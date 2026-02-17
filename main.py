@@ -32,6 +32,16 @@ from pathlib import Path
 
 from loguru import logger
 
+# 日志写入文件（logs/目录下，按天轮转，保留30天）
+config_module = __import__("config")
+logger.add(
+    str(config_module.LOG_DIR / "auto_quota_{time:YYYY-MM-DD}.log"),
+    rotation="00:00",     # 每天零点新建一个日志文件
+    retention="30 days",  # 保留30天
+    encoding="utf-8",
+    level="INFO",
+)
+
 import config
 from src.bill_reader import BillReader
 from src.hybrid_searcher import HybridSearcher
