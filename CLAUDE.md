@@ -122,28 +122,37 @@
 
 ### ✅ 已完成
 - 核心匹配引擎（搜索+参数验证+大模型精选）
+- 三模式匹配：search（纯搜索）/ full（搜索+大模型）/ agent（造价员贾维斯）
 - 专业分类模块（specialty_classifier.py，12大册，级联搜索）
 - 清单预处理（bill_cleaner.py，名称修正+专业分类+参数提取）
 - Streamlit Web界面（匹配/审核/换定额/经验库管理）
-- 经验库（含版本绑定+来源分级+防学错机制+权威层/候选层+specialty字段）
+- 经验库（含版本绑定+来源分级+防学错机制+权威层/候选层+导入验证）
 - 通用知识库（universal_kb.py，跨省份匹配知识，两层机制+specialty字段）
 - 造价Home数据导入工具（import_reference.py + 批处理文件，含专业标签）
 - 多Agent纠偏审核（multi_agent_review.py，参数审核+规则审核+裁判Agent）
 - 定额规则知识库（rule_knowledge.py，SQLite+ChromaDB，规则检索注入Prompt）
-- 按册搜索（BM25/向量/混合搜索均支持books过滤）
+- 按册搜索（BM25/向量/混合搜索均支持books过滤，严守专业边界）
+- Reranker重排（bge-reranker-v2-m3，交叉编码器精排）
 - DN取档修复（支持Φ/φ符号）+ ParamValidator软降权
+- 电气材料代码系统（conduit_map/wire_map + 前缀剥离 + is_electrical判断）
+- 关联定额同类过滤（同册同章节不重复，防止一条清单出多个同类定额）
+- 措施费跳过（三模式统一，bill_item schema一致）
+- 经验库导入验证（6项检查：后缀清理/存在性/类型/材质/DN/回路）
+- 日志写入文件（loguru，按天轮转保留30天）
+- Codex 5.3 代码审查（.codex/instructions.md + 代码审查.bat）
 - 黄金集评测工具（eval_golden.py）
-- 命令行入口（main.py）
+- 命令行入口（main.py）+ 运行匹配.bat
 
 ### ⚠️ 当前问题
-- 纯搜索模式（search mode）准确率不足，需要改进搜索质量（考虑Reranker等方案）
-- 经验库/通用知识库基本为空，缺少种子数据
+- Codex CLI连OpenAI API不稳定（国内网络），成功率约50%
+- 电气匹配准确率待重测（conduit_map/wire_map修正后）
+- test_accuracy.py硬编码路径，其他机器跑不了
 
 ### ❌ 待完成
-- 提升搜索质量（Reranker重排等方案）
-- 导入种子数据到经验库和通用知识库
+- 电缆"综合考虑"敷设方式的默认处理规则
+- Agent模式自动进化（学习笔记→规则提炼，第二期）
+- 导入更多种子数据到经验库和通用知识库
 - 土建/市政定额导入（等用户从广联达导出）
-- 群聊经验/行业知识导入
 
 ## 关键设计决策
 
