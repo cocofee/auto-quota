@@ -43,6 +43,9 @@ class HybridSearcher:
         self._bm25_engine = None
         self._vector_engine = None
 
+        # 通用知识库（延迟初始化）
+        self._universal_kb = None
+
     @property
     def bm25_engine(self):
         """延迟加载BM25引擎"""
@@ -57,16 +60,39 @@ class HybridSearcher:
             self._vector_engine = VectorEngine(self.province)
         return self._vector_engine
 
+    @property
+    def universal_kb(self):
+        """延迟加载通用知识库"""
+        if self._universal_kb is None:
+            try:
+                from src.universal_kb import UniversalKB
+                self._universal_kb = UniversalKB()
+                # 检查是否有数据（没数据就不用查了）
+                if self._universal_kb.get_stats()["authority"] == 0:
+                    logger.debug("通用知识库权威层为空，跳过知识库增强")
+                    self._universal_kb = False  # 标记为不可用，避免反复初始化
+            except Exception as e:
+                logger.debug(f"通用知识库加载失败（不影响基础搜索）: {e}")
+                self._universal_kb = False
+        return self._universal_kb if self._universal_kb is not False else None
+
     def search(self, query: str, top_k: int = None,
-               bm25_weight: float = None, vector_weight: float = None) -> list[dict]:
+               bm25_weight: float = None, vector_weight: float = None,
+               books: list[str] = None) -> list[dict]:
         """
         混合搜索：同时执行BM25和向量搜索，用RRF融合结果
+
+        流程：
+        1. 查通用知识库，获取搜索增强关键词（如果有权威层数据）
+        2. 用原始query + 增强关键词分别执行BM25和向量搜索
+        3. RRF融合排序
 
         参数:
             query: 搜索文本（清单项目名称+特征描述）
             top_k: 最终返回的候选数量
             bm25_weight: BM25搜索权重（默认0.3）
             vector_weight: 向量搜索权重（默认0.7）
+            books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
 
         返回:
             融合排序后的候选定额列表，每条包含:
@@ -77,21 +103,40 @@ class HybridSearcher:
         vector_weight = vector_weight or config.VECTOR_WEIGHT
 
         # ============================================================
+        # 第0步：查通用知识库获取搜索增强关键词
+        # ============================================================
+        kb_hints = []
+        if self.universal_kb:
+            try:
+                kb_hints = self.universal_kb.get_search_keywords(query)
+                if kb_hints:
+                    logger.debug(f"通用知识库增强: {kb_hints[:3]}")
+            except Exception as e:
+                logger.debug(f"通用知识库查询失败（不影响搜索）: {e}")
+
+        # ============================================================
         # 第1步：分别执行两路搜索
         # ============================================================
 
-        # BM25关键词搜索
+        # 构建增强搜索词：原始query + 通用知识库提供的定额名称关键词
+        # BM25对精确关键词敏感，增强词能帮它找到更准确的候选
+        enhanced_query = query
+        if kb_hints:
+            # 取第一个定额名称模式作为补充（避免关键词过多反而稀释）
+            enhanced_query = query + " " + kb_hints[0]
+
+        # BM25关键词搜索（使用增强搜索词，带册号过滤）
         bm25_results = []
         try:
-            bm25_results = self.bm25_engine.search(query, top_k=config.BM25_TOP_K)
+            bm25_results = self.bm25_engine.search(enhanced_query, top_k=config.BM25_TOP_K, books=books)
             logger.debug(f"BM25搜索返回 {len(bm25_results)} 条结果")
         except Exception as e:
             logger.warning(f"BM25搜索失败: {e}")
 
-        # 向量语义搜索
+        # 向量语义搜索（使用原始query，带册号过滤）
         vector_results = []
         try:
-            vector_results = self.vector_engine.search(query, top_k=config.VECTOR_TOP_K)
+            vector_results = self.vector_engine.search(query, top_k=config.VECTOR_TOP_K, books=books)
             logger.debug(f"向量搜索返回 {len(vector_results)} 条结果")
         except Exception as e:
             logger.warning(f"向量搜索失败: {e}")

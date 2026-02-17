@@ -66,14 +66,48 @@ class QuotaDB:
                 -- 搜索用文本（清洗后的）
                 search_text TEXT,                -- 用于BM25和向量搜索的文本
 
+                -- 大册分类（从定额编号前缀提取，如C10、C4）
+                book TEXT,                       -- 所属大册编号
+
                 UNIQUE(quota_id, chapter)        -- 同一章节内编号唯一
             )
         """)
+
+        # 版本元数据表：记录每次导入定额的版本信息
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS db_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        # 兼容旧库：检查book列是否存在，不存在则添加
+        # （旧版数据库没有book字段，直接建索引会报错"no such column"）
+        existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
+        if "book" not in existing_cols:
+            cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
+            logger.info("旧数据库缺少book列，已自动添加")
+
+        # 回填book为空的历史数据：从quota_id前缀提取册号（如C10-5-41 → C10）
+        # 覆盖两种情况：1.新加列值为NULL  2.列已存在但历史值为空字符串
+        cursor.execute("""
+            UPDATE quotas SET book = UPPER(
+                CASE
+                    WHEN quota_id GLOB '[Cc][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
+                    WHEN quota_id GLOB '[Cc][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
+                    ELSE ''
+                END
+            ) WHERE book IS NULL OR book = ''
+        """)
+        backfilled = cursor.rowcount
+        if backfilled > 0:
+            logger.info(f"回填book字段{backfilled}条")
 
         # 创建索引加速查询
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_quota_id ON quotas(quota_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_specialty ON quotas(specialty)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chapter ON quotas(chapter)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_book ON quotas(book)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_dn ON quotas(dn)")
 
         conn.commit()
@@ -105,6 +139,9 @@ class QuotaDB:
 
         # 写入数据库
         self._save_to_db(quotas)
+
+        # 记录版本号（用定额数量+导入时间生成，改了定额数据版本号就会变）
+        self._update_version(len(quotas))
 
         logger.info(f"导入完成: {specialty}定额 共{len(quotas)}条 → {self.db_path}")
         return len(quotas)
@@ -285,6 +322,10 @@ class QuotaDB:
         # 构建搜索文本
         search_text = text_parser.build_search_text(name)
 
+        # 从定额编号提取所属大册（如 C10-5-41 → C10，C4-11-168 → C4）
+        book_match = re.match(r'^(C\d+)', quota_id, re.IGNORECASE)
+        book = book_match.group(1).upper() if book_match else ""
+
         return {
             "quota_id": quota_id,
             "name": name,
@@ -301,6 +342,7 @@ class QuotaDB:
             "material": params.get("material"),
             "connection": params.get("connection"),
             "search_text": search_text,
+            "book": book,
         }
 
     def _save_to_db(self, quotas: list[dict]):
@@ -316,11 +358,11 @@ class QuotaDB:
             INSERT OR IGNORE INTO quotas
             (quota_id, name, unit, work_type, specialty, chapter,
              dn, cable_section, kva, kv, ampere, weight_t, material, connection,
-             search_text)
+             search_text, book)
             VALUES
             (?, ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?, ?, ?, ?,
-             ?)
+             ?, ?)
         """
 
         batch = []
@@ -330,7 +372,7 @@ class QuotaDB:
                 q["specialty"], q["chapter"],
                 q["dn"], q["cable_section"], q["kva"], q["kv"],
                 q["ampere"], q["weight_t"], q["material"], q["connection"],
-                q["search_text"],
+                q["search_text"], q.get("book", ""),
             ))
 
         cursor.executemany(insert_sql, batch)
@@ -338,6 +380,43 @@ class QuotaDB:
         conn.close()
 
         logger.info(f"写入数据库: {len(batch)}条记录")
+
+    def _update_version(self, quota_count: int):
+        """更新定额库版本号
+
+        版本号格式："{定额数量}_{时间戳}"
+        每次重新导入定额后版本号都会变化，
+        用于经验库判断"这条经验是否基于当前版本的定额库"。
+        """
+        import time
+        version = f"{quota_count}_{int(time.time())}"
+
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO db_meta (key, value)
+            VALUES ('version', ?)
+        """, (version,))
+        conn.commit()
+        conn.close()
+
+        logger.info(f"定额库版本号已更新: {version}")
+
+    def get_version(self) -> str:
+        """获取当前定额库的版本号
+
+        返回:
+            版本号字符串，如果从未导入过则返回空字符串
+        """
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM db_meta WHERE key = 'version'")
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else ""
+        except Exception:
+            return ""
 
     # ================================================================
     # 查询接口
@@ -394,6 +473,94 @@ class QuotaDB:
         conn.close()
         return chapters
 
+    def get_specialties(self) -> list[str]:
+        """获取所有专业大类名称（如"安装"、"土建"、"市政"）"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT specialty FROM quotas ORDER BY specialty")
+        specialties = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return specialties
+
+    def get_chapters_by_specialty(self, specialty: str) -> list[str]:
+        """获取指定专业下的所有章节名称
+
+        参数:
+            specialty: 专业名称，如"安装"
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT chapter FROM quotas WHERE specialty = ? ORDER BY chapter",
+            (specialty,)
+        )
+        chapters = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return chapters
+
+    def get_quotas_by_chapter(self, chapter: str, limit: int = 500) -> list[dict]:
+        """获取指定章节下的所有定额条目
+
+        参数:
+            chapter: 章节名称
+            limit: 最大返回数量（默认500，一个章节通常不超过几百条）
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM quotas WHERE chapter = ? ORDER BY quota_id LIMIT ?",
+            (chapter, limit)
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def search_by_keywords(self, keywords: str, chapter: str = None,
+                           book: str = None, limit: int = 50) -> list[dict]:
+        """多关键词AND搜索（空格分隔的多个关键词，必须全部包含才返回）
+
+        参数:
+            keywords: 搜索文本，多个词用空格分隔（如"室外 镀锌钢管"）
+            chapter: 限定在某个章节内搜索（可选）
+            book: 限定在某个大册内搜索（可选，如"C10"）
+            limit: 最大返回数量
+        """
+        # 把输入按空格拆分成多个关键词
+        word_list = keywords.strip().split()
+        if not word_list:
+            return []
+
+        # 构建SQL：每个关键词都必须出现在name或search_text中（AND逻辑）
+        conditions = []
+        params = []
+        for word in word_list:
+            conditions.append("(name LIKE ? OR search_text LIKE ?)")
+            params.extend([f"%{word}%", f"%{word}%"])
+
+        sql = f"SELECT * FROM quotas WHERE {' AND '.join(conditions)}"
+
+        # 如果指定了章节，加上章节过滤
+        if chapter:
+            sql += " AND chapter = ?"
+            params.append(chapter)
+
+        # 如果指定了大册，加上大册过滤
+        if book:
+            sql += " AND book = ?"
+            params.append(book)
+
+        sql += f" ORDER BY quota_id LIMIT ?"
+        params.append(limit)
+
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        rows = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
     def get_stats(self) -> dict:
         """获取数据库统计信息"""
         conn = sqlite3.connect(str(self.db_path))
@@ -424,6 +591,108 @@ class QuotaDB:
             "with_dn": with_dn,
             "with_cable_section": with_section,
         }
+
+    # ================================================================
+    # 大册（book）相关方法
+    # ================================================================
+
+    def upgrade_add_book_field(self):
+        """
+        升级：给已有数据添加 book 字段（从定额编号前缀提取）
+
+        从 quota_id 提取册号，例如：
+          C10-1-5  → book="C10"
+          C4-8-3   → book="C4"
+          C1-1-100 → book="C1"
+
+        如果 book 列不存在，先 ALTER TABLE 添加。
+        """
+        from src.specialty_classifier import get_book_from_quota_id
+
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+
+        # 检查 book 列是否已存在
+        cursor.execute("PRAGMA table_info(quotas)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "book" not in columns:
+            cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
+            logger.info("已添加 book 列到 quotas 表")
+
+        # 创建索引
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_book ON quotas(book)")
+
+        # 批量更新：从 quota_id 提取 book
+        cursor.execute("SELECT id, quota_id FROM quotas")
+        rows = cursor.fetchall()
+
+        updated = 0
+        for row_id, quota_id in rows:
+            book = get_book_from_quota_id(quota_id)
+            if book:
+                cursor.execute("UPDATE quotas SET book = ? WHERE id = ?",
+                               (book, row_id))
+                updated += 1
+
+        conn.commit()
+        conn.close()
+        logger.info(f"book字段更新完成: {updated}/{len(rows)} 条定额已标记册号")
+
+    def get_books(self) -> list[dict]:
+        """
+        获取所有大册的列表（含每册定额数量）
+
+        返回:
+            [{"code": "C1", "name": "机械设备安装", "count": 3232}, ...]
+        """
+        from src.specialty_classifier import BOOKS
+
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+
+        # 统计每册的定额数量
+        cursor.execute("""
+            SELECT book, COUNT(*) as cnt
+            FROM quotas
+            WHERE book IS NOT NULL
+            GROUP BY book
+            ORDER BY book
+        """)
+        counts = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        result = []
+        for code, info in BOOKS.items():
+            result.append({
+                "code": code,
+                "name": info["name"],
+                "count": counts.get(code, 0),
+            })
+
+        return result
+
+    def get_chapters_by_book(self, book: str) -> list[dict]:
+        """
+        获取指定大册下的所有章节（含每章定额数量）
+
+        参数:
+            book: 大册编号（如"C10"）
+
+        返回:
+            [{"chapter": "081_Ⅰ 室外管道", "count": 138}, ...]
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT chapter, COUNT(*) as cnt
+            FROM quotas
+            WHERE book = ?
+            GROUP BY chapter
+            ORDER BY chapter
+        """, (book,))
+        result = [{"chapter": row[0], "count": row[1]} for row in cursor.fetchall()]
+        conn.close()
+        return result
 
 
 # ================================================================

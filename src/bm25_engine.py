@@ -40,6 +40,7 @@ class BM25Engine:
         self.bm25 = None               # BM25Okapi对象
         self.quota_ids = []             # 与索引对应的数据库记录ID列表
         self.tokenized_corpus = []      # 分词后的文档列表
+        self.quota_books = {}           # 每条定额的所属册号 {db_id: "C10", ...}
 
         # 加载jieba专业词典
         self._load_custom_dict()
@@ -65,11 +66,20 @@ class BM25Engine:
         """
         logger.info("开始构建BM25索引...")
 
-        # 从数据库读取数据
+        # 从数据库读取数据（包含book字段，用于按册过滤）
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
+
+        # 兼容旧数据库：检测book列是否存在，不存在时降级查询
+        has_book_col = any(
+            row[1] == "book" for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()
+        )
+        if has_book_col:
+            cursor.execute("SELECT id, search_text, book FROM quotas WHERE search_text IS NOT NULL")
+        else:
+            logger.warning("旧数据库缺少book列，按册过滤功能不可用")
+            cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
         rows = cursor.fetchall()
         conn.close()
 
@@ -80,9 +90,11 @@ class BM25Engine:
         # jieba分词
         self.quota_ids = []
         self.tokenized_corpus = []
+        self.quota_books = {}
 
         for row in rows:
             self.quota_ids.append(row["id"])
+            self.quota_books[row["id"]] = row["book"] or "" if has_book_col else ""
             # 分词，去除单字符的词（通常是标点或无意义字符）
             tokens = [w for w in jieba.cut(row["search_text"]) if len(w.strip()) > 1]
             self.tokenized_corpus.append(tokens)
@@ -101,6 +113,7 @@ class BM25Engine:
             "bm25": self.bm25,
             "quota_ids": self.quota_ids,
             "tokenized_corpus": self.tokenized_corpus,
+            "quota_books": self.quota_books,
         }
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.index_path, "wb") as f:
@@ -124,6 +137,7 @@ class BM25Engine:
             self.bm25 = data["bm25"]
             self.quota_ids = data["quota_ids"]
             self.tokenized_corpus = data["tokenized_corpus"]
+            self.quota_books = data.get("quota_books", {})  # 兼容旧索引（没有book字段）
             logger.info(f"BM25索引加载成功: {len(self.quota_ids)}条文档")
             return True
         except Exception as e:
@@ -137,13 +151,14 @@ class BM25Engine:
         if not self.load_index():
             self.build_index()
 
-    def search(self, query: str, top_k: int = None) -> list[dict]:
+    def search(self, query: str, top_k: int = None, books: list[str] = None) -> list[dict]:
         """
         BM25关键词搜索
 
         参数:
             query: 搜索文本（清单描述）
             top_k: 返回前K条结果
+            books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
 
         返回:
             匹配结果列表，每条包含 {id, quota_id, name, unit, score, ...}
@@ -164,10 +179,37 @@ class BM25Engine:
         # BM25搜索
         scores = self.bm25.get_scores(query_tokens)
 
-        # 取Top K（按分数降序）
+        # 取候选结果（按分数降序）
         scored_indices = [(i, scores[i]) for i in range(len(scores)) if scores[i] > 0]
         scored_indices.sort(key=lambda x: x[1], reverse=True)
-        top_indices = scored_indices[:top_k]
+
+        # 如果指定了册号过滤，从所有正分结果中筛选指定册的（确保不遗漏）
+        # 注意：旧索引可能没有quota_books数据，此时降级为不过滤
+        if books and self.quota_books:
+            books_set = set(books)
+            top_indices = []
+            for i, s in scored_indices:
+                db_id = self.quota_ids[i]
+                if self.quota_books.get(db_id, "") in books_set:
+                    top_indices.append((i, s))
+                    if len(top_indices) >= top_k:
+                        break
+            # 只在确认是旧索引缺少book数据时才降级全库搜索
+            # 判断依据：quota_books全是空字符串 → 旧索引没有book信息
+            if not top_indices and scored_indices:
+                all_books_empty = all(v == "" for v in self.quota_books.values())
+                if all_books_empty:
+                    logger.warning("旧索引缺少book数据，降级为全库搜索")
+                    top_indices = scored_indices[:top_k]
+                else:
+                    # 正常情况：该册确实没有匹配结果，保持空（不跨专业污染）
+                    logger.info(f"按册过滤({books})后无匹配结果")
+        elif books and not self.quota_books:
+            # quota_books完全为空 → 旧索引，降级为不过滤
+            logger.warning("旧索引无book数据，跳过按册过滤")
+            top_indices = scored_indices[:top_k]
+        else:
+            top_indices = scored_indices[:top_k]
 
         if not top_indices:
             return []

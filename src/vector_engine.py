@@ -40,8 +40,7 @@ class VectorEngine:
     def model(self):
         """延迟加载BGE向量模型（首次调用时加载，占用约2GB显存）"""
         if self._model is None:
-            logger.info(f"正在加载向量模型: {config.VECTOR_MODEL_NAME}")
-            logger.info("首次加载需要下载模型文件（约1.3GB），请耐心等待...")
+            logger.info(f"正在加载向量模型: {config.VECTOR_MODEL_NAME}（加载到显存中...）")
             try:
                 from sentence_transformers import SentenceTransformer
                 self._model = SentenceTransformer(
@@ -81,11 +80,20 @@ class VectorEngine:
         """
         logger.info("开始构建向量索引...")
 
-        # 从数据库读取数据
+        # 从数据库读取数据（包含book字段，用于ChromaDB的metadata过滤）
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
+
+        # 兼容旧数据库：检测book列是否存在，不存在时降级查询
+        has_book_col = any(
+            row[1] == "book" for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()
+        )
+        if has_book_col:
+            cursor.execute("SELECT id, search_text, book FROM quotas WHERE search_text IS NOT NULL")
+        else:
+            logger.warning("旧数据库缺少book列，按册过滤功能不可用")
+            cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
         rows = cursor.fetchall()
         conn.close()
 
@@ -127,24 +135,29 @@ class VectorEngine:
                 normalize_embeddings=True  # L2归一化，配合余弦相似度
             )
 
-            # 存入ChromaDB
+            # 每条定额的所属册号，存入ChromaDB的metadata（用于按册过滤搜索）
+            metadatas = [{"book": (row["book"] or "") if has_book_col else ""} for row in batch_rows]
+
+            # 存入ChromaDB（带metadata，支持后续按册过滤查询）
             self.collection.add(
                 ids=ids,
                 documents=texts,
                 embeddings=embeddings.tolist(),
+                metadatas=metadatas,
             )
 
             logger.info(f"  向量化进度: {end}/{total} ({end * 100 // total}%)")
 
         logger.info(f"向量索引构建完成: {total}条 → {self.chroma_dir}")
 
-    def search(self, query: str, top_k: int = None) -> list[dict]:
+    def search(self, query: str, top_k: int = None, books: list[str] = None) -> list[dict]:
         """
         向量语义搜索
 
         参数:
             query: 搜索文本（清单描述）
             top_k: 返回前K条结果
+            books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
 
         返回:
             匹配结果列表，每条包含 {id, quota_id, name, unit, vector_score, ...}
@@ -164,11 +177,57 @@ class VectorEngine:
             normalize_embeddings=True
         )
 
-        # ChromaDB查询
-        results = self.collection.query(
-            query_embeddings=query_embedding.tolist(),
-            n_results=top_k,
-        )
+        # 构建按册过滤条件（ChromaDB的where参数）
+        where_filter = None
+        if books:
+            if len(books) == 1:
+                where_filter = {"book": books[0]}
+            else:
+                where_filter = {"book": {"$in": books}}
+
+        # ChromaDB查询（带可选的册号过滤）
+        try:
+            results = self.collection.query(
+                query_embeddings=query_embedding.tolist(),
+                n_results=top_k,
+                where=where_filter,
+            )
+        except Exception as e:
+            # 旧向量集合可能没有book metadata，过滤会报错
+            if where_filter:
+                logger.warning(f"向量搜索按册过滤失败({e})，降级为全库搜索（旧索引兼容）")
+                results = self.collection.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=top_k,
+                )
+            else:
+                raise
+
+        # 按册过滤后结果为空时，只在确认是旧索引缺metadata时才降级
+        if where_filter and (not results or not results["ids"] or not results["ids"][0]):
+            # 检查是否是旧索引：采样多条记录，看是否全部缺少有效book metadata
+            # 只看一条不准（可能刚好取到非C*开头的合法空book记录）
+            try:
+                sample = self.collection.peek(limit=10)
+                sample_metas = sample.get("metadatas", []) if sample else []
+                # 统计有有效book值的记录数
+                valid_book_count = sum(
+                    1 for m in sample_metas if m and m.get("book", "").strip()
+                )
+                # 采样中无任何有效book → 旧索引
+                is_old_index = (valid_book_count == 0)
+            except Exception:
+                is_old_index = True
+
+            if is_old_index:
+                logger.warning("旧索引缺少book metadata，降级为全库搜索")
+                results = self.collection.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=top_k,
+                )
+            else:
+                # 正常情况：该册确实没有匹配结果，保持空（不跨专业污染）
+                logger.info(f"向量搜索按册过滤({books})后无匹配结果")
 
         if not results or not results["ids"] or not results["ids"][0]:
             return []
