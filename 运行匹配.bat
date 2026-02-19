@@ -11,37 +11,16 @@ echo  流程: 匹配 - 生成Excel+审核文件 - Claude Code审核 - 导入修正
 echo.
 
 :: ============================================================
-:: 选择省份
+:: 选择省份（用Python避免bat变量嵌套问题）
 :: ============================================================
-echo [第1步] 选择省份/定额版本:
-echo.
-
-set province_count=0
-for /d %%P in ("db\provinces\*") do (
-    set /a province_count+=1
-    set "province_!province_count!=%%~nxP"
-    echo   [!province_count!] %%~nxP
-)
-
-if !province_count!==0 (
-    echo [错误] db\provinces\ 中没有已安装的省份定额库
+python tools/_select_province.py
+if errorlevel 1 (
     pause
     exit /b 1
 )
-
-if !province_count!==1 (
-    set "PROVINCE=!province_1!"
-    echo   只有1个省份，自动选择: !PROVINCE!
-) else (
-    echo.
-    set /p "PROVINCE_CHOICE=请输入编号: "
-    set "PROVINCE=!province_%PROVINCE_CHOICE%!"
-    if not defined PROVINCE (
-        echo [错误] 无效选择
-        pause
-        exit /b 1
-    )
-)
+set /p PROVINCE=<.tmp_selected_province.txt
+del /q .tmp_selected_province.txt 2>nul
+echo.
 echo.
 
 :: ============================================================
@@ -226,6 +205,7 @@ goto POST_MATCH
 :: 退出
 :: ============================================================
 :EXIT
+del /q .tmp_selected_province.txt 2>nul
 echo.
 echo  再见!
 echo.
