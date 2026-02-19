@@ -548,22 +548,29 @@ def extract_book_from_chapter(chapter: str, quotas: list) -> str:
         return ""
     # 从第一条定额编号提取
     qid = quotas[0].get("quota_id", "")
-    m = re.match(r'^(C\d+)', qid)
-    return m.group(1) if m else ""
+    # 通用格式：C10-5-41→C10, A-1-5→A, D-3-8→D, 1-2-3→1
+    m = re.match(r'^([A-Za-z]\d{0,2})-', qid)
+    if not m:
+        m = re.match(r'^(\d{1,2})-', qid)
+    return m.group(1).upper() if m else ""
 
 
-def process_all_chapters(db: QuotaDB) -> dict:
+def process_all_chapters(db: QuotaDB, specialty: str = None) -> dict:
     """
     处理所有章节，提取规则
 
     参数:
         db: 定额数据库实例
+        specialty: 限定专业（如"安装"、"土建"），为None时处理所有
 
     返回:
         完整的规则字典
     """
-    chapters = db.get_chapters()
-    print(f"共找到 {len(chapters)} 个章节")
+    if specialty:
+        chapters = db.get_chapters_by_specialty(specialty)
+    else:
+        chapters = db.get_chapters()
+    print(f"共找到 {len(chapters)} 个章节" + (f" (specialty={specialty})" if specialty else ""))
 
     all_chapters = {}
     total_quotas = 0
@@ -609,8 +616,9 @@ def process_all_chapters(db: QuotaDB) -> dict:
 
     result = {
         "meta": {
-            "source": "C 通用安装工程_全部.xlsx",
+            "source": specialty or "全部",
             "province": db.province,
+            "specialty": specialty or "全部",
             "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "total_chapters": len(chapters),
             "total_quotas": total_quotas,
@@ -696,82 +704,103 @@ def generate_summary(rules: dict) -> str:
 
 def main():
     """主函数"""
+    import argparse
+    parser = argparse.ArgumentParser(description="定额规则自动提取工具")
+    parser.add_argument("--specialty", type=str, default=None,
+                        help="限定专业（如 安装、土建），不指定则处理所有")
+    parser.add_argument("--province", type=str, default=None,
+                        help="省份版本（如 北京2024），不指定使用默认配置")
+    args = parser.parse_args()
+
     print("=" * 50)
     print("定额规则自动提取工具")
     print("=" * 50)
     print()
 
     # 连接数据库
-    db = QuotaDB()
+    db = QuotaDB(province=args.province)
     print(f"省份: {db.province}")
     print(f"数据库: {db.db_path}")
+    if args.specialty:
+        print(f"专业: {args.specialty}")
     print()
 
-    # 处理所有章节
-    rules = process_all_chapters(db)
-    print()
+    # 如果未指定specialty，自动提取所有已有专业
+    if args.specialty:
+        specialties = [args.specialty]
+    else:
+        specialties = db.get_specialties()
+        if not specialties:
+            print("数据库为空，请先导入定额数据")
+            return
+        print(f"发现 {len(specialties)} 个专业: {', '.join(specialties)}")
 
-    # 输出路径
-    output_dir = PROJECT_ROOT / "data" / "quota_rules"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 逐个specialty生成规则文件
+    for specialty in specialties:
+        print(f"\n{'='*40}")
+        print(f"处理专业: {specialty}")
+        print(f"{'='*40}")
 
-    province = db.province
-    json_path = output_dir / f"{province}_安装定额规则.json"
-    summary_path = output_dir / f"{province}_安装定额规则_摘要.txt"
+        rules = process_all_chapters(db, specialty=specialty)
 
-    # 写入JSON（原子替换，避免中断产生损坏文件）
-    json_tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".json",
-            prefix=f"{json_path.stem}_tmp_",
-            dir=str(json_path.parent),
-            encoding="utf-8",
-            delete=False,
-        ) as f:
-            json_tmp = f.name
-            json.dump(rules, f, ensure_ascii=False, indent=2)
-        os.replace(json_tmp, json_path)
-    finally:
-        if json_tmp and Path(json_tmp).exists():
-            try:
-                os.remove(json_tmp)
-            except OSError:
-                pass
-    print(f"JSON规则文件: {json_path}")
+        # 输出路径（按省份分子目录）
+        province = db.province
+        output_dir = PROJECT_ROOT / "data" / "quota_rules" / province
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 写入摘要
-    summary = generate_summary(rules)
-    summary_tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".txt",
-            prefix=f"{summary_path.stem}_tmp_",
-            dir=str(summary_path.parent),
-            encoding="utf-8",
-            delete=False,
-        ) as f:
-            summary_tmp = f.name
-            f.write(summary)
-        os.replace(summary_tmp, summary_path)
-    finally:
-        if summary_tmp and Path(summary_tmp).exists():
-            try:
-                os.remove(summary_tmp)
-            except OSError:
-                pass
-    print(f"摘要文件: {summary_path}")
+        # 文件名格式: {专业}定额规则.json
+        json_path = output_dir / f"{specialty}定额规则.json"
+        summary_path = output_dir / f"{specialty}定额规则_摘要.txt"
 
-    # 打印统计
-    meta = rules["meta"]
-    print()
-    print(f"提取完成!")
-    print(f"  章节: {meta['total_chapters']}")
-    print(f"  定额: {meta['total_quotas']}")
-    print(f"  家族: {meta['total_families']}")
-    print(f"  独立: {meta['total_standalone']}")
+        # 写入JSON（原子替换）
+        json_tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json",
+                prefix=f"{json_path.stem}_tmp_",
+                dir=str(json_path.parent),
+                encoding="utf-8", delete=False,
+            ) as f:
+                json_tmp = f.name
+                json.dump(rules, f, ensure_ascii=False, indent=2)
+            os.replace(json_tmp, json_path)
+        finally:
+            if json_tmp and Path(json_tmp).exists():
+                try:
+                    os.remove(json_tmp)
+                except OSError:
+                    pass
+        print(f"JSON规则文件: {json_path}")
+
+        # 写入摘要
+        summary = generate_summary(rules)
+        summary_tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt",
+                prefix=f"{summary_path.stem}_tmp_",
+                dir=str(summary_path.parent),
+                encoding="utf-8", delete=False,
+            ) as f:
+                summary_tmp = f.name
+                f.write(summary)
+            os.replace(summary_tmp, summary_path)
+        finally:
+            if summary_tmp and Path(summary_tmp).exists():
+                try:
+                    os.remove(summary_tmp)
+                except OSError:
+                    pass
+        print(f"摘要文件: {summary_path}")
+
+        # 打印统计
+        meta = rules["meta"]
+        print(f"  章节: {meta['total_chapters']}")
+        print(f"  定额: {meta['total_quotas']}")
+        print(f"  家族: {meta['total_families']}")
+        print(f"  独立: {meta['total_standalone']}")
+
+    print(f"\n全部完成!")
 
 
 if __name__ == "__main__":
