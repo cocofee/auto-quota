@@ -288,7 +288,7 @@ class ExperienceDB:
 
     def _get_quota_map(self, province: str = None) -> dict:
         """获取定额库映射（按省份缓存，避免重复读取）"""
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
         cache_by_province = getattr(self, "_quota_map_cache_by_province", {})
         if province in cache_by_province:
             return cache_by_province[province]
@@ -350,7 +350,7 @@ class ExperienceDB:
         返回:
             新记录的ID，校验失败返回 -1
         """
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
         now = time.time()
 
         # ========== 定额校验（除了用户手动修正，其他来源都要校验）==========
@@ -426,7 +426,7 @@ class ExperienceDB:
 
         # 新建记录才追加向量索引；更新走原id即可
         if inserted_new:
-            self._add_to_vector_index(record_id, bill_text)
+            self._add_to_vector_index(record_id, bill_text, province=province)
             logger.debug(f"经验库新增: [{source}] '{bill_text[:50]}' → {quota_ids}")
         else:
             logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={source}")
@@ -554,8 +554,10 @@ class ExperienceDB:
             return dict(row)
         return None
 
-    def _add_to_vector_index(self, record_id: int, bill_text: str):
-        """将经验记录添加到向量索引"""
+    def _add_to_vector_index(self, record_id: int, bill_text: str,
+                             province: str = None):
+        """将经验记录添加到向量索引（带省份metadata，支持按省份过滤）"""
+        province = province or config.get_current_province()
         try:
             embedding = self.model.encode(
                 [bill_text],
@@ -565,6 +567,7 @@ class ExperienceDB:
                 ids=[str(record_id)],
                 documents=[bill_text],
                 embeddings=embedding.tolist(),
+                metadatas=[{"province": province}],
             )
         except Exception as e:
             logger.warning(f"向量索引添加失败: {e}")
@@ -594,7 +597,7 @@ class ExperienceDB:
             相似的经验记录列表，每条包含:
             {id, bill_text, quota_ids, quota_names, similarity, confidence, ...}
         """
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
 
         # 获取当前定额库版本（用于校验经验记录是否过期）
         current_version = config.get_current_quota_version(province)
@@ -633,10 +636,28 @@ class ExperienceDB:
                 normalize_embeddings=True
             )
 
-            results = self.collection.query(
-                query_embeddings=query_embedding.tolist(),
-                n_results=min(top_k * 2, self.collection.count()),  # 多取一些，后面过滤
-            )
+            # 先尝试按省份过滤的向量搜索
+            try:
+                results = self.collection.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=min(top_k * 2, self.collection.count()),
+                    where={"province": province},  # 按省份过滤向量搜索
+                )
+            except Exception as where_err:
+                # 旧索引可能没有province metadata，where过滤会报错
+                logger.warning(f"经验库按省份过滤失败({where_err})，降级为全库搜索。"
+                              f"建议重建向量索引以获得更好的多省份隔离")
+                results = self.collection.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=min(top_k * 2, self.collection.count()),
+                )
+
+            # 兼容旧索引：按省份过滤后无结果时，尝试无过滤搜索（SQL层仍会过滤省份）
+            if not results or not results.get("ids") or not results.get("ids")[0]:
+                results = self.collection.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=min(top_k * 2, self.collection.count()),
+                )
 
             if not results or not results.get("ids") or not results.get("ids")[0]:
                 return []
@@ -744,7 +765,7 @@ class ExperienceDB:
             limit_val = 20
         limit_val = max(1, min(limit_val, 100))
 
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
         like_pattern = f"%{text}%"
 
         conn = self._connect(row_factory=True)
@@ -884,7 +905,7 @@ class ExperienceDB:
         返回:
             {"total": 总数, "added": 新增数, "updated": 更新数, "skipped": 跳过数}
         """
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
         quota_db_ver = config.get_current_quota_version(province)
         stats = {"total": len(records), "added": 0, "updated": 0, "skipped": 0}
 
@@ -943,13 +964,14 @@ class ExperienceDB:
     def rebuild_vector_index(self):
         """
         重建经验库的向量索引（当SQLite数据更新但向量索引不同步时使用）
+        重建后带省份metadata，支持按省份过滤向量搜索
         """
         logger.info("重建经验库向量索引...")
 
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, bill_text FROM experiences")
+            cursor.execute("SELECT id, bill_text, province FROM experiences")
             rows = cursor.fetchall()
         finally:
             conn.close()
@@ -971,7 +993,7 @@ class ExperienceDB:
             metadata={"hnsw:space": "cosine"}
         )
 
-        # 批量向量化
+        # 批量向量化（带省份metadata）
         batch_size = 256
         total = len(rows)
         for start in range(0, total, batch_size):
@@ -980,6 +1002,7 @@ class ExperienceDB:
 
             ids = [str(row["id"]) for row in batch]
             texts = [row["bill_text"] for row in batch]
+            metadatas = [{"province": row["province"] or ""} for row in batch]
 
             embeddings = self.model.encode(
                 texts,
@@ -991,9 +1014,10 @@ class ExperienceDB:
                 ids=ids,
                 documents=texts,
                 embeddings=embeddings.tolist(),
+                metadatas=metadatas,
             )
 
-        logger.info(f"经验库向量索引重建完成: {total}条记录")
+        logger.info(f"经验库向量索引重建完成: {total}条记录（含省份metadata）")
 
     # ================================================================
     # 统计信息

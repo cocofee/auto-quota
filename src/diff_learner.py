@@ -50,7 +50,7 @@ class DiffLearner:
                 "details": 修正详情列表
             }
         """
-        province = province or config.CURRENT_PROVINCE
+        province = province or config.get_current_province()
 
         # 读取两个文件的清单→定额映射
         logger.info(f"读取原始文件: {original_path}")
