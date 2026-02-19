@@ -174,8 +174,6 @@ class RuleValidator:
             else:
                 # 兼容旧结构：从根目录按前缀匹配
                 json_files = sorted(rules_dir.glob(f"{province}_*定额规则.json"))
-                if not json_files:
-                    json_files = sorted(rules_dir.glob("*_定额规则.json"))
             if not json_files:
                 logger.warning("未找到定额规则文件，规则校验功能禁用")
                 return
