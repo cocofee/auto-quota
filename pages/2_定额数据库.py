@@ -16,6 +16,19 @@ import config
 st.set_page_config(page_title="定额数据库", page_icon="📚", layout="wide")
 
 
+def _ensure_list(value):
+    return value if isinstance(value, list) else []
+
+
+def _open_quota_conn(db_path):
+    """统一SQLite连接参数，减少页面查询时的锁等待失败。"""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path), timeout=10)
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def show_db_stats():
     """展示定额数据库统计信息"""
     try:
@@ -25,11 +38,11 @@ def show_db_stats():
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("定额总数", f"{stats['total']} 条")
+            st.metric("定额总数", f"{stats.get('total', 0)} 条")
         with col2:
-            st.metric("章节数", stats["chapters"])
+            st.metric("章节数", stats.get("chapters", 0))
         with col3:
-            st.metric("专业数", stats["specialties"])
+            st.metric("专业数", stats.get("specialties", 0))
 
         # 搜索引擎状态
         col4, col5 = st.columns(2)
@@ -80,16 +93,16 @@ def show_browse(db):
     selected_chapter = selected_chapter_display.rsplit(" (", 1)[0]
 
     # 第3级：显示该章节的定额列表
-    import sqlite3
-    conn = sqlite3.connect(str(db.db_path))
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT quota_id, name, unit FROM quotas WHERE chapter = ? ORDER BY quota_id LIMIT 200",
-        (selected_chapter,)
-    )
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+    conn = _open_quota_conn(db.db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT quota_id, name, unit FROM quotas WHERE chapter = ? ORDER BY quota_id LIMIT 200",
+            (selected_chapter,)
+        )
+        rows = [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
 
     if rows:
         st.caption(f"共 {len(rows)} 条（最多显示200条）")
@@ -124,13 +137,15 @@ def show_search(db):
         if selected_filter != "全部":
             book_filter = selected_filter.split(" ")[0]  # "C10 给排水采暖燃气" → "C10"
 
-        results = db.search_by_keyword(search_keyword, limit=50, book=book_filter)
+        results = _ensure_list(db.search_by_keywords(search_keyword, limit=50, book=book_filter))
         if results:
             filter_text = f"（{selected_filter}）" if book_filter else ""
             st.success(f"找到 {len(results)} 条定额{filter_text}")
 
             rows = []
             for r in results:
+                if not isinstance(r, dict):
+                    continue
                 rows.append({
                     "定额编号": r.get("quota_id", ""),
                     "名称": r.get("name", "")[:60],
@@ -237,8 +252,8 @@ def main():
             from src.quota_db import QuotaDB
             db = QuotaDB()
             show_search(db)
-        except Exception:
-            st.warning("定额数据库未初始化，请先导入定额数据")
+        except Exception as e:
+            st.warning(f"定额数据库未初始化，请先导入定额数据（{e}）")
 
     with tab3:
         show_import()

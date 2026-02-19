@@ -16,6 +16,24 @@ import config
 st.set_page_config(page_title="经验库", page_icon="🧠", layout="wide")
 
 
+def _safe_json_list(raw):
+    """安全解析JSON数组，脏数据时降级为空列表。"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, str):
+        return []
+    raw = raw.strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
 def get_experience_db():
     """获取经验库实例"""
     try:
@@ -26,17 +44,26 @@ def get_experience_db():
         return None
 
 
+def _open_db_conn(db_path):
+    """统一SQLite连接参数，降低页面读写并发下的锁冲突。"""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path), timeout=10)
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def show_stats(exp_db):
     """展示经验库统计"""
     stats = exp_db.get_stats()
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("总记录数", f"{stats['total']} 条")
+        st.metric("总记录数", f"{stats.get('total', 0)} 条")
     with col2:
-        st.metric("平均置信度", f"{stats['avg_confidence']}%")
+        st.metric("平均置信度", f"{stats.get('avg_confidence', 0)}%")
     with col3:
-        st.metric("向量索引", f"{stats['vector_count']} 条")
+        st.metric("向量索引", f"{stats.get('vector_count', 0)} 条")
 
     # 按来源分类
     by_source = stats.get("by_source", {})
@@ -44,6 +71,7 @@ def show_stats(exp_db):
         st.subheader("按来源分类")
         source_labels = {
             "auto_match": "自动匹配确认",
+            "user_confirmed": "用户确认",
             "user_correction": "用户修正",
             "project_import": "项目导入",
         }
@@ -68,47 +96,45 @@ def show_records(exp_db):
     st.subheader("历史匹配记录")
 
     # 从SQLite直接读取记录（分页）
-    import sqlite3
-    conn = sqlite3.connect(str(exp_db.db_path))
-    conn.row_factory = sqlite3.Row
+    conn = _open_db_conn(exp_db.db_path)
+    try:
+        # 总数
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM experiences")
+        total = cursor.fetchone()[0]
+        if total == 0:
+            st.info("经验库为空，匹配清单后系统会自动积累经验")
+            return
 
-    # 总数
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM experiences")
-    total = cursor.fetchone()[0]
+        # 分页参数
+        page_size = 50
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = st.number_input("页码", min_value=1, max_value=total_pages, value=1)
+        offset = (page - 1) * page_size
 
-    if total == 0:
-        st.info("经验库为空，匹配清单后系统会自动积累经验")
+        # 查询
+        cursor.execute("""
+            SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                   source, confidence, confirm_count, province
+            FROM experiences
+            ORDER BY updated_at DESC
+            LIMIT ? OFFSET ?
+        """, (page_size, offset))
+        rows = cursor.fetchall()
+    finally:
         conn.close()
-        return
-
-    # 分页参数
-    page_size = 50
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    page = st.number_input("页码", min_value=1, max_value=total_pages, value=1)
-    offset = (page - 1) * page_size
-
-    # 查询
-    cursor.execute("""
-        SELECT id, bill_text, bill_name, quota_ids, quota_names,
-               source, confidence, confirm_count, province
-        FROM experiences
-        ORDER BY updated_at DESC
-        LIMIT ? OFFSET ?
-    """, (page_size, offset))
-    rows = cursor.fetchall()
-    conn.close()
 
     st.caption(f"共 {total} 条记录，当前第 {page}/{total_pages} 页")
 
     # 构建DataFrame
     display_rows = []
     for r in rows:
-        quota_ids = json.loads(r["quota_ids"]) if r["quota_ids"] else []
-        quota_names = json.loads(r["quota_names"]) if r["quota_names"] else []
+        quota_ids = _safe_json_list(r["quota_ids"])
+        quota_names = _safe_json_list(r["quota_names"])
 
         source_labels = {
             "auto_match": "自动匹配",
+            "user_confirmed": "用户确认",
             "user_correction": "用户修正",
             "project_import": "项目导入",
         }
@@ -154,26 +180,26 @@ def show_search(exp_db):
 
     if query:
         # 用SQLite LIKE做简单搜索（不触发向量模型加载）
-        import sqlite3
-        conn = sqlite3.connect(str(exp_db.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, bill_text, bill_name, quota_ids, quota_names,
-                   confidence, confirm_count, source
-            FROM experiences
-            WHERE bill_text LIKE ? OR bill_name LIKE ?
-            LIMIT 30
-        """, (f"%{query}%", f"%{query}%"))
-        rows = cursor.fetchall()
-        conn.close()
+        conn = _open_db_conn(exp_db.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                       confidence, confirm_count, source
+                FROM experiences
+                WHERE bill_text LIKE ? OR bill_name LIKE ?
+                LIMIT 30
+            """, (f"%{query}%", f"%{query}%"))
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         if rows:
             st.success(f"找到 {len(rows)} 条相关记录")
             display_rows = []
             for r in rows:
-                quota_ids = json.loads(r["quota_ids"]) if r["quota_ids"] else []
-                quota_names = json.loads(r["quota_names"]) if r["quota_names"] else []
+                quota_ids = _safe_json_list(r["quota_ids"])
+                quota_names = _safe_json_list(r["quota_names"])
                 display_rows.append({
                     "清单文本": r["bill_text"][:60],
                     "定额编号": ", ".join(quota_ids),

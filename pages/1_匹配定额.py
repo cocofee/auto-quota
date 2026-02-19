@@ -10,11 +10,16 @@
 
 import sys
 import time
+import uuid
+import re
+import os
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
 import streamlit as st
 import pandas as pd
+from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
@@ -72,10 +77,104 @@ def save_uploaded_file(uploaded_file) -> str:
     """保存上传文件到临时目录"""
     temp_dir = config.OUTPUT_DIR / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    file_path = temp_dir / uploaded_file.name
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    _cleanup_temp_files(temp_dir)
+
+    max_mb = int(getattr(config, "UPLOAD_MAX_MB", 30))
+    max_bytes = max_mb * 1024 * 1024
+    file_size = getattr(uploaded_file, "size", None)
+    if isinstance(file_size, int) and file_size > max_bytes:
+        raise ValueError(f"上传文件过大：{file_size / 1024 / 1024:.1f}MB，超过限制 {max_mb}MB")
+
+    # 仅保留文件名，阻断路径穿越；同时清洗特殊字符并加随机前缀防覆盖
+    raw_name = Path(getattr(uploaded_file, "name", "upload.xlsx")).name
+    suffix = Path(raw_name).suffix.lower()
+    if suffix not in {".xlsx", ".xls"}:
+        suffix = ".xlsx"
+    stem = Path(raw_name).stem
+    safe_stem = re.sub(r'[^A-Za-z0-9._\-\u4e00-\u9fff]+', "_", stem).strip("._")
+    if not safe_stem:
+        safe_stem = "upload"
+    safe_name = f"{safe_stem}_{uuid.uuid4().hex[:8]}{suffix}"
+
+    file_path = temp_dir / safe_name
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=suffix,
+            prefix=f"{safe_stem}_tmp_",
+            dir=str(temp_dir),
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            f.write(uploaded_file.getbuffer())
+        os.replace(tmp_path, file_path)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            try:
+                os.remove(tmp_path)
+            except OSError as e:
+                logger.debug(f"上传临时文件清理失败: {tmp_path} ({e})")
     return str(file_path)
+
+
+def _safe_unlink(path_like, context: str = ""):
+    """安全删除临时文件，失败仅记录日志，不影响主流程。"""
+    if not path_like:
+        return
+    path = Path(path_like)
+    try:
+        path.unlink(missing_ok=True)
+    except Exception as e:
+        suffix = f" ({context})" if context else ""
+        logger.debug(f"删除临时文件失败: {path}{suffix} ({e})")
+
+
+def _cleanup_temp_files(temp_dir: Path,
+                        max_keep: int = 300,
+                        max_age_hours: int = 24 * 3):
+    """
+    清理临时目录中的历史文件，避免长期运行导致磁盘膨胀。
+    - 超过 max_age_hours 的文件删除
+    - 其余文件按修改时间保留最新 max_keep 个
+    """
+    try:
+        files = [p for p in temp_dir.iterdir() if p.is_file()]
+    except Exception as e:
+        logger.debug(f"扫描临时目录失败，跳过清理: {e}")
+        return
+
+    if not files:
+        return
+
+    file_entries = []
+    for f in files:
+        try:
+            file_entries.append((f, f.stat().st_mtime))
+        except OSError:
+            continue
+    if not file_entries:
+        return
+
+    now = time.time()
+    max_age_sec = max_age_hours * 3600
+    files_sorted = sorted(file_entries, key=lambda item: item[1], reverse=True)
+    survivors = files_sorted[:max_keep]
+    survivors_set = {item[0] for item in survivors}
+
+    removed = 0
+    for f, mtime in files_sorted:
+        should_remove = f not in survivors_set or (now - mtime) > max_age_sec
+        if not should_remove:
+            continue
+        try:
+            f.unlink(missing_ok=True)
+            removed += 1
+        except Exception as e:
+            logger.debug(f"清理临时文件失败: {f} ({e})")
+
+    if removed > 0:
+        logger.debug(f"临时目录清理完成: 删除 {removed} 个历史文件")
 
 
 def get_sections(results):
@@ -88,6 +187,77 @@ def get_sections(results):
         section = r.get("bill_item", {}).get("section", "其他") or "其他"
         sections[section] = sections.get(section, 0) + 1
     return sections
+
+
+def _ensure_list(value):
+    return value if isinstance(value, list) else []
+
+
+def _safe_confidence(value, default: int = 0) -> int:
+    try:
+        conf = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(100, conf))
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_stats(stats, results):
+    """把统计字段标准化，防止缺字段导致页面渲染报错。"""
+    results = _ensure_list(results)
+    if not isinstance(stats, dict):
+        stats = {}
+    total = len(results)
+    matched = sum(1 for r in results if _ensure_list((r or {}).get("quotas", [])))
+    high_conf = sum(1 for r in results
+                    if _safe_confidence((r or {}).get("confidence", 0)) >= config.CONFIDENCE_GREEN)
+    mid_conf = sum(1 for r in results
+                   if config.CONFIDENCE_YELLOW <= _safe_confidence((r or {}).get("confidence", 0)) < config.CONFIDENCE_GREEN)
+    low_conf = sum(1 for r in results
+                   if 0 < _safe_confidence((r or {}).get("confidence", 0)) < config.CONFIDENCE_YELLOW)
+    return {
+        "total": _safe_int(stats.get("total", total), total),
+        "matched": _safe_int(stats.get("matched", matched), matched),
+        "high_conf": _safe_int(stats.get("high_conf", high_conf), high_conf),
+        "mid_conf": _safe_int(stats.get("mid_conf", mid_conf), mid_conf),
+        "low_conf": _safe_int(stats.get("low_conf", low_conf), low_conf),
+        "exp_hits": _safe_int(stats.get("exp_hits", 0), 0),
+        "elapsed": _safe_float(stats.get("elapsed", 0.0), 0.0),
+    }
+
+
+def _resolve_selected_quota(selected_row, quota_list: list[dict]):
+    """兼容st.dataframe不同版本的选中行结构，返回选中的quota dict。"""
+    if isinstance(selected_row, int):
+        return quota_list[selected_row] if 0 <= selected_row < len(quota_list) else None
+    if not isinstance(selected_row, dict):
+        return None
+
+    qid = str(selected_row.get("定额编号", "")).strip()
+    if qid:
+        for q in quota_list:
+            if str(q.get("quota_id", "")).strip() == qid:
+                return q
+
+    idx_val = selected_row.get("_index", selected_row.get("index"))
+    try:
+        idx = int(idx_val)
+    except (TypeError, ValueError):
+        return None
+    return quota_list[idx] if 0 <= idx < len(quota_list) else None
 
 
 # ================================================================
@@ -110,7 +280,9 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
     # JSON结果文件路径（临时文件）
     temp_dir = config.OUTPUT_DIR / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    json_path = str(temp_dir / "_match_result.json")
+    _cleanup_temp_files(temp_dir)
+    json_file = temp_dir / f"_match_result_{uuid.uuid4().hex}.json"
+    json_path = str(json_file)
 
     # 构建命令行（和批处理bat文件调用的是同一个main.py）
     project_dir = str(Path(__file__).parent.parent)
@@ -119,6 +291,7 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
         file_path,
         "--mode", mode,
         "--json-output", json_path,
+        "--province", config.CURRENT_PROVINCE,
     ]
     if sheet_name:
         cmd.extend(["--sheet", sheet_name])
@@ -139,6 +312,7 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
         )
     except subprocess.TimeoutExpired:
         st.error("匹配超时（超过10分钟），请检查清单数量或搜索引擎状态")
+        _safe_unlink(json_file, "匹配超时后清理结果文件")
         return None, None
 
     if result.returncode != 0:
@@ -146,6 +320,7 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
         # 显示错误信息（stderr中有详细日志）
         error_msg = result.stderr or result.stdout or "未知错误"
         st.code(error_msg[-2000:], language="text")  # 只显示最后2000字符
+        _safe_unlink(json_file, "匹配失败后清理结果文件")
         return None, None
 
     # 读取JSON结果
@@ -164,12 +339,25 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
             data = json.load(f)
     except Exception as e:
         st.error(f"读取匹配结果失败: {e}")
+        _safe_unlink(json_file, "结果JSON解析失败后清理文件")
+        return None, None
+    if not isinstance(data, dict):
+        st.error("匹配结果格式异常：JSON根节点不是对象")
+        logger.warning(f"匹配结果JSON结构异常: type={type(data).__name__}, path={json_path}")
+        _safe_unlink(json_file, "结果JSON结构异常后清理文件")
         return None, None
 
     progress_bar.progress(1.0)
     status_text.text("匹配完成")
+    _safe_unlink(json_file, "匹配完成后清理结果文件")
 
-    return data.get("results"), data.get("stats")
+    results = data.get("results")
+    if not isinstance(results, list):
+        st.error("匹配结果格式异常：results 不是列表")
+        logger.warning(f"匹配结果results异常: type={type(results).__name__}, path={json_path}")
+        return None, None
+    stats = _normalize_stats(data.get("stats"), results)
+    return results, stats
 
 
 # ================================================================
@@ -186,9 +374,11 @@ def build_grid_data(results, section_filter="全部"):
     """
     rows = []
     for idx, r in enumerate(results):
+        if not isinstance(r, dict):
+            continue
         item = r.get("bill_item", {})
-        quotas = r.get("quotas", [])
-        conf = r.get("confidence", 0)
+        quotas = [q for q in _ensure_list(r.get("quotas", [])) if isinstance(q, dict)]
+        conf = _safe_confidence(r.get("confidence", 0))
         section = item.get("section", "其他") or "其他"
 
         # 按分部过滤
@@ -207,6 +397,7 @@ def build_grid_data(results, section_filter="全部"):
         rows.append({
             "data_idx": idx,         # 内部索引，用于关联数据
             "row_type": "bill",      # 行类型标记
+            "row_uid": f"bill_{idx}",
             "序号": idx + 1,
             "类型": "清单",
             "编码": item.get("code", ""),
@@ -220,10 +411,11 @@ def build_grid_data(results, section_filter="全部"):
 
         # 定额子行（可以有多条）
         if quotas:
-            for q in quotas:
+            for q_idx, q in enumerate(quotas):
                 rows.append({
                     "data_idx": idx,
                     "row_type": "quota",
+                    "row_uid": f"quota_{idx}_{q_idx}",
                     "序号": "",
                     "类型": "定额",
                     "编码": q.get("quota_id", ""),
@@ -238,6 +430,7 @@ def build_grid_data(results, section_filter="全部"):
             rows.append({
                 "data_idx": idx,
                 "row_type": "no_match",
+                "row_uid": f"no_match_{idx}",
                 "序号": "",
                 "类型": "未匹配",
                 "编码": "",
@@ -268,8 +461,8 @@ def show_grid_table(results, section_filter="全部"):
         st.info("当前分部下没有清单项")
         return
 
-    # 表格显示的列（隐藏内部字段 data_idx 和 row_type）
-    display_cols = ["序号", "类型", "编码", "名称", "特征描述", "单位", "工程量", "置信度", "状态"]
+    # 表格显示的列（隐藏内部字段 data_idx / row_type / row_uid）
+    display_cols = ["row_uid", "序号", "类型", "编码", "名称", "特征描述", "单位", "工程量", "置信度", "状态"]
     display_df = df[display_cols].copy()
 
     # 置信度列：数字转百分比文字（只处理清单行有数字的情况）
@@ -278,6 +471,7 @@ def show_grid_table(results, section_filter="全部"):
     )
 
     gb = GridOptionsBuilder.from_dataframe(display_df)
+    gb.configure_column("row_uid", hide=True)
 
     # 列宽配置（参考广联达的表格比例）
     gb.configure_column("序号", width=55, pinned="left")
@@ -357,20 +551,21 @@ def show_grid_table(results, section_filter="全部"):
         row_data = None
         if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
             row_data = selected_rows.iloc[0].to_dict()
-        elif isinstance(selected_rows, list) and len(selected_rows) > 0:
+        elif (
+            isinstance(selected_rows, list)
+            and len(selected_rows) > 0
+            and isinstance(selected_rows[0], dict)
+        ):
             row_data = selected_rows[0]
 
         if row_data:
-            row_type_val = row_data.get("类型", "")
-            code_val = row_data.get("编码", "")
-            name_val = row_data.get("名称", "")
-
-            # 在原始df中查找匹配行，获取 data_idx
-            for _, orig_row in df.iterrows():
-                if (orig_row["类型"] == row_type_val and
-                    orig_row["编码"] == code_val and
-                    orig_row["名称"] == name_val):
+            row_uid = row_data.get("row_uid", "")
+            if row_uid:
+                match_rows = df[df["row_uid"] == row_uid]
+                if not match_rows.empty:
+                    orig_row = match_rows.iloc[0]
                     bill_idx = int(orig_row["data_idx"])
+                    row_type_val = orig_row.get("类型", "")
 
                     if row_type_val in ("定额", "未匹配"):
                         # 点击定额行或未匹配行 → 直接打开换定额弹窗
@@ -378,7 +573,6 @@ def show_grid_table(results, section_filter="全部"):
                     else:
                         # 点击清单行 → 显示详情面板
                         st.session_state.selected_row_idx = bill_idx
-                    break
 
 
 # ================================================================
@@ -395,8 +589,8 @@ def show_detail_panel(results, idx):
 
     r = results[idx]
     item = r.get("bill_item", {})
-    quotas = r.get("quotas", [])
-    conf = r.get("confidence", 0)
+    quotas = [q for q in _ensure_list(r.get("quotas", [])) if isinstance(q, dict)]
+    conf = _safe_confidence(r.get("confidence", 0))
 
     st.markdown("---")
 
@@ -460,12 +654,7 @@ def show_detail_panel(results, idx):
             show_quota_dialog(idx)
 
     with btn_col3:
-        pass
-
-
-def show_swap_panel(results, idx):
-    """换定额的搜索面板（已废弃，改用 show_quota_dialog 弹窗）"""
-    pass
+        st.empty()
 
 
 @st.dialog("查询定额", width="large")
@@ -481,10 +670,15 @@ def show_quota_dialog(idx):
     from src.quota_db import QuotaDB
     db = QuotaDB()
 
-    results = st.session_state.match_results
+    results = _ensure_list(st.session_state.match_results)
+    if idx < 0 or idx >= len(results):
+        st.warning("目标清单索引无效，已忽略本次操作。")
+        return
     r = results[idx]
     item = r.get("bill_item", {})
-    current_quotas = r.get("quotas", [])
+    current_quotas = [q for q in _ensure_list(r.get("quotas", [])) if isinstance(q, dict)]
+    if not isinstance(results[idx].get("quotas"), list):
+        results[idx]["quotas"] = current_quotas
 
     # 显示当前清单信息
     st.caption(f"清单第{idx+1}条：{item.get('name', '')}　|　当前 {len(current_quotas)} 条定额")
@@ -628,8 +822,10 @@ def show_quota_dialog(idx):
             selected_rows = event.selection.rows if event.selection else []
 
             if selected_rows:
-                chosen_idx = selected_rows[0]
-                chosen = quota_list[chosen_idx]
+                chosen = _resolve_selected_quota(selected_rows[0], quota_list)
+                if not chosen:
+                    st.warning("选中行无法解析，请重新选择。")
+                    return
 
                 st.success(f"已选：{chosen['quota_id']} | {chosen['name']} | {chosen.get('unit', '')}")
 
@@ -643,8 +839,10 @@ def show_quota_dialog(idx):
                             "unit": chosen.get("unit", ""),
                             "reason": "用户手动插入",
                         }
-                        results[idx]["quotas"].append(new_quota)
-                        results[idx]["confidence"] = max(results[idx].get("confidence", 0), 90)
+                        qlist = _ensure_list(results[idx].get("quotas", []))
+                        qlist.append(new_quota)
+                        results[idx]["quotas"] = qlist
+                        results[idx]["confidence"] = max(_safe_confidence(results[idx].get("confidence", 0)), 90)
                         results[idx]["match_source"] = "user_correction"
                         st.session_state.corrected_set.add(idx)
                         st.session_state.confirmed_set.discard(idx)
@@ -657,10 +855,12 @@ def show_quota_dialog(idx):
                             "unit": chosen.get("unit", ""),
                             "reason": "用户手动替换",
                         }
-                        if results[idx]["quotas"]:
-                            results[idx]["quotas"][0] = new_quota
+                        qlist = _ensure_list(results[idx].get("quotas", []))
+                        if qlist:
+                            qlist[0] = new_quota
                         else:
-                            results[idx]["quotas"].append(new_quota)
+                            qlist.append(new_quota)
+                        results[idx]["quotas"] = qlist
                         results[idx]["confidence"] = 95
                         results[idx]["match_source"] = "user_correction"
                         st.session_state.corrected_set.add(idx)
@@ -679,7 +879,10 @@ def show_quota_dialog(idx):
                 st.text(f"  {i+1}. {q.get('quota_id', '')} | {q.get('name', '')}")
             with col_del:
                 if st.button("删除", key=f"del_q_{idx}_{i}"):
-                    results[idx]["quotas"].pop(i)
+                    qlist = _ensure_list(results[idx].get("quotas", []))
+                    if 0 <= i < len(qlist):
+                        qlist.pop(i)
+                    results[idx]["quotas"] = qlist
                     st.session_state.corrected_set.add(idx)
                     st.rerun()
 
@@ -693,7 +896,7 @@ def save_to_experience_db():
 
     只有用户审核过的条目才会进入经验库（纠偏机制）
     """
-    results = st.session_state.match_results
+    results = _ensure_list(st.session_state.match_results)
     to_save = st.session_state.confirmed_set | st.session_state.corrected_set
 
     if not to_save:
@@ -712,15 +915,20 @@ def save_to_experience_db():
     try:
         from src.universal_kb import UniversalKB
         universal_kb = UniversalKB()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"通用知识库加载失败，跳过同步学习: {e}")
 
     saved = 0
-    for idx in to_save:
+    failed = 0
+    valid_indexes = sorted(i for i in to_save if isinstance(i, int) and i >= 0)
+    for idx in valid_indexes:
         if idx >= len(results):
             continue
         r = results[idx]
-        quotas = r.get("quotas", [])
+        if not isinstance(r, dict):
+            failed += 1
+            continue
+        quotas = [q for q in _ensure_list(r.get("quotas", [])) if isinstance(q, dict)]
         if not quotas:
             continue
 
@@ -730,20 +938,30 @@ def save_to_experience_db():
             continue
 
         # 从定额列表中收集编号和名称
-        quota_ids = [q["quota_id"] for q in quotas if q.get("quota_id")]
-        quota_names = [q.get("name", "") for q in quotas if q.get("quota_id")]
+        quota_ids = [str(q.get("quota_id", "")).strip() for q in quotas if str(q.get("quota_id", "")).strip()]
+        quota_names = [str(q.get("name", "")).strip() for q in quotas if str(q.get("quota_id", "")).strip()]
         if not quota_ids:
             continue
 
         source = "user_correction" if idx in st.session_state.corrected_set else "user_confirmed"
+        base_conf = _safe_confidence(r.get("confidence", 80), default=80)
+        if source == "user_confirmed":
+            # 用户显式确认应满足经验直通门槛，避免“确认了但下次仍命不中”
+            save_confidence = max(base_conf, int(config.EXPERIENCE_DIRECT_THRESHOLD))
+        else:
+            # 用户修正是高信任反馈
+            save_confidence = max(base_conf, 95)
 
         try:
-            exp_db.add_experience(
+            record_id = exp_db.add_experience(
                 bill_text=bill_text, quota_ids=quota_ids, quota_names=quota_names,
                 bill_name=item.get("name"), bill_code=item.get("code"),
                 bill_unit=item.get("unit"), source=source,
-                confidence=r.get("confidence", 80),
+                confidence=save_confidence,
             )
+            if record_id <= 0:
+                failed += 1
+                continue
             saved += 1
 
             # 同步更新通用知识库（用定额名称，不用编号，全国通用）
@@ -753,11 +971,20 @@ def save_to_experience_db():
                         bill_text=bill_text,
                         quota_names=quota_names,
                     )
-                except Exception:
-                    pass  # 通用知识库更新失败不影响经验库保存
+                except Exception as e:
+                    logger.warning(
+                        f"通用知识库同步失败（不影响经验库保存）: idx={idx}, "
+                        f"bill='{item.get('name', '')[:40]}', error={e}"
+                    )
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"经验保存失败: idx={idx}, bill='{item.get('name', '')[:40]}', error={e}"
+            )
+            failed += 1
+
+    if failed > 0:
+        st.warning(f"有 {failed} 条经验保存失败，请查看日志后重试。")
 
     return saved
 
@@ -771,7 +998,7 @@ def export_excel():
     from src.output_writer import OutputWriter
     writer = OutputWriter()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = str(config.OUTPUT_DIR / f"匹配结果_{timestamp}.xlsx")
+    output_path = str(config.OUTPUT_DIR / f"匹配结果_{timestamp}_{uuid.uuid4().hex[:6]}.xlsx")
     writer.write_results(
         st.session_state.match_results, output_path,
         original_file=st.session_state.uploaded_file_path,
@@ -810,7 +1037,11 @@ def main():
         uploaded = st.file_uploader("上传清单Excel", type=["xlsx", "xls"])
 
         if uploaded:
-            file_path = save_uploaded_file(uploaded)
+            try:
+                file_path = save_uploaded_file(uploaded)
+            except ValueError as e:
+                st.error(str(e))
+                st.stop()
             st.session_state.uploaded_file_path = file_path
 
             # 第一步：检测Sheet并让用户选择
@@ -878,9 +1109,9 @@ def main():
 
                 try:
                     results, stats = run_matching(items, mode, use_exp, bar, txt)
-                    if results:
+                    if results is not None:
                         st.session_state.match_results = results
-                        st.session_state.match_stats = stats
+                        st.session_state.match_stats = _normalize_stats(stats, results)
                         st.session_state.matching_done = True
                         st.rerun()  # 切换到结果界面
                 except Exception as e:
@@ -892,8 +1123,8 @@ def main():
     # ========================================================
     # 已匹配状态：广联达风格结果界面
     # ========================================================
-    results = st.session_state.match_results
-    stats = st.session_state.match_stats
+    results = _ensure_list(st.session_state.match_results)
+    stats = _normalize_stats(st.session_state.match_stats, results)
 
     # ---- 侧边栏：分部导航 + 操作 ----
     with st.sidebar:
@@ -939,14 +1170,14 @@ def main():
         if st.button("一键确认所有绿色", use_container_width=True,
                       help="确认所有置信度≥85%的匹配结果"):
             for i, r in enumerate(results):
-                if r.get("confidence", 0) >= config.CONFIDENCE_GREEN and r.get("quotas"):
+                if _safe_confidence(r.get("confidence", 0)) >= config.CONFIDENCE_GREEN and _ensure_list(r.get("quotas", [])):
                     st.session_state.confirmed_set.add(i)
             st.rerun()
 
         if st.button("确认所有已匹配", use_container_width=True,
                       help="确认所有有匹配结果的条目"):
             for i, r in enumerate(results):
-                if r.get("quotas"):
+                if _ensure_list(r.get("quotas", [])):
                     st.session_state.confirmed_set.add(i)
             st.rerun()
 
