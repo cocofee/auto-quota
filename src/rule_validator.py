@@ -18,6 +18,7 @@ from pathlib import Path
 from loguru import logger
 
 from src.text_parser import parser as text_parser
+import config
 
 # 关键词提取时忽略的词（太常见，没有区分度）
 STOP_WORDS = {"以内", "以下", "以上", "以", "内", "其他", "及"}
@@ -150,26 +151,59 @@ def tokenize(text: str) -> list:
 class RuleValidator:
     """定额规则校验器"""
 
-    def __init__(self, rules_path: str = None):
+    def __init__(self, rules_path: str = None, province: str = None):
         """
         参数:
             rules_path: 规则JSON文件路径，默认自动查找
+            province: 省份名称，用于定位规则文件目录
         """
         self.rules = None
         self.family_index = {}
         self.all_families = []  # 所有家族（带预计算的关键词）
 
         if rules_path is None:
-            # 自动查找规则文件
+            # 自动查找并加载所有专业的规则文件
             project_root = Path(__file__).parent.parent
             rules_dir = project_root / "data" / "quota_rules"
-            # 找第一个JSON文件
-            json_files = list(rules_dir.glob("*_安装定额规则.json"))
-            if json_files:
-                rules_path = str(sorted(json_files)[0])
+
+            # 优先从省份子目录加载（新结构）
+            province = province or config.get_current_province()
+            province_rules_dir = rules_dir / province
+            if province_rules_dir.exists():
+                json_files = sorted(province_rules_dir.glob("*定额规则.json"))
             else:
+                # 兼容旧结构：从根目录按前缀匹配
+                json_files = sorted(rules_dir.glob(f"{province}_*定额规则.json"))
+                if not json_files:
+                    json_files = sorted(rules_dir.glob("*_定额规则.json"))
+            if not json_files:
                 logger.warning("未找到定额规则文件，规则校验功能禁用")
                 return
+
+            # 合并所有规则文件的chapters
+            merged_chapters = {}
+            for jf in json_files:
+                try:
+                    with open(jf, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, dict) and isinstance(loaded.get("chapters"), dict):
+                        merged_chapters.update(loaded["chapters"])
+                        logger.info(f"已加载规则文件: {jf.name} ({len(loaded['chapters'])}章节)")
+                except Exception as e:
+                    logger.warning(f"跳过损坏的规则文件: {jf.name} ({e})")
+
+            if not merged_chapters:
+                logger.warning("所有规则文件均无有效章节，规则校验功能禁用")
+                return
+
+            self.rules = {"chapters": merged_chapters}
+            self._build_index()
+
+            family_count = len(set(id(v) for v in self.family_index.values()))
+            if self.family_index:
+                logger.info(f"规则校验器已加载: {len(self.family_index)} 条定额, "
+                            f"{family_count} 个家族 (来自{len(json_files)}个规则文件)")
+            return
 
         rules_file = Path(rules_path)
         try:
@@ -293,22 +327,20 @@ class RuleValidator:
                     logger.debug(f"连接方式推导: {mat_code} → {default_conn}")
                     break
 
-        # ===== 电梯专用匹配（优先于通用策略） =====
-        # 电梯家族是 text 类型档位，通用 param_driven 无法处理
-        # 需要专用逻辑：类型+站数 → 直接定位家族和档位
-        if bill_params.get("elevator_type") and bill_params.get("elevator_stops") is not None:
-            elevator_result = self._match_elevator(
-                bill_text, bill_params, bill_keywords, item, books=books)
-            if elevator_result:
-                return elevator_result
-
-        # ===== 策略A：参数驱动匹配（通用、不依赖修饰词如"明装"） =====
+        # ===== 策略A：参数驱动匹配（数值型档位，通用、不依赖修饰词如"明装"） =====
         # 思路：如果能从清单中提取出参数值，且参数类型匹配某个家族，
         #       那只需要核心名词对上就行，不要求"明装/落地/嵌入"等修饰词
         param_result = self._match_by_param_driven(
             bill_text, bill_keywords, bill_params, item, books=books)
         if param_result:
             return param_result
+
+        # ===== 策略A2：文本型家族匹配（电梯/起重机等 value_type="text" 的家族） =====
+        # 通用逻辑：自动分析家族数据推断参数类型，不需要为每种设备写专用代码
+        text_result = self._match_text_family(
+            bill_text, bill_keywords, bill_params, item, books=books)
+        if text_result:
+            return text_result
 
         # ===== 策略B：纯关键词驱动匹配（兜底） =====
         return self._match_by_keyword_driven(
@@ -484,97 +516,350 @@ class RuleValidator:
         return self._build_rule_result(
             best_entry, best_param_value, best_score, bill_text, item)
 
-    def _match_elevator(self, bill_text: str, bill_params: dict,
-                        bill_keywords: list, item: dict = None,
-                        books: list = None) -> dict:
+    def _match_text_family(self, bill_text: str, bill_keywords: list,
+                           bill_params: dict = None,
+                           item: dict = None, books: list = None) -> dict:
         """
-        电梯专用匹配逻辑
+        通用文本型家族匹配
 
-        电梯家族特殊性：value_type="text"，档位值格式"N 站数N"，没有 tiers 字段。
-        通用 param_driven 无法处理，需要专用逻辑：
-        1. 根据 elevator_type 定位家族（曳引式/载货/杂物/液压）
-        2. 根据 elevator_stops 在该家族中找正确档位（向上取档）
-        3. 超出最大档则取最大档，提示需补增减层门
+        适用于所有 value_type="text" 的家族（电梯、起重机、轨道等）。
+        不需要为每种设备写专用代码。
+
+        算法：
+        1. 关键词匹配找候选文本型家族
+        2. 自动分析家族 quota values 中的数字模式
+        3. 从家族名称/前缀/值中提取参数线索
+        4. 用线索从清单中提取对应参数值
+        5. 向上取档匹配
         """
-        elevator_type = bill_params.get("elevator_type", "")
-        elevator_stops = bill_params.get("elevator_stops")
+        best_score = 0
+        best_match = None
 
-        if not elevator_type or elevator_stops is None:
-            return None
-
-        # 自动扶梯不走这个逻辑（扶梯按宽度，已有 tiers，走 param_driven）
-        if elevator_type == "自动扶梯":
-            return None
-
-        # 在所有家族中查找类型匹配的电梯家族
-        target_family_entry = None
         for entry in self.all_families:
+            if not isinstance(entry, dict):
+                continue
+            family = entry.get("family")
+            if not isinstance(family, dict):
+                continue
+
+            # 只处理文本型家族（有 tiers 的走 param_driven）
+            if family.get("tiers"):
+                continue
+            quotas = family.get("quotas", [])
+            if not quotas:
+                continue
+
+            # 册号过滤
             if books and entry.get("book") and entry["book"] not in books:
                 continue
-            family = entry.get("family", {})
-            family_name = family.get("name", "")
-            # 家族名如"载货电梯 层数"，以电梯类型开头
-            if family_name.startswith(elevator_type):
-                target_family_entry = entry
-                break
 
-        if not target_family_entry:
+            # 属性兼容性检查
+            family_attrs = entry.get("attrs", {})
+            if family_attrs and not self._family_compatible(
+                    bill_text, bill_params or {}, family_attrs):
+                continue
+
+            family_kws = entry.get("keywords") or []
+            if not family_kws:
+                continue
+
+            # ---- 关键词匹配评分 ----
+            forward_hits = 0
+            has_specific_keyword = False
+            for fkw in family_kws:
+                matched = False
+                matched_via_generic = False
+                for bkw in bill_keywords:
+                    if fkw == bkw or fkw in bkw:
+                        matched = True
+                        break
+                    elif bkw in fkw:
+                        matched = True
+                        if bkw in GENERIC_MODIFIERS:
+                            matched_via_generic = True
+                        break
+                # 复合词拆分匹配
+                if not matched and len(fkw) >= 4:
+                    fkw_parts = list(jieba.cut(fkw))
+                    fkw_parts = [p for p in fkw_parts
+                                 if len(p) >= 2 and p not in STOP_WORDS]
+                    if len(fkw_parts) >= 2:
+                        all_covered = all(
+                            any(fp == bkw or fp in bkw or bkw in fp
+                                for bkw in bill_keywords)
+                            for fp in fkw_parts
+                        )
+                        if all_covered:
+                            matched = True
+                if matched:
+                    forward_hits += 1
+                if matched and fkw not in GENERIC_MODIFIERS and not matched_via_generic:
+                    has_specific_keyword = True
+
+            type_fallback = False
+            if forward_hits == 0 or not has_specific_keyword:
+                # 补充定位：关键词没命中，但清单提取的分类参数直接匹配家族名称
+                # 例如 text_parser 提取了 elevator_type="载货电梯"，
+                # 而家族名称是"载货电梯 层数"→ 直接定位成功
+                # 这是通用逻辑：不管什么设备，分类参数匹配家族名就视为有效
+                type_matched = False
+                family_name = family.get("name", "")
+                for key, val in (bill_params or {}).items():
+                    if isinstance(val, str) and len(val) >= 3:
+                        if val in family_name:
+                            type_matched = True
+                            break
+                if not type_matched:
+                    continue
+                # 分类参数本身就是强信号，视同命中了具体关键词
+                has_specific_keyword = True
+                forward_hits = max(forward_hits, 1)
+                type_fallback = True  # 标记：通过分类参数匹配的
+
+            # 验证家族基础名称匹配（防止参数描述关键词导致误匹配）
+            # 但如果已通过分类参数直接定位家族，跳过此检查（分类参数是更强的信号）
+            if not type_fallback:
+                base_name = family.get("name", "")
+                base_name_kws = tokenize(base_name)
+                base_name_kws = [kw for kw in base_name_kws
+                                 if kw not in GENERIC_MODIFIERS and len(kw) >= 2]
+                if base_name_kws:
+                    has_base_match = False
+                    for bkw in bill_keywords:
+                        for bnkw in base_name_kws:
+                            if bnkw == bkw or bnkw in bkw or bkw in bnkw:
+                                has_base_match = True
+                                break
+                            common_prefix_len = 0
+                            for ca, cb in zip(bnkw, bkw):
+                                if ca == cb:
+                                    common_prefix_len += 1
+                                else:
+                                    break
+                            if common_prefix_len >= 2:
+                                has_base_match = True
+                                break
+                        if has_base_match:
+                            break
+                    if not has_base_match:
+                        continue
+
+            # ---- 解析 quota values 中的数字（提取可比较的档位） ----
+            value_tiers = self._parse_text_values(quotas)
+            if not value_tiers:
+                continue  # 纯文本值（如"门型吊钩式"），暂不处理
+
+            # ---- 从清单中提取对应参数 ----
+            bill_value = self._extract_text_param(
+                bill_text, bill_params or {}, family)
+            if bill_value is None:
+                continue
+
+            # ---- 向上取档匹配 ----
+            matched_quota, exceeded = self._find_text_tier(
+                value_tiers, bill_value)
+            if not matched_quota:
+                continue
+
+            # ---- 综合评分 ----
+            reverse_hits = 0
+            for bkw in bill_keywords:
+                for fkw in family_kws:
+                    if bkw in fkw or fkw in bkw:
+                        reverse_hits += 1
+                        break
+            coverage = forward_hits / len(family_kws)
+            bill_coverage = (reverse_hits / len(bill_keywords)
+                             if bill_keywords else 0)
+            medium_bonus = self._compute_medium_bonus(
+                bill_text, family.get("name", ""))
+            score = 0.5 + coverage * 0.3 + bill_coverage * 0.2 + medium_bonus
+
+            # 文本型参数与家族名称的关联加分
+            # 例如 elevator_type="载货电梯" 出现在家族名 "载货电梯 层数" 中 → 加分
+            # 这是通用逻辑：不管什么设备类型，只要提取到的文本参数匹配家族名就加分
+            family_name = family.get("name", "")
+            for key, val in (bill_params or {}).items():
+                if isinstance(val, str) and len(val) >= 2:
+                    if val in family_name:
+                        score += 0.15
+                        break
+
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "entry": entry,
+                    "quota": matched_quota,
+                    "bill_value": bill_value,
+                    "exceeded": exceeded,
+                }
+
+        if not best_match or best_score < 0.55:
             return None
 
-        family = target_family_entry["family"]
-        quotas = family.get("quotas", [])
+        return self._build_text_result(
+            best_match["entry"], best_match["quota"],
+            best_match["bill_value"], best_match["exceeded"],
+            best_score, bill_text, item)
 
-        # 从 quotas 中解析站数，向上取档（找 >= elevator_stops 的最小值）
-        best_quota = None
-        best_stops = None
+    def _parse_text_values(self, quotas: list) -> list:
+        """
+        从文本型家族的 quota values 中提取数字档位
 
+        例如 "26 站数26" → 提取首部数字 26
+        例如 "5 跨距(m以内) 19.5" → 提取首部数字 5
+
+        返回: [(quota_dict, primary_number), ...] 按数字升序排列
+        """
+        results = []
         for quota in quotas:
             value_str = quota.get("value", "")
-            stops_match = re.match(r'^(\d+)\s', value_str)
-            if stops_match:
-                quota_stops = int(stops_match.group(1))
-                if quota_stops >= elevator_stops:
-                    if best_stops is None or quota_stops < best_stops:
-                        best_stops = quota_stops
-                        best_quota = quota
+            # 提取值的首部数字（支持小数和分数如"15/3"）
+            m = re.match(r'^(\d+(?:\.\d+)?)\s', value_str)
+            if m:
+                results.append((quota, float(m.group(1))))
+        results.sort(key=lambda x: x[1])
+        return results
 
-        exceeded_max = False
-        if not best_quota:
-            # 站数超出该家族最大档位，取最大档
-            max_quota = None
-            max_stops = 0
-            for quota in quotas:
-                value_str = quota.get("value", "")
-                stops_match = re.match(r'^(\d+)\s', value_str)
-                if stops_match:
-                    s = int(stops_match.group(1))
-                    if s > max_stops:
-                        max_stops = s
-                        max_quota = quota
+    def _extract_text_param(self, bill_text: str, bill_params: dict,
+                            family: dict) -> float:
+        """
+        通用文本型参数提取：从清单中提取与家族对应的参数值
 
-            if max_quota:
-                best_quota = max_quota
-                best_stops = max_stops
-                exceeded_max = True
-                logger.warning(
-                    f"电梯站数{elevator_stops}超出{elevator_type}最大档{max_stops}站，"
-                    f"取最大档定额{max_quota.get('id')}，超出部分需另计增减层门")
-            else:
-                return None
+        不需要知道具体是什么设备。而是：
+        1. 从家族 name/prefix/values 中收集参数名称线索（如"层数"、"起重量"）
+        2. 将线索映射到 bill_params 中已提取的参数
+        3. 如果映射失败，直接在清单文本中搜索 "线索词+数字"
+        """
+        hints = self._collect_param_hints(family)
+        if not hints:
+            return None
 
-        # 构建匹配结果
-        quota_id = best_quota.get("id")
+        # 通用参数名→bill_params键 映射
+        # 这不是设备特定的，而是工程参数的通用字典：
+        # "重量"对电梯/起重机/水泵都指 weight_t，"功率"对风机/水泵都指 kw
+        HINT_TO_PARAM = {
+            "站数": "elevator_stops", "层数": "elevator_stops",
+            "重量": "weight_t", "起重量": "weight_t",
+            "功率": "kw",
+            "容量": "kva",
+            "电流": "ampere",
+            "截面": "cable_section",
+            "口径": "dn", "直径": "dn", "管径": "dn",
+            "回路": "circuits",
+            "周长": "perimeter",
+            "大边": "large_side",
+        }
+
+        # 策略1：通过参数名映射到 bill_params
+        for hint in hints:
+            for map_key, param_key in HINT_TO_PARAM.items():
+                if map_key in hint:
+                    val = bill_params.get(param_key)
+                    if val is not None:
+                        return float(val)
+
+        # 策略2：在清单文本中直接搜索 "参数名:数字" 或 "参数名 数字"
+        for hint in hints:
+            if len(hint) < 2:
+                continue
+            pattern = rf'{re.escape(hint)}[：:\s]*(\d+(?:\.\d+)?)'
+            m = re.search(pattern, bill_text)
+            if m:
+                return float(m.group(1))
+
+        return None
+
+    def _collect_param_hints(self, family: dict) -> list:
+        """
+        从家族数据中收集参数名称线索
+
+        数据来源（不需要知道设备类型）：
+        - 家族名称尾部词：如 "曳引式电梯 层数" → "层数"
+        - 家族前缀尾部词：如 "载货电梯 层数" → "层数"
+        - quota value 中的中文词：如 "26 站数26" → "站数"
+        """
+        hints = []
+
+        # 从 family name 提取尾部参数词
+        name = family.get("name", "")
+        name_parts = name.split()
+        if len(name_parts) >= 2:
+            last_part = name_parts[-1]
+            # 去掉括号内容（如"起重量(t以内)"→"起重量"）
+            last_part = re.sub(r'[（(].*[)）]', '', last_part).strip()
+            if last_part and len(last_part) >= 2:
+                hints.append(last_part)
+
+        # 从 prefix 提取尾部参数词
         prefix = family.get("prefix", "")
-        quota_name = f"{prefix}{best_quota.get('value', '')}".strip()
-        # 置信度：精确匹配85，超档70
-        confidence = 70 if exceeded_max else 85
+        prefix_parts = prefix.split()
+        if len(prefix_parts) >= 2:
+            last_part = prefix_parts[-1]
+            last_part = re.sub(r'[（(].*[)）]', '', last_part).strip()
+            if last_part and len(last_part) >= 2 and last_part not in hints:
+                hints.append(last_part)
+
+        # 从 quota values 中提取中文参数名
+        for quota in family.get("quotas", [])[:3]:
+            value_str = quota.get("value", "")
+            chinese_words = re.findall(r'[\u4e00-\u9fff]{2,}', value_str)
+            for word in chinese_words:
+                # 过滤"以内"等无意义词
+                if word not in STOP_WORDS and word not in hints:
+                    hints.append(word)
+
+        return hints
+
+    def _find_text_tier(self, value_tiers: list,
+                        bill_value: float) -> tuple:
+        """
+        向上取档：在文本型家族的数字档位中找 ≥ bill_value 的最小值
+
+        返回: (matched_quota_dict, exceeded_max)
+        - matched_quota_dict: 匹配到的 quota 字典，None 表示没找到
+        - exceeded_max: 是否超出了最大档（取了最大档兜底）
+        """
+        # 向上取档
+        for quota, number in value_tiers:
+            if number >= bill_value:
+                return quota, False
+
+        # 超出最大档 → 取最大档
+        if value_tiers:
+            max_quota, max_num = value_tiers[-1]
+            logger.warning(
+                f"参数值{bill_value}超出最大档{max_num}，取最大档定额"
+                f"{max_quota.get('id')}，超出部分需另行计算")
+            return max_quota, True
+
+        return None, False
+
+    def _build_text_result(self, entry: dict, matched_quota: dict,
+                           bill_value: float, exceeded: bool,
+                           score: float, bill_text: str,
+                           item: dict = None) -> dict:
+        """构建文本型家族匹配结果"""
+        family = entry["family"]
+        quota_id = matched_quota.get("id")
+        prefix = family.get("prefix", "")
+        value_str = matched_quota.get("value", "")
+        quota_name = f"{prefix} {value_str}".strip()
+
+        # 从 value 中提取档位显示数字
+        tier_match = re.match(r'^(\d+(?:\.\d+)?)', value_str)
+        tier_display = tier_match.group(1) if tier_match else value_str
+
+        # 置信度：精确匹配85，超档80（需≥80才能跳过搜索）
+        confidence = 80 if exceeded else 85
 
         explanation_parts = [
-            f"电梯规则匹配: {elevator_type}",
-            f"站数{elevator_stops}→档位{best_stops}站",
+            f"规则匹配: 「{family.get('name', '')}」",
+            f"参数{bill_value}→档位{tier_display}",
         ]
-        if exceeded_max:
-            explanation_parts.append(f"(超出最大档{best_stops}站，需另计增减层门)")
+        if exceeded:
+            explanation_parts.append(
+                f"(超出最大档{tier_display}，需另行计算)")
 
         result = {
             "bill_item": item or {},
@@ -588,11 +873,11 @@ class RuleValidator:
             "explanation": " | ".join(explanation_parts),
             "match_source": "rule",
             "rule_family": family.get("name", ""),
-            "rule_score": 0.9,
+            "rule_score": round(score, 3),
         }
 
-        logger.info(f"电梯规则匹配: '{bill_text[:40]}' → {quota_id} "
-                     f"({elevator_type} {elevator_stops}站→{best_stops}站档)")
+        logger.info(f"文本型规则匹配: '{bill_text[:40]}' → {quota_id} "
+                     f"(「{family.get('name', '')}」参数{bill_value}→{tier_display})")
 
         return result
 
@@ -920,9 +1205,9 @@ class RuleValidator:
         # 有档位信息才做校验（纯文字类型的家族不校验）
         tiers = family.get("tiers")
         if not tiers:
-            # 电梯家族特殊校验：value_type="text" 但可以通过站数校验
-            if family.get("value_type") == "text" and "电梯" in family.get("name", ""):
-                return self._validate_elevator_result(result, bill_text, family)
+            # 文本型家族通用校验（电梯、起重机等 value_type="text" 的家族）
+            if family.get("value_type") == "text":
+                return self._validate_text_family_result(result, bill_text, family)
             # 其他无数值档位的家族 → 加小幅置信度
             result["confidence"] = min(result.get("confidence", 0) + 3, 100)
             result["rule_validated"] = True
@@ -997,79 +1282,74 @@ class RuleValidator:
 
             return result
 
-    def _validate_elevator_result(self, result: dict, bill_text: str,
-                                   family: dict) -> dict:
+    def _validate_text_family_result(self, result: dict, bill_text: str,
+                                      family: dict) -> dict:
         """
-        电梯专用校验：检查搜索匹配到的电梯定额站数档位是否正确，
-        错误时自动纠正到正确档位。
+        通用文本型家族校验：检查搜索匹配到的定额档位是否正确
+
+        适用于所有 value_type="text" 的家族（电梯、起重机等），
+        不需要为每种设备写专用校验代码。
         """
         bill_params = text_parser.parse(bill_text)
-        elevator_stops = bill_params.get("elevator_stops")
 
-        if elevator_stops is None:
+        # 解析 quota values 中的数字
+        value_tiers = self._parse_text_values(family.get("quotas", []))
+        if not value_tiers:
+            # 纯文本值，无法做数字校验
             result["rule_validated"] = True
-            result["rule_note"] = f"属于家族「{family.get('name', '')}」，清单未提供站数信息"
+            result["rule_note"] = f"属于家族「{family.get('name', '')}」"
             return result
 
-        main_quota = result.get("quotas", [{}])[0]
-        current_id = main_quota.get("quota_id", "")
+        # 从清单中提取对应参数
+        bill_value = self._extract_text_param(bill_text, bill_params, family)
+        if bill_value is None:
+            result["rule_validated"] = True
+            result["rule_note"] = (f"属于家族「{family.get('name', '')}」，"
+                                   f"清单未提供对应参数")
+            return result
 
-        # 当前定额的站数
-        current_stops = None
-        for quota in family.get("quotas", []):
-            if quota.get("id") == current_id:
-                stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
-                if stops_match:
-                    current_stops = int(stops_match.group(1))
-                break
-
-        # 找正确的定额（向上取档：>= elevator_stops 的最小值）
-        correct_quota = None
-        correct_stops = None
-        for quota in family.get("quotas", []):
-            stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
-            if stops_match:
-                s = int(stops_match.group(1))
-                if s >= elevator_stops:
-                    if correct_stops is None or s < correct_stops:
-                        correct_stops = s
-                        correct_quota = quota
-
-        if correct_quota is None:
-            # 超出最大档，取最大档
-            for quota in family.get("quotas", []):
-                stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
-                if stops_match:
-                    s = int(stops_match.group(1))
-                    if correct_stops is None or s > correct_stops:
-                        correct_stops = s
-                        correct_quota = quota
-
+        # 找正确的档位
+        correct_quota, exceeded = self._find_text_tier(
+            value_tiers, bill_value)
         if not correct_quota:
             return result
 
+        # 比较当前定额和正确定额
+        main_quota = result.get("quotas", [{}])[0]
+        current_id = main_quota.get("quota_id", "")
         correct_id = correct_quota.get("id")
+
+        # 从正确档位的 value 中提取显示数字
+        tier_match = re.match(
+            r'^(\d+(?:\.\d+)?)', correct_quota.get("value", ""))
+        tier_display = tier_match.group(1) if tier_match else "?"
 
         if current_id == correct_id:
             # 档位正确
-            result["confidence"] = min(result.get("confidence", 0) + 8, 100)
+            result["confidence"] = min(
+                result.get("confidence", 0) + 8, 100)
             result["rule_validated"] = True
-            result["rule_note"] = (f"电梯校验通过: 「{family.get('name', '')}」"
-                                   f"站数{elevator_stops}→{correct_stops}站档 ✓")
+            result["rule_note"] = (
+                f"文本型校验通过: 「{family.get('name', '')}」"
+                f"参数{bill_value}→{tier_display}档 ✓")
         else:
             # 档位错误，纠正
             prefix = family.get("prefix", "")
-            correct_name = f"{prefix}{correct_quota.get('value', '')}".strip()
+            correct_name = (
+                f"{prefix} {correct_quota.get('value', '')}".strip())
             main_quota["quota_id"] = correct_id
             main_quota["name"] = correct_name
-            result["confidence"] = max(result.get("confidence", 0), 75)
+            result["confidence"] = max(
+                result.get("confidence", 0), 75)
             result["rule_validated"] = True
             result["rule_corrected"] = True
-            result["rule_note"] = (f"电梯校验纠正: 「{family.get('name', '')}」"
-                                   f"站数{elevator_stops}→{correct_stops}站档, "
-                                   f"原{current_id}→改为{correct_id}")
-            logger.info(f"电梯校验纠正: {current_id} → {correct_id} "
-                        f"(站数{elevator_stops}→{correct_stops}站档)")
+            result["rule_note"] = (
+                f"文本型校验纠正: 「{family.get('name', '')}」"
+                f"参数{bill_value}→{tier_display}档, "
+                f"原{current_id}→改为{correct_id}")
+            logger.info(
+                f"文本型校验纠正: {current_id} → {correct_id} "
+                f"(参数{bill_value}→{tier_display}档)")
 
         return result
 
