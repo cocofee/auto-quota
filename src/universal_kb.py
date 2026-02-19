@@ -649,7 +649,7 @@ class UniversalKB:
             param_hints=param_hints,
             layer="authority",
             confidence=85,
-            source_province=province or config.CURRENT_PROVINCE,
+            source_province=province or config.get_current_province(),
         )
         logger.info(f"通用知识库学习: '{bill_text[:50]}' → {len(quota_names)}条定额模式 [权威层]")
 

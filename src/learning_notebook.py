@@ -201,7 +201,7 @@ class LearningNotebook:
                 note.get("confidence", 0),
                 note.get("llm_type", ""),
                 note.get("elapsed_seconds", 0),
-                note.get("province", config.CURRENT_PROVINCE),
+                note.get("province", config.get_current_province()),
                 note.get("project_name", ""),
                 time.time(),
             ))
