@@ -12,6 +12,7 @@ import sys
 import io
 import time
 import json
+import argparse
 from pathlib import Path
 
 # 修复Windows终端GBK编码问题（支持中文和Unicode特殊字符）
@@ -28,6 +29,13 @@ from src.text_parser import parser as text_parser
 from src.specialty_classifier import classify as classify_specialty
 from src.reranker import Reranker
 from src.agent_matcher import AgentMatcher
+
+
+def _resolve_runtime_province(name: str = None) -> str:
+    """Resolve province and sync runtime province for downstream modules."""
+    province = config.resolve_province(name, interactive=False)
+    config.set_current_province(province)
+    return province
 
 
 def _normalize_fallbacks(value) -> list[str]:
@@ -52,13 +60,15 @@ def _normalize_fallbacks(value) -> list[str]:
 
 
 def debug_single(bill_name: str, bill_desc: str = "",
-                 llm_type: str = None, top_k: int = 10,
-                 no_llm: bool = False):
+                 llm_type: str = None, top_k: int = 20,
+                 no_llm: bool = False, province: str = None):
     """对单条清单运行Agent调试"""
+    province = _resolve_runtime_province(province)
     print(f"\n{'='*70}")
     print(f"Agent调试: {bill_name}")
     if bill_desc:
         print(f"特征描述: {bill_desc}")
+    print(f"省份: {province}")
     print(f"{'='*70}")
 
     full_text = f"{bill_name} {bill_desc}".strip()
@@ -84,9 +94,9 @@ def debug_single(bill_name: str, bill_desc: str = "",
 
     # 第3步：搜索
     print(f"\n[3] 搜索定额库...")
-    searcher = HybridSearcher()
+    searcher = HybridSearcher(province=province)
     books = [primary] + fallbacks if primary else None
-    candidates = searcher.search(search_query, top_k=20, books=books)
+    candidates = searcher.search(search_query, top_k=top_k, books=books)
     print(f"  搜索到 {len(candidates)} 条候选")
 
     # 第4步：Reranker重排
@@ -120,7 +130,7 @@ def debug_single(bill_name: str, bill_desc: str = "",
     try:
         from src.experience_db import ExperienceDB
         exp_db = ExperienceDB()
-        reference_cases = exp_db.get_reference_cases(full_text, top_k=3)
+        reference_cases = exp_db.get_reference_cases(full_text, top_k=3, province=province)
         if reference_cases:
             print(f"\n[6] 经验库参考案例:")
             for case in reference_cases:
@@ -179,7 +189,7 @@ def debug_single(bill_name: str, bill_desc: str = "",
         "params": params,
     }
 
-    agent = AgentMatcher(llm_type=agent_llm)
+    agent = AgentMatcher(llm_type=agent_llm, province=province)
     start = time.time()
     result = agent.match_single(
         bill_item=bill_item,
@@ -221,19 +231,20 @@ def debug_single(bill_name: str, bill_desc: str = "",
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Agent单条调试工具")
+    parser.add_argument("bill_name", help="清单名称")
+    parser.add_argument("bill_desc", nargs="?", default="", help="特征描述")
+    parser.add_argument("--llm", default=None, help="指定Agent模型类型")
+    parser.add_argument("--top-k", type=int, default=20, help="搜索候选数量")
+    parser.add_argument("--no-llm", action="store_true", help="只跑检索与参数验证，不调用大模型")
+    parser.add_argument("--province", default=None, help=f"省份（默认: {config.CURRENT_PROVINCE}）")
+    args = parser.parse_args()
 
-    bill_name = sys.argv[1]
-    bill_desc = sys.argv[2] if len(sys.argv) > 2 else ""
-    llm_type = None
-    no_llm = "--no-llm" in sys.argv
-
-    # 检查是否有 --llm 参数
-    for i, arg in enumerate(sys.argv):
-        if arg == "--llm" and i + 1 < len(sys.argv):
-            llm_type = sys.argv[i + 1]
-            break
-
-    debug_single(bill_name, bill_desc, llm_type=llm_type, no_llm=no_llm)
+    debug_single(
+        args.bill_name,
+        args.bill_desc,
+        llm_type=args.llm,
+        top_k=args.top_k,
+        no_llm=args.no_llm,
+        province=args.province,
+    )
