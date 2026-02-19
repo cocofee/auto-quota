@@ -343,9 +343,9 @@ def get_book_from_quota_id(quota_id: str) -> str | None:
     if not quota_id:
         return None
 
-    # 通用匹配：字母+可选数字 在第一个 '-' 之前
-    # C10-1-5 → "C10", A-1-1 → "A", D-3-8 → "D"
-    match = re.match(r'^([A-Za-z]\d{0,2})-', quota_id)
+    # 通用匹配：字母(1个或多个)+可选数字 在第一个 '-' 之前
+    # C10-1-5 → "C10", A-1-1 → "A", SC1-1-1 → "SC1", GY-1 → "GY"
+    match = re.match(r'^([A-Za-z]+\d{0,2})-', quota_id)
     if match:
         book = match.group(1).upper()
         if book in BOOKS:
