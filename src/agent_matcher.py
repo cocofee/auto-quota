@@ -46,7 +46,7 @@ class AgentMatcher:
             province: 省份版本（用于Prompt上下文）
         """
         self.llm_type = llm_type or config.DEFAULT_LLM
-        self.province = province or config.CURRENT_PROVINCE
+        self.province = province or config.get_current_province()
         self._client = None
         self.notebook = LearningNotebook()
 
