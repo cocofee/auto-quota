@@ -32,7 +32,7 @@ class QuotaDB:
         参数:
             province: 省份名称，如"北京2024"，默认用config中的配置
         """
-        self.province = province or config.CURRENT_PROVINCE
+        self.province = province or config.get_current_province()
         self.db_path = config.get_quota_db_path(self.province)
 
         # 确保数据库目录存在
@@ -96,13 +96,16 @@ class QuotaDB:
             cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
             logger.info("旧数据库缺少book列，已自动添加")
 
-        # 回填book为空的历史数据：从quota_id前缀提取册号（如C10-5-41 → C10）
-        # 覆盖两种情况：1.新加列值为NULL  2.列已存在但历史值为空字符串
+        # 回填book为空的历史数据：从quota_id提取第一段作为册号
+        # 兼容各省份编号格式：C10-1-5→C10, A-1-1→A, 1-2-3→1, D-5-8→D
         cursor.execute("""
             UPDATE quotas SET book = UPPER(
                 CASE
-                    WHEN quota_id GLOB '[Cc][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
-                    WHEN quota_id GLOB '[Cc][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
+                    WHEN quota_id GLOB '[A-Za-z][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
+                    WHEN quota_id GLOB '[A-Za-z][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
+                    WHEN quota_id GLOB '[A-Za-z]-*' THEN SUBSTR(quota_id, 1, 1)
+                    WHEN quota_id GLOB '[0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
+                    WHEN quota_id GLOB '[0-9]-*' THEN SUBSTR(quota_id, 1, 1)
                     ELSE ''
                 END
             ) WHERE book IS NULL OR book = ''
@@ -122,13 +125,16 @@ class QuotaDB:
         conn.close()
         logger.info(f"数据库初始化完成: {self.db_path}")
 
-    def import_excel(self, excel_path: str, specialty: str = "安装"):
+    def import_excel(self, excel_path: str, specialty: str = "安装",
+                     clear_existing: bool = True):
         """
         导入定额Excel文件到SQLite数据库
 
         参数:
             excel_path: Excel文件路径
             specialty: 专业类别（安装/土建/市政）
+            clear_existing: 是否清除该specialty的旧数据（默认True）。
+                多文件导入同一specialty时，第一个文件设True，后续设False以追加数据。
         """
         excel_path = Path(excel_path)
         if not excel_path.exists():
@@ -145,8 +151,8 @@ class QuotaDB:
             logger.warning(f"openpyxl读取失败({e})，切换到ZIP+XML方式")
             quotas = self._read_with_zip_xml(excel_path, specialty)
 
-        # 写入数据库
-        self._save_to_db(quotas)
+        # 写入数据库（按specialty隔离，不影响其他专业）
+        self._save_to_db(quotas, specialty=specialty, clear_existing=clear_existing)
 
         # 记录版本号（用定额数量+导入时间生成，改了定额数据版本号就会变）
         self._update_version(len(quotas))
@@ -320,8 +326,9 @@ class QuotaDB:
             return None
 
         # 过滤表头行（编号不像定额编号的跳过）
-        # 定额编号通常格式: C1-1-1, C9-1-20, 01-01-001 等
-        if not re.match(r'^[A-Za-z]?\d', quota_id):
+        # 定额编号通常格式: C10-1-1, A-1-5, D-3-8, 01-01-001 等
+        # 允许：字母+数字(C10-...)、字母+横杠(A-1-...)、纯数字开头(01-...)
+        if not re.match(r'^[A-Za-z][\d-]|^\d', quota_id):
             return None
 
         # 用text_parser提取结构化参数
@@ -330,8 +337,12 @@ class QuotaDB:
         # 构建搜索文本
         search_text = text_parser.build_search_text(name)
 
-        # 从定额编号提取所属大册（如 C10-5-41 → C10，C4-11-168 → C4）
-        book_match = re.match(r'^(C\d+)', quota_id, re.IGNORECASE)
+        # 从定额编号提取所属大册（通用格式，兼容各省份）
+        # C10-5-41 → C10, A-1-5 → A, D-3-8 → D, 1-2-3 → 1
+        book_match = re.match(r'^([A-Za-z]\d{0,2})-', quota_id)
+        if not book_match:
+            # 纯数字前缀：1-2-3 → "1"
+            book_match = re.match(r'^(\d{1,2})-', quota_id)
         book = book_match.group(1).upper() if book_match else ""
 
         return {
@@ -353,13 +364,30 @@ class QuotaDB:
             "book": book,
         }
 
-    def _save_to_db(self, quotas: list[dict]):
-        """批量写入SQLite数据库"""
+    def _save_to_db(self, quotas: list[dict], specialty: str = None,
+                    clear_existing: bool = True):
+        """批量写入SQLite数据库
+
+        参数:
+            quotas: 定额列表
+            specialty: 专业名称，指定时只删除该专业的旧数据（多专业共存）
+            clear_existing: 是否清除旧数据（默认True）。
+                多文件导入同一specialty时，第一个文件设True清除旧数据，
+                后续文件设False直接追加，避免覆盖前面已导入的数据。
+        """
         conn = self._connect()
         cursor = conn.cursor()
 
-        # 清空旧数据（重新导入时）
-        cursor.execute("DELETE FROM quotas")
+        # 按专业删除旧数据（不影响其他专业）
+        if clear_existing:
+            if specialty:
+                cursor.execute("DELETE FROM quotas WHERE specialty = ?", (specialty,))
+                logger.info(f"已清空 specialty='{specialty}' 的旧数据")
+            else:
+                cursor.execute("DELETE FROM quotas")
+                logger.info("已清空全部旧数据")
+        else:
+            logger.info(f"追加模式: 保留 specialty='{specialty}' 的已有数据")
 
         # 批量插入
         insert_sql = """
@@ -730,6 +758,59 @@ class QuotaDB:
 
 
 # ================================================================
+# 工具函数
+# ================================================================
+
+def detect_specialty_from_excel(excel_path: str) -> str:
+    """
+    从Excel的D列（工作类型）自动识别specialty
+
+    读取所有Sheet的前30行D列值，取出现次数最多的作为该文件的specialty。
+    这是最可靠的识别方式，不依赖文件名或编号前缀。
+    """
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+        type_counts = {}
+        for sheet_name in wb.sheetnames:  # 扫描所有Sheet
+            ws = wb[sheet_name]
+            for j, row in enumerate(ws.iter_rows(min_row=1, max_row=30, values_only=True)):
+                if row and len(row) > 3 and row[3]:
+                    val = str(row[3]).strip()
+                    if val and val not in ("工作类型", "类型", "类别"):  # 跳过表头
+                        type_counts[val] = type_counts.get(val, 0) + 1
+        wb.close()
+
+        if type_counts:
+            return max(type_counts, key=type_counts.get)
+    except Exception as e:
+        logger.warning(f"自动识别specialty失败({e})，从文件名推断")
+
+    # 兜底：从文件名推断（覆盖更多关键词）
+    name = Path(excel_path).stem
+    keyword_map = {
+        "安装": "安装",
+        "建筑": "土建",
+        "装饰": "土建",
+        "土建": "土建",
+        "市政": "市政",
+        "园林": "园林",
+        "仿古": "仿古",
+        "修缮": "修缮",
+        "电气": "安装",
+        "给排水": "安装",
+        "暖通": "安装",
+        "消防": "安装",
+        "智能化": "安装",
+        "通风": "安装",
+    }
+    for keyword, specialty in keyword_map.items():
+        if keyword in name:
+            return specialty
+    return "未知"
+
+
+# ================================================================
 # 命令行入口：直接运行此文件可导入定额
 # ================================================================
 
@@ -740,26 +821,36 @@ if __name__ == "__main__":
 
     db = QuotaDB()
 
-    # 导入安装定额
-    excel_file = config.QUOTA_DATA_DIR / config.QUOTA_EXCEL_FILES["安装"]
-    if excel_file.exists():
-        count = db.import_excel(str(excel_file), specialty="安装")
-        logger.info(f"安装定额导入完成: {count}条")
+    # 扫描省份目录下所有xlsx文件，自动识别specialty并导入
+    quota_dir = config.get_quota_data_dir(db.province)
+    if not quota_dir.exists():
+        # 兼容旧目录结构：如果省份目录不存在，回退到QUOTA_DATA_DIR
+        quota_dir = config.QUOTA_DATA_DIR
+        logger.warning(f"省份目录不存在，使用旧目录: {quota_dir}")
+
+    xlsx_files = list(quota_dir.glob("*.xlsx"))
+    if not xlsx_files:
+        logger.error(f"目录下没有xlsx文件: {quota_dir}")
+        logger.error(f"请将广联达导出的定额Excel放到: {quota_dir}")
+    else:
+        total = 0
+        cleared_specialties = set()  # 记录已清理旧数据的specialty，避免重复清理导致数据丢失
+        for xlsx_file in sorted(xlsx_files):
+            # 从D列自动识别specialty
+            specialty = detect_specialty_from_excel(str(xlsx_file))
+            # 同一specialty的第一个文件清除旧数据，后续文件追加
+            is_first = specialty not in cleared_specialties
+            cleared_specialties.add(specialty)
+            logger.info(f"导入: {xlsx_file.name} → specialty='{specialty}' ({'清除旧数据' if is_first else '追加'})")
+            count = db.import_excel(str(xlsx_file), specialty=specialty,
+                                    clear_existing=is_first)
+            total += count
+            logger.info(f"  完成: {count}条")
 
         # 打印统计信息
         stats = db.get_stats()
-        logger.info(f"数据库统计:")
+        logger.info(f"\n数据库统计:")
         logger.info(f"  总记录数: {stats['total']}")
         logger.info(f"  章节数: {stats['chapters']}")
-        logger.info(f"  含管径DN: {stats['with_dn']}条")
-        logger.info(f"  含电缆截面: {stats['with_cable_section']}条")
+        logger.info(f"  专业数: {stats['specialties']}")
 
-        # 测试搜索
-        logger.info("\n测试搜索:")
-        results = db.search_by_keyword("钢管")
-        logger.info(f"  搜索'钢管': 找到{len(results)}条")
-        for r in results[:3]:
-            logger.info(f"    {r['quota_id']} | {r['name'][:50]} | {r['unit']}")
-    else:
-        logger.error(f"定额文件不存在: {excel_file}")
-        logger.error(f"请将定额Excel放到: {config.QUOTA_DATA_DIR}")
