@@ -39,7 +39,7 @@ KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 # ============================================================
 
 # 默认省份常量（命令行和旧代码的回退值）
-CURRENT_PROVINCE = "北京2024消耗量"
+CURRENT_PROVINCE = "北京市建设工程施工消耗量标准(2024)"
 
 # 运行时省份（支持Web界面动态切换，不修改源文件）
 _runtime_province = None
