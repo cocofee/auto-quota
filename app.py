@@ -88,7 +88,7 @@ def main():
     st.subheader("当前配置")
     info_col1, info_col2 = st.columns(2)
     with info_col1:
-        st.text(f"省份/版本：{config.CURRENT_PROVINCE}")
+        st.text(f"省份/版本：{config.get_current_province()}")
         st.text(f"默认大模型：{config.DEFAULT_LLM}")
     with info_col2:
         st.text(f"向量模型：{config.VECTOR_MODEL_NAME}")
