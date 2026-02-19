@@ -326,9 +326,9 @@ class QuotaDB:
             return None
 
         # 过滤表头行（编号不像定额编号的跳过）
-        # 定额编号通常格式: C10-1-1, A-1-5, D-3-8, 01-01-001 等
-        # 允许：字母+数字(C10-...)、字母+横杠(A-1-...)、纯数字开头(01-...)
-        if not re.match(r'^[A-Za-z][\d-]|^\d', quota_id):
+        # 定额编号通常格式: C10-1-1, A-1-5, SC1-1-1, GY-1, 01-01-001 等
+        # 允许：字母+数字(C10-..., SC1-...)、字母+横杠(A-1-..., GY-...)、纯数字开头(01-...)
+        if not re.match(r'^[A-Za-z]+[\d-]|^\d', quota_id):
             return None
 
         # 用text_parser提取结构化参数
@@ -338,8 +338,8 @@ class QuotaDB:
         search_text = text_parser.build_search_text(name)
 
         # 从定额编号提取所属大册（通用格式，兼容各省份）
-        # C10-5-41 → C10, A-1-5 → A, D-3-8 → D, 1-2-3 → 1
-        book_match = re.match(r'^([A-Za-z]\d{0,2})-', quota_id)
+        # C10-5-41 → C10, A-1-5 → A, SC1-1-1 → SC1, GY-1 → GY, 1-2-3 → 1
+        book_match = re.match(r'^([A-Za-z]+\d{0,2})-', quota_id)
         if not book_match:
             # 纯数字前缀：1-2-3 → "1"
             book_match = re.match(r'^(\d{1,2})-', quota_id)
