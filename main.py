@@ -1051,6 +1051,9 @@ def main():
         logger.error(str(e))
         sys.exit(1)
 
+    # 同步运行态省份，避免遗漏传参的内部模块回落到硬编码默认省份
+    config.set_current_province(province)
+
     logger.info("=" * 60)
     logger.info("自动套定额系统")
     logger.info(f"  输入文件: {input_path}")

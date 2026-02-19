@@ -217,11 +217,14 @@ def resolve_province(name: str = None, interactive: bool = False) -> str:
     if not available:
         raise ValueError("没有找到任何省份数据库，请先导入定额数据")
 
-    # 未指定省份：交互模式下让用户选，否则用默认值
+    # 未指定省份：交互模式下让用户选，否则优先当前默认，找不到则回退第一个可用省份
     if not name:
         if interactive and len(available) > 1:
             return _interactive_select(available)
-        return CURRENT_PROVINCE
+        current = get_current_province()
+        if current in available:
+            return current
+        return available[0]
 
     # 1. 精确匹配
     if name in available:
