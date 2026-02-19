@@ -11,6 +11,7 @@ import sqlite3
 import zipfile
 import xml.etree.ElementTree as ET
 import re
+import datetime  # 用于检测Excel误解析的日期类型
 from pathlib import Path
 from loguru import logger
 
@@ -97,13 +98,25 @@ class QuotaDB:
             logger.info("旧数据库缺少book列，已自动添加")
 
         # 回填book为空的历史数据：从quota_id提取第一段作为册号
-        # 兼容各省份编号格式：C10-1-5→C10, A-1-1→A, 1-2-3→1, D-5-8→D
+        # 兼容各省份编号格式：C10-1-5→C10, SC1-1-1→SC1, GY-1→GY, A-1-1→A, 2003-3-1→2003
         cursor.execute("""
             UPDATE quotas SET book = UPPER(
                 CASE
+                    -- 多字母前缀（2~3个字母+0~2位数字+横杠）
+                    -- SC10-xx, GY1-xx 等
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z][A-Za-z][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 5)
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z][A-Za-z][0-9]-*' THEN SUBSTR(quota_id, 1, 4)
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z][A-Za-z]-*' THEN SUBSTR(quota_id, 1, 3)
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 4)
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
+                    WHEN quota_id GLOB '[A-Za-z][A-Za-z]-*' THEN SUBSTR(quota_id, 1, 2)
+                    -- 单字母前缀：C10-xx, A-xx 等
                     WHEN quota_id GLOB '[A-Za-z][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
                     WHEN quota_id GLOB '[A-Za-z][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
                     WHEN quota_id GLOB '[A-Za-z]-*' THEN SUBSTR(quota_id, 1, 1)
+                    -- 纯数字前缀（1~4位数字+横杠）
+                    WHEN quota_id GLOB '[0-9][0-9][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 4)
+                    WHEN quota_id GLOB '[0-9][0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 3)
                     WHEN quota_id GLOB '[0-9][0-9]-*' THEN SUBSTR(quota_id, 1, 2)
                     WHEN quota_id GLOB '[0-9]-*' THEN SUBSTR(quota_id, 1, 1)
                     ELSE ''
@@ -316,7 +329,15 @@ class QuotaDB:
             return None
 
         # 读取各列
-        quota_id = str(row_values[0] or "").strip()
+        # P0修复：检测Excel误解析为日期的定额编号
+        # 场景：编号"2003-03-01"被Excel/openpyxl自动解析为datetime(2003,3,1)
+        # 修复：检测datetime对象，转回"年-月-日"数字编号格式
+        raw_id = row_values[0]
+        if isinstance(raw_id, (datetime.datetime, datetime.date)):
+            # 去掉前导零，和普通定额编号格式保持一致（如5-3-32而非05-03-32）
+            raw_id = f"{raw_id.year}-{raw_id.month}-{raw_id.day}"
+            logger.debug(f"日期→编号修复: {row_values[0]} → {raw_id}")
+        quota_id = str(raw_id or "").strip()
         name = str(row_values[1] or "").strip()
         unit = str(row_values[2] or "").strip() if len(row_values) > 2 else ""
         work_type = str(row_values[3] or "").strip() if len(row_values) > 3 else ""
@@ -338,11 +359,12 @@ class QuotaDB:
         search_text = text_parser.build_search_text(name)
 
         # 从定额编号提取所属大册（通用格式，兼容各省份）
-        # C10-5-41 → C10, A-1-5 → A, SC1-1-1 → SC1, GY-1 → GY, 1-2-3 → 1
+        # C10-5-41 → C10, A-1-5 → A, SC1-1-1 → SC1, GY-1 → GY, 2003-3-1 → 2003
         book_match = re.match(r'^([A-Za-z]+\d{0,2})-', quota_id)
         if not book_match:
-            # 纯数字前缀：1-2-3 → "1"
-            book_match = re.match(r'^(\d{1,2})-', quota_id)
+            # 纯数字前缀：1-2-3 → "1", 2003-3-1 → "2003"
+            # 支持1~4位数字前缀（广东市政用4位如2003-xx-xx）
+            book_match = re.match(r'^(\d{1,4})-', quota_id)
         book = book_match.group(1).upper() if book_match else ""
 
         return {

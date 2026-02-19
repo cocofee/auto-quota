@@ -200,10 +200,14 @@ class VectorEngine:
         if specialty:
             conditions.append({"specialty": specialty})
         if books:
-            if len(books) == 1:
-                conditions.append({"book": books[0]})
+            # P1修复：book过滤时也包含book为空的定额（可能属于任何册）
+            # 原逻辑：只匹配指定book → book=""的定额永远搜不到
+            # 新逻辑：匹配指定book OR book为空
+            books_with_empty = list(books) + [""]
+            if len(books_with_empty) == 1:
+                conditions.append({"book": books_with_empty[0]})
             else:
-                conditions.append({"book": {"$in": books}})
+                conditions.append({"book": {"$in": books_with_empty}})
 
         if len(conditions) == 1:
             where_filter = conditions[0]

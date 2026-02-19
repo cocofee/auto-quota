@@ -255,8 +255,12 @@ class BM25Engine:
                     if self.quota_specialties.get(db_id, "") != specialty:
                         continue
                 # book过滤
+                # P1修复：book为空的定额不排除（可能属于任何册，如补充定额、措施费）
+                # 原逻辑：book="" 不在 books_set 中会被跳过 → 这些定额永远搜不到
+                # 新逻辑：有明确book但不匹配时才跳过，无book的定额放行
                 if books_set and self.quota_books:
-                    if self.quota_books.get(db_id, "") not in books_set:
+                    item_book = self.quota_books.get(db_id, "")
+                    if item_book and item_book not in books_set:
                         continue
                 top_indices.append((i, s))
                 if len(top_indices) >= top_k:
