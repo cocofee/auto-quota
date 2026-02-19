@@ -15,6 +15,20 @@ db/
 # 输出结果
 output/
 
+# 日志文件（本地生成，按天轮转）
+logs/
+
+# 本地生成的数据文件（经验库/规则/参考数据，机器相关）
+data/experience/
+data/reference/
+data/quota_rules/
+
+# 文档导出（CHM解包等大量生成文件）
+docs/chm_dump/
+
+# 调试输出
+tests/debug_sheets.txt
+
 # IDE配置
 .vscode/
 .idea/

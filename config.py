@@ -161,6 +161,17 @@ BM25_WEIGHT = 0.3                               # 混合搜索中BM25的权重
 HYBRID_TOP_K = 20                               # 混合搜索最终返回Top K
 RRF_K = 60                                      # RRF融合排序的常数k（标准值60）
 
+# 自适应融合与多查询增强（训练无关，适合快速演进）
+HYBRID_ADAPTIVE_FUSION = True                   # 根据query特征动态调整BM25/向量权重
+HYBRID_MULTI_QUERY_FUSION = True                # 使用多查询变体进行RRF融合
+HYBRID_QUERY_VARIANTS = 3                       # 最多使用几个query变体
+HYBRID_VARIANT_WEIGHTS = [1.0, 0.75, 0.60]     # 各query变体在RRF中的权重
+HYBRID_ADAPTIVE_BOOST = 0.18                    # 动态权重偏移幅度（0~0.4更稳妥）
+HYBRID_FEEDBACK_ADAPTIVE_BIAS = True            # 从用户修正/确认数据学习全局权重偏置
+HYBRID_FEEDBACK_BIAS_MAX = 0.08                 # 反馈偏置最大幅度（避免震荡）
+HYBRID_FEEDBACK_BIAS_REFRESH_SEC = 300          # 偏置缓存刷新周期（秒）
+HYBRID_FEEDBACK_MIN_SAMPLES = 60                # 启用偏置的最小样本数
+
 # Reranker重排配置（交叉编码器，精度远高于向量搜索）
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3" # 中文重排模型（568M参数，FP16约2GB显存）
 RERANKER_TOP_K = 20                              # 重排后保留的候选数（不截断，让param_validator精确筛选）
@@ -249,6 +260,9 @@ ENGINEERING_DICT_PATH = DICT_DIR / "engineering_dict.txt"
 
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_LEVEL = "INFO"
+
+# 上传安全限制（Web页面）
+UPLOAD_MAX_MB = 30
 
 # ============================================================
 # 初始化：确保必要目录存在
