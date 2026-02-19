@@ -53,8 +53,12 @@ class ExperienceDB:
         """创建经验库SQLite表（如果不存在）"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
         cursor = conn.cursor()
+        # 改善并发写入稳定性，减少 database is locked
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS experiences (
@@ -109,11 +113,35 @@ class ExperienceDB:
             CREATE INDEX IF NOT EXISTS idx_province
             ON experiences(province)
         """)
+        # 组合索引：加速按省份+清单文本查重
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_province_bill_text
+            ON experiences(province, bill_text)
+        """)
 
         conn.commit()
         conn.close()
 
         logger.debug(f"经验库数据库已初始化: {self.db_path}")
+
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，提升并发稳定性。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
+    @staticmethod
+    def _safe_json_list(raw):
+        """安全解析JSON数组，异常时返回空列表，避免脏数据导致主流程崩溃。"""
+        if not raw:
+            return []
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
 
     @property
     def model(self):
@@ -125,7 +153,8 @@ class ExperienceDB:
                     config.VECTOR_MODEL_NAME,
                     device="cuda"
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"经验库向量模型GPU加载失败({e})，切换到CPU")
                 self._model = SentenceTransformer(
                     config.VECTOR_MODEL_NAME,
                     device="cpu"
@@ -150,7 +179,8 @@ class ExperienceDB:
     # ================================================================
 
     def _validate_quota_ids(self, bill_text: str, quota_ids: list[str],
-                            quota_names: list[str] = None) -> dict:
+                            quota_names: list[str] = None,
+                            province: str = None) -> dict:
         """
         校验定额编号是否合理，防止错误数据进入经验库
 
@@ -177,7 +207,7 @@ class ExperienceDB:
         quota_names = quota_names or []
 
         # 加载定额库映射（延迟加载，缓存到实例）
-        quota_map = self._get_quota_map()
+        quota_map = self._get_quota_map(province=province)
 
         for i, qid in enumerate(quota_ids):
             qname = quota_names[i] if i < len(quota_names) else ""
@@ -256,20 +286,27 @@ class ExperienceDB:
             "errors": errors,
         }
 
-    def _get_quota_map(self) -> dict:
-        """获取定额库映射（缓存到实例，避免重复读取）"""
-        if hasattr(self, '_quota_map_cache') and self._quota_map_cache:
-            return self._quota_map_cache
+    def _get_quota_map(self, province: str = None) -> dict:
+        """获取定额库映射（按省份缓存，避免重复读取）"""
+        province = province or config.CURRENT_PROVINCE
+        cache_by_province = getattr(self, "_quota_map_cache_by_province", {})
+        if province in cache_by_province:
+            return cache_by_province[province]
 
         try:
-            quota_db_path = config.get_quota_db_path()
+            quota_db_path = config.get_quota_db_path(province)
             if not quota_db_path.exists():
                 return {}
-            conn = sqlite3.connect(str(quota_db_path))
+            conn = sqlite3.connect(str(quota_db_path), timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
-            rows = conn.execute('SELECT quota_id, name, dn, cable_section, material FROM quotas').fetchall()
-            conn.close()
-            self._quota_map_cache = {
+            try:
+                rows = conn.execute(
+                    "SELECT quota_id, name, dn, cable_section, material FROM quotas"
+                ).fetchall()
+            finally:
+                conn.close()
+            quota_map = {
                 row['quota_id']: {
                     'name': row['name'],
                     'dn': row['dn'],
@@ -278,7 +315,9 @@ class ExperienceDB:
                 }
                 for row in rows
             }
-            return self._quota_map_cache
+            cache_by_province[province] = quota_map
+            self._quota_map_cache_by_province = cache_by_province
+            return quota_map
         except Exception as e:
             logger.warning(f"加载定额库映射失败: {e}")
             return {}
@@ -317,7 +356,8 @@ class ExperienceDB:
         # ========== 定额校验（除了用户手动修正，其他来源都要校验）==========
         # user_correction 是用户亲手改的，信任度最高，跳过校验
         if source != "user_correction":
-            validation = self._validate_quota_ids(bill_text, quota_ids, quota_names)
+            validation = self._validate_quota_ids(
+                bill_text, quota_ids, quota_names, province=province)
             if not validation["valid"]:
                 logger.warning(
                     f"经验库写入被拦截 [{source}]: '{bill_text[:50]}' → {quota_ids} "
@@ -338,48 +378,65 @@ class ExperienceDB:
             "user_correction", "user_confirmed"
         ) else "candidate"
 
-        # 检查是否已有相同的清单文本
-        existing = self._find_exact_match(bill_text, province)
-        if existing:
-            # 已有记录，更新定额和置信度
-            return self._update_experience(
-                existing["id"], quota_ids, quota_names,
-                source, confidence
-            )
-
-        # 新建记录
-        conn = sqlite3.connect(str(self.db_path))
+        inserted_new = False
+        conn = self._connect()
         cursor = conn.cursor()
+        try:
+            # 事务化“查重+写入/更新”，避免并发下重复插入
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute("""
+                SELECT id FROM experiences
+                WHERE bill_text = ? AND province = ?
+                LIMIT 1
+            """, (bill_text, province))
+            existing = cursor.fetchone()
 
-        cursor.execute("""
-            INSERT INTO experiences
-            (bill_text, bill_name, bill_code, bill_unit,
-             quota_ids, quota_names, source, confidence,
-             confirm_count, province, project_name,
-             created_at, updated_at, notes, quota_db_version, layer, specialty)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            bill_text, bill_name, bill_code, bill_unit,
-            json.dumps(quota_ids, ensure_ascii=False),
-            json.dumps(quota_names or [], ensure_ascii=False),
-            source, confidence,
-            province, project_name, now, now, notes,
-            quota_db_ver, layer, specialty,
-        ))
+            if existing:
+                record_id = self._update_experience(
+                    int(existing[0]), quota_ids, quota_names,
+                    source, confidence,
+                    quota_db_version=quota_db_ver,
+                    conn=conn, cursor=cursor, commit=False
+                )
+            else:
+                cursor.execute("""
+                    INSERT INTO experiences
+                    (bill_text, bill_name, bill_code, bill_unit,
+                     quota_ids, quota_names, source, confidence,
+                     confirm_count, province, project_name,
+                     created_at, updated_at, notes, quota_db_version, layer, specialty)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    bill_text, bill_name, bill_code, bill_unit,
+                    json.dumps(quota_ids, ensure_ascii=False),
+                    json.dumps(quota_names or [], ensure_ascii=False),
+                    source, confidence,
+                    province, project_name, now, now, notes,
+                    quota_db_ver, layer, specialty,
+                ))
+                record_id = int(cursor.lastrowid)
+                inserted_new = True
 
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-        # 同时添加到向量索引
-        self._add_to_vector_index(record_id, bill_text)
-
-        logger.debug(f"经验库新增: [{source}] '{bill_text[:50]}' → {quota_ids}")
+        # 新建记录才追加向量索引；更新走原id即可
+        if inserted_new:
+            self._add_to_vector_index(record_id, bill_text)
+            logger.debug(f"经验库新增: [{source}] '{bill_text[:50]}' → {quota_ids}")
+        else:
+            logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={source}")
         return record_id
 
     def _update_experience(self, record_id: int, quota_ids: list[str],
                            quota_names: list[str], source: str,
-                           confidence: int) -> int:
+                           confidence: int, quota_db_version: str = None,
+                           conn=None, cursor=None,
+                           commit: bool = True) -> int:
         """更新已有的经验记录
 
         按来源分级处理，防止 auto_match 不断膨胀置信度：
@@ -390,8 +447,15 @@ class ExperienceDB:
         """
         now = time.time()
 
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        owns_conn = conn is None or cursor is None
+        if owns_conn:
+            conn = self._connect()
+            cursor = conn.cursor()
+
+        try:
+            confidence_floor = int(confidence)
+        except (TypeError, ValueError):
+            confidence_floor = 80
 
         if source == "user_correction":
             # 用户手动修正 → 最高信任：更新定额、涨分、涨确认次数、晋升权威层
@@ -400,45 +464,56 @@ class ExperienceDB:
                     quota_ids = ?,
                     quota_names = ?,
                     source = ?,
-                    confidence = MIN(confidence + 10, 100),
+                    confidence = MIN(MAX(confidence + 10, ?), 100),
                     confirm_count = confirm_count + 1,
                     layer = 'authority',
+                    quota_db_version = COALESCE(?, quota_db_version),
                     updated_at = ?
                 WHERE id = ?
             """, (
                 json.dumps(quota_ids, ensure_ascii=False),
                 json.dumps(quota_names or [], ensure_ascii=False),
-                source, now, record_id,
+                source, confidence_floor, quota_db_version, now, record_id,
             ))
         elif source == "user_confirmed":
             # 用户点了"确认正确" → 高信任：涨分、涨确认次数、晋升权威层（但不改定额）
             cursor.execute("""
                 UPDATE experiences SET
-                    confidence = MIN(confidence + 5, 100),
+                    source = CASE
+                        WHEN source = 'user_correction' THEN source
+                        ELSE 'user_confirmed'
+                    END,
+                    confidence = MIN(MAX(confidence + 5, ?), 100),
                     confirm_count = confirm_count + 1,
                     layer = 'authority',
+                    quota_db_version = COALESCE(?, quota_db_version),
                     updated_at = ?
                 WHERE id = ?
-            """, (now, record_id))
+            """, (confidence_floor, quota_db_version, now, record_id))
         elif source == "project_import":
             # 已完成项目导入 → 中等信任：小幅涨分
+            project_floor = max(min(confidence_floor, 95), 0)
             cursor.execute("""
                 UPDATE experiences SET
-                    confidence = MIN(confidence + 2, 95),
+                    confidence = MIN(MAX(confidence + 2, ?), 95),
                     confirm_count = confirm_count + 1,
+                    quota_db_version = COALESCE(?, quota_db_version),
                     updated_at = ?
                 WHERE id = ?
-            """, (now, record_id))
+            """, (project_floor, quota_db_version, now, record_id))
         else:
             # auto_match 或其他未知来源 → 不涨分、不涨确认次数，只记录时间
             cursor.execute("""
                 UPDATE experiences SET
+                    quota_db_version = COALESCE(?, quota_db_version),
                     updated_at = ?
                 WHERE id = ?
-            """, (now, record_id))
+            """, (quota_db_version, now, record_id))
 
-        conn.commit()
-        conn.close()
+        if commit:
+            conn.commit()
+        if owns_conn:
+            conn.close()
 
         logger.debug(f"经验库更新: ID={record_id}, 来源={source}")
         return record_id
@@ -452,25 +527,28 @@ class ExperienceDB:
             province: 省份
             authority_only: 是否只查权威层（直通匹配时为True）
         """
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
 
-        if authority_only:
-            cursor.execute("""
-                SELECT * FROM experiences
-                WHERE bill_text = ? AND province = ? AND layer = 'authority'
-                LIMIT 1
-            """, (bill_text, province))
-        else:
-            cursor.execute("""
-                SELECT * FROM experiences
-                WHERE bill_text = ? AND province = ?
-                LIMIT 1
-            """, (bill_text, province))
+            if authority_only:
+                cursor.execute("""
+                    SELECT * FROM experiences
+                    WHERE bill_text = ? AND province = ? AND layer = 'authority'
+                    ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                    LIMIT 1
+                """, (bill_text, province))
+            else:
+                cursor.execute("""
+                    SELECT * FROM experiences
+                    WHERE bill_text = ? AND province = ?
+                    ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                    LIMIT 1
+                """, (bill_text, province))
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
+        finally:
+            conn.close()
 
         if row:
             return dict(row)
@@ -520,13 +598,14 @@ class ExperienceDB:
 
         # 获取当前定额库版本（用于校验经验记录是否过期）
         current_version = config.get_current_quota_version(province)
+        stale_exact = None
 
         # 先尝试精确匹配（最快）—— 直通匹配只查权威层
         exact = self._find_exact_match(query_text, province, authority_only=True)
         if exact and exact.get("confidence", 0) >= min_confidence:
             exact["similarity"] = 1.0  # 精确匹配相似度为1
-            exact["quota_ids"] = json.loads(exact["quota_ids"])
-            exact["quota_names"] = json.loads(exact.get("quota_names", "[]"))
+            exact["quota_ids"] = self._safe_json_list(exact.get("quota_ids"))
+            exact["quota_names"] = self._safe_json_list(exact.get("quota_names"))
 
             # 版本校验：版本一致才标记为 "exact"（允许直通）
             record_version = exact.get("quota_db_version", "")
@@ -539,12 +618,13 @@ class ExperienceDB:
                 # 版本不一致 → 降级为"过期参考"，不应直通
                 exact["match_type"] = "stale"
                 logger.debug(f"经验库版本不一致（经验:{record_version} vs 当前:{current_version}），降级为参考")
-
-            return [exact]
+            if exact["match_type"] == "exact":
+                return [exact]
+            stale_exact = exact
 
         # 向量相似搜索
         if self.collection.count() == 0:
-            return []
+            return [stale_exact] if stale_exact else []
 
         try:
             query_prefix = "为这个句子生成表示以用于检索中文文档: "
@@ -558,30 +638,50 @@ class ExperienceDB:
                 n_results=min(top_k * 2, self.collection.count()),  # 多取一些，后面过滤
             )
 
-            if not results or not results["ids"] or not results["ids"][0]:
+            if not results or not results.get("ids") or not results.get("ids")[0]:
                 return []
 
-            # 获取匹配的记录ID和相似度
-            matched_ids = [int(mid) for mid in results["ids"][0]]
-            distances = results["distances"][0] if results["distances"] else []
-            similarities = [1 - d for d in distances]
+            # 获取匹配的记录ID和相似度（防御性处理长度不一致/非法ID）
+            raw_ids = results.get("ids", [[]])[0]
+            raw_distances = results["distances"][0] if results.get("distances") else []
+            if len(raw_distances) != len(raw_ids):
+                logger.warning(
+                    f"经验库向量检索返回长度不一致: ids={len(raw_ids)}, "
+                    f"distances={len(raw_distances)}，已按最低相似度补齐/截断"
+                )
+            distances = list(raw_distances[:len(raw_ids)])
+            if len(distances) < len(raw_ids):
+                distances.extend([1.0] * (len(raw_ids) - len(distances)))
+
+            matched_ids = []
+            similarities = []
+            for mid, dist in zip(raw_ids, distances):
+                try:
+                    db_id = int(mid)
+                except (TypeError, ValueError):
+                    logger.warning(f"经验库向量检索返回非法ID，已跳过: {mid!r}")
+                    continue
+                matched_ids.append(db_id)
+                similarities.append(max(0.0, min(1.0, 1 - dist)))
+
+            if not matched_ids:
+                return [stale_exact] if stale_exact else []
 
             # 从SQLite获取完整记录
-            conn = sqlite3.connect(str(self.db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            placeholders = ",".join(["?"] * len(matched_ids))
-            cursor.execute(f"""
-                SELECT * FROM experiences
-                WHERE id IN ({placeholders})
-                AND province = ?
-                AND confidence >= ?
-                AND layer = 'authority'
-            """, matched_ids + [province, min_confidence])
-
-            rows = {row["id"]: dict(row) for row in cursor.fetchall()}
-            conn.close()
+            conn = self._connect(row_factory=True)
+            try:
+                cursor = conn.cursor()
+                placeholders = ",".join(["?"] * len(matched_ids))
+                cursor.execute(f"""
+                    SELECT * FROM experiences
+                    WHERE id IN ({placeholders})
+                    AND province = ?
+                    AND confidence >= ?
+                    AND layer = 'authority'
+                """, matched_ids + [province, min_confidence])
+                rows = {row["id"]: dict(row) for row in cursor.fetchall()}
+            finally:
+                conn.close()
 
             # 组装结果
             similar_records = []
@@ -589,8 +689,8 @@ class ExperienceDB:
                 if db_id in rows:
                     record = rows[db_id]
                     record["similarity"] = sim
-                    record["quota_ids"] = json.loads(record["quota_ids"])
-                    record["quota_names"] = json.loads(record.get("quota_names", "[]"))
+                    record["quota_ids"] = self._safe_json_list(record.get("quota_ids"))
+                    record["quota_names"] = self._safe_json_list(record.get("quota_names"))
 
                     # 版本校验：版本一致→"similar"，版本不一致→"stale"
                     record_version = record.get("quota_db_version", "")
@@ -604,13 +704,126 @@ class ExperienceDB:
             # 按相似度降序排序
             similar_records.sort(key=lambda x: x["similarity"], reverse=True)
 
+            # 精确命中过期时，保留为首条参考，但不阻断后续有效记录
+            if stale_exact:
+                merged = [stale_exact]
+                seen = {stale_exact.get("id")}
+                for rec in similar_records:
+                    rec_id = rec.get("id")
+                    if rec_id in seen:
+                        continue
+                    merged.append(rec)
+                    seen.add(rec_id)
+                similar_records = merged
+
             return similar_records[:top_k]
 
         except Exception as e:
             logger.warning(f"经验库向量搜索失败: {e}")
+            return [stale_exact] if stale_exact else []
+
+    def find_experience(self, bill_text: str, province: str = None,
+                        limit: int = 20) -> list[dict]:
+        """
+        兼容查询接口：按清单文本/名称查找经验记录（用于工具脚本快速排查）。
+
+        排序规则：
+        1. 精确 bill_text 命中
+        2. 精确 bill_name 命中
+        3. bill_text LIKE 命中
+        4. bill_name LIKE 命中
+        5. 同组内按 confidence/confirm_count/updated_at/id 逆序
+        """
+        text = (bill_text or "").strip()
+        if not text:
             return []
 
-    def get_reference_cases(self, query_text: str, top_k: int = 3) -> list[dict]:
+        try:
+            limit_val = int(limit)
+        except (TypeError, ValueError):
+            limit_val = 20
+        limit_val = max(1, min(limit_val, 100))
+
+        province = province or config.CURRENT_PROVINCE
+        like_pattern = f"%{text}%"
+
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            if province:
+                cursor.execute("""
+                    SELECT *
+                    FROM experiences
+                    WHERE province = ?
+                      AND (
+                        bill_text = ?
+                        OR COALESCE(bill_name, '') = ?
+                        OR bill_text LIKE ?
+                        OR COALESCE(bill_name, '') LIKE ?
+                      )
+                    ORDER BY
+                        CASE
+                            WHEN bill_text = ? THEN 0
+                            WHEN COALESCE(bill_name, '') = ? THEN 1
+                            WHEN bill_text LIKE ? THEN 2
+                            WHEN COALESCE(bill_name, '') LIKE ? THEN 3
+                            ELSE 4
+                        END ASC,
+                        confidence DESC,
+                        confirm_count DESC,
+                        updated_at DESC,
+                        id DESC
+                    LIMIT ?
+                """, (
+                    province,
+                    text, text, like_pattern, like_pattern,
+                    text, text, like_pattern, like_pattern,
+                    limit_val,
+                ))
+            else:
+                cursor.execute("""
+                    SELECT *
+                    FROM experiences
+                    WHERE
+                        bill_text = ?
+                        OR COALESCE(bill_name, '') = ?
+                        OR bill_text LIKE ?
+                        OR COALESCE(bill_name, '') LIKE ?
+                    ORDER BY
+                        CASE
+                            WHEN bill_text = ? THEN 0
+                            WHEN COALESCE(bill_name, '') = ? THEN 1
+                            WHEN bill_text LIKE ? THEN 2
+                            WHEN COALESCE(bill_name, '') LIKE ? THEN 3
+                            ELSE 4
+                        END ASC,
+                        confidence DESC,
+                        confirm_count DESC,
+                        updated_at DESC,
+                        id DESC
+                    LIMIT ?
+                """, (
+                    text, text, like_pattern, like_pattern,
+                    text, text, like_pattern, like_pattern,
+                    limit_val,
+                ))
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"查询经验记录失败: {e}")
+            return []
+        finally:
+            conn.close()
+
+        records = []
+        for row in rows:
+            item = dict(row)
+            item["quota_ids"] = self._safe_json_list(item.get("quota_ids"))
+            item["quota_names"] = self._safe_json_list(item.get("quota_names"))
+            records.append(item)
+        return records
+
+    def get_reference_cases(self, query_text: str, top_k: int = 3,
+                            province: str = None) -> list[dict]:
         """
         获取参考案例（供大模型 few-shot 使用）
 
@@ -621,10 +834,14 @@ class ExperienceDB:
         返回:
             [{"bill": "清单描述", "quotas": ["定额1", "定额2"]}, ...]
         """
-        records = self.search_similar(query_text, top_k=top_k, min_confidence=70)
+        records = self.search_similar(
+            query_text, top_k=top_k, min_confidence=70, province=province)
 
         cases = []
         for r in records:
+            # 过期经验不进入few-shot上下文，避免把旧版定额注入提示词
+            if r.get("match_type") == "stale":
+                continue
             # 把定额编号和名称拼在一起
             quota_strs = []
             ids = r.get("quota_ids", [])
@@ -668,6 +885,7 @@ class ExperienceDB:
             {"total": 总数, "added": 新增数, "updated": 更新数, "skipped": 跳过数}
         """
         province = province or config.CURRENT_PROVINCE
+        quota_db_ver = config.get_current_quota_version(province)
         stats = {"total": len(records), "added": 0, "updated": 0, "skipped": 0}
 
         for record in records:
@@ -685,8 +903,8 @@ class ExperienceDB:
                 if bill_name:
                     desc = bill_text[len(bill_name):].strip() if bill_text.startswith(bill_name) else bill_text
                     bill_text = normalize_bill_text(bill_name, desc)
-            except Exception:
-                pass  # normalize失败就用原文本
+            except Exception as e:
+                logger.debug(f"经验导入文本规范化失败，使用原文本: {e}")
 
             # 检查是否已存在
             existing = self._find_exact_match(bill_text, province)
@@ -695,11 +913,12 @@ class ExperienceDB:
                 self._update_experience(
                     existing["id"], quota_ids,
                     record.get("quota_names"),
-                    "project_import", 85
+                    "project_import", 85,
+                    quota_db_version=quota_db_ver,
                 )
                 stats["updated"] += 1
             else:
-                self.add_experience(
+                record_id = self.add_experience(
                     bill_text=bill_text,
                     quota_ids=quota_ids,
                     quota_names=record.get("quota_names"),
@@ -711,7 +930,10 @@ class ExperienceDB:
                     province=province,
                     project_name=project_name,
                 )
-                stats["added"] += 1
+                if record_id > 0:
+                    stats["added"] += 1
+                else:
+                    stats["skipped"] += 1
 
         logger.info(f"项目导入完成: 总{stats['total']}条, "
                     f"新增{stats['added']}, 更新{stats['updated']}, 跳过{stats['skipped']}")
@@ -724,12 +946,13 @@ class ExperienceDB:
         """
         logger.info("重建经验库向量索引...")
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, bill_text FROM experiences")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, bill_text FROM experiences")
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             logger.info("经验库为空，无需重建")
@@ -741,8 +964,8 @@ class ExperienceDB:
         self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
         try:
             self._chroma_client.delete_collection("experiences")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"经验库旧向量集合删除跳过: {e}")
         self._collection = self._chroma_client.create_collection(
             name="experiences",
             metadata={"hnsw:space": "cosine"}
@@ -778,46 +1001,48 @@ class ExperienceDB:
 
     def get_stats(self) -> dict:
         """获取经验库统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        # 总记录数
-        cursor.execute("SELECT COUNT(*) FROM experiences")
-        total = cursor.fetchone()[0]
+            # 总记录数
+            cursor.execute("SELECT COUNT(*) FROM experiences")
+            total = cursor.fetchone()[0]
 
-        # 按层级统计
-        cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'authority'")
-        authority_count = cursor.fetchone()[0]
+            # 按层级统计
+            cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'authority'")
+            authority_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'candidate'")
-        candidate_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'candidate'")
+            candidate_count = cursor.fetchone()[0]
 
-        # 按来源分类统计
-        cursor.execute("""
-            SELECT source, COUNT(*) as cnt
-            FROM experiences
-            GROUP BY source
-        """)
-        by_source = {row[0]: row[1] for row in cursor.fetchall()}
+            # 按来源分类统计
+            cursor.execute("""
+                SELECT source, COUNT(*) as cnt
+                FROM experiences
+                GROUP BY source
+            """)
+            by_source = {row[0]: row[1] for row in cursor.fetchall()}
 
-        # 按省份统计
-        cursor.execute("""
-            SELECT province, COUNT(*) as cnt
-            FROM experiences
-            GROUP BY province
-        """)
-        by_province = {row[0]: row[1] for row in cursor.fetchall()}
+            # 按省份统计
+            cursor.execute("""
+                SELECT province, COUNT(*) as cnt
+                FROM experiences
+                GROUP BY province
+            """)
+            by_province = {row[0]: row[1] for row in cursor.fetchall()}
 
-        # 平均置信度
-        cursor.execute("SELECT AVG(confidence) FROM experiences")
-        avg_confidence = cursor.fetchone()[0] or 0
-
-        conn.close()
+            # 平均置信度
+            cursor.execute("SELECT AVG(confidence) FROM experiences")
+            avg_confidence = cursor.fetchone()[0] or 0
+        finally:
+            conn.close()
 
         # 向量索引数量
         try:
             vector_count = self.collection.count()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"经验库向量索引计数失败，按0返回: {e}")
             vector_count = 0
 
         return {
@@ -829,11 +1054,6 @@ class ExperienceDB:
             "avg_confidence": round(avg_confidence, 1),
             "vector_count": vector_count,
         }
-
-
-# 模块级单例
-experience_db = ExperienceDB()
-
 
 # ================================================================
 # 命令行入口：查看经验库状态

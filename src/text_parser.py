@@ -190,6 +190,24 @@ class TextParser:
         if circuits is not None:
             result["circuits"] = circuits
 
+        # 提取风管形状（矩形/圆形，通风空调管道的核心分类维度）
+        shape = self._extract_shape(text)
+        if shape:
+            result["shape"] = shape
+
+        # 提取周长（通风空调风口/阀门/散流器/消声器按周长取档）
+        perimeter = self._extract_perimeter(text)
+        if perimeter is not None:
+            result["perimeter"] = perimeter
+            # 如果从"规格：W*H"计算出了周长，说明cable_section是误提取（同一个W*H源）
+            if "cable_section" in result:
+                del result["cable_section"]
+
+        # 提取大边长（弯头导流叶片、矩形风管等按大边长取档）
+        large_side = self._extract_large_side(text)
+        if large_side is not None:
+            result["large_side"] = large_side
+
         return result
 
     # De外径→DN公称直径转换表（塑料管常用De标记外径，定额用DN标记公称直径）
@@ -283,10 +301,15 @@ class TextParser:
         dim3_pattern = r'\d+\s*[*×xX]\s*\d+\s*[*×xX]\s*\d+'
         text_clean = re.sub(dim3_pattern, ' ', text_clean)
 
+        # 排除"规格：W*H"格式的设备尺寸（风口/阀门/散流器等的物理尺寸）
+        # 如 "规格：800*320"、"规格：400×120"
+        spec_dim_pattern = r'规格[：:]\s*\d+\s*[*×xX]\s*\d+(?:\s*[*×xX]\s*\d+)?'
+        text_clean = re.sub(spec_dim_pattern, ' ', text_clean)
+
         # 排除二维面板尺寸（NxN后面跟mm或没有电缆型号前缀）
         # 如 "600x600mm"、"300×300"（面板尺寸）
         # 但保留 "4×185"（电缆截面，前面的数字较小，通常≤5）
-        dim2_pattern = r'(?<![A-Za-z\-])\b(\d+)\s*[×xX]\s*(\d+)\s*(?:mm)?(?!\s*[+＋])'
+        dim2_pattern = r'(?<![A-Za-z\-])\b(\d+)\s*[*×xX]\s*(\d+)\s*(?:mm)?(?!\s*[+＋])'
         def _is_panel_size(m):
             """判断 NxN 是面板尺寸还是电缆截面"""
             n1, n2 = int(m.group(1)), int(m.group(2))
@@ -489,6 +512,79 @@ class TextParser:
             return int(match.group(1))
         return None
 
+    def _extract_shape(self, text: str) -> str:
+        """
+        提取风管形状（矩形/圆形）
+
+        来源：
+        1. 清单描述中的"形状：矩形风管"
+        2. 定额名称中的"圆形风管制作"/"矩形风管制作"
+        """
+        # 优先从"形状：xxx"字段提取（清单描述格式）
+        shape_match = re.search(r'形状[：:]\s*(矩形|圆形|方形)', text)
+        if shape_match:
+            shape = shape_match.group(1)
+            return "矩形" if shape == "方形" else shape
+
+        # 从"矩形风管"/"圆形风管"关键词提取（定额名称格式）
+        duct_shape = re.search(r'(矩形|圆形)风管', text)
+        if duct_shape:
+            return duct_shape.group(1)
+
+        return ""
+
+    def _extract_perimeter(self, text: str) -> Optional[float]:
+        """
+        提取周长参数（通风空调风口/阀门/散流器/消声器的核心取档参数）
+
+        来源：
+        1. 定额名称："周长(mm以内) 3200" → 3200
+        2. 清单规格："规格：800*320" → 周长 = (800+320)*2 = 2240
+        3. 三维规格："规格：400*120*1000" → 周长 = (400+120)*2 = 1040（忽略长度）
+        """
+        # 模式1：定额名称中的"周长(mm以内) N"
+        m = re.search(r'周长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)', text)
+        if m:
+            return float(m.group(1))
+
+        # 模式2：清单"规格：W*H"或"规格：W*H*L" → (W+H)*2
+        spec_match = re.search(
+            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
+            text)
+        if spec_match:
+            w = float(spec_match.group(1))
+            h = float(spec_match.group(2))
+            # 排除电缆格式（如4*185，第一个数字≤10是芯数）
+            if w > 10 and h > 10:
+                return (w + h) * 2
+
+        return None
+
+    def _extract_large_side(self, text: str) -> Optional[float]:
+        """
+        提取大边长参数（弯头导流叶片、矩形风管等按大边长取档）
+
+        来源：
+        1. 定额名称："大边长(mm以内) 630" → 630
+        2. 清单规格："规格：800*500" → 大边长 = max(800, 500) = 800
+        """
+        # 模式1：定额名称中的"大边长(mm以内) N"
+        m = re.search(r'大边长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)', text)
+        if m:
+            return float(m.group(1))
+
+        # 模式2：清单"规格：W*H" → max(W, H)
+        spec_match = re.search(
+            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
+            text)
+        if spec_match:
+            w = float(spec_match.group(1))
+            h = float(spec_match.group(2))
+            if w > 10 and h > 10:
+                return max(w, h)
+
+        return None
+
     def build_search_text(self, name: str, description: str = "") -> str:
         """
         构建用于搜索的文本
@@ -559,6 +655,7 @@ class TextParser:
         connection = params.get("connection", "")
         dn = params.get("dn")
         cable_section = params.get("cable_section")
+        shape = params.get("shape", "")  # 风管形状：矩形/圆形
 
         # ===== 管道类：有材质或DN参数，且不是电气类（电缆/配管/穿线） =====
         # 电气类即使有material/dn也应走下面的电气专用query构建
@@ -579,6 +676,10 @@ class TextParser:
             if connection:
                 core += f"({connection})"
             query_parts.append(core)
+
+            # 风管形状：加入"矩形风管"或"圆形风管"帮助BM25区分
+            if shape and "风管" in name:
+                query_parts.append(f"{shape}风管")
 
             if dn:
                 query_parts.append(f"DN{dn}")

@@ -18,6 +18,8 @@ RRF算法原理：
 """
 
 import sqlite3
+import re
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -45,6 +47,10 @@ class HybridSearcher:
 
         # 通用知识库（延迟初始化）
         self._universal_kb = None
+
+        # 反馈偏置缓存（用用户修正/确认数据动态校准检索权重）
+        self._feedback_bias_value = 0.0
+        self._feedback_bias_ts = 0.0
 
     @property
     def bm25_engine(self):
@@ -99,8 +105,13 @@ class HybridSearcher:
             {id, quota_id, name, unit, hybrid_score, bm25_rank, vector_rank, ...}
         """
         top_k = top_k or config.HYBRID_TOP_K
-        bm25_weight = bm25_weight or config.BM25_WEIGHT
-        vector_weight = vector_weight or config.VECTOR_WEIGHT
+        base_bm25_weight = config.BM25_WEIGHT if bm25_weight is None else bm25_weight
+        base_vector_weight = config.VECTOR_WEIGHT if vector_weight is None else vector_weight
+        bm25_weight, vector_weight, weight_reason = self._get_adaptive_weights(
+            query=query,
+            bm25_weight=base_bm25_weight,
+            vector_weight=base_vector_weight,
+        )
 
         # ============================================================
         # 第0步：查通用知识库获取搜索增强关键词
@@ -115,74 +126,441 @@ class HybridSearcher:
                 logger.debug(f"通用知识库查询失败（不影响搜索）: {e}")
 
         # ============================================================
-        # 第1步：分别执行两路搜索
+        # 第1步：多查询变体检索（Query2doc / MuGI 思路的轻量落地）
         # ============================================================
+        query_variants = self._build_query_variants(query, kb_hints)
+        bm25_runs = []
+        vector_runs = []
+        total_bm25_hits = 0
+        total_vector_hits = 0
 
-        # 构建增强搜索词：原始query + 通用知识库提供的定额名称关键词
-        # BM25对精确关键词敏感，增强词能帮它找到更准确的候选
-        enhanced_query = query
-        if kb_hints:
-            # 取第一个定额名称模式作为补充（避免关键词过多反而稀释）
-            enhanced_query = query + " " + kb_hints[0]
+        for idx, variant in enumerate(query_variants, start=1):
+            q_text = variant["query"]
+            q_weight = variant["weight"]
+            q_tag = variant["tag"]
 
-        # BM25关键词搜索（使用增强搜索词，带册号过滤）
-        bm25_results = []
-        try:
-            bm25_results = self.bm25_engine.search(enhanced_query, top_k=config.BM25_TOP_K, books=books)
-            logger.debug(f"BM25搜索返回 {len(bm25_results)} 条结果")
-        except Exception as e:
-            logger.warning(f"BM25搜索失败: {e}")
+            bm25_results = []
+            try:
+                bm25_results = self.bm25_engine.search(
+                    q_text, top_k=config.BM25_TOP_K, books=books
+                )
+                total_bm25_hits += len(bm25_results)
+            except Exception as e:
+                logger.warning(f"BM25搜索失败[{q_tag}]: {e}")
 
-        # 向量语义搜索（使用原始query，带册号过滤）
-        vector_results = []
-        try:
-            vector_results = self.vector_engine.search(query, top_k=config.VECTOR_TOP_K, books=books)
-            logger.debug(f"向量搜索返回 {len(vector_results)} 条结果")
-        except Exception as e:
-            logger.warning(f"向量搜索失败: {e}")
+            vector_results = []
+            try:
+                vector_results = self.vector_engine.search(
+                    q_text, top_k=config.VECTOR_TOP_K, books=books
+                )
+                total_vector_hits += len(vector_results)
+            except Exception as e:
+                logger.warning(f"向量搜索失败[{q_tag}]: {e}")
+
+            bm25_runs.append({
+                "tag": q_tag,
+                "query": q_text,
+                "weight": q_weight,
+                "results": bm25_results,
+            })
+            vector_runs.append({
+                "tag": q_tag,
+                "query": q_text,
+                "weight": q_weight,
+                "results": vector_results,
+            })
+
+            logger.debug(
+                f"变体#{idx} [{q_tag}] 检索完成: "
+                f"BM25={len(bm25_results)} 向量={len(vector_results)}"
+            )
 
         # 如果两路都没有结果，返回空
-        if not bm25_results and not vector_results:
+        if total_bm25_hits == 0 and total_vector_hits == 0:
             logger.warning(f"两路搜索均无结果: '{query}'")
             return []
 
-        # 如果只有一路有结果，直接返回那一路的结果
-        if not bm25_results:
-            for r in vector_results[:top_k]:
-                r["hybrid_score"] = r.get("vector_score", 0)
+        # 如果只有一路有结果，做该路的多查询融合排序后返回
+        if total_bm25_hits == 0:
+            vector_only = self._merge_single_engine_runs(
+                vector_runs, engine="vector", k=config.RRF_K
+            )
+            top_results = vector_only[:top_k]
+            for r in top_results:
+                r["hybrid_score"] = r.get("vector_rrf_score", r.get("vector_score", 0))
                 r["bm25_rank"] = None
-                r["vector_rank"] = vector_results.index(r) + 1
-            return vector_results[:top_k]
+                r["fusion_mode"] = "vector_only_rrf"
+                r["effective_bm25_weight"] = bm25_weight
+                r["effective_vector_weight"] = vector_weight
+                r["fusion_weight_reason"] = weight_reason
+            return top_results
 
-        if not vector_results:
-            for r in bm25_results[:top_k]:
-                r["hybrid_score"] = r.get("bm25_score", 0)
-                r["bm25_rank"] = bm25_results.index(r) + 1
+        if total_vector_hits == 0:
+            bm25_only = self._merge_single_engine_runs(
+                bm25_runs, engine="bm25", k=config.RRF_K
+            )
+            top_results = bm25_only[:top_k]
+            for r in top_results:
+                r["hybrid_score"] = r.get("bm25_rrf_score", r.get("bm25_score", 0))
                 r["vector_rank"] = None
-            return bm25_results[:top_k]
+                r["fusion_mode"] = "bm25_only_rrf"
+                r["effective_bm25_weight"] = bm25_weight
+                r["effective_vector_weight"] = vector_weight
+                r["fusion_weight_reason"] = weight_reason
+            return top_results
 
         # ============================================================
         # 第2步：RRF融合排序
         # ============================================================
 
-        merged = self._rrf_fusion(
-            bm25_results=bm25_results,
-            vector_results=vector_results,
-            bm25_weight=bm25_weight,
-            vector_weight=vector_weight,
-            k=config.RRF_K,
-        )
+        use_multi_query = bool(getattr(config, "HYBRID_MULTI_QUERY_FUSION", True))
+        multi_query_effective = use_multi_query and len(query_variants) > 1
+        if multi_query_effective:
+            merged = self._rrf_fusion_multi_query(
+                bm25_runs=bm25_runs,
+                vector_runs=vector_runs,
+                bm25_weight=bm25_weight,
+                vector_weight=vector_weight,
+                k=config.RRF_K,
+            )
+        else:
+            merged = self._rrf_fusion(
+                bm25_results=bm25_runs[0]["results"],
+                vector_results=vector_runs[0]["results"],
+                bm25_weight=bm25_weight,
+                vector_weight=vector_weight,
+                k=config.RRF_K,
+            )
 
         # 取Top K
         top_results = merged[:top_k]
 
+        for r in top_results:
+            r["fusion_mode"] = "adaptive_multi_query_rrf" if multi_query_effective else "adaptive_rrf"
+            r["effective_bm25_weight"] = bm25_weight
+            r["effective_vector_weight"] = vector_weight
+            r["fusion_weight_reason"] = weight_reason
+            r["query_variants"] = [v["tag"] for v in query_variants]
+
         logger.debug(
-            f"混合搜索: BM25({len(bm25_results)}条) + "
-            f"向量({len(vector_results)}条) → "
-            f"融合后 {len(top_results)} 条"
+            f"混合搜索: 变体={len(query_variants)} "
+            f"BM25累计={total_bm25_hits} 向量累计={total_vector_hits} "
+            f"权重(bm25={bm25_weight:.2f}, vector={vector_weight:.2f}, reason={weight_reason}) "
+            f"→ 融合后 {len(top_results)} 条"
         )
 
         return top_results
+
+    def _get_adaptive_weights(self, query: str, bm25_weight: float,
+                              vector_weight: float) -> tuple[float, float, str]:
+        """
+        查询自适应权重：
+        - 规格型号/数字参数密集：提高BM25占比
+        - 纯语义描述为主：提高向量占比
+        """
+        if not bool(getattr(config, "HYBRID_ADAPTIVE_FUSION", True)):
+            total = max(bm25_weight + vector_weight, 1e-9)
+            return bm25_weight / total, vector_weight / total, "static"
+
+        boost = float(getattr(config, "HYBRID_ADAPTIVE_BOOST", 0.18))
+        boost = min(max(boost, 0.0), 0.4)
+
+        pattern_hits = 0
+        spec_patterns = [
+            r"DN\s*\d+",
+            r"\d+\s*回路",
+            r"\d+(\.\d+)?\s*(mm2|mm²|kva|kv|kw|a|m)",
+            r"[A-Za-z]{1,8}[-_/]*\d+([*×xX/]\d+)*",
+        ]
+        for p in spec_patterns:
+            if re.search(p, query, flags=re.IGNORECASE):
+                pattern_hits += 1
+
+        chinese_len = len(re.findall(r"[\u4e00-\u9fff]", query))
+        reason = "balanced"
+        new_bm25 = bm25_weight
+        new_vector = vector_weight
+
+        if pattern_hits >= 2 or (pattern_hits >= 1 and chinese_len <= 20):
+            new_bm25 = bm25_weight + boost
+            new_vector = vector_weight - boost
+            reason = "spec_heavy"
+        elif pattern_hits == 0 and chinese_len >= 18:
+            new_bm25 = bm25_weight - boost
+            new_vector = vector_weight + boost
+            reason = "semantic_heavy"
+
+        # 叠加来自用户反馈的全局偏置（快速进化学习）
+        feedback_bias = self._get_feedback_bias()
+        if feedback_bias != 0:
+            new_bm25 += feedback_bias
+            new_vector -= feedback_bias
+            reason = f"{reason}+feedback"
+
+        # 防止某一路权重过低导致失去召回能力
+        new_bm25 = max(new_bm25, 0.1)
+        new_vector = max(new_vector, 0.1)
+        total = new_bm25 + new_vector
+        return new_bm25 / total, new_vector / total, reason
+
+    def _get_feedback_bias(self) -> float:
+        """
+        基于经验库最近样本计算全局偏置：
+        - 规格型清单纠错率更高 -> 往BM25偏
+        - 语义型清单纠错率更高 -> 往向量偏
+        """
+        if not bool(getattr(config, "HYBRID_FEEDBACK_ADAPTIVE_BIAS", True)):
+            return 0.0
+
+        refresh_sec = max(int(getattr(config, "HYBRID_FEEDBACK_BIAS_REFRESH_SEC", 300)), 30)
+        now = time.time()
+        if now - self._feedback_bias_ts < refresh_sec:
+            return self._feedback_bias_value
+
+        min_samples = max(int(getattr(config, "HYBRID_FEEDBACK_MIN_SAMPLES", 60)), 20)
+        max_bias = float(getattr(config, "HYBRID_FEEDBACK_BIAS_MAX", 0.08))
+        max_bias = min(max(max_bias, 0.0), 0.2)
+
+        bias = 0.0
+        try:
+            exp_db = config.get_experience_db_path()
+            if not exp_db.exists():
+                self._feedback_bias_value = 0.0
+                self._feedback_bias_ts = now
+                return 0.0
+
+            conn = sqlite3.connect(str(exp_db), timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT source, bill_text
+                    FROM experiences
+                    WHERE bill_text IS NOT NULL
+                      AND province = ?
+                      AND source IN ('user_correction', 'user_confirmed')
+                    ORDER BY updated_at DESC
+                    LIMIT 2000
+                    """
+                    , (self.province,)
+                ).fetchall()
+            finally:
+                conn.close()
+
+            if len(rows) < min_samples:
+                self._feedback_bias_value = 0.0
+                self._feedback_bias_ts = now
+                return 0.0
+
+            spec_total = 0
+            spec_corr = 0
+            sem_total = 0
+            sem_corr = 0
+
+            for source, bill_text in rows:
+                text = str(bill_text or "").strip()
+                if not text:
+                    continue
+                is_spec = self._is_spec_heavy_text(text)
+                is_corr = (source == "user_correction")
+                if is_spec:
+                    spec_total += 1
+                    if is_corr:
+                        spec_corr += 1
+                else:
+                    sem_total += 1
+                    if is_corr:
+                        sem_corr += 1
+
+            if spec_total >= min_samples // 3 and sem_total >= min_samples // 3:
+                spec_err = spec_corr / max(spec_total, 1)
+                sem_err = sem_corr / max(sem_total, 1)
+                delta = spec_err - sem_err
+                # delta>0: 规格型更难，向BM25偏；delta<0: 语义型更难，向向量偏
+                bias = max(-max_bias, min(max_bias, delta * 0.25))
+
+        except Exception as e:
+            logger.debug(f"反馈偏置计算失败（忽略，不影响主流程）: {e}")
+            bias = 0.0
+
+        self._feedback_bias_value = bias
+        self._feedback_bias_ts = now
+        return bias
+
+    @staticmethod
+    def _is_spec_heavy_text(text: str) -> bool:
+        """判断文本是否为规格参数主导（DN/回路/型号/参数单位等）。"""
+        patterns = [
+            r"DN\s*\d+",
+            r"\d+\s*回路",
+            r"\d+(\.\d+)?\s*(mm2|mm²|kva|kv|kw|a|m)",
+            r"[A-Za-z]{1,8}[-_/]*\d+([*×xX/]\d+)*",
+        ]
+        hits = 0
+        for p in patterns:
+            if re.search(p, text, flags=re.IGNORECASE):
+                hits += 1
+        chinese_len = len(re.findall(r"[\u4e00-\u9fff]", text))
+        return hits >= 2 or (hits >= 1 and chinese_len <= 20)
+
+    def _build_query_variants(self, query: str, kb_hints: list[str]) -> list[dict]:
+        """
+        构造少量高价值查询变体，避免纯原始query召回盲区。
+        """
+        max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 3))
+        max_variants = max(max_variants, 1)
+        raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60])
+        if not isinstance(raw_weights, (list, tuple)) or not raw_weights:
+            raw_weights = [1.0, 0.75, 0.60]
+        variant_weights = [max(float(w), 0.05) for w in raw_weights]
+
+        variants = []
+        seen = set()
+
+        def _add(q: str, tag: str):
+            qn = re.sub(r"\s+", " ", q or "").strip()
+            if not qn or qn in seen:
+                return
+            idx = len(variants)
+            w = variant_weights[idx] if idx < len(variant_weights) else variant_weights[-1] * 0.85
+            variants.append({"query": qn, "tag": tag, "weight": w})
+            seen.add(qn)
+
+        # V1: 原始query
+        _add(query, "raw")
+
+        # V2: 规范化query（去噪、统一分隔符）
+        normalized = re.sub(r"[，,。；;、|/\\]+", " ", query)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        _add(normalized, "normalized")
+
+        # V3: 参数强化query（把关键规格参数显式再强调一遍）
+        param_tokens = []
+        normalized_lower = normalized.lower()
+        for p in [
+            r"DN\s*\d+",
+            r"\d+\s*回路",
+            r"\d+(\.\d+)?\s*(mm2|mm²|kva|kv|kw|a|m)",
+            r"[A-Za-z]{1,8}[-_/]*\d+([*×xX/]\d+)*",
+        ]:
+            for m in re.finditer(p, query, flags=re.IGNORECASE):
+                token = m.group(0).strip()
+                if token and token not in param_tokens and token.lower() not in normalized_lower:
+                    param_tokens.append(token)
+        if param_tokens:
+            _add(f"{normalized} {' '.join(param_tokens[:4])}", "param_boost")
+
+        # 额外兜底：若仍不够且有知识库提示，拼接一个知识变体
+        if kb_hints and len(variants) < max_variants:
+            _add(f"{query} {kb_hints[0]}", "kb_hint")
+
+        return variants[:max_variants]
+
+    def _merge_single_engine_runs(self, runs: list[dict], engine: str,
+                                  k: int = 60) -> list[dict]:
+        """
+        单路搜索（仅BM25或仅向量）时的多查询RRF融合。
+        """
+        if engine not in ("bm25", "vector"):
+            raise ValueError(f"unsupported engine: {engine}")
+
+        score_key = "bm25_score" if engine == "bm25" else "vector_score"
+        rank_key = "bm25_rank" if engine == "bm25" else "vector_rank"
+        rrf_key = "bm25_rrf_score" if engine == "bm25" else "vector_rrf_score"
+
+        score_map = {}
+        best_rank_map = {}
+        best_result_map = {}
+
+        for run in runs:
+            run_weight = max(float(run.get("weight", 1.0)), 0.05)
+            for rank, result in enumerate(run.get("results", []), start=1):
+                db_id = result["id"]
+                score_map[db_id] = score_map.get(db_id, 0.0) + run_weight / (k + rank)
+                if db_id not in best_rank_map or rank < best_rank_map[db_id]:
+                    best_rank_map[db_id] = rank
+                    best_result_map[db_id] = result
+
+        merged = []
+        for db_id, rrf_score in score_map.items():
+            result = dict(best_result_map[db_id])
+            result[rrf_key] = rrf_score
+            result[rank_key] = best_rank_map[db_id]
+            if score_key not in result:
+                result[score_key] = None
+            merged.append(result)
+
+        merged.sort(key=lambda x: x[rrf_key], reverse=True)
+        return merged
+
+    def _rrf_fusion_multi_query(self, bm25_runs: list[dict], vector_runs: list[dict],
+                                bm25_weight: float, vector_weight: float,
+                                k: int = 60) -> list[dict]:
+        """
+        多查询 + 双路引擎的加权RRF融合。
+        """
+        bm25_rank_maps = []
+        vector_rank_maps = []
+        all_ids = set()
+
+        for run in bm25_runs:
+            rank_map = {}
+            for rank, result in enumerate(run.get("results", []), start=1):
+                db_id = result["id"]
+                rank_map[db_id] = (rank, result)
+                all_ids.add(db_id)
+            bm25_rank_maps.append((max(float(run.get("weight", 1.0)), 0.05), rank_map))
+
+        for run in vector_runs:
+            rank_map = {}
+            for rank, result in enumerate(run.get("results", []), start=1):
+                db_id = result["id"]
+                rank_map[db_id] = (rank, result)
+                all_ids.add(db_id)
+            vector_rank_maps.append((max(float(run.get("weight", 1.0)), 0.05), rank_map))
+
+        scored_results = []
+        for db_id in all_ids:
+            bm25_rank = None
+            vector_rank = None
+            rrf_score = 0.0
+            base_result = None
+            bm25_score = None
+            vector_score = None
+
+            for run_weight, rank_map in bm25_rank_maps:
+                if db_id in rank_map:
+                    rank, result = rank_map[db_id]
+                    rrf_score += (bm25_weight * run_weight) / (k + rank)
+                    if bm25_rank is None or rank < bm25_rank:
+                        bm25_rank = rank
+                        bm25_score = result.get("bm25_score", 0)
+                    if base_result is None:
+                        base_result = result
+
+            for run_weight, rank_map in vector_rank_maps:
+                if db_id in rank_map:
+                    rank, result = rank_map[db_id]
+                    rrf_score += (vector_weight * run_weight) / (k + rank)
+                    if vector_rank is None or rank < vector_rank:
+                        vector_rank = rank
+                        vector_score = result.get("vector_score", 0)
+                    # 优先以向量结果作为基础，信息通常更完整
+                    base_result = result
+
+            if base_result is None:
+                continue
+
+            result = dict(base_result)
+            result["hybrid_score"] = rrf_score
+            result["bm25_rank"] = bm25_rank
+            result["vector_rank"] = vector_rank
+            result["bm25_score"] = bm25_score
+            result["vector_score"] = vector_score
+            scored_results.append(result)
+
+        scored_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
+        return scored_results
 
     def _rrf_fusion(self, bm25_results: list[dict], vector_results: list[dict],
                     bm25_weight: float, vector_weight: float,
@@ -281,14 +659,14 @@ class HybridSearcher:
             self.bm25_engine.ensure_index()
             status["bm25_ready"] = self.bm25_engine.bm25 is not None
             status["bm25_count"] = len(self.bm25_engine.quota_ids) if self.bm25_engine.bm25 else 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"HybridSearcher状态检查-BM25失败: {e}")
 
         try:
             status["vector_count"] = self.vector_engine.get_index_count()
             status["vector_ready"] = status["vector_count"] > 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"HybridSearcher状态检查-向量引擎失败: {e}")
 
         return status
 

@@ -57,7 +57,7 @@ class ParamValidator:
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
         if not bill_params:
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t"]
+            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side"]
             for c in candidates:
                 # 从定额名称提取参数
                 quota_params = text_parser.parse(c.get("name", ""))
@@ -410,7 +410,49 @@ class ParamValidator:
                 score_sum += 0.5
                 details.append(f"定额无容量参数")
 
-        # === 4. 电压等级kV（软性参数） ===
+        # === 4. 回路数（硬性参数） ===
+        if "circuits" in bill_params:
+            check_count += 1
+            if "circuits" in quota_params:
+                bill_cir = bill_params["circuits"]
+                quota_cir = quota_params["circuits"]
+                if bill_cir == quota_cir:
+                    score_sum += 1.0
+                    details.append(f"回路{bill_cir}={quota_cir} 精确匹配")
+                elif bill_cir < quota_cir:
+                    tier_score = self._tier_up_score(bill_cir, quota_cir)
+                    score_sum += tier_score
+                    details.append(f"回路{bill_cir}→{quota_cir} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"回路{bill_cir}>{quota_cir} 不匹配(清单>定额)")
+            else:
+                score_sum += 0.5
+                details.append("定额无回路参数")
+
+        # === 5. 电流A（硬性参数） ===
+        if "ampere" in bill_params:
+            check_count += 1
+            if "ampere" in quota_params:
+                bill_amp = bill_params["ampere"]
+                quota_amp = quota_params["ampere"]
+                if bill_amp == quota_amp:
+                    score_sum += 1.0
+                    details.append(f"电流{bill_amp}A={quota_amp}A 精确匹配")
+                elif bill_amp < quota_amp:
+                    tier_score = self._tier_up_score(bill_amp, quota_amp)
+                    score_sum += tier_score
+                    details.append(f"电流{bill_amp}A→{quota_amp}A 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"电流{bill_amp}A>{quota_amp}A 不匹配(清单>定额)")
+            else:
+                score_sum += 0.5
+                details.append("定额无电流参数")
+
+        # === 6. 电压等级kV（软性参数） ===
         if "kv" in bill_params and "kv" in quota_params:
             check_count += 1
             if bill_params["kv"] == quota_params["kv"]:
@@ -420,7 +462,7 @@ class ParamValidator:
                 score_sum += 0.3
                 details.append(f"电压{bill_params['kv']}kV≠{quota_params['kv']}kV")
 
-        # === 5. 材质（硬性参数：钢塑≠铝塑，材质错了直接降权） ===
+        # === 7. 材质（硬性参数：钢塑≠铝塑，材质错了直接降权） ===
         if "material" in bill_params and "material" in quota_params:
             check_count += 1
             bill_mat = bill_params["material"]
@@ -438,7 +480,7 @@ class ParamValidator:
                 score_sum += 0.0
                 details.append(f"材质'{bill_mat}'≠'{quota_mat}' 不匹配")
 
-        # === 6. 连接方式（硬性参数：螺纹≠沟槽、热熔≠粘接 必须匹配） ===
+        # === 8. 连接方式（硬性参数：螺纹≠沟槽、热熔≠粘接 必须匹配） ===
         if "connection" in bill_params and "connection" in quota_params:
             check_count += 1
             bill_c = bill_params["connection"]
@@ -456,7 +498,54 @@ class ParamValidator:
                 #       此时最接近的定额（材质+DN都对）仍是最佳选择，不应完全排除
                 score_sum += 0.2
                 details.append(f"连接方式'{bill_c}'≠'{quota_c}' 不匹配(降权)")
-        # === 7. 重量（软性参数） ===
+        # === 9. 风管形状（硬性参数：矩形≠圆形，形状错了定额完全不同） ===
+        if "shape" in bill_params:
+            quota_shape = quota_params.get("shape", "")
+            if quota_shape:
+                check_count += 1
+                if bill_params["shape"] == quota_shape:
+                    score_sum += 1.0
+                    details.append(f"形状'{bill_params['shape']}'匹配")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"形状'{bill_params['shape']}'≠'{quota_shape}' 不匹配")
+
+        # === 10. 周长（硬性参数：风口/阀门/散流器/消声器按周长取档） ===
+        if "perimeter" in bill_params and "perimeter" in quota_params:
+            check_count += 1
+            bill_p = bill_params["perimeter"]
+            quota_p = quota_params["perimeter"]
+            if bill_p == quota_p:
+                score_sum += 1.0
+                details.append(f"周长{bill_p}={quota_p} 精确匹配")
+            elif bill_p <= quota_p:
+                tier_score = self._tier_up_score(bill_p, quota_p)
+                score_sum += tier_score
+                details.append(f"周长{bill_p}→{quota_p} 向上取档")
+            else:
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"周长{bill_p}>{quota_p} 不匹配(清单>定额)")
+
+        # === 11. 大边长（硬性参数：弯头导流叶片等按大边长取档） ===
+        if "large_side" in bill_params and "large_side" in quota_params:
+            check_count += 1
+            bill_ls = bill_params["large_side"]
+            quota_ls = quota_params["large_side"]
+            if bill_ls == quota_ls:
+                score_sum += 1.0
+                details.append(f"大边长{bill_ls}={quota_ls} 精确匹配")
+            elif bill_ls <= quota_ls:
+                tier_score = self._tier_up_score(bill_ls, quota_ls)
+                score_sum += tier_score
+                details.append(f"大边长{bill_ls}→{quota_ls} 向上取档")
+            else:
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"大边长{bill_ls}>{quota_ls} 不匹配(清单>定额)")
+
+        # === 12. 重量（软性参数） ===
         if "weight_t" in bill_params and "weight_t" in quota_params:
             check_count += 1
             bill_w = bill_params["weight_t"]
@@ -476,7 +565,7 @@ class ParamValidator:
         if check_count == 0:
             # 反向检查：定额有档位参数但清单没提供 → 无法确认档位
             # 例如配电箱定额写"48回路"但清单只写了尺寸没写回路数
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t"]
+            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side"]
             quota_has_tier = any(p in quota_params for p in TIER_PARAMS)
             if quota_has_tier:
                 return True, 0.6, "定额有档位参数但清单未指定"

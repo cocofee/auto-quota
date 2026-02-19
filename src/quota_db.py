@@ -38,9 +38,17 @@ class QuotaDB:
         # 确保数据库目录存在
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，减少并发场景下锁等待失败。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
     def init_db(self):
         """创建数据库表结构"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -347,7 +355,7 @@ class QuotaDB:
 
     def _save_to_db(self, quotas: list[dict]):
         """批量写入SQLite数据库"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
 
         # 清空旧数据（重新导入时）
@@ -391,7 +399,7 @@ class QuotaDB:
         import time
         version = f"{quota_count}_{int(time.time())}"
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         cursor.execute("""
             INSERT OR REPLACE INTO db_meta (key, value)
@@ -409,13 +417,16 @@ class QuotaDB:
             版本号字符串，如果从未导入过则返回空字符串
         """
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM db_meta WHERE key = 'version'")
-            row = cursor.fetchone()
-            conn.close()
-            return row[0] if row else ""
-        except Exception:
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM db_meta WHERE key = 'version'")
+                row = cursor.fetchone()
+                return row[0] if row else ""
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug(f"读取定额库版本号失败，按空版本返回: {e}")
             return ""
 
     # ================================================================
@@ -424,62 +435,71 @@ class QuotaDB:
 
     def get_all_quotas(self) -> list[dict]:
         """获取所有定额记录"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM quotas ORDER BY id")
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM quotas ORDER BY id")
+            rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return rows
 
     def get_quota_count(self) -> int:
         """获取定额总数"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM quotas")
-        count = cursor.fetchone()[0]
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM quotas")
+            count = cursor.fetchone()[0]
+        finally:
+            conn.close()
         return count
 
     def get_quota_by_id(self, quota_id: str) -> list[dict]:
         """根据定额编号查询"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM quotas WHERE quota_id = ?", (quota_id,))
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM quotas WHERE quota_id = ?", (quota_id,))
+            rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return rows
 
     def search_by_keyword(self, keyword: str, limit: int = 20) -> list[dict]:
         """简单关键词搜索（SQLite LIKE查询）"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM quotas WHERE name LIKE ? OR search_text LIKE ? LIMIT ?",
-            (f"%{keyword}%", f"%{keyword}%", limit)
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM quotas WHERE name LIKE ? OR search_text LIKE ? LIMIT ?",
+                (f"%{keyword}%", f"%{keyword}%", limit)
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return rows
 
     def get_chapters(self) -> list[str]:
         """获取所有章节名称"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT chapter FROM quotas ORDER BY chapter")
-        chapters = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT chapter FROM quotas ORDER BY chapter")
+            chapters = [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return chapters
 
     def get_specialties(self) -> list[str]:
         """获取所有专业大类名称（如"安装"、"土建"、"市政"）"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT specialty FROM quotas ORDER BY specialty")
-        specialties = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT specialty FROM quotas ORDER BY specialty")
+            specialties = [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return specialties
 
     def get_chapters_by_specialty(self, specialty: str) -> list[str]:
@@ -488,14 +508,16 @@ class QuotaDB:
         参数:
             specialty: 专业名称，如"安装"
         """
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT DISTINCT chapter FROM quotas WHERE specialty = ? ORDER BY chapter",
-            (specialty,)
-        )
-        chapters = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT chapter FROM quotas WHERE specialty = ? ORDER BY chapter",
+                (specialty,)
+            )
+            chapters = [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return chapters
 
     def get_quotas_by_chapter(self, chapter: str, limit: int = 500) -> list[dict]:
@@ -505,15 +527,16 @@ class QuotaDB:
             chapter: 章节名称
             limit: 最大返回数量（默认500，一个章节通常不超过几百条）
         """
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM quotas WHERE chapter = ? ORDER BY quota_id LIMIT ?",
-            (chapter, limit)
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM quotas WHERE chapter = ? ORDER BY quota_id LIMIT ?",
+                (chapter, limit)
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return rows
 
     def search_by_keywords(self, keywords: str, chapter: str = None,
@@ -553,36 +576,38 @@ class QuotaDB:
         sql += f" ORDER BY quota_id LIMIT ?"
         params.append(limit)
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(sql, params)
-        rows = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            rows = [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return rows
 
     def get_stats(self) -> dict:
         """获取数据库统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM quotas")
-        total = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM quotas")
+            total = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(DISTINCT chapter) FROM quotas")
-        chapters = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT chapter) FROM quotas")
+            chapters = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(DISTINCT specialty) FROM quotas")
-        specialties = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT specialty) FROM quotas")
+            specialties = cursor.fetchone()[0]
 
-        # 各参数非空的数量
-        cursor.execute("SELECT COUNT(*) FROM quotas WHERE dn IS NOT NULL")
-        with_dn = cursor.fetchone()[0]
+            # 各参数非空的数量
+            cursor.execute("SELECT COUNT(*) FROM quotas WHERE dn IS NOT NULL")
+            with_dn = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM quotas WHERE cable_section IS NOT NULL")
-        with_section = cursor.fetchone()[0]
-
-        conn.close()
+            cursor.execute("SELECT COUNT(*) FROM quotas WHERE cable_section IS NOT NULL")
+            with_section = cursor.fetchone()[0]
+        finally:
+            conn.close()
 
         return {
             "total": total,
@@ -609,33 +634,38 @@ class QuotaDB:
         """
         from src.specialty_classifier import get_book_from_quota_id
 
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        # 检查 book 列是否已存在
-        cursor.execute("PRAGMA table_info(quotas)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "book" not in columns:
-            cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
-            logger.info("已添加 book 列到 quotas 表")
+            # 检查 book 列是否已存在
+            cursor.execute("PRAGMA table_info(quotas)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if "book" not in columns:
+                cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
+                logger.info("已添加 book 列到 quotas 表")
 
-        # 创建索引
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_book ON quotas(book)")
+            # 创建索引
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_book ON quotas(book)")
 
-        # 批量更新：从 quota_id 提取 book
-        cursor.execute("SELECT id, quota_id FROM quotas")
-        rows = cursor.fetchall()
+            # 批量更新：从 quota_id 提取 book
+            cursor.execute("SELECT id, quota_id FROM quotas")
+            rows = cursor.fetchall()
 
-        updated = 0
-        for row_id, quota_id in rows:
-            book = get_book_from_quota_id(quota_id)
-            if book:
-                cursor.execute("UPDATE quotas SET book = ? WHERE id = ?",
-                               (book, row_id))
-                updated += 1
+            updated = 0
+            for row_id, quota_id in rows:
+                book = get_book_from_quota_id(quota_id)
+                if book:
+                    cursor.execute("UPDATE quotas SET book = ? WHERE id = ?",
+                                   (book, row_id))
+                    updated += 1
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         logger.info(f"book字段更新完成: {updated}/{len(rows)} 条定额已标记册号")
 
     def get_books(self) -> list[dict]:
@@ -647,19 +677,21 @@ class QuotaDB:
         """
         from src.specialty_classifier import BOOKS
 
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        # 统计每册的定额数量
-        cursor.execute("""
-            SELECT book, COUNT(*) as cnt
-            FROM quotas
-            WHERE book IS NOT NULL
-            GROUP BY book
-            ORDER BY book
-        """)
-        counts = {row[0]: row[1] for row in cursor.fetchall()}
-        conn.close()
+            # 统计每册的定额数量
+            cursor.execute("""
+                SELECT book, COUNT(*) as cnt
+                FROM quotas
+                WHERE book IS NOT NULL
+                GROUP BY book
+                ORDER BY book
+            """)
+            counts = {row[0]: row[1] for row in cursor.fetchall()}
+        finally:
+            conn.close()
 
         result = []
         for code, info in BOOKS.items():
@@ -681,17 +713,19 @@ class QuotaDB:
         返回:
             [{"chapter": "081_Ⅰ 室外管道", "count": 138}, ...]
         """
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT chapter, COUNT(*) as cnt
-            FROM quotas
-            WHERE book = ?
-            GROUP BY chapter
-            ORDER BY chapter
-        """, (book,))
-        result = [{"chapter": row[0], "count": row[1]} for row in cursor.fetchall()]
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT chapter, COUNT(*) as cnt
+                FROM quotas
+                WHERE book = ?
+                GROUP BY chapter
+                ORDER BY chapter
+            """, (book,))
+            result = [{"chapter": row[0], "count": row[1]} for row in cursor.fetchall()]
+        finally:
+            conn.close()
         return result
 
 

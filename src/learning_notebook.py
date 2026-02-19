@@ -50,7 +50,10 @@ class LearningNotebook:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS learning_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +102,42 @@ class LearningNotebook:
         conn.commit()
         conn.close()
 
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，降低锁冲突概率。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
+    @staticmethod
+    def _safe_json_list(raw):
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, tuple):
+            return list(raw)
+        if not isinstance(raw, str):
+            return []
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _as_json_list_text(value):
+        """把任意输入归一化为 JSON 数组文本，避免脏数据进入库。"""
+        if isinstance(value, (list, tuple)):
+            return json.dumps(list(value), ensure_ascii=False)
+        if isinstance(value, str):
+            return json.dumps(LearningNotebook._safe_json_list(value), ensure_ascii=False)
+        return "[]"
+
     def record_note(self, note: dict) -> int:
         """
         记录一条学习笔记
@@ -136,42 +175,43 @@ class LearningNotebook:
         )
 
         # 列表字段转JSON
-        quota_ids = note.get("result_quota_ids", [])
-        quota_names = note.get("result_quota_names", [])
-        if isinstance(quota_ids, list):
-            quota_ids = json.dumps(quota_ids, ensure_ascii=False)
-        if isinstance(quota_names, list):
-            quota_names = json.dumps(quota_names, ensure_ascii=False)
+        quota_ids = self._as_json_list_text(note.get("result_quota_ids", []))
+        quota_names = self._as_json_list_text(note.get("result_quota_names", []))
 
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.execute("""
-            INSERT INTO learning_notes (
-                bill_text, bill_name, bill_description, bill_unit, specialty,
-                pattern_key, reasoning, search_query,
-                result_quota_ids, result_quota_names, confidence,
-                llm_type, elapsed_seconds, province, project_name, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            bill_text,
-            note.get("bill_name", ""),
-            note.get("bill_description", ""),
-            note.get("bill_unit", ""),
-            note.get("specialty", ""),
-            pattern_key,
-            note.get("reasoning", ""),
-            note.get("search_query", ""),
-            quota_ids,
-            quota_names,
-            note.get("confidence", 0),
-            note.get("llm_type", ""),
-            note.get("elapsed_seconds", 0),
-            note.get("province", config.CURRENT_PROVINCE),
-            note.get("project_name", ""),
-            time.time(),
-        ))
-        conn.commit()
-        note_id = cursor.lastrowid
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.execute("""
+                INSERT INTO learning_notes (
+                    bill_text, bill_name, bill_description, bill_unit, specialty,
+                    pattern_key, reasoning, search_query,
+                    result_quota_ids, result_quota_names, confidence,
+                    llm_type, elapsed_seconds, province, project_name, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                bill_text,
+                note.get("bill_name", ""),
+                note.get("bill_description", ""),
+                note.get("bill_unit", ""),
+                note.get("specialty", ""),
+                pattern_key,
+                note.get("reasoning", ""),
+                note.get("search_query", ""),
+                quota_ids,
+                quota_names,
+                note.get("confidence", 0),
+                note.get("llm_type", ""),
+                note.get("elapsed_seconds", 0),
+                note.get("province", config.CURRENT_PROVINCE),
+                note.get("project_name", ""),
+                time.time(),
+            ))
+            conn.commit()
+            note_id = cursor.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         logger.debug(f"学习笔记已记录 #{note_id}: {note.get('bill_name', '')[:30]}")
         return note_id
@@ -186,18 +226,27 @@ class LearningNotebook:
             feedback: "confirmed"（确认正确）或 "corrected"（已修正）
             corrected_quota_ids: 如果修正了，新的正确定额编号列表
         """
-        corrected_json = None
-        if corrected_quota_ids:
-            corrected_json = json.dumps(corrected_quota_ids, ensure_ascii=False)
+        if feedback not in {"confirmed", "corrected", "pending"}:
+            logger.warning(f"非法反馈值: {feedback}，已降级为 pending")
+            feedback = "pending"
+        if corrected_quota_ids is not None and not isinstance(corrected_quota_ids, list):
+            logger.warning(f"学习笔记#{note_id} corrected_quota_ids 非列表，已忽略")
+            corrected_quota_ids = None
+        corrected_json = json.dumps(corrected_quota_ids, ensure_ascii=False) if corrected_quota_ids else None
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute("""
-            UPDATE learning_notes
-            SET user_feedback = ?, corrected_quota_ids = ?
-            WHERE id = ?
-        """, (feedback, corrected_json, note_id))
-        conn.commit()
-        conn.close()
+        conn = self._connect()
+        try:
+            conn.execute("""
+                UPDATE learning_notes
+                SET user_feedback = ?, corrected_quota_ids = ?
+                WHERE id = ?
+            """, (feedback, corrected_json, note_id))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         logger.debug(f"学习笔记 #{note_id} 反馈: {feedback}")
 
@@ -211,14 +260,15 @@ class LearningNotebook:
         返回:
             该模式下的所有笔记列表
         """
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("""
-            SELECT * FROM learning_notes
-            WHERE pattern_key = ?
-            ORDER BY created_at DESC
-        """, (pattern_key,)).fetchall()
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            rows = conn.execute("""
+                SELECT * FROM learning_notes
+                WHERE pattern_key = ?
+                ORDER BY created_at DESC
+            """, (pattern_key,)).fetchall()
+        finally:
+            conn.close()
 
         return [self._row_to_dict(r) for r in rows]
 
@@ -240,90 +290,88 @@ class LearningNotebook:
             - top_family: 最常见的定额家族前缀
             - consistency: 结果一致率
         """
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
+        conn = self._connect(row_factory=True)
+        try:
+            # 找出笔记数 >= min_count 的模式
+            patterns = conn.execute("""
+                SELECT pattern_key, COUNT(*) as cnt,
+                       SUM(CASE WHEN user_feedback = 'confirmed' THEN 1 ELSE 0 END) as confirmed
+                FROM learning_notes
+                WHERE pattern_key IS NOT NULL AND pattern_key != ''
+                GROUP BY pattern_key
+                HAVING cnt >= ?
+            """, (min_count,)).fetchall()
 
-        # 找出笔记数 >= min_count 的模式
-        patterns = conn.execute("""
-            SELECT pattern_key, COUNT(*) as cnt,
-                   SUM(CASE WHEN user_feedback = 'confirmed' THEN 1 ELSE 0 END) as confirmed
-            FROM learning_notes
-            WHERE pattern_key IS NOT NULL AND pattern_key != ''
-            GROUP BY pattern_key
-            HAVING cnt >= ?
-        """, (min_count,)).fetchall()
+            extractable = []
+            for p in patterns:
+                pattern_key = p["pattern_key"]
+                total = p["cnt"]
+                confirmed = p["confirmed"]
 
-        extractable = []
-        for p in patterns:
-            pattern_key = p["pattern_key"]
-            total = p["cnt"]
-            confirmed = p["confirmed"]
+                # 检查确认率
+                confirm_rate = confirmed / total if total > 0 else 0
+                if confirm_rate < min_confirm_rate:
+                    continue
 
-            # 检查确认率
-            confirm_rate = confirmed / total if total > 0 else 0
-            if confirm_rate < min_confirm_rate:
-                continue
+                # 检查结果一致性（定额家族是否一致）
+                rows = conn.execute("""
+                    SELECT result_quota_ids FROM learning_notes
+                    WHERE pattern_key = ? AND user_feedback != 'corrected'
+                """, (pattern_key,)).fetchall()
 
-            # 检查结果一致性（定额家族是否一致）
-            rows = conn.execute("""
-                SELECT result_quota_ids FROM learning_notes
-                WHERE pattern_key = ? AND user_feedback != 'corrected'
-            """, (pattern_key,)).fetchall()
+                family_counter = Counter()
+                for r in rows:
+                    ids = self._safe_json_list(r["result_quota_ids"])
+                    if not ids:
+                        continue
+                    # 取主定额的家族前缀（如 C10-1-80 → C10-1-）
+                    main_id = str(ids[0]).strip()
+                    if not main_id or "-" not in main_id:
+                        continue
+                    family = main_id.rsplit("-", 1)[0] + "-"
+                    family_counter[family] += 1
 
-            family_counter = Counter()
-            for r in rows:
-                try:
-                    ids = json.loads(r["result_quota_ids"] or "[]")
-                    if ids:
-                        # 取主定额的家族前缀（如 C10-1-80 → C10-1-）
-                        main_id = ids[0]
-                        family = main_id.rsplit("-", 1)[0] + "-"
-                        family_counter[family] += 1
-                except (json.JSONDecodeError, IndexError):
-                    pass
+                if not family_counter:
+                    continue
 
-            if not family_counter:
-                continue
+                top_family, top_count = family_counter.most_common(1)[0]
+                consistency = top_count / len(rows) if rows else 0
 
-            top_family, top_count = family_counter.most_common(1)[0]
-            consistency = top_count / len(rows) if rows else 0
-
-            if consistency >= 0.8:
-                extractable.append({
-                    "pattern_key": pattern_key,
-                    "total_count": total,
-                    "confirmed_count": confirmed,
-                    "confirm_rate": round(confirm_rate, 2),
-                    "top_family": top_family,
-                    "consistency": round(consistency, 2),
-                })
-
-        conn.close()
+                if consistency >= 0.8:
+                    extractable.append({
+                        "pattern_key": pattern_key,
+                        "total_count": total,
+                        "confirmed_count": confirmed,
+                        "confirm_rate": round(confirm_rate, 2),
+                        "top_family": top_family,
+                        "consistency": round(consistency, 2),
+                    })
+        finally:
+            conn.close()
         return extractable
 
     def get_stats(self) -> dict:
         """统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
+        conn = self._connect(row_factory=True)
+        try:
+            total = conn.execute("SELECT COUNT(*) as c FROM learning_notes").fetchone()["c"]
+            confirmed = conn.execute(
+                "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='confirmed'"
+            ).fetchone()["c"]
+            corrected = conn.execute(
+                "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='corrected'"
+            ).fetchone()["c"]
+            pending = conn.execute(
+                "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='pending'"
+            ).fetchone()["c"]
 
-        total = conn.execute("SELECT COUNT(*) as c FROM learning_notes").fetchone()["c"]
-        confirmed = conn.execute(
-            "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='confirmed'"
-        ).fetchone()["c"]
-        corrected = conn.execute(
-            "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='corrected'"
-        ).fetchone()["c"]
-        pending = conn.execute(
-            "SELECT COUNT(*) as c FROM learning_notes WHERE user_feedback='pending'"
-        ).fetchone()["c"]
-
-        # 不同模式的数量
-        pattern_count = conn.execute(
-            "SELECT COUNT(DISTINCT pattern_key) as c FROM learning_notes "
-            "WHERE pattern_key IS NOT NULL AND pattern_key != ''"
-        ).fetchone()["c"]
-
-        conn.close()
+            # 不同模式的数量
+            pattern_count = conn.execute(
+                "SELECT COUNT(DISTINCT pattern_key) as c FROM learning_notes "
+                "WHERE pattern_key IS NOT NULL AND pattern_key != ''"
+            ).fetchone()["c"]
+        finally:
+            conn.close()
 
         return {
             "total": total,
@@ -338,11 +386,7 @@ class LearningNotebook:
         d = dict(row)
         # 解析JSON字段
         for key in ["result_quota_ids", "result_quota_names", "corrected_quota_ids"]:
-            if d.get(key):
-                try:
-                    d[key] = json.loads(d[key])
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            d[key] = self._safe_json_list(d.get(key))
         return d
 
 

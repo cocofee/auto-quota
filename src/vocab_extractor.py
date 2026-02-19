@@ -14,6 +14,8 @@
 
 import re
 import sqlite3
+import os
+import tempfile
 from pathlib import Path
 from collections import Counter, defaultdict
 
@@ -38,17 +40,24 @@ class VocabExtractor:
         self.equipment = set()     # 提取到的设备类型词汇
         self.all_terms = set()     # 所有有意义的词汇
 
+    def _connect(self):
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def extract_all(self):
         """执行完整的反向提取流程"""
         logger.info("开始从定额库反向提取词汇...")
 
         # 读取所有定额
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, quota_id, name, chapter FROM quotas")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, quota_id, name, chapter FROM quotas")
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         logger.info(f"定额总数: {len(rows)} 条")
 
@@ -197,13 +206,17 @@ class VocabExtractor:
         不会覆盖手动维护的词条，只添加新词
         """
         dict_path = config.ENGINEERING_DICT_PATH
+        dict_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 读取现有词典
         existing_words = set()
         if dict_path.exists():
             with open(dict_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    word = line.strip().split()[0] if line.strip() else ""
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    word = line.split()[0]
                     if word:
                         existing_words.add(word)
 
@@ -243,13 +256,30 @@ class VocabExtractor:
         cache_path = Path(__file__).parent.parent / "data" / "dict" / "extracted_vocab.txt"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(cache_path, "w", encoding="utf-8") as f:
-            f.write("[materials]\n")
-            for m in sorted(self.materials):
-                f.write(f"{m}\n")
-            f.write("\n[connections]\n")
-            for c in sorted(self.connections):
-                f.write(f"{c}\n")
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".txt",
+                prefix=f"{cache_path.stem}_tmp_",
+                dir=str(cache_path.parent),
+                encoding="utf-8",
+                delete=False,
+            ) as f:
+                tmp_path = f.name
+                f.write("[materials]\n")
+                for m in sorted(self.materials):
+                    f.write(f"{m}\n")
+                f.write("\n[connections]\n")
+                for c in sorted(self.connections):
+                    f.write(f"{c}\n")
+            os.replace(tmp_path, cache_path)
+        finally:
+            if tmp_path and Path(tmp_path).exists():
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
         logger.info(f"提取词汇缓存已保存: {cache_path}")
 
