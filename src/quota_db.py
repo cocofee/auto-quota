@@ -90,6 +90,20 @@ class QuotaDB:
             )
         """)
 
+        # 导入历史表：记录每个已导入的Excel文件，用于增量导入时跳过已导入的文件
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS import_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_name TEXT NOT NULL,          -- 文件名（不含路径）
+                file_size INTEGER,                -- 文件大小(字节)
+                file_mtime REAL,                  -- 文件最后修改时间(时间戳)
+                specialty TEXT,                   -- 专业（安装/土建/市政）
+                quota_count INTEGER DEFAULT 0,    -- 导入的定额条数
+                imported_at REAL,                 -- 导入时间(时间戳)
+                UNIQUE(file_name)                 -- 同名文件只保留最新一条记录
+            )
+        """)
+
         # 兼容旧库：检查book列是否存在，不存在则添加
         # （旧版数据库没有book字段，直接建索引会报错"no such column"）
         existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
@@ -478,6 +492,59 @@ class QuotaDB:
         except Exception as e:
             logger.debug(f"读取定额库版本号失败，按空版本返回: {e}")
             return ""
+
+    # ================================================================
+    # 导入历史（用于增量导入）
+    # ================================================================
+
+    def record_import(self, file_path: str, specialty: str, quota_count: int):
+        """记录一个文件的导入信息，用于下次增量导入时判断是否已导入过
+
+        参数:
+            file_path: Excel文件的完整路径
+            specialty: 专业类别
+            quota_count: 本次导入的定额条数
+        """
+        import time as _time
+        p = Path(file_path)
+        stat = p.stat()
+
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO import_history
+                    (file_name, file_size, file_mtime, specialty, quota_count, imported_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (p.name, stat.st_size, stat.st_mtime, specialty, quota_count, _time.time()))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_import_history(self) -> list[dict]:
+        """获取所有已导入文件的记录
+
+        返回:
+            [{"file_name": "安装.xlsx", "file_size": 12345, "file_mtime": 1700000000.0,
+              "specialty": "安装", "quota_count": 3000, "imported_at": 1700000000.0}, ...]
+        """
+        self.init_db()  # 确保表存在（兼容旧数据库）
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_name, file_size, file_mtime, specialty, quota_count, imported_at FROM import_history")
+            return [dict(r) for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def clear_import_history(self):
+        """清空导入历史（全量重导时调用）"""
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM import_history")
+            conn.commit()
+        finally:
+            conn.close()
 
     # ================================================================
     # 查询接口
