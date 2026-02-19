@@ -29,11 +29,11 @@ def _open_quota_conn(db_path):
     return conn
 
 
-def show_db_stats():
+def show_db_stats(province):
     """展示定额数据库统计信息"""
     try:
         from src.quota_db import QuotaDB
-        db = QuotaDB()
+        db = QuotaDB(province)
         stats = db.get_stats()
 
         col1, col2, col3 = st.columns(3)
@@ -237,20 +237,37 @@ def show_import():
 
 def main():
     st.title("定额数据库")
-    st.caption(f"省份：{config.CURRENT_PROVINCE}")
+
+    # 省份选择（列出所有已导入的省份定额库）
+    available_provinces = config.list_db_provinces()
+    if available_provinces:
+        default_prov = st.session_state.get("current_province", config.CURRENT_PROVINCE)
+        default_idx = 0
+        if default_prov in available_provinces:
+            default_idx = available_provinces.index(default_prov)
+        selected_province = st.selectbox(
+            "省份/定额版本",
+            available_provinces,
+            index=default_idx,
+            key="db_province_selector",
+        )
+        st.session_state["current_province"] = selected_province
+    else:
+        st.warning("未找到省份数据，请先导入定额")
+        selected_province = config.CURRENT_PROVINCE
 
     # 标签页切换
     tab1, tab2, tab3 = st.tabs(["数据库概览", "搜索定额", "导入管理"])
 
     with tab1:
-        db = show_db_stats()
+        db = show_db_stats(selected_province)
         if db:
             show_browse(db)
 
     with tab2:
         try:
             from src.quota_db import QuotaDB
-            db = QuotaDB()
+            db = QuotaDB(selected_province)
             show_search(db)
         except Exception as e:
             st.warning(f"定额数据库未初始化，请先导入定额数据（{e}）")
