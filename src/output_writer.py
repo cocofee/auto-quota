@@ -36,15 +36,12 @@ RED_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="soli
 HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
 GRAY_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 LIGHT_BLUE_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-# 定额行专用浅蓝灰色（比纯灰更柔和，和清单行有视觉区分）
-QUOTA_BG_FILL = PatternFill(start_color="EDF2F9", end_color="EDF2F9", fill_type="solid")
 
-# 字体
+# 字体（和广联达一致：宋体9号，全表统一）
 HEADER_FONT = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
 BILL_FONT = Font(name="微软雅黑", size=10)
-QUOTA_FONT = Font(name="微软雅黑", size=9, color="333333")
-# 定额行编号字体（蓝色加粗，醒目区分）
-QUOTA_ID_FONT = Font(name="微软雅黑", size=9, bold=True, color="2F5496")
+# 定额行字体：宋体9号，和广联达导出格式一致
+GLD_FONT = Font(name="宋体", size=9)
 
 # 边框
 THIN_BORDER = Border(
@@ -53,23 +50,6 @@ THIN_BORDER = Border(
     top=Side(style="thin"),
     bottom=Side(style="thin"),
 )
-# 定额行边框（左右虚线，上下细线，比清单行轻一些）
-QUOTA_BORDER = Border(
-    left=Side(style="thin", color="BFBFBF"),
-    right=Side(style="thin", color="BFBFBF"),
-    top=Side(style="thin", color="D9D9D9"),
-    bottom=Side(style="thin", color="D9D9D9"),
-)
-# 清单行底部分隔线（定额组和下一个清单之间的视觉分隔）
-SECTION_BOTTOM_BORDER = Border(
-    left=Side(style="thin"),
-    right=Side(style="thin"),
-    top=Side(style="thin", color="D9D9D9"),
-    bottom=Side(style="medium", color="4472C4"),
-)
-
-# 定额行紧凑行高（不继承清单行的大行高）
-QUOTA_ROW_HEIGHT = 22
 
 
 # ================================================================
@@ -429,11 +409,6 @@ class OutputWriter:
                     q_row = row_idx + 1 + q_idx
                     self._write_single_quota_row(
                         ws, q_row, quota, bill_unit, bill_qty)
-                # 最后一行定额行的底部加蓝色分隔线（区分下一条清单）
-                last_q_row = row_idx + len(quotas)
-                for col in range(1, max(ws.max_column + 1, 10)):
-                    cell = ws.cell(row=last_q_row, column=col)
-                    cell.border = SECTION_BOTTOM_BORDER
             else:
                 # 未匹配提示行
                 q_row = row_idx + 1
@@ -441,41 +416,17 @@ class OutputWriter:
                 ws.cell(row=q_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
                 for col in range(1, 10):
                     cell = ws.cell(row=q_row, column=col)
-                    cell.font = Font(name="微软雅黑", size=9, color="FF0000")
+                    cell.font = Font(name="宋体", size=9, color="FF0000")
                     cell.fill = RED_FILL
                     cell.border = THIN_BORDER
-                ws.row_dimensions[q_row].height = QUOTA_ROW_HEIGHT
 
-        # 第4.5步：统一修复行高和合并格式（insert_rows会破坏原始行高映射和继承合并）
-        # 遍历所有数据行，按类型设置正确的行高
-        # 同时修复非定额行被错误继承的C-D合并
+        # 第4.5步：恢复清单行原始行高（insert_rows会打乱行高映射）
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
-            b_val = ws.cell(row=row_idx, column=2).value
-            is_quota_row = (a_val is None and b_val
-                            and str(b_val).startswith("C"))
             if _is_bill_serial(a_val):
-                # 清单行：恢复原始行高 + 取消被继承的C-D合并
                 saved_h = original_bill_heights.get(str(a_val).strip())
                 if saved_h:
                     ws.row_dimensions[row_idx].height = saved_h
-                try:
-                    ws.unmerge_cells(
-                        start_row=row_idx, start_column=3,
-                        end_row=row_idx, end_column=4)
-                except (KeyError, ValueError):
-                    pass
-            elif is_quota_row:
-                # 定额行（A空、B以C开头）：紧凑行高（合并在写入时已做）
-                ws.row_dimensions[row_idx].height = QUOTA_ROW_HEIGHT
-            else:
-                # 其他行（分部小计、小节标题等）：取消被继承的C-D合并
-                try:
-                    ws.unmerge_cells(
-                        start_row=row_idx, start_column=3,
-                        end_row=row_idx, end_column=4)
-                except (KeyError, ValueError):
-                    pass
 
         # 第5步：在表头行添加J-N列标题
         self._add_extra_headers(ws, header_row)
@@ -588,7 +539,7 @@ class OutputWriter:
             ws.cell(row=current_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
             for col in range(1, max_col + 1):
                 cell = ws.cell(row=current_row, column=col)
-                cell.font = Font(name="微软雅黑", size=9, color="FF0000")
+                cell.font = Font(name="宋体", size=9, color="FF0000")
                 cell.fill = RED_FILL
                 cell.border = THIN_BORDER
             current_row += 1
@@ -597,51 +548,47 @@ class OutputWriter:
 
     def _write_single_quota_row(self, ws, q_row: int, quota: dict,
                                 bill_unit: str, bill_qty):
-        """写入一行定额数据（含单位换算）"""
+        """写入一行定额数据（广联达标准格式：宋体9号、thin边框、无背景、不合并）"""
         # A列留空（广联达靠这个区分清单行和子目行）
-        # B列：定额编号（蓝色加粗，带左缩进，一眼看出是子目）
+
+        # B列：定额编号（居中）
         cell_b = ws.cell(
             row=q_row, column=2, value=safe_excel_text(quota.get("quota_id", ""))
         )
-        cell_b.font = QUOTA_ID_FONT
-        cell_b.alignment = Alignment(vertical="center", indent=2)
+        cell_b.font = GLD_FONT
+        cell_b.alignment = Alignment(horizontal="center", vertical="center",
+                                     wrap_text=True)
 
-        # C列：定额名称（灰色字体，带左缩进）
-        # 合并C-D列给名称更多显示空间（清单行的D列是项目特征描述，定额行不需要）
+        # C列：定额名称（左对齐，自动换行）
         cell_c = ws.cell(
             row=q_row, column=3, value=safe_excel_text(quota.get("name", ""))
         )
-        cell_c.font = QUOTA_FONT
-        cell_c.alignment = Alignment(vertical="center", indent=1, wrap_text=True)
-        try:
-            ws.merge_cells(start_row=q_row, start_column=3, end_row=q_row, end_column=4)
-        except Exception:
-            pass  # 合并失败时忽略（可能已合并或有冲突）
+        cell_c.font = GLD_FONT
+        cell_c.alignment = Alignment(horizontal="left", vertical="center",
+                                     wrap_text=True)
 
-        # E列：单位
+        # E列：单位（居中）
         quota_unit = quota.get("unit", "") or bill_unit
-        ws.cell(row=q_row, column=5, value=quota_unit)
+        cell_e = ws.cell(row=q_row, column=5, value=quota_unit)
+        cell_e.font = GLD_FONT
+        cell_e.alignment = Alignment(horizontal="center", vertical="center",
+                                     wrap_text=True)
 
-        # F列：工程量（自动单位换算）
+        # F列：工程量（右对齐，自动单位换算）
         converted_qty = convert_quantity(bill_qty, bill_unit, quota_unit)
-        ws.cell(row=q_row, column=6, value=converted_qty)
+        cell_f = ws.cell(row=q_row, column=6, value=converted_qty)
+        cell_f.font = GLD_FONT
+        cell_f.alignment = Alignment(horizontal="right", vertical="center",
+                                     wrap_text=True)
 
-        # 统一格式：只对有内容的A-F列设背景，G-I列留白（视觉更轻）
-        for col in range(1, 7):  # A-F列
+        # 所有列统一 thin 边框 + 宋体9号（和清单行一致）
+        for col in range(1, 10):  # A-I列
             cell = ws.cell(row=q_row, column=col)
+            cell.border = THIN_BORDER
             if cell.font == Font() or cell.font is None:
-                cell.font = QUOTA_FONT
-            cell.fill = QUOTA_BG_FILL
-            cell.border = QUOTA_BORDER
+                cell.font = GLD_FONT
             if cell.alignment is None or cell.alignment == Alignment():
-                cell.alignment = Alignment(vertical="center")
-        # G-I列：不填背景色（空白过渡），只加轻边框
-        for col in range(7, 10):
-            cell = ws.cell(row=q_row, column=col)
-            cell.border = QUOTA_BORDER
-
-        # 注意：行高不在这里设置（insert_rows会打乱行高映射）
-        # 统一在 _process_bill_sheet 的后处理步骤中设置
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
 
     def _add_extra_headers(self, ws, header_row: int):
         """在表头行添加J-N列标题"""
