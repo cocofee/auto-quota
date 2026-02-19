@@ -59,37 +59,47 @@ class RuleKnowledge:
         # 向量引擎（延迟初始化）
         self._collection = None
 
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，降低并发场景下锁等待失败。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
     def _init_db(self):
         """初始化SQLite数据库表结构"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                province TEXT NOT NULL,          -- 省份名称（如"北京2024"）
-                specialty TEXT DEFAULT '',       -- 专业（安装/土建/市政）
-                chapter TEXT DEFAULT '',         -- 章节名称（如"第五章 给排水"）
-                section TEXT DEFAULT '',         -- 小节名称（如"管道安装"）
-                content TEXT NOT NULL,           -- 规则正文
-                content_hash TEXT UNIQUE,        -- 内容哈希（去重用）
-                source_file TEXT DEFAULT '',     -- 来源文件路径
-                keywords TEXT DEFAULT '',        -- 提取的关键词（空格分隔）
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    province TEXT NOT NULL,          -- 省份名称（如"北京2024"）
+                    specialty TEXT DEFAULT '',       -- 专业（安装/土建/市政）
+                    chapter TEXT DEFAULT '',         -- 章节名称（如"第五章 给排水"）
+                    section TEXT DEFAULT '',         -- 小节名称（如"管道安装"）
+                    content TEXT NOT NULL,           -- 规则正文
+                    content_hash TEXT UNIQUE,        -- 内容哈希（去重用）
+                    source_file TEXT DEFAULT '',     -- 来源文件路径
+                    keywords TEXT DEFAULT '',        -- 提取的关键词（空格分隔）
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # 索引：按省份+专业查询
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_rules_province
-            ON rules(province)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_rules_specialty
-            ON rules(province, specialty)
-        """)
+            # 索引：按省份+专业查询
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_rules_province
+                ON rules(province)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_rules_specialty
+                ON rules(province, specialty)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     @property
     def collection(self):
@@ -157,37 +167,41 @@ class RuleKnowledge:
 
         # 存入数据库
         stats = {"total": len(segments), "added": 0, "skipped": 0}
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            for seg in segments:
+                content_hash = hashlib.md5(
+                    f"{province}:{specialty}:{seg}".encode()
+                ).hexdigest()
 
-        for seg in segments:
-            content_hash = hashlib.md5(
-                f"{province}:{specialty}:{seg}".encode()
-            ).hexdigest()
+                # 检查是否已存在（去重）
+                cursor.execute(
+                    "SELECT id FROM rules WHERE content_hash = ?",
+                    (content_hash,)
+                )
+                if cursor.fetchone():
+                    stats["skipped"] += 1
+                    continue
 
-            # 检查是否已存在（去重）
-            cursor.execute(
-                "SELECT id FROM rules WHERE content_hash = ?",
-                (content_hash,)
-            )
-            if cursor.fetchone():
-                stats["skipped"] += 1
-                continue
+                # 提取关键词
+                keywords = self._extract_keywords(seg)
 
-            # 提取关键词
-            keywords = self._extract_keywords(seg)
+                cursor.execute("""
+                    INSERT INTO rules (province, specialty, chapter, section, content,
+                                       content_hash, source_file, keywords)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (province, specialty, chapter, "", seg,
+                      content_hash, str(path), " ".join(keywords)))
 
-            cursor.execute("""
-                INSERT INTO rules (province, specialty, chapter, section, content,
-                                   content_hash, source_file, keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (province, specialty, chapter, "", seg,
-                  content_hash, str(path), " ".join(keywords)))
+                stats["added"] += 1
 
-            stats["added"] += 1
-
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         logger.info(
             f"导入规则: {path.name} → "
@@ -278,7 +292,7 @@ class RuleKnowledge:
             try:
                 vector_results = self._vector_search(query, top_k, province)
                 for r in vector_results:
-                    rid = r.get("id", "")
+                    rid = self._normalize_result_id(r.get("id", ""))
                     if rid not in seen_ids:
                         seen_ids.add(rid)
                         results.append(r)
@@ -288,7 +302,7 @@ class RuleKnowledge:
         # 第2路：关键词检索（精确匹配中文词，弥补英文向量模型的不足）
         keyword_results = self._keyword_search(query, top_k, province)
         for r in keyword_results:
-            rid = str(r.get("id", ""))
+            rid = self._normalize_result_id(r.get("id", ""))
             if rid not in seen_ids:
                 seen_ids.add(rid)
                 results.append(r)
@@ -301,7 +315,11 @@ class RuleKnowledge:
         """使用ChromaDB向量检索"""
         where_filter = None
         if province:
-            where_filter = {"province": province}
+            # 同时搜索指定省份和"通用"规则（通用规则适用于所有省份）
+            where_filter = {"$or": [
+                {"province": province},
+                {"province": "通用"},
+            ]}
 
         results = self.collection.query(
             query_texts=[query],
@@ -333,55 +351,55 @@ class RuleKnowledge:
     def _keyword_search(self, query: str, top_k: int,
                         province: str = None) -> list[dict]:
         """关键词检索（向量检索的回退方案）"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
 
-        # 提取查询中的关键词
-        keywords = self._extract_keywords(query)
-        if not keywords:
+            # 提取查询中的关键词
+            keywords = self._extract_keywords(query)
+            if not keywords:
+                return []
+
+            # 构建LIKE查询（匹配任意一个关键词）
+            conditions = []
+            params = []
+            for kw in keywords[:5]:  # 最多用5个关键词
+                conditions.append("(content LIKE ? OR keywords LIKE ?)")
+                params.extend([f"%{kw}%", f"%{kw}%"])
+
+            where_clause = " OR ".join(conditions)
+            if province:
+                # 同时搜索指定省份和"通用"规则
+                where_clause = f"province IN (?, '通用') AND ({where_clause})"
+                params.insert(0, province)
+
+            sql = f"""
+                SELECT id, province, specialty, chapter, content
+                FROM rules
+                WHERE {where_clause}
+                LIMIT ?
+            """
+            params.append(top_k)
+
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
             conn.close()
-            return []
-
-        # 构建LIKE查询（匹配任意一个关键词）
-        conditions = []
-        params = []
-        for kw in keywords[:5]:  # 最多用5个关键词
-            conditions.append("(content LIKE ? OR keywords LIKE ?)")
-            params.extend([f"%{kw}%", f"%{kw}%"])
-
-        where_clause = " OR ".join(conditions)
-        if province:
-            where_clause = f"province = ? AND ({where_clause})"
-            params.insert(0, province)
-
-        sql = f"""
-            SELECT id, province, specialty, chapter, content
-            FROM rules
-            WHERE {where_clause}
-            LIMIT ?
-        """
-        params.append(top_k)
-
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [dict(row) for row in rows]
 
     def _update_vector_index(self):
         """更新ChromaDB向量索引（增量：只添加没有索引过的规则）"""
         if not self.collection:
             return
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        # 获取所有规则
-        cursor.execute("SELECT id, province, specialty, chapter, content FROM rules")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            # 获取所有规则
+            cursor.execute("SELECT id, province, specialty, chapter, content FROM rules")
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             return
@@ -390,7 +408,8 @@ class RuleKnowledge:
         try:
             existing = self.collection.get()
             existing_ids = set(existing["ids"]) if existing["ids"] else set()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"读取规则向量索引现有ID失败，按全量补写处理: {e}")
             existing_ids = set()
 
         # 找出需要新增的
@@ -509,6 +528,14 @@ class RuleKnowledge:
 
         return list(keywords)
 
+    @staticmethod
+    def _normalize_result_id(raw_id) -> str:
+        """统一规则结果ID格式，避免向量路与关键词路去重失效。"""
+        rid = str(raw_id or "").strip()
+        if rid.startswith("rule_"):
+            rid = rid[5:]
+        return rid
+
     def _infer_chapter(self, filename: str) -> str:
         """从文件名推断章节名称"""
         # 常见模式：第X章_xxx, 第X册_xxx, C5_给排水
@@ -535,23 +562,24 @@ class RuleKnowledge:
 
     def get_stats(self) -> dict:
         """获取规则库统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM rules")
-        total = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM rules")
+            total = cursor.fetchone()[0]
 
-        cursor.execute(
-            "SELECT province, COUNT(*) FROM rules GROUP BY province"
-        )
-        by_province = {row[0]: row[1] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT province, COUNT(*) FROM rules GROUP BY province"
+            )
+            by_province = {row[0]: row[1] for row in cursor.fetchall()}
 
-        cursor.execute(
-            "SELECT specialty, COUNT(*) FROM rules GROUP BY specialty"
-        )
-        by_specialty = {row[0]: row[1] for row in cursor.fetchall()}
-
-        conn.close()
+            cursor.execute(
+                "SELECT specialty, COUNT(*) FROM rules GROUP BY specialty"
+            )
+            by_specialty = {row[0]: row[1] for row in cursor.fetchall()}
+        finally:
+            conn.close()
 
         return {
             "total": total,
