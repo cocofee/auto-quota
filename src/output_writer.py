@@ -231,6 +231,30 @@ class OutputWriter:
     """匹配结果Excel输出，保留原始清单结构"""
 
     @staticmethod
+    def _convert_xls_for_output(xls_path: str, output_xlsx_path: str):
+        """将 .xls 文件转换为 .xlsx 格式（用于输出保留结构）"""
+        import xlrd
+        xls_wb = xlrd.open_workbook(str(xls_path))
+        xlsx_wb = openpyxl.Workbook()
+        xlsx_wb.remove(xlsx_wb.active)
+        for sheet_idx in range(xls_wb.nsheets):
+            xls_sheet = xls_wb.sheet_by_index(sheet_idx)
+            xlsx_sheet = xlsx_wb.create_sheet(title=xls_sheet.name)
+            for row_idx in range(xls_sheet.nrows):
+                for col_idx in range(xls_sheet.ncols):
+                    cell = xls_sheet.cell(row_idx, col_idx)
+                    value = cell.value
+                    if cell.ctype == 3:  # 日期类型
+                        try:
+                            value = xlrd.xldate_as_datetime(value, xls_wb.datemode)
+                        except Exception:
+                            pass
+                    if value is not None and value != "":
+                        xlsx_sheet.cell(row=row_idx + 1, column=col_idx + 1, value=value)
+        xlsx_wb.save(str(output_xlsx_path))
+        xls_wb.release_resources()
+
+    @staticmethod
     def _save_workbook_atomic(wb, output_path: str):
         """原子写入Excel，避免中断时留下半成品文件。"""
         out_path = Path(output_path)
@@ -305,7 +329,11 @@ class OutputWriter:
                 results_by_sheet.setdefault(sheet, []).append(r)
 
         # 复制原始文件（保留所有格式和结构）
-        shutil.copy2(original_file, output_path)
+        # .xls 文件需要先转换为 .xlsx（openpyxl 不支持旧格式）
+        if Path(original_file).suffix.lower() == ".xls":
+            self._convert_xls_for_output(original_file, output_path)
+        else:
+            shutil.copy2(original_file, output_path)
 
         # 打开副本进行修改
         wb = openpyxl.load_workbook(output_path)
