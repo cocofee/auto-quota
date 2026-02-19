@@ -30,6 +30,27 @@ from src.reranker import Reranker
 from src.agent_matcher import AgentMatcher
 
 
+def _normalize_fallbacks(value) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        items = []
+
+    cleaned = []
+    seen = set()
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
 def debug_single(bill_name: str, bill_desc: str = "",
                  llm_type: str = None, top_k: int = 10,
                  no_llm: bool = False):
@@ -54,7 +75,9 @@ def debug_single(bill_name: str, bill_desc: str = "",
     classification = classify_specialty(bill_name, bill_desc)
     primary = classification.get("primary", "未知")
     primary_name = classification.get("primary_name", "")
-    fallbacks = classification.get("fallbacks", [])
+    fallbacks = _normalize_fallbacks(classification.get("fallbacks", []))
+    if primary:
+        fallbacks = [b for b in fallbacks if b != primary]
     print(f"  主专业: {primary} {primary_name}")
     if fallbacks:
         print(f"  借用专业: {fallbacks}")
@@ -105,8 +128,8 @@ def debug_single(bill_name: str, bill_desc: str = "",
                 print(f"  \"{case.get('bill', '')[:40]}\" → {quotas_str}")
         else:
             print(f"\n[6] 经验库: 无相似案例")
-    except Exception:
-        print(f"\n[6] 经验库: 不可用")
+    except Exception as e:
+        print(f"\n[6] 经验库: 不可用 ({e})")
 
     # 第7步：Agent大模型分析（可跳过）
     if not candidates:

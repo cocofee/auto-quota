@@ -12,6 +12,9 @@ Agent手动审核工具 - Claude Code 充当大模型大脑
 import sys
 import os
 import json
+import re
+import argparse
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -25,6 +28,55 @@ from src.text_parser import parser as text_parser, normalize_bill_text
 from src.specialty_classifier import classify as classify_specialty
 from src.reranker import Reranker
 from src.rule_validator import RuleValidator
+
+
+def _safe_unlink(path: str):
+    try:
+        os.remove(path)
+    except OSError as e:
+        print(f"[WARN] 清理临时文件失败: {path} ({e})")
+
+
+def _atomic_write_json(path: str, payload):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix=f"{target.stem}_tmp_",
+            dir=str(target.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as tf:
+            tmp_path = tf.name
+            json.dump(payload, tf, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, target)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            _safe_unlink(tmp_path)
+
+
+def _normalize_fallbacks(value) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        items = []
+
+    cleaned = []
+    seen = set()
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
 
 
 def get_candidates_for_item(item, searcher, validator, reranker, rule_validator):
@@ -42,6 +94,14 @@ def get_candidates_for_item(item, searcher, validator, reranker, rule_validator)
     }
     if not classification["primary"]:
         classification = classify_specialty(name, desc, section_title=section)
+    primary = classification.get("primary")
+    primary = str(primary).strip() if primary is not None else ""
+    primary = primary or None
+    fallbacks = _normalize_fallbacks(classification.get("fallbacks", []))
+    if primary:
+        fallbacks = [b for b in fallbacks if b != primary]
+    classification["primary"] = primary
+    classification["fallbacks"] = fallbacks
 
     # 规则预匹配
     rule_books = [classification["primary"]] + classification.get("fallbacks", [])
@@ -126,16 +186,24 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
         # 简化候选列表（只保留关键信息，减小文件大小）
         simple_candidates = []
         for c in candidates[:10]:
+            if not isinstance(c, dict):
+                continue
+            quota_id = str(c.get("quota_id", "")).strip()
+            quota_name = str(c.get("name", "")).strip()
+            if not quota_id or not quota_name:
+                continue
             simple_candidates.append({
                 "index": len(simple_candidates) + 1,
-                "quota_id": c["quota_id"],
-                "name": c["name"],
+                "quota_id": quota_id,
+                "name": quota_name,
                 "unit": c.get("unit", ""),
                 "param_match": c.get("param_match", True),
                 "param_score": round(c.get("param_score", 0), 2),
                 "param_detail": c.get("param_detail", ""),
             })
 
+        best_quota_id = str(best.get("quota_id", "")).strip() if isinstance(best, dict) else ""
+        best_name = str(best.get("name", "")).strip() if isinstance(best, dict) else ""
         review_items.append({
             "index": idx,
             "name": item.get("name", ""),
@@ -146,8 +214,8 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
                 item.get("name", ""), item.get("description", "") or ""),
             "candidates": simple_candidates,
             "current_best": {
-                "quota_id": best["quota_id"],
-                "name": best["name"],
+                "quota_id": best_quota_id,
+                "name": best_name,
                 "confidence": confidence,
             },
             "confidence": confidence,
@@ -161,17 +229,16 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
 
     # 输出
     basename = Path(excel_path).stem.replace("-小栗AI自动编清单", "")[:30]
+    basename = re.sub(r'[\\/:*?"<>|]+', "_", basename).strip(" ._") or "project"
     output_path = f"output/review/agent_review_{basename}.json"
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "source_file": excel_path,
-            "total_items": len(items),
-            "green_count": green_count,
-            "rule_count": rule_count,
-            "review_count": len(review_items),
-            "items": review_items,
-        }, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(output_path, {
+        "source_file": excel_path,
+        "total_items": len(items),
+        "green_count": green_count,
+        "rule_count": rule_count,
+        "review_count": len(review_items),
+        "items": review_items,
+    })
 
     print(f"\n汇总: 总{len(items)}条, 绿{green_count}, 规则{rule_count}, 待审{len(review_items)}")
     print(f"审核文件: {output_path}")
@@ -183,25 +250,45 @@ def store_decisions(decisions_file):
     from src.experience_db import ExperienceDB
     from src.learning_notebook import LearningNotebook
 
-    with open(decisions_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(decisions_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"读取决策文件失败: {decisions_file} ({e})")
+        return
+    if not isinstance(data, dict):
+        print("决策文件格式错误：根节点必须是对象")
+        return
+    decisions = data.get("decisions", [])
+    if not isinstance(decisions, list):
+        print("决策文件格式错误：decisions 必须是数组")
+        return
 
     exp_db = ExperienceDB()
     notebook = LearningNotebook()
     stored = 0
+    skipped = 0
 
-    for item in data.get("decisions", []):
-        bill_text = f"{item['name']} {item.get('description', '')}".strip()
+    for item in decisions:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            skipped += 1
+            continue
+        bill_text = f"{name} {item.get('description', '')}".strip()
         quota_ids = item.get("correct_quota_ids", [])
         quota_names = item.get("correct_quota_names", [])
         reasoning = item.get("reasoning", "")
 
-        if not quota_ids:
+        if not isinstance(quota_ids, list) or not quota_ids:
+            skipped += 1
             continue
 
         # 存入经验库（user_confirmed来源 = 权威层数据）
-        exp_db.add_experience(
-            bill_text=normalize_bill_text(item["name"], item.get("description", "")),
+        record_id = exp_db.add_experience(
+            bill_text=normalize_bill_text(name, item.get("description", "")),
             quota_ids=quota_ids,
             quota_names=quota_names,
             source="user_confirmed",
@@ -209,11 +296,14 @@ def store_decisions(decisions_file):
             specialty=item.get("specialty", ""),
             notes=reasoning,
         )
+        if record_id <= 0:
+            skipped += 1
+            continue
 
         # 记录学习笔记
-        notebook.record_note({
+        note_id = notebook.record_note({
             "bill_text": bill_text,
-            "bill_name": item["name"],
+            "bill_name": name,
             "bill_description": item.get("description", ""),
             "specialty": item.get("specialty", ""),
             "reasoning": reasoning,
@@ -222,26 +312,47 @@ def store_decisions(decisions_file):
             "confidence": 90,
             "llm_type": "claude_code_manual",
         })
-        # 标记为已确认
-        notebook.mark_user_feedback(notebook.get_stats()["total"], "confirmed")
+        # 标记该条笔记为已确认（使用返回的note_id，避免并发时标错）
+        if note_id > 0:
+            notebook.mark_user_feedback(note_id, "confirmed")
 
         stored += 1
 
-    print(f"已存入 {stored} 条经验到权威层")
+    print(f"已存入 {stored} 条经验到权威层，跳过 {skipped} 条")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Agent手动审核工具（导出待审核项 / 回写审核决策）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python tools/agent_review.py 清单.xlsx --limit 200
+  python tools/agent_review.py --store output/review_decisions.json
+        """.strip(),
+    )
+    parser.add_argument(
+        "excel_path",
+        nargs="?",
+        help="待审核清单Excel路径（导出模式）",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="导出审核项时最多处理的清单条数",
+    )
+    parser.add_argument(
+        "--store",
+        metavar="DECISIONS_JSON",
+        help="把审核决策JSON回写到经验库",
+    )
+    args = parser.parse_args()
 
-    if sys.argv[1] == "--store":
-        # 存入模式
-        store_decisions(sys.argv[2])
+    if args.store:
+        store_decisions(args.store)
+    elif args.excel_path:
+        export_review_items(args.excel_path, limit=args.limit)
     else:
-        # 导出审核模式
-        limit = None
-        for i, arg in enumerate(sys.argv):
-            if arg == "--limit" and i + 1 < len(sys.argv):
-                limit = int(sys.argv[i + 1])
-        export_review_items(sys.argv[1], limit=limit)
+        parser.print_help()
+        sys.exit(1)
