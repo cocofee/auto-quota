@@ -484,6 +484,118 @@ class RuleValidator:
         return self._build_rule_result(
             best_entry, best_param_value, best_score, bill_text, item)
 
+    def _match_elevator(self, bill_text: str, bill_params: dict,
+                        bill_keywords: list, item: dict = None,
+                        books: list = None) -> dict:
+        """
+        电梯专用匹配逻辑
+
+        电梯家族特殊性：value_type="text"，档位值格式"N 站数N"，没有 tiers 字段。
+        通用 param_driven 无法处理，需要专用逻辑：
+        1. 根据 elevator_type 定位家族（曳引式/载货/杂物/液压）
+        2. 根据 elevator_stops 在该家族中找正确档位（向上取档）
+        3. 超出最大档则取最大档，提示需补增减层门
+        """
+        elevator_type = bill_params.get("elevator_type", "")
+        elevator_stops = bill_params.get("elevator_stops")
+
+        if not elevator_type or elevator_stops is None:
+            return None
+
+        # 自动扶梯不走这个逻辑（扶梯按宽度，已有 tiers，走 param_driven）
+        if elevator_type == "自动扶梯":
+            return None
+
+        # 在所有家族中查找类型匹配的电梯家族
+        target_family_entry = None
+        for entry in self.all_families:
+            if books and entry.get("book") and entry["book"] not in books:
+                continue
+            family = entry.get("family", {})
+            family_name = family.get("name", "")
+            # 家族名如"载货电梯 层数"，以电梯类型开头
+            if family_name.startswith(elevator_type):
+                target_family_entry = entry
+                break
+
+        if not target_family_entry:
+            return None
+
+        family = target_family_entry["family"]
+        quotas = family.get("quotas", [])
+
+        # 从 quotas 中解析站数，向上取档（找 >= elevator_stops 的最小值）
+        best_quota = None
+        best_stops = None
+
+        for quota in quotas:
+            value_str = quota.get("value", "")
+            stops_match = re.match(r'^(\d+)\s', value_str)
+            if stops_match:
+                quota_stops = int(stops_match.group(1))
+                if quota_stops >= elevator_stops:
+                    if best_stops is None or quota_stops < best_stops:
+                        best_stops = quota_stops
+                        best_quota = quota
+
+        exceeded_max = False
+        if not best_quota:
+            # 站数超出该家族最大档位，取最大档
+            max_quota = None
+            max_stops = 0
+            for quota in quotas:
+                value_str = quota.get("value", "")
+                stops_match = re.match(r'^(\d+)\s', value_str)
+                if stops_match:
+                    s = int(stops_match.group(1))
+                    if s > max_stops:
+                        max_stops = s
+                        max_quota = quota
+
+            if max_quota:
+                best_quota = max_quota
+                best_stops = max_stops
+                exceeded_max = True
+                logger.warning(
+                    f"电梯站数{elevator_stops}超出{elevator_type}最大档{max_stops}站，"
+                    f"取最大档定额{max_quota.get('id')}，超出部分需另计增减层门")
+            else:
+                return None
+
+        # 构建匹配结果
+        quota_id = best_quota.get("id")
+        prefix = family.get("prefix", "")
+        quota_name = f"{prefix}{best_quota.get('value', '')}".strip()
+        # 置信度：精确匹配85，超档70
+        confidence = 70 if exceeded_max else 85
+
+        explanation_parts = [
+            f"电梯规则匹配: {elevator_type}",
+            f"站数{elevator_stops}→档位{best_stops}站",
+        ]
+        if exceeded_max:
+            explanation_parts.append(f"(超出最大档{best_stops}站，需另计增减层门)")
+
+        result = {
+            "bill_item": item or {},
+            "quotas": [{
+                "quota_id": quota_id,
+                "name": quota_name,
+                "unit": family.get("unit", ""),
+                "reason": " | ".join(explanation_parts),
+            }],
+            "confidence": confidence,
+            "explanation": " | ".join(explanation_parts),
+            "match_source": "rule",
+            "rule_family": family.get("name", ""),
+            "rule_score": 0.9,
+        }
+
+        logger.info(f"电梯规则匹配: '{bill_text[:40]}' → {quota_id} "
+                     f"({elevator_type} {elevator_stops}站→{best_stops}站档)")
+
+        return result
+
     def _match_by_keyword_driven(self, bill_text: str, bill_keywords: list,
                                  bill_params: dict = None,
                                  item: dict = None,
@@ -808,7 +920,10 @@ class RuleValidator:
         # 有档位信息才做校验（纯文字类型的家族不校验）
         tiers = family.get("tiers")
         if not tiers:
-            # 没有数值档位 → 加小幅置信度（至少家族对了）
+            # 电梯家族特殊校验：value_type="text" 但可以通过站数校验
+            if family.get("value_type") == "text" and "电梯" in family.get("name", ""):
+                return self._validate_elevator_result(result, bill_text, family)
+            # 其他无数值档位的家族 → 加小幅置信度
             result["confidence"] = min(result.get("confidence", 0) + 3, 100)
             result["rule_validated"] = True
             result["rule_note"] = f"属于家族「{family.get('name', '')}」"
@@ -881,6 +996,82 @@ class RuleValidator:
                                        f"但未找到对应编号")
 
             return result
+
+    def _validate_elevator_result(self, result: dict, bill_text: str,
+                                   family: dict) -> dict:
+        """
+        电梯专用校验：检查搜索匹配到的电梯定额站数档位是否正确，
+        错误时自动纠正到正确档位。
+        """
+        bill_params = text_parser.parse(bill_text)
+        elevator_stops = bill_params.get("elevator_stops")
+
+        if elevator_stops is None:
+            result["rule_validated"] = True
+            result["rule_note"] = f"属于家族「{family.get('name', '')}」，清单未提供站数信息"
+            return result
+
+        main_quota = result.get("quotas", [{}])[0]
+        current_id = main_quota.get("quota_id", "")
+
+        # 当前定额的站数
+        current_stops = None
+        for quota in family.get("quotas", []):
+            if quota.get("id") == current_id:
+                stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
+                if stops_match:
+                    current_stops = int(stops_match.group(1))
+                break
+
+        # 找正确的定额（向上取档：>= elevator_stops 的最小值）
+        correct_quota = None
+        correct_stops = None
+        for quota in family.get("quotas", []):
+            stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
+            if stops_match:
+                s = int(stops_match.group(1))
+                if s >= elevator_stops:
+                    if correct_stops is None or s < correct_stops:
+                        correct_stops = s
+                        correct_quota = quota
+
+        if correct_quota is None:
+            # 超出最大档，取最大档
+            for quota in family.get("quotas", []):
+                stops_match = re.match(r'^(\d+)\s', quota.get("value", ""))
+                if stops_match:
+                    s = int(stops_match.group(1))
+                    if correct_stops is None or s > correct_stops:
+                        correct_stops = s
+                        correct_quota = quota
+
+        if not correct_quota:
+            return result
+
+        correct_id = correct_quota.get("id")
+
+        if current_id == correct_id:
+            # 档位正确
+            result["confidence"] = min(result.get("confidence", 0) + 8, 100)
+            result["rule_validated"] = True
+            result["rule_note"] = (f"电梯校验通过: 「{family.get('name', '')}」"
+                                   f"站数{elevator_stops}→{correct_stops}站档 ✓")
+        else:
+            # 档位错误，纠正
+            prefix = family.get("prefix", "")
+            correct_name = f"{prefix}{correct_quota.get('value', '')}".strip()
+            main_quota["quota_id"] = correct_id
+            main_quota["name"] = correct_name
+            result["confidence"] = max(result.get("confidence", 0), 75)
+            result["rule_validated"] = True
+            result["rule_corrected"] = True
+            result["rule_note"] = (f"电梯校验纠正: 「{family.get('name', '')}」"
+                                   f"站数{elevator_stops}→{correct_stops}站档, "
+                                   f"原{current_id}→改为{correct_id}")
+            logger.info(f"电梯校验纠正: {current_id} → {correct_id} "
+                        f"(站数{elevator_stops}→{correct_stops}站档)")
+
+        return result
 
     def validate_results(self, results: list[dict]) -> list[dict]:
         """
