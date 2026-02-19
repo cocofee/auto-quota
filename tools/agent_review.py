@@ -30,6 +30,13 @@ from src.reranker import Reranker
 from src.rule_validator import RuleValidator
 
 
+def _resolve_runtime_province(name: str = None) -> str:
+    """Resolve province and sync runtime province for downstream modules."""
+    province = config.resolve_province(name, interactive=False)
+    config.set_current_province(province)
+    return province
+
+
 def _safe_unlink(path: str):
     try:
         os.remove(path)
@@ -124,9 +131,11 @@ def get_candidates_for_item(item, searcher, validator, reranker, rule_validator)
     return candidates, None, "search"
 
 
-def export_review_items(excel_path, limit=None, confidence_threshold=85):
+def export_review_items(excel_path, limit=None, confidence_threshold=85, province=None):
     """导出需要审核的清单项（红色+黄色）及其候选列表"""
+    province = _resolve_runtime_province(province)
     print(f"读取清单: {excel_path}")
+    print(f"省份: {province}")
     reader = BillReader()
     items = reader.read_excel(excel_path)
     if not items:
@@ -138,10 +147,10 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
         items = items[:limit]
 
     print(f"初始化搜索引擎...")
-    searcher = HybridSearcher()
+    searcher = HybridSearcher(province=province)
     validator = ParamValidator()
     reranker = Reranker()
-    rule_validator = RuleValidator()
+    rule_validator = RuleValidator(province=province)
 
     review_items = []
     green_count = 0
@@ -233,6 +242,7 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
     output_path = f"output/review/agent_review_{basename}.json"
     _atomic_write_json(output_path, {
         "source_file": excel_path,
+        "province": province,
         "total_items": len(items),
         "green_count": green_count,
         "rule_count": rule_count,
@@ -245,10 +255,13 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
     return output_path
 
 
-def store_decisions(decisions_file):
+def store_decisions(decisions_file, province=None):
     """把审核决策存入经验库"""
     from src.experience_db import ExperienceDB
     from src.learning_notebook import LearningNotebook
+
+    province = _resolve_runtime_province(province)
+    print(f"省份: {province}")
 
     try:
         with open(decisions_file, "r", encoding="utf-8") as f:
@@ -293,6 +306,7 @@ def store_decisions(decisions_file):
             quota_names=quota_names,
             source="user_confirmed",
             confidence=90,
+            province=province,
             specialty=item.get("specialty", ""),
             notes=reasoning,
         )
@@ -347,12 +361,17 @@ if __name__ == "__main__":
         metavar="DECISIONS_JSON",
         help="把审核决策JSON回写到经验库",
     )
+    parser.add_argument(
+        "--province",
+        default=None,
+        help=f"省份（默认: {config.CURRENT_PROVINCE}）",
+    )
     args = parser.parse_args()
 
     if args.store:
-        store_decisions(args.store)
+        store_decisions(args.store, province=args.province)
     elif args.excel_path:
-        export_review_items(args.excel_path, limit=args.limit)
+        export_review_items(args.excel_path, limit=args.limit, province=args.province)
     else:
         parser.print_help()
         sys.exit(1)
