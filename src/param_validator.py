@@ -561,6 +561,23 @@ class ParamValidator:
                 score_sum += 0.3
                 details.append(f"重量{bill_w}t≠{quota_w}t")
 
+        # === 13. 电梯站数（硬性参数） ===
+        if "elevator_stops" in bill_params and "elevator_stops" in quota_params:
+            check_count += 1
+            bill_stops = bill_params["elevator_stops"]
+            quota_stops = quota_params["elevator_stops"]
+            if bill_stops == quota_stops:
+                score_sum += 1.0
+                details.append(f"站数{bill_stops}={quota_stops} 精确匹配")
+            elif bill_stops < quota_stops:
+                tier_score = self._tier_up_score(bill_stops, quota_stops)
+                score_sum += tier_score
+                details.append(f"站数{bill_stops}→{quota_stops} 向上取档")
+            else:
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"站数{bill_stops}>{quota_stops} 不匹配(清单>定额)")
+
         # 计算最终分数
         if check_count == 0:
             # 反向检查：定额有档位参数但清单没提供 → 无法确认档位
