@@ -450,7 +450,7 @@ class AgentMatcher:
         for c in candidates:
             if c["quota_id"] not in selected_ids:
                 ps = c.get("param_score", 0.5)
-                alt_conf = int(ps * 85) if c.get("param_match", True) else max(int(ps * 40), 15)
+                alt_conf = int(ps * 95) if c.get("param_match", True) else max(int(ps * 45), 15)
                 alternatives.append({
                     "quota_id": c["quota_id"],
                     "name": c["name"],
@@ -518,10 +518,10 @@ class AgentMatcher:
             matched = [c for c in candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
-                confidence = int(best.get("param_score", 0.5) * 85)
+                confidence = int(best.get("param_score", 0.5) * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
             else:
                 best = candidates[0]
-                confidence = max(int(best.get("param_score", 0.0) * 40), 15)
+                confidence = max(int(best.get("param_score", 0.0) * 45), 15)
 
         return {
             "bill_item": bill_item,
