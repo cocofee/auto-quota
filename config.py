@@ -38,11 +38,31 @@ KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 # 当前省份/版本配置（默认北京2024）
 # ============================================================
 
-CURRENT_PROVINCE = "北京2024"
+# 默认省份常量（命令行和旧代码的回退值）
+CURRENT_PROVINCE = "北京2024消耗量"
+
+# 运行时省份（支持Web界面动态切换，不修改源文件）
+_runtime_province = None
+
+
+def set_current_province(name: str):
+    """设置运行时的当前省份（Web界面切换时调用）"""
+    global _runtime_province
+    _runtime_province = name
+
+
+def get_current_province() -> str:
+    """获取当前生效的省份名称
+
+    优先级：运行时设置 > 硬编码默认值
+    Web界面通过 set_current_province() 设置，命令行通过 --province 参数传递
+    """
+    return _runtime_province or CURRENT_PROVINCE
+
 
 def get_province_db_dir(province=None):
     """获取指定省份的数据库目录"""
-    province = province or CURRENT_PROVINCE
+    province = province or get_current_province()
     return PROVINCES_DB_DIR / province
 
 def get_quota_db_path(province=None):
@@ -62,7 +82,7 @@ def _safe_dir_name(name: str) -> str:
 
 def get_chroma_quota_dir(province=None):
     """获取定额向量数据库目录（使用ASCII安全路径，避免Windows中文路径问题）"""
-    province = province or CURRENT_PROVINCE
+    province = province or get_current_province()
     safe_name = _safe_dir_name(province)
     new_path = DB_DIR / "chroma" / f"{safe_name}_quota"
 
@@ -129,11 +149,154 @@ def get_current_quota_version(province=None):
 # 定额Excel文件配置
 # ============================================================
 
-# 安装定额文件名（放在 data/quota_data/ 下）
+# 定额数据按省份分目录存放：data/quota_data/{province}/
+# 每个目录下放该省份的定额Excel文件（广联达导出格式）
+# specialty（专业）从Excel的D列自动识别，不需要手动配置
+
+def get_quota_data_dir(province=None):
+    """获取指定省份的定额Excel源文件目录
+
+    支持两种目录结构：
+    1. 扁平: data/quota_data/北京2024/
+    2. 嵌套: data/quota_data/北京/北京2024/
+    优先匹配扁平结构，找不到再扫描子目录
+    """
+    province = province or get_current_province()
+    # 扁平结构：直接匹配
+    flat_path = QUOTA_DATA_DIR / province
+    if flat_path.exists() and flat_path.is_dir():
+        return flat_path
+    # 嵌套结构：在所有子目录中查找
+    if QUOTA_DATA_DIR.exists():
+        for parent in QUOTA_DATA_DIR.iterdir():
+            if parent.is_dir():
+                nested = parent / province
+                if nested.exists() and nested.is_dir():
+                    return nested
+    # 都没找到，返回扁平路径（让调用方报错）
+    return flat_path
+
+
+def list_db_provinces():
+    """扫描 db/provinces/ 下所有已构建的省份数据库目录
+
+    返回省份名称列表（即目录名），如 ['北京2024消耗量', '北京2021消耗量', ...]
+    """
+    provinces = []
+    if not PROVINCES_DB_DIR.exists():
+        return provinces
+    for item in sorted(PROVINCES_DB_DIR.iterdir()):
+        if item.is_dir():
+            provinces.append(item.name)
+    return provinces
+
+
+def resolve_province(name: str = None, interactive: bool = False) -> str:
+    """将用户输入的省份简称解析为完整的省份目录名
+
+    解析优先级:
+    1. 精确匹配 db/provinces/ 下的目录名
+    2. 模糊匹配：输入是某个目录名的子串，且唯一匹配
+    3. 多个模糊匹配：交互模式下让用户选择，否则报错
+    4. 无匹配：报错并列出所有可用省份
+
+    参数:
+        name: 用户输入的省份名称/简称，None 表示使用默认值或交互选择
+        interactive: 是否允许交互式选择（命令行场景为True）
+
+    返回: 完整的省份目录名
+
+    示例:
+        resolve_province("2024")      → "北京2024消耗量"
+        resolve_province("修缮")      → "北京2021房屋修缮"
+        resolve_province("山东")      → "山东"
+        resolve_province("2021消耗")  → "北京2021消耗量"
+    """
+    available = list_db_provinces()
+
+    if not available:
+        raise ValueError("没有找到任何省份数据库，请先导入定额数据")
+
+    # 未指定省份：交互模式下让用户选，否则用默认值
+    if not name:
+        if interactive and len(available) > 1:
+            return _interactive_select(available)
+        return CURRENT_PROVINCE
+
+    # 1. 精确匹配
+    if name in available:
+        return name
+
+    # 2. 模糊匹配（输入是目录名的子串）
+    matches = [p for p in available if name in p]
+
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        if interactive:
+            print(f"\n'{name}' 匹配到多个省份：")
+            return _interactive_select(matches)
+        # 非交互模式，返回详细错误
+        options = ", ".join(matches)
+        raise ValueError(f"'{name}' 匹配到多个省份: {options}，请输入更精确的名称")
+    else:
+        options = ", ".join(available)
+        raise ValueError(f"找不到省份 '{name}'，可用省份: {options}")
+
+
+def _interactive_select(provinces: list) -> str:
+    """交互式选择省份（命令行菜单）"""
+    # 默认省份排在最前面
+    if CURRENT_PROVINCE in provinces:
+        provinces = [CURRENT_PROVINCE] + [p for p in provinces if p != CURRENT_PROVINCE]
+
+    print("\n请选择省份定额库:")
+    for i, p in enumerate(provinces):
+        default_mark = " (默认)" if p == CURRENT_PROVINCE else ""
+        print(f"  [{i + 1}] {p}{default_mark}")
+
+    while True:
+        try:
+            choice = input(f"\n输入编号 [1-{len(provinces)}]，直接回车选默认: ").strip()
+            if not choice:
+                # 回车 = 选默认
+                result = CURRENT_PROVINCE if CURRENT_PROVINCE in provinces else provinces[0]
+                print(f"  → 已选择: {result}")
+                return result
+            idx = int(choice) - 1
+            if 0 <= idx < len(provinces):
+                print(f"  → 已选择: {provinces[idx]}")
+                return provinces[idx]
+            print(f"  无效编号，请输入 1-{len(provinces)}")
+        except (ValueError, EOFError):
+            print(f"  无效输入，请输入 1-{len(provinces)}")
+
+
+def list_all_provinces():
+    """扫描所有可用的省份/版本
+
+    支持扁平和嵌套两种目录结构，返回省份名称列表。
+    """
+    provinces = []
+    if not QUOTA_DATA_DIR.exists():
+        return provinces
+    for item in sorted(QUOTA_DATA_DIR.iterdir()):
+        if not item.is_dir():
+            continue
+        # 检查是否直接含xlsx（扁平结构）
+        has_xlsx = any(item.glob("*.xlsx"))
+        if has_xlsx:
+            provinces.append(item.name)
+        else:
+            # 检查子目录（嵌套结构）
+            for sub in sorted(item.iterdir()):
+                if sub.is_dir() and any(sub.glob("*.xlsx")):
+                    provinces.append(sub.name)
+    return provinces
+
+# 兼容旧代码：保留QUOTA_EXCEL_FILES但标记为废弃
 QUOTA_EXCEL_FILES = {
     "安装": "C 通用安装工程_全部.xlsx",
-    # "土建": "待导入.xlsx",    # 用户从广联达导出后添加
-    # "市政": "待导入.xlsx",
 }
 
 # 定额Excel列映射（A=编号, B=名称+参数, C=单位, D=工作类型）
@@ -141,7 +304,7 @@ QUOTA_EXCEL_COLUMNS = {
     "id_col": 0,       # A列：定额编号
     "name_col": 1,     # B列：名称+特征参数
     "unit_col": 2,     # C列：计量单位
-    "type_col": 3,     # D列：工作类型
+    "type_col": 3,     # D列：工作类型（"安装"/"土建"/"市政"等，用于自动识别specialty）
 }
 
 # ============================================================
@@ -269,11 +432,10 @@ UPLOAD_MAX_MB = 30
 # ============================================================
 
 def ensure_dirs():
-    """创建所有必要的目录"""
+    """创建所有必要的目录（不含省份目录，省份目录在导入时按需创建）"""
     dirs = [
         DATA_DIR, QUOTA_DATA_DIR, EXPERIENCE_DIR, DICT_DIR,
         DB_DIR, COMMON_DB_DIR, PROVINCES_DB_DIR,
-        get_province_db_dir(),  # 当前省份目录
         OUTPUT_DIR, KNOWLEDGE_DIR, LOG_DIR,
     ]
     for d in dirs:

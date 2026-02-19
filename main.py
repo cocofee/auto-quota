@@ -379,7 +379,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     rule_hits = 0  # 规则预匹配命中计数
 
     # 创建规则校验器（用于预匹配和后置校验）
-    rule_validator = RuleValidator()
+    rule_validator = RuleValidator(province=province)
 
     # 创建Reranker（延迟加载，第一次走搜索时才实际加载模型）
     from src.reranker import Reranker
@@ -637,7 +637,7 @@ def match_full(bill_items: list[dict], searcher: HybridSearcher,
     rule_hits = 0  # 规则预匹配命中计数
 
     # 创建规则校验器（用于预匹配和后置校验）
-    rule_validator = RuleValidator()
+    rule_validator = RuleValidator(province=province)
 
     # 创建Reranker（延迟加载）
     from src.reranker import Reranker
@@ -844,7 +844,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     agent_hits = 0
 
     # 创建规则校验器和Reranker
-    rule_validator = RuleValidator()
+    rule_validator = RuleValidator(province=province)
     from src.reranker import Reranker
     reranker = Reranker()
 
@@ -1041,11 +1041,21 @@ def main():
         logger.error(f"文件不存在: {input_path}")
         sys.exit(1)
 
+    # 解析省份（支持简称模糊匹配 + 交互式选择）
+    try:
+        province = config.resolve_province(
+            args.province,
+            interactive=(not args.json_output)  # 非JSON输出模式才允许交互
+        )
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
     logger.info("=" * 60)
     logger.info("自动套定额系统")
     logger.info(f"  输入文件: {input_path}")
     logger.info(f"  匹配模式: {args.mode}")
-    logger.info(f"  省份: {args.province or config.CURRENT_PROVINCE}")
+    logger.info(f"  省份: {province}")
     logger.info(f"  经验库: {'关闭' if args.no_experience else '开启'}")
     logger.info("=" * 60)
 
@@ -1075,7 +1085,6 @@ def main():
 
     # 2. 初始化搜索引擎
     logger.info("第2步：初始化搜索引擎...")
-    province = args.province or config.CURRENT_PROVINCE
     searcher = HybridSearcher(province)
     validator = ParamValidator()
 
