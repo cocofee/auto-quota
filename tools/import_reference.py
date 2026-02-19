@@ -59,81 +59,82 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
     import openpyxl
 
     wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        # 遍历所有Sheet（造价Home导出的Excel可能有多个工作簿）
+        pairs = []
+        sheet_names = wb.sheetnames
+        logger.info(f"Excel包含 {len(sheet_names)} 个工作簿: {sheet_names[:10]}{'...' if len(sheet_names) > 10 else ''}")
 
-    # 遍历所有Sheet（造价Home导出的Excel可能有多个工作簿）
-    pairs = []
-    sheet_names = wb.sheetnames
-    logger.info(f"Excel包含 {len(sheet_names)} 个工作簿: {sheet_names[:10]}{'...' if len(sheet_names) > 10 else ''}")
+        for sheet_name in sheet_names:
+            ws = wb[sheet_name]
+            current_bill = None  # 当前正在处理的清单项
+            current_section = ""  # 当前分部标题（如"给排水工程"）
+            sheet_pairs = 0  # 当前Sheet解析出的清单数
 
-    for sheet_name in sheet_names:
-        ws = wb[sheet_name]
-        current_bill = None  # 当前正在处理的清单项
-        current_section = ""  # 当前分部标题（如"给排水工程"）
-        sheet_pairs = 0  # 当前Sheet解析出的清单数
-
-        for row in ws.iter_rows(min_row=1, values_only=True):
-            # 跳过空行
-            if not row or all(cell is None for cell in row):
-                continue
-
-            # 确保至少有3列
-            cells = list(row) + [None] * (7 - len(row)) if len(row) < 7 else list(row)
-
-            col_a = str(cells[0] or "").strip()  # 序号
-            col_b = str(cells[1] or "").strip()  # 项目编码 / 定额编号
-            col_c = str(cells[2] or "").strip()  # 项目名称 / 定额名称
-            col_d = str(cells[3] or "").strip()  # 项目特征描述
-            col_e = str(cells[4] or "").strip()  # 计量单位
-
-            # 跳过表头行（"序号"、"项目编码"等文字）
-            if col_a in ("序号", "") and col_b in ("项目编码", "编码", ""):
-                if col_c in ("项目名称", "名称", ""):
+            for row in ws.iter_rows(min_row=1, values_only=True):
+                # 跳过空行
+                if not row or all(cell is None for cell in row):
                     continue
 
-            # 判断行类型
-            row_type = _classify_row(col_a, col_b, col_c, col_d)
+                # 确保至少有3列
+                cells = list(row) + [None] * (7 - len(row)) if len(row) < 7 else list(row)
 
-            if row_type == "bill":
-                # 清单行：保存之前的清单（如果有），开始新的清单
-                if current_bill and current_bill["quotas"]:
-                    pairs.append(current_bill)
-                    sheet_pairs += 1
+                col_a = str(cells[0] or "").strip()  # 序号
+                col_b = str(cells[1] or "").strip()  # 项目编码 / 定额编号
+                col_c = str(cells[2] or "").strip()  # 项目名称 / 定额名称
+                col_d = str(cells[3] or "").strip()  # 项目特征描述
+                col_e = str(cells[4] or "").strip()  # 计量单位
 
-                # 构建清单模式文本（使用共享的规范化函数，确保和匹配时格式一致）
-                bill_pattern = normalize_bill_text(col_c, col_d)
+                # 跳过表头行（"序号"、"项目编码"等文字）
+                if col_a in ("序号", "") and col_b in ("项目编码", "编码", ""):
+                    if col_c in ("项目名称", "名称", ""):
+                        continue
 
-                current_bill = {
-                    "bill_name": col_c,
-                    "bill_desc": col_d,
-                    "bill_code": col_b,
-                    "bill_unit": col_e,
-                    "bill_pattern": bill_pattern,
-                    "section": current_section,  # 继承当前分部标题
-                    "quotas": [],
-                }
+                # 判断行类型
+                row_type = _classify_row(col_a, col_b, col_c, col_d)
 
-            elif row_type == "quota" and current_bill is not None:
-                # 定额行：挂到当前清单下
-                current_bill["quotas"].append({
-                    "code": col_b,
-                    "name": col_c,
-                })
+                if row_type == "bill":
+                    # 清单行：保存之前的清单（如果有），开始新的清单
+                    if current_bill and current_bill["quotas"]:
+                        pairs.append(current_bill)
+                        sheet_pairs += 1
 
-            elif row_type == "other" and col_c and len(col_c) >= 2:
-                # 可能是分部/章节标题行（如"给排水工程"、"电气安装"）
-                # 保存下来供后续清单项继承
-                current_section = col_c
+                    # 构建清单模式文本（使用共享的规范化函数，确保和匹配时格式一致）
+                    bill_pattern = normalize_bill_text(col_c, col_d)
 
-        # 保存当前Sheet最后一个清单
-        if current_bill and current_bill["quotas"]:
-            pairs.append(current_bill)
-            sheet_pairs += 1
+                    current_bill = {
+                        "bill_name": col_c,
+                        "bill_desc": col_d,
+                        "bill_code": col_b,
+                        "bill_unit": col_e,
+                        "bill_pattern": bill_pattern,
+                        "section": current_section,  # 继承当前分部标题
+                        "quotas": [],
+                    }
 
-        if sheet_pairs > 0:
-            logger.debug(f"  工作簿 '{sheet_name}': {sheet_pairs} 条清单")
+                elif row_type == "quota" and current_bill is not None:
+                    # 定额行：挂到当前清单下
+                    current_bill["quotas"].append({
+                        "code": col_b,
+                        "name": col_c,
+                    })
 
-    wb.close()
-    return pairs
+                elif row_type == "other" and col_c and len(col_c) >= 2:
+                    # 可能是分部/章节标题行（如"给排水工程"、"电气安装"）
+                    # 保存下来供后续清单项继承
+                    current_section = col_c
+
+            # 保存当前Sheet最后一个清单
+            if current_bill and current_bill["quotas"]:
+                pairs.append(current_bill)
+                sheet_pairs += 1
+
+            if sheet_pairs > 0:
+                logger.debug(f"  工作簿 '{sheet_name}': {sheet_pairs} 条清单")
+
+        return pairs
+    finally:
+        wb.close()
 
 
 def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
@@ -177,33 +178,6 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     return "other"
 
 
-def _build_bill_pattern(name: str, desc: str) -> str:
-    """
-    从清单名称和特征描述构建搜索模式文本
-
-    目标：提取有意义的关键信息，去掉无用的格式文字
-    """
-    # 合并名称和描述
-    parts = [name]
-
-    if desc:
-        # 项目特征描述通常是多行，每行一个特征
-        # 格式如："1.材质：镀锌钢管\r\n2.连接方式：丝接\r\n3.规格：DN25"
-        lines = re.split(r'[\r\n]+', desc)
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            # 去掉行首的序号（如"1."、"2."）
-            line = re.sub(r'^\d+[.、．]\s*', '', line)
-            # 去掉"项目特征："等前缀
-            line = re.sub(r'^项目特征[：:]\s*', '', line)
-            if line:
-                parts.append(line)
-
-    return " ".join(parts)
-
-
 def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
     """
     将清单→定额对转换为通用知识库的导入格式
@@ -216,10 +190,21 @@ def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
     records = []
 
     for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        bill_pattern = pair.get("bill_pattern", "")
+        if not isinstance(bill_pattern, str) or not bill_pattern.strip():
+            continue
+
         # 主定额名称模式列表
         quota_patterns = []
-        for q in pair["quotas"]:
-            name = q["name"].strip()
+        quotas = pair.get("quotas", [])
+        if not isinstance(quotas, list):
+            quotas = []
+        for q in quotas:
+            if not isinstance(q, dict):
+                continue
+            name = str(q.get("name", "")).strip()
             if name:
                 quota_patterns.append(name)
 
@@ -232,11 +217,11 @@ def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
         if section:
             specialty = parse_section_title(section)
         if not specialty:
-            classification = classify_specialty(pair["bill_name"], pair.get("bill_desc", ""))
+            classification = classify_specialty(pair.get("bill_name", ""), pair.get("bill_desc", ""))
             specialty = classification.get("primary")
 
         records.append({
-            "bill_pattern": pair["bill_pattern"],
+            "bill_pattern": bill_pattern,
             "quota_patterns": quota_patterns,
             "associated_patterns": [],  # 暂时为空，后续可从定额关系中提取
             "param_hints": {},          # 暂时为空，后续可从text_parser提取
@@ -246,7 +231,7 @@ def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
     return records
 
 
-def import_to_experience(pairs: list[dict], project_name: str):
+def import_to_experience(pairs: list[dict], project_name: str, province: str = None):
     """
     将清单→定额对导入经验库（带定额编号，同省份可直接匹配）
 
@@ -264,26 +249,46 @@ def import_to_experience(pairs: list[dict], project_name: str):
     skipped = 0
 
     for pair in pairs:
-        bill_text = pair["bill_pattern"]  # 清单名称+特征描述
-        quota_ids = [q["code"] for q in pair["quotas"]]
-        quota_names = [q["name"] for q in pair["quotas"]]
+        if not isinstance(pair, dict):
+            skipped += 1
+            logger.warning(f"经验库导入跳过: 记录结构非法（期望dict，实际{type(pair).__name__}）")
+            continue
+        bill_text = pair.get("bill_pattern", "")  # 清单名称+特征描述
+        if not isinstance(bill_text, str) or not bill_text.strip():
+            skipped += 1
+            logger.warning(f"经验库导入跳过: 清单'{pair.get('bill_name', '')[:40]}' 缺少有效bill_pattern")
+            continue
+        quotas = pair.get("quotas", [])
+        if not isinstance(quotas, list):
+            skipped += 1
+            logger.warning(f"经验库导入跳过: 清单'{pair.get('bill_name', '')[:40]}' quotas结构非法")
+            continue
+        quota_ids = [q.get("code", "") for q in quotas if isinstance(q, dict) and q.get("code")]
+        quota_names = [q.get("name", "") for q in quotas if isinstance(q, dict) and q.get("code")]
 
         if not quota_ids:
             skipped += 1
             continue
 
         try:
-            exp_db.add_experience(
+            record_id = exp_db.add_experience(
                 bill_text=bill_text,
                 quota_ids=quota_ids,
                 quota_names=quota_names,
                 confidence=75,  # 项目导入给75分（候选层）
                 source="project_import",
                 project_name=project_name,
+                province=province,
             )
-            added += 1
+            if record_id > 0:
+                added += 1
+            else:
+                skipped += 1
         except Exception as e:
-            logger.debug(f"经验库导入跳过: {e}")
+            logger.warning(
+                f"经验库导入失败并跳过: bill='{pair.get('bill_name', '')[:40]}', "
+                f"code='{pair.get('bill_code', '')}', error={e}"
+            )
             skipped += 1
 
     return {"added": added, "skipped": skipped}
@@ -330,34 +335,54 @@ def main():
         sys.exit(1)
 
     # 打印解析结果摘要
-    total_quotas = sum(len(p["quotas"]) for p in pairs)
+    total_quotas = sum(
+        len(p.get("quotas", []))
+        for p in pairs
+        if isinstance(p, dict) and isinstance(p.get("quotas", []), list)
+    )
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  定额项: {total_quotas}条")
-    logger.info(f"  平均每条清单: {total_quotas / len(pairs):.1f}条定额")
+    avg_per_bill = (total_quotas / len(pairs)) if pairs else 0
+    logger.info(f"  平均每条清单: {avg_per_bill:.1f}条定额")
 
     # 打印前5条示例
     logger.info("--- 示例（前5条）---")
     for i, pair in enumerate(pairs[:5]):
-        quota_names = [q["name"][:30] for q in pair["quotas"]]
-        logger.info(f"  [{i+1}] {pair['bill_name'][:40]}")
+        quotas = pair.get("quotas", []) if isinstance(pair, dict) else []
+        if not isinstance(quotas, list):
+            quotas = []
+        quota_names = [str(q.get("name", ""))[:30] for q in quotas if isinstance(q, dict) and q.get("name")]
+        if not quota_names:
+            quota_names = ["(无有效定额名称)"]
+        bill_name = pair.get("bill_name", "") if isinstance(pair, dict) else ""
+        logger.info(f"  [{i+1}] {str(bill_name)[:40]}")
         logger.info(f"      → {', '.join(quota_names)}")
 
     if args.dry_run:
         logger.info("--- dry-run模式，不导入 ---")
         for i, pair in enumerate(pairs):
+            bill_name = pair.get("bill_name", "") if isinstance(pair, dict) else ""
+            bill_desc = pair.get("bill_desc", "") if isinstance(pair, dict) else ""
+            bill_code = pair.get("bill_code", "") if isinstance(pair, dict) else ""
+            bill_pattern = pair.get("bill_pattern", "") if isinstance(pair, dict) else ""
+            quotas = pair.get("quotas", []) if isinstance(pair, dict) else []
+            if not isinstance(quotas, list):
+                quotas = []
             print(f"\n--- 第{i+1}条 ---")
-            print(f"  清单: {pair['bill_name']}")
-            if pair['bill_desc']:
-                print(f"  特征: {pair['bill_desc'][:100]}")
-            print(f"  编码: {pair['bill_code']}")
-            print(f"  模式: {pair['bill_pattern'][:80]}")
-            for q in pair["quotas"]:
-                print(f"  定额: {q['code']} → {q['name']}")
+            print(f"  清单: {bill_name}")
+            if bill_desc:
+                print(f"  特征: {str(bill_desc)[:100]}")
+            print(f"  编码: {bill_code}")
+            print(f"  模式: {str(bill_pattern)[:80]}")
+            for q in quotas:
+                if not isinstance(q, dict):
+                    continue
+                print(f"  定额: {q.get('code', '')} → {q.get('name', '')}")
         return
 
     # 第2步：导入经验库（带定额编号，同省份直接用）
     logger.info("导入经验库...")
-    exp_stats = import_to_experience(pairs, project_name)
+    exp_stats = import_to_experience(pairs, project_name, province=args.province)
     logger.info(f"  经验库: 新增{exp_stats['added']}条, 跳过{exp_stats['skipped']}条")
 
     # 第3步：导入通用知识库（定额名称模式，跨省份通用）

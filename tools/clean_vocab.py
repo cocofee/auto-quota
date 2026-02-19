@@ -16,6 +16,8 @@
 """
 
 from pathlib import Path
+import os
+import tempfile
 
 
 def clean_vocab():
@@ -85,8 +87,25 @@ def clean_vocab():
         output_lines.append(line)
 
     # 写回文件
-    with open(vocab_path, "w", encoding="utf-8") as f:
-        f.writelines(output_lines)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            prefix=f"{vocab_path.stem}_tmp_",
+            dir=str(vocab_path.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            f.writelines(output_lines)
+        os.replace(tmp_path, vocab_path)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     print(f"\n清理完成！共移除 {removed_count} 个错误词条。")
     print(f"文件已更新: {vocab_path}")

@@ -17,27 +17,91 @@ import os
 import json
 import argparse
 import re
+import tempfile
 from pathlib import Path
 
 # 确保能导入项目模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-def run_matching(excel_path: str, use_experience: bool = False) -> dict:
+def _atomic_write_text(path: str, text: str):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            prefix=f"{target.stem}_tmp_",
+            dir=str(target.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as tf:
+            tmp_path = tf.name
+            tf.write(text)
+        os.replace(tmp_path, target)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+def _atomic_write_json(path: str, payload):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix=f"{target.stem}_tmp_",
+            dir=str(target.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as tf:
+            tmp_path = tf.name
+            json.dump(payload, tf, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, target)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+def run_matching(excel_path: str, use_experience: bool = False,
+                 province: str = None, filter_code: str = None) -> dict:
     """调用 main.py 的匹配逻辑，返回完整结果
 
     参数:
         excel_path: 清单Excel路径
         use_experience: 是否使用经验库（默认False=纯搜索测试）
+        province: 省份名称（如"北京2024"），传入时启用经验库
+        filter_code: 过滤编码前缀（如"03"=仅安装工程）
     """
+    temp_dir = Path("output") / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="_temp_review_", dir=str(temp_dir),
+        delete=False, encoding="utf-8"
+    ) as tf:
+        temp_json = tf.name
+
     # 用模拟命令行参数的方式调用
     original_argv = sys.argv
     argv = [
         'main.py',
         excel_path,
         '--mode', 'search',
-        '--json-output', '_temp_review.json',
+        '--json-output', temp_json,
     ]
+    if province:
+        argv.extend(['--province', province])
+    if filter_code:
+        argv.extend(['--filter-code', filter_code])
     if not use_experience:
         argv.append('--no-experience')
     sys.argv = argv
@@ -47,11 +111,36 @@ def run_matching(excel_path: str, use_experience: bool = False) -> dict:
     finally:
         sys.argv = original_argv
 
-    # 读取结果JSON
-    with open('_temp_review.json', 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    os.remove('_temp_review.json')
+    try:
+        # 读取结果JSON
+        with open(temp_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"匹配结果文件不存在: {temp_json}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"匹配结果JSON损坏: {temp_json} ({e})") from e
+    except OSError as e:
+        raise RuntimeError(f"读取匹配结果失败: {temp_json} ({e})") from e
+    finally:
+        try:
+            os.remove(temp_json)
+        except Exception as e:
+            print(f"[WARN] 清理临时文件失败: {temp_json} ({e})")
+
+    if not isinstance(data, dict):
+        raise RuntimeError("匹配结果格式错误：根节点必须是对象")
+    results = data.get("results")
+    if results is not None and not isinstance(results, list):
+        raise RuntimeError("匹配结果格式错误：results 必须是数组")
     return data
+
+
+def _safe_confidence(value, default: int = 0) -> int:
+    try:
+        conf = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(100, conf))
 
 
 def format_confidence(conf: int) -> str:
@@ -75,10 +164,9 @@ def format_description(desc: str, max_lines: int = 3) -> str:
     return ' | '.join(lines)
 
 
-def write_batch(results: list, batch_num: int, total_batches: int,
+def write_batch(results: list, start_idx: int, batch_num: int, total_batches: int,
                 total_items: int, output_dir: str, project_name: str):
     """写一批审核结果到txt文件"""
-    start_idx = (batch_num - 1) * len(results)
     filepath = os.path.join(output_dir, f"review_{project_name}_batch{batch_num}.txt")
 
     lines = []
@@ -95,7 +183,7 @@ def write_batch(results: list, batch_num: int, total_batches: int,
         desc = bill.get("description", "")
         unit = bill.get("unit", "")
         qty = bill.get("quantity", "")
-        conf = r.get("confidence", 0)
+        conf = _safe_confidence(r.get("confidence", 0))
         source = r.get("match_source", "search")
 
         # 措施项跳过，简洁显示
@@ -106,8 +194,10 @@ def write_batch(results: list, batch_num: int, total_batches: int,
 
         # 定额信息
         quotas = r.get("quotas", [])
+        if not isinstance(quotas, list):
+            quotas = []
         if quotas:
-            q = quotas[0]
+            q = quotas[0] if isinstance(quotas[0], dict) else {}
             quota_id = q.get("quota_id", "")
             quota_name = q.get("name", "")
             quota_unit = q.get("unit", "")
@@ -120,6 +210,8 @@ def write_batch(results: list, batch_num: int, total_batches: int,
 
         # 备选定额
         alts = r.get("alternatives", [])
+        if not isinstance(alts, list):
+            alts = []
 
         # 格式化输出
         conf_str = format_confidence(conf)
@@ -134,16 +226,21 @@ def write_batch(results: list, batch_num: int, total_batches: int,
         # 备选
         if alts:
             for j, alt in enumerate(alts):
-                alt_conf = format_confidence(alt.get("confidence", 0))
-                lines.append(f"  备选{j+1}: {alt['quota_id']} {alt['name']}  ({alt_conf})")
+                if not isinstance(alt, dict):
+                    continue
+                alt_conf = format_confidence(_safe_confidence(alt.get("confidence", 0)))
+                lines.append(
+                    f"  备选{j+1}: {alt.get('quota_id', '')} "
+                    f"{alt.get('name', '')}  ({alt_conf})"
+                )
         lines.append(f"{'─'*70}")
 
     # 汇总统计（措施项单独统计，不影响绿/黄/红）
     measure = sum(1 for r in results if r.get("match_source") == "skip_measure")
     actual = [r for r in results if r.get("match_source") != "skip_measure"]
-    green = sum(1 for r in actual if r.get("confidence", 0) >= 85)
-    yellow = sum(1 for r in actual if 60 <= r.get("confidence", 0) < 85)
-    red = sum(1 for r in actual if r.get("confidence", 0) < 60)
+    green = sum(1 for r in actual if _safe_confidence(r.get("confidence", 0)) >= 85)
+    yellow = sum(1 for r in actual if 60 <= _safe_confidence(r.get("confidence", 0)) < 85)
+    red = sum(1 for r in actual if _safe_confidence(r.get("confidence", 0)) < 60)
     stat = f"本批统计: 绿色{green} 黄色{yellow} 红色{red} / 实际{len(actual)}条"
     if measure:
         stat += f" (另有{measure}条措施项跳过)"
@@ -153,8 +250,7 @@ def write_batch(results: list, batch_num: int, total_batches: int,
     lines.append("格式：[序号] 错误原因 或 [序号] 应该是XXX")
     lines.append("")
 
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(lines))
+    _atomic_write_text(filepath, '\n'.join(lines))
 
     return filepath
 
@@ -165,6 +261,8 @@ def main():
     parser.add_argument('--batch-size', type=int, default=20, help='每批条数（默认20）')
     parser.add_argument('--with-experience', action='store_true',
                         help='启用经验库（默认关闭，纯搜索测试）')
+    parser.add_argument('--province', help='省份名称（如"北京2024"）')
+    parser.add_argument('--filter-code', help='过滤编码前缀（如"03"=仅安装工程）')
     args = parser.parse_args()
 
     excel_path = args.excel_path
@@ -191,7 +289,12 @@ def main():
     print()
 
     # 运行匹配
-    data = run_matching(excel_path, use_experience=args.with_experience)
+    try:
+        data = run_matching(excel_path, use_experience=args.with_experience,
+                           province=args.province, filter_code=args.filter_code)
+    except Exception as e:
+        print(f"匹配失败: {e}")
+        sys.exit(1)
     results = data.get('results', [])
     total = len(results)
 
@@ -202,9 +305,9 @@ def main():
     # 统计（措施项单独统计）
     measure = sum(1 for r in results if r.get("match_source") == "skip_measure")
     actual = [r for r in results if r.get("match_source") != "skip_measure"]
-    green = sum(1 for r in actual if r.get("confidence", 0) >= 85)
-    yellow = sum(1 for r in actual if 60 <= r.get("confidence", 0) < 85)
-    red = sum(1 for r in actual if r.get("confidence", 0) < 60)
+    green = sum(1 for r in actual if _safe_confidence(r.get("confidence", 0)) >= 85)
+    yellow = sum(1 for r in actual if 60 <= _safe_confidence(r.get("confidence", 0)) < 85)
+    red = sum(1 for r in actual if _safe_confidence(r.get("confidence", 0)) < 60)
     stat = f"匹配完成: 共{total}条  绿色{green} 黄色{yellow} 红色{red}"
     if measure:
         stat += f"  (另有{measure}条措施项自动跳过)"
@@ -218,15 +321,14 @@ def main():
         start = b * batch_size
         end = min(start + batch_size, total)
         batch_results = results[start:end]
-        filepath = write_batch(batch_results, b + 1, total_batches,
+        filepath = write_batch(batch_results, start, b + 1, total_batches,
                               total, output_dir, project_name)
         batch_files.append(filepath)
         print(f"  批次{b+1}/{total_batches}: {filepath}")
 
     # 保存完整JSON（方便后续处理）
     json_path = os.path.join(output_dir, f"review_{project_name}.json")
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(json_path, data)
     print(f"\n完整JSON: {json_path}")
 
     print(f"\n请从 batch1 开始审核，每批{batch_size}条。")

@@ -17,8 +17,10 @@
 """
 
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -717,15 +719,49 @@ def main():
     json_path = output_dir / f"{province}_安装定额规则.json"
     summary_path = output_dir / f"{province}_安装定额规则_摘要.txt"
 
-    # 写入JSON
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
+    # 写入JSON（原子替换，避免中断产生损坏文件）
+    json_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix=f"{json_path.stem}_tmp_",
+            dir=str(json_path.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as f:
+            json_tmp = f.name
+            json.dump(rules, f, ensure_ascii=False, indent=2)
+        os.replace(json_tmp, json_path)
+    finally:
+        if json_tmp and Path(json_tmp).exists():
+            try:
+                os.remove(json_tmp)
+            except OSError:
+                pass
     print(f"JSON规则文件: {json_path}")
 
     # 写入摘要
     summary = generate_summary(rules)
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(summary)
+    summary_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            prefix=f"{summary_path.stem}_tmp_",
+            dir=str(summary_path.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as f:
+            summary_tmp = f.name
+            f.write(summary)
+        os.replace(summary_tmp, summary_path)
+    finally:
+        if summary_tmp and Path(summary_tmp).exists():
+            try:
+                os.remove(summary_tmp)
+            except OSError:
+                pass
     print(f"摘要文件: {summary_path}")
 
     # 打印统计
