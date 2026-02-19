@@ -39,7 +39,7 @@ LIGHT_BLUE_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_typ
 
 # 字体（和广联达一致：宋体9号，全表统一）
 HEADER_FONT = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
-BILL_FONT = Font(name="微软雅黑", size=10)
+BILL_FONT = Font(name="宋体", size=9)
 # 定额行字体：宋体9号，和广联达导出格式一致
 GLD_FONT = Font(name="宋体", size=9)
 
@@ -50,6 +50,19 @@ THIN_BORDER = Border(
     top=Side(style="thin"),
     bottom=Side(style="thin"),
 )
+
+# 标准列宽（参考广联达格式，配合 wrap_text 使用）
+STANDARD_COL_WIDTHS = {
+    "A": 5,     # 序号
+    "B": 13,    # 项目编码/定额编号
+    "C": 20,    # 项目名称
+    "D": 30,    # 项目特征描述/定额名称
+    "E": 6,     # 计量单位
+    "F": 10,    # 工程量
+    "G": 10,    # 综合单价
+    "H": 10,    # 合价
+    "I": 10,    # 暂估价
+}
 
 
 # ================================================================
@@ -378,8 +391,9 @@ class OutputWriter:
                 f"Sheet [{ws.title}]: 结果为清单子集，按sheet_bill_seq精准回写 "
                 f"({len(results)}/{len(bill_rows)})")
 
-        # 第3.5步：保存原始清单行高度（insert_rows会打乱行高映射）
-        # 用A列序号（清单行标识）→ 行高 的映射，方便插入后恢复
+        # 第3.5步：保存原始清单行高度
+        # insert_rows 不会移动 row_dimensions 的键，所以需要手动保存/恢复
+        # 用 A 列序号作 key，插入后根据序号找到新行号再恢复
         original_bill_heights = {}
         for row_idx in bill_rows:
             h = ws.row_dimensions[row_idx].height
@@ -420,7 +434,7 @@ class OutputWriter:
                     cell.fill = RED_FILL
                     cell.border = THIN_BORDER
 
-        # 第4.5步：恢复清单行原始行高（insert_rows会打乱行高映射）
+        # 第4.5步：恢复清单行原始行高（insert_rows 不移动 row_dimensions 键）
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
             if _is_bill_serial(a_val):
@@ -430,6 +444,9 @@ class OutputWriter:
 
         # 第5步：在表头行添加J-N列标题
         self._add_extra_headers(ws, header_row)
+
+        # 第6步：统一格式化所有行（固定列宽 + 字体 + 边框 + 换行）
+        self._apply_post_format(ws, header_row)
 
         logger.info(f"Sheet [{ws.title}]: 处理 {len(row_result_pairs)} 条清单项")
 
@@ -507,7 +524,7 @@ class OutputWriter:
             alt_col = 12 + alt_idx  # L=12, M=13, N=14
             alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
             cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
-            cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
+            cell_alt.font = Font(name="宋体", size=9, color="666666")
             cell_alt.border = THIN_BORDER
 
     def _write_quota_rows(self, ws, current_row: int, result: dict,
@@ -613,6 +630,54 @@ class OutputWriter:
         ws.column_dimensions["M"].width = 30
         ws.column_dimensions["N"].width = 30
 
+    def _apply_post_format(self, ws, header_row: int):
+        """
+        格式化清单行和定额行（不动分部/合计等原始行，保留其原始格式）
+
+        解决的问题：
+        - openpyxl 加载后清单行可能丢失字体/边框/对齐
+        - insert_rows 新插入的定额行没有格式
+        - 统一设 wrap_text=True 让文字自动换行
+        - 设固定列宽让表格宽度一致
+        """
+        # 1. 设固定列宽（A-I列）
+        for col, width in STANDARD_COL_WIDTHS.items():
+            ws.column_dimensions[col].width = width
+
+        # 2. 只格式化清单行和定额行，跳过分部/合计等原始行
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            a_val = ws.cell(row=row_idx, column=1).value
+            b_val = ws.cell(row=row_idx, column=2).value
+            is_bill = _is_bill_serial(a_val)
+            is_quota = (
+                (a_val is None or str(a_val).strip() == "")
+                and b_val
+                and _is_quota_code(str(b_val).strip())
+            )
+
+            if not is_bill and not is_quota:
+                continue  # 分部/合计/空行等，保留原始格式不动
+
+            for col_idx in range(1, 15):  # A-N 列（1-14）
+                cell = ws.cell(row=row_idx, column=col_idx)
+
+                # 边框：统一设 thin 边框
+                cell.border = THIN_BORDER
+
+                # 字体：如果丢失或变成默认 Calibri 就覆盖为宋体9号
+                if not cell.font or cell.font.name in (None, "Calibri"):
+                    cell.font = GLD_FONT
+
+                # 对齐 + wrap_text：根据列确定对齐方式
+                h_align = "center"
+                if col_idx in (3, 4, 11, 12, 13, 14):  # C/D/K/L/M/N：左对齐
+                    h_align = "left"
+                elif col_idx in (6, 7, 8):  # F/G/H列（数量/单价/合价）：右对齐
+                    h_align = "right"
+                cell.alignment = Alignment(
+                    horizontal=h_align, vertical="center", wrap_text=True
+                )
+
     # ================================================================
     # 兜底模式：新建工作簿（无原始文件时使用）
     # ================================================================
@@ -715,7 +780,7 @@ class OutputWriter:
                 alt_col = 12 + alt_idx
                 alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
                 cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
-                cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
+                cell_alt.font = Font(name="宋体", size=9, color="666666")
                 cell_alt.border = THIN_BORDER
 
             for col_idx in range(1, 15):
@@ -808,7 +873,7 @@ class OutputWriter:
                 alt_col = 7 + alt_idx  # G=7, H=8, I=9
                 alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
                 cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
-                cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
+                cell_alt.font = Font(name="宋体", size=9, color="666666")
 
             # 格式
             for col_idx in range(1, 10):
