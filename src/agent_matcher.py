@@ -36,15 +36,17 @@ class AgentMatcher:
     3. 记录推理过程到学习笔记（为后续进化积累数据）
     """
 
-    def __init__(self, llm_type: str = None):
+    def __init__(self, llm_type: str = None, province: str = None):
         """
         参数:
             llm_type: 使用哪个大模型后端
                 "claude" → Claude API（推理能力强，开发阶段推荐）
                 "deepseek" → DeepSeek API（便宜，生产阶段推荐）
                 None → 用 config.py 里的 DEFAULT_LLM 配置
+            province: 省份版本（用于Prompt上下文）
         """
         self.llm_type = llm_type or config.DEFAULT_LLM
+        self.province = province or config.CURRENT_PROVINCE
         self._client = None
         self.notebook = LearningNotebook()
 
@@ -245,7 +247,7 @@ class AgentMatcher:
         if overview_context:
             overview_text = f"\n## 整表概览\n{overview_context}"
 
-        prompt = f"""你是一位经验丰富的工程造价师，精通{config.CURRENT_PROVINCE}版安装工程定额。
+        prompt = f"""你是一位经验丰富的工程造价师，精通{self.province}版安装工程定额。
 请像真正的造价师一样分析这条清单，从候选定额中选出最合适的。
 
 ## 清单项目
@@ -346,35 +348,42 @@ class AgentMatcher:
         except json.JSONDecodeError as e:
             logger.warning(f"Agent JSON解析失败: {e}")
             return self._fallback_result(bill_item, candidates, f"JSON解析失败: {e}")
+        if not isinstance(data, dict):
+            logger.warning(f"Agent JSON根节点不是对象: {type(data).__name__}")
+            return self._fallback_result(bill_item, candidates, "JSON结构错误")
 
         # 构建 quotas 列表
         quotas = []
+        no_match = self._to_bool(data.get("no_match", False))
 
         # 主定额
-        main_idx = data.get("main_quota_index")
-        main_id = data.get("main_quota_id")
+        main_idx = self._to_int(data.get("main_quota_index"))
+        main_id = str(data.get("main_quota_id", "")).strip()
+        if main_id.lower() in ("none", "null"):
+            main_id = ""
 
-        if main_idx is not None and 1 <= main_idx <= len(candidates):
-            main_c = candidates[main_idx - 1]
-            quotas.append({
-                "quota_id": main_c["quota_id"],
-                "name": main_c["name"],
-                "unit": main_c.get("unit", ""),
-                "reason": data.get("main_reason", ""),
-                "db_id": main_c.get("id"),
-            })
-        elif main_id:
-            # 按编号查找（备用）
-            for c in candidates:
-                if c["quota_id"] == main_id:
-                    quotas.append({
-                        "quota_id": c["quota_id"],
-                        "name": c["name"],
-                        "unit": c.get("unit", ""),
-                        "reason": data.get("main_reason", ""),
-                        "db_id": c.get("id"),
-                    })
-                    break
+        if not no_match:
+            if main_idx is not None and 1 <= main_idx <= len(candidates):
+                main_c = candidates[main_idx - 1]
+                quotas.append({
+                    "quota_id": main_c["quota_id"],
+                    "name": main_c["name"],
+                    "unit": main_c.get("unit", ""),
+                    "reason": data.get("main_reason", ""),
+                    "db_id": main_c.get("id"),
+                })
+            elif main_id:
+                # 按编号查找（备用）
+                for c in candidates:
+                    if c["quota_id"] == main_id:
+                        quotas.append({
+                            "quota_id": c["quota_id"],
+                            "name": c["name"],
+                            "unit": c.get("unit", ""),
+                            "reason": data.get("main_reason", ""),
+                            "db_id": c.get("id"),
+                        })
+                        break
 
         # 关联定额（过滤同类：关联定额不能和主定额同册同章节）
         main_quota_prefix = ""
@@ -384,40 +393,55 @@ class AgentMatcher:
             if len(parts) >= 2:
                 main_quota_prefix = f"{parts[0]}-{parts[1]}"
 
-        for related in data.get("related_quotas", []):
-            rel_idx = related.get("index")
-            rel_id = related.get("quota_id")
+        # 只在“主定额存在”时才接受关联定额，避免无主定额时误入关联项
+        if quotas:
+            related_quotas = data.get("related_quotas", [])
+            if not isinstance(related_quotas, list):
+                related_quotas = []
 
-            rel_c = None
-            if rel_idx is not None and 1 <= rel_idx <= len(candidates):
-                rel_c = candidates[rel_idx - 1]
-            elif rel_id:
-                for c in candidates:
-                    if c["quota_id"] == rel_id:
-                        rel_c = c
-                        break
+            for related in related_quotas:
+                if not isinstance(related, dict):
+                    continue
+                rel_idx = self._to_int(related.get("index"))
+                rel_id = str(related.get("quota_id", "")).strip()
+                if rel_id.lower() in ("none", "null"):
+                    rel_id = ""
 
-            if not rel_c:
-                continue
+                rel_c = None
+                if rel_idx is not None and 1 <= rel_idx <= len(candidates):
+                    rel_c = candidates[rel_idx - 1]
+                elif rel_id:
+                    for c in candidates:
+                        if c["quota_id"] == rel_id:
+                            rel_c = c
+                            break
 
-            # 过滤同类定额：册号+章节相同的不算关联
-            rel_qid = rel_c["quota_id"]
-            rel_parts = rel_qid.split("-")
-            if len(rel_parts) >= 2 and main_quota_prefix:
-                rel_prefix = f"{rel_parts[0]}-{rel_parts[1]}"
-                if rel_prefix == main_quota_prefix:
-                    logger.debug(f"过滤同类关联定额: {rel_qid}（与主定额同属{main_quota_prefix}）")
+                if not rel_c:
                     continue
 
-            quotas.append({
-                "quota_id": rel_c["quota_id"],
-                "name": rel_c["name"],
-                "unit": rel_c.get("unit", ""),
-                "reason": related.get("reason", ""),
-                "db_id": rel_c.get("id"),
-            })
+                # 过滤同类定额：册号+章节相同的不算关联
+                rel_qid = rel_c["quota_id"]
+                rel_parts = rel_qid.split("-")
+                if len(rel_parts) >= 2 and main_quota_prefix:
+                    rel_prefix = f"{rel_parts[0]}-{rel_parts[1]}"
+                    if rel_prefix == main_quota_prefix:
+                        logger.debug(f"过滤同类关联定额: {rel_qid}（与主定额同属{main_quota_prefix}）")
+                        continue
 
-        confidence = data.get("confidence", 0)
+                quotas.append({
+                    "quota_id": rel_c["quota_id"],
+                    "name": rel_c["name"],
+                    "unit": rel_c.get("unit", ""),
+                    "reason": related.get("reason", ""),
+                    "db_id": rel_c.get("id"),
+                })
+
+        raw_confidence = data.get("confidence", 0)
+        try:
+            confidence = int(raw_confidence)
+        except (ValueError, TypeError):
+            confidence = 0
+        confidence = max(0, min(100, confidence))
         explanation = data.get("explanation", "")
 
         # 备选候选（排除已选的）
@@ -437,6 +461,9 @@ class AgentMatcher:
                 if len(alternatives) >= 3:
                     break
 
+        if not quotas:
+            confidence = 0
+
         result = {
             "bill_item": bill_item,
             "quotas": quotas,
@@ -448,9 +475,34 @@ class AgentMatcher:
         }
 
         if not quotas:
-            result["no_match_reason"] = data.get("no_match_reason", "大模型未选中任何定额")
+            result["no_match_reason"] = data.get("no_match_reason") or "大模型未选中任何定额"
 
         return result
+
+    @staticmethod
+    def _to_int(value):
+        """把大模型返回的索引值安全转为int，失败返回None。"""
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_bool(value) -> bool:
+        """兼容 bool/数字/字符串 的布尔语义。"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"true", "1", "yes", "y", "是"}:
+                return True
+            if v in {"false", "0", "no", "n", "否", ""}:
+                return False
+        return bool(value)
 
     def _fallback_result(self, bill_item: dict, candidates: list[dict],
                          error_msg: str) -> dict:

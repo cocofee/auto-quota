@@ -25,12 +25,14 @@ import config
 class LLMMatcher:
     """大模型精选匹配器"""
 
-    def __init__(self, llm_type: str = None):
+    def __init__(self, llm_type: str = None, province: str = None):
         """
         参数:
             llm_type: 使用哪个大模型（"deepseek"/"claude"/"openai"），默认用config配置
+            province: 省份版本（用于规则检索与Prompt上下文）
         """
         self.llm_type = llm_type or config.DEFAULT_LLM
+        self.province = province or config.CURRENT_PROVINCE
         self._client = None
 
     @property
@@ -157,9 +159,10 @@ class LLMMatcher:
         rules_text = ""
         try:
             from src.rule_knowledge import RuleKnowledge
-            rule_kb = RuleKnowledge()
+            rule_kb = RuleKnowledge(province=self.province)
             if rule_kb.get_stats()["total"] > 0:
-                rules = rule_kb.search_rules(f"{bill_name} {bill_desc}", top_k=3)
+                rules = rule_kb.search_rules(
+                    f"{bill_name} {bill_desc}", top_k=3, province=self.province)
                 if rules:
                     rule_lines = ["\n## 相关定额规则（来自定额说明）"]
                     for r in rules:
@@ -167,10 +170,10 @@ class LLMMatcher:
                         content = r.get("content", "")[:300]
                         rule_lines.append(f"- [{chapter}] {content}")
                     rules_text = "\n".join(rule_lines) + "\n"
-        except Exception:
-            pass  # 规则知识库尚未建立，不影响匹配
+        except Exception as e:
+            logger.debug(f"规则知识库上下文加载失败，降级继续匹配: {e}")
 
-        prompt = f"""你是一位经验丰富的工程造价师，精通北京2024版安装工程定额。
+        prompt = f"""你是一位经验丰富的工程造价师，精通{self.province}版安装工程定额。
 你的任务是根据工程量清单项，从候选定额中选择最合适的定额子目。
 
 ## 清单项目
@@ -296,20 +299,40 @@ class LLMMatcher:
                 "no_match_reason": str(e),
                 "raw_response": response_text,
             }
+        if not isinstance(data, dict):
+            logger.warning(f"大模型返回JSON根节点不是对象: {type(data).__name__}")
+            return {
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "JSON结构错误",
+                "no_match_reason": "回复JSON根节点必须是对象",
+                "raw_response": response_text,
+            }
+
+        raw_confidence = data.get("confidence", 0)
+        try:
+            confidence = int(raw_confidence)
+        except (ValueError, TypeError):
+            confidence = 0
+        confidence = max(0, min(100, confidence))
 
         # 构建标准化的结果（quotas列表：第一条是主定额，后面是关联定额）
         result = {
             "quotas": [],
-            "confidence": data.get("confidence", 0),
+            "confidence": confidence,
             "explanation": data.get("explanation", ""),
             "no_match_reason": data.get("no_match_reason"),
             "raw_response": response_text,
         }
 
+        no_match = self._to_bool(data.get("no_match", False))
+
         # 提取主定额，加入quotas列表
-        if not data.get("no_match", False):
-            main_idx = data.get("main_quota_index")
-            main_id = data.get("main_quota_id")
+        if not no_match:
+            main_idx = self._to_int(data.get("main_quota_index"))
+            main_id = str(data.get("main_quota_id", "")).strip()
+            if main_id.lower() in ("none", "null"):
+                main_id = ""
 
             if main_idx is not None and 1 <= main_idx <= len(candidates):
                 main_candidate = candidates[main_idx - 1]
@@ -334,50 +357,89 @@ class LLMMatcher:
                         break
 
         # 提取关联定额，也加入quotas列表
-        # 安全过滤：关联定额不能和主定额是同类工作（防止大模型把同类不同规格都塞进来）
-        main_quota_prefix = ""  # 主定额的册号+章节前缀（如"C4-8"）
+        # 只在“主定额存在”时才接受关联定额，避免出现“无主定额但有关联定额”的异常结果
         if result["quotas"]:
+            main_quota_prefix = ""  # 主定额的册号+章节前缀（如"C4-8"）
             main_qid = result["quotas"][0].get("quota_id", "")
             # 提取前缀：C4-8-25 → "C4-8"（取到第二个"-"之前）
             parts = main_qid.split("-")
             if len(parts) >= 2:
                 main_quota_prefix = f"{parts[0]}-{parts[1]}"
 
-        for related in data.get("related_quotas", []):
-            rel_idx = related.get("index")
-            rel_id = related.get("quota_id")
+            related_quotas = data.get("related_quotas", [])
+            if not isinstance(related_quotas, list):
+                related_quotas = []
 
-            # 确定关联定额候选
-            rel_candidate = None
-            if rel_idx is not None and 1 <= rel_idx <= len(candidates):
-                rel_candidate = candidates[rel_idx - 1]
-            elif rel_id:
-                for c in candidates:
-                    if c["quota_id"] == rel_id:
-                        rel_candidate = c
-                        break
+            for related in related_quotas:
+                if not isinstance(related, dict):
+                    continue
+                rel_idx = self._to_int(related.get("index"))
+                rel_id = str(related.get("quota_id", "")).strip()
+                if rel_id.lower() in ("none", "null"):
+                    rel_id = ""
 
-            if not rel_candidate:
-                continue
+                # 确定关联定额候选
+                rel_candidate = None
+                if rel_idx is not None and 1 <= rel_idx <= len(candidates):
+                    rel_candidate = candidates[rel_idx - 1]
+                elif rel_id:
+                    for c in candidates:
+                        if c["quota_id"] == rel_id:
+                            rel_candidate = c
+                            break
 
-            # 过滤同类定额：册号+章节相同的不算关联（如C4-8-25和C4-8-45都是电缆敷设）
-            rel_qid = rel_candidate["quota_id"]
-            rel_parts = rel_qid.split("-")
-            if len(rel_parts) >= 2 and main_quota_prefix:
-                rel_prefix = f"{rel_parts[0]}-{rel_parts[1]}"
-                if rel_prefix == main_quota_prefix:
-                    logger.debug(f"过滤同类关联定额: {rel_qid}（与主定额{main_qid}同属{main_quota_prefix}）")
+                if not rel_candidate:
                     continue
 
-            result["quotas"].append({
-                "quota_id": rel_candidate["quota_id"],
-                "name": rel_candidate["name"],
-                "unit": rel_candidate.get("unit", ""),
-                "reason": related.get("reason", ""),
-                "db_id": rel_candidate.get("id"),
-            })
+                # 过滤同类定额：册号+章节相同的不算关联（如C4-8-25和C4-8-45都是电缆敷设）
+                rel_qid = rel_candidate["quota_id"]
+                rel_parts = rel_qid.split("-")
+                if len(rel_parts) >= 2 and main_quota_prefix:
+                    rel_prefix = f"{rel_parts[0]}-{rel_parts[1]}"
+                    if rel_prefix == main_quota_prefix:
+                        logger.debug(f"过滤同类关联定额: {rel_qid}（与主定额{main_qid}同属{main_quota_prefix}）")
+                        continue
+
+                result["quotas"].append({
+                    "quota_id": rel_candidate["quota_id"],
+                    "name": rel_candidate["name"],
+                    "unit": rel_candidate.get("unit", ""),
+                    "reason": related.get("reason", ""),
+                    "db_id": rel_candidate.get("id"),
+                })
+
+        # 防止“高分但无定额”：无主定额/无有效定额时强制降为0分
+        if not result["quotas"]:
+            result["confidence"] = 0
+            if not result.get("no_match_reason"):
+                result["no_match_reason"] = "大模型未选中有效主定额"
 
         return result
+
+    @staticmethod
+    def _to_int(value):
+        """把大模型返回的索引值安全转为int，失败返回None。"""
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_bool(value) -> bool:
+        """兼容 bool/数字/字符串 的布尔语义。"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"true", "1", "yes", "y", "是"}:
+                return True
+            if v in {"false", "0", "no", "n", "否", ""}:
+                return False
+        return bool(value)
 
     def _extract_json(self, text: str) -> str | None:
         """

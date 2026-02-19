@@ -49,8 +49,12 @@ class UniversalKB:
         """创建通用知识库SQLite表"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
         cursor = conn.cursor()
+        # 提升并发读写稳定性
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge (
@@ -109,6 +113,36 @@ class UniversalKB:
         conn.close()
         logger.debug(f"通用知识库已初始化: {self.db_path}")
 
+    @staticmethod
+    def _safe_json_list(raw):
+        """安全解析JSON数组，异常时返回空列表。"""
+        if not raw:
+            return []
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _safe_json_dict(raw):
+        """安全解析JSON对象，异常时返回空字典。"""
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，降低并发锁冲突概率。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
     @property
     def model(self):
         """延迟加载向量模型"""
@@ -118,7 +152,8 @@ class UniversalKB:
                 self._model = SentenceTransformer(
                     config.VECTOR_MODEL_NAME, device="cuda"
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"通用知识库向量模型GPU加载失败({e})，切换到CPU")
                 self._model = SentenceTransformer(
                     config.VECTOR_MODEL_NAME, device="cpu"
                 )
@@ -186,7 +221,7 @@ class UniversalKB:
         if similar:
             # 合并定额模式：把新的quota_patterns并入已有记录（去重）
             merged_quotas = self._merge_patterns(
-                json.loads(similar.get("quota_patterns", "[]")),
+                self._safe_json_list(similar.get("quota_patterns")),
                 quota_patterns
             )
             return self._update_knowledge(
@@ -197,33 +232,37 @@ class UniversalKB:
         # 新建记录
         province_list = [source_province] if source_province else []
 
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO knowledge
-            (bill_pattern, bill_keywords, quota_patterns, associated_patterns,
-             param_hints, layer, confidence, confirm_count, province_list,
-             source_province, source_project, specialty, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            bill_pattern,
-            json.dumps(bill_keywords or [], ensure_ascii=False),
-            json.dumps(quota_patterns, ensure_ascii=False),
-            json.dumps(associated_patterns or [], ensure_ascii=False),
-            json.dumps(param_hints or {}, ensure_ascii=False),
-            layer,
-            confidence,
-            1 if layer == "authority" else 0,  # 权威层初始确认1次，候选层0次
-            json.dumps(province_list, ensure_ascii=False),
-            source_province,
-            source_project,
-            specialty,
-            now, now,
-        ))
-
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO knowledge
+                (bill_pattern, bill_keywords, quota_patterns, associated_patterns,
+                 param_hints, layer, confidence, confirm_count, province_list,
+                 source_province, source_project, specialty, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                bill_pattern,
+                json.dumps(bill_keywords or [], ensure_ascii=False),
+                json.dumps(quota_patterns, ensure_ascii=False),
+                json.dumps(associated_patterns or [], ensure_ascii=False),
+                json.dumps(param_hints or {}, ensure_ascii=False),
+                layer,
+                confidence,
+                1 if layer == "authority" else 0,  # 权威层初始确认1次，候选层0次
+                json.dumps(province_list, ensure_ascii=False),
+                source_province,
+                source_project,
+                specialty,
+                now, now,
+            ))
+            record_id = cursor.lastrowid
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         # 添加到向量索引
         self._add_to_vector_index(record_id, bill_pattern)
@@ -240,76 +279,86 @@ class UniversalKB:
                           source_province: str) -> int:
         """更新已有的知识记录"""
         now = time.time()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
 
-        # 读取当前记录
-        cursor.execute("SELECT * FROM knowledge WHERE id = ?", (record_id,))
-        current = dict(cursor.fetchone())
+        try:
+            cursor = conn.cursor()
+            # 读取当前记录
+            cursor.execute("SELECT * FROM knowledge WHERE id = ?", (record_id,))
+            current_row = cursor.fetchone()
+            if current_row is None:
+                raise ValueError(f"知识记录不存在: id={record_id}")
+            current = dict(current_row)
 
-        # 更新省份列表（去重）
-        province_list = json.loads(current.get("province_list", "[]"))
-        if source_province and source_province not in province_list:
-            province_list.append(source_province)
+            # 更新省份列表（去重）
+            province_list = self._safe_json_list(current.get("province_list"))
+            if source_province and source_province not in province_list:
+                province_list.append(source_province)
 
-        # 层级晋升：candidate可以升为authority，但authority不降级
-        new_layer = current["layer"]
-        if layer == "authority":
-            new_layer = "authority"
+            # 层级晋升：candidate可以升为authority，但authority不降级
+            new_layer = current["layer"]
+            if layer == "authority":
+                new_layer = "authority"
 
-        # 置信度：取较高值
-        new_confidence = max(current["confidence"], confidence)
+            # 置信度：取较高值
+            new_confidence = max(current["confidence"], confidence)
 
-        # 如果是权威层数据，更新定额模式
-        if layer == "authority":
-            cursor.execute("""
-                UPDATE knowledge SET
-                    quota_patterns = ?,
-                    associated_patterns = ?,
-                    param_hints = ?,
-                    layer = ?,
-                    confidence = ?,
-                    confirm_count = confirm_count + 1,
-                    province_list = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                json.dumps(quota_patterns, ensure_ascii=False),
-                json.dumps(associated_patterns or [], ensure_ascii=False),
-                json.dumps(param_hints or {}, ensure_ascii=False),
-                new_layer,
-                min(new_confidence + 5, 100),
-                json.dumps(province_list, ensure_ascii=False),
-                now, record_id,
-            ))
-        else:
-            # 候选层数据只更新省份列表和时间戳，不涨分
-            cursor.execute("""
-                UPDATE knowledge SET
-                    province_list = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                json.dumps(province_list, ensure_ascii=False),
-                now, record_id,
-            ))
+            # 如果是权威层数据，更新定额模式
+            if layer == "authority":
+                cursor.execute("""
+                    UPDATE knowledge SET
+                        quota_patterns = ?,
+                        associated_patterns = ?,
+                        param_hints = ?,
+                        layer = ?,
+                        confidence = ?,
+                        confirm_count = confirm_count + 1,
+                        province_list = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (
+                    json.dumps(quota_patterns, ensure_ascii=False),
+                    json.dumps(associated_patterns or [], ensure_ascii=False),
+                    json.dumps(param_hints or {}, ensure_ascii=False),
+                    new_layer,
+                    min(new_confidence + 5, 100),
+                    json.dumps(province_list, ensure_ascii=False),
+                    now, record_id,
+                ))
+            else:
+                # 候选层数据只更新省份列表和时间戳，不涨分
+                cursor.execute("""
+                    UPDATE knowledge SET
+                        province_list = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (
+                    json.dumps(province_list, ensure_ascii=False),
+                    now, record_id,
+                ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         return record_id
 
     def _find_exact(self, bill_pattern: str) -> dict:
         """精确查找相同清单模式的知识记录"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM knowledge WHERE bill_pattern = ? LIMIT 1",
-            (bill_pattern,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM knowledge WHERE bill_pattern = ? LIMIT 1",
+                (bill_pattern,)
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
         return dict(row) if row else None
 
     def _find_similar(self, bill_pattern: str, threshold: float = 0.95) -> dict:
@@ -348,12 +397,14 @@ class UniversalKB:
 
             # 从SQLite获取完整记录
             record_id = int(results["ids"][0][0])
-            conn = sqlite3.connect(str(self.db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM knowledge WHERE id = ?", (record_id,))
-            row = cursor.fetchone()
-            conn.close()
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM knowledge WHERE id = ?", (record_id,))
+                row = cursor.fetchone()
+            finally:
+                conn.close()
 
             if row:
                 logger.debug(
@@ -455,33 +506,56 @@ class UniversalKB:
                 n_results=min(top_k * 3, self.collection.count()),
             )
 
-            if not search_results or not search_results["ids"][0]:
+            if not search_results or not search_results.get("ids") or not search_results.get("ids")[0]:
                 return results
 
-            # 获取匹配的记录
-            matched_ids = [int(mid) for mid in search_results["ids"][0]]
-            distances = search_results["distances"][0] if search_results["distances"] else []
-            similarities = [1 - d for d in distances]
+            # 获取匹配的记录（防御性处理长度不一致/非法ID）
+            raw_ids = search_results.get("ids", [[]])[0]
+            raw_distances = search_results["distances"][0] if search_results.get("distances") else []
+            if len(raw_distances) != len(raw_ids):
+                logger.warning(
+                    f"通用知识库向量检索返回长度不一致: ids={len(raw_ids)}, "
+                    f"distances={len(raw_distances)}，已按最低相似度补齐/截断"
+                )
+            distances = list(raw_distances[:len(raw_ids)])
+            if len(distances) < len(raw_ids):
+                distances.extend([1.0] * (len(raw_ids) - len(distances)))
+
+            matched_ids = []
+            similarities = []
+            for mid, dist in zip(raw_ids, distances):
+                try:
+                    db_id = int(mid)
+                except (TypeError, ValueError):
+                    logger.warning(f"通用知识库向量检索返回非法ID，已跳过: {mid!r}")
+                    continue
+                matched_ids.append(db_id)
+                similarities.append(max(0.0, min(1.0, 1 - dist)))
+
+            if not matched_ids:
+                return results
 
             # 从SQLite获取完整记录
-            conn = sqlite3.connect(str(self.db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            placeholders = ",".join(["?"] * len(matched_ids))
-            if authority_only:
-                cursor.execute(f"""
-                    SELECT * FROM knowledge
-                    WHERE id IN ({placeholders}) AND layer = 'authority'
-                """, matched_ids)
-            else:
-                cursor.execute(f"""
-                    SELECT * FROM knowledge
-                    WHERE id IN ({placeholders})
-                """, matched_ids)
+                placeholders = ",".join(["?"] * len(matched_ids))
+                if authority_only:
+                    cursor.execute(f"""
+                        SELECT * FROM knowledge
+                        WHERE id IN ({placeholders}) AND layer = 'authority'
+                    """, matched_ids)
+                else:
+                    cursor.execute(f"""
+                        SELECT * FROM knowledge
+                        WHERE id IN ({placeholders})
+                    """, matched_ids)
 
-            rows = {row["id"]: dict(row) for row in cursor.fetchall()}
-            conn.close()
+                rows = {row["id"]: dict(row) for row in cursor.fetchall()}
+            finally:
+                conn.close()
 
             # 组装结果（按相似度排序，去掉已有的精确匹配）
             existing_ids = {r.get("id") for r in results}
@@ -535,14 +609,14 @@ class UniversalKB:
         return {
             "id": record["id"],
             "bill_pattern": record["bill_pattern"],
-            "quota_patterns": json.loads(record.get("quota_patterns", "[]")),
-            "associated_patterns": json.loads(record.get("associated_patterns", "[]")),
-            "param_hints": json.loads(record.get("param_hints", "{}")),
+            "quota_patterns": self._safe_json_list(record.get("quota_patterns")),
+            "associated_patterns": self._safe_json_list(record.get("associated_patterns")),
+            "param_hints": self._safe_json_dict(record.get("param_hints")),
             "similarity": similarity,
             "confidence": record.get("confidence", 0),
             "confirm_count": record.get("confirm_count", 0),
             "layer": record.get("layer", "candidate"),
-            "province_list": json.loads(record.get("province_list", "[]")),
+            "province_list": self._safe_json_list(record.get("province_list")),
         }
 
     # ================================================================
@@ -615,11 +689,13 @@ class UniversalKB:
 
             # 统一走 add_knowledge()，内部会做精确匹配 + 语义去重
             # 先记录当前总数，看add_knowledge是更新了还是新增了
-            conn = sqlite3.connect(str(self.db_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM knowledge")
-            count_before = cursor.fetchone()[0]
-            conn.close()
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM knowledge")
+                count_before = cursor.fetchone()[0]
+            finally:
+                conn.close()
 
             self.add_knowledge(
                 bill_pattern=bill_pattern,
@@ -633,11 +709,13 @@ class UniversalKB:
                 source_project=source_project,
             )
 
-            conn = sqlite3.connect(str(self.db_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM knowledge")
-            count_after = cursor.fetchone()[0]
-            conn.close()
+            conn = self._connect()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM knowledge")
+                count_after = cursor.fetchone()[0]
+            finally:
+                conn.close()
 
             if count_after > count_before:
                 stats["added"] += 1
@@ -660,12 +738,14 @@ class UniversalKB:
         """重建向量索引"""
         logger.info("重建通用知识库向量索引...")
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, bill_pattern FROM knowledge")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, bill_pattern FROM knowledge")
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             logger.info("通用知识库为空，无需重建")
@@ -677,8 +757,8 @@ class UniversalKB:
         self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
         try:
             self._chroma_client.delete_collection("universal_kb")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"通用知识库旧向量集合删除跳过: {e}")
         self._collection = self._chroma_client.create_collection(
             name="universal_kb",
             metadata={"hnsw:space": "cosine"}
@@ -713,37 +793,39 @@ class UniversalKB:
 
     def get_stats(self) -> dict:
         """获取通用知识库统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM knowledge")
-        total = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM knowledge")
+            total = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM knowledge WHERE layer = 'authority'")
-        authority_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM knowledge WHERE layer = 'authority'")
+            authority_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM knowledge WHERE layer = 'candidate'")
-        candidate_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM knowledge WHERE layer = 'candidate'")
+            candidate_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT AVG(confidence) FROM knowledge WHERE layer = 'authority'")
-        avg_authority_conf = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT AVG(confidence) FROM knowledge WHERE layer = 'authority'")
+            avg_authority_conf = cursor.fetchone()[0] or 0
 
-        # 涉及的省份数
-        cursor.execute("SELECT province_list FROM knowledge")
-        all_provinces = set()
-        for row in cursor.fetchall():
-            try:
-                provinces = json.loads(row[0] or "[]")
-                all_provinces.update(provinces)
-            except Exception:
-                pass
-
-        conn.close()
+            # 涉及的省份数
+            cursor.execute("SELECT province_list FROM knowledge")
+            all_provinces = set()
+            for row in cursor.fetchall():
+                try:
+                    provinces = self._safe_json_list(row[0])
+                    all_provinces.update(provinces)
+                except Exception as e:
+                    logger.debug(f"通用知识库省份列表解析失败，跳过该记录: {e}")
+        finally:
+            conn.close()
 
         # 向量索引数量
         try:
             vector_count = self.collection.count()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"通用知识库向量索引计数失败，按0返回: {e}")
             vector_count = 0
 
         return {

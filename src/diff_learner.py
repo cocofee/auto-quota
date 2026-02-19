@@ -105,7 +105,7 @@ class DiffLearner:
                 if corr_quotas:
                     normalized_text = normalize_bill_text(bill_name, bill_desc)
                     corr_names = corr_item.get("quota_names", [])
-                    experience_db.add_experience(
+                    record_id = experience_db.add_experience(
                         bill_text=normalized_text,
                         quota_ids=corr_quotas,
                         quota_names=corr_names,
@@ -117,6 +117,10 @@ class DiffLearner:
                         province=province,
                         notes="diff_learner自动对比确认",
                     )
+                    if record_id <= 0:
+                        logger.warning(
+                            f"diff_learner确认写入被拦截: {normalized_text[:60]} -> {corr_quotas}"
+                        )
             else:
                 # 已修改 → 用户纠正了定额
                 corrected += 1
@@ -137,7 +141,7 @@ class DiffLearner:
                 if corr_quotas:
                     normalized_text = normalize_bill_text(bill_name, bill_desc)
                     corr_names = corr_item.get("quota_names", [])
-                    experience_db.add_experience(
+                    record_id = experience_db.add_experience(
                         bill_text=normalized_text,
                         quota_ids=corr_quotas,
                         quota_names=corr_names,
@@ -149,6 +153,10 @@ class DiffLearner:
                         province=province,
                         notes="diff_learner自动对比学习",
                     )
+                    if record_id <= 0:
+                        logger.warning(
+                            f"diff_learner修正写入被拦截: {normalized_text[:60]} -> {corr_quotas}"
+                        )
 
         total = len(original_mapping)
         result = {

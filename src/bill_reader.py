@@ -23,6 +23,17 @@ import config
 from src.text_parser import parser as text_parser
 
 
+def _is_quota_code(code: str) -> bool:
+    """判断是否是定额编号（支持 X-XXX / D00003 / AD0003 / 带'换'后缀）。"""
+    if not isinstance(code, str):
+        return False
+    c = code.strip()
+    if not c:
+        return False
+    core = c[:-1] if c.endswith("换") else c
+    return bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core)) or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+
+
 class BillReader:
     """工程量清单读取器"""
 
@@ -67,24 +78,24 @@ class BillReader:
 
         wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
         all_items = []
+        try:
+            # 确定要读取的Sheet列表
+            if sheet_name:
+                sheets_to_read = [sheet_name]
+            else:
+                sheets_to_read = self._filter_bill_sheets(wb.sheetnames)
 
-        # 确定要读取的Sheet列表
-        if sheet_name:
-            sheets_to_read = [sheet_name]
-        else:
-            sheets_to_read = self._filter_bill_sheets(wb.sheetnames)
-
-        for sn in sheets_to_read:
-            if sn not in wb.sheetnames:
-                logger.warning(f"Sheet '{sn}' 不存在，跳过")
-                continue
-            ws = wb[sn]
-            items = self._read_sheet(ws, sn)
-            if items:
-                all_items.extend(items)
-                logger.info(f"  Sheet '{sn}': 读取 {len(items)} 条清单项")
-
-        wb.close()
+            for sn in sheets_to_read:
+                if sn not in wb.sheetnames:
+                    logger.warning(f"Sheet '{sn}' 不存在，跳过")
+                    continue
+                ws = wb[sn]
+                items = self._read_sheet(ws, sn)
+                if items:
+                    all_items.extend(items)
+                    logger.info(f"  Sheet '{sn}': 读取 {len(items)} 条清单项")
+        finally:
+            wb.close()
 
         if not all_items:
             logger.warning("未读取到任何清单项目，请检查文件格式")
@@ -157,29 +168,29 @@ class BillReader:
 
         wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
         result = []
+        try:
+            for sn in wb.sheetnames:
+                ws = wb[sn]
+                # 读取前20行检测表头
+                header_rows = []
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i >= 20:
+                        break
+                    header_rows.append(row)
 
-        for sn in wb.sheetnames:
-            ws = wb[sn]
-            # 读取前20行检测表头
-            header_rows = []
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i >= 20:
-                    break
-                header_rows.append(row)
+                # 检测是否有分部分项的标准表头
+                col_map, _ = self._detect_columns(header_rows)
+                # 至少要有"名称"列才算有效
+                is_bill = "name" in col_map and len(col_map) >= 2
+                matched_count = len(col_map)
 
-            # 检测是否有分部分项的标准表头
-            col_map, _ = self._detect_columns(header_rows)
-            # 至少要有"名称"列才算有效
-            is_bill = "name" in col_map and len(col_map) >= 2
-            matched_count = len(col_map)
-
-            result.append({
-                "name": sn,
-                "is_bill": is_bill,
-                "matched_headers": matched_count,
-            })
-
-        wb.close()
+                result.append({
+                    "name": sn,
+                    "is_bill": is_bill,
+                    "matched_headers": matched_count,
+                })
+        finally:
+            wb.close()
         return result
 
     def _read_sheet(self, ws, sheet_name: str) -> list[dict]:
@@ -219,11 +230,14 @@ class BillReader:
         items = []
         current_section = ""  # 当前分部工程名
 
+        sheet_bill_seq = 0
         for i, row in enumerate(all_rows):
             if i <= header_row_idx:
                 continue  # 跳过表头及之前的行
 
-            item = self._parse_bill_row(row, col_map, sheet_name, current_section)
+            item = self._parse_bill_row(
+                row, col_map, sheet_name, current_section, source_row=i + 1
+            )
 
             if item is None:
                 # 检查是否是分部工程标题行（如"土方工程"、"给排水工程"）
@@ -232,6 +246,8 @@ class BillReader:
                     current_section = section
                 continue
 
+            sheet_bill_seq += 1
+            item["sheet_bill_seq"] = sheet_bill_seq
             items.append(item)
 
         return items
@@ -311,7 +327,7 @@ class BillReader:
         return {}, -1
 
     def _parse_bill_row(self, row, col_map: dict, sheet_name: str,
-                        section: str) -> dict | None:
+                        section: str, source_row: int = None) -> dict | None:
         """
         解析一行清单数据
 
@@ -358,7 +374,8 @@ class BillReader:
         quantity = None
         if quantity_str:
             try:
-                quantity = float(quantity_str)
+                q = quantity_str.replace(",", "").strip()
+                quantity = float(q)
             except (ValueError, TypeError):
                 pass
 
@@ -374,7 +391,7 @@ class BillReader:
         # 过滤定额行：编码为定额格式（如C4-4-31、5-325、D00003等），不是清单项
         # 广联达导出的预算文件中，清单行和定额行交替排列：
         #   清单行编码为12位数字（如030402011001），定额行编码为 X-XXX 格式（如C4-4-31）
-        if code and re.match(r'^[A-Za-z]?\d{1,2}-\d+', code):
+        if _is_quota_code(code):
             return None  # 定额编号格式，跳过
 
         # 构建搜索文本（合并名称+特征描述，去除无用信息）
@@ -397,6 +414,7 @@ class BillReader:
             "params": params,
             "sheet_name": sheet_name,
             "section": section,
+            "source_row": source_row,
         }
 
     def _detect_section_header(self, row, col_map: dict) -> str | None:
@@ -435,22 +453,26 @@ class BillReader:
 # ================================================================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="读取清单Excel并预览前N条解析结果")
+    parser.add_argument("input", help="清单Excel路径")
+    parser.add_argument("--limit", type=int, default=20, help="预览条数，默认20")
+    args = parser.parse_args()
+
     reader = BillReader()
+    items = reader.read_excel(args.input)
 
-    # 读取测试清单
-    test_file = "C:/Users/Administrator/Desktop/工程量清单(1).xlsx"
-    items = reader.read_excel(test_file)
-
-    # 打印前20条
-    logger.info(f"\n前20条清单项:")
-    for item in items[:20]:
+    logger.info(f"\n前{min(len(items), args.limit)}条清单项:")
+    for item in items[:args.limit]:
+        section = (item.get("section") or "")[:10]
         logger.info(
-            f"  [{item['index']}] {item['code']} | {item['name'][:30]} | "
-            f"{item['unit']} | {item['quantity']} | 分部:{item['section'][:10]}"
+            f"  [{item.get('index', '')}] {item.get('code', '')} | {item.get('name', '')[:30]} | "
+            f"{item.get('unit', '')} | {item.get('quantity', '')} | 分部:{section}"
         )
-        if item['description']:
+        if item.get("description"):
             # 只打印第一行特征描述
-            desc_line1 = item['description'].split('\n')[0][:50]
+            desc_line1 = item["description"].split("\n")[0][:50]
             logger.info(f"    特征: {desc_line1}")
-        if item['params']:
+        if item.get("params"):
             logger.info(f"    参数: {item['params']}")

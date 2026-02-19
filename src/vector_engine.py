@@ -36,6 +36,14 @@ class VectorEngine:
         self._collection = None
         self._chroma_client = None
 
+    def _connect(self, row_factory: bool = False):
+        """统一SQLite连接参数，减少并发场景下锁等待失败。"""
+        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
+        if row_factory:
+            conn.row_factory = sqlite3.Row
+        return conn
+
     @property
     def model(self):
         """延迟加载BGE向量模型（首次调用时加载，占用约2GB显存）"""
@@ -81,21 +89,21 @@ class VectorEngine:
         logger.info("开始构建向量索引...")
 
         # 从数据库读取数据（包含book字段，用于ChromaDB的metadata过滤）
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        # 兼容旧数据库：检测book列是否存在，不存在时降级查询
-        has_book_col = any(
-            row[1] == "book" for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()
-        )
-        if has_book_col:
-            cursor.execute("SELECT id, search_text, book FROM quotas WHERE search_text IS NOT NULL")
-        else:
-            logger.warning("旧数据库缺少book列，按册过滤功能不可用")
-            cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            # 兼容旧数据库：检测book列是否存在，不存在时降级查询
+            has_book_col = any(
+                row[1] == "book" for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()
+            )
+            if has_book_col:
+                cursor.execute("SELECT id, search_text, book FROM quotas WHERE search_text IS NOT NULL")
+            else:
+                logger.warning("旧数据库缺少book列，按册过滤功能不可用")
+                cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             logger.error("数据库中没有定额数据，请先运行定额导入")
@@ -111,8 +119,8 @@ class VectorEngine:
         # 删除并重建collection
         try:
             self._chroma_client.delete_collection("quotas")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"向量索引旧集合删除跳过: {e}")
         self._collection = self._chroma_client.create_collection(
             name="quotas",
             metadata={"hnsw:space": "cosine"}
@@ -204,7 +212,7 @@ class VectorEngine:
                 raise
 
         # 按册过滤后结果为空时，只在确认是旧索引缺metadata时才降级
-        if where_filter and (not results or not results["ids"] or not results["ids"][0]):
+        if where_filter and (not results or not results.get("ids") or not results.get("ids")[0]):
             # 检查是否是旧索引：采样多条记录，看是否全部缺少有效book metadata
             # 只看一条不准（可能刚好取到非C*开头的合法空book记录）
             try:
@@ -216,7 +224,8 @@ class VectorEngine:
                 )
                 # 采样中无任何有效book → 旧索引
                 is_old_index = (valid_book_count == 0)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"向量索引metadata采样失败，按旧索引兼容处理: {e}")
                 is_old_index = True
 
             if is_old_index:
@@ -229,28 +238,50 @@ class VectorEngine:
                 # 正常情况：该册确实没有匹配结果，保持空（不跨专业污染）
                 logger.info(f"向量搜索按册过滤({books})后无匹配结果")
 
-        if not results or not results["ids"] or not results["ids"][0]:
+        if not results or not results.get("ids") or not results.get("ids")[0]:
             return []
 
         # 获取匹配的数据库ID和相似度分数
-        matched_ids = results["ids"][0]
-        # ChromaDB返回的distances是距离（越小越相似），转为相似度分数
-        distances = results["distances"][0] if results["distances"] else [0] * len(matched_ids)
+        matched_ids = results.get("ids", [[]])[0]
+        raw_distances = results["distances"][0] if results.get("distances") else []
+
+        # 防御性对齐：部分后端/旧索引场景可能出现 ids 与 distances 数量不一致
+        if len(raw_distances) != len(matched_ids):
+            logger.warning(
+                f"向量检索返回长度不一致: ids={len(matched_ids)}, "
+                f"distances={len(raw_distances)}，已按最低相似度补齐/截断"
+            )
+        distances = list(raw_distances[:len(matched_ids)])
+        if len(distances) < len(matched_ids):
+            # 缺失距离按最大距离1.0处理（相似度0），避免虚高置信度
+            distances.extend([1.0] * (len(matched_ids) - len(distances)))
+
         # 余弦距离 → 相似度分数（1-distance，因为用的cosine space）
-        scores = [1 - d for d in distances]
+        scores = [max(0.0, min(1.0, 1 - d)) for d in distances]
 
         # 查询数据库获取完整定额信息
-        db_ids = [int(mid) for mid in matched_ids]
-        score_map = {int(mid): s for mid, s in zip(matched_ids, scores)}
+        db_ids = []
+        score_map = {}
+        for mid, score in zip(matched_ids, scores):
+            try:
+                db_id = int(mid)
+            except (TypeError, ValueError):
+                logger.warning(f"向量检索返回非法ID，已跳过: {mid!r}")
+                continue
+            db_ids.append(db_id)
+            score_map[db_id] = score
 
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        if not db_ids:
+            return []
 
-        placeholders = ",".join(["?"] * len(db_ids))
-        cursor.execute(f"SELECT * FROM quotas WHERE id IN ({placeholders})", db_ids)
-        rows = {row["id"]: dict(row) for row in cursor.fetchall()}
-        conn.close()
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            placeholders = ",".join(["?"] * len(db_ids))
+            cursor.execute(f"SELECT * FROM quotas WHERE id IN ({placeholders})", db_ids)
+            rows = {row["id"]: dict(row) for row in cursor.fetchall()}
+        finally:
+            conn.close()
 
         # 组装结果，保持分数排序
         results = []
@@ -269,7 +300,8 @@ class VectorEngine:
         """获取向量索引中的文档数量"""
         try:
             return self.collection.count()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"向量索引计数失败，按0返回: {e}")
             return 0
 
 
