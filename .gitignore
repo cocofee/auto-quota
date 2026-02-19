@@ -23,6 +23,9 @@ data/experience/
 data/reference/
 data/quota_rules/
 
+# 定额Excel源文件（体积大，各机器不同，不纳入git）
+data/quota_data/
+
 # 文档导出（CHM解包等大量生成文件）
 docs/chm_dump/
 
