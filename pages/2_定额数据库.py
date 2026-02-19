@@ -158,81 +158,191 @@ def show_search(db):
             st.info("未找到匹配的定额")
 
 
-def show_import():
-    """导入新定额"""
+def show_import(province):
+    """导入新定额（支持增量导入：自动识别已导入/未导入文件）"""
+    from src.quota_db import QuotaDB, detect_specialty_from_excel
+    import datetime
+
     st.subheader("导入定额Excel")
 
     st.markdown("""
     **操作步骤：**
     1. 从广联达导出定额Excel文件
-    2. 将文件放到 `data/quota_data/` 目录下
-    3. 点击下方按钮导入并构建索引
-
-    **文件格式要求：**
-    - A列：定额编号（如 C1-1-1）
-    - B列：名称+特征参数
-    - C列：计量单位
-    - D列：工作类型
+    2. 将文件放到对应省份的 `data/quota_data/{省份}/` 目录下
+    3. 下方会自动显示哪些文件已导入、哪些是新增的
+    4. 点击按钮导入新增文件
     """)
 
-    # 显示data/quota_data/下的文件
-    quota_dir = config.QUOTA_DATA_DIR
-    if quota_dir.exists():
-        files = list(quota_dir.glob("*.xlsx")) + list(quota_dir.glob("*.xls"))
-        if files:
-            st.caption("已有的定额文件：")
-            for f in files:
-                st.text(f"  {f.name}")
+    # 扫描当前省份的定额Excel目录
+    quota_dir = config.get_quota_data_dir(province)
+    if not quota_dir.exists():
+        st.warning(f"定额目录不存在: {quota_dir}")
+        st.info("请创建该目录并放入广联达导出的定额Excel文件")
+        return
+
+    xlsx_files = sorted(quota_dir.glob("*.xlsx"))
+    if not xlsx_files:
+        st.info(f"目录下没有xlsx文件: {quota_dir}")
+        return
+
+    # 获取导入历史，区分已导入/新增/已修改
+    db = QuotaDB(province=province)
+    history = db.get_import_history()
+    imported_map = {
+        h["file_name"]: h for h in history
+    }
+
+    # 分类文件
+    imported_files = []   # 已导入（跳过）
+    new_files = []        # 新增（待导入）
+    modified_files = []   # 已修改（需重新导入）
+
+    for f in xlsx_files:
+        stat = f.stat()
+        prev = imported_map.get(f.name)
+        if prev is None:
+            new_files.append(f)
+        elif prev["file_size"] == stat.st_size and abs(prev["file_mtime"] - stat.st_mtime) < 1:
+            imported_files.append((f, prev))
         else:
-            st.info(f"目录 {quota_dir} 下没有Excel文件")
-    else:
-        st.warning(f"目录不存在: {quota_dir}")
+            modified_files.append((f, prev))
 
-    specialty = st.selectbox("定额专业", ["安装", "土建", "市政"])
+    # 显示文件状态概览
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("已导入", f"{len(imported_files)} 个")
+    with col2:
+        st.metric("新增待导入", f"{len(new_files)} 个")
+    with col3:
+        st.metric("已修改", f"{len(modified_files)} 个")
 
-    if st.button("导入定额并构建索引", type="primary"):
-        # 查找对应专业的定额文件
-        excel_name = config.QUOTA_EXCEL_FILES.get(specialty)
-        if not excel_name:
-            st.error(f"未配置 {specialty} 专业的定额文件，请在 config.py 中配置")
+    # 已导入的文件列表（折叠显示）
+    if imported_files:
+        with st.expander(f"已导入的文件（{len(imported_files)} 个）", expanded=False):
+            rows = []
+            for f, info in imported_files:
+                imported_time = datetime.datetime.fromtimestamp(info["imported_at"])
+                rows.append({
+                    "文件名": f.name,
+                    "专业": info.get("specialty", ""),
+                    "定额条数": info.get("quota_count", 0),
+                    "导入时间": imported_time.strftime("%Y-%m-%d %H:%M"),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # 新增文件列表
+    if new_files:
+        st.markdown(f"**新增文件（{len(new_files)} 个）：**")
+        for f in new_files:
+            specialty = detect_specialty_from_excel(str(f))
+            size_mb = f.stat().st_size / 1024 / 1024
+            st.markdown(f"- {f.name} — 专业: `{specialty}`, 大小: {size_mb:.1f}MB")
+
+    # 已修改文件列表
+    if modified_files:
+        st.markdown(f"**已修改文件（{len(modified_files)} 个，需重新导入）：**")
+        for f, prev in modified_files:
+            specialty = detect_specialty_from_excel(str(f))
+            st.markdown(f"- {f.name} — 专业: `{specialty}`（文件已更新）")
+
+    # 需要导入的文件 = 新增 + 已修改
+    files_to_import = new_files + [f for f, _ in modified_files]
+
+    st.divider()
+
+    # 导入按钮区域
+    col_inc, col_full = st.columns(2)
+
+    with col_inc:
+        if files_to_import:
+            if st.button(f"导入新增文件（{len(files_to_import)} 个）", type="primary"):
+                _do_import(db, province, files_to_import, full_mode=False)
+        else:
+            st.success("所有文件已导入，无需更新")
+
+    with col_full:
+        if st.button("全量重导（所有文件）"):
+            _do_import(db, province, xlsx_files, full_mode=True)
+
+
+def _do_import(db, province, files_to_import, full_mode=False):
+    """执行导入操作（增量或全量）
+
+    参数:
+        db: QuotaDB实例
+        province: 省份名称
+        files_to_import: 要导入的文件列表
+        full_mode: True=全量重导（清除旧数据），False=增量追加
+    """
+    from src.quota_db import detect_specialty_from_excel
+
+    if full_mode:
+        db.clear_import_history()
+
+    mode_label = "全量重导" if full_mode else "增量导入"
+    progress = st.progress(0, text=f"正在{mode_label}...")
+
+    # 第1步：导入定额到数据库
+    imported = {}  # {specialty: count}
+    cleared_specialties = set()
+    total_files = len(files_to_import)
+
+    for i, xlsx_file in enumerate(files_to_import):
+        specialty = detect_specialty_from_excel(str(xlsx_file))
+        progress.progress(
+            (i + 1) / (total_files + 2),
+            text=f"导入 {xlsx_file.name}（{i+1}/{total_files}）...",
+        )
+
+        try:
+            if full_mode:
+                # 全量模式：同一specialty第一个文件清旧数据
+                is_first = specialty not in cleared_specialties
+                cleared_specialties.add(specialty)
+                count = db.import_excel(str(xlsx_file), specialty=specialty,
+                                        clear_existing=is_first)
+            else:
+                # 增量模式：追加，不清旧数据
+                count = db.import_excel(str(xlsx_file), specialty=specialty,
+                                        clear_existing=False)
+
+            imported[specialty] = imported.get(specialty, 0) + count
+            # 记录导入历史
+            db.record_import(str(xlsx_file), specialty, count)
+        except Exception as e:
+            st.error(f"导入失败 {xlsx_file.name}: {e}")
             return
 
-        excel_path = quota_dir / excel_name
-        if not excel_path.exists():
-            st.error(f"定额文件不存在: {excel_path}")
-            return
+    total_count = sum(imported.values())
+    st.success(f"导入完成！本次导入 {total_count} 条定额")
+    for sp, cnt in imported.items():
+        st.caption(f"  {sp}: {cnt} 条")
 
-        with st.spinner("正在导入定额（可能需要几分钟）..."):
-            try:
-                from src.quota_db import QuotaDB
-                db = QuotaDB()
-                count = db.import_excel(str(excel_path), specialty)
-                # 导入后自动补充book字段
-                db.upgrade_add_book_field()
-                st.success(f"导入完成！共 {count} 条定额")
-            except Exception as e:
-                st.error(f"导入失败: {e}")
-                return
+    # 第2步：构建BM25索引
+    progress.progress(
+        (total_files + 1) / (total_files + 2),
+        text="构建BM25搜索索引...",
+    )
+    try:
+        from src.bm25_engine import BM25Engine
+        bm25 = BM25Engine(province=province)
+        bm25.build_index()
+        st.success("BM25索引构建完成")
+    except Exception as e:
+        st.error(f"BM25索引构建失败: {e}")
 
-        with st.spinner("正在构建BM25索引..."):
-            try:
-                from src.bm25_engine import BM25Engine
-                bm25 = BM25Engine()
-                bm25.build_index()
-                st.success("BM25索引构建完成")
-            except Exception as e:
-                st.error(f"BM25索引构建失败: {e}")
+    # 第3步：构建向量索引
+    progress.progress(1.0, text="构建向量索引...")
+    try:
+        from src.vector_engine import VectorEngine
+        vec = VectorEngine(province=province)
+        vec.build_index()
+        st.success("向量索引构建完成")
+    except Exception as e:
+        st.error(f"向量索引构建失败: {e}")
 
-        with st.spinner("正在构建向量索引（首次需要加载模型）..."):
-            try:
-                from src.vector_engine import VectorEngine
-                vec = VectorEngine()
-                vec.build_index()
-                st.success("向量索引构建完成")
-            except Exception as e:
-                st.error(f"向量索引构建失败: {e}")
-
-        st.balloons()
+    progress.empty()
+    st.balloons()
 
 
 def main():
@@ -273,7 +383,7 @@ def main():
             st.warning(f"定额数据库未初始化，请先导入定额数据（{e}）")
 
     with tab3:
-        show_import()
+        show_import(selected_province)
 
 
 main()
