@@ -25,7 +25,7 @@ from config import get_quota_db_path
 
 
 def lookup_by_keywords(keywords: list, section: str = None, type_filter: str = None,
-                       province: str = "北京2024", limit: int = 50) -> list:
+                       province: str = None, limit: int = 50) -> list:
     """按关键词搜索定额（多关键词取交集）"""
     db_path = get_quota_db_path(province)
     if not os.path.exists(db_path):
@@ -60,7 +60,7 @@ def lookup_by_keywords(keywords: list, section: str = None, type_filter: str = N
     return results
 
 
-def lookup_by_id(quota_id: str, province: str = "北京2024") -> list:
+def lookup_by_id(quota_id: str, province: str = None) -> list:
     """按定额编号查找（支持前缀匹配）"""
     db_path = get_quota_db_path(province)
     if not os.path.exists(db_path):
@@ -86,7 +86,7 @@ def lookup_by_id(quota_id: str, province: str = "北京2024") -> list:
     return results
 
 
-def lookup_series(quota_id: str, province: str = "北京2024") -> list:
+def lookup_series(quota_id: str, province: str = None) -> list:
     """查看某条定额所在的整个系列（同名不同档位的所有定额）"""
     db_path = get_quota_db_path(province)
     if not os.path.exists(db_path):
@@ -140,7 +140,7 @@ def main():
     parser.add_argument("--series", help="查看某条定额的完整系列（所有档位）")
     parser.add_argument("--section", help="按章节过滤（如 C4-8, C4-11）")
     parser.add_argument("--type", dest="type_filter", help="按类型过滤（如 槽式、焊接）")
-    parser.add_argument("--province", default="北京2024", help="省份（默认北京2024）")
+    parser.add_argument("--province", default=None, help="省份（默认使用config配置）")
     parser.add_argument("--limit", type=int, default=50, help="最大返回条数")
     args = parser.parse_args()
 

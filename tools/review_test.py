@@ -73,7 +73,8 @@ def _atomic_write_json(path: str, payload):
 
 
 def run_matching(excel_path: str, use_experience: bool = False,
-                 province: str = None, filter_code: str = None) -> dict:
+                 province: str = None, filter_code: str = None,
+                 quiet: bool = False) -> dict:
     """调用 main.py 的匹配逻辑，返回完整结果
 
     参数:
@@ -81,7 +82,14 @@ def run_matching(excel_path: str, use_experience: bool = False,
         use_experience: 是否使用经验库（默认False=纯搜索测试）
         province: 省份名称（如"北京2024"），传入时启用经验库
         filter_code: 过滤编码前缀（如"03"=仅安装工程）
+        quiet: 静默模式，抑制模型加载进度条
     """
+    # 静默模式：抑制 tqdm/transformers 的进度条
+    if quiet:
+        os.environ["TQDM_DISABLE"] = "1"
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     temp_dir = Path("output") / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -263,6 +271,8 @@ def main():
                         help='启用经验库（默认关闭，纯搜索测试）')
     parser.add_argument('--province', help='省份名称（如"北京2024"）')
     parser.add_argument('--filter-code', help='过滤编码前缀（如"03"=仅安装工程）')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                        help='静默模式，抑制模型加载进度条（减少输出噪声）')
     args = parser.parse_args()
 
     excel_path = args.excel_path
@@ -291,7 +301,8 @@ def main():
     # 运行匹配
     try:
         data = run_matching(excel_path, use_experience=args.with_experience,
-                           province=args.province, filter_code=args.filter_code)
+                           province=args.province, filter_code=args.filter_code,
+                           quiet=args.quiet)
     except Exception as e:
         print(f"匹配失败: {e}")
         sys.exit(1)
