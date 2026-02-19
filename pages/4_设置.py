@@ -5,6 +5,7 @@
 
 import sys
 import os
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -13,6 +14,63 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 st.set_page_config(page_title="设置", page_icon="⚙️", layout="wide")
+
+
+def _sanitize_env_value(value) -> str:
+    """清洗.env值，阻断换行注入和空字节。"""
+    text = str(value or "")
+    text = text.replace("\x00", "").replace("\r", " ").replace("\n", " ").strip()
+    return text
+
+
+def _merge_env_updates(env_path: Path, updates: dict):
+    """只更新目标key，保留.env中其他配置和注释。"""
+    updates = {str(k): _sanitize_env_value(v) for k, v in (updates or {}).items()}
+    existing_lines = []
+    if env_path.exists():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                existing_lines = f.read().splitlines()
+        except Exception as e:
+            raise RuntimeError(f"读取 .env 失败: {e}") from e
+
+    out_lines = []
+    seen = set()
+    key_pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+    for line in existing_lines:
+        m = key_pattern.match(line.strip())
+        if not m:
+            out_lines.append(line)
+            continue
+
+        key = m.group(1)
+        if key in updates:
+            if key not in seen:
+                out_lines.append(f"{key}={updates[key]}")
+                seen.add(key)
+            # 重复key跳过（保留第一次）
+            continue
+
+        out_lines.append(line)
+
+    for key, value in updates.items():
+        if key not in seen:
+            out_lines.append(f"{key}={value}")
+
+    tmp_path = env_path.with_suffix(env_path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(out_lines) + "\n")
+        os.replace(tmp_path, env_path)
+    except Exception as e:
+        raise RuntimeError(f"写入 .env 失败: {e}") from e
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def show_api_settings():
@@ -29,12 +87,16 @@ def show_api_settings():
     # 读取当前.env配置
     env_vars = {}
     if env_path.exists():
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip()
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        env_vars[key.strip()] = value.strip()
+        except Exception as e:
+            st.warning(f"读取 .env 失败，已使用默认值：{e}")
+            env_vars = {}
 
     # 默认大模型选择
     llm_options = {
@@ -90,26 +152,18 @@ def show_api_settings():
 
     # 保存按钮
     if st.button("保存API配置", type="primary"):
-        # 写入.env文件
-        lines = [
-            f"# 自动套定额系统 API配置",
-            f"# 修改后需要重启Streamlit才能生效",
-            f"",
-            f"DEFAULT_LLM={default_llm}",
-            f"",
-            f"# DeepSeek",
-            f"DEEPSEEK_API_KEY={deepseek_key}",
-            f"DEEPSEEK_BASE_URL={deepseek_url}",
-            f"",
-            f"# Claude",
-            f"ANTHROPIC_API_KEY={anthropic_key}",
-            f"",
-            f"# OpenAI",
-            f"OPENAI_API_KEY={openai_key}",
-        ]
-
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        updates = {
+            "DEFAULT_LLM": default_llm,
+            "DEEPSEEK_API_KEY": deepseek_key,
+            "DEEPSEEK_BASE_URL": deepseek_url,
+            "ANTHROPIC_API_KEY": anthropic_key,
+            "OPENAI_API_KEY": openai_key,
+        }
+        try:
+            _merge_env_updates(env_path, updates)
+        except Exception as e:
+            st.error(f"保存失败：{e}")
+            return
 
         st.success("API配置已保存到 .env 文件。重启Streamlit后生效。")
 
@@ -192,8 +246,9 @@ def show_system_info():
         ukb = UniversalKB()
         ukb_stats = ukb.get_stats()
         st.text(f"通用知识库：权威层 {ukb_stats.get('authority', 0)} 条，候选层 {ukb_stats.get('candidate', 0)} 条")
-    except Exception:
+    except Exception as e:
         st.text("通用知识库：未初始化")
+        st.caption(f"原因: {e}")
 
     # 规则知识库
     try:
@@ -204,8 +259,9 @@ def show_system_info():
         if rkb_stats.get("by_province"):
             for prov, count in rkb_stats["by_province"].items():
                 st.text(f"  - {prov}：{count} 条")
-    except Exception:
+    except Exception as e:
         st.text("规则知识库：未初始化")
+        st.caption(f"原因: {e}")
 
     # 经验库
     try:
@@ -215,8 +271,9 @@ def show_system_info():
         auth_count = edb_stats.get("authority", 0)
         cand_count = edb_stats.get("candidate", 0)
         st.text(f"经验库：权威层 {auth_count} 条，候选层 {cand_count} 条（共 {edb_stats.get('total', 0)} 条）")
-    except Exception:
+    except Exception as e:
         st.text("经验库：未初始化")
+        st.caption(f"原因: {e}")
 
     # 检查GPU
     st.divider()
@@ -225,12 +282,16 @@ def show_system_info():
         import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
-            gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+            props = torch.cuda.get_device_properties(0)
+            total_memory = getattr(props, "total_memory", getattr(props, "total_mem", 0))
+            gpu_mem = total_memory / (1024**3) if total_memory else 0
             st.success(f"GPU可用：{gpu_name}（{gpu_mem:.1f}GB显存）")
         else:
             st.warning("未检测到GPU，向量搜索将使用CPU（速度较慢）")
     except ImportError:
         st.warning("PyTorch未安装")
+    except Exception as e:
+        st.warning(f"GPU状态检测失败: {e}")
 
 
 def main():
