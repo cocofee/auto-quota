@@ -30,7 +30,7 @@ class VocabExtractor:
     """从定额数据库反向提取词汇"""
 
     def __init__(self, province: str = None):
-        self.province = province or config.CURRENT_PROVINCE
+        self.province = province or config.get_current_province()
         self.db_path = config.get_quota_db_path(self.province)
 
         # 提取结果

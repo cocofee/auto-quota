@@ -27,7 +27,7 @@ class VectorEngine:
         参数:
             province: 省份名称，默认用config配置
         """
-        self.province = province or config.CURRENT_PROVINCE
+        self.province = province or config.get_current_province()
         self.db_path = config.get_quota_db_path(self.province)
         self.chroma_dir = config.get_chroma_quota_dir(self.province)
 
@@ -88,19 +88,21 @@ class VectorEngine:
         """
         logger.info("开始构建向量索引...")
 
-        # 从数据库读取数据（包含book字段，用于ChromaDB的metadata过滤）
+        # 从数据库读取数据（包含book和specialty字段，用于ChromaDB的metadata过滤）
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            # 兼容旧数据库：检测book列是否存在，不存在时降级查询
-            has_book_col = any(
-                row[1] == "book" for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()
-            )
+            # 检测book和specialty列是否存在
+            col_info = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
+            has_book_col = "book" in col_info
+            has_specialty_col = "specialty" in col_info
+
+            select_cols = "id, search_text"
             if has_book_col:
-                cursor.execute("SELECT id, search_text, book FROM quotas WHERE search_text IS NOT NULL")
-            else:
-                logger.warning("旧数据库缺少book列，按册过滤功能不可用")
-                cursor.execute("SELECT id, search_text FROM quotas WHERE search_text IS NOT NULL")
+                select_cols += ", book"
+            if has_specialty_col:
+                select_cols += ", specialty"
+            cursor.execute(f"SELECT {select_cols} FROM quotas WHERE search_text IS NOT NULL")
             rows = cursor.fetchall()
         finally:
             conn.close()
@@ -143,8 +145,13 @@ class VectorEngine:
                 normalize_embeddings=True  # L2归一化，配合余弦相似度
             )
 
-            # 每条定额的所属册号，存入ChromaDB的metadata（用于按册过滤搜索）
-            metadatas = [{"book": (row["book"] or "") if has_book_col else ""} for row in batch_rows]
+            # 每条定额的元数据（book + specialty），用于搜索时过滤
+            metadatas = []
+            for row in batch_rows:
+                meta = {}
+                meta["book"] = (row["book"] or "") if has_book_col else ""
+                meta["specialty"] = (row["specialty"] or "") if has_specialty_col else ""
+                metadatas.append(meta)
 
             # 存入ChromaDB（带metadata，支持后续按册过滤查询）
             self.collection.add(
@@ -158,7 +165,8 @@ class VectorEngine:
 
         logger.info(f"向量索引构建完成: {total}条 → {self.chroma_dir}")
 
-    def search(self, query: str, top_k: int = None, books: list[str] = None) -> list[dict]:
+    def search(self, query: str, top_k: int = None, books: list[str] = None,
+               specialty: str = None) -> list[dict]:
         """
         向量语义搜索
 
@@ -166,6 +174,7 @@ class VectorEngine:
             query: 搜索文本（清单描述）
             top_k: 返回前K条结果
             books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
+            specialty: 限定搜索的专业（如"安装"、"土建"），为None时不按专业过滤
 
         返回:
             匹配结果列表，每条包含 {id, quota_id, name, unit, vector_score, ...}
@@ -185,13 +194,21 @@ class VectorEngine:
             normalize_embeddings=True
         )
 
-        # 构建按册过滤条件（ChromaDB的where参数）
+        # 构建过滤条件（specialty优先，book其次）
         where_filter = None
+        conditions = []
+        if specialty:
+            conditions.append({"specialty": specialty})
         if books:
             if len(books) == 1:
-                where_filter = {"book": books[0]}
+                conditions.append({"book": books[0]})
             else:
-                where_filter = {"book": {"$in": books}}
+                conditions.append({"book": {"$in": books}})
+
+        if len(conditions) == 1:
+            where_filter = conditions[0]
+        elif len(conditions) > 1:
+            where_filter = {"$and": conditions}
 
         # ChromaDB查询（带可选的册号过滤）
         try:

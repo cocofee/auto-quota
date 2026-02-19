@@ -39,7 +39,7 @@ class HybridSearcher:
         参数:
             province: 省份名称，默认用config配置
         """
-        self.province = province or config.CURRENT_PROVINCE
+        self.province = province or config.get_current_province()
 
         # 两个搜索引擎（延迟初始化）
         self._bm25_engine = None
