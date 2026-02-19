@@ -145,20 +145,10 @@ class ExperienceDB:
 
     @property
     def model(self):
-        """延迟加载向量模型（与定额搜索共用同一个BGE模型）"""
+        """从全局 ModelCache 获取向量模型（与定额搜索共用同一个BGE模型）"""
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            try:
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME,
-                    device="cuda"
-                )
-            except Exception as e:
-                logger.warning(f"经验库向量模型GPU加载失败({e})，切换到CPU")
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME,
-                    device="cpu"
-                )
+            from src.model_cache import ModelCache
+            self._model = ModelCache.get_vector_model()
         return self._model
 
     @property
