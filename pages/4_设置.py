@@ -177,20 +177,27 @@ def show_province_settings():
     """)
 
     # 检查已有的省份数据
-    provinces_dir = config.PROVINCES_DB_DIR
-    available_provinces = []
-    if provinces_dir.exists():
-        for p in provinces_dir.iterdir():
-            if p.is_dir() and (p / "quota.db").exists():
-                available_provinces.append(p.name)
+    available_provinces = config.list_db_provinces()
 
     if available_provinces:
         st.info(f"已有的省份数据：{', '.join(available_provinces)}")
+
+        # 当前选中的省份
+        default_prov = st.session_state.get("current_province", config.CURRENT_PROVINCE)
+        default_idx = 0
+        if default_prov in available_provinces:
+            default_idx = available_provinces.index(default_prov)
+
+        selected = st.selectbox(
+            "选择当前省份",
+            available_provinces,
+            index=default_idx,
+            key="settings_province_selector",
+        )
+        st.session_state["current_province"] = selected
+        st.success(f"当前省份：{selected}")
     else:
         st.warning("暂无省份数据，请先在「定额数据库」页面导入定额")
-
-    st.text(f"当前省份：{config.CURRENT_PROVINCE}")
-    st.caption("切换省份功能需要修改 config.py 中的 CURRENT_PROVINCE，后续版本会支持界面切换")
 
 
 def show_match_settings():

@@ -291,7 +291,7 @@ def run_matching(bill_items, mode, use_experience, progress_bar, status_text):
         file_path,
         "--mode", mode,
         "--json-output", json_path,
-        "--province", config.CURRENT_PROVINCE,
+        "--province", st.session_state.get("current_province", config.CURRENT_PROVINCE),
     ]
     if sheet_name:
         cmd.extend(["--sheet", sheet_name])
@@ -958,6 +958,7 @@ def save_to_experience_db():
                 bill_name=item.get("name"), bill_code=item.get("code"),
                 bill_unit=item.get("unit"), source=source,
                 confidence=save_confidence,
+                province=st.session_state.get("current_province", config.CURRENT_PROVINCE),
             )
             if record_id <= 0:
                 failed += 1
@@ -1031,7 +1032,26 @@ def main():
             )
             use_exp = st.checkbox("使用经验库", value=True)
             st.divider()
-            st.caption(f"省份：{config.CURRENT_PROVINCE}")
+
+            # 省份选择（列出所有已导入的省份定额库）
+            available_provinces = config.list_db_provinces()
+            if available_provinces:
+                # 确定默认选中项
+                default_prov = st.session_state.get(
+                    "current_province", config.CURRENT_PROVINCE)
+                default_idx = 0
+                if default_prov in available_provinces:
+                    default_idx = available_provinces.index(default_prov)
+                selected_province = st.selectbox(
+                    "省份/定额版本",
+                    available_provinces,
+                    index=default_idx,
+                    key="province_selector",
+                )
+                st.session_state["current_province"] = selected_province
+            else:
+                st.warning("未找到省份数据，请先导入定额")
+                st.session_state["current_province"] = config.CURRENT_PROVINCE
 
         # 上传文件
         uploaded = st.file_uploader("上传清单Excel", type=["xlsx", "xls"])
@@ -1128,6 +1148,10 @@ def main():
 
     # ---- 侧边栏：分部导航 + 操作 ----
     with st.sidebar:
+        # 当前省份（只读显示，匹配完成后不允许切换）
+        st.caption(f"当前省份：{st.session_state.get('current_province', config.CURRENT_PROVINCE)}")
+        st.divider()
+
         # 分部导航
         st.subheader("分部导航")
         sections = get_sections(results)

@@ -91,16 +91,20 @@ def show_stats(exp_db):
         st.dataframe(pd.DataFrame(province_rows), use_container_width=True, hide_index=True)
 
 
-def show_records(exp_db):
-    """展示经验库记录"""
+def show_records(exp_db, province_filter=None):
+    """展示经验库记录（支持省份过滤）"""
     st.subheader("历史匹配记录")
 
     # 从SQLite直接读取记录（分页）
     conn = _open_db_conn(exp_db.db_path)
     try:
-        # 总数
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM experiences")
+        # 按省份过滤的总数
+        if province_filter:
+            cursor.execute("SELECT COUNT(*) FROM experiences WHERE province = ?",
+                          (province_filter,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM experiences")
         total = cursor.fetchone()[0]
         if total == 0:
             st.info("经验库为空，匹配清单后系统会自动积累经验")
@@ -112,14 +116,24 @@ def show_records(exp_db):
         page = st.number_input("页码", min_value=1, max_value=total_pages, value=1)
         offset = (page - 1) * page_size
 
-        # 查询
-        cursor.execute("""
-            SELECT id, bill_text, bill_name, quota_ids, quota_names,
-                   source, confidence, confirm_count, province
-            FROM experiences
-            ORDER BY updated_at DESC
-            LIMIT ? OFFSET ?
-        """, (page_size, offset))
+        # 查询（按省份过滤）
+        if province_filter:
+            cursor.execute("""
+                SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                       source, confidence, confirm_count, province
+                FROM experiences
+                WHERE province = ?
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """, (province_filter, page_size, offset))
+        else:
+            cursor.execute("""
+                SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                       source, confidence, confirm_count, province
+                FROM experiences
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """, (page_size, offset))
         rows = cursor.fetchall()
     finally:
         conn.close()
@@ -169,8 +183,8 @@ def show_records(exp_db):
     st.dataframe(styled, use_container_width=True, height=500)
 
 
-def show_search(exp_db):
-    """在经验库中搜索"""
+def show_search(exp_db, province_filter=None):
+    """在经验库中搜索（支持省份过滤）"""
     st.subheader("搜索经验库")
 
     query = st.text_input(
@@ -183,13 +197,23 @@ def show_search(exp_db):
         conn = _open_db_conn(exp_db.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, bill_text, bill_name, quota_ids, quota_names,
-                       confidence, confirm_count, source
-                FROM experiences
-                WHERE bill_text LIKE ? OR bill_name LIKE ?
-                LIMIT 30
-            """, (f"%{query}%", f"%{query}%"))
+            if province_filter:
+                cursor.execute("""
+                    SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                           confidence, confirm_count, source
+                    FROM experiences
+                    WHERE (bill_text LIKE ? OR bill_name LIKE ?)
+                    AND province = ?
+                    LIMIT 30
+                """, (f"%{query}%", f"%{query}%", province_filter))
+            else:
+                cursor.execute("""
+                    SELECT id, bill_text, bill_name, quota_ids, quota_names,
+                           confidence, confirm_count, source
+                    FROM experiences
+                    WHERE bill_text LIKE ? OR bill_name LIKE ?
+                    LIMIT 30
+                """, (f"%{query}%", f"%{query}%"))
             rows = cursor.fetchall()
         finally:
             conn.close()
@@ -220,16 +244,26 @@ def main():
     if not exp_db:
         return
 
+    # 省份过滤选择（经验库是共享的，可以按省份筛选查看）
+    available_provinces = config.list_db_provinces()
+    filter_options = ["全部省份"] + available_provinces
+    selected_filter = st.selectbox(
+        "按省份筛选",
+        filter_options,
+        key="exp_province_filter",
+    )
+    province_filter = None if selected_filter == "全部省份" else selected_filter
+
     tab1, tab2, tab3 = st.tabs(["统计概览", "历史记录", "搜索"])
 
     with tab1:
         show_stats(exp_db)
 
     with tab2:
-        show_records(exp_db)
+        show_records(exp_db, province_filter=province_filter)
 
     with tab3:
-        show_search(exp_db)
+        show_search(exp_db, province_filter=province_filter)
 
 
 main()
