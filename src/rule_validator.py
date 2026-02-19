@@ -155,6 +155,10 @@ class RuleValidator:
         参数:
             rules_path: 规则JSON文件路径，默认自动查找
         """
+        self.rules = None
+        self.family_index = {}
+        self.all_families = []  # 所有家族（带预计算的关键词）
+
         if rules_path is None:
             # 自动查找规则文件
             project_root = Path(__file__).parent.parent
@@ -162,27 +166,49 @@ class RuleValidator:
             # 找第一个JSON文件
             json_files = list(rules_dir.glob("*_安装定额规则.json"))
             if json_files:
-                rules_path = str(json_files[0])
+                rules_path = str(sorted(json_files)[0])
             else:
                 logger.warning("未找到定额规则文件，规则校验功能禁用")
-                self.rules = None
-                self.family_index = {}
                 return
 
-        # 加载规则文件
-        with open(rules_path, "r", encoding="utf-8") as f:
-            self.rules = json.load(f)
+        rules_file = Path(rules_path)
+        try:
+            with open(rules_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+        except FileNotFoundError:
+            logger.warning(f"规则文件不存在，规则校验功能禁用: {rules_file}")
+            return
+        except json.JSONDecodeError as e:
+            logger.warning(f"规则文件JSON损坏，规则校验功能禁用: {rules_file} ({e})")
+            return
+        except OSError as e:
+            logger.warning(f"读取规则文件失败，规则校验功能禁用: {rules_file} ({e})")
+            return
+        except Exception as e:
+            logger.warning(f"加载规则文件异常，规则校验功能禁用: {rules_file} ({e})")
+            return
+
+        if not isinstance(loaded, dict):
+            logger.warning(f"规则文件格式错误（根节点非对象），规则校验功能禁用: {rules_file}")
+            return
+        chapters = loaded.get("chapters")
+        if not isinstance(chapters, dict):
+            logger.warning(f"规则文件格式错误（缺少chapters对象），规则校验功能禁用: {rules_file}")
+            return
+
+        self.rules = loaded
 
         # 构建两个索引：
         # 1. quota_id → 家族（用于档位校验）
         # 2. 关键词 → 家族列表（用于规则预匹配）
-        self.family_index = {}
-        self.all_families = []  # 所有家族（带预计算的关键词）
         self._build_index()
 
         family_count = len(set(id(v) for v in self.family_index.values()))
-        logger.info(f"规则校验器已加载: {len(self.family_index)} 条定额, "
-                    f"{family_count} 个家族")
+        if self.family_index:
+            logger.info(f"规则校验器已加载: {len(self.family_index)} 条定额, "
+                        f"{family_count} 个家族")
+        else:
+            logger.warning(f"规则文件已加载但未解析到可用家族，规则校验功能实际不可用: {rules_file}")
 
     def _build_index(self):
         """构建索引：quota_id→家族 + 关键词→家族"""
@@ -300,7 +326,11 @@ class RuleValidator:
         best_param_value = None
 
         for entry in self.all_families:
-            family = entry["family"]
+            if not isinstance(entry, dict):
+                continue
+            family = entry.get("family")
+            if not isinstance(family, dict):
+                continue
             tiers = family.get("tiers")
             if not tiers:
                 continue  # 只处理有数值档位的家族
@@ -315,7 +345,7 @@ class RuleValidator:
                     bill_text, bill_params or {}, family_attrs):
                 continue
 
-            family_kws = entry["keywords"]
+            family_kws = entry.get("keywords") or []
             if not family_kws:
                 continue
 
@@ -380,6 +410,40 @@ class RuleValidator:
             if not has_specific_keyword:
                 continue
 
+            # 第3.5步：验证家族基础名称匹配（防止参数描述中的关键词导致误匹配）
+            # 例如："油浸频敏变阻器安装"的prefix包含"启动电动机功率"，
+            # 导致"电动机检查接线"错误匹配到这个家族（"电动机"来自参数描述）
+            # 修复：要求家族基础名称（不含参数）至少有一个核心词与清单匹配
+            # 匹配方式：精确/子串匹配 + 共同前缀匹配（≥2字符）
+            # 共同前缀：解决"接闪网"vs"接闪带"这类同族不同后缀的术语
+            base_name = family.get("name", "")
+            base_name_kws = tokenize(base_name)
+            base_name_kws = [kw for kw in base_name_kws
+                             if kw not in GENERIC_MODIFIERS and len(kw) >= 2]
+            if base_name_kws:
+                has_base_match = False
+                for bkw in bill_keywords:
+                    for bnkw in base_name_kws:
+                        # 精确匹配或子串匹配
+                        if bnkw == bkw or bnkw in bkw or bkw in bnkw:
+                            has_base_match = True
+                            break
+                        # 共同前缀匹配（≥2个字符）
+                        # 解决"接闪网"vs"接闪带"等同类术语的不同后缀问题
+                        common_prefix_len = 0
+                        for ca, cb in zip(bnkw, bkw):
+                            if ca == cb:
+                                common_prefix_len += 1
+                            else:
+                                break
+                        if common_prefix_len >= 2:
+                            has_base_match = True
+                            break
+                    if has_base_match:
+                        break
+                if not has_base_match:
+                    continue  # 家族核心名称无匹配 → 跳过（参数描述关键词不算）
+
             reverse_hits = 0
             for bkw in bill_keywords:
                 for fkw in family_kws:
@@ -424,6 +488,8 @@ class RuleValidator:
         best_entry = None
 
         for entry in self.all_families:
+            if not isinstance(entry, dict):
+                continue
             # 按册过滤：只在指定的册号范围内匹配
             if books and entry.get("book") and entry["book"] not in books:
                 continue
@@ -433,7 +499,7 @@ class RuleValidator:
                     bill_text, bill_params or {}, family_attrs):
                 continue
 
-            family_kws = entry["keywords"]
+            family_kws = entry.get("keywords") or []
             if not family_kws:
                 continue
 
@@ -491,7 +557,9 @@ class RuleValidator:
             coverage = forward_hits / len(family_kws)
             bill_coverage = reverse_hits / len(bill_keywords) if bill_keywords else 0
             # 介质上下文加减分（区分"给水"vs"排水"等同参数家族）
-            family = entry["family"]
+            family = entry.get("family")
+            if not isinstance(family, dict):
+                continue
             medium_bonus = self._compute_medium_bonus(
                 bill_text, family.get("name", ""))
             score = coverage * 0.6 + bill_coverage * 0.4 + medium_bonus
@@ -504,7 +572,9 @@ class RuleValidator:
         if not best_entry or best_score < 0.45:
             return None
 
-        family = best_entry["family"]
+        family = best_entry.get("family")
+        if not isinstance(family, dict):
+            return None
         tiers = family.get("tiers")
 
         if tiers:
