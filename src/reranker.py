@@ -41,30 +41,10 @@ class Reranker:
 
     @property
     def model(self):
-        """延迟加载 Reranker 模型（首次调用时加载，约2GB显存）"""
+        """从全局 ModelCache 获取 Reranker 模型（避免重复加载）"""
         if self._model is None:
-            logger.info(f"正在加载Reranker模型: {self.model_name}")
-            try:
-                from sentence_transformers import CrossEncoder
-                self._model = CrossEncoder(
-                    self.model_name,
-                    max_length=512,    # 定额名称一般不超过100字，512够用
-                    device="cuda",     # 用GPU加速
-                )
-                logger.info("Reranker模型加载成功（GPU模式）")
-            except Exception as e:
-                logger.warning(f"Reranker GPU加载失败，尝试CPU: {e}")
-                try:
-                    from sentence_transformers import CrossEncoder
-                    self._model = CrossEncoder(
-                        self.model_name,
-                        max_length=512,
-                        device="cpu",
-                    )
-                    logger.info("Reranker模型加载成功（CPU模式）")
-                except Exception as e2:
-                    logger.error(f"Reranker模型加载失败: {e2}")
-                    raise
+            from src.model_cache import ModelCache
+            self._model = ModelCache.get_reranker_model()
         return self._model
 
     def rerank(self, query: str, candidates: list[dict],

@@ -134,6 +134,14 @@ class HybridSearcher:
         total_bm25_hits = 0
         total_vector_hits = 0
 
+        # 批量预编码所有查询变体的向量（一次GPU调用，比逐条快很多）
+        variant_queries = [v["query"] for v in query_variants]
+        try:
+            all_embeddings = self.vector_engine.encode_queries(variant_queries)
+        except Exception as e:
+            logger.warning(f"批量向量编码失败: {e}")
+            all_embeddings = [None] * len(variant_queries)
+
         for idx, variant in enumerate(query_variants, start=1):
             q_text = variant["query"]
             q_weight = variant["weight"]
@@ -150,8 +158,11 @@ class HybridSearcher:
 
             vector_results = []
             try:
+                # 使用预计算的向量，跳过逐条编码
+                embedding = all_embeddings[idx - 1] if all_embeddings[0] is not None else None
                 vector_results = self.vector_engine.search(
-                    q_text, top_k=config.VECTOR_TOP_K, books=books
+                    q_text, top_k=config.VECTOR_TOP_K, books=books,
+                    precomputed_embedding=embedding
                 )
                 total_vector_hits += len(vector_results)
             except Exception as e:

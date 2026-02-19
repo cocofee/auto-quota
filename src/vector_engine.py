@@ -46,24 +46,10 @@ class VectorEngine:
 
     @property
     def model(self):
-        """延迟加载BGE向量模型（首次调用时加载，占用约2GB显存）"""
+        """从全局 ModelCache 获取BGE向量模型（避免重复加载）"""
         if self._model is None:
-            logger.info(f"正在加载向量模型: {config.VECTOR_MODEL_NAME}（加载到显存中...）")
-            try:
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME,
-                    device="cuda"  # 使用GPU加速
-                )
-                logger.info("向量模型加载成功（GPU模式）")
-            except Exception as e:
-                logger.warning(f"GPU加载失败({e})，切换到CPU模式")
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME,
-                    device="cpu"
-                )
-                logger.info("向量模型加载成功（CPU模式，速度较慢）")
+            from src.model_cache import ModelCache
+            self._model = ModelCache.get_vector_model()
         return self._model
 
     @property
@@ -165,8 +151,27 @@ class VectorEngine:
 
         logger.info(f"向量索引构建完成: {total}条 → {self.chroma_dir}")
 
+    def encode_queries(self, queries: list[str]) -> list:
+        """
+        批量编码多个查询文本（一次GPU调用，比逐条快很多）
+
+        参数:
+            queries: 查询文本列表
+
+        返回:
+            向量列表，与输入一一对应
+        """
+        query_prefix = "为这个句子生成表示以用于检索中文文档: "
+        prefixed = [query_prefix + q for q in queries]
+        embeddings = self.model.encode(
+            prefixed,
+            batch_size=len(prefixed),
+            normalize_embeddings=True
+        )
+        return embeddings
+
     def search(self, query: str, top_k: int = None, books: list[str] = None,
-               specialty: str = None) -> list[dict]:
+               specialty: str = None, precomputed_embedding=None) -> list[dict]:
         """
         向量语义搜索
 
@@ -175,6 +180,7 @@ class VectorEngine:
             top_k: 返回前K条结果
             books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
             specialty: 限定搜索的专业（如"安装"、"土建"），为None时不按专业过滤
+            precomputed_embedding: 预计算的向量（跳过encode步骤，用于批量优化）
 
         返回:
             匹配结果列表，每条包含 {id, quota_id, name, unit, vector_score, ...}
@@ -186,13 +192,16 @@ class VectorEngine:
             logger.error("向量索引为空，请先运行 build_index()")
             return []
 
-        # 对查询文本进行向量化
-        # BGE模型官方建议：检索时在query前加提示词
-        query_prefix = "为这个句子生成表示以用于检索中文文档: "
-        query_embedding = self.model.encode(
-            [query_prefix + query],
-            normalize_embeddings=True
-        )
+        # 使用预计算的向量，或者现场编码
+        if precomputed_embedding is not None:
+            import numpy as np
+            query_embedding = np.array(precomputed_embedding).reshape(1, -1)
+        else:
+            query_prefix = "为这个句子生成表示以用于检索中文文档: "
+            query_embedding = self.model.encode(
+                [query_prefix + query],
+                normalize_embeddings=True
+            )
 
         # 构建过滤条件（specialty优先，book其次）
         where_filter = None

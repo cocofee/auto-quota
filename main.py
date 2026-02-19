@@ -1091,6 +1091,13 @@ def main():
     searcher = HybridSearcher(province)
     validator = ParamValidator()
 
+    # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
+    try:
+        from src.model_cache import ModelCache
+        ModelCache.preload_all()
+    except Exception as e:
+        logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
+
     # 检查引擎状态
     status = searcher.get_status()
     logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
