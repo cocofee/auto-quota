@@ -293,6 +293,15 @@ class RuleValidator:
                     logger.debug(f"连接方式推导: {mat_code} → {default_conn}")
                     break
 
+        # ===== 电梯专用匹配（优先于通用策略） =====
+        # 电梯家族是 text 类型档位，通用 param_driven 无法处理
+        # 需要专用逻辑：类型+站数 → 直接定位家族和档位
+        if bill_params.get("elevator_type") and bill_params.get("elevator_stops") is not None:
+            elevator_result = self._match_elevator(
+                bill_text, bill_params, bill_keywords, item, books=books)
+            if elevator_result:
+                return elevator_result
+
         # ===== 策略A：参数驱动匹配（通用、不依赖修饰词如"明装"） =====
         # 思路：如果能从清单中提取出参数值，且参数类型匹配某个家族，
         #       那只需要核心名词对上就行，不要求"明装/落地/嵌入"等修饰词

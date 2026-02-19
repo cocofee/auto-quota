@@ -595,6 +595,85 @@ class TextParser:
 
         return None
 
+    def _extract_elevator_stops(self, text: str) -> Optional[int]:
+        """
+        提取电梯停靠站数
+
+        中国建筑楼层规则：没有0层（B1直接到1楼）。
+        计算方法：
+        - "停靠层数:-2~24层" → abs(-2) + 24 = 26站（跨地下+地上，无0层）
+        - "停靠层数:1~10层" → 10 - 1 + 1 = 10站（纯地上）
+        - "26站" → 直接取值
+        """
+        # 模式1：层数范围格式 "停靠层数:-2~24层"（最常见的清单描述格式）
+        range_match = re.search(
+            r'(?:停靠层数|停靠层站|停靠站数|层数)[：:]\s*(-?\d+)\s*[~～\-至到]\s*(-?\d+)\s*(?:层|站)?',
+            text
+        )
+        if range_match:
+            start = int(range_match.group(1))  # 起始层（可能为负，如-2）
+            end = int(range_match.group(2))    # 终止层（正数，如24）
+
+            if start < 0 and end > 0:
+                # 跨越地下+地上：站数 = |起始层| + 终止层（中国无0层）
+                stops = abs(start) + end
+            elif start < 0 and end <= 0:
+                # 纯地下：站数 = |起始层| - |终止层| + 1
+                stops = abs(start) - abs(end) + 1
+            else:
+                # 纯地上：站数 = 终止层 - 起始层 + 1
+                stops = end - start + 1
+
+            if 2 <= stops <= 100:  # 合理范围校验
+                return stops
+
+        # 模式2：直接给出站数 "站数:26" 或 "站数26"
+        stops_match = re.search(r'(?:站数|停靠站)[：:\s]*(\d+)', text)
+        if stops_match:
+            stops = int(stops_match.group(1))
+            if 2 <= stops <= 100:
+                return stops
+
+        # 模式3："26站" 格式
+        stops_match2 = re.search(r'(\d+)\s*站', text)
+        if stops_match2:
+            stops = int(stops_match2.group(1))
+            if 2 <= stops <= 100:
+                return stops
+
+        return None
+
+    # 电梯类型判断规则（按优先级排列：具体类型优先，泛称在后）
+    _ELEVATOR_TYPE_RULES = [
+        (["货梯", "载货"], "载货电梯"),
+        (["杂物", "餐梯", "杂物梯"], "杂物电梯"),
+        (["液压"], "液压电梯"),
+        (["扶梯", "自动扶梯"], "自动扶梯"),
+        (["客梯", "乘客", "观光电梯", "无障碍电梯", "无机房电梯"], "曳引式电梯"),
+    ]
+
+    def _extract_elevator_type(self, text: str) -> str:
+        """
+        从清单名称提取电梯类型
+
+        优先级：货梯 > 杂物电梯 > 液压电梯 > 扶梯 > 客梯/通用电梯
+        如"货梯兼消防电梯"优先匹配"货梯"→载货电梯。
+        含"电梯"但没匹配具体类型→默认曳引式电梯（最常见）。
+        不含电梯相关词→返回空字符串。
+        """
+        if not any(kw in text for kw in ["电梯", "扶梯", "货梯", "客梯", "杂物梯", "餐梯"]):
+            return ""
+
+        for keywords, elevator_type in self._ELEVATOR_TYPE_RULES:
+            if any(kw in text for kw in keywords):
+                return elevator_type
+
+        # 兜底：含"电梯"→曳引式电梯
+        if "电梯" in text:
+            return "曳引式电梯"
+
+        return ""
+
     def build_search_text(self, name: str, description: str = "") -> str:
         """
         构建用于搜索的文本
