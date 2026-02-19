@@ -22,6 +22,37 @@ import config
 from src.quota_db import QuotaDB, detect_specialty_from_excel
 
 
+def _resolve_import_province(name: str = None) -> str:
+    """解析导入目标省份，优先匹配 data/quota_data 中真实可用的省份目录。"""
+    available = config.list_all_provinces()
+
+    # 未指定：优先当前省份，不存在则回退第一个可用省份
+    if not name:
+        current = config.get_current_province()
+        if available and current not in available:
+            return available[0]
+        return current
+
+    # 没有可扫描目录时（如旧版扁平结构），保留原始输入做兼容
+    if not available:
+        return name
+
+    # 精确匹配
+    if name in available:
+        return name
+
+    # 模糊匹配（唯一命中）
+    matches = [p for p in available if name in p]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        options = ", ".join(matches)
+        raise ValueError(f"'{name}' 匹配到多个省份: {options}，请输入更精确名称")
+
+    options = ", ".join(available)
+    raise ValueError(f"找不到省份 '{name}'，可用省份: {options}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="一键导入定额数据")
     parser.add_argument("--province", type=str, default=None,
@@ -30,7 +61,14 @@ def main():
                         help="跳过索引重建（仅导入数据和生成规则）")
     args = parser.parse_args()
 
-    province = args.province or config.get_current_province()
+    try:
+        province = _resolve_import_province(args.province)
+    except ValueError as e:
+        print(f"错误: {e}")
+        return
+
+    # 同步运行态省份，避免后续未显式传参模块回落到硬编码默认值
+    config.set_current_province(province)
 
     print("=" * 60)
     print(f"  一键导入定额数据")
