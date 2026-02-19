@@ -37,8 +37,10 @@ Excel格式要求（和广联达导出格式一样）
 
 import argparse
 import json
+import os
 import sys
 import time
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -58,6 +60,30 @@ from src.param_validator import ParamValidator
 GOLDEN_FILE = PROJECT_ROOT / "tests" / "golden_cases.json"
 # 上一次评测结果存储路径（用于对比退步）
 LAST_RESULT_FILE = PROJECT_ROOT / "tests" / "last_eval_result.json"
+
+
+def _atomic_write_json(path: Path, payload):
+    """原子写JSON文件，避免中断时留下损坏内容。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix=f"{path.stem}_tmp_",
+            dir=str(path.parent),
+            encoding="utf-8",
+            delete=False,
+        ) as tf:
+            tmp_path = tf.name
+            json.dump(payload, tf, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path and Path(tmp_path).exists():
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 # ================================================================
@@ -128,7 +154,7 @@ def _read_sheet_pairs(ws) -> list[dict]:
         a_str = str(a).strip() if a else ""
         b_str = str(b).strip() if b else ""
 
-        is_bill_row = a_str.isdigit() and c  # A列是数字 + C列有内容
+        is_bill_row = _is_bill_serial(a) and c  # A列是序号 + C列有内容
         is_quota_row = (not a_str or a_str == "None") and b_str and _looks_like_quota_id(b_str)
 
         if is_bill_row:
@@ -157,6 +183,25 @@ def _read_sheet_pairs(ws) -> list[dict]:
         pairs.append(_make_pair(current_bill, current_quota_ids, current_quota_names))
 
     return pairs
+
+
+def _is_bill_serial(value) -> bool:
+    """识别清单序号，兼容 1 / 1.0 / "2.0" / "03"。"""
+    if value is None:
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    if isinstance(value, float):
+        return value.is_integer() and value >= 0
+    text = str(value).strip()
+    if not text:
+        return False
+    if text.isdigit():
+        return True
+    if text.endswith(".0"):
+        body = text[:-2].strip()
+        return body.isdigit()
+    return False
 
 
 def _looks_like_quota_id(text: str) -> bool:
@@ -249,15 +294,17 @@ def _save_pairs_to_experience(pairs: list[dict]) -> int:
         return 0
 
     saved = 0
+    failed = 0
     for pair in pairs:
         if not pair["correct_quota_ids"]:
             continue
         try:
             from src.text_parser import normalize_bill_text
-            bill_text = normalize_bill_text(pair.get("bill_name", ""), pair.get("bill_desc", ""))
+            bill_text = normalize_bill_text(
+                pair.get("bill_name", ""), pair.get("bill_description", ""))
             if not bill_text:
                 bill_text = pair["bill_text"]  # 兜底用原始文本
-            exp_db.add_experience(
+            record_id = exp_db.add_experience(
                 bill_text=bill_text,
                 quota_ids=pair["correct_quota_ids"],
                 quota_names=pair.get("correct_quota_names", []),
@@ -267,9 +314,14 @@ def _save_pairs_to_experience(pairs: list[dict]) -> int:
                 source="user_correction",  # 用户修正的，最高信任
                 confidence=95,
             )
-            saved += 1
-        except Exception:
-            pass
+            if record_id > 0:
+                saved += 1
+        except Exception as e:
+            failed += 1
+            logger.warning(f"黄金集写入经验库失败: {pair.get('bill_name', '')[:30]} ({e})")
+
+    if failed > 0:
+        logger.warning(f"黄金集写入有失败: 成功{saved} 失败{failed}")
 
     return saved
 
@@ -284,16 +336,19 @@ def load_golden_cases() -> list[dict]:
         return []
     try:
         with open(GOLDEN_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+            logger.warning("黄金集文件格式异常（应为list），已降级为空")
+            return []
+    except Exception as e:
+        logger.warning(f"黄金集文件读取失败，已降级为空: {e}")
         return []
 
 
 def save_golden_cases(cases: list[dict]):
     """保存黄金集到JSON文件"""
-    GOLDEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(GOLDEN_FILE, "w", encoding="utf-8") as f:
-        json.dump(cases, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(GOLDEN_FILE, cases)
 
 
 # ================================================================
@@ -356,12 +411,12 @@ def run_evaluation(compare_last: bool = False):
     report = _generate_report(results, elapsed)
     print(report)
 
-    # 保存本次结果（供下次对比用）
-    _save_eval_results(results)
-
     # 和上次结果对比
     if compare_last:
         _compare_with_last(results)
+
+    # 保存本次结果（供下次对比用）
+    _save_eval_results(results)
 
 
 def _analyze_case(case: dict, candidates: list, correct_main: str,
@@ -528,9 +583,7 @@ def _save_eval_results(results: list[dict]):
         } for r in results],
     }
 
-    LAST_RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LAST_RESULT_FILE, "w", encoding="utf-8") as f:
-        json.dump(save_data, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(LAST_RESULT_FILE, save_data)
 
     logger.info(f"评测结果已保存: {LAST_RESULT_FILE}")
 
@@ -544,11 +597,28 @@ def _compare_with_last(current_results: list[dict]):
     try:
         with open(LAST_RESULT_FILE, "r", encoding="utf-8") as f:
             last_data = json.load(f)
-    except Exception:
-        print("\n上次的评测结果文件损坏，跳过对比。")
+    except Exception as e:
+        print(f"\n上次的评测结果文件损坏，跳过对比: {e}")
         return
 
-    last_results = {r["bill_text"]: r for r in last_data.get("results", [])}
+    if not isinstance(last_data, dict):
+        print("\n上次的评测结果格式错误（根节点非对象），跳过对比。")
+        return
+    last_rows = last_data.get("results", [])
+    if not isinstance(last_rows, list):
+        print("\n上次的评测结果格式错误（results 非数组），跳过对比。")
+        return
+
+    last_results = {}
+    for r in last_rows:
+        if not isinstance(r, dict):
+            continue
+        bt = str(r.get("bill_text", "")).strip()
+        if bt:
+            last_results[bt] = r
+    if not last_results:
+        print("\n上次评测结果中无有效条目，跳过对比。")
+        return
 
     regressions = []  # 退步项（上次对，这次错）
     improvements = []  # 进步项（上次错，这次对）

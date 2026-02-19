@@ -1,153 +1,204 @@
 """
-准确率测试：用广联达导出的标准文件验证匹配精度
+准确率测试：用带标准答案的Excel验证匹配精度。
 
-读取"云计价分部分项清单带定额表.xlsx"，其中包含清单→正确定额的对应关系。
-用系统匹配清单，对比匹配结果和正确答案。
+注意：本文件是手工评测脚本，不是 pytest 单元测试。
+已改为 main() 入口，避免 pytest 收集阶段执行耗时逻辑。
 """
+from __future__ import annotations
+
+import argparse
 import sys
-sys.path.insert(0, ".")
+from pathlib import Path
+
 import openpyxl
+
+sys.path.insert(0, ".")
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 
-# === 1. 读取标准文件，提取清单→正确定额的对应关系 ===
-wb = openpyxl.load_workbook(
-    r"C:\Users\Administrator\Desktop\云计价分部分项清单带定额表.xlsx",
-    read_only=True, data_only=True,
-)
-ws = wb[wb.sheetnames[0]]
 
-# 解析文件：提取 (清单, [正确定额]) 对
-test_cases = []  # [(清单dict, [定额编号...])]
-current_bill = None
-current_quotas = []
+def _is_bill_serial(value) -> bool:
+    """识别清单序号，兼容 1 / 1.0 / "2.0" / "03"。"""
+    if value is None:
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    if isinstance(value, float):
+        return value.is_integer() and value >= 0
+    text = str(value).strip()
+    if not text:
+        return False
+    if text.isdigit():
+        return True
+    if text.endswith(".0"):
+        body = text[:-2].strip()
+        return body.isdigit()
+    return False
 
-for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-    if row_idx <= 2:
-        continue
 
-    a = row[0] if len(row) > 0 else None
-    b = row[1] if len(row) > 1 else None
-    c = row[2] if len(row) > 2 else None
-    d = row[3] if len(row) > 3 else None
-    e = row[4] if len(row) > 4 else None
-    f = row[5] if len(row) > 5 else None
+def load_test_cases(excel_path: str) -> list[tuple[dict, list[str]]]:
+    """读取Excel，提取 (清单项, 正确定额列表)。"""
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    ws = wb[wb.sheetnames[0]]
 
-    # 清单行（有序号）
-    if a is not None and str(a).strip().isdigit():
-        # 保存上一条
-        if current_bill:
-            test_cases.append((current_bill, current_quotas))
+    test_cases: list[tuple[dict, list[str]]] = []
+    current_bill = None
+    current_quotas: list[str] = []
 
-        current_bill = {
-            "code": str(b).strip() if b else "",
-            "name": str(c).strip() if c else "",
-            "description": str(d).strip() if d else "",
-            "unit": str(e).strip() if e else "",
-            "quantity": f,
-        }
-        current_quotas = []
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if row_idx <= 2:
+            continue
 
-    # 定额行
-    elif b and str(b).strip().startswith("C"):
-        quota_id = str(b).strip()
-        # 去掉"换"后缀和空格
-        quota_id = quota_id.split()[0].rstrip("换").strip()
-        current_quotas.append(quota_id)
+        a = row[0] if len(row) > 0 else None
+        b = row[1] if len(row) > 1 else None
+        c = row[2] if len(row) > 2 else None
+        d = row[3] if len(row) > 3 else None
+        e = row[4] if len(row) > 4 else None
+        f = row[5] if len(row) > 5 else None
 
-# 最后一条
-if current_bill:
-    test_cases.append((current_bill, current_quotas))
+        if _is_bill_serial(a):
+            if current_bill:
+                test_cases.append((current_bill, current_quotas))
 
-print(f"共提取 {len(test_cases)} 条测试用例")
+            current_bill = {
+                "code": str(b).strip() if b else "",
+                "name": str(c).strip() if c else "",
+                "description": str(d).strip() if d else "",
+                "unit": str(e).strip() if e else "",
+                "quantity": f,
+            }
+            current_quotas = []
+        elif b and str(b).strip().startswith("C"):
+            quota_id = str(b).strip().split()[0].rstrip("换").strip()
+            current_quotas.append(quota_id)
 
-# === 2. 用系统匹配，对比结果 ===
-searcher = HybridSearcher()
-validator = ParamValidator()
+    if current_bill:
+        test_cases.append((current_bill, current_quotas))
 
-lines = []
-lines.append(f"{'=' * 80}")
-lines.append(f"准确率测试：{len(test_cases)} 条清单")
-lines.append(f"{'=' * 80}")
+    wb.close()
+    return test_cases
 
-exact_match = 0     # 主定额编号完全匹配
-partial_match = 0   # 主定额编号相近（同一小节）
-no_match = 0        # 完全不匹配
-no_result = 0       # 搜索无结果
 
-for i, (bill, correct_quotas) in enumerate(test_cases, 1):
-    name = bill["name"]
-    desc = bill["description"]
+def evaluate_cases(test_cases: list[tuple[dict, list[str]]]) -> tuple[str, dict]:
+    """执行匹配并返回文本报告与统计。"""
+    searcher = HybridSearcher()
+    validator = ParamValidator()
 
-    # 用新的query构建
-    search_query = text_parser.build_quota_query(name, desc)
-    full_query = f"{name} {desc}".strip()
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"准确率测试：{len(test_cases)} 条清单")
+    lines.append("=" * 80)
 
-    # 搜索
-    candidates = searcher.search(search_query, top_k=10)
+    exact_match = 0
+    partial_match = 0
+    no_match = 0
+    no_result = 0
 
-    if not candidates:
-        no_result += 1
+    for i, (bill, correct_quotas) in enumerate(test_cases, 1):
+        name = bill["name"]
+        desc = bill["description"]
+
+        search_query = text_parser.build_quota_query(name, desc)
+        full_query = f"{name} {desc}".strip()
+
+        candidates = searcher.search(search_query, top_k=10)
+        if not candidates:
+            no_result += 1
+            lines.append(f"\n第{i:2d}条 [{name}] query=[{search_query}]")
+            lines.append(f"  正确: {correct_quotas}")
+            lines.append("  结果: 搜索无结果 ✗")
+            continue
+
+        validated = validator.validate_candidates(full_query, candidates)
+        matched = [c for c in validated if c.get("param_match", True)]
+        top = matched[0] if matched else (validated[0] if validated else None)
+
+        if not top:
+            no_result += 1
+            lines.append(f"\n第{i:2d}条 [{name}] query=[{search_query}]")
+            lines.append(f"  正确: {correct_quotas}")
+            lines.append("  结果: 无匹配候选 ✗")
+            continue
+
+        system_quota_id = top.get("quota_id", "")
+        correct_main = correct_quotas[0] if correct_quotas else ""
+
+        if system_quota_id == correct_main:
+            exact_match += 1
+            mark = "✓"
+        elif (system_quota_id and correct_main and
+              system_quota_id.rsplit("-", 1)[0] == correct_main.rsplit("-", 1)[0]):
+            partial_match += 1
+            mark = "≈"
+        else:
+            no_match += 1
+            mark = "✗"
+
         lines.append(f"\n第{i:2d}条 [{name}] query=[{search_query}]")
-        lines.append(f"  正确: {correct_quotas}")
-        lines.append(f"  结果: 搜索无结果 ✗")
-        continue
+        lines.append(f"  正确: {correct_main:15s} | 系统: {system_quota_id:15s} {mark}")
+        if mark != "✓":
+            lines.append(f"  系统定额名: {top.get('name', '')[:50]}")
+            lines.append(
+                "  参数: "
+                f"match={top.get('param_match')}, "
+                f"score={top.get('param_score', 0):.2f}, "
+                f"{top.get('param_detail', '')[:60]}"
+            )
 
-    # 参数验证
-    validated = validator.validate_candidates(full_query, candidates)
-    matched = [c for c in validated if c.get("param_match", True)]
+    total = len(test_cases)
+    pct = lambda n: (n * 100 // total) if total else 0
+    lines.append(f"\n{'=' * 80}")
+    lines.append(f"测试结果统计（{total}条清单）:")
+    lines.append(f"  精确匹配 ✓: {exact_match:3d} ({pct(exact_match)}%)")
+    lines.append(f"  近似匹配 ≈: {partial_match:3d} ({pct(partial_match)}%)")
+    lines.append(f"  不匹配   ✗: {no_match:3d} ({pct(no_match)}%)")
+    lines.append(f"  无结果     : {no_result:3d} ({pct(no_result)}%)")
+    lines.append(f"  准确率(精确+近似): {pct(exact_match + partial_match)}%")
+    lines.append("=" * 80)
 
-    # 取Top1
-    if matched:
-        top = matched[0]
-    else:
-        top = validated[0] if validated else None
+    summary = {
+        "total": total,
+        "exact": exact_match,
+        "partial": partial_match,
+        "no_match": no_match,
+        "no_result": no_result,
+        "accuracy": pct(exact_match + partial_match),
+    }
+    return "\n".join(lines), summary
 
-    if not top:
-        no_result += 1
-        lines.append(f"\n第{i:2d}条 [{name}] query=[{search_query}]")
-        lines.append(f"  正确: {correct_quotas}")
-        lines.append(f"  结果: 无匹配候选 ✗")
-        continue
 
-    system_quota_id = top.get("quota_id", "")
-    correct_main = correct_quotas[0] if correct_quotas else ""
+def main() -> int:
+    parser = argparse.ArgumentParser(description="准确率测试脚本（手工评测）")
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="带标准答案的Excel路径",
+    )
+    parser.add_argument(
+        "--output",
+        default="accuracy_test_result.txt",
+        help="输出报告路径",
+    )
+    args = parser.parse_args()
 
-    # 判断匹配程度
-    if system_quota_id == correct_main:
-        exact_match += 1
-        mark = "✓"
-    elif system_quota_id.rsplit("-", 1)[0] == correct_main.rsplit("-", 1)[0]:
-        # 同一小节（如C10-2-123 vs C10-2-120，都是室内给水钢塑复合管）
-        partial_match += 1
-        mark = "≈"
-    else:
-        no_match += 1
-        mark = "✗"
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"输入文件不存在: {input_path}")
+        return 1
 
-    lines.append(f"\n第{i:2d}条 [{name}] query=[{search_query}]")
-    lines.append(f"  正确: {correct_main:15s} | 系统: {system_quota_id:15s} {mark}")
-    if mark != "✓":
-        top_name = top.get("name", "")[:50]
-        lines.append(f"  系统定额名: {top_name}")
-        lines.append(f"  参数: match={top.get('param_match')}, score={top.get('param_score', 0):.2f}, {top.get('param_detail', '')[:60]}")
+    test_cases = load_test_cases(str(input_path))
+    print(f"共提取 {len(test_cases)} 条测试用例")
 
-# === 3. 统计 ===
-total = len(test_cases)
-lines.append(f"\n{'=' * 80}")
-lines.append(f"测试结果统计（{total}条清单）:")
-lines.append(f"  精确匹配 ✓: {exact_match:3d} ({exact_match*100//total}%)")
-lines.append(f"  近似匹配 ≈: {partial_match:3d} ({partial_match*100//total}%)")
-lines.append(f"  不匹配   ✗: {no_match:3d} ({no_match*100//total}%)")
-lines.append(f"  无结果     : {no_result:3d} ({no_result*100//total}%)")
-lines.append(f"  准确率(精确+近似): {(exact_match+partial_match)*100//total}%")
-lines.append(f"{'=' * 80}")
+    output_text, summary = evaluate_cases(test_cases)
+    Path(args.output).write_text(output_text, encoding="utf-8")
 
-output = "\n".join(lines)
-with open("accuracy_test_result.txt", "w", encoding="utf-8") as f:
-    f.write(output)
-print(f"\n测试完成！结果写入 accuracy_test_result.txt")
-print(f"精确匹配: {exact_match}/{total} ({exact_match*100//total}%)")
-print(f"近似匹配: {partial_match}/{total}")
-print(f"准确率(精确+近似): {(exact_match+partial_match)*100//total}%")
+    print(f"\n测试完成！结果写入 {args.output}")
+    print(f"精确匹配: {summary['exact']}/{summary['total']} ({(summary['exact'] * 100 // max(summary['total'], 1))}%)")
+    print(f"近似匹配: {summary['partial']}/{summary['total']}")
+    print(f"准确率(精确+近似): {summary['accuracy']}%")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
