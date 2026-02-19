@@ -497,14 +497,14 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
                 # 有参数匹配的候选 → 正常使用
                 best = matched_candidates[0]
                 param_score = best.get("param_score", 0.5)
-                confidence = int(param_score * 85)
+                confidence = int(param_score * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
                 explanation = best.get("param_detail", "")
             else:
                 # 所有候选都参数不匹配 → 回退到第一个候选，但大幅降低置信度
                 # （不直接丢弃，让用户能看到"最接近"的候选，方便手动选择）
                 best = candidates[0]
                 param_score = best.get("param_score", 0.0)
-                confidence = max(int(param_score * 40), 15)  # 最低15分，最高40分
+                confidence = max(int(param_score * 45), 15)  # 最低15分，最高45分
                 explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
 
         result = {
@@ -528,7 +528,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             alternatives = []
             for alt in alt_list:
                 alt_ps = alt.get("param_score", 0.5)
-                alt_conf = int(alt_ps * 85) if alt.get("param_match", True) else max(int(alt_ps * 40), 15)
+                alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
                 alternatives.append({
                     "quota_id": alt["quota_id"],
                     "name": alt["name"],
@@ -772,7 +772,7 @@ def match_full(bill_items: list[dict], searcher: HybridSearcher,
             alternatives = []
             for alt in alt_list:
                 alt_ps = alt.get("param_score", 0.5)
-                alt_conf = int(alt_ps * 85) if alt.get("param_match", True) else max(int(alt_ps * 40), 15)
+                alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
                 alternatives.append({
                     "quota_id": alt["quota_id"],
                     "name": alt["name"],

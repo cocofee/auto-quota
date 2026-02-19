@@ -174,10 +174,10 @@ def export_review_items(excel_path, limit=None, confidence_threshold=85):
         matched = [c for c in candidates if c.get("param_match", True)]
         if matched:
             best = matched[0]
-            confidence = int(best.get("param_score", 0.5) * 85)
+            confidence = int(best.get("param_score", 0.5) * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
         else:
             best = candidates[0]
-            confidence = max(int(best.get("param_score", 0.0) * 40), 15)
+            confidence = max(int(best.get("param_score", 0.0) * 45), 15)
 
         if confidence >= confidence_threshold:
             green_count += 1
