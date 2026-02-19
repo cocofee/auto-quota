@@ -208,6 +208,16 @@ class TextParser:
         if large_side is not None:
             result["large_side"] = large_side
 
+        # 提取电梯停靠站数（从"停靠层数:-2~24层"计算）
+        elevator_stops = self._extract_elevator_stops(text)
+        if elevator_stops is not None:
+            result["elevator_stops"] = elevator_stops
+
+        # 提取电梯类型（从名称关键词判断：货梯→载货电梯、客梯→曳引式电梯等）
+        elevator_type = self._extract_elevator_type(text)
+        if elevator_type:
+            result["elevator_type"] = elevator_type
+
         return result
 
     # De外径→DN公称直径转换表（塑料管常用De标记外径，定额用DN标记公称直径）
