@@ -15,6 +15,9 @@
 import re
 import sys
 import shutil
+import os
+import uuid
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -33,11 +36,15 @@ RED_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="soli
 HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
 GRAY_FILL = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 LIGHT_BLUE_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+# 定额行专用浅蓝灰色（比纯灰更柔和，和清单行有视觉区分）
+QUOTA_BG_FILL = PatternFill(start_color="EDF2F9", end_color="EDF2F9", fill_type="solid")
 
 # 字体
 HEADER_FONT = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
 BILL_FONT = Font(name="微软雅黑", size=10)
 QUOTA_FONT = Font(name="微软雅黑", size=9, color="333333")
+# 定额行编号字体（蓝色加粗，醒目区分）
+QUOTA_ID_FONT = Font(name="微软雅黑", size=9, bold=True, color="2F5496")
 
 # 边框
 THIN_BORDER = Border(
@@ -46,6 +53,23 @@ THIN_BORDER = Border(
     top=Side(style="thin"),
     bottom=Side(style="thin"),
 )
+# 定额行边框（左右虚线，上下细线，比清单行轻一些）
+QUOTA_BORDER = Border(
+    left=Side(style="thin", color="BFBFBF"),
+    right=Side(style="thin", color="BFBFBF"),
+    top=Side(style="thin", color="D9D9D9"),
+    bottom=Side(style="thin", color="D9D9D9"),
+)
+# 清单行底部分隔线（定额组和下一个清单之间的视觉分隔）
+SECTION_BOTTOM_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin", color="D9D9D9"),
+    bottom=Side(style="medium", color="4472C4"),
+)
+
+# 定额行紧凑行高（不继承清单行的大行高）
+QUOTA_ROW_HEIGHT = 22
 
 
 # ================================================================
@@ -80,6 +104,47 @@ def _build_unit_conversions():
 _build_unit_conversions()
 
 
+def _safe_confidence(value, default: int = 0) -> int:
+    """把置信度安全转换为0-100整数。"""
+    try:
+        conf = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(100, conf))
+
+
+def _ensure_list(value) -> list:
+    """把任意输入收敛为list，避免脏类型触发导出异常。"""
+    return value if isinstance(value, list) else []
+
+
+def _is_bill_serial(a_val) -> bool:
+    """判断A列是否为清单序号（兼容int/float/字符串）。"""
+    if a_val is None:
+        return False
+    if isinstance(a_val, int):
+        return a_val > 0
+    if isinstance(a_val, float):
+        return a_val > 0 and a_val.is_integer()
+    text = str(a_val).strip()
+    if not text:
+        return False
+    if text.isdigit():
+        return True
+    return bool(re.fullmatch(r"\d+\.0+", text))
+
+
+def _is_quota_code(code: str) -> bool:
+    """判断是否是定额编号格式（支持 X-XXX / D00003 / 带'换'后缀）。"""
+    if not isinstance(code, str):
+        return False
+    c = code.strip()
+    if not c:
+        return False
+    core = c[:-1] if c.endswith("换") else c
+    return bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core)) or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+
+
 def convert_quantity(bill_qty, bill_unit: str, quota_unit: str):
     """
     单位换算：当清单单位和定额单位不同时，转换工程量
@@ -89,24 +154,41 @@ def convert_quantity(bill_qty, bill_unit: str, quota_unit: str):
     """
     if bill_qty is None:
         return 0
+
+    # 归一化工程量为数值，避免字符串数量在换算时触发类型错误
+    qty = bill_qty
+    if isinstance(qty, str):
+        q = qty.strip().replace(",", "")
+        if q == "":
+            return 0
+        try:
+            qty = float(q)
+        except ValueError:
+            return bill_qty
+    elif not isinstance(qty, (int, float)):
+        try:
+            qty = float(qty)
+        except Exception:
+            return bill_qty
+
     if not bill_unit or not quota_unit:
-        return bill_qty
+        return qty
 
     # 标准化单位文本（统一小写，处理特殊Unicode字符）
     bu = bill_unit.strip().lower().replace("㎡", "m²").replace("㎥", "m³")
     qu = quota_unit.strip().lower().replace("㎡", "m²").replace("㎥", "m³")
 
     if bu == qu:
-        return bill_qty
+        return qty
 
     factor = UNIT_CONVERSIONS.get((bu, qu))
     if factor:
-        converted = round(bill_qty * factor, 4)
-        logger.debug(f"单位换算: {bill_qty}{bill_unit} → {converted}{quota_unit} (×{factor})")
+        converted = round(qty * factor, 4)
+        logger.debug(f"单位换算: {qty}{bill_unit} → {converted}{quota_unit} (×{factor})")
         return converted
 
     # 没有找到换算关系，原样返回（大多数情况单位相同）
-    return bill_qty
+    return qty
 
 
 # ================================================================
@@ -140,8 +222,43 @@ def confidence_to_stars(confidence: int, has_quotas: bool) -> str:
         return f"★待审({confidence}%)"
 
 
+def safe_excel_text(value):
+    """防止Excel公式注入：文本以 = + - @ 开头时前置单引号。"""
+    if value is None:
+        return value
+    if not isinstance(value, str):
+        return value
+    text = value.replace("\x00", "")
+    if text.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
+
+
 class OutputWriter:
     """匹配结果Excel输出，保留原始清单结构"""
+
+    @staticmethod
+    def _save_workbook_atomic(wb, output_path: str):
+        """原子写入Excel，避免中断时留下半成品文件。"""
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".xlsx",
+                prefix=f"{out_path.stem}_tmp_",
+                dir=str(out_path.parent),
+                delete=False,
+            ) as tf:
+                tmp_path = tf.name
+            wb.save(tmp_path)
+            os.replace(tmp_path, out_path)
+        finally:
+            if tmp_path and Path(tmp_path).exists():
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def write_results(self, results: list[dict], output_path: str = None,
                       original_file: str = None) -> str:
@@ -159,7 +276,9 @@ class OutputWriter:
         """
         if not output_path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = str(config.OUTPUT_DIR / f"匹配结果_{timestamp}.xlsx")
+            output_path = str(
+                config.OUTPUT_DIR / f"匹配结果_{timestamp}_{uuid.uuid4().hex[:6]}.xlsx"
+            )
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -197,25 +316,27 @@ class OutputWriter:
 
         # 打开副本进行修改
         wb = openpyxl.load_workbook(output_path)
+        try:
+            # 逐个处理有匹配结果的Sheet
+            processed_sheets = 0
+            for sheet_name in wb.sheetnames:
+                if sheet_name not in results_by_sheet:
+                    continue  # 不是清单Sheet，原样保留
+                ws = wb[sheet_name]
+                sheet_results = results_by_sheet[sheet_name]
+                self._process_bill_sheet(ws, sheet_results)
+                processed_sheets += 1
 
-        # 逐个处理有匹配结果的Sheet
-        processed_sheets = 0
-        for sheet_name in wb.sheetnames:
-            if sheet_name not in results_by_sheet:
-                continue  # 不是清单Sheet，原样保留
-            ws = wb[sheet_name]
-            sheet_results = results_by_sheet[sheet_name]
-            self._process_bill_sheet(ws, sheet_results)
-            processed_sheets += 1
+            # 追加辅助Sheet（追加到最后，不影响原有Sheet顺序）
+            ws_review = wb.create_sheet("待审核")
+            self._write_review_sheet(ws_review, results)
 
-        # 追加辅助Sheet（追加到最后，不影响原有Sheet顺序）
-        ws_review = wb.create_sheet("待审核")
-        self._write_review_sheet(ws_review, results)
+            ws_stats = wb.create_sheet("统计汇总")
+            self._write_stats_sheet(ws_stats, results)
 
-        ws_stats = wb.create_sheet("统计汇总")
-        self._write_stats_sheet(ws_stats, results)
-
-        wb.save(output_path)
+            self._save_workbook_atomic(wb, output_path)
+        finally:
+            wb.close()
         logger.info(
             f"匹配结果已保存（保留原始{processed_sheets}个清单Sheet，"
             f"共{len(wb.sheetnames)}个Sheet）: {output_path}")
@@ -242,22 +363,53 @@ class OutputWriter:
         bill_rows = []
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
-            if a_val is not None and str(a_val).strip().isdigit():
+            if _is_bill_serial(a_val):
                 bill_rows.append(row_idx)
 
-        # 检查清单行数和结果数是否一致
-        if len(bill_rows) != len(results):
-            logger.warning(
-                f"Sheet [{ws.title}]: 清单行数({len(bill_rows)}) != "
-                f"结果数({len(results)}), 按顺序匹配")
+        # 第3步：构建“清单行 -> 结果”映射
+        # 优先使用 sheet_bill_seq 精准回写（支持 filter-code/limit 等子集输出）
+        row_result_pairs = []
+        used_seq = set()
+        can_use_seq_map = True
+        for result in results:
+            bill_item = result.get("bill_item", {})
+            seq = bill_item.get("sheet_bill_seq")
+            if not isinstance(seq, int):
+                can_use_seq_map = False
+                break
+            if seq <= 0 or seq > len(bill_rows) or seq in used_seq:
+                can_use_seq_map = False
+                break
+            used_seq.add(seq)
+            row_result_pairs.append((bill_rows[seq - 1], result))
 
-        num_to_process = min(len(bill_rows), len(results))
+        # 兼容旧结果格式：无序号映射时退回顺序匹配
+        if not can_use_seq_map:
+            if len(bill_rows) != len(results):
+                logger.warning(
+                    f"Sheet [{ws.title}]: 清单行数({len(bill_rows)}) != "
+                    f"结果数({len(results)}), 且缺少可用定位信息，按顺序匹配")
+            num_to_process = min(len(bill_rows), len(results))
+            row_result_pairs = [
+                (bill_rows[i], results[i]) for i in range(num_to_process)
+            ]
+        elif len(bill_rows) != len(results):
+            logger.info(
+                f"Sheet [{ws.title}]: 结果为清单子集，按sheet_bill_seq精准回写 "
+                f"({len(results)}/{len(bill_rows)})")
 
-        # 第3步：从下往上插入定额行（从最后一条清单开始处理，避免行号偏移）
-        for i in range(num_to_process - 1, -1, -1):
-            row_idx = bill_rows[i]
-            result = results[i]
-            quotas = result.get("quotas", [])
+        # 第3.5步：保存原始清单行高度（insert_rows会打乱行高映射）
+        # 用A列序号（清单行标识）→ 行高 的映射，方便插入后恢复
+        original_bill_heights = {}
+        for row_idx in bill_rows:
+            h = ws.row_dimensions[row_idx].height
+            a_val = ws.cell(row=row_idx, column=1).value
+            if h and a_val is not None:
+                original_bill_heights[str(a_val).strip()] = h
+
+        # 第4步：从下往上插入定额行（避免插行导致行号偏移）
+        for row_idx, result in sorted(row_result_pairs, key=lambda x: x[0], reverse=True):
+            quotas = _ensure_list(result.get("quotas", []))
 
             # 在清单行的J-N列写入推荐度和备选
             self._write_bill_extra_info(ws, row_idx, result)
@@ -277,21 +429,58 @@ class OutputWriter:
                     q_row = row_idx + 1 + q_idx
                     self._write_single_quota_row(
                         ws, q_row, quota, bill_unit, bill_qty)
+                # 最后一行定额行的底部加蓝色分隔线（区分下一条清单）
+                last_q_row = row_idx + len(quotas)
+                for col in range(1, max(ws.max_column + 1, 10)):
+                    cell = ws.cell(row=last_q_row, column=col)
+                    cell.border = SECTION_BOTTOM_BORDER
             else:
                 # 未匹配提示行
                 q_row = row_idx + 1
                 no_reason = result.get("no_match_reason", "未找到匹配定额")
-                ws.cell(row=q_row, column=3, value=f"未匹配: {no_reason}")
+                ws.cell(row=q_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
                 for col in range(1, 10):
                     cell = ws.cell(row=q_row, column=col)
                     cell.font = Font(name="微软雅黑", size=9, color="FF0000")
                     cell.fill = RED_FILL
                     cell.border = THIN_BORDER
+                ws.row_dimensions[q_row].height = QUOTA_ROW_HEIGHT
 
-        # 第4步：在表头行添加J-N列标题
+        # 第4.5步：统一修复行高和合并格式（insert_rows会破坏原始行高映射和继承合并）
+        # 遍历所有数据行，按类型设置正确的行高
+        # 同时修复非定额行被错误继承的C-D合并
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            a_val = ws.cell(row=row_idx, column=1).value
+            b_val = ws.cell(row=row_idx, column=2).value
+            is_quota_row = (a_val is None and b_val
+                            and str(b_val).startswith("C"))
+            if _is_bill_serial(a_val):
+                # 清单行：恢复原始行高 + 取消被继承的C-D合并
+                saved_h = original_bill_heights.get(str(a_val).strip())
+                if saved_h:
+                    ws.row_dimensions[row_idx].height = saved_h
+                try:
+                    ws.unmerge_cells(
+                        start_row=row_idx, start_column=3,
+                        end_row=row_idx, end_column=4)
+                except (KeyError, ValueError):
+                    pass
+            elif is_quota_row:
+                # 定额行（A空、B以C开头）：紧凑行高（合并在写入时已做）
+                ws.row_dimensions[row_idx].height = QUOTA_ROW_HEIGHT
+            else:
+                # 其他行（分部小计、小节标题等）：取消被继承的C-D合并
+                try:
+                    ws.unmerge_cells(
+                        start_row=row_idx, start_column=3,
+                        end_row=row_idx, end_column=4)
+                except (KeyError, ValueError):
+                    pass
+
+        # 第5步：在表头行添加J-N列标题
         self._add_extra_headers(ws, header_row)
 
-        logger.info(f"Sheet [{ws.title}]: 处理 {num_to_process} 条清单项")
+        logger.info(f"Sheet [{ws.title}]: 处理 {len(row_result_pairs)} 条清单项")
 
     def _find_header_row_in_ws(self, ws) -> int:
         """在worksheet中找到表头行（包含'项目编码''项目名称'等关键词的行）"""
@@ -320,7 +509,7 @@ class OutputWriter:
             # 已有定额行：A列为空，B列是定额编号格式（如C4-4-31、5-325）
             if (a_val is None or str(a_val).strip() == "") and b_val:
                 b_str = str(b_val).strip()
-                if re.match(r'^[A-Za-z]?\d{1,2}-\d+', b_str):
+                if _is_quota_code(b_str):
                     existing_quota_rows.append(row_idx)
 
         # 从下往上删除
@@ -332,8 +521,8 @@ class OutputWriter:
 
     def _write_bill_extra_info(self, ws, row_idx: int, result: dict):
         """在清单行的J-N列写入推荐度、匹配说明、备选定额"""
-        confidence = result.get("confidence", 0)
-        quotas = result.get("quotas", [])
+        confidence = _safe_confidence(result.get("confidence", 0), default=0)
+        quotas = _ensure_list(result.get("quotas", []))
         explanation = result.get("explanation", "")
 
         # 置信度颜色
@@ -353,43 +542,106 @@ class OutputWriter:
             cell_j.fill = conf_fill
 
         # K列：匹配说明
-        cell_k = ws.cell(row=row_idx, column=11,
-                         value=explanation[:80] if explanation else "")
+        cell_k = ws.cell(
+            row=row_idx,
+            column=11,
+            value=safe_excel_text(explanation[:80] if explanation else "")
+        )
         cell_k.font = BILL_FONT
         cell_k.border = THIN_BORDER
 
         # L/M/N列：备选定额
-        alternatives = result.get("alternatives", [])
+        alternatives = _ensure_list(result.get("alternatives", []))
         for alt_idx, alt in enumerate(alternatives[:3]):
             alt_col = 12 + alt_idx  # L=12, M=13, N=14
-            alt_text = f"{alt.get('quota_id', '')} {alt.get('name', '')}"
+            alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
             cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
             cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
             cell_alt.border = THIN_BORDER
+
+    def _write_quota_rows(self, ws, current_row: int, result: dict,
+                          bill_unit: str, bill_qty, max_col: int) -> int:
+        """写入一条清单对应的所有定额行（兜底新建模式用）
+
+        参数:
+            ws: worksheet对象
+            current_row: 当前写入的行号
+            result: 匹配结果字典
+            bill_unit: 清单单位
+            bill_qty: 清单工程量
+            max_col: 最大列数（用于格式化）
+
+        返回:
+            写入后的下一个可用行号
+        """
+        quotas = _ensure_list(result.get("quotas", []))
+        confidence = _safe_confidence(result.get("confidence", 0), default=0)
+
+        if quotas:
+            for quota in quotas:
+                self._write_single_quota_row(
+                    ws, current_row, quota, bill_unit, bill_qty)
+                current_row += 1
+        else:
+            # 未匹配提示行
+            no_reason = result.get("no_match_reason", "未找到匹配定额")
+            ws.cell(row=current_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=current_row, column=col)
+                cell.font = Font(name="微软雅黑", size=9, color="FF0000")
+                cell.fill = RED_FILL
+                cell.border = THIN_BORDER
+            current_row += 1
+
+        return current_row
 
     def _write_single_quota_row(self, ws, q_row: int, quota: dict,
                                 bill_unit: str, bill_qty):
         """写入一行定额数据（含单位换算）"""
         # A列留空（广联达靠这个区分清单行和子目行）
-        ws.cell(row=q_row, column=2,
-                value=quota.get("quota_id", ""))       # B: 定额编号
-        ws.cell(row=q_row, column=3,
-                value=quota.get("name", ""))            # C: 定额名称
-        # D列留空
-        quota_unit = quota.get("unit", "") or bill_unit
-        ws.cell(row=q_row, column=5, value=quota_unit)  # E: 单位
+        # B列：定额编号（蓝色加粗，带左缩进，一眼看出是子目）
+        cell_b = ws.cell(
+            row=q_row, column=2, value=safe_excel_text(quota.get("quota_id", ""))
+        )
+        cell_b.font = QUOTA_ID_FONT
+        cell_b.alignment = Alignment(vertical="center", indent=2)
 
-        # F: 工程量（自动单位换算）
+        # C列：定额名称（灰色字体，带左缩进）
+        # 合并C-D列给名称更多显示空间（清单行的D列是项目特征描述，定额行不需要）
+        cell_c = ws.cell(
+            row=q_row, column=3, value=safe_excel_text(quota.get("name", ""))
+        )
+        cell_c.font = QUOTA_FONT
+        cell_c.alignment = Alignment(vertical="center", indent=1, wrap_text=True)
+        try:
+            ws.merge_cells(start_row=q_row, start_column=3, end_row=q_row, end_column=4)
+        except Exception:
+            pass  # 合并失败时忽略（可能已合并或有冲突）
+
+        # E列：单位
+        quota_unit = quota.get("unit", "") or bill_unit
+        ws.cell(row=q_row, column=5, value=quota_unit)
+
+        # F列：工程量（自动单位换算）
         converted_qty = convert_quantity(bill_qty, bill_unit, quota_unit)
         ws.cell(row=q_row, column=6, value=converted_qty)
 
-        # 格式：灰色背景（定额行标志）
-        for col in range(1, max(ws.max_column + 1, 10)):
+        # 统一格式：只对有内容的A-F列设背景，G-I列留白（视觉更轻）
+        for col in range(1, 7):  # A-F列
             cell = ws.cell(row=q_row, column=col)
-            cell.font = QUOTA_FONT
-            cell.fill = GRAY_FILL
-            cell.border = THIN_BORDER
-            cell.alignment = Alignment(vertical="center")
+            if cell.font == Font() or cell.font is None:
+                cell.font = QUOTA_FONT
+            cell.fill = QUOTA_BG_FILL
+            cell.border = QUOTA_BORDER
+            if cell.alignment is None or cell.alignment == Alignment():
+                cell.alignment = Alignment(vertical="center")
+        # G-I列：不填背景色（空白过渡），只加轻边框
+        for col in range(7, 10):
+            cell = ws.cell(row=q_row, column=col)
+            cell.border = QUOTA_BORDER
+
+        # 注意：行高不在这里设置（insert_rows会打乱行高映射）
+        # 统一在 _process_bill_sheet 的后处理步骤中设置
 
     def _add_extra_headers(self, ws, header_row: int):
         """在表头行添加J-N列标题"""
@@ -421,16 +673,19 @@ class OutputWriter:
     def _write_new_workbook(self, results, output_path):
         """无原始文件时，新建工作簿输出"""
         wb = openpyxl.Workbook()
-        self._write_detail_sheet(wb.active, results)
-        wb.active.title = "匹配结果明细"
+        try:
+            self._write_detail_sheet(wb.active, results)
+            wb.active.title = "匹配结果明细"
 
-        ws_review = wb.create_sheet("待审核")
-        self._write_review_sheet(ws_review, results)
+            ws_review = wb.create_sheet("待审核")
+            self._write_review_sheet(ws_review, results)
 
-        ws_stats = wb.create_sheet("统计汇总")
-        self._write_stats_sheet(ws_stats, results)
+            ws_stats = wb.create_sheet("统计汇总")
+            self._write_stats_sheet(ws_stats, results)
 
-        wb.save(output_path)
+            self._save_workbook_atomic(wb, output_path)
+        finally:
+            wb.close()
         logger.info(f"匹配结果已保存（新建模式）: {output_path}")
         return output_path
 
@@ -478,8 +733,8 @@ class OutputWriter:
         current_row = 3
         for idx, result in enumerate(results, start=1):
             bill = result.get("bill_item", {})
-            confidence = result.get("confidence", 0)
-            quotas = result.get("quotas", [])
+            confidence = _safe_confidence(result.get("confidence", 0), default=0)
+            quotas = _ensure_list(result.get("quotas", []))
             explanation = result.get("explanation", "")
             bill_quantity = bill.get("quantity", "")
             bill_unit = bill.get("unit", "")
@@ -493,22 +748,25 @@ class OutputWriter:
 
             # 清单行
             ws.cell(row=current_row, column=1, value=idx)
-            ws.cell(row=current_row, column=2, value=bill.get("code", ""))
-            ws.cell(row=current_row, column=3, value=bill.get("name", ""))
-            ws.cell(row=current_row, column=4, value=bill.get("description", ""))
+            ws.cell(row=current_row, column=2, value=safe_excel_text(bill.get("code", "")))
+            ws.cell(row=current_row, column=3, value=safe_excel_text(bill.get("name", "")))
+            ws.cell(row=current_row, column=4, value=safe_excel_text(bill.get("description", "")))
             ws.cell(row=current_row, column=5, value=bill_unit)
             ws.cell(row=current_row, column=6, value=bill_quantity)
             # J列：星级推荐
             conf_text = confidence_to_stars(confidence, bool(quotas))
             ws.cell(row=current_row, column=10, value=conf_text)
-            ws.cell(row=current_row, column=11,
-                    value=explanation[:80] if explanation else "")
+            ws.cell(
+                row=current_row,
+                column=11,
+                value=safe_excel_text(explanation[:80] if explanation else "")
+            )
 
             # L/M/N列：备选定额
-            alternatives = result.get("alternatives", [])
+            alternatives = _ensure_list(result.get("alternatives", []))
             for alt_idx, alt in enumerate(alternatives[:3]):
                 alt_col = 12 + alt_idx
-                alt_text = f"{alt.get('quota_id', '')} {alt.get('name', '')}"
+                alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
                 cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
                 cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
                 cell_alt.border = THIN_BORDER
@@ -558,16 +816,16 @@ class OutputWriter:
         review_count = 0
 
         for idx, result in enumerate(results, start=1):
-            confidence = result.get("confidence", 0)
+            confidence = _safe_confidence(result.get("confidence", 0), default=0)
 
             # 只列出黄色和红色的（< 85%）
             if confidence >= config.CONFIDENCE_GREEN:
                 continue
 
             bill = result.get("bill_item", {})
-            quotas = result.get("quotas", [])
+            quotas = _ensure_list(result.get("quotas", []))
             explanation = result.get("explanation", "")
-            alternatives = result.get("alternatives", [])
+            alternatives = _ensure_list(result.get("alternatives", []))
 
             # 当前匹配的定额
             main_quota_id = ""
@@ -584,21 +842,24 @@ class OutputWriter:
 
             # 写入数据
             ws.cell(row=current_row, column=1, value=idx)
-            ws.cell(row=current_row, column=2, value=bill.get("name", ""))
-            ws.cell(row=current_row, column=3, value=main_quota_id)
-            ws.cell(row=current_row, column=4, value=main_quota_name)
+            ws.cell(row=current_row, column=2, value=safe_excel_text(bill.get("name", "")))
+            ws.cell(row=current_row, column=3, value=safe_excel_text(main_quota_id))
+            ws.cell(row=current_row, column=4, value=safe_excel_text(main_quota_name))
 
             conf_text = confidence_to_stars(confidence, bool(quotas))
             cell_conf = ws.cell(row=current_row, column=5, value=conf_text)
             cell_conf.fill = conf_fill
 
-            ws.cell(row=current_row, column=6,
-                    value=explanation[:80] if explanation else "")
+            ws.cell(
+                row=current_row,
+                column=6,
+                value=safe_excel_text(explanation[:80] if explanation else "")
+            )
 
             # 备选定额
             for alt_idx, alt in enumerate(alternatives[:3]):
                 alt_col = 7 + alt_idx  # G=7, H=8, I=9
-                alt_text = f"{alt.get('quota_id', '')} {alt.get('name', '')}"
+                alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
                 cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
                 cell_alt.font = Font(name="微软雅黑", size=9, color="666666")
 
@@ -628,12 +889,12 @@ class OutputWriter:
         total = len(results)
         matched = sum(1 for r in results if r.get("quotas"))
         high_conf = sum(1 for r in results
-                        if r.get("confidence", 0) >= config.CONFIDENCE_GREEN)
+                        if _safe_confidence(r.get("confidence", 0), default=0) >= config.CONFIDENCE_GREEN)
         mid_conf = sum(1 for r in results
                        if config.CONFIDENCE_YELLOW
-                       <= r.get("confidence", 0) < config.CONFIDENCE_GREEN)
+                       <= _safe_confidence(r.get("confidence", 0), default=0) < config.CONFIDENCE_GREEN)
         low_conf = sum(1 for r in results
-                       if 0 < r.get("confidence", 0) < config.CONFIDENCE_YELLOW)
+                       if 0 < _safe_confidence(r.get("confidence", 0), default=0) < config.CONFIDENCE_YELLOW)
         no_match = total - matched
 
         stats = [
@@ -663,6 +924,3 @@ class OutputWriter:
         ws.column_dimensions["B"].width = 10
         ws.column_dimensions["C"].width = 10
 
-
-# 模块级单例
-writer = OutputWriter()
