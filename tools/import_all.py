@@ -164,6 +164,16 @@ def main():
     # ===== 第2步：筛选需要导入的文件 =====
     db = QuotaDB(province=province)
 
+    # 自动检测：如果import_history表为空但数据库已有数据，说明是旧库升级
+    # 这种情况自动切换为全量模式，避免重复追加
+    history = db.get_import_history()
+    stats = db.get_stats()
+    if not args.full and not history and stats.get("total", 0) > 0:
+        print("检测到旧数据库（无导入历史记录），自动切换为全量模式")
+        print("（后续运行将自动使用增量模式）")
+        print()
+        args.full = True
+
     if args.full:
         # 全量模式：清空导入历史，所有文件都需要导入
         db.clear_import_history()

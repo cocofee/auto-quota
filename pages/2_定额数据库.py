@@ -188,6 +188,15 @@ def show_import(province):
     # 获取导入历史，区分已导入/新增/已修改
     db = QuotaDB(province=province)
     history = db.get_import_history()
+    stats = db.get_stats()
+
+    # 旧库升级检测：有定额数据但没有导入历史 → 提示先全量重导一次
+    if not history and stats.get("total", 0) > 0:
+        st.warning("检测到旧数据库（无导入历史记录），请先点击「全量重导」建立导入记录，之后才能使用增量导入。")
+        if st.button("全量重导（建立导入记录）", type="primary"):
+            _do_import(db, province, xlsx_files, full_mode=True)
+        return
+
     imported_map = {
         h["file_name"]: h for h in history
     }
