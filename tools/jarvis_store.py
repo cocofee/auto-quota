@@ -41,7 +41,7 @@ def _parse_json_list(raw_text: str, field_name: str) -> list:
 def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
               reason: str = "", specialty: str = "", province: str = None):
     """存入一条纠正到经验库权威层"""
-    province = province or config.CURRENT_PROVINCE
+    province = province or config.get_current_province()
     exp_db = ExperienceDB()
 
     bill_text = normalize_bill_text(name, desc)
@@ -176,8 +176,16 @@ def main():
     parser.add_argument("--province", default=None, help="省份")
     parser.add_argument("--file", help="批量纠正JSON文件路径")
     parser.add_argument("--lookup", help="查找清单项在经验库中的记录")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="静默模式，抑制模型加载进度条")
 
     args = parser.parse_args()
+
+    # 静默模式：抑制 tqdm/transformers 的进度条
+    if args.quiet:
+        os.environ["TQDM_DISABLE"] = "1"
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     if args.lookup:
         lookup(args.lookup)
