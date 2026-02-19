@@ -57,7 +57,7 @@ class ParamValidator:
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
         if not bill_params:
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side"]
+            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side", "elevator_stops"]
             for c in candidates:
                 # 从定额名称提取参数
                 quota_params = text_parser.parse(c.get("name", ""))
@@ -565,7 +565,7 @@ class ParamValidator:
         if check_count == 0:
             # 反向检查：定额有档位参数但清单没提供 → 无法确认档位
             # 例如配电箱定额写"48回路"但清单只写了尺寸没写回路数
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side"]
+            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side", "elevator_stops"]
             quota_has_tier = any(p in quota_params for p in TIER_PARAMS)
             if quota_has_tier:
                 return True, 0.6, "定额有档位参数但清单未指定"
