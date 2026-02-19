@@ -11,8 +11,10 @@
 - 小栗AI输出格式
 """
 
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import openpyxl
@@ -76,7 +78,20 @@ class BillReader:
 
         logger.info(f"读取清单文件: {file_path}")
 
-        wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
+        # .xls 文件自动转换为临时 .xlsx（openpyxl 不支持旧版 .xls 格式）
+        temp_xlsx_path = None
+        actual_path = file_path
+
+        if file_path.suffix.lower() == ".xls":
+            try:
+                temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
+                actual_path = Path(temp_xlsx_path)
+                logger.info(f"  已将 .xls 转换为临时 .xlsx")
+            except Exception as e:
+                logger.error(f"  .xls 转换失败: {e}")
+                raise ValueError(f"无法读取 .xls 文件: {file_path}。转换失败: {e}")
+
+        wb = openpyxl.load_workbook(str(actual_path), read_only=True, data_only=True)
         all_items = []
         try:
             # 确定要读取的Sheet列表
@@ -96,6 +111,12 @@ class BillReader:
                     logger.info(f"  Sheet '{sn}': 读取 {len(items)} 条清单项")
         finally:
             wb.close()
+            # 清理 .xls 转换产生的临时文件
+            if temp_xlsx_path:
+                try:
+                    Path(temp_xlsx_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
         if not all_items:
             logger.warning("未读取到任何清单项目，请检查文件格式")
@@ -103,6 +124,56 @@ class BillReader:
         logger.info(f"清单读取完成: 共 {len(all_items)} 条项目")
 
         return all_items
+
+    def _convert_xls_to_xlsx(self, xls_path: Path) -> str:
+        """
+        将 .xls 文件转换为临时 .xlsx 文件
+
+        用 xlrd 读取 .xls 数据，openpyxl 写入临时 .xlsx。
+        只转数据，不转格式（后续只需要数据值）。
+
+        返回: 临时 .xlsx 文件路径
+        """
+        import xlrd  # 延迟导入，仅 .xls 场景需要
+
+        xls_wb = xlrd.open_workbook(str(xls_path))
+
+        # 临时文件放在 output/temp 目录
+        temp_dir = Path(__file__).parent.parent / "output" / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix="xls_convert_", dir=str(temp_dir))
+        os.close(fd)
+
+        try:
+            xlsx_wb = openpyxl.Workbook()
+            xlsx_wb.remove(xlsx_wb.active)  # 删除默认空Sheet
+
+            for sheet_idx in range(xls_wb.nsheets):
+                xls_sheet = xls_wb.sheet_by_index(sheet_idx)
+                xlsx_sheet = xlsx_wb.create_sheet(title=xls_sheet.name)
+
+                for row_idx in range(xls_sheet.nrows):
+                    for col_idx in range(xls_sheet.ncols):
+                        cell = xls_sheet.cell(row_idx, col_idx)
+                        value = cell.value
+                        # xlrd 日期类型需特殊处理（ctype=3）
+                        if cell.ctype == 3:
+                            try:
+                                value = xlrd.xldate_as_datetime(value, xls_wb.datemode)
+                            except Exception:
+                                pass
+                        if value is not None and value != "":
+                            xlsx_sheet.cell(row=row_idx + 1, column=col_idx + 1, value=value)
+
+            xlsx_wb.save(temp_path)
+            logger.debug(f"  .xls → .xlsx 转换完成: {xls_wb.nsheets} 个Sheet")
+        except Exception:
+            Path(temp_path).unlink(missing_ok=True)
+            raise
+        finally:
+            xls_wb.release_resources()
+
+        return temp_path
 
     # 非清单Sheet的名称关键词（包含这些词的Sheet直接跳过）
     SKIP_SHEET_KEYWORDS = [
