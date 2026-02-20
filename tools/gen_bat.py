@@ -75,18 +75,6 @@ if not exist "!INPUT_FILE!" (
 
 set "CURRENT_FILE=!INPUT_FILE!"
 
-echo.
-echo  选择清单范围:
-echo   [1] 仅安装工程 编码03开头
-echo   [2] 全部清单
-echo.
-set /p "SCOPE_CHOICE=请输入 1 或 2 [默认1]: "
-if "!SCOPE_CHOICE!"=="2" (
-    set "FILTER="
-) else (
-    set "FILTER=--filter-code 03"
-)
-
 :: ============================================================
 :: 执行匹配
 :: ============================================================
@@ -99,7 +87,7 @@ echo  省份: !PROVINCE!
 echo ============================================================
 echo.
 
-python tools/review_test.py "!CURRENT_FILE!" --with-experience --province "!PROVINCE!" !FILTER!
+python tools/jarvis_pipeline.py "!CURRENT_FILE!" --province "!PROVINCE!"
 
 set "LAST_OUTPUT="
 for /f "delims=" %%F in ('dir /b /od "output\\匹配结果_*.xlsx" 2^>nul') do (

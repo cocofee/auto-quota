@@ -10,26 +10,22 @@
 pip install -r requirements.txt
 ```
 
-### 2. 启动Web界面（推荐）
+### 2. 一键匹配（推荐）
 
 ```bash
-streamlit run app.py
+python tools/jarvis_pipeline.py "清单.xlsx" --province "北京2024"
 ```
 
-浏览器会自动打开 `http://localhost:8501`，在网页上操作：
-- **匹配定额**：拖拽上传清单Excel → 选择匹配模式 → 一键匹配 → 下载结果
-- **定额数据库**：查看/搜索/导入定额
-- **经验库**：查看历史匹配记录和统计
-- **设置**：配置API密钥、查看系统状态
+自动完成：匹配定额 → 自动审核 → 纠正Excel，结果在 `output/` 目录下。
 
-### 3. 命令行方式（备用）
+### 3. 单独匹配（备用）
 
 ```bash
 # 纯搜索模式（免费，不需要API Key）
 python main.py 清单文件.xlsx --mode search
 
-# 完整模式（需要在 .env 中配置 API Key，精度更高）
-python main.py 清单文件.xlsx --mode full
+# Agent模式（造价员贾维斯，需要API Key）
+python main.py 清单文件.xlsx --mode agent
 ```
 
 ### 4. 查看结果
@@ -72,12 +68,14 @@ auto-quota/
 │   └── chroma_db/           # 向量索引
 │
 ├── output/              # 输出结果（每次匹配生成一个Excel）
-├── app.py               # Streamlit Web界面入口（streamlit run app.py）
-├── pages/               # Streamlit多页面
-│   ├── 1_匹配定额.py       # 核心功能：上传清单→匹配→下载结果
-│   ├── 2_定额数据库.py     # 查看/搜索/导入定额
-│   ├── 3_经验库.py         # 历史匹配记录和统计
-│   └── 4_设置.py           # API配置、系统信息
+├── tools/               # 批处理工具
+│   ├── jarvis_pipeline.py    # 一键全流程（匹配+审核+纠正）
+│   ├── jarvis_auto_review.py # 自动审核
+│   ├── jarvis_correct.py     # 纠正写回Excel
+│   ├── jarvis_store.py       # 存入经验库
+│   ├── experience_view.py    # 经验库查看/搜索
+│   ├── import_all.py         # 导入定额数据
+│   └── import_reference.py   # 导入预算数据
 ├── knowledge/           # 知识库文件
 ├── logs/                # 运行日志
 └── docs/                # 文档
@@ -101,7 +99,7 @@ auto-quota/
 | 模式 | 命令参数 | 需要API Key | 费用 | 精度 |
 |------|---------|------------|------|------|
 | 纯搜索 | `--mode search` | 不需要 | 免费 | 一般 |
-| 完整模式 | `--mode full` | 需要 | 约几分钱/条 | 更高 |
+| 贾维斯 | `--mode agent` | 需要 | 约几分钱/条 | 最高 |
 
 ### 经验库
 
@@ -125,14 +123,11 @@ auto-quota/
 ## 常用命令
 
 ```bash
-# 启动Web界面（推荐方式）
-streamlit run app.py
+# 一键全流程（推荐）
+python tools/jarvis_pipeline.py "清单.xlsx" --province "北京2024"
 
-# 命令行匹配（备用）
+# 单独匹配
 python main.py 清单文件.xlsx
-
-# 只处理安装专业的清单（编码以03开头）
-python main.py 清单文件.xlsx --filter-code 03
 
 # 只处理前10条（快速测试）
 python main.py 清单文件.xlsx --limit 10

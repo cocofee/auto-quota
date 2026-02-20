@@ -16,108 +16,30 @@ Jarvis 定额查询工具 - 从定额库中查询定额编号和名称
 """
 import sys
 import os
-import sqlite3
 import argparse
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import get_quota_db_path
+from src.quota_search import search_quota_db, search_by_id_prefix, search_series
 
 
 def lookup_by_keywords(keywords: list, section: str = None, type_filter: str = None,
                        province: str = None, limit: int = 50) -> list:
     """按关键词搜索定额（多关键词取交集）"""
-    db_path = get_quota_db_path(province)
-    if not os.path.exists(db_path):
-        print(f"错误: 定额库不存在: {db_path}")
-        return []
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-
-    # 构建查询条件：每个关键词都必须出现在name中
-    conditions = []
-    params = []
-    for kw in keywords:
-        conditions.append("name LIKE ?")
-        params.append(f"%{kw}%")
-
-    if section:
-        conditions.append("quota_id LIKE ?")
-        params.append(f"{section}%")
-
+    all_keywords = list(keywords)
     if type_filter:
-        conditions.append("name LIKE ?")
-        params.append(f"%{type_filter}%")
-
-    where = " AND ".join(conditions)
-    sql = f"SELECT quota_id, name, unit FROM quotas WHERE {where} ORDER BY quota_id LIMIT ?"
-    params.append(limit)
-
-    cursor.execute(sql, params)
-    results = cursor.fetchall()
-    conn.close()
-    return results
+        all_keywords.append(type_filter)
+    return search_quota_db(all_keywords, section=section, province=province, limit=limit)
 
 
 def lookup_by_id(quota_id: str, province: str = None) -> list:
     """按定额编号查找（支持前缀匹配）"""
-    db_path = get_quota_db_path(province)
-    if not os.path.exists(db_path):
-        print(f"错误: 定额库不存在: {db_path}")
-        return []
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-
-    # 先精确匹配
-    cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?", (quota_id,))
-    results = cursor.fetchall()
-
-    # 如果没有精确匹配，尝试前缀匹配（查看整个系列）
-    if not results:
-        cursor.execute(
-            "SELECT quota_id, name, unit FROM quotas WHERE quota_id LIKE ? ORDER BY quota_id LIMIT 30",
-            (f"{quota_id}%",)
-        )
-        results = cursor.fetchall()
-
-    conn.close()
-    return results
+    return search_by_id_prefix(quota_id, province=province)
 
 
 def lookup_series(quota_id: str, province: str = None) -> list:
     """查看某条定额所在的整个系列（同名不同档位的所有定额）"""
-    db_path = get_quota_db_path(province)
-    if not os.path.exists(db_path):
-        return []
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-
-    # 先找到这条定额的名称（去掉最后的数字参数部分）
-    cursor.execute("SELECT name FROM quotas WHERE quota_id = ?", (quota_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return []
-
-    # 提取名称的"家族前缀"（去掉最后的数字）
-    name = row[0]
-    # 找到名称中最后一个非数字非小数点的位置
-    parts = name.rsplit(" ", 1)
-    if len(parts) > 1:
-        family_name = parts[0]
-    else:
-        family_name = name
-
-    cursor.execute(
-        "SELECT quota_id, name, unit FROM quotas WHERE name LIKE ? ORDER BY quota_id",
-        (f"{family_name}%",)
-    )
-    results = cursor.fetchall()
-    conn.close()
-    return results
+    return search_series(quota_id, province=province)
 
 
 def print_results(results: list, title: str = "查询结果"):
