@@ -1446,8 +1446,10 @@ class RuleValidator:
         # 策略3：按参数名称匹配
         if param_name:
             # "容量" → 找 容量XXX 或 XXXkVA
+            # 用re.escape转义参数名中的特殊字符（如括号）
+            safe_name = re.escape(param_name)
             value = self._first_match_float(
-                bill_text, [rf'{param_name}\s*[:：]?\s*(\d+(?:\.\d+)?)'])
+                bill_text, [rf'{safe_name}\s*[:：]?\s*(\d+(?:\.\d+)?)'])
             if value is not None:
                 return value
 

@@ -60,12 +60,21 @@ class Reranker:
 
         返回:
             重排后的候选列表，每条增加 rerank_score 字段
+            如果Reranker失败，候选会被标记 reranker_failed=True
         """
         if not candidates:
             return candidates
 
         if top_k is None:
             top_k = config.RERANKER_TOP_K
+
+        # 检查模型是否可用（冷却期内返回None）
+        model = self.model
+        if model is None:
+            logger.warning("Reranker模型不可用（加载失败或冷却中），跳过重排")
+            for c in candidates:
+                c["reranker_failed"] = True
+            return candidates[:top_k] if top_k else candidates
 
         # 构造 [查询, 候选名称] 对
         # 用定额名称做重排（最有区分度的字段）
@@ -82,10 +91,12 @@ class Reranker:
 
         # 用交叉编码器打分
         try:
-            scores = self.model.predict(pairs)
+            scores = model.predict(pairs)
         except Exception as e:
             logger.error(f"Reranker打分失败: {e}")
-            # 打分失败时保持原有顺序
+            # 打分失败：标记候选为"未重排"（下游FastPath不应信任排序）
+            for c in candidates:
+                c["reranker_failed"] = True
             return candidates[:top_k] if top_k else candidates
 
         # 给每条候选加上 rerank_score

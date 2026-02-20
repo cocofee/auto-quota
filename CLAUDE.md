@@ -110,6 +110,49 @@ python tools/experience_view.py search "镀锌钢管"  # 搜索
 3. **一省通全国**：通用知识库存定额名称模式（不存编号），跨省复用
 4. **定额版本绑定**：定额库更新后旧经验自动标记stale
 
+## 大模型配置（.env文件）
+
+Agent模式需要大模型API。在 `.env` 文件中配置，支持多个模型切换。
+
+### Claude（当前默认，通过中转服务）
+
+```bash
+# 变量名用 CLAUDE_ 前缀（不能用 ANTHROPIC_，会和 Claude Code 自身环境变量冲突）
+CLAUDE_API_KEY=你的中转API Key
+CLAUDE_BASE_URL=http://你的中转地址:端口    # 留空则走官方API
+CLAUDE_MODEL=claude-opus-4-6               # 可选: claude-opus-4-6, claude-sonnet-4-6
+
+# Agent模式切换为Claude
+AGENT_LLM=claude
+```
+
+**为什么不用 ANTHROPIC_ 前缀？**
+Claude Code（就是这个开发工具）会在系统环境变量中设置 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_BASE_URL`。
+如果 `.env` 也用这个名字，`load_dotenv()` 不会覆盖已有环境变量，导致读到 Claude Code 的值而非中转的值。
+所以用 `CLAUDE_` 前缀避免冲突。
+
+**中转模式的技术细节：**
+中转模式下不走 Anthropic SDK（SDK 会自动添加 `authorization: Bearer PROXY_MANAGED` 头导致中转认证失败），
+而是用 httpx 直接发送 HTTP 请求，只带 `x-api-key` 头。代码在 `src/agent_matcher.py` 的 `_call_claude()` 方法。
+
+### Kimi（备选）
+
+```bash
+KIMI_API_KEY=你的DashScope API Key
+KIMI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+KIMI_MODEL=kimi-k2.5
+
+AGENT_LLM=kimi
+```
+
+### 其他支持的模型
+
+- `deepseek`：DeepSeek（需 DEEPSEEK_API_KEY）
+- `qwen`：通义千问（需 QWEN_API_KEY）
+- `openai`：OpenAI GPT（需 OPENAI_API_KEY）
+
+切换方法：修改 `.env` 中的 `AGENT_LLM=模型名` 即可。
+
 ## 测试文件位置
 
 测试用的清单Excel文件统一放在D盘：

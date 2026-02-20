@@ -369,9 +369,11 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_MODEL = "deepseek-chat"
 
-# Claude配置
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+# Claude配置（支持中转服务）
+# 注意：用CLAUDE_前缀而非ANTHROPIC_前缀，避免和Claude Code自身环境变量冲突
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", "")  # 中转地址，留空=官方API
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-6")
 
 # OpenAI配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -421,13 +423,25 @@ AGENT_LLM = os.getenv("AGENT_LLM", "deepseek")
 AGENT_TEMPERATURE = 0.1
 
 # Agent快速通道（高置信候选时跳过LLM，显著提速）
+# 默认值说明：
+#   SCORE=0.60 → param_score≥0.6即可走快通道（绝大多数条目跳过LLM）
+#     - 1.0="无参数可验证/完美匹配" → 走快通道
+#     - 0.6-0.7="部分匹配/有档位未确认" → 走快通道（如质量不达标可调高到0.85）
+#     - <0.6="参数不匹配" → 走LLM
+#   SCORE_GAP=0.03 → top1和top2的reranker分差至少0.03才走快通道
+#     - reranker分数是0~1归一化的（bge-reranker-v2-m3经sigmoid）
+#     - 分差<0表示reranker和参数验证器意见不一致 → 必须走LLM
+#     - 分差<0.03表示基本平局 → 走LLM
+#     - 分差≥0.03表示reranker明确偏好top1 → 可走快通道
+#   AUDIT_RATE=0.15 → 15%抽检率，监控快通道质量（不一致时以LLM为准）
 AGENT_FASTPATH_ENABLED = os.getenv("AGENT_FASTPATH_ENABLED", "1").strip().lower() not in (
     "0", "false", "no", "off", ""
 )
-AGENT_FASTPATH_SCORE = float(os.getenv("AGENT_FASTPATH_SCORE", "0.93"))
-AGENT_FASTPATH_MARGIN = float(os.getenv("AGENT_FASTPATH_MARGIN", "0.08"))
+AGENT_FASTPATH_SCORE = float(os.getenv("AGENT_FASTPATH_SCORE", "0.60"))
+AGENT_FASTPATH_MARGIN = float(os.getenv("AGENT_FASTPATH_MARGIN", "0.03"))
+AGENT_FASTPATH_SCORE_GAP = float(os.getenv("AGENT_FASTPATH_SCORE_GAP", "0.03"))
 AGENT_FASTPATH_AUDIT_RATE = max(0.0, min(
-    1.0, float(os.getenv("AGENT_FASTPATH_AUDIT_RATE", "0.05"))
+    1.0, float(os.getenv("AGENT_FASTPATH_AUDIT_RATE", "0.15"))
 ))
 
 # 学习笔记数据库路径

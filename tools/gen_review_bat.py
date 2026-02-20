@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
-"""生成 贾维斯审核.bat（GBK编码）
+"""生成 Jarvis.bat（GBK编码）
 
-全流程一键操作：拖入清单Excel → 匹配定额 → 自动审核 → 自动纠正 → 打开结果
+全流程一键操作：选择定额库 → 拖入清单Excel → 匹配定额 → 自动审核 → 自动纠正 → 打开结果
+支持主定额库 + 辅助定额库（用于安装清单中的土建/市政项目）
 """
 
 bat_content = r"""@echo off
 setlocal enabledelayedexpansion
-title 贾维斯一键审核
+title Jarvis - 一键审核
 cd /d "%~dp0"
 
 echo ============================================================
-echo        贾维斯一键审核 - 匹配+审核+纠正 全自动
+echo        Jarvis 一键审核 - 匹配+审核+纠正 全自动
 echo ============================================================
 echo.
-echo  全流程: 拖入Excel → 匹配定额 → 自动审核 → 纠正错误 → 出结果
+echo  全流程: 选定额库 - 拖入Excel - 自动匹配 - 审核纠正 - 出结果
 echo.
 
 :: ============================================================
-:: 选择省份
+:: 选择定额库（主定额+辅助定额）
 :: ============================================================
 python tools\_select_province.py
 if errorlevel 1 (
@@ -26,6 +27,13 @@ if errorlevel 1 (
 )
 set /p PROVINCE=<.tmp_selected_province.txt
 del /q .tmp_selected_province.txt 2>nul
+
+:: 读取辅助定额库（可选）
+set "AUX_PROVINCES="
+if exist .tmp_selected_aux_provinces.txt (
+    set /p AUX_PROVINCES=<.tmp_selected_aux_provinces.txt
+    del /q .tmp_selected_aux_provinces.txt 2>nul
+)
 echo.
 
 :: ============================================================
@@ -33,7 +41,10 @@ echo.
 :: ============================================================
 :WAIT_FILE
 echo ============================================================
-echo  省份: !PROVINCE!
+echo  主定额: !PROVINCE!
+if defined AUX_PROVINCES (
+    echo  辅助:   !AUX_PROVINCES!
+)
 echo ============================================================
 echo.
 echo  请将清单Excel文件拖拽到此窗口，然后按回车:
@@ -64,11 +75,19 @@ echo.
 echo ############################################################
 echo  开始全自动流水线
 echo  文件: !CURRENT_FILE!
-echo  省份: !PROVINCE!
+echo  主定额: !PROVINCE!
+if defined AUX_PROVINCES (
+    echo  辅助: !AUX_PROVINCES!
+)
 echo ############################################################
 echo.
 
-python tools\jarvis_pipeline.py "!CURRENT_FILE!" --province "!PROVINCE!"
+:: 运行流水线
+if defined AUX_PROVINCES (
+    python tools\jarvis_pipeline.py "!CURRENT_FILE!" --province "!PROVINCE!" --aux-province "!AUX_PROVINCES!"
+) else (
+    python tools\jarvis_pipeline.py "!CURRENT_FILE!" --province "!PROVINCE!"
+)
 
 :: 找到最新的输出文件
 set "LAST_OUTPUT="
@@ -144,13 +163,14 @@ goto POST_DONE
 
 :EXIT
 del /q .tmp_selected_province.txt 2>nul
+del /q .tmp_selected_aux_provinces.txt 2>nul
 echo.
 echo  再见!
 echo.
 pause
 """
 
-with open("贾维斯审核.bat", "w", encoding="gbk") as f:
+with open("Jarvis.bat", "w", encoding="gbk") as f:
     f.write(bat_content)
 
-print("OK: 贾维斯审核.bat 已用GBK编码生成")
+print("OK: Jarvis.bat 已用GBK编码生成")

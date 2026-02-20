@@ -808,8 +808,10 @@ class TextParser:
 
         # ===== 管道类：有材质或DN参数，且不是电气类（电缆/配管/穿线） =====
         # 电气类即使有material/dn也应走下面的电气专用query构建
+        # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
         is_electrical = any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
-        if (material or dn) and not is_electrical:
+        is_lamp = "灯" in name  # 灯具类走专用的_normalize_bill_name处理
+        if (material or dn) and not is_electrical and not is_lamp:
             if material and "管" in material:
                 core = f"{location}{usage}{material}"
             elif material:
@@ -1025,15 +1027,138 @@ class TextParser:
         if "电缆头" in name and "终端" not in name:
             return name.replace("电力电缆头", "电缆终端头").replace("电缆头", "电缆终端头")
 
-        # 灯具类：去掉"LED"前缀（定额不按光源分类，按灯具类型分类）
+        # 灯具类：去掉"LED"前缀和瓦数/电压等噪声（定额不按光源和瓦数分类）
         if "灯" in name:
             cleaned = re.sub(r'LED\s*', '', name, flags=re.IGNORECASE)
-            # 吸顶灯 → 普通灯具安装 吸顶灯
+            # 去掉瓦数（12W、2×28W、1*28W等）和电压（220V等）—— 定额不按这些分类
+            cleaned = re.sub(r'\d+[×*]\d+\s*W', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'\d+\s*W\b', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'\d+\s*V\b', '', cleaned, flags=re.IGNORECASE)
+            # 去掉"T5"等灯管型号前缀
+            cleaned = re.sub(r'\bT\d+\s*', '', cleaned)
+            # 去掉"A型"消防等级标记（如"A型1*3W"中的"A型"，不影响定额选择）
+            cleaned = re.sub(r'[A-Z]型', '', cleaned)
+            # 去掉反斜杠及后续电气参数（如"\5W,DC≤36V,lm≥500"）
+            cleaned = re.sub(r'\\[^\\]*$', '', cleaned)
+            # 去掉流明参数（如"2400lm"、"lm≥500"）
+            cleaned = re.sub(r'\d*lm[≥>=\d]*', '', cleaned, flags=re.IGNORECASE)
+            # 去掉直流电压参数（如"DC≤36V"）
+            cleaned = re.sub(r'DC[≤<>=]*\d+V?', '', cleaned, flags=re.IGNORECASE)
+            # 清理多余空格、逗号和括号
+            cleaned = re.sub(r'[,，]+', ' ', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            cleaned = re.sub(r'\(\s*\)', '', cleaned).strip()
+            cleaned = re.sub(r'\[\s*\]', '', cleaned).strip()
+
+            # ===== 按灯具类型映射到定额搜索名称 =====
+
+            # 吸顶灯 → 普通灯具安装 吸顶灯（含防水式吸顶灯）
             if "吸顶灯" in cleaned:
+                if "防水" in cleaned or "防尘" in cleaned:
+                    return "防水防尘灯安装 吸顶式"
                 return "普通灯具安装 吸顶灯"
-            # 直管灯/灯管 → LED灯带 灯管式（LED直管灯套LED灯带定额）
-            if re.search(r'直管|灯管', cleaned):
+
+            # 壁灯 → 壁灯安装
+            if "壁灯" in cleaned:
+                if "防水" in cleaned or "防尘" in cleaned:
+                    return "防水防尘灯安装 壁灯"
+                return "壁灯安装 小型壁灯"
+
+            # 防爆灯 → 密闭灯安装 防爆灯
+            if "防爆" in cleaned and "灯" in cleaned:
+                return "密闭灯安装 防爆灯"
+
+            # 防水防尘灯（非壁灯、非吸顶灯的其他防水灯）
+            if ("防水" in cleaned or "防尘" in cleaned or "防潮" in cleaned) and "灯" in cleaned:
+                return "防水防尘灯安装"
+
+            # 直管灯/灯管/线槽灯 → LED灯带 灯管式
+            if re.search(r'直管|灯管|线槽灯', cleaned):
                 return "LED灯带 灯管式"
+
+            # 井道灯 → 密闭灯安装（井道用密闭灯）
+            if "井道灯" in cleaned:
+                return "密闭灯安装 防潮灯"
+
+            # 荧光灯具：提取安装方式和管数
+            if "荧光灯" in cleaned:
+                # 提取管数
+                tube_count = ""
+                if "三管" in cleaned or "3管" in cleaned:
+                    tube_count = "三管"
+                elif "双管" in cleaned or "2管" in cleaned:
+                    tube_count = "双管"
+                else:
+                    tube_count = "单管"  # 默认单管
+                # 提取安装方式
+                install = "吸顶式"  # 默认
+                if "吊链" in cleaned:
+                    install = "吊链式"
+                elif "吊管" in cleaned or "吊杆" in cleaned or "吊装" in cleaned:
+                    install = "吊管式"
+                elif "嵌入" in cleaned:
+                    install = "嵌入式"
+                elif "壁装" in cleaned:
+                    install = "壁装式"
+                elif "吸顶" in cleaned:
+                    install = "吸顶式"
+                return f"荧光灯具安装 {install} {tube_count}"
+
+            # 壁装/管吊/吊装的灯 → 根据安装方式推断荧光灯安装
+            if re.search(r'壁装.*灯|灯.*壁装', cleaned):
+                tube = "双管" if "双管" in cleaned else "单管"
+                return f"荧光灯具安装 壁装式 {tube}"
+            if re.search(r'管吊|吊装|吊链', cleaned) and "灯" in cleaned:
+                tube = "双管" if "双管" in cleaned else ("三管" if "三管" in cleaned else "单管")
+                install = "吊链式" if "吊链" in cleaned else "吊管式"
+                return f"荧光灯具安装 {install} {tube}"
+
+            # 感应灯/声光控灯 → 普通灯具安装
+            if re.search(r'感应灯|声光控|光控', cleaned):
+                return "普通灯具安装 吸顶灯"
+
+            # 灯头座/灯头 → 座灯头安装
+            if re.search(r'灯头座|座灯头', cleaned):
+                return "其他普通灯具安装 座灯头"
+
+            # 集中电源灯 → 智能应急灯具安装（需在疏散/标志灯之前判断）
+            if "集中电源" in cleaned:
+                if "疏散照明" in cleaned:
+                    return "智能应急灯具及标志灯具安装 应急灯"
+                if "指示" in cleaned or "标志" in cleaned:
+                    return "智能应急灯具及标志灯具安装 标志灯"
+                return "智能应急灯具及标志灯具安装"
+
+            # 应急灯/应急照明灯
+            if "应急" in cleaned:
+                if "吸顶" in cleaned:
+                    return "普通灯具安装 吸顶灯"
+                if "疏散" in cleaned or "照明" in cleaned:
+                    return "荧光灯具安装"
+                return "荧光灯具安装"
+
+            # 疏散指示灯/标志灯/出口指示灯 → 标志、诱导灯安装
+            if re.search(r'疏散|指示灯|标志灯|诱导灯|出口.*灯|楼层.*灯', cleaned):
+                if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
+                    return "标志、诱导灯安装 壁式"
+                if "嵌入" in cleaned or "地面" in cleaned:
+                    return "标志、诱导灯安装 地面嵌入式"
+                if "吸顶" in cleaned:
+                    return "标志、诱导灯安装 吸顶式"
+                return "标志、诱导灯安装 壁式"
+
+            # 单管灯/双管灯/三管灯（不含"荧光"字样的简称）→ 荧光灯具安装
+            tube_match = re.search(r'(单管|双管|三管)灯', cleaned)
+            if tube_match:
+                tube_map = {"单管": "单管", "双管": "双管", "三管": "三管"}
+                tube = tube_map.get(tube_match.group(1), "单管")
+                return f"荧光灯具安装 吸顶式 {tube}"
+
+            # 坡道灯/过渡照明灯/照明灯 → 普通灯具安装
+            if re.search(r'照明灯|过渡灯|坡道.*灯', cleaned):
+                return "普通灯具安装 吸顶灯"
+
+            # 通用灯具兜底：保留cleaned（已去除LED/瓦数/电压噪声）
             return cleaned
 
         # 接线盒（86mm的小接线盒，不是通信用的大接线箱）

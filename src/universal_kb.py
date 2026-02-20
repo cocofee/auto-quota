@@ -145,30 +145,21 @@ class UniversalKB:
 
     @property
     def model(self):
-        """延迟加载向量模型"""
+        """从全局 ModelCache 获取向量模型（与定额搜索、经验库共用同一个BGE模型）"""
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            try:
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME, device="cuda"
-                )
-            except Exception as e:
-                logger.warning(f"通用知识库向量模型GPU加载失败({e})，切换到CPU")
-                self._model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME, device="cpu"
-                )
+            from src.model_cache import ModelCache
+            self._model = ModelCache.get_vector_model()
         return self._model
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection"""
-        if self._collection is None:
-            import chromadb
-            self.chroma_dir.mkdir(parents=True, exist_ok=True)
-            self._chroma_client = chromadb.PersistentClient(
-                path=str(self.chroma_dir)
-            )
-            self._collection = self._chroma_client.get_or_create_collection(
+        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
+        from src.model_cache import ModelCache
+        client = ModelCache.get_chroma_client(str(self.chroma_dir))
+        # 客户端变了（被重建过），需要刷新collection
+        if client is not self._chroma_client:
+            self._chroma_client = client
+            self._collection = client.get_or_create_collection(
                 name="universal_kb",
                 metadata={"hnsw:space": "cosine"}
             )
@@ -703,8 +694,8 @@ class UniversalKB:
                 associated_patterns=record.get("associated_patterns"),
                 param_hints=record.get("param_hints"),
                 specialty=record.get("specialty"),
-                layer="candidate",
-                confidence=50,
+                layer="authority",   # 人工验证过的预算数据，直接进权威层
+                confidence=80,      # 项目导入给80分（比人工修正的95低，比自动匹配的50高）
                 source_province=source_province,
                 source_project=source_project,
             )
