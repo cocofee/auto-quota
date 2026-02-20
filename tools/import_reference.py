@@ -34,6 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
 from src.text_parser import normalize_bill_text
+import config
 
 
 def read_excel_pairs(excel_path: str) -> list[dict]:
@@ -294,24 +295,87 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
     return {"added": added, "skipped": skipped}
 
 
+def _select_quota_db() -> str:
+    """交互式选择定额库版本
+
+    列出 db/provinces/ 下所有已导入的定额库，让用户选择。
+    经验导入必须绑定具体的定额库版本，才能：
+    1. 校验定额编号是否存在
+    2. 判断经验是否过期（定额库更新后 stale 检测）
+
+    返回:
+        完整的省份定额版本名称（如 "北京市建设工程施工消耗量标准(2024)"）
+    """
+    import sqlite3 as _sqlite3
+    db_provinces = config.list_db_provinces()
+
+    if not db_provinces:
+        print("\n  [错误] 没有找到已导入的定额库")
+        print(f"  请先运行 python tools/import_all.py 导入定额数据")
+        sys.exit(1)
+
+    if len(db_provinces) == 1:
+        selected = db_provinces[0]
+        print(f"\n  只有1个定额库，自动选择: {selected}")
+        return selected
+
+    # 列出所有已导入的定额库（含定额条数，帮助用户区分）
+    print("\n  请选择该预算文件使用的定额库:")
+    print()
+    for i, p in enumerate(db_provinces, 1):
+        db_path = config.get_quota_db_path(p)
+        db_info = ""
+        if db_path.exists():
+            try:
+                conn = _sqlite3.connect(str(db_path), timeout=5)
+                count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
+                conn.close()
+                db_info = f"{count}条定额"
+            except Exception:
+                db_info = "数据库已存在"
+        print(f"    [{i}] {p}  ({db_info})")
+
+    print()
+    while True:
+        try:
+            choice = input(f"  输入编号 [1-{len(db_provinces)}]: ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(db_provinces):
+                selected = db_provinces[idx]
+                print(f"  → 已选择: {selected}")
+                return selected
+            print(f"  编号超出范围，请输入 1-{len(db_provinces)}")
+        except ValueError:
+            print(f"  请输入数字编号")
+        except EOFError:
+            # 非交互环境（如管道/脚本调用），无法读取输入，直接退出
+            print("\n  [错误] 非交互环境无法选择定额库，请用 --province 参数指定")
+            sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="预算数据导入工具 - 从做好的预算Excel导入经验（一次导入，经验库+通用知识库两边都存）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
-  # 导入一个做好的预算文件（广联达导出的Excel）
-  python tools/import_reference.py 预算文件.xlsx --province 北京
+  # 导入预算文件（交互式选择定额库版本）
+  python tools/import_reference.py 预算文件.xlsx
+
+  # 指定定额库版本（跳过交互选择）
+  python tools/import_reference.py 预算文件.xlsx --province "北京市建设工程施工消耗量标准(2024)"
 
   # 指定项目名称
-  python tools/import_reference.py 预算文件.xlsx --province 北京 --project 丰台安置房
+  python tools/import_reference.py 预算文件.xlsx --project 丰台安置房
 
   # 查看解析结果但不导入（调试用）
   python tools/import_reference.py 预算文件.xlsx --dry-run
         """,
     )
     parser.add_argument("input_file", help="带定额的预算Excel文件（广联达/造价Home等导出）")
-    parser.add_argument("--province", default="北京", help="数据来源省份（如：北京、四川），默认北京")
+    parser.add_argument("--province", default=None,
+                        help="定额库版本全称（如 '北京市建设工程施工消耗量标准(2024)'）。"
+                             "不指定则交互式选择。")
     parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
     parser.add_argument("--dry-run", action="store_true", help="只解析不导入（调试用）")
 
@@ -322,6 +386,22 @@ def main():
     if not input_path.exists():
         logger.error(f"文件不存在: {input_path}")
         sys.exit(1)
+
+    # 确定定额库版本：指定了就解析匹配，没指定就交互选择
+    if args.province:
+        try:
+            province = config.resolve_province(args.province)
+        except ValueError as e:
+            logger.error(f"省份解析失败: {e}")
+            sys.exit(1)
+        # 校验该省份是否有定额库
+        db_path = config.get_quota_db_path(province)
+        if not db_path.exists():
+            logger.error(f"该省份尚未导入定额库: {province}")
+            logger.error(f"请先运行: python tools/import_all.py --province \"{province}\"")
+            sys.exit(1)
+    else:
+        province = _select_quota_db()
 
     project_name = args.project or input_path.stem
 
@@ -382,7 +462,7 @@ def main():
 
     # 第2步：导入经验库（带定额编号，同省份直接用）
     logger.info("导入经验库...")
-    exp_stats = import_to_experience(pairs, project_name, province=args.province)
+    exp_stats = import_to_experience(pairs, project_name, province=province)
     logger.info(f"  经验库: 新增{exp_stats['added']}条, 跳过{exp_stats['skipped']}条")
 
     # 第3步：导入通用知识库（定额名称模式，跨省份通用）
@@ -393,7 +473,7 @@ def main():
 
     kb_stats = kb.batch_import(
         kb_records,
-        source_province=args.province,
+        source_province=province,
         source_project=project_name,
     )
     logger.info(f"  通用知识库: 新增{kb_stats['added']}条, 合并{kb_stats['merged']}条")
@@ -402,7 +482,7 @@ def main():
     logger.info("=" * 50)
     logger.info("导入完成")
     logger.info(f"  项目: {project_name}")
-    logger.info(f"  省份: {args.province}")
+    logger.info(f"  定额库: {province}")
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  经验库: +{exp_stats['added']}条（带定额编号，同省直接用）")
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")

@@ -18,22 +18,20 @@
 ## 常用命令
 
 ```bash
-# 匹配定额（三种模式）
-python main.py "<Excel路径>"                    # search模式（默认，纯搜索）
-python main.py "<Excel路径>" --mode full        # full模式（搜索+大模型，需API）
-python main.py "<Excel路径>" --mode agent       # agent模式（Jarvis，自动学习）
+# 匹配定额（两种模式）
+python main.py "<Excel路径>"                    # search模式（默认，纯搜索，免费）
+python main.py "<Excel路径>" --mode agent       # agent模式（Jarvis，需API Key）
 
 # 常用参数
 python main.py "<Excel路径>" --limit 10         # 只处理前10条（调试用）
-python main.py "<Excel路径>" --filter-code 03   # 只处理03开头的安装清单
 python main.py "<Excel路径>" --sheet "给排水"   # 只处理指定Sheet
 
-# 测试与评测
-python tools/review_test.py "<Excel路径>"       # 审核测试
-python tools/eval_golden.py                     # 黄金集评测
+# Jarvis全流程（匹配+审核+纠正）
+python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024"
 
-# Web界面
-streamlit run pages/1_匹配定额.py
+# 经验库查看
+python tools/experience_view.py stats            # 统计
+python tools/experience_view.py search "镀锌钢管"  # 搜索
 ```
 
 ## 执行协议
