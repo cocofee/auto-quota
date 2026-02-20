@@ -79,7 +79,8 @@ class ExperienceDB:
                 notes TEXT,                           -- 备注
                 quota_db_version TEXT DEFAULT '',      -- 写入时的定额库版本号（用于版本校验）
                 layer TEXT DEFAULT 'candidate',         -- 数据层级：authority=权威层 / candidate=候选层
-                specialty TEXT                          -- 所属专业册号（如"C10"），用于按专业过滤
+                specialty TEXT,                         -- 所属专业册号（如"C10"），用于按专业过滤
+                materials TEXT DEFAULT '[]'             -- 主材列表（JSON数组），格式：[{"quota_code":"4-14","name":"开关","code":"260101Z@2","unit":"只"},...]
             )
         """)
 
@@ -101,6 +102,12 @@ class ExperienceDB:
         except sqlite3.OperationalError:
             cursor.execute("ALTER TABLE experiences ADD COLUMN specialty TEXT")
             logger.info("经验库已升级：新增 specialty 字段（专业分类）")
+
+        try:
+            cursor.execute("SELECT materials FROM experiences LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE experiences ADD COLUMN materials TEXT DEFAULT '[]'")
+            logger.info("经验库已升级：新增 materials 字段（主材信息）")
 
         # 全文搜索索引（加速精确文本查找）
         cursor.execute("""
@@ -380,6 +387,7 @@ class ExperienceDB:
 
     def add_experience(self, bill_text: str, quota_ids: list[str],
                        quota_names: list[str] = None,
+                       materials: list[dict] = None,
                        bill_name: str = None, bill_code: str = None,
                        bill_unit: str = None,
                        source: str = "auto_match",
@@ -395,6 +403,7 @@ class ExperienceDB:
             bill_text: 清单完整文本（名称+特征描述）
             quota_ids: 匹配的定额编号列表
             quota_names: 对应的定额名称列表
+            materials: 主材列表 [{"quota_code":"4-14-379","name":"开关","code":"26010101Z@2","unit":"只"},...]
             source: 来源（user_correction/project_import/auto_match）
             confidence: 置信度（0-100）
             specialty: 所属专业册号（如"C10"），由specialty_classifier判断
@@ -427,6 +436,7 @@ class ExperienceDB:
         layer = self._source_to_layer(source)
         quota_ids_json = self._json_dump(quota_ids)
         quota_names_json = self._json_dump(quota_names or [])
+        materials_json = self._json_dump(materials or [])
 
         inserted_new = False
         conn = self._connect()
@@ -452,14 +462,15 @@ class ExperienceDB:
                 cursor.execute("""
                     INSERT INTO experiences
                     (bill_text, bill_name, bill_code, bill_unit,
-                     quota_ids, quota_names, source, confidence,
+                     quota_ids, quota_names, materials, source, confidence,
                      confirm_count, province, project_name,
                      created_at, updated_at, notes, quota_db_version, layer, specialty)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     bill_text, bill_name, bill_code, bill_unit,
                     quota_ids_json,
                     quota_names_json,
+                    materials_json,
                     source, confidence,
                     province, project_name, now, now, notes,
                     quota_db_ver, layer, specialty,

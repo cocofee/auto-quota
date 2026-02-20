@@ -114,11 +114,21 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
                     }
 
                 elif row_type == "quota" and current_bill is not None:
-                    # 定额行：挂到当前清单下
+                    # 定额行：挂到当前清单下（带空的materials列表，后续主材行填充）
                     current_bill["quotas"].append({
                         "code": col_b,
                         "name": col_c,
+                        "materials": [],  # 主材列表，由后续material行填充
                     })
+
+                elif row_type == "material" and current_bill is not None:
+                    # 主材行：挂到当前清单的最后一条定额下
+                    if current_bill["quotas"]:
+                        current_bill["quotas"][-1]["materials"].append({
+                            "code": col_b,
+                            "name": col_c,
+                            "unit": col_e,
+                        })
 
                 elif row_type == "other" and col_c and len(col_c) >= 2:
                     # 可能是分部/章节标题行（如"给排水工程"、"电气安装"）
@@ -140,11 +150,12 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
 
 def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     """
-    判断一行是清单行、定额行还是标题行
+    判断一行是清单行、定额行、主材行还是标题行
 
     区分规则：
     - 清单行：有序号（纯数字）或编码为12位数字，且有项目名称
     - 定额行：编码格式为 X-XXX 或 DXXXXX（定额编号格式），无项目特征
+    - 主材行：编码为纯数字8位以上或含Z@，有名称，无项目特征描述
     - 标题行/其他：不符合以上规则
     """
     # 清单行判断：有序号 + 12位编码（或至少9位数字编码）
@@ -174,6 +185,13 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
 
     if is_quota_code and col_c:
         return "quota"
+
+    # 主材行判断：编码是纯数字8位以上 或 含Z@（广联达材料编码格式）
+    # 例如：01190031（日光灯）、26010101Z@2（单联单控开关）、28110000Z@121（电缆）
+    if col_c and not col_d:  # 有名称但无项目特征描述
+        is_material_code = bool(re.match(r'^\d{7,}$', col_b)) or 'Z@' in col_b
+        if is_material_code:
+            return "material"
 
     return "other"
 
@@ -266,6 +284,21 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
         quota_ids = [q.get("code", "") for q in quotas if isinstance(q, dict) and q.get("code")]
         quota_names = [q.get("name", "") for q in quotas if isinstance(q, dict) and q.get("code")]
 
+        # 提取主材信息：每条定额下的materials合并成一个列表
+        # 格式：[{"quota_code": "4-14-379", "name": "单联单控开关", "unit": "只"}, ...]
+        materials = []
+        for q in quotas:
+            if not isinstance(q, dict) or not q.get("code"):
+                continue
+            for m in q.get("materials", []):
+                if isinstance(m, dict) and m.get("name"):
+                    materials.append({
+                        "quota_code": q["code"],
+                        "name": m["name"],
+                        "code": m.get("code", ""),
+                        "unit": m.get("unit", ""),
+                    })
+
         if not quota_ids:
             skipped += 1
             continue
@@ -275,6 +308,7 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
                 bill_text=bill_text,
                 quota_ids=quota_ids,
                 quota_names=quota_names,
+                materials=materials,  # 主材信息
                 confidence=90,  # 项目导入给90分（权威层，可直通匹配）
                 source="project_import",
                 project_name=project_name,
