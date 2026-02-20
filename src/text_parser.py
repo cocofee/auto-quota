@@ -12,6 +12,7 @@
 """
 
 import re
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,10 @@ class TextParser:
         # 最终使用的列表（基础 + 从定额库自动提取的，按长度降序）
         self._materials = None  # 延迟初始化
         self._connections = None  # 延迟初始化
+
+        # 解析结果缓存（热点文本会被多次解析：规则校验/经验校验/主流程）
+        self._parse_cache = OrderedDict()
+        self._parse_cache_max = 4096
 
     def _ensure_vocab_loaded(self):
         """确保词汇列表已加载（合并基础列表 + 定额库提取的词汇）"""
@@ -127,6 +132,21 @@ class TextParser:
         self._materials = sorted(cleaned_materials, key=len, reverse=True)
         self._connections = sorted(conn_set, key=len, reverse=True)
 
+    def _get_parse_cache(self, text: str) -> Optional[dict]:
+        """读取解析缓存（LRU 命中后刷新活跃度）。"""
+        cached = self._parse_cache.get(text)
+        if cached is None:
+            return None
+        self._parse_cache.move_to_end(text)
+        return dict(cached)
+
+    def _set_parse_cache(self, text: str, result: dict):
+        """写入解析缓存并维护 LRU 上限。"""
+        self._parse_cache[text] = dict(result)
+        self._parse_cache.move_to_end(text)
+        if len(self._parse_cache) > self._parse_cache_max:
+            self._parse_cache.popitem(last=False)
+
     def parse(self, text: str) -> dict:
         """
         解析文本，提取所有可识别的参数
@@ -142,6 +162,10 @@ class TextParser:
 
         # 预处理：换行符替换为空格，避免换行截断参数字段
         text = text.replace("\n", " ").replace("\r", " ")
+
+        cached = self._get_parse_cache(text)
+        if cached is not None:
+            return cached
 
         result = {}
 
@@ -218,7 +242,13 @@ class TextParser:
         if elevator_type:
             result["elevator_type"] = elevator_type
 
-        return result
+        # 提取电梯运行速度（从"速度:2.5m/s"提取数值，用于区分2m/s以上/以下系列）
+        elevator_speed = self._extract_elevator_speed(text)
+        if elevator_speed is not None:
+            result["elevator_speed"] = elevator_speed
+
+        self._set_parse_cache(text, result)
+        return dict(result)
 
     # De外径→DN公称直径转换表（塑料管常用De标记外径，定额用DN标记公称直径）
     # 标准对照：GB/T 1047, ISO 4065
@@ -355,6 +385,63 @@ class TextParser:
 
         return None
 
+    def _search_first_float(self, text: str, patterns: list[str]) -> Optional[float]:
+        """Return first float captured by regex patterns, or None."""
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return float(match.group(1))
+        return None
+
+    def _search_first_int(self, text: str, patterns: list[str]) -> Optional[int]:
+        """Return first int captured by regex patterns, or None."""
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return int(match.group(1))
+        return None
+
+    def _search_first_float_group(self, text: str,
+                                  pattern_groups: list[tuple[str, int]]) -> Optional[float]:
+        """Return first float captured by (pattern, group_idx) specs."""
+        for pattern, group_idx in pattern_groups:
+            match = re.search(pattern, text)
+            if match:
+                return float(match.group(group_idx))
+        return None
+
+    def _extract_spec_wh(self, text: str) -> Optional[tuple[float, float]]:
+        """Extract W/H from '规格:W*H(*L)' and filter out cable-style small prefixes."""
+        spec_match = re.search(
+            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
+            text)
+        if not spec_match:
+            return None
+
+        w = float(spec_match.group(1))
+        h = float(spec_match.group(2))
+        if w <= 10 or h <= 10:
+            return None
+        return w, h
+
+    @staticmethod
+    def _format_number_for_query(value: float) -> str:
+        return str(int(value)) if value == int(value) else str(value)
+
+    def _extract_named_mm_or_spec(self, text: str, name: str,
+                                  use_perimeter: bool) -> Optional[float]:
+        """Extract mm-tier value from named field first, fallback to spec W*H."""
+        named_value = self._search_first_float(
+            text, [rf'{name}\s*[（(]\s*mm以内\s*[)）]\s*(\d+)'])
+        if named_value is not None:
+            return named_value
+
+        spec_wh = self._extract_spec_wh(text)
+        if not spec_wh:
+            return None
+        w, h = spec_wh
+        return (w + h) * 2 if use_perimeter else max(w, h)
+
     def _extract_kva(self, text: str) -> Optional[float]:
         """
         提取变压器容量（kVA）
@@ -365,11 +452,7 @@ class TextParser:
             r'(\d+(?:\.\d+)?)\s*[kK][vV][·.]?[aA]',              # 800kva, 800kV·A
             r'容量\s*(?:\([kK][vV][·.]?[aA](?:以内)?\))?\s*(\d+(?:\.\d+)?)',  # 容量(kV·A) 800
         ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return float(match.group(1))
-        return None
+        return self._search_first_float(text, patterns)
 
     def _extract_kv(self, text: str) -> Optional[float]:
         """
@@ -377,17 +460,12 @@ class TextParser:
 
         支持格式: 10kV, 10KV, 0.6/1kV, 8.5/15kv
         """
-        # 格式: 数字/数字kV（取后面的值作为电压等级）
-        match = re.search(r'(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*[kK][vV]', text)
-        if match:
-            return float(match.group(2))
-
-        # 格式: 数字kV
-        match = re.search(r'(\d+(?:\.\d+)?)\s*[kK][vV](?![·.aA])', text)
-        if match:
-            return float(match.group(1))
-
-        return None
+        return self._search_first_float_group(text, [
+            # 格式: 数字/数字kV（取后面的值作为电压等级）
+            (r'(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*[kK][vV]', 2),
+            # 格式: 数字kV
+            (r'(\d+(?:\.\d+)?)\s*[kK][vV](?![·.aA])', 1),
+        ])
 
     def _extract_ampere(self, text: str) -> Optional[float]:
         """
@@ -399,11 +477,7 @@ class TextParser:
             r'(\d+(?:\.\d+)?)\s*[aA](?![a-zA-Z])',               # 100A
             r'电流\s*(?:\([aA](?:以内)?\))?\s*(\d+(?:\.\d+)?)',    # 电流(A以内) 100
         ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return float(match.group(1))
-        return None
+        return self._search_first_float(text, patterns)
 
     def _extract_weight(self, text: str) -> Optional[float]:
         """
@@ -417,10 +491,9 @@ class TextParser:
             r'(\d+(?:\.\d+)?)\s*吨',                               # 30吨
             r'(?:重量|质量)\s*(?:\([tT](?:以内)?\))?\s*(\d+(?:\.\d+)?)',  # 重量(t以内) 30
         ]
-        for pattern in patterns_t:
-            match = re.search(pattern, text)
-            if match:
-                return float(match.group(1))
+        weight_t = self._search_first_float(text, patterns_t)
+        if weight_t is not None:
+            return weight_t
 
         # 千克 → 转为吨
         match = re.search(r'(\d+(?:\.\d+)?)\s*[kK][gG]', text)
@@ -512,15 +585,12 @@ class TextParser:
         - 回路数:7回路 → 7
         - 规格(回路以内) 48 → 48  （定额名称格式，数字在"回路"后面）
         """
-        # 格式1：明确的"X回路"
-        match = re.search(r'(\d+)\s*回路', text)
-        if match:
-            return int(match.group(1))
-        # 格式2：定额名称"回路以内) 48"，数字在括号关闭后
-        match = re.search(r'回路[^)）]*[)）]\s*(\d+)', text)
-        if match:
-            return int(match.group(1))
-        return None
+        return self._search_first_int(text, [
+            # 格式1：明确的"X回路"
+            r'(\d+)\s*回路',
+            # 格式2：定额名称"回路以内) 48"，数字在括号关闭后
+            r'回路[^)）]*[)）]\s*(\d+)',
+        ])
 
     def _extract_shape(self, text: str) -> str:
         """
@@ -552,23 +622,7 @@ class TextParser:
         2. 清单规格："规格：800*320" → 周长 = (800+320)*2 = 2240
         3. 三维规格："规格：400*120*1000" → 周长 = (400+120)*2 = 1040（忽略长度）
         """
-        # 模式1：定额名称中的"周长(mm以内) N"
-        m = re.search(r'周长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)', text)
-        if m:
-            return float(m.group(1))
-
-        # 模式2：清单"规格：W*H"或"规格：W*H*L" → (W+H)*2
-        spec_match = re.search(
-            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
-            text)
-        if spec_match:
-            w = float(spec_match.group(1))
-            h = float(spec_match.group(2))
-            # 排除电缆格式（如4*185，第一个数字≤10是芯数）
-            if w > 10 and h > 10:
-                return (w + h) * 2
-
-        return None
+        return self._extract_named_mm_or_spec(text, "周长", use_perimeter=True)
 
     def _extract_large_side(self, text: str) -> Optional[float]:
         """
@@ -578,22 +632,7 @@ class TextParser:
         1. 定额名称："大边长(mm以内) 630" → 630
         2. 清单规格："规格：800*500" → 大边长 = max(800, 500) = 800
         """
-        # 模式1：定额名称中的"大边长(mm以内) N"
-        m = re.search(r'大边长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)', text)
-        if m:
-            return float(m.group(1))
-
-        # 模式2：清单"规格：W*H" → max(W, H)
-        spec_match = re.search(
-            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
-            text)
-        if spec_match:
-            w = float(spec_match.group(1))
-            h = float(spec_match.group(2))
-            if w > 10 and h > 10:
-                return max(w, h)
-
-        return None
+        return self._extract_named_mm_or_spec(text, "大边长", use_perimeter=False)
 
     def _extract_elevator_stops(self, text: str) -> Optional[int]:
         """
@@ -624,24 +663,23 @@ class TextParser:
                 # 纯地上：站数 = 终止层 - 起始层 + 1
                 stops = end - start + 1
 
-            if 2 <= stops <= 100:  # 合理范围校验
+            if self._is_valid_elevator_stops(stops):  # 合理范围校验（定额最大到120站）
                 return stops
 
-        # 模式2：直接给出站数 "站数:26" 或 "站数26"
-        stops_match = re.search(r'(?:站数|停靠站)[：:\s]*(\d+)', text)
-        if stops_match:
-            stops = int(stops_match.group(1))
-            if 2 <= stops <= 100:
-                return stops
-
-        # 模式3："26站" 格式
-        stops_match2 = re.search(r'(\d+)\s*站', text)
-        if stops_match2:
-            stops = int(stops_match2.group(1))
-            if 2 <= stops <= 100:
-                return stops
+        # 模式2/3：直接给出站数（优先“站数/停靠站”，其次“26站”）
+        stops = self._search_first_int(text, [
+            r'(?:站数|停靠站)[：:\s]*(\d+)',
+            r'(\d+)\s*站',
+        ])
+        if stops is not None and self._is_valid_elevator_stops(stops):
+            return stops
 
         return None
+
+    @staticmethod
+    def _is_valid_elevator_stops(stops: int) -> bool:
+        """电梯站数合理范围校验。"""
+        return 2 <= stops <= 200
 
     # 电梯类型判断规则（按优先级排列：具体类型优先，泛称在后）
     _ELEVATOR_TYPE_RULES = [
@@ -673,6 +711,28 @@ class TextParser:
             return "曳引式电梯"
 
         return ""
+
+    def _extract_elevator_speed(self, text: str) -> Optional[float]:
+        """
+        从清单描述中提取电梯运行速度(m/s)
+
+        支持格式：
+        - "速度:2.5m/s" 或 "速度：2.5m/s"
+        - "运行速度:1.0m/s"
+        - "速度 2.5 m/s"（带空格）
+
+        返回浮点数速度值，如 2.5；未找到返回 None。
+        用于区分定额中"运行速度2m/s以上"和"2m/s以下"两个子系列。
+        """
+        match = re.search(
+            r'(?:运行速度|速度)[：:\s]*(\d+(?:\.\d+)?)\s*m/s',
+            text, re.IGNORECASE
+        )
+        if match:
+            speed = float(match.group(1))
+            if 0.1 <= speed <= 20.0:  # 合理范围校验（电梯速度一般0.25~10m/s）
+                return speed
+        return None
 
     def build_search_text(self, name: str, description: str = "") -> str:
         """
@@ -777,6 +837,20 @@ class TextParser:
                 query_parts.append(name)
 
             return " ".join(query_parts)
+
+        # ===== 电梯类：有电梯参数时构建专用搜索query =====
+        # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
+        # 例如 "载货电梯" 速度1.0m/s 10站 → "载货电梯 运行速度2m/s以下 层数 站数"
+        # 优先用提取的 elevator_type，不同类型对应不同定额家族
+        elevator_speed = params.get("elevator_speed")
+        elevator_stops = params.get("elevator_stops")
+        if elevator_speed is not None and elevator_stops is not None:
+            # 用提取的电梯类型（载货/液压/杂物等），避免全部误导到"自动电梯"家族
+            elevator_type = params.get("elevator_type", "曳引式电梯")
+            # 按速度分类构建搜索query，不带具体站数（BM25无法模糊匹配数字）
+            # 让param_validator通过向上取档选择正确的站数档位
+            speed_class = "运行速度2m/s以上" if elevator_speed > 2.0 else "运行速度2m/s以下"
+            return f"{elevator_type}({speed_class}) 层数、站数"
 
         # ===== 非管道类：从描述中提取关键信息构建query =====
         # 电气设备、灯具、电缆、配管、配线等
@@ -892,7 +966,7 @@ class TextParser:
                 # 电缆截面
                 if cable_section:
                     # 保留小数（如2.5mm²不能截断为2）
-                    section_str = str(int(cable_section)) if cable_section == int(cable_section) else str(cable_section)
+                    section_str = self._format_number_for_query(cable_section)
                     query_parts.append(f"电缆截面 {section_str}")
                 # 不再添加 laying（已融入名称）
             else:
@@ -912,7 +986,7 @@ class TextParser:
 
                 # 电缆截面（非电缆类一般用不到，但保留兼容）
                 if cable_section:
-                    section_str = str(int(cable_section)) if cable_section == int(cable_section) else str(cable_section)
+                    section_str = self._format_number_for_query(cable_section)
                     query_parts.append(f"截面{section_str}")
 
             # --- 安装方式（配电箱、灯具、插座等通用） ---

@@ -25,6 +25,10 @@ from src.text_parser import parser as text_parser
 
 class ParamValidator:
     """候选定额的参数验证器"""
+    TIER_PARAMS = [
+        "dn", "cable_section", "kva", "circuits", "ampere",
+        "weight_t", "perimeter", "large_side", "elevator_stops",
+    ]
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
                             supplement_query: str = None) -> list[dict]:
@@ -57,7 +61,6 @@ class ParamValidator:
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
         if not bill_params:
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side", "elevator_stops"]
             for c in candidates:
                 # 从定额名称提取参数
                 quota_params = text_parser.parse(c.get("name", ""))
@@ -65,7 +68,7 @@ class ParamValidator:
                 db_params = self._get_db_params(c)
                 merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
 
-                has_tier = any(p in merged for p in TIER_PARAMS)
+                has_tier = any(p in merged for p in self.TIER_PARAMS)
                 if has_tier:
                     c["param_score"] = 0.6  # 定额有档位但清单没指定，不确定
                     c["param_detail"] = "定额有档位参数但清单未指定"
@@ -84,6 +87,9 @@ class ParamValidator:
             db_params = self._get_db_params(candidate)
             # 合并：数据库字段优先，文本提取作为补充
             merged_quota_params = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+
+            # 传入定额名称，供速度分类等校验使用
+            merged_quota_params["_quota_name"] = candidate.get("name", "")
 
             # 执行参数匹配
             is_match, score, detail = self._check_params(bill_params, merged_quota_params)
@@ -136,6 +142,18 @@ class ParamValidator:
             params["material"] = candidate["material"]
         if candidate.get("connection"):
             params["connection"] = candidate["connection"]
+        if candidate.get("circuits") is not None:
+            params["circuits"] = candidate["circuits"]
+        if candidate.get("shape"):
+            params["shape"] = candidate["shape"]
+        if candidate.get("perimeter") is not None:
+            params["perimeter"] = candidate["perimeter"]
+        if candidate.get("large_side") is not None:
+            params["large_side"] = candidate["large_side"]
+        if candidate.get("elevator_stops") is not None:
+            params["elevator_stops"] = candidate["elevator_stops"]
+        if candidate.get("elevator_speed") is not None:
+            params["elevator_speed"] = candidate["elevator_speed"]
         return params
 
     # 材质族谱：同族内的材质视为"近似匹配"，跨族则为"不匹配"
@@ -578,12 +596,32 @@ class ParamValidator:
                 score_sum += 0.0
                 details.append(f"站数{bill_stops}>{quota_stops} 不匹配(清单>定额)")
 
+        # === 14. 电梯运行速度（硬性参数） ===
+        # 只有当定额名称明确标注了速度分类（"2m/s以上"或"2m/s以下"）时才校验
+        # 没有速度标注的定额（如"增加厅门""电气安装"）不参与速度评分，避免误加分
+        if "elevator_speed" in bill_params:
+            bill_speed = bill_params["elevator_speed"]
+            quota_name = quota_params.get("_quota_name", "")
+            has_speed_class = "2m/s以下" in quota_name or "2m/s以上" in quota_name
+            if has_speed_class:
+                check_count += 1
+                if bill_speed > 2.0 and "2m/s以下" in quota_name:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"速度{bill_speed}m/s>2 但定额是2m/s以下")
+                elif bill_speed <= 2.0 and "2m/s以上" in quota_name:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"速度{bill_speed}m/s≤2 但定额是2m/s以上")
+                else:
+                    score_sum += 1.0
+                    details.append(f"电梯速度{bill_speed}m/s匹配")
+
         # 计算最终分数
         if check_count == 0:
             # 反向检查：定额有档位参数但清单没提供 → 无法确认档位
             # 例如配电箱定额写"48回路"但清单只写了尺寸没写回路数
-            TIER_PARAMS = ["dn", "cable_section", "kva", "circuits", "ampere", "weight_t", "perimeter", "large_side", "elevator_stops"]
-            quota_has_tier = any(p in quota_params for p in TIER_PARAMS)
+            quota_has_tier = any(p in quota_params for p in self.TIER_PARAMS)
             if quota_has_tier:
                 return True, 0.6, "定额有档位参数但清单未指定"
             return True, 0.8, "无共同参数可对比"
