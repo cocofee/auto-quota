@@ -50,8 +50,8 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
         bill_text=bill_text,
         quota_ids=quota_ids,
         quota_names=quota_names,
-        source="user_confirmed",  # 权威层
-        confidence=95,
+        source="auto_review",   # 自动审核纠正（非人工确认，区别于user_confirmed）
+        confidence=85,
         specialty=specialty,
         province=province,
         notes=f"[贾维斯审核] {reason}",

@@ -150,8 +150,18 @@ class ExperienceDB:
 
     @staticmethod
     def _source_to_layer(source: str) -> str:
-        """来源到层级映射。"""
-        return "authority" if source in ("user_correction", "user_confirmed") else "candidate"
+        """来源到层级映射。
+
+        authority（权威层，可直通匹配）：
+          - user_correction: 用户手动修正
+          - user_confirmed: 用户点击确认
+          - project_import: 已完成项目导入（人工验证过的预算）
+        candidate（候选层，仅供参考）：
+          - auto_match: 系统自动匹配（未经人工验证）
+          - auto_review: 贾维斯自动审核纠正（未经人工验证）
+        """
+        authority_sources = ("user_correction", "user_confirmed", "project_import")
+        return "authority" if source in authority_sources else "candidate"
 
     @staticmethod
     def _safe_int(value, default: int) -> int:
@@ -181,12 +191,13 @@ class ExperienceDB:
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection"""
-        if self._collection is None:
-            import chromadb
-            self.chroma_dir.mkdir(parents=True, exist_ok=True)
-            self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
-            self._collection = self._chroma_client.get_or_create_collection(
+        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
+        from src.model_cache import ModelCache
+        client = ModelCache.get_chroma_client(str(self.chroma_dir))
+        # 客户端变了（被重建过），需要刷新collection
+        if client is not self._chroma_client:
+            self._chroma_client = client
+            self._collection = client.get_or_create_collection(
                 name="experiences",
                 metadata={"hnsw:space": "cosine"}
             )
@@ -231,16 +242,23 @@ class ExperienceDB:
             qname = quota_names[i] if i < len(quota_names) else ""
             original_qid = qid
 
-            # --- 校验1: 清洗编号后缀 ---
-            qid_clean = re.sub(r'\s*换$', '', qid.strip())
-            qid_clean = re.sub(r'\s*\*[\d.]+$', '', qid_clean).strip()
+            # --- 校验1: 清洗编号（去"换"后缀、"借"前缀、空格、乘数后缀） ---
+            qid_clean = qid.strip().replace(" ", "")
+            qid_clean = re.sub(r'换$', '', qid_clean)       # 去"换"后缀
+            if qid_clean.startswith("借"):
+                qid_clean = qid_clean[1:]                    # 去"借"前缀
+            qid_clean = re.sub(r'\*[\d.]+$', '', qid_clean)  # 去"*数量"后缀
+            qid_clean = qid_clean.strip()
             if qid_clean != original_qid.strip():
-                warnings.append(f"定额编号'{original_qid}'带多余后缀，已清洗为'{qid_clean}'")
+                warnings.append(f"定额编号'{original_qid}'已清洗为'{qid_clean}'")
 
-            # --- 校验2: 编号是否存在 ---
+            # --- 校验2: 编号是否存在（补子目直接跳过，不报错） ---
+            if qid_clean.startswith("补子目"):
+                warnings.append(f"跳过补子目: '{original_qid}'")
+                continue
             if quota_map and qid_clean not in quota_map:
-                errors.append(f"定额编号'{qid_clean}'不存在于定额库")
-                continue  # 跳过不存在的编号
+                # 降级为警告，不阻止导入（人工预算中的编号可能是换算/借用后的变体）
+                warnings.append(f"定额编号'{qid_clean}'不在定额库中（仍保留导入）")
 
             # --- 校验3: 配电箱 vs 接线箱 ---
             if '配电箱' in bill_text and '接线箱' not in bill_text:
@@ -405,9 +423,7 @@ class ExperienceDB:
         # 获取当前定额库版本号（绑定到经验记录）
         quota_db_ver = config.get_current_quota_version(province)
 
-        # 根据来源设置层级
-        # 只有用户确认/修正 → 权威层
-        # project_import 和 auto_match → 候选层（未经用户验证）
+        # 根据来源设置层级（详见 _source_to_layer() 注释）
         layer = self._source_to_layer(source)
         quota_ids_json = self._json_dump(quota_ids)
         quota_names_json = self._json_dump(quota_names or [])

@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 title 一键导入定额数据
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo ============================================================
 echo           一键导入定额数据

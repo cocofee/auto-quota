@@ -159,22 +159,21 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
 
     # 定额行判断：编码格式为 X-XXX 或 DXXXXX
     # 常见定额编号格式：5-325, 8-2947, D00003, 1-790, 5-92换, AD0003换
+    # 江西等省份特殊格式：1-45 换（带空格）、借14-17 换（借用其他册）、补子目1
+    cleaned_code = col_b.replace(" ", "").rstrip("换")  # 去空格和"换"后缀
+    if cleaned_code.startswith("借"):
+        cleaned_code = cleaned_code[1:]  # 去"借"前缀
+
     is_quota_code = bool(re.match(
-        r'^[A-Za-z]?\d{1,2}-\d+', col_b  # X-XXX 格式（如 5-325, C1-1-1）
+        r'^[A-Za-z]?\d{1,2}-\d+', cleaned_code  # X-XXX 格式（如 5-325, C1-1-1）
     )) or bool(re.match(
-        r'^[A-Za-z]?\d{4,}', col_b  # DXXXXX 格式（如 D00003, AD0003）
+        r'^[A-Za-z]?\d{4,}', cleaned_code  # DXXXXX 格式（如 D00003, AD0003）
+    )) or bool(re.match(
+        r'^补子目', col_b  # 补充子目（如"补子目1"）
     ))
 
-    if is_quota_code and col_c and not has_desc:
+    if is_quota_code and col_c:
         return "quota"
-
-    # 补充：有些定额行也带"换"字后缀
-    if col_b.endswith("换") and len(col_b) > 2:
-        code_part = col_b[:-1]  # 去掉"换"
-        is_quota = bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', code_part)) or \
-                   bool(re.match(r'^[A-Za-z]?\d{4,}', code_part))
-        if is_quota and col_c:
-            return "quota"
 
     return "other"
 
@@ -276,7 +275,7 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
                 bill_text=bill_text,
                 quota_ids=quota_ids,
                 quota_names=quota_names,
-                confidence=75,  # 项目导入给75分（候选层）
+                confidence=90,  # 项目导入给90分（权威层，可直通匹配）
                 source="project_import",
                 project_name=project_name,
                 province=province,
@@ -486,7 +485,7 @@ def main():
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  经验库: +{exp_stats['added']}条（带定额编号，同省直接用）")
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
-    logger.info(f"  数据层级: 候选层（在Web界面确认后自动晋升为权威层）")
+    logger.info(f"  数据层级: 权威层（project_import → authority，可直通匹配）")
     logger.info("=" * 50)
 
 

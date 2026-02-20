@@ -54,12 +54,13 @@ class VectorEngine:
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection"""
-        if self._collection is None:
-            import chromadb
-            self.chroma_dir.mkdir(parents=True, exist_ok=True)
-            self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
-            self._collection = self._chroma_client.get_or_create_collection(
+        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
+        from src.model_cache import ModelCache
+        client = ModelCache.get_chroma_client(str(self.chroma_dir))
+        # 客户端变了（被重建过），需要刷新collection
+        if client is not self._chroma_client:
+            self._chroma_client = client
+            self._collection = client.get_or_create_collection(
                 name="quotas",
                 metadata={"hnsw:space": "cosine"}  # 使用余弦相似度
             )

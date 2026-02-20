@@ -26,6 +26,7 @@ import sys
 import time
 import os
 import json
+import random
 import tempfile
 from pathlib import Path
 
@@ -321,11 +322,13 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
 
     设计思想：不要只搜主专业（太窄，容易漏掉正确答案），
     直接在"主专业+借用专业"范围内搜索，让Reranker和参数验证来挑最好的。
-    比如弱电(C5)的双绞线在C5能找到，而同一清单中的配管/穿线通过
-    借用C4也能找到。
+
+    辅助定额库：
+    当清单项被分类为非安装专业（如A=土建、D=市政、E=园林），
+    搜索用户选择的所有辅助定额库，取最佳结果。
 
     参数:
-        searcher: 混合搜索引擎实例
+        searcher: 混合搜索引擎实例（可能挂载了 aux_searchers）
         search_query: 搜索文本
         classification: specialty_classifier.classify() 的返回值
         top_k: 返回候选数量
@@ -341,6 +344,23 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     # 如果无法判断专业（primary=None），直接全库搜索
     if not primary:
         return searcher.search(search_query, top_k=top_k, books=None)
+
+    # ---- 辅助定额库路由 ----
+    # 清单项分类为非安装（A/D/E）时，搜索所有辅助定额库
+    aux_searchers = getattr(searcher, 'aux_searchers', [])
+    if aux_searchers and not primary.startswith("C"):
+        # 搜索每个辅助库，合并结果取最好的
+        all_candidates = []
+        for aux in aux_searchers:
+            try:
+                results = aux.search(search_query, top_k=top_k, books=None)
+                all_candidates.extend(results)
+            except Exception as e:
+                logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
+        if all_candidates:
+            # 按分数降序排序，取 top_k
+            all_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return all_candidates[:top_k]
 
     # 第1步：在主专业+借用专业范围内搜索（比只搜主专业更灵活）
     # 多取一些候选（top_k*2），让借用册有机会出现在结果中
@@ -804,9 +824,57 @@ def _safe_float_value(value, default: float = 0.0) -> float:
         return default
 
 
-def _should_skip_agent_llm(candidates: list[dict]) -> bool:
+def _result_quota_signature(result: dict) -> tuple:
+    """返回结果中的定额编号签名，用于一致性比对。"""
+    quotas = result.get("quotas") or []
+    return tuple(str(q.get("quota_id", "")).strip() for q in quotas if q.get("quota_id"))
+
+
+def _has_fastpath_conflict(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None) -> bool:
     """
-    Agent快速通道：高置信且明显领先的候选，直接采用搜索结果，跳过LLM。
+    快速通道冲突闸门：
+    若经验/规则备选给出中高置信且与top候选不一致，则强制走LLM。
+    """
+    if not candidates:
+        return True
+    top_id = str(candidates[0].get("quota_id", "")).strip()
+    if not top_id:
+        return True
+
+    for backup in (exp_backup, rule_backup):
+        if not backup:
+            continue
+        backup_conf = _safe_float_value(backup.get("confidence"), 0.0)
+        if backup_conf < config.CONFIDENCE_YELLOW:
+            continue
+        backup_sig = _result_quota_signature(backup)
+        if backup_sig and backup_sig[0] != top_id:
+            return True
+    return False
+
+
+def _should_skip_agent_llm(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None) -> bool:
+    """
+    Agent快速通道：参数匹配通过且分数达标的候选，跳过LLM直接采用搜索结果。
+
+    设计思路：
+    - 搜索+reranker+参数验证 已经能给出高质量候选
+    - LLM 对"同类定额不同档位"的选择帮助有限（还是靠参数匹配定档）
+    - 只有搜索结果不确定（param_match=False 或分数低）时才需要 LLM 介入
+    - 通过抽检监控快通道质量，发现问题可随时调严
+
+    快通道放行条件（全部满足才跳过LLM）：
+    1. 快通道开启
+    2. 候选列表非空
+    3. top1参数匹配通过
+    4. Reranker打分成功
+    5. 无经验库/规则冲突
+    6. param_score达标（≥0.60）
+    7. top1和top2的reranker分差足够大（≥SCORE_GAP）
     """
     if not config.AGENT_FASTPATH_ENABLED:
         return False
@@ -814,17 +882,46 @@ def _should_skip_agent_llm(candidates: list[dict]) -> bool:
         return False
 
     top = candidates[0]
+    # 参数不匹配 → 需要LLM判断
     if not top.get("param_match", True):
+        return False
+    # Reranker失败 → 候选排序不可信，必须走LLM
+    if any(c.get("reranker_failed") for c in candidates[:3]):
+        return False
+    # 经验库/规则与搜索结果冲突 → 需要LLM仲裁
+    if _has_fastpath_conflict(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
         return False
 
     top_score = _safe_float_value(top.get("param_score"), 0.0)
     if top_score < config.AGENT_FASTPATH_SCORE:
         return False
-    if len(candidates) == 1:
-        return True
 
-    second_score = _safe_float_value(candidates[1].get("param_score"), 0.0)
-    return (top_score - second_score) >= config.AGENT_FASTPATH_MARGIN
+    # ===== 新增：搜索排名分差检查 =====
+    # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁
+    # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
+    score_gap_threshold = _safe_float_value(config.AGENT_FASTPATH_SCORE_GAP, 1.0)
+    if score_gap_threshold > 0 and len(candidates) >= 2:
+        top1_rs = _safe_float_value(
+            candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0)), 0.0)
+        top2_rs = _safe_float_value(
+            candidates[1].get("rerank_score", candidates[1].get("hybrid_score", 0)), 0.0)
+        gap = top1_rs - top2_rs
+        logger.debug(f"FastPath分差: top1={top1_rs:.3f} top2={top2_rs:.3f} gap={gap:.3f} "
+                     f"阈值={score_gap_threshold} → {'放行' if gap >= score_gap_threshold else '拦截'}")
+        if gap < score_gap_threshold:
+            return False  # 分差不够，让LLM来选
+
+    return True
+
+
+def _should_audit_fastpath() -> bool:
+    """按配置比例抽检快速通道结果。"""
+    rate = _safe_float_value(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
+    if rate <= 0:
+        return False
+    if rate >= 1:
+        return True
+    return random.random() < rate
 
 
 def _mark_agent_fastpath(result: dict):
@@ -973,8 +1070,12 @@ def _log_run_banner(input_path: Path, mode: str, province: str,
     logger.info("=" * 60)
 
 
-def _init_search_components(resolved_province: str):
-    """初始化搜索引擎与参数校验器，并做状态检查。"""
+def _init_search_components(resolved_province: str, aux_provinces: list = None):
+    """初始化搜索引擎与参数校验器，并做状态检查。
+
+    如果指定了辅助定额库（aux_provinces），会为每个辅助库创建独立的搜索器，
+    并按定额库类型（土建/市政/园林）挂载到主搜索器上，供 cascade_search 路由使用。
+    """
     logger.info("第2步：初始化搜索引擎...")
     searcher = HybridSearcher(resolved_province)
     validator = ParamValidator()
@@ -993,6 +1094,20 @@ def _init_search_components(resolved_province: str):
 
     if not status["bm25_ready"]:
         raise RuntimeError("BM25索引未就绪，请先运行: python -m src.bm25_engine")
+
+    # ---- 辅助定额库初始化 ----
+    # aux_searchers: [HybridSearcher, ...] 列表
+    # 附加到主搜索器上，cascade_search() 会在非安装项目时搜索这些库
+    searcher.aux_searchers = []
+    if aux_provinces:
+        for aux_p in aux_provinces:
+            try:
+                aux_searcher = HybridSearcher(aux_p)
+                aux_status = aux_searcher.get_status()
+                searcher.aux_searchers.append(aux_searcher)
+                logger.info(f"  辅助定额库: {aux_p} ({aux_status['bm25_count']}条)")
+            except Exception as e:
+                logger.warning(f"  辅助定额库 {aux_p} 初始化失败: {e}")
 
     return searcher, validator
 
@@ -1190,27 +1305,33 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     """
     Agent模式（造价员贾维斯）：经验库 → 规则 → 搜索+Agent分析
 
-    流程：
-    1. 先查经验库，命中则直通（和search模式一样）
-    2. 再查规则预匹配（和search模式一样）
-    3. 未命中 → 代码自动执行搜索+参数验证
-    4. 把候选结果喂给Agent大模型分析判断
-    5. 自动记录学习笔记（为后续进化积累数据）
+    两阶段架构（提速核心）：
+    1. 第1阶段（串行搜索）：逐条跑搜索+参数验证+快通道判断
+       - 经验库/规则命中 → 直接采用
+       - 快通道命中 → 直接采用搜索结果
+       - 需要LLM → 收集到待处理列表
+    2. 第2阶段（并发LLM）：对需要LLM的条目并发调用API
+       - 并发数由 config.LLM_CONCURRENT 控制（默认5路）
+       - 大幅减少LLM等待时间
 
     和search模式的区别：第3步不是直接取参数验证第1名，而是让大模型分析选择
     和full模式的区别：Prompt更强（造价员角色）、自动记录学习笔记
     """
     from src.agent_matcher import AgentMatcher
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # 初始化Agent（使用指定的或config中配置的大模型）
     agent_llm = llm_type or config.AGENT_LLM
     agent = AgentMatcher(llm_type=agent_llm, province=province)
 
-    results = []
+    # 结果数组：按原始顺序存放，用 index 定位
+    results_by_idx = {}  # {idx: result}
     exp_hits = 0
     rule_hits = 0
     agent_hits = 0
     fastpath_hits = 0
+    fastpath_audit_total = 0
+    fastpath_audit_mismatch = 0
 
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
@@ -1219,14 +1340,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     reference_cases_cache = {}
     rules_context_cache = {}
 
-    logger.info(f"Agent模式启动，大模型: {agent_llm}")
+    logger.info(f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}")
+
+    # ========== 第1阶段：串行搜索 + 快通道 ==========
+    # 收集需要LLM的条目
+    llm_tasks = []  # [(idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit)]
+    _consumed_buf = []  # _prepare_match_iteration 会往这里 append 消耗掉的结果
 
     for idx, item in enumerate(bill_items, start=1):
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
             idx=idx,
             total=len(bill_items),
-            results=results,
+            results=_consumed_buf,  # 消耗掉的结果追加到缓冲区
             exp_hits=exp_hits,
             rule_hits=rule_hits,
             experience_db=experience_db,
@@ -1242,19 +1368,39 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             agent_hits=agent_hits,
         )
         if consumed:
+            # 经验库/规则直通命中，结果在 _consumed_buf 最后一条
+            results_by_idx[idx] = _consumed_buf[-1]
             continue
 
         ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
         name = ctx["name"]
         desc = ctx["desc"]
 
-        if _should_skip_agent_llm(candidates):
-            result, exp_hits, rule_hits = _resolve_search_mode_result(
+        if _should_skip_agent_llm(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
+            fast_result, exp_hits, rule_hits = _resolve_search_mode_result(
                 item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
-            _mark_agent_fastpath(result)
+            _mark_agent_fastpath(fast_result)
             fastpath_hits += 1
+            results_by_idx[idx] = fast_result
+
+            # 质量护栏：抽检走快通道的条目（收集到LLM任务里一起并发）
+            if _should_audit_fastpath():
+                fastpath_audit_total += 1
+                llm_tasks.append((idx, item, candidates, full_query, search_query,
+                                  name, desc, exp_backup, rule_backup, True))  # True=审计模式
         else:
-            result, exp_hits, rule_hits = _resolve_agent_mode_result(
+            # 需要LLM分析
+            llm_tasks.append((idx, item, candidates, full_query, search_query,
+                              name, desc, exp_backup, rule_backup, False))  # False=正常模式
+
+    logger.info(f"第1阶段完成: 快通道{fastpath_hits}条, 需LLM{len(llm_tasks)}条")
+
+    # ========== 第2阶段：并发LLM调用 ==========
+    if llm_tasks:
+        def _process_llm_task(task):
+            """单个LLM任务处理（线程安全）"""
+            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
                 agent=agent,
                 item=item,
                 candidates=candidates,
@@ -1266,18 +1412,63 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 desc=desc,
                 exp_backup=exp_backup,
                 rule_backup=rule_backup,
-                exp_hits=exp_hits,
-                rule_hits=rule_hits,
+                exp_hits=0,
+                rule_hits=0,
                 province=province,
                 reference_cases_cache=reference_cases_cache,
                 rules_context_cache=rules_context_cache,
             )
+            return idx, result, task_exp_hits, task_rule_hits, is_audit
 
-        agent_hits = _append_agent_result_and_log(
-            results, result, idx, len(bill_items), exp_hits, rule_hits, agent_hits)
+        # 并发执行LLM任务
+        concurrent = max(1, config.LLM_CONCURRENT)
+        logger.info(f"第2阶段: {len(llm_tasks)}条LLM任务，{concurrent}路并发")
+
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                idx, result, task_exp_hits, task_rule_hits, is_audit = future.result()
+                completed += 1
+
+                if is_audit:
+                    # 审计模式：对比快通道结果
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        results_by_idx[idx] = result  # 以LLM结果为准
+                        # 记录不一致详情，便于后续分析优化
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get("name",
+                                    fast_result.get("original_name", fast_result.get("name", "?")))
+                        logger.info(f"抽检不一致 #{idx} [{item_name}]: "
+                                    f"快通道={fast_sig} → LLM={llm_sig}")
+                    # 否则保持快通道结果不变
+                else:
+                    # 正常LLM结果
+                    results_by_idx[idx] = result
+                    exp_hits += task_exp_hits
+                    rule_hits += task_rule_hits
+                    agent_hits += 1
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+
+    # ========== 组装最终结果（按原始顺序）==========
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            results.append(results_by_idx[idx])
 
     logger.info(f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
                f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条")
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(f"快速通道抽检: {fastpath_audit_total} 条, 不一致 {fastpath_audit_mismatch} 条, "
+                   f"一致率 {consistency:.1f}%")
 
     # 规则后置校验
     rule_validator.validate_results(results)
@@ -1286,7 +1477,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
 
 def run(input_file, mode="agent", output=None,
-        limit=None, province=None, no_experience=False, sheet=None,
+        limit=None, province=None, aux_provinces=None,
+        no_experience=False, sheet=None,
         json_output=None, agent_llm=None, interactive=None):
     """执行匹配的核心逻辑（供命令行和其他模块直接调用）
 
@@ -1295,7 +1487,8 @@ def run(input_file, mode="agent", output=None,
         mode: 匹配模式 (search/agent)
         output: 输出Excel路径（默认自动生成）
         limit: 只处理前N条（调试用）
-        province: 省份名称
+        province: 主定额库省份名称
+        aux_provinces: 辅助定额库列表（如 ["广东土建", "广东市政"]）
         no_experience: 是否禁用经验库
         sheet: 指定只读取的Sheet名称
         json_output: JSON结果输出路径（可选）
@@ -1320,7 +1513,7 @@ def run(input_file, mode="agent", output=None,
     bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
 
     # 2. 初始化搜索引擎
-    searcher, validator = _init_search_components(resolved_province)
+    searcher, validator = _init_search_components(resolved_province, aux_provinces)
 
     # 初始化经验库（可选）
     experience_db = _init_experience_db(no_experience)
@@ -1378,7 +1571,9 @@ def main():
                         help="匹配模式: agent=造价员贾维斯(默认) search=纯搜索(免费)")
     parser.add_argument("--output", "-o", help="输出文件路径（默认自动生成）")
     parser.add_argument("--limit", type=int, help="只处理前N条清单项（调试用）")
-    parser.add_argument("--province", default=None, help=f"省份（默认: {config.CURRENT_PROVINCE}）")
+    parser.add_argument("--province", default=None, help=f"主定额库（默认: {config.CURRENT_PROVINCE}）")
+    parser.add_argument("--aux-province", default=None,
+                        help="辅助定额库（逗号分隔，用于安装清单中的土建/市政项目）")
     parser.add_argument("--no-experience", action="store_true",
                         help="不使用经验库（不查询也不存储经验）")
     parser.add_argument("--sheet", help="指定只读取的Sheet名称（默认读取所有Sheet）")
@@ -1387,6 +1582,11 @@ def main():
 
     args = parser.parse_args()
 
+    # 解析辅助定额库
+    aux_provinces = None
+    if args.aux_province:
+        aux_provinces = [p.strip() for p in args.aux_province.split(",") if p.strip()]
+
     try:
         run(
             input_file=args.input_file,
@@ -1394,6 +1594,7 @@ def main():
             output=args.output,
             limit=args.limit,
             province=args.province,
+            aux_provinces=aux_provinces,
             no_experience=args.no_experience,
             sheet=args.sheet,
             json_output=args.json_output,

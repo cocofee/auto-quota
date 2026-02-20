@@ -4,12 +4,12 @@ Agent匹配器 - "造价员贾维斯"核心模块
 1. 代码自动执行搜索+参数验证（复用现有流程，不花API钱）
 2. 把候选结果喂给大模型，大模型像造价师一样分析判断
 3. 每次处理自动记录学习笔记（为后续规则提炼积累数据）
-4. 高置信度结果存入经验库候选层
+4. 匹配结果不自动写经验库（需人工审核修正后通过导入修正.bat导入）
 
 和现有 match_full 模式的区别：
 - Prompt更强：造价员角色，包含专业推理指引
 - 上下文更丰富：候选+经验库案例+规则说明+整表概览
-- 自动学习：记录学习笔记+存经验库，越用越聪明
+- 学习笔记：记录匹配推理过程，为后续规则提炼积累数据
 
 使用位置：main.py 中 --mode agent 时调用
 """
@@ -84,10 +84,16 @@ class AgentMatcher:
                 base_url=config.QWEN_BASE_URL,
             )
         elif self.llm_type == "claude":
-            import anthropic
-            if not config.ANTHROPIC_API_KEY:
-                raise ValueError("未配置ANTHROPIC_API_KEY，请在.env文件中设置")
-            return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+            if not config.CLAUDE_API_KEY:
+                raise ValueError("未配置CLAUDE_API_KEY，请在.env文件中设置")
+            if config.CLAUDE_BASE_URL:
+                # 中转模式：用httpx直接调用，绕开SDK的认证头冲突
+                import httpx
+                return httpx.Client(timeout=config.LLM_TIMEOUT)
+            else:
+                # 官方API：用Anthropic SDK
+                import anthropic
+                return anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
         elif self.llm_type == "openai":
             from openai import OpenAI
             if not config.OPENAI_API_KEY:
@@ -321,14 +327,34 @@ class AgentMatcher:
         return response.choices[0].message.content
 
     def _call_claude(self, prompt: str) -> str:
-        """调用Claude API"""
-        response = self.client.messages.create(
-            model=config.CLAUDE_MODEL,
-            max_tokens=1500,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-        )
-        return response.content[0].text
+        """调用Claude API（支持中转和官方两种模式）"""
+        if config.CLAUDE_BASE_URL:
+            # 中转模式：用httpx原始请求（避免SDK认证头冲突）
+            url = f"{config.CLAUDE_BASE_URL.rstrip('/')}/v1/messages"
+            headers = {
+                "x-api-key": config.CLAUDE_API_KEY,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01",
+            }
+            data = {
+                "model": config.CLAUDE_MODEL,
+                "max_tokens": 1500,
+                "temperature": 0.1,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            response = self.client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            result = response.json()
+            return result["content"][0]["text"]
+        else:
+            # 官方API：用Anthropic SDK
+            response = self.client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=1500,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            return response.content[0].text
 
     def _parse_response(self, response_text: str, bill_item: dict,
                         candidates: list[dict]) -> dict:
