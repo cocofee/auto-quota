@@ -71,6 +71,12 @@ class QuotaDB:
                 weight_t REAL,                   -- 重量(吨)
                 material TEXT,                   -- 材质
                 connection TEXT,                 -- 连接方式
+                circuits INTEGER,                -- 回路数
+                shape TEXT,                      -- 形状(矩形/圆形)
+                perimeter REAL,                  -- 周长
+                large_side REAL,                 -- 大边长
+                elevator_stops INTEGER,          -- 电梯站数
+                elevator_speed REAL,             -- 电梯速度(m/s)
 
                 -- 搜索用文本（清洗后的）
                 search_text TEXT,                -- 用于BM25和向量搜索的文本
@@ -107,9 +113,20 @@ class QuotaDB:
         # 兼容旧库：检查book列是否存在，不存在则添加
         # （旧版数据库没有book字段，直接建索引会报错"no such column"）
         existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
-        if "book" not in existing_cols:
-            cursor.execute("ALTER TABLE quotas ADD COLUMN book TEXT")
-            logger.info("旧数据库缺少book列，已自动添加")
+        required_columns = {
+            "book": "TEXT",
+            "circuits": "INTEGER",
+            "shape": "TEXT",
+            "perimeter": "REAL",
+            "large_side": "REAL",
+            "elevator_stops": "INTEGER",
+            "elevator_speed": "REAL",
+        }
+        for col_name, col_type in required_columns.items():
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE quotas ADD COLUMN {col_name} {col_type}")
+                existing_cols.add(col_name)
+                logger.info(f"旧数据库缺少{col_name}列，已自动添加")
 
         # 回填book为空的历史数据：从quota_id提取第一段作为册号
         # 兼容各省份编号格式：C10-1-5→C10, SC1-1-1→SC1, GY-1→GY, A-1-1→A, 2003-3-1→2003
@@ -396,6 +413,12 @@ class QuotaDB:
             "weight_t": params.get("weight_t"),
             "material": params.get("material"),
             "connection": params.get("connection"),
+            "circuits": params.get("circuits"),
+            "shape": params.get("shape"),
+            "perimeter": params.get("perimeter"),
+            "large_side": params.get("large_side"),
+            "elevator_stops": params.get("elevator_stops"),
+            "elevator_speed": params.get("elevator_speed"),
             "search_text": search_text,
             "book": book,
         }
@@ -430,10 +453,11 @@ class QuotaDB:
             INSERT OR IGNORE INTO quotas
             (quota_id, name, unit, work_type, specialty, chapter,
              dn, cable_section, kva, kv, ampere, weight_t, material, connection,
+             circuits, shape, perimeter, large_side, elevator_stops, elevator_speed,
              search_text, book)
             VALUES
             (?, ?, ?, ?, ?, ?,
-             ?, ?, ?, ?, ?, ?, ?, ?,
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              ?, ?)
         """
 
@@ -444,6 +468,8 @@ class QuotaDB:
                 q["specialty"], q["chapter"],
                 q["dn"], q["cable_section"], q["kva"], q["kv"],
                 q["ampere"], q["weight_t"], q["material"], q["connection"],
+                q["circuits"], q["shape"], q["perimeter"], q["large_side"],
+                q["elevator_stops"], q["elevator_speed"],
                 q["search_text"], q.get("book", ""),
             ))
 

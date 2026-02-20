@@ -529,11 +529,11 @@ class AgentMatcher:
                 "quota_id": best["quota_id"],
                 "name": best["name"],
                 "unit": best.get("unit", ""),
-                "reason": f"Agent降级(搜索模式): {error_msg}",
+                "reason": f"Agent降级(候选策略): {error_msg}",
                 "db_id": best.get("id"),
             }] if best else [],
             "confidence": confidence,
-            "explanation": f"Agent降级为搜索模式: {error_msg}",
+            "explanation": f"Agent降级为候选策略: {error_msg}",
             "match_source": "agent_fallback",
             "candidates_count": len(candidates),
         }

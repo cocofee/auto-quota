@@ -233,6 +233,21 @@ def resolve_province(name: str = None, interactive: bool = False) -> str:
     # 2. 模糊匹配（输入是目录名的子串）
     matches = [p for p in available if name in p]
 
+    # 3. 多关键词匹配（把输入拆成多个关键词，全部命中才算匹配）
+    # 例如 "广东安装" → ["广东", "安装"]，匹配 "广东省通用安装工程综合定额(2018)"
+    if not matches and len(name) >= 2:
+        # 按常见分隔点拆分：省/市 + 类型关键词
+        keywords = []
+        # 尝试按2-4字拆分
+        for split_len in range(2, min(len(name), 5)):
+            parts = [name[i:i+split_len] for i in range(0, len(name), split_len)]
+            if all(len(p) >= 2 for p in parts):
+                keywords = parts
+                break
+        if not keywords:
+            keywords = [name]
+        matches = [p for p in available if all(kw in p for kw in keywords)]
+
     if len(matches) == 1:
         return matches[0]
     elif len(matches) > 1:
@@ -404,6 +419,16 @@ AGENT_LLM = os.getenv("AGENT_LLM", "deepseek")
 
 # Agent大模型温度（低温度=更确定性，高温度=更创造性）
 AGENT_TEMPERATURE = 0.1
+
+# Agent快速通道（高置信候选时跳过LLM，显著提速）
+AGENT_FASTPATH_ENABLED = os.getenv("AGENT_FASTPATH_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+AGENT_FASTPATH_SCORE = float(os.getenv("AGENT_FASTPATH_SCORE", "0.93"))
+AGENT_FASTPATH_MARGIN = float(os.getenv("AGENT_FASTPATH_MARGIN", "0.08"))
+AGENT_FASTPATH_AUDIT_RATE = max(0.0, min(
+    1.0, float(os.getenv("AGENT_FASTPATH_AUDIT_RATE", "0.05"))
+))
 
 # 学习笔记数据库路径
 def get_learning_notes_db_path():

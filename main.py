@@ -2,23 +2,19 @@
 自动套定额系统 - 命令行入口
 功能：
 1. 读取清单Excel → 逐条匹配定额 → 输出结果Excel
-2. 支持三种模式：
-   - search: 纯搜索模式（不调API，免费但精度低一些）
-   - full: 完整模式（搜索+大模型精选，需要API Key）
+2. 支持两种模式：
    - agent: Agent模式（造价员贾维斯，搜索+Agent分析+自动学习进化）
-3. 整合经验库：先查经验库→命中直通→未命中走搜索→结果自动存入经验库
+   - search: 纯搜索模式（不调API，免费）
+3. 整合经验库：先查经验库→命中直通→未命中走搜索（经验只在人工审核后入库）
 
 使用方法：
-    # 纯搜索模式（不需要API Key，免费）
-    python main.py 清单文件.xlsx --mode search
-
-    # 完整模式（需要配置API Key）
-    python main.py 清单文件.xlsx --mode full
-
     # Agent模式（造价员贾维斯，自动学习进化）
     python main.py 清单文件.xlsx --mode agent
 
-    # 不使用经验库（纯搜索，不查也不存经验）
+    # 纯搜索模式（不需要API Key，免费）
+    python main.py 清单文件.xlsx --mode search
+
+    # 不使用经验库（不查也不存经验）
     python main.py 清单文件.xlsx --no-experience
 
     # 查看帮助
@@ -273,6 +269,10 @@ def try_experience_match(query: str, item: dict, experience_db,
 
 # 级联搜索最少要返回的候选数量（少于此值则扩大搜索范围）
 CASCADE_MIN_CANDIDATES = 3
+# 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
+RULE_DIRECT_CONFIDENCE = 80
+# 措施项关键词（这些是工程管理费用，不套安装定额）
+MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
 
 
 def _normalize_fallbacks(value) -> list[str]:
@@ -358,6 +358,763 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     return candidates
 
 
+def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
+    """判断是否为措施项/章节分隔行，这类行不应套安装定额。"""
+    return (
+        (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
+        or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
+    )
+
+
+def _build_classification(item: dict, name: str, desc: str, section: str) -> dict:
+    """获取并标准化专业分类结果。"""
+    classification = {
+        "primary": item.get("specialty"),
+        "fallbacks": item.get("specialty_fallbacks", []),
+    }
+    if not classification["primary"]:
+        classification = classify_specialty(name, desc, section_title=section)
+    return _normalize_classification(classification)
+
+
+def _build_item_context(item: dict) -> dict:
+    """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
+    name = item.get("name", "")
+    desc = item.get("description", "") or ""
+    section = item.get("section", "") or ""
+    original_name = item.get("original_name", name)
+    return {
+        "name": name,
+        "desc": desc,
+        "section": section,
+        "unit": item.get("unit"),
+        "quantity": item.get("quantity"),
+        "full_query": f"{name} {desc}".strip(),
+        "normalized_query": normalize_bill_text(original_name, desc),
+        "search_query": text_parser.build_quota_query(name, desc),
+    }
+
+
+def _prepare_rule_match(rule_validator: RuleValidator, full_query: str, item: dict,
+                        search_query: str, classification: dict) -> tuple[dict, dict]:
+    """
+    规则预匹配统一入口。
+
+    返回:
+        (rule_direct, rule_backup)
+        - rule_direct: 高置信直通结果
+        - rule_backup: 低置信备选结果
+    """
+    rule_books = [classification.get("primary")] + classification.get("fallbacks", [])
+    rule_books = [b for b in rule_books if b]
+    rule_result = rule_validator.match_by_rules(
+        full_query, item, clean_query=search_query,
+        books=rule_books if rule_books else None)
+    if not rule_result:
+        return None, None
+    if rule_result.get("confidence", 0) >= RULE_DIRECT_CONFIDENCE:
+        return rule_result, None
+    return None, rule_result
+
+
+def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
+                        search_query: str, full_query: str,
+                        classification: dict) -> list[dict]:
+    """统一执行：级联搜索 → Reranker重排 → 参数验证。"""
+    candidates = cascade_search(searcher, search_query, classification)
+    # 单候选时重排无意义，可直接跳过提升速度
+    if candidates and len(candidates) > 1:
+        candidates = reranker.rerank(search_query, candidates)
+    if candidates:
+        candidates = validator.validate_candidates(
+            full_query, candidates, supplement_query=search_query)
+    return candidates
+
+
+def _build_alternatives(candidates: list[dict], selected_ids: set = None,
+                        skip_obj=None, top_n: int = 3) -> list[dict]:
+    """从候选中构建备选定额列表。"""
+    if not candidates:
+        return []
+    selected_ids = selected_ids or set()
+    filtered = []
+    for c in candidates:
+        if skip_obj is not None and c is skip_obj:
+            continue
+        if selected_ids and c.get("quota_id") in selected_ids:
+            continue
+        filtered.append(c)
+    alternatives = []
+    for alt in filtered[:top_n]:
+        alt_ps = alt.get("param_score", 0.5)
+        alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
+        alternatives.append({
+            "quota_id": alt["quota_id"],
+            "name": alt["name"],
+            "unit": alt.get("unit", ""),
+            "confidence": alt_conf,
+            "reason": alt.get("param_detail", ""),
+        })
+    return alternatives
+
+
+def _build_skip_measure_result(item: dict) -> dict:
+    """构建措施项跳过结果。"""
+    return {
+        "bill_item": item,
+        "quotas": [],
+        "alternatives": [],
+        "confidence": 0,
+        "match_source": "skip_measure",
+        "explanation": "措施项（管理费用），不套安装定额",
+    }
+
+
+def _apply_rule_backup(result: dict, rule_backup: dict, rule_hits: int,
+                       prefer_label: str) -> tuple[dict, int]:
+    """
+    低置信规则结果兜底比较：置信度更高则替换当前结果。
+
+    prefer_label 用于日志前缀，如“搜索/经验”“LLM/经验”“Agent/经验”。
+    """
+    if not rule_backup:
+        return result, rule_hits
+    if rule_backup.get("confidence", 0) > result.get("confidence", 0):
+        return rule_backup, rule_hits + 1
+    logger.debug(
+        f"{prefer_label}结果优于低置信规则: "
+        f"当前{result.get('confidence', 0)}分 >= "
+        f"规则{rule_backup.get('confidence', 0)}分, "
+        f"不使用规则结果")
+    return result, rule_hits
+
+
+def _apply_similar_exp_backup(result: dict, exp_backup: dict, exp_hits: int,
+                              prefer_label: str) -> tuple[dict, int]:
+    """经验库相似匹配兜底比较：置信度更高则替换当前结果。"""
+    if not exp_backup:
+        return result, exp_hits
+    if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
+        return exp_backup, exp_hits + 1
+    logger.debug(
+        f"{prefer_label}结果优于经验库相似匹配: "
+        f"当前{result.get('confidence', 0)}分 > "
+        f"经验库{exp_backup.get('confidence', 0)}分, "
+        f"保持{prefer_label}结果")
+    return result, exp_hits
+
+
+def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleValidator,
+                               province: str = None, exact_exp_direct: bool = False) -> dict:
+    """
+    三种模式统一的前置处理：
+    1) 措施项跳过
+    2) 专业分类
+    3) 经验库预匹配（可配置精确命中是否直通）
+    4) 规则预匹配（高置信直通、低置信备选）
+    """
+    ctx = _build_item_context(item)
+    name = ctx["name"]
+    desc = ctx["desc"]
+    full_query = ctx["full_query"]
+    search_query = ctx["search_query"]
+    normalized_query = ctx["normalized_query"]
+
+    if _is_measure_item(name, desc, ctx["unit"], ctx["quantity"]):
+        return {
+            "early_result": _build_skip_measure_result(item),
+            "early_type": "skip_measure",
+        }
+
+    classification = _build_classification(item, name, desc, ctx["section"])
+    exp_result = try_experience_match(
+        normalized_query, item, experience_db, rule_validator, province=province)
+    exp_backup = exp_result if exp_result else None
+
+    if exact_exp_direct and exp_result and exp_result.get("match_source") == "experience_exact":
+        return {
+            "early_result": exp_result,
+            "early_type": "experience_exact",
+        }
+
+    rule_direct, rule_backup = _prepare_rule_match(
+        rule_validator, full_query, item, search_query, classification)
+    if rule_direct:
+        return {
+            "early_result": rule_direct,
+            "early_type": "rule_direct",
+        }
+
+    return {
+        "early_result": None,
+        "early_type": None,
+        "ctx": ctx,
+        "classification": classification,
+        "exp_backup": exp_backup,
+        "rule_backup": rule_backup,
+    }
+
+
+def _should_log_progress(idx: int, total: int, interval: int) -> bool:
+    """统一进度日志触发条件。"""
+    return (idx % interval == 0) or (idx == total)
+
+
+def _log_standard_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
+                           interval: int, show_percent: bool = False):
+    """打印常规模式进度日志。"""
+    if not _should_log_progress(idx, total, interval):
+        return
+    if show_percent:
+        logger.info(f"匹配进度: {idx}/{total} "
+                   f"({idx * 100 // total}%, "
+                   f"经验库{exp_hits}, 规则{rule_hits})")
+    else:
+        logger.info(f"匹配进度: {idx}/{total} "
+                   f"(经验库{exp_hits}, 规则{rule_hits})")
+
+
+def _log_agent_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
+                        agent_hits: int, interval: int):
+    """打印Agent模式进度日志。"""
+    if not _should_log_progress(idx, total, interval):
+        return
+    logger.info(f"Agent进度: {idx}/{total} "
+               f"(经验库{exp_hits}, 规则{rule_hits}, Agent{agent_hits})")
+
+
+def _log_exp_rule_summary(exp_hits: int, rule_hits: int, total: int):
+    """打印经验库/规则命中汇总。"""
+    if exp_hits > 0 or rule_hits > 0:
+        logger.info(f"经验库命中 {exp_hits}/{total} 条, "
+                   f"规则命中 {rule_hits}/{total} 条")
+
+
+def _consume_early_result(results: list[dict], early_result: dict, early_type: str,
+                          idx: int, total: int, interval: int,
+                          exp_hits: int, rule_hits: int,
+                          log_types: set[str], is_agent: bool = False,
+                          agent_hits: int = 0) -> tuple[bool, int, int]:
+    """统一处理前置阶段提前命中的结果。"""
+    if early_result is None:
+        return False, exp_hits, rule_hits
+
+    results.append(early_result)
+    if early_type == "experience_exact":
+        exp_hits += 1
+    elif early_type == "rule_direct":
+        rule_hits += 1
+
+    if early_type in log_types:
+        if is_agent:
+            _log_agent_progress(idx, total, exp_hits, rule_hits, agent_hits, interval)
+        else:
+            _log_standard_progress(
+                idx, total, exp_hits, rule_hits, interval, show_percent=False)
+
+    return True, exp_hits, rule_hits
+
+
+def _reconcile_search_and_experience(result: dict, exp_backup: dict,
+                                     exp_hits: int) -> tuple[dict, int]:
+    """
+    search模式下，经验库与搜索结果交叉验证。
+
+    规则保持原逻辑：
+    1) 同一主定额：抬高置信并标注 confirmed
+    2) 经验库精确匹配但与搜索不一致：经验分降到88后再比较
+    3) 经验库相似匹配：按置信度比较
+    """
+    if not exp_backup:
+        return result, exp_hits
+
+    exp_source = exp_backup.get("match_source", "")
+    exp_qids = [q.get("quota_id", "") for q in exp_backup.get("quotas", [])]
+    search_qids = [q.get("quota_id", "") for q in result.get("quotas", [])]
+
+    same_quota = (exp_qids and search_qids and exp_qids[0] == search_qids[0])
+    if same_quota:
+        result["confidence"] = max(result.get("confidence", 0), 92)
+        result["match_source"] = f"{exp_source}_confirmed"
+        result["explanation"] = f"经验库+搜索一致: {result.get('explanation', '')}"
+        return result, exp_hits + 1
+
+    if exp_source == "experience_exact":
+        exp_conf = min(exp_backup.get("confidence", 0), 88)
+        search_conf = result.get("confidence", 0)
+        if exp_conf >= search_conf:
+            exp_backup["confidence"] = exp_conf
+            logger.debug(
+                f"经验库精确匹配(降级) vs 搜索: "
+                f"经验{exp_conf}分 >= 搜索{search_conf}分")
+            return exp_backup, exp_hits + 1
+        logger.debug(
+            f"搜索优于经验库精确匹配: "
+            f"搜索{search_conf}分 > 经验{exp_conf}分(降级)")
+        return result, exp_hits
+
+    if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
+        return exp_backup, exp_hits + 1
+
+    logger.debug(
+        f"搜索结果优于经验库相似匹配: "
+        f"搜索{result.get('confidence', 0)}分 > "
+        f"经验库{exp_backup.get('confidence', 0)}分")
+    return result, exp_hits
+
+
+def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> dict:
+    """
+    search模式下，根据候选结果构建基础匹配结果。
+
+    优先取 param_match=True 的首项；若全部不匹配，则降权回退到首候选。
+    """
+    best = None
+    confidence = 0
+    explanation = ""
+
+    if candidates:
+        matched_candidates = [c for c in candidates if c.get("param_match", True)]
+        if matched_candidates:
+            best = matched_candidates[0]
+            param_score = best.get("param_score", 0.5)
+            confidence = int(param_score * 95)
+            explanation = best.get("param_detail", "")
+        else:
+            best = candidates[0]
+            param_score = best.get("param_score", 0.0)
+            confidence = max(int(param_score * 45), 15)
+            explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
+
+    result = {
+        "bill_item": item,
+        "quotas": [{
+            "quota_id": best["quota_id"],
+            "name": best["name"],
+            "unit": best.get("unit", ""),
+            "reason": explanation,
+            "db_id": best.get("id"),
+        }] if best else [],
+        "confidence": confidence,
+        "explanation": explanation,
+        "candidates_count": len(candidates),
+        "match_source": "search",
+    }
+
+    if best and candidates:
+        result["alternatives"] = _build_alternatives(
+            candidates, skip_obj=best, top_n=3)
+    if not best:
+        result["no_match_reason"] = "搜索无匹配结果"
+    return result
+
+
+def _build_empty_match_result(item: dict, reason: str, source: str = "search") -> dict:
+    """构建空匹配结果（用于无候选时兜底）。"""
+    return {
+        "bill_item": item,
+        "quotas": [],
+        "confidence": 0,
+        "explanation": reason,
+        "no_match_reason": reason,
+        "match_source": source,
+    }
+
+
+def _apply_mode_backups(result: dict, exp_backup: dict, rule_backup: dict,
+                        exp_hits: int, rule_hits: int,
+                        exp_label: str, rule_label: str) -> tuple[dict, int, int]:
+    """full/agent 模式统一后处理：经验库相似兜底 + 低置信规则兜底。"""
+    result, exp_hits = _apply_similar_exp_backup(
+        result, exp_backup, exp_hits, prefer_label=exp_label)
+    result, rule_hits = _apply_rule_backup(
+        result, rule_backup, rule_hits, prefer_label=rule_label)
+    return result, exp_hits, rule_hits
+
+
+def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
+                                      reranker, validator: ParamValidator):
+    """从统一 prepared 上下文中取字段并执行候选流水线。"""
+    ctx = prepared["ctx"]
+    full_query = ctx["full_query"]
+    search_query = ctx["search_query"]
+    classification = prepared["classification"]
+    candidates = _prepare_candidates(
+        searcher, reranker, validator, search_query, full_query, classification)
+    return (
+        ctx,
+        full_query,
+        search_query,
+        candidates,
+        prepared["exp_backup"],
+        prepared["rule_backup"],
+    )
+
+
+def _prepare_match_iteration(item: dict, idx: int, total: int,
+                             results: list[dict], exp_hits: int, rule_hits: int,
+                             experience_db, rule_validator: RuleValidator,
+                             province: str, exact_exp_direct: bool,
+                             searcher: HybridSearcher, reranker,
+                             validator: ParamValidator,
+                             interval: int, log_types: set[str],
+                             is_agent: bool = False, agent_hits: int = 0):
+    """统一单条清单的前置命中消费和候选准备。"""
+    prepared = _prepare_item_for_matching(
+        item, experience_db, rule_validator, province=province,
+        exact_exp_direct=exact_exp_direct)
+    consumed, exp_hits, rule_hits = _consume_early_result(
+        results=results,
+        early_result=prepared.get("early_result"),
+        early_type=prepared.get("early_type"),
+        idx=idx,
+        total=total,
+        interval=interval,
+        exp_hits=exp_hits,
+        rule_hits=rule_hits,
+        log_types=log_types,
+        is_agent=is_agent,
+        agent_hits=agent_hits,
+    )
+    if consumed:
+        return True, exp_hits, rule_hits, None
+    return (
+        False,
+        exp_hits,
+        rule_hits,
+        _prepare_candidates_from_prepared(prepared, searcher, reranker, validator),
+    )
+
+
+def _resolve_search_mode_result(item: dict, candidates: list[dict],
+                                exp_backup: dict, rule_backup: dict,
+                                exp_hits: int, rule_hits: int):
+    """search模式统一结果决策：搜索结果 + 经验/规则兜底。"""
+    result = _build_search_result_from_candidates(item, candidates)
+    result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
+    result, rule_hits = _apply_rule_backup(
+        result, rule_backup, rule_hits, prefer_label="搜索/经验")
+    return result, exp_hits, rule_hits
+
+
+def _safe_float_value(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _should_skip_agent_llm(candidates: list[dict]) -> bool:
+    """
+    Agent快速通道：高置信且明显领先的候选，直接采用搜索结果，跳过LLM。
+    """
+    if not config.AGENT_FASTPATH_ENABLED:
+        return False
+    if not candidates:
+        return False
+
+    top = candidates[0]
+    if not top.get("param_match", True):
+        return False
+
+    top_score = _safe_float_value(top.get("param_score"), 0.0)
+    if top_score < config.AGENT_FASTPATH_SCORE:
+        return False
+    if len(candidates) == 1:
+        return True
+
+    second_score = _safe_float_value(candidates[1].get("param_score"), 0.0)
+    return (top_score - second_score) >= config.AGENT_FASTPATH_MARGIN
+
+
+def _mark_agent_fastpath(result: dict):
+    """为快速通道结果打标，便于统计与审计。"""
+    result["agent_skipped"] = True
+    if result.get("match_source") == "search":
+        result["match_source"] = "agent_fastpath"
+    note = "Agent快速通道: 高置信候选，跳过LLM"
+    explanation = (result.get("explanation") or "").strip()
+    result["explanation"] = f"{explanation} | {note}" if explanation else note
+
+
+def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
+                               experience_db, full_query: str, search_query: str,
+                               rule_kb, name: str, desc: str,
+                               exp_backup: dict, rule_backup: dict,
+                               exp_hits: int, rule_hits: int,
+                               province: str = None,
+                               reference_cases_cache: dict = None,
+                               rules_context_cache: dict = None):
+    """agent模式统一结果决策：Agent分析 + 经验/规则兜底。"""
+    if reference_cases_cache is None:
+        reference_cases_cache = {}
+    if rules_context_cache is None:
+        rules_context_cache = {}
+
+    reference_cases = _get_reference_cases_cached(
+        reference_cases_cache, experience_db, full_query, province=province,
+        top_k=3, tolerate_error=True, default=None,
+        error_prefix="参考案例获取失败（不影响Agent主流程）")
+    rules_context = _get_agent_rules_context_cached(
+        rules_context_cache, rule_kb, name, desc, province=province, top_k=3)
+    result = agent.match_single(
+        bill_item=item,
+        candidates=candidates,
+        reference_cases=reference_cases,
+        rules_context=rules_context,
+        search_query=search_query,
+    )
+    result, exp_hits, rule_hits = _apply_mode_backups(
+        result, exp_backup, rule_backup,
+        exp_hits, rule_hits,
+        exp_label="Agent", rule_label="Agent/经验")
+    return result, exp_hits, rule_hits
+
+
+def _append_search_result_and_log(results: list[dict], result: dict,
+                                  idx: int, total: int,
+                                  exp_hits: int, rule_hits: int):
+    """search模式统一结果入列与进度日志。"""
+    results.append(result)
+    _log_standard_progress(
+        idx, total, exp_hits, rule_hits, interval=50, show_percent=True)
+
+
+def _append_agent_result_and_log(results: list[dict], result: dict,
+                                 idx: int, total: int,
+                                 exp_hits: int, rule_hits: int,
+                                 agent_hits: int) -> int:
+    """agent模式统一结果入列、命中计数与进度日志。"""
+    results.append(result)
+    if result.get("match_source", "").startswith("agent"):
+        agent_hits += 1
+    _log_agent_progress(
+        idx, total, exp_hits, rule_hits, agent_hits, interval=10)
+    return agent_hits
+
+
+def _match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
+                   validator: ParamValidator, experience_db,
+                   resolved_province: str, agent_llm: str = None) -> list[dict]:
+    """按模式执行匹配。"""
+    if mode == "search":
+        return match_search_only(
+            bill_items, searcher, validator, experience_db, province=resolved_province)
+    if mode == "agent":
+        return match_agent(
+            bill_items, searcher, validator, experience_db,
+            llm_type=agent_llm, province=resolved_province)
+    raise ValueError(f"不支持的匹配模式: {mode}")
+
+
+def _build_run_stats(results: list[dict], elapsed: float) -> dict:
+    """构建运行统计信息。"""
+    total = len(results)
+    matched = sum(1 for r in results if r.get("quotas"))
+    high_conf = sum(
+        1 for r in results if r.get("confidence", 0) >= config.CONFIDENCE_GREEN)
+    mid_conf = sum(
+        1 for r in results
+        if config.CONFIDENCE_YELLOW <= r.get("confidence", 0) < config.CONFIDENCE_GREEN)
+    exp_matched = sum(
+        1 for r in results if r.get("match_source", "").startswith("experience"))
+    return {
+        "total": total,
+        "matched": matched,
+        "high_conf": high_conf,
+        "mid_conf": mid_conf,
+        "low_conf": total - high_conf - mid_conf,
+        "exp_hits": exp_matched,
+        "elapsed": elapsed,
+    }
+
+
+def _log_run_summary(stats: dict, has_experience_db: bool):
+    """打印运行汇总日志。"""
+    total = stats["total"]
+    matched = stats["matched"]
+    high_conf = stats["high_conf"]
+    mid_conf = stats["mid_conf"]
+    exp_matched = stats["exp_hits"]
+    elapsed = stats["elapsed"]
+
+    logger.info("=" * 60)
+    logger.info("匹配完成")
+    logger.info(f"  总清单项: {total}")
+    logger.info(f"  已匹配: {matched} ({matched * 100 // max(total, 1)}%)")
+    logger.info(f"  高置信度(绿): {high_conf}")
+    logger.info(f"  中置信度(黄): {mid_conf}")
+    logger.info(f"  未匹配/低置信度(红): {total - high_conf - mid_conf}")
+    if has_experience_db:
+        logger.info(f"  经验库命中: {exp_matched} ({exp_matched * 100 // max(total, 1)}%)")
+    logger.info(f"  耗时: {elapsed:.1f}秒")
+    per_item = elapsed / max(total, 1)
+    logger.info(f"  平均每条: {per_item:.2f}秒/条（含初始化）")
+    if total > 0:
+        init_overhead = 23  # 模型加载固定开销（秒）
+        match_time = max(elapsed - init_overhead, 0)
+        match_per_item = match_time / total
+        logger.info(f"  纯匹配速度: {match_per_item:.2f}秒/条")
+        logger.info(f"  预估: 100条≈{(init_overhead + match_per_item * 100) / 60:.1f}分钟 | "
+                   f"500条≈{(init_overhead + match_per_item * 500) / 60:.1f}分钟 | "
+                   f"1000条≈{(init_overhead + match_per_item * 1000) / 60:.1f}分钟")
+    logger.info("=" * 60)
+
+
+def _log_run_banner(input_path: Path, mode: str, province: str,
+                    no_experience: bool):
+    """打印启动横幅信息。"""
+    logger.info("=" * 60)
+    logger.info("自动套定额系统")
+    logger.info(f"  输入文件: {input_path}")
+    logger.info(f"  匹配模式: {mode}")
+    logger.info(f"  省份: {province}")
+    logger.info(f"  经验库: {'关闭' if no_experience else '开启'}")
+    logger.info("=" * 60)
+
+
+def _init_search_components(resolved_province: str):
+    """初始化搜索引擎与参数校验器，并做状态检查。"""
+    logger.info("第2步：初始化搜索引擎...")
+    searcher = HybridSearcher(resolved_province)
+    validator = ParamValidator()
+
+    # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
+    try:
+        from src.model_cache import ModelCache
+        ModelCache.preload_all()
+    except Exception as e:
+        logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
+
+    # 检查引擎状态
+    status = searcher.get_status()
+    logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
+    logger.info(f"  向量索引: {status['vector_count']} 条定额")
+
+    if not status["bm25_ready"]:
+        raise RuntimeError("BM25索引未就绪，请先运行: python -m src.bm25_engine")
+
+    return searcher, validator
+
+
+def _init_experience_db(no_experience: bool):
+    """按配置初始化经验库（可选）。"""
+    experience_db = None
+    if no_experience:
+        return experience_db
+    try:
+        from src.experience_db import ExperienceDB
+        experience_db = ExperienceDB()
+        exp_stats = experience_db.get_stats()
+        logger.info(f"  经验库: {exp_stats['total']} 条历史记录")
+    except Exception as e:
+        logger.warning(f"经验库加载失败，将跳过经验库: {e}")
+        experience_db = None
+    return experience_db
+
+
+def _resolve_run_province(province: str, interactive, json_output):
+    """解析并设置当前省份。"""
+    if interactive is None:
+        interactive = not json_output
+    resolved_province = config.resolve_province(
+        province,
+        interactive=interactive
+    )
+    config.set_current_province(resolved_province)
+    return resolved_province
+
+
+def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None):
+    """读取并清洗清单数据，按需截断数量。"""
+    logger.info("第1步：读取清单文件...")
+    reader = BillReader()
+    bill_items = reader.read_excel(str(input_path), sheet_name=sheet)
+
+    if not bill_items:
+        raise RuntimeError("未读取到任何清单项目，请检查文件格式")
+
+    # 清单数据清洗（名称修正+专业分类+参数提取）
+    bill_items = clean_bill_items(bill_items)
+
+    # 限制数量（调试用）
+    if limit:
+        bill_items = bill_items[:limit]
+        logger.info(f"限制处理前 {limit} 条")
+
+    return bill_items
+
+
+def _get_reference_cases(experience_db, full_query: str, province: str = None,
+                         top_k: int = 3, tolerate_error: bool = False,
+                         default=None, error_prefix: str = "参考案例获取失败（不影响主流程）"):
+    """统一获取经验库参考案例。"""
+    if not experience_db:
+        return default
+    if not tolerate_error:
+        return experience_db.get_reference_cases(
+            full_query, top_k=top_k, province=province)
+    try:
+        return experience_db.get_reference_cases(
+            full_query, top_k=top_k, province=province)
+    except Exception as e:
+        logger.debug(f"{error_prefix}: {e}")
+        return default
+
+
+def _get_reference_cases_cached(cache: dict, experience_db, full_query: str,
+                                province: str = None, top_k: int = 3,
+                                tolerate_error: bool = False, default=None,
+                                error_prefix: str = "参考案例获取失败（不影响主流程）"):
+    """带缓存获取经验案例，减少重复查询。"""
+    key = (province or "", full_query, top_k, tolerate_error)
+    if key not in cache:
+        cache[key] = _get_reference_cases(
+            experience_db, full_query, province=province, top_k=top_k,
+            tolerate_error=tolerate_error, default=default,
+            error_prefix=error_prefix)
+    return cache[key]
+
+
+def _get_agent_rules_context(rule_kb, name: str, desc: str, province: str = None,
+                             top_k: int = 3):
+    """Agent模式获取规则上下文（失败时降级继续）。"""
+    if not rule_kb:
+        return None
+    try:
+        return rule_kb.search_rules(f"{name} {desc}", top_k=top_k, province=province)
+    except Exception as e:
+        logger.debug(f"规则上下文获取失败（不影响Agent主流程）: {e}")
+        return None
+
+
+def _get_agent_rules_context_cached(cache: dict, rule_kb, name: str, desc: str,
+                                    province: str = None, top_k: int = 3):
+    """带缓存获取规则上下文，减少重复检索。"""
+    key = (province or "", name, desc, top_k)
+    if key not in cache:
+        cache[key] = _get_agent_rules_context(
+            rule_kb, name, desc, province=province, top_k=top_k)
+    return cache[key]
+
+
+def _load_rule_kb(province: str = None):
+    """Agent模式按需加载规则知识库，失败时降级为None。"""
+    try:
+        from src.rule_knowledge import RuleKnowledge
+        rule_kb = RuleKnowledge(province=province)
+        return rule_kb if rule_kb.get_stats()["total"] > 0 else None
+    except Exception as e:
+        logger.debug(f"规则知识库不可用（Agent模式降级继续）: {e}")
+        return None
+
+
+def _create_rule_validator_and_reranker(province: str = None):
+    """统一创建规则校验器和Reranker。"""
+    from src.reranker import Reranker
+    return RuleValidator(province=province), Reranker()
+
+
 def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
                       validator: ParamValidator,
                       experience_db=None,
@@ -372,447 +1129,58 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     1. 先查经验库，命中则直接返回
     2. 未命中则走混合搜索+参数验证
     3. 取参数验证后排名第1的候选作为主定额
-    4. 高置信度结果自动存入经验库
+    4. 结果用于人工审核；经验仅在审核确认后存入经验库
     """
     results = []
     exp_hits = 0  # 经验库命中计数
     rule_hits = 0  # 规则预匹配命中计数
+    match_start_time = time.time()  # 纯匹配阶段开始时间
 
-    # 创建规则校验器（用于预匹配和后置校验）
-    rule_validator = RuleValidator(province=province)
-
-    # 创建Reranker（延迟加载，第一次走搜索时才实际加载模型）
-    from src.reranker import Reranker
-    reranker = Reranker()
-
-    # 措施项关键词（这些是工程管理费用，不套安装定额）
-    MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
-    measure_skip = 0  # 措施项跳过计数
+    rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
     for idx, item in enumerate(bill_items, start=1):
-        name = item.get("name", "")
-        desc = item.get("description", "") or ""
-        section = item.get("section", "") or ""
-        unit = item.get("unit")
-        quantity = item.get("quantity")
-
-        # 第-1层：措施项自动跳过（不套定额）
-        # 判断条件：名称含措施费关键词 + 无单位无数量
-        # 或者：名称是"其他"且无单位无数量无描述（章节分隔行）
-        is_measure = (
-            (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
-            or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
+        consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
+            item=item,
+            idx=idx,
+            total=len(bill_items),
+            results=results,
+            exp_hits=exp_hits,
+            rule_hits=rule_hits,
+            experience_db=experience_db,
+            rule_validator=rule_validator,
+            province=province,
+            exact_exp_direct=False,
+            searcher=searcher,
+            reranker=reranker,
+            validator=validator,
+            interval=50,
+            log_types={"rule_direct"},
         )
-        if is_measure:
-            results.append({
-                "bill_item": item,
-                "quotas": [],
-                "alternatives": [],
-                "confidence": 0,
-                "match_source": "skip_measure",
-                "explanation": "措施项（管理费用），不套安装定额",
-            })
-            measure_skip += 1
+        if consumed:
             continue
 
-        # 原始名称（清洗前的，用于经验库匹配——因为经验库是用原始名称导入的）
-        original_name = item.get("original_name", name)
-        # 完整文本（用于参数验证）
-        full_query = f"{name} {desc}".strip()
-        # 规范化文本（用于经验库匹配，用原始名称+去掉序号和换行，和导入时格式一致）
-        normalized_query = normalize_bill_text(original_name, desc)
-        # 精简query（用于搜索引擎，用清洗后的名称，模仿定额命名风格）
-        search_query = text_parser.build_quota_query(name, desc)
+        _, _, _, candidates, exp_backup, rule_backup = prepared_bundle
 
-        # 第0层：专业分类（bill_cleaner已预处理，直接读取标签）
-        classification = {
-            "primary": item.get("specialty"),
-            "fallbacks": item.get("specialty_fallbacks", []),
-        }
-        # 如果清洗时没有标签（备用），现场判断
-        if not classification["primary"]:
-            classification = classify_specialty(name, desc, section_title=section)
-        classification = _normalize_classification(classification)
+        result, exp_hits, rule_hits = _resolve_search_mode_result(
+            item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
 
-        # 第1层：查经验库（用规范化文本匹配，和导入时格式一致）
-        # 传入rule_validator用于参数校验（防止经验库的档位不匹配当前清单参数）
-        exp_result = try_experience_match(
-            normalized_query, item, experience_db, rule_validator,
-            province=province)
-        if exp_result:
-            # 经验库匹配（无论精确还是相似）统一存为备选，继续走搜索交叉验证
-            # 原因：经验库可能存错（同一清单在不同工程可能对应不同定额）
-            # 搜索可以作为"第二意见"，两路一致时更可信
-            exp_backup = exp_result
-        else:
-            exp_backup = None
+        _append_search_result_and_log(
+            results, result, idx, len(bill_items), exp_hits, rule_hits)
 
-        # 第1.5层：规则预匹配（用关键词匹配家族→按参数选档位→直接出结果）
-        # clean_query用清洗后的搜索文本（如"成套配电箱 明装 7回路"），关键词更准确
-        # full_query保留完整文本，用于参数提取（如从"底距地1.3m安装"中提取数值）
-        # books限定在清单所属专业册号范围内匹配（如给排水只匹配C10+C8+C12）
-        rule_books = [classification["primary"]] + classification.get("fallbacks", [])
-        rule_books = [b for b in rule_books if b]  # 过滤掉空值
-        rule_result = rule_validator.match_by_rules(
-            full_query, item, clean_query=search_query,
-            books=rule_books if rule_books else None)
-        rule_backup = None
-        if rule_result:
-            rule_conf = rule_result.get("confidence", 0)
-            if rule_conf >= 80:
-                # 高置信规则匹配（score≥0.7）：直接使用，跳过搜索
-                results.append(rule_result)
-                rule_hits += 1
-                if idx % 50 == 0 or idx == len(bill_items):
-                    logger.info(f"匹配进度: {idx}/{len(bill_items)} "
-                               f"(经验库{exp_hits}, 规则{rule_hits})")
-                continue
-            else:
-                # 低置信规则匹配（score<0.7）：存为备选，继续搜索
-                # 防止低质量规则匹配覆盖更好的搜索结果
-                rule_backup = rule_result
+    _log_exp_rule_summary(exp_hits, rule_hits, len(bill_items))
 
-        # 第2层：级联搜索（主专业 → 借用专业 → 全库）
-        candidates = cascade_search(searcher, search_query, classification)
-
-        # 第2.5层：Reranker重排（交叉编码器语义精排，比向量搜索更准确）
-        if candidates:
-            candidates = reranker.rerank(search_query, candidates)
-
-        # 参数验证（full_query提供完整信息，search_query补充规范化参数）
-        # 典型场景：full_query中"BV4"提取不到截面，但search_query中"导线截面 4"可以
-        if candidates:
-            candidates = validator.validate_candidates(
-                full_query, candidates, supplement_query=search_query)
-
-        # 取参数匹配的第1名作为结果
-        # 软降权策略：优先用param_match=True的候选，没有的话回退到第一个候选（降低置信度）
-        best = None
-        confidence = 0
-        explanation = ""
-
-        if candidates:
-            matched_candidates = [c for c in candidates if c.get("param_match", True)]
-            if matched_candidates:
-                # 有参数匹配的候选 → 正常使用
-                best = matched_candidates[0]
-                param_score = best.get("param_score", 0.5)
-                confidence = int(param_score * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
-                explanation = best.get("param_detail", "")
-            else:
-                # 所有候选都参数不匹配 → 回退到第一个候选，但大幅降低置信度
-                # （不直接丢弃，让用户能看到"最接近"的候选，方便手动选择）
-                best = candidates[0]
-                param_score = best.get("param_score", 0.0)
-                confidence = max(int(param_score * 45), 15)  # 最低15分，最高45分
-                explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
-
-        result = {
-            "bill_item": item,
-            "quotas": [{
-                "quota_id": best["quota_id"],
-                "name": best["name"],
-                "unit": best.get("unit", ""),
-                "reason": explanation,
-                "db_id": best.get("id"),
-            }] if best else [],
-            "confidence": confidence,
-            "explanation": explanation,
-            "candidates_count": len(candidates),
-            "match_source": "search",
-        }
-
-        # 提取 top-3 备选候选（排除已选中的 best）
-        if best and candidates:
-            alt_list = [c for c in candidates if c is not best][:3]
-            alternatives = []
-            for alt in alt_list:
-                alt_ps = alt.get("param_score", 0.5)
-                alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
-                alternatives.append({
-                    "quota_id": alt["quota_id"],
-                    "name": alt["name"],
-                    "unit": alt.get("unit", ""),
-                    "confidence": alt_conf,
-                    "reason": alt.get("param_detail", ""),
-                })
-            result["alternatives"] = alternatives
-
-        if not best:
-            result["no_match_reason"] = "搜索无匹配结果"
-
-        # 经验库 vs 搜索 交叉验证
-        # 经验库不再"直通"，而是和搜索结果互相验证
-        if exp_backup:
-            exp_source = exp_backup.get("match_source", "")
-            exp_qids = [q.get("quota_id", "") for q in exp_backup.get("quotas", [])]
-            search_qids = [q.get("quota_id", "") for q in result.get("quotas", [])]
-
-            # 检查经验库和搜索是否找到了同一个定额
-            same_quota = (exp_qids and search_qids
-                          and exp_qids[0] == search_qids[0])
-
-            if same_quota:
-                # 两路一致 → 互相验证，高置信
-                result["confidence"] = max(result.get("confidence", 0), 92)
-                result["match_source"] = f"{exp_source}_confirmed"
-                result["explanation"] = (
-                    f"经验库+搜索一致: {result.get('explanation', '')}")
-                exp_hits += 1
-            elif exp_source == "experience_exact":
-                # 精确匹配但搜索结论不同 → 经验库可能对也可能错
-                # 策略：经验库置信度降到88（不绝对信任），和搜索比较取高的
-                exp_conf = min(exp_backup.get("confidence", 0), 88)
-                search_conf = result.get("confidence", 0)
-                if exp_conf >= search_conf:
-                    exp_backup["confidence"] = exp_conf
-                    result = exp_backup
-                    exp_hits += 1
-                    logger.debug(
-                        f"经验库精确匹配(降级) vs 搜索: "
-                        f"经验{exp_conf}分 >= 搜索{search_conf}分")
-                else:
-                    logger.debug(
-                        f"搜索优于经验库精确匹配: "
-                        f"搜索{search_conf}分 > 经验{exp_conf}分(降级)")
-            else:
-                # 相似匹配：保持原有比较逻辑
-                if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
-                    result = exp_backup
-                    exp_hits += 1
-                else:
-                    logger.debug(
-                        f"搜索结果优于经验库相似匹配: "
-                        f"搜索{result.get('confidence', 0)}分 > "
-                        f"经验库{exp_backup.get('confidence', 0)}分")
-
-        # 和低置信规则匹配结果对比，取置信度更高的
-        # 场景：搜索给88分（绿），规则给70分（黄）→ 选搜索结果
-        # 场景：搜索给40分（红），规则给70分（黄）→ 选规则结果
-        if rule_backup:
-            if rule_backup.get("confidence", 0) > result.get("confidence", 0):
-                result = rule_backup
-                rule_hits += 1
-            else:
-                logger.debug(
-                    f"搜索/经验结果优于低置信规则: "
-                    f"当前{result.get('confidence', 0)}分 >= "
-                    f"规则{rule_backup.get('confidence', 0)}分, "
-                    f"不使用规则结果")
-
-        results.append(result)
-
-        # 每50条打印一次进度
-        if idx % 50 == 0 or idx == len(bill_items):
-            logger.info(f"匹配进度: {idx}/{len(bill_items)} "
-                       f"({idx * 100 // len(bill_items)}%, "
-                       f"经验库{exp_hits}, 规则{rule_hits})")
-
-    if exp_hits > 0 or rule_hits > 0:
-        logger.info(f"经验库命中 {exp_hits}/{len(bill_items)} 条, "
-                   f"规则命中 {rule_hits}/{len(bill_items)} 条")
+    # 纯匹配耗时统计（不含模型加载）
+    match_elapsed = time.time() - match_start_time
+    n = len(bill_items)
+    if n > 0:
+        per_item_sec = match_elapsed / n
+        logger.info(f"纯匹配耗时: {match_elapsed:.1f}秒 ({per_item_sec:.2f}秒/条, 共{n}条)")
 
     # 规则后置校验：对搜索出来的结果校验档位，纠正选错的档位
     rule_validator.validate_results(results)
 
     return results
 
-
-def match_full(bill_items: list[dict], searcher: HybridSearcher,
-               validator: ParamValidator,
-               experience_db=None,
-               province: str = None) -> list[dict]:
-    """
-    完整模式：经验库 → 混合搜索 + 参数验证 + 大模型精选
-
-    需要配置API Key，每条清单消耗约几分钱API费用
-    经验库命中的条目不消耗API费用
-    """
-    from src.llm_matcher import LLMMatcher
-
-    matcher = LLMMatcher(province=province)
-
-    results = []
-    exp_hits = 0
-    rule_hits = 0  # 规则预匹配命中计数
-
-    # 创建规则校验器（用于预匹配和后置校验）
-    rule_validator = RuleValidator(province=province)
-
-    # 创建Reranker（延迟加载）
-    from src.reranker import Reranker
-    reranker = Reranker()
-
-    # 措施项关键词（这些是工程管理费用，不套安装定额）
-    MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
-    measure_skip = 0
-
-    for idx, item in enumerate(bill_items, start=1):
-        name = item.get("name", "")
-        desc = item.get("description", "") or ""
-        section = item.get("section", "") or ""
-        # 原始名称（清洗前的，用于经验库匹配）
-        original_name = item.get("original_name", name)
-        # 完整文本（用于参数验证）
-        full_query = f"{name} {desc}".strip()
-        # 规范化文本（用于经验库匹配，用原始名称+去掉序号和换行）
-        normalized_query = normalize_bill_text(original_name, desc)
-        # 精简query（用于搜索引擎）
-        search_query = text_parser.build_quota_query(name, desc)
-
-        unit = item.get("unit")
-        quantity = item.get("quantity")
-
-        # 第-1层：措施项自动跳过（不套定额）
-        is_measure = (
-            (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
-            or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
-        )
-        if is_measure:
-            results.append({
-                "bill_item": item,
-                "quotas": [],
-                "alternatives": [],
-                "confidence": 0,
-                "match_source": "skip_measure",
-                "explanation": "措施项（管理费用），不套安装定额",
-            })
-            measure_skip += 1
-            continue
-
-        # 第0层：专业分类（bill_cleaner已预处理，直接读取标签）
-        classification = {
-            "primary": item.get("specialty"),
-            "fallbacks": item.get("specialty_fallbacks", []),
-        }
-        if not classification["primary"]:
-            classification = classify_specialty(name, desc, section_title=section)
-        classification = _normalize_classification(classification)
-
-        # 第1层：查经验库（用规范化文本匹配）
-        # 传入rule_validator用于参数校验（防止经验库的档位不匹配当前清单参数）
-        exp_result = try_experience_match(
-            normalized_query, item, experience_db, rule_validator,
-            province=province)
-        if exp_result:
-            # 精确匹配（文本完全一致）：直接用，不走搜索+LLM
-            if exp_result.get("match_source") == "experience_exact":
-                results.append(exp_result)
-                exp_hits += 1
-                if idx % 10 == 0 or idx == len(bill_items):
-                    logger.info(f"匹配进度: {idx}/{len(bill_items)} "
-                               f"(经验库{exp_hits}, 规则{rule_hits})")
-                continue
-            # 相似匹配：暂存，继续走搜索+LLM取更好的结果
-            # 原因：相似匹配的参数可能不对（如同名管道不同DN），LLM可能更准
-            exp_backup = exp_result
-        else:
-            exp_backup = None
-
-        # 第1.5层：规则预匹配（用关键词匹配家族→按参数选档位→直接出结果）
-        # clean_query用清洗后的搜索文本，关键词更准确
-        # books限定在清单所属专业册号范围内匹配
-        rule_books = [classification["primary"]] + classification.get("fallbacks", [])
-        rule_books = [b for b in rule_books if b]
-        rule_result = rule_validator.match_by_rules(
-            full_query, item, clean_query=search_query,
-            books=rule_books if rule_books else None)
-        if rule_result:
-            results.append(rule_result)
-            rule_hits += 1
-            if idx % 10 == 0 or idx == len(bill_items):
-                logger.info(f"匹配进度: {idx}/{len(bill_items)} "
-                           f"(经验库{exp_hits}, 规则{rule_hits})")
-            continue
-
-        # 第2层：级联搜索（主专业 → 借用专业 → 全库）
-        candidates = cascade_search(searcher, search_query, classification)
-
-        # 第2.5层：Reranker重排（交叉编码器语义精排）
-        if candidates:
-            candidates = reranker.rerank(search_query, candidates)
-
-        # 参数验证（full_query提供完整信息，search_query补充规范化参数）
-        if candidates:
-            candidates = validator.validate_candidates(
-                full_query, candidates, supplement_query=search_query)
-
-        if not candidates:
-            # 搜索无结果，但如果有经验库相似匹配则用它兜底
-            if exp_backup:
-                results.append(exp_backup)
-                exp_hits += 1
-            else:
-                results.append({
-                    "bill_item": item,
-                    "quotas": [],
-                    "confidence": 0,
-                    "explanation": "搜索无结果",
-                    "no_match_reason": "搜索无结果",
-                    "match_source": "search",
-                })
-            continue
-
-        # 获取经验库参考案例（给大模型做 few-shot 参考）
-        reference_cases = []
-        if experience_db:
-            reference_cases = experience_db.get_reference_cases(
-                full_query, top_k=3, province=province)
-
-        # 第2.5层：大模型精选（带参考案例）
-        result = matcher.match(item, candidates, reference_cases=reference_cases)
-        result["bill_item"] = item
-        result["candidates_count"] = len(candidates)
-        result["match_source"] = "llm"
-
-        # 提取 top-3 备选候选（排除大模型选中的主定额）
-        if candidates:
-            selected_ids = {q.get("quota_id") for q in result.get("quotas", [])}
-            alt_list = [c for c in candidates if c["quota_id"] not in selected_ids][:3]
-            alternatives = []
-            for alt in alt_list:
-                alt_ps = alt.get("param_score", 0.5)
-                alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
-                alternatives.append({
-                    "quota_id": alt["quota_id"],
-                    "name": alt["name"],
-                    "unit": alt.get("unit", ""),
-                    "confidence": alt_conf,
-                    "reason": alt.get("param_detail", ""),
-                })
-            result["alternatives"] = alternatives
-
-        # 和经验库相似匹配结果对比，取置信度更高的
-        if exp_backup:
-            if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
-                result = exp_backup
-                exp_hits += 1
-            else:
-                logger.debug(
-                    f"LLM结果优于经验库相似匹配: "
-                    f"LLM{result.get('confidence', 0)}分 > "
-                    f"经验库{exp_backup.get('confidence', 0)}分, "
-                    f"使用LLM结果")
-
-        results.append(result)
-
-        # 注意：不再自动存入经验库
-        # 经验库只在用户通过Web界面确认/修正后才存入
-
-        # 打印进度
-        if idx % 10 == 0 or idx == len(bill_items):
-            logger.info(f"匹配进度: {idx}/{len(bill_items)} "
-                       f"({idx * 100 // len(bill_items)}%, "
-                       f"经验库{exp_hits}, 规则{rule_hits})")
-
-    if exp_hits > 0 or rule_hits > 0:
-        logger.info(f"经验库命中 {exp_hits}/{len(bill_items)} 条, "
-                   f"规则命中 {rule_hits}/{len(bill_items)} 条")
-
-    # 规则后置校验：对搜索/大模型的结果校验档位
-    rule_validator.validate_results(results)
-
-    return results
 
 
 def match_agent(bill_items: list[dict], searcher: HybridSearcher,
@@ -842,155 +1210,74 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     exp_hits = 0
     rule_hits = 0
     agent_hits = 0
+    fastpath_hits = 0
 
-    # 创建规则校验器和Reranker
-    rule_validator = RuleValidator(province=province)
-    from src.reranker import Reranker
-    reranker = Reranker()
+    rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
     # 查规则知识库（Agent需要规则上下文）
-    rule_kb = None
-    try:
-        from src.rule_knowledge import RuleKnowledge
-        rule_kb = RuleKnowledge(province=province)
-        if rule_kb.get_stats()["total"] == 0:
-            rule_kb = None
-    except Exception as e:
-        logger.debug(f"规则知识库不可用（Agent模式降级继续）: {e}")
+    rule_kb = _load_rule_kb(province=province)
+    reference_cases_cache = {}
+    rules_context_cache = {}
 
     logger.info(f"Agent模式启动，大模型: {agent_llm}")
 
-    # 措施项关键词（这些是工程管理费用，不套安装定额）
-    MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
-    measure_skip = 0
-
     for idx, item in enumerate(bill_items, start=1):
-        name = item.get("name", "")
-        desc = item.get("description", "") or ""
-        section = item.get("section", "") or ""
-        original_name = item.get("original_name", name)
-        full_query = f"{name} {desc}".strip()
-        normalized_query = normalize_bill_text(original_name, desc)
-        search_query = text_parser.build_quota_query(name, desc)
-
-        unit = item.get("unit")
-        quantity = item.get("quantity")
-
-        # 第-1层：措施项自动跳过（不套定额）
-        is_measure = (
-            (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
-            or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
+        consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
+            item=item,
+            idx=idx,
+            total=len(bill_items),
+            results=results,
+            exp_hits=exp_hits,
+            rule_hits=rule_hits,
+            experience_db=experience_db,
+            rule_validator=rule_validator,
+            province=province,
+            exact_exp_direct=True,
+            searcher=searcher,
+            reranker=reranker,
+            validator=validator,
+            interval=50,
+            log_types={"experience_exact", "rule_direct"},
+            is_agent=True,
+            agent_hits=agent_hits,
         )
-        if is_measure:
-            results.append({
-                "bill_item": item,
-                "quotas": [],
-                "alternatives": [],
-                "confidence": 0,
-                "match_source": "skip_measure",
-                "explanation": "措施项（管理费用），不套安装定额",
-            })
-            measure_skip += 1
+        if consumed:
             continue
 
-        # 专业分类
-        classification = {
-            "primary": item.get("specialty"),
-            "fallbacks": item.get("specialty_fallbacks", []),
-        }
-        if not classification["primary"]:
-            classification = classify_specialty(name, desc, section_title=section)
-        classification = _normalize_classification(classification)
+        ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
+        name = ctx["name"]
+        desc = ctx["desc"]
 
-        # 第1层：查经验库（区分精确/相似，和search模式一样）
-        exp_result = try_experience_match(
-            normalized_query, item, experience_db, rule_validator,
-            province=province)
-        if exp_result:
-            # 精确匹配（文本完全一致）：直接用，不走Agent
-            if exp_result.get("match_source") == "experience_exact":
-                results.append(exp_result)
-                exp_hits += 1
-                if idx % 50 == 0 or idx == len(bill_items):
-                    logger.info(f"Agent进度: {idx}/{len(bill_items)} "
-                               f"(经验库{exp_hits}, 规则{rule_hits}, Agent{agent_hits})")
-                continue
-            # 相似匹配：暂存，继续走Agent取更好的结果
-            exp_backup = exp_result
+        if _should_skip_agent_llm(candidates):
+            result, exp_hits, rule_hits = _resolve_search_mode_result(
+                item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
+            _mark_agent_fastpath(result)
+            fastpath_hits += 1
         else:
-            exp_backup = None
+            result, exp_hits, rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                full_query=full_query,
+                search_query=search_query,
+                rule_kb=rule_kb,
+                name=name,
+                desc=desc,
+                exp_backup=exp_backup,
+                rule_backup=rule_backup,
+                exp_hits=exp_hits,
+                rule_hits=rule_hits,
+                province=province,
+                reference_cases_cache=reference_cases_cache,
+                rules_context_cache=rules_context_cache,
+            )
 
-        # 第1.5层：规则预匹配（和search模式完全一样）
-        rule_books = [classification["primary"]] + classification.get("fallbacks", [])
-        rule_books = [b for b in rule_books if b]
-        rule_result = rule_validator.match_by_rules(
-            full_query, item, clean_query=search_query,
-            books=rule_books if rule_books else None)
-        if rule_result:
-            results.append(rule_result)
-            rule_hits += 1
-            if idx % 50 == 0 or idx == len(bill_items):
-                logger.info(f"Agent进度: {idx}/{len(bill_items)} "
-                           f"(经验库{exp_hits}, 规则{rule_hits}, Agent{agent_hits})")
-            continue
-
-        # 第2层：搜索+参数验证（代码自动执行，和search模式一样）
-        candidates = cascade_search(searcher, search_query, classification)
-        if candidates:
-            candidates = reranker.rerank(search_query, candidates)
-        if candidates:
-            candidates = validator.validate_candidates(
-                full_query, candidates, supplement_query=search_query)
-
-        # 第3层：Agent大模型分析（这是和search模式的关键区别）
-        # 准备额外上下文
-        reference_cases = None
-        if experience_db:
-            try:
-                reference_cases = experience_db.get_reference_cases(
-                    full_query, top_k=3, province=province)
-            except Exception as e:
-                logger.debug(f"参考案例获取失败（不影响Agent主流程）: {e}")
-
-        rules_context = None
-        if rule_kb:
-            try:
-                rules_context = rule_kb.search_rules(
-                    f"{name} {desc}", top_k=3, province=province)
-            except Exception as e:
-                logger.debug(f"规则上下文获取失败（不影响Agent主流程）: {e}")
-
-        result = agent.match_single(
-            bill_item=item,
-            candidates=candidates,
-            reference_cases=reference_cases,
-            rules_context=rules_context,
-            search_query=search_query,
-        )
-
-        # 和经验库相似匹配结果对比，取置信度更高的
-        if exp_backup:
-            if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
-                result = exp_backup
-                exp_hits += 1
-            else:
-                logger.debug(
-                    f"Agent结果优于经验库相似匹配: "
-                    f"Agent{result.get('confidence', 0)}分 > "
-                    f"经验库{exp_backup.get('confidence', 0)}分, "
-                    f"使用Agent结果")
-
-        results.append(result)
-        if result.get("match_source", "").startswith("agent"):
-            agent_hits += 1
-
-        # 打印进度
-        if idx % 10 == 0 or idx == len(bill_items):
-            logger.info(f"Agent进度: {idx}/{len(bill_items)} "
-                       f"(经验库{exp_hits}, 规则{rule_hits}, Agent{agent_hits})")
+        agent_hits = _append_agent_result_and_log(
+            results, result, idx, len(bill_items), exp_hits, rule_hits, agent_hits)
 
     logger.info(f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
-               f"Agent分析{agent_hits}/{len(bill_items)}条")
+               f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条")
 
     # 规则后置校验
     rule_validator.validate_results(results)
@@ -998,33 +1285,98 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     return results
 
 
+def run(input_file, mode="agent", output=None,
+        limit=None, province=None, no_experience=False, sheet=None,
+        json_output=None, agent_llm=None, interactive=None):
+    """执行匹配的核心逻辑（供命令行和其他模块直接调用）
+
+    参数:
+        input_file: 清单Excel文件路径
+        mode: 匹配模式 (search/agent)
+        output: 输出Excel路径（默认自动生成）
+        limit: 只处理前N条（调试用）
+        province: 省份名称
+        no_experience: 是否禁用经验库
+        sheet: 指定只读取的Sheet名称
+        json_output: JSON结果输出路径（可选）
+        agent_llm: Agent模式使用的大模型
+        interactive: 是否允许交互式提示（如省份选择）。
+                     默认None=自动判断（命令行调用时True，程序调用建议传False）
+
+    返回: {"results": [...], "stats": {...}}
+    """
+    input_path = Path(input_file)
+    if not input_path.exists():
+        raise FileNotFoundError(f"文件不存在: {input_path}")
+
+    # 解析省份（支持简称模糊匹配）
+    resolved_province = _resolve_run_province(
+        province, interactive=interactive, json_output=json_output)
+    _log_run_banner(input_path, mode, resolved_province, no_experience)
+
+    start_time = time.time()
+
+    # 1. 读取清单
+    bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
+
+    # 2. 初始化搜索引擎
+    searcher, validator = _init_search_components(resolved_province)
+
+    # 初始化经验库（可选）
+    experience_db = _init_experience_db(no_experience)
+
+    # 3. 执行匹配
+    logger.info(f"第3步：开始匹配 ({mode} 模式)...")
+    results = _match_by_mode(
+        mode, bill_items, searcher, validator, experience_db,
+        resolved_province, agent_llm=agent_llm)
+
+    # 4. 输出结果
+    elapsed = time.time() - start_time
+    stats = _build_run_stats(results, elapsed)
+
+    # 生成Excel（基于原始文件结构，保留分部小节标题）
+    logger.info("第4步：生成结果Excel...")
+    writer = OutputWriter()
+    output_path = writer.write_results(
+        results, output, original_file=str(input_path))
+    logger.info(f"  输出文件: {output_path}")
+
+    # 如果指定了JSON输出，也保存一份JSON（供审核工具读取）
+    if json_output:
+        _atomic_write_json(json_output, {"results": results, "stats": stats})
+        logger.info(f"  JSON结果已保存: {json_output}")
+
+    # 5. 打印统计
+    _log_run_summary(stats, has_experience_db=bool(experience_db))
+
+    return {"results": results, "stats": stats}
+
+
 def main():
+    """命令行入口：解析参数后调用 run()"""
     parser = argparse.ArgumentParser(
         description="自动套定额系统 - 命令行入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
+  # Agent模式（造价员贾维斯，需要API Key）
+  python main.py 清单文件.xlsx --mode agent
+
   # 纯搜索模式（免费，不需要API Key）
   python main.py 清单文件.xlsx --mode search
 
-  # 完整模式（需要API Key，精度更高）
-  python main.py 清单文件.xlsx --mode full
-
   # 指定输出路径
   python main.py 清单文件.xlsx --output 结果.xlsx
-
-  # 只处理安装相关的清单项（编码以03开头）
-  python main.py 清单文件.xlsx --filter-code 03
 
   # 不使用经验库
   python main.py 清单文件.xlsx --no-experience
         """,
     )
     parser.add_argument("input_file", help="清单Excel文件路径")
-    parser.add_argument("--mode", choices=["search", "full", "agent"], default="search",
-                        help="匹配模式: search=纯搜索(免费) full=搜索+大模型(需API) agent=造价员贾维斯(自动学习)")
+    parser.add_argument("--mode", choices=["search", "agent"], default="agent",
+                        help="匹配模式: agent=造价员贾维斯(默认) search=纯搜索(免费)")
     parser.add_argument("--output", "-o", help="输出文件路径（默认自动生成）")
-    parser.add_argument("--filter-code", help="只处理指定编码前缀的清单项（如03=安装）")
     parser.add_argument("--limit", type=int, help="只处理前N条清单项（调试用）")
     parser.add_argument("--province", default=None, help=f"省份（默认: {config.CURRENT_PROVINCE}）")
     parser.add_argument("--no-experience", action="store_true",
@@ -1035,145 +1387,21 @@ def main():
 
     args = parser.parse_args()
 
-    # 验证输入文件
-    input_path = Path(args.input_file)
-    if not input_path.exists():
-        logger.error(f"文件不存在: {input_path}")
-        sys.exit(1)
-
-    # 解析省份（支持简称模糊匹配 + 交互式选择）
     try:
-        province = config.resolve_province(
-            args.province,
-            interactive=(not args.json_output)  # 非JSON输出模式才允许交互
+        run(
+            input_file=args.input_file,
+            mode=args.mode,
+            output=args.output,
+            limit=args.limit,
+            province=args.province,
+            no_experience=args.no_experience,
+            sheet=args.sheet,
+            json_output=args.json_output,
+            agent_llm=args.agent_llm,
         )
-    except ValueError as e:
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
         logger.error(str(e))
         sys.exit(1)
-
-    # 同步运行态省份，避免遗漏传参的内部模块回落到硬编码默认省份
-    config.set_current_province(province)
-
-    logger.info("=" * 60)
-    logger.info("自动套定额系统")
-    logger.info(f"  输入文件: {input_path}")
-    logger.info(f"  匹配模式: {args.mode}")
-    logger.info(f"  省份: {province}")
-    logger.info(f"  经验库: {'关闭' if args.no_experience else '开启'}")
-    logger.info("=" * 60)
-
-    start_time = time.time()
-
-    # 1. 读取清单
-    logger.info("第1步：读取清单文件...")
-    reader = BillReader()
-    bill_items = reader.read_excel(str(input_path), sheet_name=args.sheet)
-
-    if not bill_items:
-        logger.error("未读取到任何清单项目，请检查文件格式")
-        sys.exit(1)
-
-    # 清单数据清洗（名称修正+专业分类+参数提取）
-    bill_items = clean_bill_items(bill_items)
-
-    # 过滤编码前缀
-    if args.filter_code:
-        bill_items = [i for i in bill_items if i.get("code", "").startswith(args.filter_code)]
-        logger.info(f"按编码前缀'{args.filter_code}'过滤后: {len(bill_items)} 条")
-
-    # 限制数量（调试用）
-    if args.limit:
-        bill_items = bill_items[:args.limit]
-        logger.info(f"限制处理前 {args.limit} 条")
-
-    # 2. 初始化搜索引擎
-    logger.info("第2步：初始化搜索引擎...")
-    searcher = HybridSearcher(province)
-    validator = ParamValidator()
-
-    # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
-    try:
-        from src.model_cache import ModelCache
-        ModelCache.preload_all()
-    except Exception as e:
-        logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
-
-    # 检查引擎状态
-    status = searcher.get_status()
-    logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
-    logger.info(f"  向量索引: {status['vector_count']} 条定额")
-
-    if not status["bm25_ready"]:
-        logger.error("BM25索引未就绪，请先运行: python -m src.bm25_engine")
-        sys.exit(1)
-
-    # 初始化经验库（可选）
-    experience_db = None
-    if not args.no_experience:
-        try:
-            from src.experience_db import ExperienceDB
-            experience_db = ExperienceDB()
-            exp_stats = experience_db.get_stats()
-            logger.info(f"  经验库: {exp_stats['total']} 条历史记录")
-        except Exception as e:
-            logger.warning(f"经验库加载失败，将跳过经验库: {e}")
-            experience_db = None
-
-    # 3. 执行匹配
-    logger.info(f"第3步：开始匹配 ({args.mode} 模式)...")
-
-    if args.mode == "search":
-        results = match_search_only(
-            bill_items, searcher, validator, experience_db, province=province)
-    elif args.mode == "agent":
-        results = match_agent(bill_items, searcher, validator, experience_db,
-                              llm_type=args.agent_llm, province=province)
-    else:
-        results = match_full(
-            bill_items, searcher, validator, experience_db, province=province)
-
-    # 4. 输出结果
-    elapsed = time.time() - start_time
-    total = len(results)
-    matched = sum(1 for r in results if r.get("quotas"))
-    high_conf = sum(1 for r in results if r.get("confidence", 0) >= config.CONFIDENCE_GREEN)
-    mid_conf = sum(1 for r in results if config.CONFIDENCE_YELLOW <= r.get("confidence", 0) < config.CONFIDENCE_GREEN)
-    exp_matched = sum(1 for r in results if r.get("match_source", "").startswith("experience"))
-
-    stats = {
-        "total": total,
-        "matched": matched,
-        "high_conf": high_conf,
-        "mid_conf": mid_conf,
-        "low_conf": total - high_conf - mid_conf,
-        "exp_hits": exp_matched,
-        "elapsed": elapsed,
-    }
-
-    # 生成Excel（基于原始文件结构，保留分部小节标题）
-    logger.info("第4步：生成结果Excel...")
-    writer = OutputWriter()
-    output_path = writer.write_results(
-        results, args.output, original_file=str(input_path))
-    logger.info(f"  输出文件: {output_path}")
-
-    # 如果指定了JSON输出，也保存一份JSON（供审核工具读取）
-    if args.json_output:
-        _atomic_write_json(args.json_output, {"results": results, "stats": stats})
-        logger.info(f"  JSON结果已保存: {args.json_output}")
-
-    # 5. 打印统计
-    logger.info("=" * 60)
-    logger.info("匹配完成")
-    logger.info(f"  总清单项: {total}")
-    logger.info(f"  已匹配: {matched} ({matched * 100 // max(total, 1)}%)")
-    logger.info(f"  高置信度(绿): {high_conf}")
-    logger.info(f"  中置信度(黄): {mid_conf}")
-    logger.info(f"  未匹配/低置信度(红): {total - high_conf - mid_conf}")
-    if experience_db:
-        logger.info(f"  经验库命中: {exp_matched} ({exp_matched * 100 // max(total, 1)}%)")
-    logger.info(f"  耗时: {elapsed:.1f}秒")
-    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
