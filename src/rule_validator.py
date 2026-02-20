@@ -70,6 +70,25 @@ MEDIUM_CONTEXT = {
 
 
 
+# text-family parameter hint -> parsed field key
+TEXT_HINT_TO_PARAM = {
+    "\u7ad9\u6570": "elevator_stops",
+    "\u5c42\u6570": "elevator_stops",
+    "\u91cd\u91cf": "weight_t",
+    "\u8d77\u91cd\u91cf": "weight_t",
+    "\u529f\u7387": "kw",
+    "\u5bb9\u91cf": "kva",
+    "\u7535\u6d41": "ampere",
+    "\u622a\u9762": "cable_section",
+    "\u53e3\u5f84": "dn",
+    "\u76f4\u5f84": "dn",
+    "\u7ba1\u5f84": "dn",
+    "\u56de\u8def": "circuits",
+    "\u5468\u957f": "perimeter",
+    "\u5927\u8fb9": "large_side",
+}
+
+
 def tokenize(text: str) -> list:
     """
     把文本拆分为关键词列表
@@ -399,46 +418,8 @@ class RuleValidator:
                 continue  # 参数超出范围
 
             # 第3步：关键词辅助确认（宽松匹配，只需核心名词命中）
-            forward_hits = 0
-            has_specific_keyword = False  # 是否命中了"有区分度"的关键词
-            for fkw in family_kws:
-                matched = False
-                matched_via_generic = False  # 是否靠通用词子串匹配
-                for bkw in bill_keywords:
-                    if fkw == bkw or fkw in bkw:
-                        # 精确匹配 或 家族词是清单词的子串 → 可靠匹配
-                        matched = True
-                        break
-                    elif bkw in fkw:
-                        # 清单词是家族词的子串（如"开关"在"快速自动开关"中）
-                        matched = True
-                        if bkw in GENERIC_MODIFIERS:
-                            matched_via_generic = True  # 靠通用词匹配的
-                        break
-
-                # 补充匹配：如果家族关键词是复合词（如"给水塑料管"），
-                # 检查清单tokens是否包含所有构成部分（如"给水"+"塑料管"都在tokens里）
-                # 这解决了清单描述把"给水"和"塑料管"分开写的问题
-                if not matched and len(fkw) >= 4:
-                    fkw_parts = list(jieba.cut(fkw))
-                    fkw_parts = [p for p in fkw_parts if len(p) >= 2 and p not in STOP_WORDS]
-                    if len(fkw_parts) >= 2:
-                        # 检查清单tokens是否覆盖家族关键词的所有子词
-                        all_covered = all(
-                            any(fp == bkw or fp in bkw or bkw in fp
-                                for bkw in bill_keywords)
-                            for fp in fkw_parts
-                        )
-                        if all_covered:
-                            matched = True
-
-                if matched:
-                    forward_hits += 1
-                # 检查命中的家族关键词是否是具体名词（非通用修饰词）
-                # 例如"配电箱"是具体名词，"安装"、"嵌入"是通用修饰词
-                # 额外排除：靠通用词子串匹配的也不算（如"开关"在"快速自动开关"中）
-                if matched and fkw not in GENERIC_MODIFIERS and not matched_via_generic:
-                    has_specific_keyword = True
+            forward_hits, has_specific_keyword = self._compute_keyword_hits(
+                family_kws, bill_keywords)
 
             if forward_hits == 0:
                 continue  # 一个关键词都没命中 → 不是同类设备
@@ -455,40 +436,10 @@ class RuleValidator:
             # 修复：要求家族基础名称（不含参数）至少有一个核心词与清单匹配
             # 匹配方式：精确/子串匹配 + 共同前缀匹配（≥2字符）
             # 共同前缀：解决"接闪网"vs"接闪带"这类同族不同后缀的术语
-            base_name = family.get("name", "")
-            base_name_kws = tokenize(base_name)
-            base_name_kws = [kw for kw in base_name_kws
-                             if kw not in GENERIC_MODIFIERS and len(kw) >= 2]
-            if base_name_kws:
-                has_base_match = False
-                for bkw in bill_keywords:
-                    for bnkw in base_name_kws:
-                        # 精确匹配或子串匹配
-                        if bnkw == bkw or bnkw in bkw or bkw in bnkw:
-                            has_base_match = True
-                            break
-                        # 共同前缀匹配（≥2个字符）
-                        # 解决"接闪网"vs"接闪带"等同类术语的不同后缀问题
-                        common_prefix_len = 0
-                        for ca, cb in zip(bnkw, bkw):
-                            if ca == cb:
-                                common_prefix_len += 1
-                            else:
-                                break
-                        if common_prefix_len >= 2:
-                            has_base_match = True
-                            break
-                    if has_base_match:
-                        break
-                if not has_base_match:
-                    continue  # 家族核心名称无匹配 → 跳过（参数描述关键词不算）
+            if not self._has_base_name_match(family.get("name", ""), bill_keywords):
+                continue  # 家族核心名称无匹配 → 跳过（参数描述关键词不算）
 
-            reverse_hits = 0
-            for bkw in bill_keywords:
-                for fkw in family_kws:
-                    if bkw in fkw or fkw in bkw:
-                        reverse_hits += 1
-                        break
+            reverse_hits = self._count_reverse_hits(family_kws, bill_keywords)
 
             # 第4步：综合评分
             # 参数匹配本身就是很强的信号（回路数对上了回路家族），给高基础分
@@ -562,37 +513,8 @@ class RuleValidator:
                 continue
 
             # ---- 关键词匹配评分 ----
-            forward_hits = 0
-            has_specific_keyword = False
-            for fkw in family_kws:
-                matched = False
-                matched_via_generic = False
-                for bkw in bill_keywords:
-                    if fkw == bkw or fkw in bkw:
-                        matched = True
-                        break
-                    elif bkw in fkw:
-                        matched = True
-                        if bkw in GENERIC_MODIFIERS:
-                            matched_via_generic = True
-                        break
-                # 复合词拆分匹配
-                if not matched and len(fkw) >= 4:
-                    fkw_parts = list(jieba.cut(fkw))
-                    fkw_parts = [p for p in fkw_parts
-                                 if len(p) >= 2 and p not in STOP_WORDS]
-                    if len(fkw_parts) >= 2:
-                        all_covered = all(
-                            any(fp == bkw or fp in bkw or bkw in fp
-                                for bkw in bill_keywords)
-                            for fp in fkw_parts
-                        )
-                        if all_covered:
-                            matched = True
-                if matched:
-                    forward_hits += 1
-                if matched and fkw not in GENERIC_MODIFIERS and not matched_via_generic:
-                    has_specific_keyword = True
+            forward_hits, has_specific_keyword = self._compute_keyword_hits(
+                family_kws, bill_keywords)
 
             type_fallback = False
             if forward_hits == 0 or not has_specific_keyword:
@@ -617,30 +539,8 @@ class RuleValidator:
             # 验证家族基础名称匹配（防止参数描述关键词导致误匹配）
             # 但如果已通过分类参数直接定位家族，跳过此检查（分类参数是更强的信号）
             if not type_fallback:
-                base_name = family.get("name", "")
-                base_name_kws = tokenize(base_name)
-                base_name_kws = [kw for kw in base_name_kws
-                                 if kw not in GENERIC_MODIFIERS and len(kw) >= 2]
-                if base_name_kws:
-                    has_base_match = False
-                    for bkw in bill_keywords:
-                        for bnkw in base_name_kws:
-                            if bnkw == bkw or bnkw in bkw or bkw in bnkw:
-                                has_base_match = True
-                                break
-                            common_prefix_len = 0
-                            for ca, cb in zip(bnkw, bkw):
-                                if ca == cb:
-                                    common_prefix_len += 1
-                                else:
-                                    break
-                            if common_prefix_len >= 2:
-                                has_base_match = True
-                                break
-                        if has_base_match:
-                            break
-                    if not has_base_match:
-                        continue
+                if not self._has_base_name_match(family.get("name", ""), bill_keywords):
+                    continue
 
             # ---- 解析 quota values 中的数字（提取可比较的档位） ----
             value_tiers = self._parse_text_values(quotas)
@@ -660,12 +560,7 @@ class RuleValidator:
                 continue
 
             # ---- 综合评分 ----
-            reverse_hits = 0
-            for bkw in bill_keywords:
-                for fkw in family_kws:
-                    if bkw in fkw or fkw in bkw:
-                        reverse_hits += 1
-                        break
+            reverse_hits = self._count_reverse_hits(family_kws, bill_keywords)
             coverage = forward_hits / len(family_kws)
             bill_coverage = (reverse_hits / len(bill_keywords)
                              if bill_keywords else 0)
@@ -733,25 +628,9 @@ class RuleValidator:
         if not hints:
             return None
 
-        # 通用参数名→bill_params键 映射
-        # 这不是设备特定的，而是工程参数的通用字典：
-        # "重量"对电梯/起重机/水泵都指 weight_t，"功率"对风机/水泵都指 kw
-        HINT_TO_PARAM = {
-            "站数": "elevator_stops", "层数": "elevator_stops",
-            "重量": "weight_t", "起重量": "weight_t",
-            "功率": "kw",
-            "容量": "kva",
-            "电流": "ampere",
-            "截面": "cable_section",
-            "口径": "dn", "直径": "dn", "管径": "dn",
-            "回路": "circuits",
-            "周长": "perimeter",
-            "大边": "large_side",
-        }
-
         # 策略1：通过参数名映射到 bill_params
         for hint in hints:
-            for map_key, param_key in HINT_TO_PARAM.items():
+            for map_key, param_key in TEXT_HINT_TO_PARAM.items():
                 if map_key in hint:
                     val = bill_params.get(param_key)
                     if val is not None:
@@ -833,6 +712,33 @@ class RuleValidator:
 
         return None, False
 
+    @staticmethod
+    def _extract_tier_display(value_str: str) -> str:
+        """从档位值字符串中提取用于展示的数字部分。"""
+        tier_match = re.match(r'^(\d+(?:\.\d+)?)', value_str or "")
+        return tier_match.group(1) if tier_match else (value_str or "?")
+
+    @staticmethod
+    def _build_rule_match_result(item: dict, quota_id: str, quota_name: str,
+                                 unit: str, reason: str, confidence: int,
+                                 family_name: str, score: float,
+                                 explanation: str) -> dict:
+        """统一构建规则匹配结果字典。"""
+        return {
+            "bill_item": item or {},
+            "quotas": [{
+                "quota_id": quota_id,
+                "name": quota_name,
+                "unit": unit,
+                "reason": reason,
+            }],
+            "confidence": confidence,
+            "explanation": explanation,
+            "match_source": "rule",
+            "rule_family": family_name,
+            "rule_score": round(score, 3),
+        }
+
     def _build_text_result(self, entry: dict, matched_quota: dict,
                            bill_value: float, exceeded: bool,
                            score: float, bill_text: str,
@@ -845,8 +751,7 @@ class RuleValidator:
         quota_name = f"{prefix} {value_str}".strip()
 
         # 从 value 中提取档位显示数字
-        tier_match = re.match(r'^(\d+(?:\.\d+)?)', value_str)
-        tier_display = tier_match.group(1) if tier_match else value_str
+        tier_display = self._extract_tier_display(value_str)
 
         # 置信度：精确匹配85，超档80（需≥80才能跳过搜索）
         confidence = 80 if exceeded else 85
@@ -859,20 +764,18 @@ class RuleValidator:
             explanation_parts.append(
                 f"(超出最大档{tier_display}，需另行计算)")
 
-        result = {
-            "bill_item": item or {},
-            "quotas": [{
-                "quota_id": quota_id,
-                "name": quota_name,
-                "unit": family.get("unit", ""),
-                "reason": " | ".join(explanation_parts),
-            }],
-            "confidence": confidence,
-            "explanation": " | ".join(explanation_parts),
-            "match_source": "rule",
-            "rule_family": family.get("name", ""),
-            "rule_score": round(score, 3),
-        }
+        explanation = " | ".join(explanation_parts)
+        result = self._build_rule_match_result(
+            item=item,
+            quota_id=quota_id,
+            quota_name=quota_name,
+            unit=family.get("unit", ""),
+            reason=explanation,
+            confidence=confidence,
+            family_name=family.get("name", ""),
+            score=score,
+            explanation=explanation,
+        )
 
         logger.info(f"文本型规则匹配: '{bill_text[:40]}' → {quota_id} "
                      f"(「{family.get('name', '')}」参数{bill_value}→{tier_display})")
@@ -907,48 +810,10 @@ class RuleValidator:
             if not family_kws:
                 continue
 
-            forward_hits = 0
-            has_specific_keyword = False  # 是否命中了有区分度的关键词
-            for fkw in family_kws:
-                matched = False
-                matched_via_generic = False  # 是否靠通用词子串匹配
-                for bkw in bill_keywords:
-                    if fkw == bkw or fkw in bkw:
-                        # 精确匹配 或 家族词是清单词的子串 → 可靠匹配
-                        matched = True
-                        break
-                    elif bkw in fkw:
-                        # 清单词是家族词的子串（如"开关"在"快速自动开关"中）
-                        matched = True
-                        if bkw in GENERIC_MODIFIERS:
-                            matched_via_generic = True  # 靠通用词匹配的，不算具体
-                        break
+            forward_hits, has_specific_keyword = self._compute_keyword_hits(
+                family_kws, bill_keywords)
 
-                # 补充匹配：复合关键词拆分后检查（和param_driven中相同逻辑）
-                if not matched and len(fkw) >= 4:
-                    fkw_parts = list(jieba.cut(fkw))
-                    fkw_parts = [p for p in fkw_parts if len(p) >= 2 and p not in STOP_WORDS]
-                    if len(fkw_parts) >= 2:
-                        all_covered = all(
-                            any(fp == bkw or fp in bkw or bkw in fp
-                                for bkw in bill_keywords)
-                            for fp in fkw_parts
-                        )
-                        if all_covered:
-                            matched = True
-
-                if matched:
-                    forward_hits += 1
-                # 检查是否命中了具体名词（非通用修饰词，且非靠通用词子串匹配）
-                if matched and fkw not in GENERIC_MODIFIERS and not matched_via_generic:
-                    has_specific_keyword = True
-
-            reverse_hits = 0
-            for bkw in bill_keywords:
-                for fkw in family_kws:
-                    if bkw in fkw or fkw in bkw:
-                        reverse_hits += 1
-                        break
+            reverse_hits = self._count_reverse_hits(family_kws, bill_keywords)
 
             if forward_hits == 0:
                 continue
@@ -989,6 +854,78 @@ class RuleValidator:
                 best_entry, param_value, best_score, bill_text, item)
         else:
             return None
+
+    def _compute_keyword_hits(self, family_kws: list, bill_keywords: list) -> tuple[int, bool]:
+        """Compute keyword forward hits and whether any specific keyword was matched."""
+        forward_hits = 0
+        has_specific_keyword = False
+
+        for fkw in family_kws:
+            matched = False
+            matched_via_generic = False
+            for bkw in bill_keywords:
+                if fkw == bkw or fkw in bkw:
+                    matched = True
+                    break
+                if bkw in fkw:
+                    matched = True
+                    if bkw in GENERIC_MODIFIERS:
+                        matched_via_generic = True
+                    break
+
+            if not matched and len(fkw) >= 4:
+                fkw_parts = list(jieba.cut(fkw))
+                fkw_parts = [p for p in fkw_parts if len(p) >= 2 and p not in STOP_WORDS]
+                if len(fkw_parts) >= 2:
+                    all_covered = all(
+                        any(fp == bkw or fp in bkw or bkw in fp for bkw in bill_keywords)
+                        for fp in fkw_parts
+                    )
+                    if all_covered:
+                        matched = True
+
+            if matched:
+                forward_hits += 1
+            if matched and fkw not in GENERIC_MODIFIERS and not matched_via_generic:
+                has_specific_keyword = True
+
+        return forward_hits, has_specific_keyword
+
+    def _count_reverse_hits(self, family_kws: list, bill_keywords: list) -> int:
+        reverse_hits = 0
+        for bkw in bill_keywords:
+            for fkw in family_kws:
+                if bkw in fkw or fkw in bkw:
+                    reverse_hits += 1
+                    break
+        return reverse_hits
+
+    def _has_common_prefix(self, left: str, right: str, min_len: int = 2) -> bool:
+        common_prefix_len = 0
+        for c1, c2 in zip(left, right):
+            if c1 != c2:
+                break
+            common_prefix_len += 1
+            if common_prefix_len >= min_len:
+                return True
+        return False
+
+    def _has_base_name_match(self, base_name: str, bill_keywords: list) -> bool:
+        base_name_kws = tokenize(base_name)
+        base_name_kws = [
+            kw for kw in base_name_kws
+            if kw not in GENERIC_MODIFIERS and len(kw) >= 2
+        ]
+        if not base_name_kws:
+            return True
+
+        for bkw in bill_keywords:
+            for bnkw in base_name_kws:
+                if bnkw == bkw or bnkw in bkw or bkw in bnkw:
+                    return True
+                if self._has_common_prefix(bnkw, bkw, min_len=2):
+                    return True
+        return False
 
     # ============ 多维属性兼容性检查 ============
     # 在关键词评分之前，先用家族的结构化属性（attrs）过滤掉明显不兼容的家族
@@ -1148,24 +1085,23 @@ class RuleValidator:
 
         quota_name = self._find_quota_name(family, quota_id)
         confidence = 80 if score >= 0.7 else 70
+        reason = (f"规则直接匹配: 「{family.get('name', '')}」"
+                  f"参数{param_value}→档位{correct_tier}")
+        explanation = (f"规则匹配(得分{score:.2f}): "
+                       f"「{family.get('name', '')}」"
+                       f"参数{param_value}→{correct_tier}档")
 
-        result = {
-            "bill_item": item or {},
-            "quotas": [{
-                "quota_id": quota_id,
-                "name": quota_name or f"{family.get('prefix', '')} {correct_tier}",
-                "unit": family.get("unit", ""),
-                "reason": (f"规则直接匹配: 「{family.get('name', '')}」"
-                           f"参数{param_value}→档位{correct_tier}"),
-            }],
-            "confidence": confidence,
-            "explanation": (f"规则匹配(得分{score:.2f}): "
-                            f"「{family.get('name', '')}」"
-                            f"参数{param_value}→{correct_tier}档"),
-            "match_source": "rule",
-            "rule_family": family.get("name", ""),
-            "rule_score": round(score, 3),
-        }
+        result = self._build_rule_match_result(
+            item=item,
+            quota_id=quota_id,
+            quota_name=quota_name or f"{family.get('prefix', '')} {correct_tier}",
+            unit=family.get("unit", ""),
+            reason=reason,
+            confidence=confidence,
+            family_name=family.get("name", ""),
+            score=score,
+            explanation=explanation,
+        )
 
         logger.debug(f"规则预匹配成功: '{bill_text[:30]}' → {quota_id} "
                     f"(家族={family.get('name', '')}, 得分={score:.2f})")
@@ -1199,33 +1135,27 @@ class RuleValidator:
         if not family:
             # 规则文件里没有这个定额（可能是独立定额）→ 不干预
             return result
+        family_name = family.get("name", "")
 
         # 有档位信息才做校验（纯文字类型的家族不校验）
         tiers = family.get("tiers")
         if not tiers:
-            # 文本型家族通用校验（电梯、起重机等 value_type="text" 的家族）
-            if family.get("value_type") == "text":
-                return self._validate_text_family_result(result, bill_text, family)
-            # 其他无数值档位的家族 → 加小幅置信度
-            result["confidence"] = min(result.get("confidence", 0) + 3, 100)
-            result["rule_validated"] = True
-            result["rule_note"] = f"属于家族「{family.get('name', '')}」"
-            return result
+            return self._validate_non_tier_family(result, bill_text, family, family_name)
 
         # 从清单文本中提取数值参数
         bill_value = self._extract_param_value(bill_text, family)
 
         if bill_value is None:
             # 清单里提取不到参数值 → 不干预
-            result["rule_validated"] = True
-            result["rule_note"] = f"属于家族「{family.get('name', '')}」，清单未提供参数值"
+            self._mark_rule_validation(
+                result, self._family_note(family_name, "，清单未提供参数值"))
             return result
 
         # 计算正确的档位（向上取档：选≥bill_value的最小档）
         correct_tier = self._find_correct_tier(bill_value, tiers)
         if correct_tier is None:
             # 参数值超出所有档位范围
-            result["rule_note"] = (f"属于家族「{family.get('name', '')}」，"
+            result["rule_note"] = (f"属于家族「{family_name}」，"
                                    f"参数值{bill_value}超出最大档{tiers[-1]}")
             return result
 
@@ -1235,50 +1165,60 @@ class RuleValidator:
         # 比较：当前选的定额和正确定额是否一致？
         if quota_id == correct_quota_id:
             # 档位正确 → 置信度加分
-            bonus = 8
-            new_conf = min(result.get("confidence", 0) + bonus, 100)
-            result["confidence"] = new_conf
-            result["rule_validated"] = True
-            result["rule_note"] = (f"规则校验通过: 「{family.get('name', '')}」"
-                                   f"参数{bill_value}→档位{correct_tier}✓")
+            self._bump_confidence(result, add=8, cap=100)
+            self._mark_rule_validation(
+                result, f"规则校验通过: 「{family_name}」参数{bill_value}→档位{correct_tier}✓")
             return result
+
+        # 档位错误，但未找到对应编号
+        if not correct_quota_id:
+            result["rule_note"] = (f"属于家族「{family_name}」，"
+                                   f"参数{bill_value}→档位{correct_tier}，"
+                                   f"但未找到对应编号")
+            return result
+
+        # 档位错误 → 纠正
+        old_id = quota_id
+        old_name = main_quota.get("name", "")
+
+        # 从家族中找到正确定额的名称
+        correct_name = self._find_quota_name(family, correct_quota_id)
+
+        # 纠正主定额
+        self._set_main_quota(
+            main_quota, correct_quota_id, correct_name or main_quota.get("name", ""))
+
+        # 置信度：纠正后给一个合理分数
+        # 但如果原始结果是"回退候选"（参数不匹配），不应强制拉高
+        if "回退候选" in result.get("explanation", ""):
+            # 回退候选：纠正档位有帮助，但定额本身可能不对，小幅加分
+            self._bump_confidence(result, add=10, cap=55)
         else:
-            # 档位错误 → 纠正
-            if correct_quota_id:
-                # 找到了正确的定额编号
-                old_id = quota_id
-                old_name = main_quota.get("name", "")
+            self._bump_confidence(result, floor=75, cap=100)
 
-                # 从家族中找到正确定额的名称
-                correct_name = self._find_quota_name(family, correct_quota_id)
+        self._mark_rule_validation(
+            result,
+            (f"规则纠正档位: 「{family_name}」"
+             f"参数{bill_value}→档位{correct_tier}, "
+             f"原{old_id}→改为{correct_quota_id}"),
+            corrected=True,
+        )
 
-                # 纠正主定额
-                main_quota["quota_id"] = correct_quota_id
-                main_quota["name"] = correct_name or main_quota.get("name", "")
+        logger.debug(f"规则纠正: {old_id}({old_name}) → "
+                    f"{correct_quota_id}({correct_name}), "
+                    f"参数值={bill_value}, 正确档={correct_tier}")
+        return result
 
-                # 置信度：纠正后给一个合理分数
-                # 但如果原始结果是"回退候选"（参数不匹配），不应强制拉高
-                if "回退候选" in result.get("explanation", ""):
-                    # 回退候选：纠正档位有帮助，但定额本身可能不对，小幅加分
-                    result["confidence"] = min(result.get("confidence", 0) + 10, 55)
-                else:
-                    result["confidence"] = max(result.get("confidence", 0), 75)
-                result["rule_validated"] = True
-                result["rule_corrected"] = True
-                result["rule_note"] = (
-                    f"规则纠正档位: 「{family.get('name', '')}」"
-                    f"参数{bill_value}→档位{correct_tier}, "
-                    f"原{old_id}→改为{correct_quota_id}")
-
-                logger.debug(f"规则纠正: {old_id}({old_name}) → "
-                            f"{correct_quota_id}({correct_name}), "
-                            f"参数值={bill_value}, 正确档={correct_tier}")
-            else:
-                result["rule_note"] = (f"属于家族「{family.get('name', '')}」，"
-                                       f"参数{bill_value}→档位{correct_tier}，"
-                                       f"但未找到对应编号")
-
-            return result
+    def _validate_non_tier_family(self, result: dict, bill_text: str,
+                                  family: dict, family_name: str) -> dict:
+        """无数值档位家族的统一校验入口。"""
+        # 文本型家族通用校验（电梯、起重机等 value_type="text" 的家族）
+        if family.get("value_type") == "text":
+            return self._validate_text_family_result(result, bill_text, family)
+        # 其他无数值档位的家族 → 加小幅置信度
+        self._bump_confidence(result, add=3, cap=100)
+        self._mark_rule_validation(result, self._family_note(family_name))
+        return result
 
     def _validate_text_family_result(self, result: dict, bill_text: str,
                                       family: dict) -> dict:
@@ -1288,27 +1228,25 @@ class RuleValidator:
         适用于所有 value_type="text" 的家族（电梯、起重机等），
         不需要为每种设备写专用校验代码。
         """
+        family_name = family.get("name", "")
         bill_params = text_parser.parse(bill_text)
 
         # 解析 quota values 中的数字
         value_tiers = self._parse_text_values(family.get("quotas", []))
         if not value_tiers:
             # 纯文本值，无法做数字校验
-            result["rule_validated"] = True
-            result["rule_note"] = f"属于家族「{family.get('name', '')}」"
+            self._mark_rule_validation(result, self._family_note(family_name))
             return result
 
         # 从清单中提取对应参数
         bill_value = self._extract_text_param(bill_text, bill_params, family)
         if bill_value is None:
-            result["rule_validated"] = True
-            result["rule_note"] = (f"属于家族「{family.get('name', '')}」，"
-                                   f"清单未提供对应参数")
+            self._mark_rule_validation(
+                result, self._family_note(family_name, "，清单未提供对应参数"))
             return result
 
         # 找正确的档位
-        correct_quota, exceeded = self._find_text_tier(
-            value_tiers, bill_value)
+        correct_quota, _ = self._find_text_tier(value_tiers, bill_value)
         if not correct_quota:
             return result
 
@@ -1318,33 +1256,27 @@ class RuleValidator:
         correct_id = correct_quota.get("id")
 
         # 从正确档位的 value 中提取显示数字
-        tier_match = re.match(
-            r'^(\d+(?:\.\d+)?)', correct_quota.get("value", ""))
-        tier_display = tier_match.group(1) if tier_match else "?"
+        tier_display = self._extract_tier_display(correct_quota.get("value", ""))
 
         if current_id == correct_id:
             # 档位正确
-            result["confidence"] = min(
-                result.get("confidence", 0) + 8, 100)
-            result["rule_validated"] = True
-            result["rule_note"] = (
-                f"文本型校验通过: 「{family.get('name', '')}」"
-                f"参数{bill_value}→{tier_display}档 ✓")
+            self._bump_confidence(result, add=8, cap=100)
+            self._mark_rule_validation(
+                result, f"文本型校验通过: 「{family_name}」参数{bill_value}→{tier_display}档 ✓")
         else:
             # 档位错误，纠正
             prefix = family.get("prefix", "")
             correct_name = (
                 f"{prefix} {correct_quota.get('value', '')}".strip())
-            main_quota["quota_id"] = correct_id
-            main_quota["name"] = correct_name
-            result["confidence"] = max(
-                result.get("confidence", 0), 75)
-            result["rule_validated"] = True
-            result["rule_corrected"] = True
-            result["rule_note"] = (
-                f"文本型校验纠正: 「{family.get('name', '')}」"
-                f"参数{bill_value}→{tier_display}档, "
-                f"原{current_id}→改为{correct_id}")
+            self._set_main_quota(main_quota, correct_id, correct_name)
+            self._bump_confidence(result, floor=75, cap=100)
+            self._mark_rule_validation(
+                result,
+                (f"文本型校验纠正: 「{family_name}」"
+                 f"参数{bill_value}→{tier_display}档, "
+                 f"原{current_id}→改为{correct_id}"),
+                corrected=True,
+            )
             logger.info(
                 f"文本型校验纠正: {current_id} → {correct_id} "
                 f"(参数{bill_value}→{tier_display}档)")
@@ -1369,24 +1301,87 @@ class RuleValidator:
 
         for result in results:
             # 跳过经验库直通的结果（已在经验库匹配阶段做过参数校验）
-            if result.get("match_source", "").startswith("experience"):
+            if self._is_experience_source(result):
                 continue
 
             # 组合清单文本
-            item = result.get("bill_item", {})
-            bill_text = f"{item.get('name', '')} {item.get('description', '')}".strip()
+            bill_text = self._compose_bill_text(result.get("bill_item", {}))
 
             self.validate_result(result, bill_text)
 
-            if result.get("rule_validated"):
-                validated += 1
-            if result.get("rule_corrected"):
-                corrected += 1
+            validated, corrected = self._tally_validation_flags(
+                result, validated, corrected)
 
         if validated > 0:
             logger.info(f"规则校验: {validated} 条命中规则, {corrected} 条档位被纠正")
 
         return results
+
+    @staticmethod
+    def _first_match_float(text: str, patterns: list[str]) -> float:
+        """按顺序匹配正则并返回首个数值。"""
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                return float(m.group(1))
+        return None
+
+    @staticmethod
+    def _is_experience_source(result: dict) -> bool:
+        """是否为经验库来源结果（批量规则校验时跳过）。"""
+        return result.get("match_source", "").startswith("experience")
+
+    @staticmethod
+    def _compose_bill_text(item: dict) -> str:
+        """统一拼接清单名称+描述文本。"""
+        return f"{item.get('name', '')} {item.get('description', '')}".strip()
+
+    @staticmethod
+    def _tally_validation_flags(result: dict, validated: int,
+                                corrected: int) -> tuple[int, int]:
+        """根据结果中的规则校验标记累计计数。"""
+        if result.get("rule_validated"):
+            validated += 1
+        if result.get("rule_corrected"):
+            corrected += 1
+        return validated, corrected
+
+    @staticmethod
+    def _family_note(family_name: str, suffix: str = "") -> str:
+        """统一构建家族说明。"""
+        return f"属于家族「{family_name}」{suffix}"
+
+    @staticmethod
+    def _mark_rule_validation(result: dict, note: str, corrected: bool = False):
+        """统一设置规则校验标记字段。"""
+        result["rule_validated"] = True
+        if corrected:
+            result["rule_corrected"] = True
+        result["rule_note"] = note
+
+    @staticmethod
+    def _bump_confidence(result: dict, add: float = 0,
+                         floor: float = None, cap: float = 100):
+        """统一调整置信度（加分/保底/封顶）。"""
+        try:
+            conf = float(result.get("confidence", 0) or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        if add:
+            conf += add
+        if floor is not None:
+            conf = max(conf, float(floor))
+        if cap is not None:
+            conf = min(conf, float(cap))
+        if abs(conf - round(conf)) < 1e-9:
+            conf = int(round(conf))
+        result["confidence"] = conf
+
+    @staticmethod
+    def _set_main_quota(main_quota: dict, quota_id: str, quota_name: str):
+        """统一写回主定额编号与名称。"""
+        main_quota["quota_id"] = quota_id
+        main_quota["name"] = quota_name
 
     def _extract_param_value(self, bill_text: str, family: dict) -> float:
         """
@@ -1433,10 +1428,9 @@ class RuleValidator:
 
         # 先尝试按参数单位匹配
         if param_unit and param_unit in unit_patterns:
-            for pat in unit_patterns[param_unit]:
-                m = re.search(pat, bill_text)
-                if m:
-                    return float(m.group(1))
+            value = self._first_match_float(bill_text, unit_patterns[param_unit])
+            if value is not None:
+                return value
 
         # 策略2：如果参数名称是"回路"、"火"等中文单位
         chinese_units = {
@@ -1445,18 +1439,17 @@ class RuleValidator:
             "芯": [r'(\d+)\s*芯'],
         }
         if param_unit in chinese_units:
-            for pat in chinese_units[param_unit]:
-                m = re.search(pat, bill_text)
-                if m:
-                    return float(m.group(1))
+            value = self._first_match_float(bill_text, chinese_units[param_unit])
+            if value is not None:
+                return value
 
         # 策略3：按参数名称匹配
         if param_name:
             # "容量" → 找 容量XXX 或 XXXkVA
-            pat = rf'{param_name}\s*[:：]?\s*(\d+(?:\.\d+)?)'
-            m = re.search(pat, bill_text)
-            if m:
-                return float(m.group(1))
+            value = self._first_match_float(
+                bill_text, [rf'{param_name}\s*[:：]?\s*(\d+(?:\.\d+)?)'])
+            if value is not None:
+                return value
 
         # 策略4：DE外径转DN公称直径（PPR管常见）
         if param_unit == "mm":
