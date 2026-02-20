@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 """生成 贾维斯审核.bat（GBK编码）
 
-单独对已有的匹配结果运行Jarvis自动审核+纠正。
-适用场景：之前跑过匹配，想单独重新审核（比如规则更新后）。
+全流程一键操作：拖入清单Excel → 匹配定额 → 自动审核 → 自动纠正 → 打开结果
 """
 
 bat_content = r"""@echo off
 setlocal enabledelayedexpansion
-title 贾维斯自动审核
+title 贾维斯一键审核
 cd /d "%~dp0"
 
 echo ============================================================
-echo           贾维斯自动审核 - 检测错误并自动纠正
+echo        贾维斯一键审核 - 匹配+审核+纠正 全自动
 echo ============================================================
 echo.
-echo  功能: 对已有的匹配结果运行自动审核
-echo        检测类别错误/管材错配/配对错误等，自动纠正
+echo  全流程: 拖入Excel → 匹配定额 → 自动审核 → 纠正错误 → 出结果
 echo.
 
 :: ============================================================
@@ -31,160 +29,118 @@ del /q .tmp_selected_province.txt 2>nul
 echo.
 
 :: ============================================================
-:: 查找最近的匹配结果JSON
+:: 等待拖入文件
 :: ============================================================
-:SELECT_FILE
+:WAIT_FILE
 echo ============================================================
 echo  省份: !PROVINCE!
 echo ============================================================
 echo.
-echo  选择要审核的匹配结果:
+echo  请将清单Excel文件拖拽到此窗口，然后按回车:
+echo    q=退出
 echo.
+set "INPUT_FILE="
+set /p "INPUT_FILE="
+set "INPUT_FILE=!INPUT_FILE:"=!"
 
-set file_count=0
+if /i "!INPUT_FILE!"=="q" goto EXIT
+if /i "!INPUT_FILE!"=="quit" goto EXIT
+if /i "!INPUT_FILE!"=="exit" goto EXIT
 
-:: 列出output\temp中的pipeline JSON（由运行匹配.bat生成）
-for /f "delims=" %%F in ('dir /b /od "output\temp\pipeline_*.json" 2^>nul') do (
-    set /a file_count+=1
-    set "file_!file_count!=output\temp\%%F"
-    echo   [!file_count!] %%~nF
-)
-
-if !file_count!==0 (
-    echo   没有找到匹配结果!
-    echo   请先双击"运行匹配.bat"生成匹配结果。
+if not exist "!INPUT_FILE!" (
     echo.
-    pause
-    exit /b 1
-)
-
-echo.
-echo   按回车选择最新的，或输入编号选择其他
-echo   q=退出
-echo.
-
-set "CHOICE="
-set /p "CHOICE=请选择: "
-
-if /i "!CHOICE!"=="q" goto EXIT
-if /i "!CHOICE!"=="quit" goto EXIT
-
-:: 默认选最新的
-if "!CHOICE!"=="" set "CHOICE=!file_count!"
-
-set "JSON_FILE=!file_%CHOICE%!"
-
-if not defined JSON_FILE (
-    echo  无效选择
-    goto SELECT_FILE
-)
-
-if not exist "!JSON_FILE!" (
-    echo  文件不存在: !JSON_FILE!
-    goto SELECT_FILE
-)
-
-echo.
-echo  已选择: !JSON_FILE!
-
-:: ============================================================
-:: 运行审核
-:: ============================================================
-:RUN_REVIEW
-echo.
-echo ============================================================
-echo  正在审核...
-echo ============================================================
-echo.
-
-python tools\jarvis_auto_review.py "!JSON_FILE!" --province "!PROVINCE!"
-
-:: jarvis_auto_review 有纠正时返回1，无纠正返回0
-:: 检查是否生成了纠正JSON
-set "CORRECTION_FILE="
-for /f "delims=" %%F in ('dir /b /od "output\temp\auto_corrections_*.json" 2^>nul') do (
-    set "CORRECTION_FILE=output\temp\%%F"
-)
-
-if not defined CORRECTION_FILE (
+    echo  [错误] 文件不存在: !INPUT_FILE!
     echo.
-    echo  审核完成，未发现需要纠正的错误!
-    goto POST_REVIEW
+    goto WAIT_FILE
 )
 
-:: ============================================================
-:: 纠正Excel
-:: ============================================================
-echo.
-echo ============================================================
-echo  发现纠正项，正在查找对应的匹配结果Excel...
-echo ============================================================
+set "CURRENT_FILE=!INPUT_FILE!"
 
-:: 查找最新的匹配结果Excel
-set "MATCH_EXCEL="
+:: ============================================================
+:: 全自动流水线：匹配 → 审核 → 纠正
+:: ============================================================
+:RUN_ALL
+echo.
+echo ############################################################
+echo  开始全自动流水线
+echo  文件: !CURRENT_FILE!
+echo  省份: !PROVINCE!
+echo ############################################################
+echo.
+
+python tools\jarvis_pipeline.py "!CURRENT_FILE!" --province "!PROVINCE!"
+
+:: 找到最新的输出文件
+set "LAST_OUTPUT="
 for /f "delims=" %%F in ('dir /b /od "output\匹配结果_*.xlsx" 2^>nul') do (
-    set "MATCH_EXCEL=output\%%F"
+    set "LAST_OUTPUT=output\%%F"
 )
-
-if not defined MATCH_EXCEL (
-    echo.
-    echo  未找到匹配结果Excel文件。
-    echo  纠正JSON已保存: !CORRECTION_FILE!
-    echo  你可以手动运行: python tools\jarvis_correct.py "Excel路径" "!CORRECTION_FILE!"
-    goto POST_REVIEW
-)
-
-echo.
-echo  匹配结果: !MATCH_EXCEL!
-echo  纠正文件: !CORRECTION_FILE!
-echo.
-echo  是否将纠正写入Excel? [Y/n]
-set "DO_CORRECT="
-set /p "DO_CORRECT=  "
-if /i "!DO_CORRECT!"=="n" goto POST_REVIEW
-
-echo.
-python tools\jarvis_correct.py "!MATCH_EXCEL!" "!CORRECTION_FILE!"
-
-:: 找到已审核版
-set "CORRECTED_EXCEL="
+set "CORRECTED_OUTPUT="
 for /f "delims=" %%F in ('dir /b /od "output\*_已审核.xlsx" 2^>nul') do (
-    set "CORRECTED_EXCEL=output\%%F"
+    set "CORRECTED_OUTPUT=output\%%F"
 )
-if defined CORRECTED_EXCEL (
-    echo.
-    echo  已审核Excel已生成: !CORRECTED_EXCEL!
+
+echo.
+echo ############################################################
+echo  全流程完成!
+echo ############################################################
+echo.
+
+if defined CORRECTED_OUTPUT (
+    echo  已审核结果: !CORRECTED_OUTPUT!
+    echo  （已自动纠正错误，可直接导入广联达）
+) else if defined LAST_OUTPUT (
+    echo  匹配结果: !LAST_OUTPUT!
+    echo  （审核通过，无需纠正）
+) else (
+    echo  未生成输出文件，请检查清单格式
 )
 
 :: ============================================================
 :: 操作菜单
 :: ============================================================
-:POST_REVIEW
+:POST_DONE
 echo.
 echo ============================================================
 echo  接下来做什么?
 echo ============================================================
 echo.
-echo   [1] 打开output目录 - 查看结果
-echo   [2] 审核其他文件
-echo   [3] 重新审核当前文件
+if defined CORRECTED_OUTPUT (
+    echo   [1] 打开已审核Excel - 直接导入广联达
+) else if defined LAST_OUTPUT (
+    echo   [1] 打开结果Excel - 导入广联达
+)
+echo   [2] 打开output目录
+echo   [3] 重新处理当前文件
+echo   [4] 处理新文件
 echo   [q] 退出
 echo.
 set "ACTION="
 set /p "ACTION=请选择: "
 
-if /i "!ACTION!"=="1" goto OPEN_OUTPUT
-if /i "!ACTION!"=="2" goto SELECT_FILE
-if /i "!ACTION!"=="3" goto RUN_REVIEW
+if /i "!ACTION!"=="1" goto OPEN_RESULT
+if /i "!ACTION!"=="2" goto OPEN_DIR
+if /i "!ACTION!"=="3" goto RUN_ALL
+if /i "!ACTION!"=="4" goto WAIT_FILE
 if /i "!ACTION!"=="q" goto EXIT
 if /i "!ACTION!"=="quit" goto EXIT
 
 echo  无效选择
-goto POST_REVIEW
+goto POST_DONE
 
-:OPEN_OUTPUT
+:OPEN_RESULT
+if defined CORRECTED_OUTPUT (
+    start "" "!CORRECTED_OUTPUT!"
+) else if defined LAST_OUTPUT (
+    start "" "!LAST_OUTPUT!"
+) else (
+    echo  没有结果文件
+)
+goto POST_DONE
+
+:OPEN_DIR
 start "" "output"
-goto POST_REVIEW
+goto POST_DONE
 
 :EXIT
 del /q .tmp_selected_province.txt 2>nul
