@@ -143,6 +143,34 @@ class ExperienceDB:
         except Exception:
             return []
 
+    @staticmethod
+    def _json_dump(value) -> str:
+        """统一 JSON 序列化（保留中文）。"""
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _source_to_layer(source: str) -> str:
+        """来源到层级映射。"""
+        return "authority" if source in ("user_correction", "user_confirmed") else "candidate"
+
+    @staticmethod
+    def _safe_int(value, default: int) -> int:
+        """安全转 int，失败返回默认值。"""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _clamp(value: int, low: int, high: int) -> int:
+        return max(min(value, high), low)
+
+    def _normalize_record_quota_fields(self, record: dict) -> dict:
+        """统一把记录中的 quota_ids/quota_names 解析成 list。"""
+        record["quota_ids"] = self._safe_json_list(record.get("quota_ids"))
+        record["quota_names"] = self._safe_json_list(record.get("quota_names"))
+        return record
+
     @property
     def model(self):
         """从全局 ModelCache 获取向量模型（与定额搜索共用同一个BGE模型）"""
@@ -247,13 +275,21 @@ class ExperienceDB:
             if bill_circuit_m and quota_map:
                 q_info = quota_map.get(qid_clean, {})
                 q_name = q_info.get('name', qname)
-                q_circuit_m = re.search(r'(\d+)', q_name) if '回路' in q_name else None
-                if q_circuit_m:
+                q_circuits = q_info.get('circuits')
+                if q_circuits is not None:
                     bc = int(bill_circuit_m.group(1))
-                    qc = int(q_circuit_m.group(1))
+                    qc = int(q_circuits)
                     if bc > qc:
                         errors.append(f"回路超档：清单{bc}回路 > 定额'{qid_clean}'的{qc}回路")
                         continue
+                else:
+                    q_circuit_m = re.search(r'(\d+)', q_name) if '回路' in q_name else None
+                    if q_circuit_m:
+                        bc = int(bill_circuit_m.group(1))
+                        qc = int(q_circuit_m.group(1))
+                        if bc > qc:
+                            errors.append(f"回路超档：清单{bc}回路 > 定额'{qid_clean}'的{qc}回路")
+                            continue
 
             # 通过所有校验，保留此定额
             cleaned_ids.append(qid_clean)
@@ -291,8 +327,15 @@ class ExperienceDB:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             try:
+                col_info = {
+                    row[1] for row in conn.execute("PRAGMA table_info(quotas)").fetchall()
+                }
+                has_circuits_col = "circuits" in col_info
+                select_cols = "quota_id, name, dn, cable_section, material"
+                if has_circuits_col:
+                    select_cols += ", circuits"
                 rows = conn.execute(
-                    "SELECT quota_id, name, dn, cable_section, material FROM quotas"
+                    f"SELECT {select_cols} FROM quotas"
                 ).fetchall()
             finally:
                 conn.close()
@@ -302,6 +345,7 @@ class ExperienceDB:
                     'dn': row['dn'],
                     'cable_section': row['cable_section'],
                     'material': row['material'],
+                    'circuits': row['circuits'] if has_circuits_col else None,
                 }
                 for row in rows
             }
@@ -364,9 +408,9 @@ class ExperienceDB:
         # 根据来源设置层级
         # 只有用户确认/修正 → 权威层
         # project_import 和 auto_match → 候选层（未经用户验证）
-        layer = "authority" if source in (
-            "user_correction", "user_confirmed"
-        ) else "candidate"
+        layer = self._source_to_layer(source)
+        quota_ids_json = self._json_dump(quota_ids)
+        quota_names_json = self._json_dump(quota_names or [])
 
         inserted_new = False
         conn = self._connect()
@@ -398,8 +442,8 @@ class ExperienceDB:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     bill_text, bill_name, bill_code, bill_unit,
-                    json.dumps(quota_ids, ensure_ascii=False),
-                    json.dumps(quota_names or [], ensure_ascii=False),
+                    quota_ids_json,
+                    quota_names_json,
                     source, confidence,
                     province, project_name, now, now, notes,
                     quota_db_ver, layer, specialty,
@@ -442,10 +486,7 @@ class ExperienceDB:
             conn = self._connect()
             cursor = conn.cursor()
 
-        try:
-            confidence_floor = int(confidence)
-        except (TypeError, ValueError):
-            confidence_floor = 80
+        confidence_floor = self._safe_int(confidence, 80)
 
         if source == "user_correction":
             # 用户手动修正 → 最高信任：更新定额、涨分、涨确认次数、晋升权威层
@@ -461,8 +502,8 @@ class ExperienceDB:
                     updated_at = ?
                 WHERE id = ?
             """, (
-                json.dumps(quota_ids, ensure_ascii=False),
-                json.dumps(quota_names or [], ensure_ascii=False),
+                self._json_dump(quota_ids),
+                self._json_dump(quota_names or []),
                 source, confidence_floor, quota_db_version, now, record_id,
             ))
         elif source == "user_confirmed":
@@ -482,7 +523,7 @@ class ExperienceDB:
             """, (confidence_floor, quota_db_version, now, record_id))
         elif source == "project_import":
             # 已完成项目导入 → 中等信任：小幅涨分
-            project_floor = max(min(confidence_floor, 95), 0)
+            project_floor = self._clamp(confidence_floor, 0, 95)
             cursor.execute("""
                 UPDATE experiences SET
                     confidence = MIN(MAX(confidence + 2, ?), 95),
@@ -520,21 +561,13 @@ class ExperienceDB:
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-
-            if authority_only:
-                cursor.execute("""
-                    SELECT * FROM experiences
-                    WHERE bill_text = ? AND province = ? AND layer = 'authority'
-                    ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
-                    LIMIT 1
-                """, (bill_text, province))
-            else:
-                cursor.execute("""
-                    SELECT * FROM experiences
-                    WHERE bill_text = ? AND province = ?
-                    ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
-                    LIMIT 1
-                """, (bill_text, province))
+            authority_clause = " AND layer = 'authority'" if authority_only else ""
+            cursor.execute(f"""
+                SELECT * FROM experiences
+                WHERE bill_text = ? AND province = ?{authority_clause}
+                ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                LIMIT 1
+            """, (bill_text, province))
 
             row = cursor.fetchone()
         finally:
@@ -597,8 +630,7 @@ class ExperienceDB:
         exact = self._find_exact_match(query_text, province, authority_only=True)
         if exact and exact.get("confidence", 0) >= min_confidence:
             exact["similarity"] = 1.0  # 精确匹配相似度为1
-            exact["quota_ids"] = self._safe_json_list(exact.get("quota_ids"))
-            exact["quota_names"] = self._safe_json_list(exact.get("quota_names"))
+            self._normalize_record_quota_fields(exact)
 
             # 版本校验：版本一致才标记为 "exact"（允许直通）
             record_version = exact.get("quota_db_version", "")
@@ -616,8 +648,10 @@ class ExperienceDB:
             stale_exact = exact
 
         # 向量相似搜索
-        if self.collection.count() == 0:
+        collection_count = self.collection.count()
+        if collection_count == 0:
             return [stale_exact] if stale_exact else []
+        n_results = min(top_k * 2, collection_count)
 
         try:
             query_prefix = "为这个句子生成表示以用于检索中文文档: "
@@ -630,7 +664,7 @@ class ExperienceDB:
             try:
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
-                    n_results=min(top_k * 2, self.collection.count()),
+                    n_results=n_results,
                     where={"province": province},  # 按省份过滤向量搜索
                 )
             except Exception as where_err:
@@ -639,14 +673,14 @@ class ExperienceDB:
                               f"建议重建向量索引以获得更好的多省份隔离")
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
-                    n_results=min(top_k * 2, self.collection.count()),
+                    n_results=n_results,
                 )
 
             # 兼容旧索引：按省份过滤后无结果时，尝试无过滤搜索（SQL层仍会过滤省份）
             if not results or not results.get("ids") or not results.get("ids")[0]:
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
-                    n_results=min(top_k * 2, self.collection.count()),
+                    n_results=n_results,
                 )
 
             if not results or not results.get("ids") or not results.get("ids")[0]:
@@ -700,8 +734,7 @@ class ExperienceDB:
                 if db_id in rows:
                     record = rows[db_id]
                     record["similarity"] = sim
-                    record["quota_ids"] = self._safe_json_list(record.get("quota_ids"))
-                    record["quota_names"] = self._safe_json_list(record.get("quota_names"))
+                    self._normalize_record_quota_fields(record)
 
                     # 版本校验：版本一致→"similar"，版本不一致→"stale"
                     record_version = record.get("quota_db_version", "")
@@ -757,67 +790,44 @@ class ExperienceDB:
 
         province = province or config.get_current_province()
         like_pattern = f"%{text}%"
+        text_match_condition = """
+            (
+                bill_text = ?
+                OR COALESCE(bill_name, '') = ?
+                OR bill_text LIKE ?
+                OR COALESCE(bill_name, '') LIKE ?
+            )
+        """
+        rank_order_clause = """
+            CASE
+                WHEN bill_text = ? THEN 0
+                WHEN COALESCE(bill_name, '') = ? THEN 1
+                WHEN bill_text LIKE ? THEN 2
+                WHEN COALESCE(bill_name, '') LIKE ? THEN 3
+                ELSE 4
+            END ASC,
+            confidence DESC,
+            confirm_count DESC,
+            updated_at DESC,
+            id DESC
+        """
+        where_clause = text_match_condition
+        params = [text, text, like_pattern, like_pattern]
+        if province:
+            where_clause = f"province = ? AND {text_match_condition}"
+            params.insert(0, province)
+        params.extend([text, text, like_pattern, like_pattern, limit_val])
 
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            if province:
-                cursor.execute("""
-                    SELECT *
-                    FROM experiences
-                    WHERE province = ?
-                      AND (
-                        bill_text = ?
-                        OR COALESCE(bill_name, '') = ?
-                        OR bill_text LIKE ?
-                        OR COALESCE(bill_name, '') LIKE ?
-                      )
-                    ORDER BY
-                        CASE
-                            WHEN bill_text = ? THEN 0
-                            WHEN COALESCE(bill_name, '') = ? THEN 1
-                            WHEN bill_text LIKE ? THEN 2
-                            WHEN COALESCE(bill_name, '') LIKE ? THEN 3
-                            ELSE 4
-                        END ASC,
-                        confidence DESC,
-                        confirm_count DESC,
-                        updated_at DESC,
-                        id DESC
-                    LIMIT ?
-                """, (
-                    province,
-                    text, text, like_pattern, like_pattern,
-                    text, text, like_pattern, like_pattern,
-                    limit_val,
-                ))
-            else:
-                cursor.execute("""
-                    SELECT *
-                    FROM experiences
-                    WHERE
-                        bill_text = ?
-                        OR COALESCE(bill_name, '') = ?
-                        OR bill_text LIKE ?
-                        OR COALESCE(bill_name, '') LIKE ?
-                    ORDER BY
-                        CASE
-                            WHEN bill_text = ? THEN 0
-                            WHEN COALESCE(bill_name, '') = ? THEN 1
-                            WHEN bill_text LIKE ? THEN 2
-                            WHEN COALESCE(bill_name, '') LIKE ? THEN 3
-                            ELSE 4
-                        END ASC,
-                        confidence DESC,
-                        confirm_count DESC,
-                        updated_at DESC,
-                        id DESC
-                    LIMIT ?
-                """, (
-                    text, text, like_pattern, like_pattern,
-                    text, text, like_pattern, like_pattern,
-                    limit_val,
-                ))
+            cursor.execute(f"""
+                SELECT *
+                FROM experiences
+                WHERE {where_clause}
+                ORDER BY {rank_order_clause}
+                LIMIT ?
+            """, params)
             rows = cursor.fetchall()
         except Exception as e:
             logger.warning(f"查询经验记录失败: {e}")
@@ -828,9 +838,7 @@ class ExperienceDB:
         records = []
         for row in rows:
             item = dict(row)
-            item["quota_ids"] = self._safe_json_list(item.get("quota_ids"))
-            item["quota_names"] = self._safe_json_list(item.get("quota_names"))
-            records.append(item)
+            records.append(self._normalize_record_quota_fields(item))
         return records
 
     def get_reference_cases(self, query_text: str, top_k: int = 3,

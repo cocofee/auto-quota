@@ -277,6 +277,57 @@ class OutputWriter:
                 except OSError:
                     pass
 
+    @staticmethod
+    def _confidence_fill(confidence: float):
+        if confidence >= config.CONFIDENCE_GREEN:
+            return GREEN_FILL
+        if confidence >= config.CONFIDENCE_YELLOW:
+            return YELLOW_FILL
+        return RED_FILL
+
+    @staticmethod
+    def _write_alternative_cells(ws, row_idx: int, start_col: int, alternatives):
+        for alt_idx, alt in enumerate(_ensure_list(alternatives)[:3]):
+            alt_col = start_col + alt_idx
+            alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
+            cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
+            cell_alt.font = Font(name="宋体", size=9, color="666666")
+            cell_alt.border = THIN_BORDER
+
+    @staticmethod
+    def _brief_explanation(explanation: str) -> str:
+        return safe_excel_text(explanation[:80] if explanation else "")
+
+    @staticmethod
+    def _write_no_match_row(ws, row_idx: int, no_reason: str, max_col: int):
+        ws.cell(row=row_idx, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
+        for col in range(1, max_col + 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.font = Font(name="宋体", size=9, color="FF0000")
+            cell.fill = RED_FILL
+            cell.border = THIN_BORDER
+
+    @staticmethod
+    def _apply_row_style(ws, row_idx: int, start_col: int, end_col: int, wrap_cols: set[int]):
+        for col_idx in range(start_col, end_col + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if cell.font == Font():
+                cell.font = BILL_FONT
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(
+                vertical="center",
+                wrap_text=(col_idx in wrap_cols),
+            )
+
+    @staticmethod
+    def _set_header_cell(ws, row_idx: int, col_idx: int, value, fill):
+        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+        cell.font = HEADER_FONT
+        cell.fill = fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = THIN_BORDER
+        return cell
+
     def write_results(self, results: list[dict], output_path: str = None,
                       original_file: str = None) -> str:
         """
@@ -455,12 +506,7 @@ class OutputWriter:
                 # 未匹配提示行
                 q_row = row_idx + 1
                 no_reason = result.get("no_match_reason", "未找到匹配定额")
-                ws.cell(row=q_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
-                for col in range(1, 10):
-                    cell = ws.cell(row=q_row, column=col)
-                    cell.font = Font(name="宋体", size=9, color="FF0000")
-                    cell.fill = RED_FILL
-                    cell.border = THIN_BORDER
+                self._write_no_match_row(ws, q_row, no_reason, 9)
 
         # 第4.5步：恢复清单行原始行高（insert_rows 不移动 row_dimensions 键）
         for row_idx in range(header_row + 1, ws.max_row + 1):
@@ -522,12 +568,7 @@ class OutputWriter:
         explanation = result.get("explanation", "")
 
         # 置信度颜色
-        if confidence >= config.CONFIDENCE_GREEN:
-            conf_fill = GREEN_FILL
-        elif confidence >= config.CONFIDENCE_YELLOW:
-            conf_fill = YELLOW_FILL
-        else:
-            conf_fill = RED_FILL
+        conf_fill = self._confidence_fill(confidence)
 
         # J列：星级推荐
         conf_text = confidence_to_stars(confidence, bool(quotas))
@@ -541,19 +582,15 @@ class OutputWriter:
         cell_k = ws.cell(
             row=row_idx,
             column=11,
-            value=safe_excel_text(explanation[:80] if explanation else "")
+            value=self._brief_explanation(explanation)
         )
         cell_k.font = BILL_FONT
         cell_k.border = THIN_BORDER
 
         # L/M/N列：备选定额
-        alternatives = _ensure_list(result.get("alternatives", []))
-        for alt_idx, alt in enumerate(alternatives[:3]):
-            alt_col = 12 + alt_idx  # L=12, M=13, N=14
-            alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
-            cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
-            cell_alt.font = Font(name="宋体", size=9, color="666666")
-            cell_alt.border = THIN_BORDER
+        self._write_alternative_cells(
+            ws, row_idx, start_col=12, alternatives=result.get("alternatives", [])
+        )
 
     def _write_quota_rows(self, ws, current_row: int, result: dict,
                           bill_unit: str, bill_qty, max_col: int) -> int:
@@ -571,7 +608,6 @@ class OutputWriter:
             写入后的下一个可用行号
         """
         quotas = _ensure_list(result.get("quotas", []))
-        confidence = _safe_confidence(result.get("confidence", 0), default=0)
 
         if quotas:
             for quota in quotas:
@@ -581,12 +617,7 @@ class OutputWriter:
         else:
             # 未匹配提示行
             no_reason = result.get("no_match_reason", "未找到匹配定额")
-            ws.cell(row=current_row, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
-            for col in range(1, max_col + 1):
-                cell = ws.cell(row=current_row, column=col)
-                cell.font = Font(name="宋体", size=9, color="FF0000")
-                cell.fill = RED_FILL
-                cell.border = THIN_BORDER
+            self._write_no_match_row(ws, current_row, no_reason, max_col)
             current_row += 1
 
         return current_row
@@ -645,11 +676,7 @@ class OutputWriter:
             14: ("备选3", LIGHT_BLUE_FILL),
         }
         for col, (title, fill) in extra_headers.items():
-            cell = ws.cell(row=header_row, column=col, value=title)
-            cell.font = HEADER_FONT
-            cell.fill = fill
-            cell.border = THIN_BORDER
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            self._set_header_cell(ws, header_row, col, title, fill)
 
         # 设置额外列宽
         ws.column_dimensions["J"].width = 14
@@ -742,15 +769,8 @@ class OutputWriter:
                    5: "计量单位", 6: "工程量", 7: "金额（元）", 10: "推荐度",
                    11: "匹配说明", 12: "备选1", 13: "备选2", 14: "备选3"}
         for col_idx, header in headers.items():
-            cell = ws.cell(row=1, column=col_idx, value=header)
-            cell.font = HEADER_FONT
-            cell.border = THIN_BORDER
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            # L/M/N列用浅蓝色区分
-            if col_idx >= 12:
-                cell.fill = LIGHT_BLUE_FILL
-            else:
-                cell.fill = HEADER_FILL
+            fill = LIGHT_BLUE_FILL if col_idx >= 12 else HEADER_FILL
+            self._set_header_cell(ws, 1, col_idx, header, fill)
         for col_idx in [8, 9]:
             cell = ws.cell(row=1, column=col_idx)
             cell.fill = HEADER_FILL
@@ -759,11 +779,7 @@ class OutputWriter:
 
         # 行2子表头
         for col_idx, header in {7: "综合单价", 8: "合价", 9: "其中：暂估价"}.items():
-            cell = ws.cell(row=2, column=col_idx, value=header)
-            cell.font = HEADER_FONT
-            cell.fill = HEADER_FILL
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = THIN_BORDER
+            self._set_header_cell(ws, 2, col_idx, header, HEADER_FILL)
         for col_idx in list(range(1, 7)) + [10, 11]:
             cell = ws.cell(row=2, column=col_idx)
             cell.fill = HEADER_FILL
@@ -779,12 +795,7 @@ class OutputWriter:
             bill_quantity = bill.get("quantity", "")
             bill_unit = bill.get("unit", "")
 
-            if confidence >= config.CONFIDENCE_GREEN:
-                conf_fill = GREEN_FILL
-            elif confidence >= config.CONFIDENCE_YELLOW:
-                conf_fill = YELLOW_FILL
-            else:
-                conf_fill = RED_FILL
+            conf_fill = self._confidence_fill(confidence)
 
             # 清单行
             ws.cell(row=current_row, column=1, value=idx)
@@ -799,25 +810,15 @@ class OutputWriter:
             ws.cell(
                 row=current_row,
                 column=11,
-                value=safe_excel_text(explanation[:80] if explanation else "")
+                value=self._brief_explanation(explanation)
             )
 
             # L/M/N列：备选定额
-            alternatives = _ensure_list(result.get("alternatives", []))
-            for alt_idx, alt in enumerate(alternatives[:3]):
-                alt_col = 12 + alt_idx
-                alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
-                cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
-                cell_alt.font = Font(name="宋体", size=9, color="666666")
-                cell_alt.border = THIN_BORDER
+            self._write_alternative_cells(
+                ws, current_row, start_col=12, alternatives=result.get("alternatives", [])
+            )
 
-            for col_idx in range(1, 15):
-                cell = ws.cell(row=current_row, column=col_idx)
-                if cell.font == Font():  # 只设置未设置过字体的单元格
-                    cell.font = BILL_FONT
-                cell.border = THIN_BORDER
-                cell.alignment = Alignment(vertical="center",
-                                           wrap_text=(col_idx == 4))
+            self._apply_row_style(ws, current_row, 1, 14, {4})
             if quotas:
                 ws.cell(row=current_row, column=10).fill = conf_fill
             current_row += 1
@@ -845,11 +846,7 @@ class OutputWriter:
         headers = ["序号", "清单名称", "当前定额编号", "当前定额名称",
                    "推荐度", "问题说明", "备选1", "备选2", "备选3"]
         for col_idx, header in enumerate(headers, start=1):
-            cell = ws.cell(row=1, column=col_idx, value=header)
-            cell.font = HEADER_FONT
-            cell.fill = HEADER_FILL
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = THIN_BORDER
+            self._set_header_cell(ws, 1, col_idx, header, HEADER_FILL)
 
         # 筛选出置信度 < CONFIDENCE_GREEN（85%）的条目
         current_row = 2
@@ -875,10 +872,7 @@ class OutputWriter:
                 main_quota_name = quotas[0].get("name", "")
 
             # 推荐度颜色
-            if confidence >= config.CONFIDENCE_YELLOW:
-                conf_fill = YELLOW_FILL
-            else:
-                conf_fill = RED_FILL
+            conf_fill = self._confidence_fill(confidence)
 
             # 写入数据
             ws.cell(row=current_row, column=1, value=idx)
@@ -893,24 +887,16 @@ class OutputWriter:
             ws.cell(
                 row=current_row,
                 column=6,
-                value=safe_excel_text(explanation[:80] if explanation else "")
+                value=self._brief_explanation(explanation)
             )
 
             # 备选定额
-            for alt_idx, alt in enumerate(alternatives[:3]):
-                alt_col = 7 + alt_idx  # G=7, H=8, I=9
-                alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
-                cell_alt = ws.cell(row=current_row, column=alt_col, value=alt_text)
-                cell_alt.font = Font(name="宋体", size=9, color="666666")
+            self._write_alternative_cells(
+                ws, current_row, start_col=7, alternatives=alternatives
+            )
 
             # 格式
-            for col_idx in range(1, 10):
-                cell = ws.cell(row=current_row, column=col_idx)
-                if cell.font == Font():
-                    cell.font = BILL_FONT
-                cell.border = THIN_BORDER
-                cell.alignment = Alignment(vertical="center",
-                                           wrap_text=(col_idx in [2, 4, 6]))
+            self._apply_row_style(ws, current_row, 1, 9, {2, 4, 6})
 
             current_row += 1
             review_count += 1
