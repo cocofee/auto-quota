@@ -456,6 +456,7 @@ class ExperienceDB:
                     int(existing[0]), quota_ids, quota_names,
                     source, confidence,
                     quota_db_version=quota_db_ver,
+                    materials_json=materials_json,
                     conn=conn, cursor=cursor, commit=False
                 )
             else:
@@ -496,6 +497,7 @@ class ExperienceDB:
     def _update_experience(self, record_id: int, quota_ids: list[str],
                            quota_names: list[str], source: str,
                            confidence: int, quota_db_version: str = None,
+                           materials_json: str = None,
                            conn=None, cursor=None,
                            commit: bool = True) -> int:
         """更新已有的经验记录
@@ -549,16 +551,22 @@ class ExperienceDB:
                 WHERE id = ?
             """, (confidence_floor, quota_db_version, now, record_id))
         elif source == "project_import":
-            # 已完成项目导入 → 中等信任：小幅涨分
+            # 已完成项目导入 → 中等信任：小幅涨分，补充主材（旧记录为空时）
             project_floor = self._clamp(confidence_floor, 0, 95)
             cursor.execute("""
                 UPDATE experiences SET
                     confidence = MIN(MAX(confidence + 2, ?), 95),
                     confirm_count = confirm_count + 1,
+                    materials = CASE
+                        WHEN (materials IS NULL OR materials = '[]') AND ? != '[]'
+                        THEN ?
+                        ELSE materials
+                    END,
                     quota_db_version = COALESCE(?, quota_db_version),
                     updated_at = ?
                 WHERE id = ?
-            """, (project_floor, quota_db_version, now, record_id))
+            """, (project_floor, materials_json or '[]', materials_json or '[]',
+                  quota_db_version, now, record_id))
         else:
             # auto_match 或其他未知来源 → 不涨分、不涨确认次数，只记录时间
             cursor.execute("""
