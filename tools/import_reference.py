@@ -152,23 +152,32 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     """
     判断一行是清单行、定额行、主材行还是标题行
 
-    区分规则：
-    - 清单行：有序号（纯数字）或编码为12位数字，且有项目名称
-    - 定额行：编码格式为 X-XXX 或 DXXXXX（定额编号格式），无项目特征
-    - 主材行：编码为纯数字8位以上或含Z@，有名称，无项目特征描述
-    - 标题行/其他：不符合以上规则
+    判断顺序很重要（优先级从高到低）：
+    1. 清单行：9-12位数字编码 + 有项目特征描述（col_d非空）
+    2. 主材行：含Z@或纯数字7位+，无项目特征描述（先排除主材，再判定额）
+    3. 定额行：编码格式为 X-XXX 或 字母+数字（如D00003）
+    4. 标题行/其他：不符合以上规则
     """
-    # 清单行判断：有序号 + 12位编码（或至少9位数字编码）
     has_serial = bool(re.match(r'^\d+$', col_a))  # 序号是纯数字
-    has_bill_code = bool(re.match(r'^\d{9,12}$', col_b))  # 12位（或9位以上）数字编码
+    has_bill_code = bool(re.match(r'^\d{9,12}$', col_b))  # 9-12位数字编码
     has_desc = bool(col_d)  # 有项目特征描述
 
-    if has_bill_code and col_c:
+    # ① 清单行：有12位编码+有项目特征描述，或有序号+名称+描述
+    # 关键：必须有 has_desc，否则12位主材编码（如080801013001）会误判
+    if has_bill_code and col_c and has_desc:
         return "bill"
     if has_serial and col_c and has_desc:
         return "bill"
 
-    # 定额行判断：编码格式为 X-XXX 或 DXXXXX
+    # ② 主材行（必须在定额之前判断，否则Z@编码会被定额正则误匹配）
+    # 主材特征：有名称、无项目特征描述、编码含Z@或纯数字7位以上
+    # 例如：01190031（日光灯）、26010101Z@2（单联单控开关）、28110000Z@121（电缆）
+    if col_c and not col_d:
+        is_material_code = bool(re.match(r'^\d{7,}', col_b)) or 'Z@' in col_b
+        if is_material_code:
+            return "material"
+
+    # ③ 定额行：编码格式为 X-XXX 或 字母开头+数字
     # 常见定额编号格式：5-325, 8-2947, D00003, 1-790, 5-92换, AD0003换
     # 江西等省份特殊格式：1-45 换（带空格）、借14-17 换（借用其他册）、补子目1
     cleaned_code = col_b.replace(" ", "").rstrip("换")  # 去空格和"换"后缀
@@ -176,9 +185,9 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
         cleaned_code = cleaned_code[1:]  # 去"借"前缀
 
     is_quota_code = bool(re.match(
-        r'^[A-Za-z]?\d{1,2}-\d+', cleaned_code  # X-XXX 格式（如 5-325, C1-1-1）
+        r'^[A-Za-z]?\d{1,2}(-\d+)+$', cleaned_code  # X-XXX 格式，支持多级如 4-3-8、5-1-967、10-11-31
     )) or bool(re.match(
-        r'^[A-Za-z]?\d{4,}', cleaned_code  # DXXXXX 格式（如 D00003, AD0003）
+        r'^[A-Za-z]\d{3,}', cleaned_code  # 字母开头+3位以上数字（如 D00003, B010, C00187@1）
     )) or bool(re.match(
         r'^补子目', col_b  # 补充子目（如"补子目1"）
     ))
@@ -186,12 +195,9 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     if is_quota_code and col_c:
         return "quota"
 
-    # 主材行判断：编码是纯数字8位以上 或 含Z@（广联达材料编码格式）
-    # 例如：01190031（日光灯）、26010101Z@2（单联单控开关）、28110000Z@121（电缆）
-    if col_c and not col_d:  # 有名称但无项目特征描述
-        is_material_code = bool(re.match(r'^\d{7,}$', col_b)) or 'Z@' in col_b
-        if is_material_code:
-            return "material"
+    # ④ 兜底：没有项目特征描述的12位编码清单（少数Excel格式描述在别的列）
+    if has_bill_code and col_c and has_serial:
+        return "bill"
 
     return "other"
 
