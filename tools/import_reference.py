@@ -77,14 +77,17 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
                 if not row or all(cell is None for cell in row):
                     continue
 
-                # 确保至少有3列
-                cells = list(row) + [None] * (7 - len(row)) if len(row) < 7 else list(row)
+                # 确保至少有9列（序号/编码/名称/特征/空列/单位/工程量/单价/合价）
+                cells = list(row) + [None] * (9 - len(row)) if len(row) < 9 else list(row)
 
                 col_a = str(cells[0] or "").strip()  # 序号
                 col_b = str(cells[1] or "").strip()  # 项目编码 / 定额编号
                 col_c = str(cells[2] or "").strip()  # 项目名称 / 定额名称
                 col_d = str(cells[3] or "").strip()  # 项目特征描述
-                col_e = str(cells[4] or "").strip()  # 计量单位
+                # cells[4] 通常是项目特征的合并空列
+                col_unit = str(cells[5] or "").strip()  # 计量单位（第6列）
+                # cells[6] 是工程量
+                col_price = cells[7]  # 综合单价/主材单价（第8列），保留原始数值
 
                 # 跳过表头行（"序号"、"项目编码"等文字）
                 if col_a in ("序号", "") and col_b in ("项目编码", "编码", ""):
@@ -107,7 +110,7 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
                         "bill_name": col_c,
                         "bill_desc": col_d,
                         "bill_code": col_b,
-                        "bill_unit": col_e,
+                        "bill_unit": col_unit,
                         "bill_pattern": bill_pattern,
                         "section": current_section,  # 继承当前分部标题
                         "quotas": [],
@@ -124,10 +127,19 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
                 elif row_type == "material" and current_bill is not None:
                     # 主材行：挂到当前清单的最后一条定额下
                     if current_bill["quotas"]:
+                        # 解析主材单价（cells[7]，可能为空或非数字）
+                        mat_price = None
+                        try:
+                            if col_price is not None:
+                                mat_price = round(float(col_price), 2)
+                        except (ValueError, TypeError):
+                            pass
+
                         current_bill["quotas"][-1]["materials"].append({
                             "code": col_b,
                             "name": col_c,
-                            "unit": col_e,
+                            "unit": col_unit,
+                            "price": mat_price,  # 主材单价（元），可能为None
                         })
 
                 elif row_type == "other" and col_c and len(col_c) >= 2:
@@ -292,19 +304,22 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
         quota_names = [q.get("name", "") for q in quotas if isinstance(q, dict) and q.get("code")]
 
         # 提取主材信息：每条定额下的materials合并成一个列表
-        # 格式：[{"quota_code": "4-14-379", "name": "单联单控开关", "unit": "只"}, ...]
+        # 格式：[{"quota_code": "4-14-379", "name": "单联单控开关", "unit": "只", "price": 4.57}, ...]
         materials = []
         for q in quotas:
             if not isinstance(q, dict) or not q.get("code"):
                 continue
             for m in q.get("materials", []):
                 if isinstance(m, dict) and m.get("name"):
-                    materials.append({
+                    mat_entry = {
                         "quota_code": q["code"],
                         "name": m["name"],
                         "code": m.get("code", ""),
                         "unit": m.get("unit", ""),
-                    })
+                    }
+                    if m.get("price") is not None:
+                        mat_entry["price"] = m["price"]
+                    materials.append(mat_entry)
 
         if not quota_ids:
             skipped += 1
