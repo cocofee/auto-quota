@@ -460,8 +460,25 @@ def main():
         for p in pairs
         if isinstance(p, dict) and isinstance(p.get("quotas", []), list)
     )
+    # 统计主材：遍历所有清单→定额→主材
+    total_materials = 0
+    bills_with_materials = 0
+    for p in pairs:
+        if not isinstance(p, dict):
+            continue
+        has_mat = False
+        for q in p.get("quotas", []):
+            if isinstance(q, dict):
+                mat_count = len(q.get("materials", []))
+                total_materials += mat_count
+                if mat_count > 0:
+                    has_mat = True
+        if has_mat:
+            bills_with_materials += 1
+
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  定额项: {total_quotas}条")
+    logger.info(f"  主材项: {total_materials}条（{bills_with_materials}条清单含主材）")
     avg_per_bill = (total_quotas / len(pairs)) if pairs else 0
     logger.info(f"  平均每条清单: {avg_per_bill:.1f}条定额")
 
@@ -524,6 +541,8 @@ def main():
     logger.info(f"  项目: {project_name}")
     logger.info(f"  定额库: {province}")
     logger.info(f"  清单项: {len(pairs)}条")
+    logger.info(f"  定额项: {total_quotas}条")
+    logger.info(f"  主材项: {total_materials}条（{bills_with_materials}条清单含主材）")
     logger.info(f"  经验库: +{exp_stats['added']}条（带定额编号，同省直接用）")
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
     logger.info(f"  数据层级: 权威层（project_import → authority，可直通匹配）")
