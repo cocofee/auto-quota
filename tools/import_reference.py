@@ -170,9 +170,10 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
         return "bill"
 
     # ② 主材行（必须在定额之前判断，否则Z@编码会被定额正则误匹配）
-    # 主材特征：有名称、无项目特征描述、编码含Z@或纯数字7位以上
+    # 主材特征：无序号、有名称、无项目特征描述、编码含Z@或纯数字7位以上
     # 例如：01190031（日光灯）、26010101Z@2（单联单控开关）、28110000Z@121（电缆）
-    if col_c and not col_d:
+    # 注意：有序号的行是清单项（如 [7] 080801013001 防鼠板），不是主材
+    if col_c and not col_d and not has_serial:
         is_material_code = bool(re.match(r'^\d{7,}', col_b)) or 'Z@' in col_b
         if is_material_code:
             return "material"
