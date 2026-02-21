@@ -882,19 +882,26 @@ class ExperienceDB:
         return records
 
     def get_reference_cases(self, query_text: str, top_k: int = 3,
-                            province: str = None) -> list[dict]:
+                            province: str = None,
+                            specialty: str = None) -> list[dict]:
         """
         获取参考案例（供大模型 few-shot 使用）
 
         与 search_similar 的区别：
         - 这个方法用于给大模型提供参考（不要求高相似度）
         - 返回格式更简洁，适合放入 Prompt
+        - 支持按专业过滤，优先返回同专业的案例
+
+        参数:
+            specialty: 专业分类（如"C10"），传入后同专业案例优先排在前面
 
         返回:
             [{"bill": "清单描述", "quotas": ["定额1", "定额2"]}, ...]
         """
+        # 多搜一些候选，后面按专业重排序再截断
+        fetch_k = top_k * 2 if specialty else top_k
         records = self.search_similar(
-            query_text, top_k=top_k, min_confidence=70, province=province)
+            query_text, top_k=fetch_k, min_confidence=70, province=province)
 
         cases = []
         for r in records:
@@ -913,7 +920,16 @@ class ExperienceDB:
                 "bill": r["bill_text"],
                 "quotas": quota_strs,
                 "confidence": r.get("confidence", 0),
+                "specialty": r.get("specialty", ""),  # 保留专业字段用于排序
             })
+
+        # 按专业优先排序：同专业的案例排前面，避免跨专业误导Agent
+        if specialty and len(cases) > top_k:
+            same = [c for c in cases if c.get("specialty") == specialty]
+            diff = [c for c in cases if c.get("specialty") != specialty]
+            cases = (same + diff)[:top_k]
+        else:
+            cases = cases[:top_k]
 
         return cases
 
