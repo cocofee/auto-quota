@@ -18,12 +18,13 @@ import sys
 import os
 import json
 import re
-import sqlite3
 import argparse
 from pathlib import Path
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect
 from config import get_quota_db_path, OUTPUT_DIR, CURRENT_PROVINCE
 
 # 检测器：纯规则判断，不查DB
@@ -194,7 +195,7 @@ def auto_review(json_path, province=None):
     db_path = get_quota_db_path(province)
     db_conn = None
     if os.path.exists(db_path):
-        db_conn = sqlite3.connect(str(db_path))
+        db_conn = _db_connect(db_path)
 
     error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
 

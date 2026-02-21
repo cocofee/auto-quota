@@ -12,7 +12,6 @@
 
 import sys
 import os
-import sqlite3
 import argparse
 from pathlib import Path
 
@@ -22,6 +21,8 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect
 from config import get_quota_db_path, CURRENT_PROVINCE, resolve_province
 from src.review_checkers import (
     check_category_mismatch, check_material_mismatch, check_connection_mismatch,
@@ -527,7 +528,7 @@ def run_db_sample_test(province, book_filter=None):
         print(f"定额库不存在: {db_path}")
         return
 
-    conn = sqlite3.connect(str(db_path))
+    conn = _db_connect(db_path)
     cursor = conn.cursor()
 
     # 定义互斥配对测试组（从同一类中抽两条不同的定额交叉检测）

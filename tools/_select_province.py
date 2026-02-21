@@ -1,22 +1,21 @@
 """
 定额库选择脚本（供bat文件调用）
 
-流程：先选省份 → 再选该省份下的定额库
+流程：先选省份 → 再选定额库（支持多选）
 1. 显示所有省份（地区），用户选一个
-2. 显示该省份下所有定额库，用户选主定额
-3. 如果同省份还有其他已导入的定额库，可选辅助定额（用于安装清单中的土建/市政项目）
-4. 写入临时文件供bat读取
+2. 显示该省份下所有定额库，用户多选（第一个为主定额，其余为辅助定额）
+3. 写入临时文件供bat读取
 """
 
 import sys
 import re
-import sqlite3
 from pathlib import Path
 from collections import OrderedDict
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from db.sqlite import connect as _db_connect
 import config
 
 
@@ -39,7 +38,7 @@ def _get_db_count(province_name: str) -> str:
     if not db_path.exists():
         return "首次导入"
     try:
-        conn = sqlite3.connect(str(db_path), timeout=5)
+        conn = _db_connect(db_path)
         count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
         conn.close()
         return f"{count}条"
@@ -47,7 +46,13 @@ def _get_db_count(province_name: str) -> str:
         return "已存在"
 
 
-def main():
+def main(allow_new=False):
+    """
+    定额库选择主流程
+
+    参数:
+        allow_new: 是否允许选择未导入的库（导入场景True，匹配场景False）
+    """
     db_provinces = config.list_db_provinces()
     data_provinces = config.list_all_provinces()
     not_imported = [p for p in data_provinces if p not in db_provinces]
@@ -99,13 +104,17 @@ def main():
             sys.exit(1)
 
     # ============================================================
-    # 第2步：选该省份下的主定额库
+    # 第2步：选定额库（支持多选，第一个为主定额）
     # ============================================================
     items = region_groups[selected_region]  # [(名称, 数量)]
 
     if len(items) == 1:
-        # 该省份只有1个定额库，自动选择
+        # 该省份只有1个定额库，自动选择（匹配场景要求必须已导入）
+        if not allow_new and items[0][1] == "首次导入":
+            print(f"  [错误] {items[0][0]} 尚未导入数据，请先运行导入")
+            sys.exit(1)
         selected_main = items[0][0]
+        selected_aux = []
         print(f"  {selected_region}只有1个定额库，自动选择: {selected_main}")
     else:
         print()
@@ -114,56 +123,44 @@ def main():
         for i, (name, info) in enumerate(items, 1):
             print(f"    [{i}] {name}  ({info})")
         print()
+        # 匹配场景下，只有已导入的库才能选（"首次导入"的还没数据，选了也搜不到）
+        imported_indices = [i for i, (_, info) in enumerate(items) if info != "首次导入"]
         try:
-            choice = input("  选主定额库编号: ").strip()
-            idx = int(choice) - 1
-            if idx < 0 or idx >= len(items):
-                print(f"  [错误] 编号超出范围（1~{len(items)}）")
+            choice = input("  选定额库编号（多选用逗号分隔）: ").strip()
+            # 解析用户输入的编号列表
+            selected_indices = []
+            for part in choice.split(","):
+                part = part.strip()
+                if part:
+                    idx = int(part) - 1
+                    if idx < 0 or idx >= len(items):
+                        print(f"  [错误] 编号 {part} 超出范围（1~{len(items)}）")
+                        sys.exit(1)
+                    if not allow_new and idx not in imported_indices:
+                        print(f"  [错误] [{part}] {items[idx][0]} 尚未导入数据，无法用于匹配")
+                        sys.exit(1)
+                    if idx not in selected_indices:
+                        selected_indices.append(idx)
+            if not selected_indices:
+                print("  [错误] 至少选择1个定额库")
                 sys.exit(1)
-            selected_main = items[idx][0]
         except (ValueError, EOFError):
             print("  [错误] 请输入数字编号")
             sys.exit(1)
 
+        # 第一个为主定额，其余为辅助定额
+        selected_main = items[selected_indices[0]][0]
+        selected_aux = [items[i][0] for i in selected_indices[1:]]
+
+    # 显示选择结果
     print()
-    print(f"  主定额: {selected_main}")
-
-    # ============================================================
-    # 第3步：选辅助定额库（可选，同省份下其他已导入的库）
-    # ============================================================
-    aux_candidates = []
-    for i, (name, info) in enumerate(items, 1):
-        if name != selected_main and info != "首次导入":
-            aux_candidates.append((i, name, info))
-
-    selected_aux = []
-    if aux_candidates:
-        print()
-        print("  同省份其他定额库（安装清单中有土建/市政项目时选上）:")
-        print("  直接回车跳过")
-        print()
-        for i, name, info in aux_candidates:
-            print(f"    [{i}] {name}  ({info})")
-        print()
-        try:
-            aux_input = input("  辅助定额库编号（多选逗号分隔）: ").strip()
-            if aux_input:
-                for part in aux_input.split(","):
-                    part = part.strip()
-                    if part:
-                        aux_idx = int(part) - 1
-                        if 0 <= aux_idx < len(items):
-                            aux_name = items[aux_idx][0]
-                            if aux_name != selected_main:
-                                selected_aux.append(aux_name)
-        except (ValueError, EOFError):
-            pass
-
     if selected_aux:
-        print()
-        print("  已选辅助:")
+        print("  已选定额:")
+        print(f"    · {selected_main}")
         for p in selected_aux:
-            print(f"    - {p}")
+            print(f"    · {p}")
+    else:
+        print(f"  已选定额: {selected_main}")
 
     # ---- 写入临时文件 ----
     tmp_main = PROJECT_ROOT / ".tmp_selected_province.txt"
@@ -179,4 +176,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # --allow-new 参数：导入场景允许选未导入的库
+    allow_new = "--allow-new" in sys.argv
+    main(allow_new=allow_new)

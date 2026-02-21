@@ -291,12 +291,45 @@ class OutputWriter:
             alt_col = start_col + alt_idx
             alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
             cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
-            cell_alt.font = Font(name="宋体", size=9, color="666666")
+            cell_alt.font = BILL_FONT  # 和正文统一字体
             cell_alt.border = THIN_BORDER
 
     @staticmethod
     def _brief_explanation(explanation: str) -> str:
         return safe_excel_text(explanation[:80] if explanation else "")
+
+    @staticmethod
+    def _brief_materials(result: dict, max_items: int = 4) -> str:
+        """把结果中的主材列表压缩成可读短文本。"""
+        materials = result.get("materials")
+        if not isinstance(materials, list) or not materials:
+            return ""
+
+        parts = []
+        for mat in materials:
+            if not isinstance(mat, dict):
+                continue
+            name = str(mat.get("name", "")).strip()
+            if not name:
+                continue
+            unit = str(mat.get("unit", "")).strip()
+            price = mat.get("price", None)
+            if price is None:
+                text = f"{name}({unit})" if unit else name
+            else:
+                try:
+                    p = f"{float(price):g}"
+                except Exception:
+                    p = str(price)
+                text = f"{name}({p}元/{unit})" if unit else f"{name}({p}元)"
+            parts.append(text)
+            if len(parts) >= max_items:
+                break
+        if not parts:
+            return ""
+        more = len(materials) - len(parts)
+        suffix = f" 等{len(materials)}项" if more > 0 else ""
+        return safe_excel_text("; ".join(parts) + suffix)
 
     @staticmethod
     def _write_no_match_row(ws, row_idx: int, no_reason: str, max_col: int):
@@ -484,7 +517,7 @@ class OutputWriter:
         for row_idx, result in sorted(row_result_pairs, key=lambda x: x[0], reverse=True):
             quotas = _ensure_list(result.get("quotas", []))
 
-            # 在清单行的J-N列写入推荐度和备选
+            # 在清单行的J-O列写入推荐度、备选和主材
             self._write_bill_extra_info(ws, row_idx, result)
 
             # 要插入的行数（至少1行用于未匹配提示）
@@ -516,7 +549,7 @@ class OutputWriter:
                 if saved_h:
                     ws.row_dimensions[row_idx].height = saved_h
 
-        # 第5步：在表头行添加J-N列标题
+        # 第5步：在表头行添加J-O列标题
         self._add_extra_headers(ws, header_row)
 
         # 第6步：统一格式化所有行（固定列宽 + 字体 + 边框 + 换行）
@@ -562,7 +595,7 @@ class OutputWriter:
             logger.info(f"Sheet [{ws.title}]: 删除 {len(existing_quota_rows)} 条已有定额行")
 
     def _write_bill_extra_info(self, ws, row_idx: int, result: dict):
-        """在清单行的J-N列写入推荐度、匹配说明、备选定额"""
+        """在清单行的J-O列写入推荐度、匹配说明、备选定额和主材"""
         confidence = _safe_confidence(result.get("confidence", 0), default=0)
         quotas = _ensure_list(result.get("quotas", []))
         explanation = result.get("explanation", "")
@@ -591,6 +624,13 @@ class OutputWriter:
         self._write_alternative_cells(
             ws, row_idx, start_col=12, alternatives=result.get("alternatives", [])
         )
+
+        # O列：主材
+        material_text = self._brief_materials(result)
+        cell_o = ws.cell(row=row_idx, column=15, value=material_text)
+        cell_o.font = BILL_FONT
+        cell_o.border = THIN_BORDER
+        cell_o.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
     def _write_quota_rows(self, ws, current_row: int, result: dict,
                           bill_unit: str, bill_qty, max_col: int) -> int:
@@ -667,13 +707,14 @@ class OutputWriter:
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
 
     def _add_extra_headers(self, ws, header_row: int):
-        """在表头行添加J-N列标题"""
+        """在表头行添加J-O列标题"""
         extra_headers = {
             10: ("推荐度", HEADER_FILL),
             11: ("匹配说明", HEADER_FILL),
             12: ("备选1", LIGHT_BLUE_FILL),
             13: ("备选2", LIGHT_BLUE_FILL),
             14: ("备选3", LIGHT_BLUE_FILL),
+            15: ("主材", LIGHT_BLUE_FILL),
         }
         for col, (title, fill) in extra_headers.items():
             self._set_header_cell(ws, header_row, col, title, fill)
@@ -684,6 +725,7 @@ class OutputWriter:
         ws.column_dimensions["L"].width = 30
         ws.column_dimensions["M"].width = 30
         ws.column_dimensions["N"].width = 30
+        ws.column_dimensions["O"].width = 36
 
     def _apply_post_format(self, ws, header_row: int):
         """
@@ -713,7 +755,7 @@ class OutputWriter:
             if not is_bill and not is_quota:
                 continue  # 分部/合计/空行等，保留原始格式不动
 
-            for col_idx in range(1, 15):  # A-N 列（1-14）
+            for col_idx in range(1, 16):  # A-O 列（1-15）
                 cell = ws.cell(row=row_idx, column=col_idx)
 
                 # 边框：统一设 thin 边框
@@ -725,7 +767,7 @@ class OutputWriter:
 
                 # 对齐 + wrap_text：根据列确定对齐方式
                 h_align = "center"
-                if col_idx in (3, 4, 11, 12, 13, 14):  # C/D/K/L/M/N：左对齐
+                if col_idx in (3, 4, 11, 12, 13, 14, 15):  # C/D/K/L/M/N/O：左对齐
                     h_align = "left"
                 elif col_idx in (6, 7, 8):  # F/G/H列（数量/单价/合价）：右对齐
                     h_align = "right"
@@ -759,15 +801,15 @@ class OutputWriter:
     def _write_detail_sheet(self, ws, results: list[dict]):
         """纯新建模式：不依赖原始文件，直接生成标准格式"""
         col_widths = {"A": 6, "B": 16, "C": 50, "D": 40, "E": 8,
-                      "F": 12, "G": 12, "H": 12, "I": 12, "J": 14, "K": 40,
-                      "L": 30, "M": 30, "N": 30}
+                      "F": 12, "G": 12, "H": 12, "I": 12, "J": 14, "K": 20,
+                      "L": 18, "M": 18, "N": 18, "O": 20}
         for col, width in col_widths.items():
             ws.column_dimensions[col].width = width
 
         # 行1表头
         headers = {1: "序号", 2: "项目编码", 3: "项目名称", 4: "项目特征描述",
                    5: "计量单位", 6: "工程量", 7: "金额（元）", 10: "推荐度",
-                   11: "匹配说明", 12: "备选1", 13: "备选2", 14: "备选3"}
+                   11: "匹配说明", 12: "备选1", 13: "备选2", 14: "备选3", 15: "主材"}
         for col_idx, header in headers.items():
             fill = LIGHT_BLUE_FILL if col_idx >= 12 else HEADER_FILL
             self._set_header_cell(ws, 1, col_idx, header, fill)
@@ -817,8 +859,9 @@ class OutputWriter:
             self._write_alternative_cells(
                 ws, current_row, start_col=12, alternatives=result.get("alternatives", [])
             )
+            ws.cell(row=current_row, column=15, value=self._brief_materials(result))
 
-            self._apply_row_style(ws, current_row, 1, 14, {4})
+            self._apply_row_style(ws, current_row, 1, 15, {4, 15})
             if quotas:
                 ws.cell(row=current_row, column=10).fill = conf_fill
             current_row += 1
@@ -836,15 +879,15 @@ class OutputWriter:
         方便用户快速定位需要修改的条目，不需要翻看整个匹配结果。
         包含：序号、清单名称、当前定额、推荐度、问题说明、备选1/2/3
         """
-        # 列宽
-        col_widths = {"A": 6, "B": 40, "C": 20, "D": 30, "E": 14,
-                      "F": 50, "G": 30, "H": 30, "I": 30}
+        # 列宽（加了项目特征列，整体后移一列）
+        col_widths = {"A": 8, "B": 30, "C": 40, "D": 20, "E": 30, "F": 14,
+                      "G": 24, "H": 18, "I": 18, "J": 18, "K": 20}
         for col, width in col_widths.items():
             ws.column_dimensions[col].width = width
 
         # 表头
-        headers = ["序号", "清单名称", "当前定额编号", "当前定额名称",
-                   "推荐度", "问题说明", "备选1", "备选2", "备选3"]
+        headers = ["清单序号", "清单名称", "项目特征", "当前定额编号", "当前定额名称",
+                   "推荐度", "问题说明", "备选1", "备选2", "备选3", "主材"]
         for col_idx, header in enumerate(headers, start=1):
             self._set_header_cell(ws, 1, col_idx, header, HEADER_FILL)
 
@@ -874,29 +917,31 @@ class OutputWriter:
             # 推荐度颜色
             conf_fill = self._confidence_fill(confidence)
 
-            # 写入数据
+            # 写入数据（加了项目特征列，整体后移一列）
             ws.cell(row=current_row, column=1, value=idx)
             ws.cell(row=current_row, column=2, value=safe_excel_text(bill.get("name", "")))
-            ws.cell(row=current_row, column=3, value=safe_excel_text(main_quota_id))
-            ws.cell(row=current_row, column=4, value=safe_excel_text(main_quota_name))
+            ws.cell(row=current_row, column=3, value=safe_excel_text(bill.get("description", "")))
+            ws.cell(row=current_row, column=4, value=safe_excel_text(main_quota_id))
+            ws.cell(row=current_row, column=5, value=safe_excel_text(main_quota_name))
 
             conf_text = confidence_to_stars(confidence, bool(quotas))
-            cell_conf = ws.cell(row=current_row, column=5, value=conf_text)
+            cell_conf = ws.cell(row=current_row, column=6, value=conf_text)
             cell_conf.fill = conf_fill
 
             ws.cell(
                 row=current_row,
-                column=6,
+                column=7,
                 value=self._brief_explanation(explanation)
             )
 
             # 备选定额
             self._write_alternative_cells(
-                ws, current_row, start_col=7, alternatives=alternatives
+                ws, current_row, start_col=8, alternatives=alternatives
             )
+            ws.cell(row=current_row, column=11, value=self._brief_materials(result))
 
-            # 格式
-            self._apply_row_style(ws, current_row, 1, 9, {2, 4, 6})
+            # 格式（项目特征、定额名称、问题说明、主材列自动换行）
+            self._apply_row_style(ws, current_row, 1, 11, {2, 3, 5, 7, 11})
 
             current_row += 1
             review_count += 1
@@ -905,7 +950,7 @@ class OutputWriter:
         if review_count == 0:
             cell = ws.cell(row=2, column=1, value="全部匹配结果均为高置信度，无需审核")
             cell.font = Font(name="微软雅黑", size=11, color="006100")
-            ws.merge_cells("A2:I2")
+            ws.merge_cells("A2:K2")
 
         ws.freeze_panes = "A2"
         logger.info(f"待审核Sheet: {review_count} 条需要人工审核")

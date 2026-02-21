@@ -11,7 +11,7 @@ echo  功能: 扫描Excel 自动识别专业 导入数据库 生成规则 建索引
 echo.
 
 :: 用Python完成省份选择（避免bat变量嵌套问题）
-python tools/_select_province.py
+python tools/_select_province.py --allow-new
 if errorlevel 1 (
     pause
     exit /b 1

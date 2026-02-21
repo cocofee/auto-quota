@@ -13,14 +13,18 @@ echo.
 :: ============================================================
 :: 第1步：选择省份定额库
 :: ============================================================
-python tools\_select_province.py
+python tools\_select_province.py --allow-new
 if errorlevel 1 (
     pause
     exit /b 1
 )
 set /p PROVINCE=<.tmp_selected_province.txt
 del /q .tmp_selected_province.txt 2>nul
-del /q .tmp_selected_aux_provinces.txt 2>nul
+set "AUX_PROVINCES="
+if exist .tmp_selected_aux_provinces.txt (
+    set /p AUX_PROVINCES=<.tmp_selected_aux_provinces.txt
+    del /q .tmp_selected_aux_provinces.txt 2>nul
+)
 echo.
 
 :: ============================================================
@@ -51,12 +55,16 @@ if not exist "!INPUT_FILE!" (
 
 echo.
 echo   文件: !INPUT_FILE!
-echo   省份: !PROVINCE!
+echo   定额库: !PROVINCE!
 echo.
 echo   开始导入...
 echo.
 
-python tools\import_reference.py "!INPUT_FILE!" --province "!PROVINCE!"
+if defined AUX_PROVINCES (
+    python tools\import_reference.py "!INPUT_FILE!" --province "!PROVINCE!" --aux-provinces "!AUX_PROVINCES!"
+) else (
+    python tools\import_reference.py "!INPUT_FILE!" --province "!PROVINCE!"
+)
 
 if errorlevel 1 (
     echo.
@@ -79,14 +87,18 @@ set /p "ACTION=请选择: "
 
 if /i "!ACTION!"=="1" goto WAIT_FILE
 if /i "!ACTION!"=="2" (
-    python tools\_select_province.py
+    python tools\_select_province.py --allow-new
     if errorlevel 1 (
         pause
         exit /b 1
     )
     set /p PROVINCE=<.tmp_selected_province.txt
     del /q .tmp_selected_province.txt 2>nul
-    del /q .tmp_selected_aux_provinces.txt 2>nul
+    set "AUX_PROVINCES="
+    if exist .tmp_selected_aux_provinces.txt (
+        set /p AUX_PROVINCES=<.tmp_selected_aux_provinces.txt
+        del /q .tmp_selected_aux_provinces.txt 2>nul
+    )
     goto WAIT_FILE
 )
 

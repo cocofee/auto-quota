@@ -13,7 +13,6 @@
 """
 
 import re
-import sqlite3
 import os
 import tempfile
 from pathlib import Path
@@ -24,6 +23,7 @@ from loguru import logger
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from db.sqlite import connect as _db_connect
 
 
 class VocabExtractor:
@@ -41,10 +41,8 @@ class VocabExtractor:
         self.all_terms = set()     # 所有有意义的词汇
 
     def _connect(self):
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=True)
 
     def extract_all(self):
         """执行完整的反向提取流程"""

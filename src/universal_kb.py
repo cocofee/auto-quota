@@ -20,13 +20,15 @@
 
 import json
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
 from loguru import logger
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
 
 
@@ -49,12 +51,8 @@ class UniversalKB:
         """创建通用知识库SQLite表"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn = _db_connect_init(self.db_path)
         cursor = conn.cursor()
-        # 提升并发读写稳定性
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge (
@@ -136,12 +134,8 @@ class UniversalKB:
             return {}
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，降低并发锁冲突概率。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     @property
     def model(self):

@@ -34,7 +34,65 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
 from src.text_parser import normalize_bill_text
+from db.sqlite import connect as _db_connect
 import config
+
+
+# 缓存：避免同一省份的定额编号集合被重复加载
+_quota_id_sets_cache: dict[str, set[str]] = {}
+
+
+def _quota_ids_exist_in_province(quota_ids: list[str], province: str) -> bool:
+    """检查定额编号是否存在于指定省份的定额库中
+
+    用于多定额库导入时的路由判断：定额编号属于哪个省的库，就导入到哪个省。
+    只要有一个编号命中，就认为属于该省（一条清单的多个定额通常属于同一省）。
+
+    参数:
+        quota_ids: 定额编号列表（如 ["C10-1-5", "C10-1-6"]）
+        province: 省份/定额库名称
+
+    返回:
+        True 表示至少有一个编号在该省的定额库中存在
+    """
+    global _quota_id_sets_cache
+
+    if not quota_ids or not province:
+        return False
+
+    # 从缓存加载，避免重复读库
+    if province not in _quota_id_sets_cache:
+        quota_db_path = config.get_quota_db_path(province)
+        if not quota_db_path.exists():
+            _quota_id_sets_cache[province] = set()
+        else:
+            try:
+                conn = _db_connect(quota_db_path)
+                try:
+                    rows = conn.execute("SELECT quota_id FROM quotas").fetchall()
+                    _quota_id_sets_cache[province] = {row[0] for row in rows}
+                finally:
+                    conn.close()
+            except Exception as e:
+                logger.warning(f"加载{province}定额库失败: {e}")
+                _quota_id_sets_cache[province] = set()
+
+    id_set = _quota_id_sets_cache[province]
+    if not id_set:
+        return False
+
+    # 清洗编号后再查（和 experience_db._validate_quota_ids 的清洗逻辑一致）
+    for qid in quota_ids:
+        qid_clean = qid.strip().replace(" ", "")
+        qid_clean = re.sub(r'换$', '', qid_clean)
+        if qid_clean.startswith("借"):
+            qid_clean = qid_clean[1:]
+        qid_clean = re.sub(r'\*[\d.]+$', '', qid_clean)
+        qid_clean = qid_clean.strip()
+        if qid_clean in id_set:
+            return True
+
+    return False
 
 
 def read_excel_pairs(excel_path: str) -> list[dict]:
@@ -197,11 +255,15 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     if cleaned_code.startswith("借"):
         cleaned_code = cleaned_code[1:]  # 去"借"前缀
 
-    is_quota_code = bool(re.match(
-        r'^[A-Za-z]?\d{1,2}(-\d+)+$', cleaned_code  # X-XXX 格式，支持多级如 4-3-8、5-1-967、10-11-31
-    )) or bool(re.match(
-        r'^[A-Za-z]\d{3,}', cleaned_code  # 字母开头+3位以上数字（如 D00003, B010, C00187@1）
-    )) or bool(re.match(
+    quota_id_patterns = (
+        # 字母/字母+数字前缀 + 多段数字（如 C10-1-5, A-1-1, SC1-1-1, GY-1）
+        r'^[A-Za-z]{1,3}\d{0,2}(-\d+)+$',
+        # 纯数字前缀 + 多段数字（如 99-1-1, 2003-1-1）
+        r'^\d{1,4}(-\d+)+$',
+        # 字母开头+连续数字（如 D00003, B010, C00187@1）
+        r'^[A-Za-z]\d{3,}',
+    )
+    is_quota_code = any(re.match(pat, cleaned_code) for pat in quota_id_patterns) or bool(re.match(
         r'^补子目', col_b  # 补充子目（如"补子目1"）
     ))
 
@@ -268,18 +330,30 @@ def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
     return records
 
 
-def import_to_experience(pairs: list[dict], project_name: str, province: str = None):
+def import_to_experience(pairs: list[dict], project_name: str,
+                         province: str = None, all_provinces: list[str] = None):
     """
     将清单→定额对导入经验库（带定额编号，同省份可直接匹配）
+
+    支持多定额库：按顺序尝试每个定额库，定额编号在哪个库能校验通过就存到哪个。
 
     参数:
         pairs: read_excel_pairs() 返回的清单→定额对列表
         project_name: 项目名称（用于标记来源）
+        province: 主定额库（单省份模式，兼容旧调用）
+        all_provinces: 所有选中的定额库列表（多省份模式，优先使用）
 
     返回:
         {"added": 新增数, "skipped": 跳过数}
     """
     from src.experience_db import ExperienceDB
+
+    # 构建省份尝试列表（主省份在前）
+    provinces_to_try = []
+    if all_provinces:
+        provinces_to_try = list(all_provinces)
+    elif province:
+        provinces_to_try = [province]
 
     exp_db = ExperienceDB()
     added = 0
@@ -326,16 +400,28 @@ def import_to_experience(pairs: list[dict], project_name: str, province: str = N
             continue
 
         try:
-            record_id = exp_db.add_experience(
-                bill_text=bill_text,
-                quota_ids=quota_ids,
-                quota_names=quota_names,
-                materials=materials,  # 主材信息
-                confidence=90,  # 项目导入给90分（权威层，可直通匹配）
-                source="project_import",
-                project_name=project_name,
-                province=province,
-            )
+            # 多定额库模式：按顺序尝试每个定额库，定额编号在哪个库就存到哪个
+            record_id = -1
+            for try_province in provinces_to_try:
+                # 预检查：定额编号是否存在于该省的定额库
+                # 没有这个检查的话，add_experience() 对缺失编号只发警告不报错，
+                # 导致循环总是停在第一个省，把所有数据都导入到错误的库
+                if len(provinces_to_try) > 1 and not _quota_ids_exist_in_province(quota_ids, try_province):
+                    continue  # 编号不属于这个省，跳过试下一个
+
+                record_id = exp_db.add_experience(
+                    bill_text=bill_text,
+                    quota_ids=quota_ids,
+                    quota_names=quota_names,
+                    materials=materials,
+                    confidence=90,
+                    source="project_import",
+                    project_name=project_name,
+                    province=try_province,
+                )
+                if record_id > 0:
+                    break  # 导入成功，不再尝试下一个定额库
+
             if record_id > 0:
                 added += 1
             else:
@@ -361,7 +447,7 @@ def _select_quota_db() -> str:
     返回:
         完整的省份定额版本名称（如 "北京市建设工程施工消耗量标准(2024)"）
     """
-    import sqlite3 as _sqlite3
+    from db.sqlite import connect as _db_connect
     db_provinces = config.list_db_provinces()
 
     if not db_provinces:
@@ -382,7 +468,7 @@ def _select_quota_db() -> str:
         db_info = ""
         if db_path.exists():
             try:
-                conn = _sqlite3.connect(str(db_path), timeout=5)
+                conn = _db_connect(db_path)
                 count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
                 conn.close()
                 db_info = f"{count}条定额"
@@ -431,6 +517,9 @@ def main():
     parser.add_argument("--province", default=None,
                         help="定额库版本全称（如 '北京市建设工程施工消耗量标准(2024)'）。"
                              "不指定则交互式选择。")
+    parser.add_argument("--aux-provinces", default=None,
+                        help="辅助定额库（逗号分隔）。安装+土建混合项目时，"
+                             "定额编号在主定额库校验不过会自动尝试辅助定额库。")
     parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
     parser.add_argument("--dry-run", action="store_true", help="只解析不导入（调试用）")
     parser.add_argument("--no-analyze", action="store_true",
@@ -451,14 +540,29 @@ def main():
         except ValueError as e:
             logger.error(f"省份解析失败: {e}")
             sys.exit(1)
-        # 校验该省份是否有定额库
+        # 校验该省份是否有定额库（导入场景允许库不存在，只是校验会宽松些）
         db_path = config.get_quota_db_path(province)
         if not db_path.exists():
-            logger.error(f"该省份尚未导入定额库: {province}")
-            logger.error(f"请先运行: python tools/import_all.py --province \"{province}\"")
-            sys.exit(1)
+            logger.warning(f"主定额库尚未导入: {province}（导入的记录将不做定额编号校验）")
     else:
         province = _select_quota_db()
+
+    # 解析辅助定额库（安装+土建混合项目时使用）
+    aux_provinces = []
+    if args.aux_provinces:
+        for ap in args.aux_provinces.split(","):
+            ap = ap.strip()
+            if not ap:
+                continue
+            try:
+                resolved = config.resolve_province(ap)
+                if resolved != province:  # 不重复加主定额库
+                    aux_provinces.append(resolved)
+            except ValueError:
+                logger.warning(f"辅助定额库解析失败，跳过: {ap}")
+
+    # 构建完整的省份列表（主定额库在前）
+    all_provinces = [province] + aux_provinces
 
     project_name = args.project or input_path.stem
 
@@ -534,9 +638,11 @@ def main():
                 print(f"  定额: {q.get('code', '')} → {q.get('name', '')}")
         return
 
-    # 第2步：导入经验库（带定额编号，同省份直接用）
+    # 第2步：导入经验库（带定额编号，自动路由到对应的定额库）
     logger.info("导入经验库...")
-    exp_stats = import_to_experience(pairs, project_name, province=province)
+    if len(all_provinces) > 1:
+        logger.info(f"  多定额库模式: {', '.join(p[:20] for p in all_provinces)}")
+    exp_stats = import_to_experience(pairs, project_name, all_provinces=all_provinces)
     logger.info(f"  经验库: 新增{exp_stats['added']}条, 跳过{exp_stats['skipped']}条")
 
     # 第3步：导入通用知识库（定额名称模式，跨省份通用）
@@ -556,7 +662,7 @@ def main():
     logger.info("=" * 50)
     logger.info("导入完成")
     logger.info(f"  项目: {project_name}")
-    logger.info(f"  定额库: {province}")
+    logger.info(f"  定额库: {', '.join(p[:25] for p in all_provinces)}")
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  定额项: {total_quotas}条")
     logger.info(f"  主材项: {total_materials}条（{bills_with_materials}条清单含主材）")
@@ -565,14 +671,17 @@ def main():
     logger.info(f"  数据层级: 权威层（project_import → authority，可直通匹配）")
     logger.info("=" * 50)
 
-    # 第4步（可选）：自动分析生成方法卡片
+    # 第4步（可选）：自动分析生成方法卡片（每个定额库都跑一遍）
     if not args.no_analyze:
         try:
             from tools.gen_method_cards import incremental_generate
             logger.info("自动分析：检查是否有新模式可以提炼方法卡片...")
-            card_stats = incremental_generate(province=province, min_samples=5)
-            if card_stats["generated"] > 0:
-                logger.info(f"  新生成 {card_stats['generated']} 张方法卡片")
+            total_generated = 0
+            for p in all_provinces:
+                card_stats = incremental_generate(province=p, min_samples=5)
+                total_generated += card_stats["generated"]
+            if total_generated > 0:
+                logger.info(f"  新生成 {total_generated} 张方法卡片")
             else:
                 logger.info("  暂无新模式需要生成方法卡片（样本不足或已有卡片）")
         except Exception as e:

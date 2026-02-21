@@ -20,14 +20,17 @@
 """
 
 import json
+import re
 import sqlite3
-import time
 import sys
+import time
 from pathlib import Path
 
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
 
 
@@ -54,10 +57,7 @@ class MethodCards:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = _db_connect_init(self.db_path)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS method_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,27 +85,36 @@ class MethodCards:
             CREATE INDEX IF NOT EXISTS idx_method_category
             ON method_cards(category)
         """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_method_source_province
+            ON method_cards(source_province)
+        """)
+        # 迁移：为已有数据库添加 universal_method 字段（跨省通用方法论）
+        try:
+            conn.execute(
+                "ALTER TABLE method_cards ADD COLUMN universal_method TEXT DEFAULT ''"
+            )
+        except sqlite3.OperationalError:
+            pass  # 字段已存在，忽略
         conn.commit()
         conn.close()
 
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     def add_card(self, category: str, specialty: str,
                  pattern_keys: list, keywords: list,
                  method_text: str, common_errors: str = "",
                  sample_count: int = 0, confirm_rate: float = 0,
-                 source_province: str = "") -> int:
+                 source_province: str = "",
+                 universal_method: str = "") -> int:
         """
         添加一张方法卡片
 
-        如果同类别+同专业已有卡片，则更新（版本号+1）。
-        否则新建。
+        用 (category, specialty, 主模式键) 做唯一标识：
+        - 同一个模式键重复生成 → 更新已有卡片（版本号+1）
+        - 不同模式键即使类别相同 → 创建新卡片（如"阀门安装"可以有多张卡片）
 
         返回:
             卡片ID
@@ -114,12 +123,14 @@ class MethodCards:
         pattern_keys_json = json.dumps(pattern_keys, ensure_ascii=False)
         keywords_json = json.dumps(keywords, ensure_ascii=False)
 
+        source_province = str(source_province or "").strip()
+
         conn = self._connect()
         try:
-            # 检查是否已存在同类别+同专业的卡片
+            # 检查是否已存在同模式键+同省份+同专业的卡片（精确匹配）
             existing = conn.execute(
-                "SELECT id, version FROM method_cards WHERE category = ? AND specialty = ?",
-                (category, specialty or "")
+                "SELECT id, version FROM method_cards WHERE pattern_keys = ? AND source_province = ? AND specialty = ?",
+                (pattern_keys_json, source_province, specialty or "")
             ).fetchone()
 
             if existing:
@@ -127,9 +138,11 @@ class MethodCards:
                 card_id, old_version = existing
                 conn.execute("""
                     UPDATE method_cards SET
+                        category = ?,
                         pattern_keys = ?,
                         keywords = ?,
                         method_text = ?,
+                        universal_method = ?,
                         common_errors = ?,
                         sample_count = ?,
                         confirm_rate = ?,
@@ -137,8 +150,10 @@ class MethodCards:
                         version = ?,
                         updated_at = ?
                     WHERE id = ?
-                """, (pattern_keys_json, keywords_json,
-                      method_text, common_errors,
+                """, (category,
+                      pattern_keys_json, keywords_json,
+                      method_text, universal_method or "",
+                      common_errors,
                       sample_count, confirm_rate,
                       source_province, old_version + 1,
                       now, card_id))
@@ -150,12 +165,12 @@ class MethodCards:
                 cursor = conn.execute("""
                     INSERT INTO method_cards (
                         category, specialty, pattern_keys, keywords,
-                        method_text, common_errors,
+                        method_text, universal_method, common_errors,
                         sample_count, confirm_rate, source_province,
                         version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """, (category, specialty or "", pattern_keys_json, keywords_json,
-                      method_text, common_errors,
+                      method_text, universal_method or "", common_errors,
                       sample_count, confirm_rate, source_province,
                       now, now))
                 conn.commit()
@@ -169,87 +184,241 @@ class MethodCards:
             conn.close()
 
     def find_relevant(self, bill_name: str, bill_desc: str = "",
-                      specialty: str = None, top_k: int = 2) -> list[dict]:
+                      specialty: str = None, province: str = None,
+                      top_k: int = 2) -> list[dict]:
         """
         根据清单名称和专业，查找最相关的方法卡片
 
-        匹配策略（按优先级）：
-        1. 关键词匹配：清单名称包含卡片的关键词
-        2. 专业匹配：同专业的卡片优先
-        3. 类别包含：清单名称包含卡片类别名
+        匹配策略（两轮查询）：
+        第1轮（同省优先）：查同省或无省份的卡片，标记 _scope="local"
+        第2轮（跨省补充）：如果第1轮不够top_k，从其他省份找有通用方法论的卡片，
+                          标记 _scope="universal"
+
+        评分规则（按优先级）：
+        1. pattern_keys匹配：清单文本包含卡片模式键中的关键词（最精准）
+        2. 关键词匹配：清单名称包含卡片的关键词
+        3. 类别名匹配：清单名称包含卡片类别名
+        4. 专业匹配：同专业的卡片优先
+        5. 省份匹配：同省份的卡片优先（仅第1轮）
 
         参数:
             bill_name: 清单名称（如"镀锌钢管管道安装 DN25 丝接"）
             bill_desc: 清单特征描述
             specialty: 专业分类（如"C10"）
+            province: 省份/定额库名称
             top_k: 返回前K张最相关的卡片
 
         返回:
-            [{"category": "管道安装", "method_text": "...", ...}, ...]
+            [{"category": "...", "method_text": "...", "_scope": "local"/"universal", ...}, ...]
         """
+        specialty = str(specialty or "").strip()
+        province = str(province or "").strip()
+        full_text = f"{bill_name} {bill_desc}".strip().lower()
+
+        # ==================== 第1轮：同省优先 ====================
+        local_cards = self._query_and_score(
+            full_text, specialty, province,
+            scope="local", prefetch_limit=max(50, top_k * 25)
+        )
+
+        # 多样性重排 + 取top_k
+        results = self._diversity_rerank(local_cards, top_k)
+
+        # ==================== 第2轮：跨省补充 ====================
+        # 如果同省卡片不够 top_k，从其他省份找通用方法论
+        if len(results) < top_k and province:
+            # 已经选中的类别+专业组合，用于去重
+            seen_keys = set()
+            for r in results:
+                base_cat = re.sub(r'\(\d+\)$', '', r.get("category", "")).strip()
+                seen_keys.add((base_cat, r.get("specialty", "")))
+
+            universal_cards = self._query_and_score(
+                full_text, specialty, province,
+                scope="universal", prefetch_limit=max(50, top_k * 25)
+            )
+
+            # 跨省卡片去重：如果和同省卡片的（类别+专业）重复，跳过
+            for card in universal_cards:
+                if len(results) >= top_k:
+                    break
+                base_cat = re.sub(r'\(\d+\)$', '', card.get("category", "")).strip()
+                key = (base_cat, card.get("specialty", ""))
+                if key not in seen_keys:
+                    results.append(card)
+                    seen_keys.add(key)
+
+        results = results[:top_k]
+
+        # 冲突检测：top2卡片专业不同时，标注提示
+        if len(results) >= 2:
+            spec1 = results[0].get("specialty", "")
+            spec2 = results[1].get("specialty", "")
+            if spec1 and spec2 and spec1 != spec2:
+                warning = (f"注意: 同时匹配到{spec1}({results[0].get('category','')})和"
+                           f"{spec2}({results[1].get('category','')})的方法卡片，建议保守决策")
+                for r in results:
+                    r["conflict_warning"] = warning
+
+        # 去掉内部评分字段
+        for card in results:
+            card.pop("_score", None)
+
+        return results
+
+    def _query_and_score(self, full_text: str, specialty: str,
+                         province: str, scope: str = "local",
+                         prefetch_limit: int = 50) -> list[dict]:
+        """
+        查询并评分方法卡片（内部方法）
+
+        参数:
+            full_text: 清单完整文本（小写）
+            specialty: 专业分类
+            province: 省份/定额库
+            scope: "local"=同省查询, "universal"=跨省查询（只找有通用方法论的）
+            prefetch_limit: 预取条数
+
+        返回:
+            评分后的卡片列表（按分数降序）
+        """
+        where_parts = []
+        params = []
+
+        if scope == "local":
+            # 同省查询：同省或无省份的卡片
+            if specialty:
+                where_parts.append("(specialty = ? OR specialty = '')")
+                params.append(specialty)
+            if province:
+                where_parts.append("(source_province = ? OR source_province = '')")
+                params.append(province)
+        else:
+            # 跨省查询：其他省份的卡片，且必须有通用方法论
+            if specialty:
+                where_parts.append("(specialty = ? OR specialty = '')")
+                params.append(specialty)
+            if province:
+                where_parts.append("source_province != ?")
+                params.append(province)
+            # 只找有方法论内容的卡片（新卡片用universal_method，旧卡片回退用method_text）
+            where_parts.append("(universal_method != '' OR method_text != '')")
+
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
         conn = self._connect(row_factory=True)
         try:
-            rows = conn.execute("SELECT * FROM method_cards").fetchall()
+            rows = conn.execute(
+                f"""
+                SELECT * FROM method_cards
+                {where_sql}
+                ORDER BY sample_count DESC, updated_at DESC
+                LIMIT ?
+                """,
+                params + [prefetch_limit]
+            ).fetchall()
         finally:
             conn.close()
 
         if not rows:
             return []
 
-        full_text = f"{bill_name} {bill_desc}".strip().lower()
         scored = []
-
         for row in rows:
             card = dict(row)
             score = 0
 
-            # 解析关键词列表
+            # 解析JSON字段
             try:
                 keywords = json.loads(card.get("keywords", "[]"))
             except (json.JSONDecodeError, TypeError):
                 keywords = []
+            try:
+                pattern_keys = json.loads(card.get("pattern_keys", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                pattern_keys = []
 
-            # 关键词匹配得分（每命中一个关键词+10分）
+            # ① pattern_keys匹配（最精准，权重最高）
+            pk_hits = 0
+            for pk in pattern_keys:
+                for part in pk.split("_"):
+                    part = part.strip("*").strip()
+                    if len(part) >= 2 and part.lower() in full_text:
+                        pk_hits += 1
+            score += min(pk_hits, 5) * 3  # 每命中+3，上限15分
+
+            # ② 关键词匹配得分（每命中一个关键词+10分）
             keyword_hits = 0
             for kw in keywords:
                 if isinstance(kw, str) and kw.lower() in full_text:
                     keyword_hits += 1
             score += keyword_hits * 10
 
-            # 类别名匹配（卡片类别出现在清单文本中 +5分）
+            # ③ 类别名匹配（卡片类别出现在清单文本中 +5分）
             category = card.get("category", "")
-            if category and category.lower() in full_text:
+            cat_core = category.replace("安装", "").replace("敷设", "").strip().lower()
+            if len(cat_core) >= 2 and cat_core in full_text:
                 score += 5
 
-            # 专业匹配（同专业 +3分）
+            # ④ 专业匹配（同专业 +3分）
             card_spec = card.get("specialty", "")
             if specialty and card_spec and specialty == card_spec:
                 score += 3
+            elif specialty and not card_spec:
+                score += 1
+
+            # ⑤ 同省份卡片优先（仅同省查询时加分）
+            if scope == "local" and province and card.get("source_province", "") == province:
+                score += 4
 
             # 没有任何匹配的卡片不返回
             if score <= 0:
                 continue
 
             card["_score"] = score
-            # 解析JSON字段
-            try:
-                card["pattern_keys"] = json.loads(card.get("pattern_keys", "[]"))
-            except (json.JSONDecodeError, TypeError):
-                card["pattern_keys"] = []
+            card["_scope"] = scope  # 标记来源：local=同省, universal=跨省
+            card["pattern_keys"] = pattern_keys
             card["keywords"] = keywords
 
             scored.append(card)
 
         # 按得分降序排序
         scored.sort(key=lambda x: x["_score"], reverse=True)
+        return scored
 
-        # 去掉内部评分字段，返回前top_k
+    def _diversity_rerank(self, scored: list[dict], top_k: int) -> list[dict]:
+        """
+        多样性重排：同基础类别（去掉序号后缀）只保留最高分的一张
+
+        参数:
+            scored: 评分后的卡片列表（已按分数降序）
+            top_k: 需要返回的卡片数
+
+        返回:
+            去重后的卡片列表
+        """
         results = []
-        for card in scored[:top_k]:
-            card.pop("_score", None)
-            results.append(card)
+        seen_base_categories = set()
+        remaining = []  # 被去重跳过的卡片（备选）
 
-        return results
+        for card in scored:
+            base_cat = re.sub(r'\(\d+\)$', '', card.get("category", "")).strip()
+            if base_cat in seen_base_categories:
+                remaining.append(card)
+                continue
+            seen_base_categories.add(base_cat)
+            results.append(card)
+            if len(results) >= top_k:
+                break
+
+        # 如果去重后不够top_k，用备选卡片补齐
+        if len(results) < top_k:
+            for card in remaining:
+                results.append(card)
+                if len(results) >= top_k:
+                    break
+
+        return results[:top_k]
 
     def get_all_cards(self) -> list[dict]:
         """获取所有方法卡片（用于导出Markdown）"""
@@ -295,6 +464,22 @@ class MethodCards:
             "avg_sample_count": round(avg_samples, 1),
         }
 
+    def _get_universal_notes(self) -> list[dict]:
+        """读取通用知识笔记（province='通用' 且 chapter='笔记'）"""
+        try:
+            from src.rule_knowledge import RuleKnowledge
+            kb = RuleKnowledge(province="通用")
+            conn = kb._connect(row_factory=True)
+            rows = conn.execute(
+                "SELECT specialty, content, source_file FROM rules "
+                "WHERE province = '通用' AND chapter = '笔记' "
+                "ORDER BY specialty, id"
+            ).fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
     def export_markdown(self, output_path: str = None) -> str:
         """
         导出所有方法卡片为Markdown文档
@@ -317,9 +502,31 @@ class MethodCards:
             f"共 {stats['total_cards']} 张卡片，"
             f"覆盖专业: {', '.join(stats['specialties']) if stats['specialties'] else '无'}",
             "",
-            "---",
-            "",
         ]
+
+        # 插入通用知识区块（从规则知识库读取 province="通用" 的笔记）
+        universal_notes = self._get_universal_notes()
+        if universal_notes:
+            lines.append("---")
+            lines.append("")
+            lines.append("## 通用知识（跨省适用）")
+            lines.append("")
+            # 按专业分组展示
+            notes_by_spec = {}
+            for note in universal_notes:
+                spec = note.get("specialty", "") or "未分类"
+                notes_by_spec.setdefault(spec, []).append(note)
+            for spec, notes in sorted(notes_by_spec.items()):
+                lines.append(f"### {spec}")
+                lines.append("")
+                for note in notes:
+                    content = note.get("content", "")
+                    source = note.get("source_file", "").replace("笔记:", "")
+                    lines.append(f"- {content}")
+                lines.append("")
+
+        lines.append("---")
+        lines.append("")
 
         # 按专业分组
         by_specialty = {}
@@ -334,13 +541,32 @@ class MethodCards:
             for card in spec_cards:
                 lines.append(f"### {card['category']}")
                 lines.append("")
+                # 显示来源省份/定额库信息
+                source = card.get("source_province", "")
+                source_info = f"，来源定额: {source}" if source else ""
                 lines.append(f"- 基于 {card.get('sample_count', 0)} 条样本，"
-                             f"确认率 {card.get('confirm_rate', 0):.0%}")
+                             f"确认率 {card.get('confirm_rate', 0):.0%}{source_info}")
                 if card.get("keywords"):
                     lines.append(f"- 关键词: {', '.join(card['keywords'])}")
                 lines.append("")
-                lines.append(card.get("method_text", ""))
-                lines.append("")
+                # 双层展示：通用方法论 + 省份定额参考
+                universal = card.get("universal_method", "")
+                province_ref = card.get("method_text", "")
+                if universal:
+                    lines.append("**通用方法论（适用所有省份）：**")
+                    lines.append("")
+                    lines.append(universal)
+                    lines.append("")
+                    if province_ref:
+                        prov_label = source if source else "当前省份"
+                        lines.append(f"**本省定额参考（{prov_label}）：**")
+                        lines.append("")
+                        lines.append(province_ref)
+                        lines.append("")
+                else:
+                    # 旧卡片没有通用方法论，直接显示method_text
+                    lines.append(province_ref)
+                    lines.append("")
                 if card.get("common_errors"):
                     lines.append("**常见错误:**")
                     lines.append(card["common_errors"])

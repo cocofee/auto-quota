@@ -4,6 +4,7 @@
 1. 从特征描述中提取真实名称（如"名称：Y型过滤器" → 替代项目名称"法兰"）
 2. 调用 specialty_classifier 给每条清单打专业标签
 3. 调用 text_parser 提取结构化参数
+4. 线缆类型自动标签（电线/电缆/光缆/双绞线）
 
 在匹配前对清单数据做预处理，让后续搜索和匹配更准确。
 
@@ -82,13 +83,20 @@ def clean_bill_items(items: list[dict]) -> list[dict]:
             full_text = f"{item['name']} {desc}".strip()
             item["params"] = text_parser.parse(full_text)
 
+        # 第4步：线缆类型标签（电线/电缆/光缆/双绞线）
+        cable_type = _classify_cable_type(item["name"], desc)
+        if cable_type:
+            item["cable_type"] = cable_type
+
     # 统计清洗结果
     name_fixed = sum(1 for i in items if "original_name" in i)
     classified = sum(1 for i in items if i.get("specialty"))
     with_params = sum(1 for i in items if i.get("params"))
+    cable_tagged = sum(1 for i in items if i.get("cable_type"))
 
     logger.info(f"清单清洗完成: {len(items)}条, "
-                f"名称修正{name_fixed}条, 专业分类{classified}条, 有参数{with_params}条")
+                f"名称修正{name_fixed}条, 专业分类{classified}条, "
+                f"有参数{with_params}条, 线缆标签{cable_tagged}条")
 
     return items
 
@@ -134,5 +142,95 @@ def extract_real_name(bill_name: str, description: str) -> str | None:
                         logger.debug(f"跳过型号替换: '{bill_name}' 不替换为 '{real_name}'")
                         continue
                     return real_name
+
+    return None
+
+
+# ============================================================
+# 线缆类型自动识别
+# ============================================================
+
+# 阻燃/耐火/低烟无卤等修饰前缀（不影响线缆类型判断）
+_CABLE_PREFIX = r'(?:WDZ[A-Z]*-?|ZA[N]?-?|NH-?|N-?|ZR[A-E]?-?|ZC-?)*'
+
+# 电线型号（B开头为主，按长度倒序避免短前缀误匹配）
+_WIRE_MODELS = [
+    'BLVV', 'BVVB', 'BLXF', 'BLV', 'BLX',
+    'BVR', 'BVV', 'BXF', 'BXR', 'BYJ', 'BV', 'BX', 'BY',
+]
+
+# 按1根计算的电线（R开头）
+_SINGLE_WIRE_MODELS = ['RVSP', 'RYJS', 'RVS', 'RVV', 'RVVP', 'RYJ']
+
+# 电缆型号（按长度倒序）
+_CABLE_MODELS = [
+    # DJ系列（计算机电缆）
+    'DJYPVP22', 'DJYPVRP22', 'DJYVP22', 'DJYVRP22',
+    # BT系列（矿物绝缘电缆）
+    'BBTRZ', 'BTTVZ', 'BTLY', 'BTTZ', 'TBTRZY',
+    # YJ系列（交联电缆）
+    'ZANYJFE', 'JKLYJV', 'JKRYJV', 'YJLV', 'YJFE', 'JKLYJ', 'JKRYJ',
+    'JKYJ', 'KYJY', 'YJV', 'YJY', 'YJE',
+    # KV系列（控制电缆）
+    'KVVRP', 'KVVP', 'KVVR', 'KVV',
+    # VV系列（电力电缆）
+    'VV22', 'VV23', 'VV39', 'VLV', 'VV', 'VY',
+    # JK系列（架空电缆）
+    'JKLV', 'JKV',
+    # HY系列（通信电缆）
+    'HBYV', 'HYAT', 'HYA', 'HYV',
+    # JH系列（防水电缆）
+    'JHSB', 'JHS',
+    # 其他
+    'JYLY', 'YTTW', 'YZW', 'PYY', 'AVR', 'AV',
+]
+
+# 双绞线型号
+_TWISTED_PAIR_MODELS = ['UTPCAT', 'SYKV', 'SYWV', 'SYV', 'UTP', 'CAT']
+
+# 中文关键词匹配（优先级高于型号匹配）
+_KEYWORD_MAP = [
+    # 光缆（最先匹配，避免被"线"类误匹配）
+    (['光纤', '光缆'], '光缆'),
+    # 双绞线
+    (['双绞线', '网线', '网络线'], '双绞线'),
+]
+
+
+def _classify_cable_type(name: str, desc: str) -> str | None:
+    """
+    从清单名称和特征描述中识别线缆类型
+
+    返回: "电线" / "电线(单根)" / "电缆" / "光缆" / "双绞线" / None
+    """
+    text = f"{name} {desc}".upper()  # 统一大写匹配型号
+    text_cn = f"{name} {desc}"       # 保留中文原文匹配关键词
+
+    # 第1步：中文关键词匹配（光缆、双绞线等）
+    for keywords, cable_type in _KEYWORD_MAP:
+        for kw in keywords:
+            if kw in text_cn:
+                return cable_type
+
+    # 第2步：型号前缀匹配（处理阻燃前缀如 WDZ-BYJ、WDZN-YJV 等）
+    # 按1根计算的电线（优先于普通电线，因为 RVV 不能被 BV 误匹配）
+    for model in _SINGLE_WIRE_MODELS:
+        if re.search(_CABLE_PREFIX + model + r'[\s\-\d]', text):
+            return '电线(单根)'
+
+    # 电缆（优先于电线，因为电缆型号更长更具体）
+    for model in _CABLE_MODELS:
+        if re.search(_CABLE_PREFIX + model + r'[\s\-\d]', text):
+            return '电缆'
+
+    # 双绞线型号
+    for model in _TWISTED_PAIR_MODELS:
+        if re.search(model + r'[\s\-\d]', text):
+            return '双绞线'
+
+    # 普通电线（最后匹配，避免 BV 匹配到 KVVR 之类）
+    for model in _WIRE_MODELS:
+        if re.search(_CABLE_PREFIX + model + r'[\s\-\d]', text):
+            return '电线'
 
     return None

@@ -22,6 +22,8 @@ from collections import Counter
 
 from loguru import logger
 
+from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
@@ -50,10 +52,7 @@ class LearningNotebook:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = _db_connect_init(self.db_path)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS learning_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,12 +102,8 @@ class LearningNotebook:
         conn.close()
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，降低锁冲突概率。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     @staticmethod
     def _safe_json_list(raw):

@@ -9,7 +9,6 @@
 而不只是匹配关键词。与BM25互补使用效果最好。
 """
 
-import sqlite3
 from pathlib import Path
 
 from loguru import logger
@@ -17,6 +16,7 @@ from loguru import logger
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from db.sqlite import connect as _db_connect
 
 
 class VectorEngine:
@@ -37,12 +37,8 @@ class VectorEngine:
         self._chroma_client = None
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，减少并发场景下锁等待失败。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     @property
     def model(self):

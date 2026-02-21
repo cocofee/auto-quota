@@ -7,7 +7,6 @@
 4. 存入SQLite数据库
 """
 
-import sqlite3
 import zipfile
 import xml.etree.ElementTree as ET
 import re
@@ -19,6 +18,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.text_parser import parser as text_parser
+from db.sqlite import connect as _db_connect
 
 
 # XML命名空间（xlsx文件内部用的）
@@ -40,12 +40,8 @@ class QuotaDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，减少并发场景下锁等待失败。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     def init_db(self):
         """创建数据库表结构"""

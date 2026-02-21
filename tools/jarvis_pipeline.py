@@ -25,14 +25,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 
 def pipeline(excel_path, province=None, aux_provinces=None,
-             use_experience=False, store=False, quiet=False):
+             use_experience=True, store=False, quiet=False):
     """Jarvis 批处理流水线（匹配 → 审核 → 纠正 → 存经验库）
 
     参数:
         excel_path: 清单Excel路径
         province: 主定额库省份名称（None=使用默认省份）
         aux_provinces: 辅助定额库列表（用于跨专业匹配，如安装清单中的土建/市政项目）
-        use_experience: 是否启用经验库
+        use_experience: 是否启用经验库（默认开启）
         store: 是否将纠正结果存入经验库
         quiet: 静默模式（抑制进度条）
 
@@ -249,7 +249,7 @@ def main():
   python tools/jarvis_pipeline.py "清单.xlsx"
   python tools/jarvis_pipeline.py "清单.xlsx" --province "北京2024"
   python tools/jarvis_pipeline.py "清单.xlsx" --province "广东安装" --aux-province "广东土建,广东市政"
-  python tools/jarvis_pipeline.py "清单.xlsx" --with-experience
+  python tools/jarvis_pipeline.py "清单.xlsx" --no-experience  # 关闭经验库
   python tools/jarvis_pipeline.py "清单.xlsx" --store
 """,
     )
@@ -257,8 +257,8 @@ def main():
     parser.add_argument("--province", help="主定额库名称（如\"北京2024\"），不指定则交互选择")
     parser.add_argument("--aux-province",
                         help="辅助定额库（逗号分隔，如\"广东土建,广东市政\"）")
-    parser.add_argument("--with-experience", action="store_true",
-                        help="启用经验库（默认关闭，纯搜索）")
+    parser.add_argument("--no-experience", action="store_true",
+                        help="关闭经验库（默认开启）")
     parser.add_argument("--store", action="store_true",
                         help="将自动纠正结果存入经验库（默认关闭）")
     parser.add_argument("--quiet", "-q", action="store_true",
@@ -307,7 +307,7 @@ def main():
         excel_path=args.excel_path,
         province=province,
         aux_provinces=aux_provinces if aux_provinces else None,
-        use_experience=args.with_experience,
+        use_experience=not args.no_experience,
         store=args.store,
         quiet=args.quiet,
     )
