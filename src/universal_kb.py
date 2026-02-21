@@ -652,7 +652,7 @@ class UniversalKB:
                      source_province: str = None,
                      source_project: str = None) -> dict:
         """
-        批量导入知识（全部进候选层）
+        批量导入知识（人工验证过的预算数据，直接进权威层）
 
         参数:
             records: 知识记录列表，每条包含：
