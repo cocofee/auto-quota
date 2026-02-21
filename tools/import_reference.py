@@ -433,6 +433,8 @@ def main():
                              "不指定则交互式选择。")
     parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
     parser.add_argument("--dry-run", action="store_true", help="只解析不导入（调试用）")
+    parser.add_argument("--no-analyze", action="store_true",
+                        help="导入后不自动分析生成方法卡片（默认会自动分析）")
 
     args = parser.parse_args()
 
@@ -562,6 +564,19 @@ def main():
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
     logger.info(f"  数据层级: 权威层（project_import → authority，可直通匹配）")
     logger.info("=" * 50)
+
+    # 第4步（可选）：自动分析生成方法卡片
+    if not args.no_analyze:
+        try:
+            from tools.gen_method_cards import incremental_generate
+            logger.info("自动分析：检查是否有新模式可以提炼方法卡片...")
+            card_stats = incremental_generate(province=province, min_samples=5)
+            if card_stats["generated"] > 0:
+                logger.info(f"  新生成 {card_stats['generated']} 张方法卡片")
+            else:
+                logger.info("  暂无新模式需要生成方法卡片（样本不足或已有卡片）")
+        except Exception as e:
+            logger.debug(f"方法卡片自动分析跳过（不影响导入结果）: {e}")
 
 
 if __name__ == "__main__":

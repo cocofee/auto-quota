@@ -105,6 +105,7 @@ class AgentMatcher:
     def match_single(self, bill_item: dict, candidates: list[dict],
                      reference_cases: list[dict] = None,
                      rules_context: list[dict] = None,
+                     method_cards: list[dict] = None,
                      overview_context: str = "",
                      search_query: str = "") -> dict:
         """
@@ -115,6 +116,7 @@ class AgentMatcher:
             candidates: 搜索+参数验证后的候选定额列表
             reference_cases: 经验库中的参考案例
             rules_context: 规则知识库中的相关规则
+            method_cards: 方法论卡片列表（从经验中提炼的选定额方法）
             overview_context: 整表概览上下文
             search_query: 搜索时使用的query（记录到笔记中）
 
@@ -141,7 +143,7 @@ class AgentMatcher:
         # 构建造价员Prompt
         prompt = self._build_agent_prompt(
             bill_item, candidates, reference_cases,
-            rules_context, overview_context
+            rules_context, method_cards, overview_context
         )
 
         # 调用大模型
@@ -181,6 +183,7 @@ class AgentMatcher:
     def _build_agent_prompt(self, bill_item: dict, candidates: list[dict],
                             reference_cases: list[dict] = None,
                             rules_context: list[dict] = None,
+                            method_cards: list[dict] = None,
                             overview_context: str = "") -> str:
         """
         构建造价员Agent的Prompt
@@ -231,6 +234,20 @@ class AgentMatcher:
                 rule_lines.append(f"  [{chapter}] {content}")
             rules_text = "\n## 相关定额规则说明\n" + "\n".join(rule_lines)
 
+        # 格式化方法论卡片（从经验中提炼的选定额方法）
+        method_text = ""
+        if method_cards:
+            card_lines = []
+            for card in method_cards[:2]:  # 最多注入2张卡片，避免prompt过长
+                category = card.get("category", "")
+                content = card.get("method_text", "")
+                errors = card.get("common_errors", "")
+                card_block = f"### {category}\n{content}"
+                if errors:
+                    card_block += f"\n**常见错误:** {errors}"
+                card_lines.append(card_block)
+            method_text = "\n## 方法论指导（从历史经验中提炼的选定额方法）\n" + "\n\n".join(card_lines)
+
         # 格式化提取的参数
         params_text = ""
         if params:
@@ -265,7 +282,7 @@ class AgentMatcher:
 {overview_text}
 ## 候选定额（代码已搜索并按匹配度排序）
 {candidates_text}
-{cases_text}{rules_text}
+{cases_text}{method_text}{rules_text}
 
 ## 分析要求
 请按以下步骤思考：

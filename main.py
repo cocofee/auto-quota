@@ -941,7 +941,8 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
                                exp_hits: int, rule_hits: int,
                                province: str = None,
                                reference_cases_cache: dict = None,
-                               rules_context_cache: dict = None):
+                               rules_context_cache: dict = None,
+                               method_cards_db=None):
     """agent模式统一结果决策：Agent分析 + 经验/规则兜底。"""
     if reference_cases_cache is None:
         reference_cases_cache = {}
@@ -950,15 +951,27 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
 
     reference_cases = _get_reference_cases_cached(
         reference_cases_cache, experience_db, full_query, province=province,
-        top_k=3, tolerate_error=True, default=None,
+        top_k=3, specialty=item.get("specialty"),
+        tolerate_error=True, default=None,
         error_prefix="参考案例获取失败（不影响Agent主流程）")
     rules_context = _get_agent_rules_context_cached(
         rules_context_cache, rule_kb, name, desc, province=province, top_k=3)
+
+    # 查询方法论卡片（按清单名称+专业匹配）
+    relevant_cards = None
+    if method_cards_db:
+        try:
+            relevant_cards = method_cards_db.find_relevant(
+                name, desc, specialty=item.get("specialty"), top_k=2)
+        except Exception as e:
+            logger.debug(f"方法卡片查询失败（不影响主流程）: {e}")
+
     result = agent.match_single(
         bill_item=item,
         candidates=candidates,
         reference_cases=reference_cases,
         rules_context=rules_context,
+        method_cards=relevant_cards,
         search_query=search_query,
     )
     result, exp_hits, rule_hits = _apply_mode_backups(
@@ -1161,17 +1174,18 @@ def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None):
 
 
 def _get_reference_cases(experience_db, full_query: str, province: str = None,
-                         top_k: int = 3, tolerate_error: bool = False,
+                         top_k: int = 3, specialty: str = None,
+                         tolerate_error: bool = False,
                          default=None, error_prefix: str = "参考案例获取失败（不影响主流程）"):
-    """统一获取经验库参考案例。"""
+    """统一获取经验库参考案例。specialty传入后同专业案例优先。"""
     if not experience_db:
         return default
     if not tolerate_error:
         return experience_db.get_reference_cases(
-            full_query, top_k=top_k, province=province)
+            full_query, top_k=top_k, province=province, specialty=specialty)
     try:
         return experience_db.get_reference_cases(
-            full_query, top_k=top_k, province=province)
+            full_query, top_k=top_k, province=province, specialty=specialty)
     except Exception as e:
         logger.debug(f"{error_prefix}: {e}")
         return default
@@ -1179,13 +1193,15 @@ def _get_reference_cases(experience_db, full_query: str, province: str = None,
 
 def _get_reference_cases_cached(cache: dict, experience_db, full_query: str,
                                 province: str = None, top_k: int = 3,
+                                specialty: str = None,
                                 tolerate_error: bool = False, default=None,
                                 error_prefix: str = "参考案例获取失败（不影响主流程）"):
-    """带缓存获取经验案例，减少重复查询。"""
-    key = (province or "", full_query, top_k, tolerate_error)
+    """带缓存获取经验案例，减少重复查询。specialty传入后同专业优先。"""
+    key = (province or "", full_query, top_k, specialty or "", tolerate_error)
     if key not in cache:
         cache[key] = _get_reference_cases(
             experience_db, full_query, province=province, top_k=top_k,
+            specialty=specialty,
             tolerate_error=tolerate_error, default=default,
             error_prefix=error_prefix)
     return cache[key]
@@ -1324,6 +1340,18 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     agent_llm = llm_type or config.AGENT_LLM
     agent = AgentMatcher(llm_type=agent_llm, province=province)
 
+    # 初始化方法卡片（从经验中提炼的选定额方法论，注入Agent Prompt）
+    method_cards_db = None
+    try:
+        from src.method_cards import MethodCards
+        mc = MethodCards()
+        mc_stats = mc.get_stats()
+        if mc_stats["total_cards"] > 0:
+            method_cards_db = mc
+            logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
+    except Exception as e:
+        logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+
     # 结果数组：按原始顺序存放，用 index 定位
     results_by_idx = {}  # {idx: result}
     exp_hits = 0
@@ -1417,6 +1445,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 province=province,
                 reference_cases_cache=reference_cases_cache,
                 rules_context_cache=rules_context_cache,
+                method_cards_db=method_cards_db,
             )
             return idx, result, task_exp_hits, task_rule_hits, is_audit
 

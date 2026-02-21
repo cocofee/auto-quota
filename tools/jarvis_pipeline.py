@@ -67,6 +67,27 @@ def pipeline(excel_path, province=None, aux_provinces=None,
     )
     logger.info(f"Jarvis流水线启动 | 文件: {excel_path} | 主定额: {province} | 辅助: {aux_provinces}")
 
+    # ---- 启动检查：方法卡片是否需要更新 ----
+    try:
+        from src.method_cards import MethodCards
+        mc = MethodCards()
+        mc_stats = mc.get_stats()
+        if mc_stats["total_cards"] == 0:
+            # 没有方法卡片，尝试增量生成
+            logger.info("检测到方法卡片为空，尝试自动生成...")
+            print("  检查方法卡片...")
+            from tools.gen_method_cards import incremental_generate
+            card_result = incremental_generate(province=province, min_samples=5)
+            if card_result["generated"] > 0:
+                print(f"  已自动生成 {card_result['generated']} 张方法卡片")
+                logger.info(f"方法卡片自动生成: {card_result['generated']}张")
+            else:
+                print("  经验数据不足，暂无方法卡片可生成")
+        else:
+            logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
+    except Exception as e:
+        logger.debug(f"方法卡片检查跳过（不影响主流程）: {e}")
+
     # ---- 第1步：匹配定额 ----
     print("=" * 60)
     print("第1步：匹配定额")
