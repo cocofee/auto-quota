@@ -24,13 +24,16 @@
 import json
 import re
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
 from loguru import logger
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
+from src.specialty_classifier import get_book_from_quota_id
 import config
 
 
@@ -53,12 +56,8 @@ class ExperienceDB:
         """创建经验库SQLite表（如果不存在）"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
+        conn = _db_connect_init(self.db_path)
         cursor = conn.cursor()
-        # 改善并发写入稳定性，减少 database is locked
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS experiences (
@@ -132,16 +131,14 @@ class ExperienceDB:
         logger.debug(f"经验库数据库已初始化: {self.db_path}")
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，提升并发稳定性。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     @staticmethod
     def _safe_json_list(raw):
         """安全解析JSON数组，异常时返回空列表，避免脏数据导致主流程崩溃。"""
+        if isinstance(raw, list):
+            return raw
         if not raw:
             return []
         try:
@@ -183,9 +180,10 @@ class ExperienceDB:
         return max(min(value, high), low)
 
     def _normalize_record_quota_fields(self, record: dict) -> dict:
-        """统一把记录中的 quota_ids/quota_names 解析成 list。"""
+        """统一把记录中的 quota_ids/quota_names/materials 解析成 list。"""
         record["quota_ids"] = self._safe_json_list(record.get("quota_ids"))
         record["quota_names"] = self._safe_json_list(record.get("quota_names"))
+        record["materials"] = self._safe_json_list(record.get("materials"))
         return record
 
     @property
@@ -348,9 +346,7 @@ class ExperienceDB:
             quota_db_path = config.get_quota_db_path(province)
             if not quota_db_path.exists():
                 return {}
-            conn = sqlite3.connect(str(quota_db_path), timeout=10)
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.row_factory = sqlite3.Row
+            conn = _db_connect(quota_db_path, row_factory=True)
             try:
                 col_info = {
                     row[1] for row in conn.execute("PRAGMA table_info(quotas)").fetchall()
@@ -414,6 +410,14 @@ class ExperienceDB:
         province = province or config.get_current_province()
         now = time.time()
 
+        # ========== 自动推断专业册号（调用方没传 specialty 时从定额编号推断）==========
+        if not specialty and quota_ids:
+            for qid in quota_ids:
+                inferred = get_book_from_quota_id(qid)
+                if inferred:
+                    specialty = inferred
+                    break
+
         # ========== 定额校验（除了用户手动修正，其他来源都要校验）==========
         # user_correction 是用户亲手改的，信任度最高，跳过校验
         if source != "user_correction":
@@ -457,6 +461,7 @@ class ExperienceDB:
                     source, confidence,
                     quota_db_version=quota_db_ver,
                     materials_json=materials_json,
+                    specialty=specialty,
                     conn=conn, cursor=cursor, commit=False
                 )
             else:
@@ -498,6 +503,7 @@ class ExperienceDB:
                            quota_names: list[str], source: str,
                            confidence: int, quota_db_version: str = None,
                            materials_json: str = None,
+                           specialty: str = None,
                            conn=None, cursor=None,
                            commit: bool = True) -> int:
         """更新已有的经验记录
@@ -528,12 +534,14 @@ class ExperienceDB:
                     confirm_count = confirm_count + 1,
                     layer = 'authority',
                     quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
                 WHERE id = ?
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
-                source, confidence_floor, quota_db_version, now, record_id,
+                source, confidence_floor, quota_db_version,
+                specialty or '', now, record_id,
             ))
         elif source == "user_confirmed":
             # 用户点了"确认正确" → 高信任：涨分、涨确认次数、晋升权威层（但不改定额）
@@ -547,9 +555,11 @@ class ExperienceDB:
                     confirm_count = confirm_count + 1,
                     layer = 'authority',
                     quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
                 WHERE id = ?
-            """, (confidence_floor, quota_db_version, now, record_id))
+            """, (confidence_floor, quota_db_version,
+                  specialty or '', now, record_id))
         elif source == "project_import":
             # 已完成项目导入 → 中等信任：小幅涨分，刷新定额和主材（解析改进后重新导入能修正旧数据）
             project_floor = self._clamp(confidence_floor, 0, 95)
@@ -564,22 +574,25 @@ class ExperienceDB:
                         ELSE materials
                     END,
                     quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
                 WHERE id = ? AND source != 'user_correction'
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
                 project_floor, materials_json or '[]', materials_json or '[]',
-                quota_db_version, now, record_id,
+                quota_db_version, specialty or '', now, record_id,
             ))
         else:
             # auto_match 或其他未知来源 → 不涨分、不涨确认次数，只记录时间
+            # 但仍然补全空的 specialty（从定额编号自动推断）
             cursor.execute("""
                 UPDATE experiences SET
                     quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
                 WHERE id = ?
-            """, (quota_db_version, now, record_id))
+            """, (quota_db_version, specialty or '', now, record_id))
 
         if commit:
             conn.commit()
@@ -984,12 +997,19 @@ class ExperienceDB:
             # 检查是否已存在
             existing = self._find_exact_match(bill_text, province)
             if existing:
-                # 已有记录，增加确认次数
+                # 已有记录，增加确认次数（同时补全空的specialty）
+                inferred_spec = None
+                if quota_ids:
+                    for qid in quota_ids:
+                        inferred_spec = get_book_from_quota_id(qid)
+                        if inferred_spec:
+                            break
                 self._update_experience(
                     existing["id"], quota_ids,
                     record.get("quota_names"),
                     "project_import", 85,
                     quota_db_version=quota_db_ver,
+                    specialty=inferred_spec,
                 )
                 stats["updated"] += 1
             else:

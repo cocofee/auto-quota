@@ -240,9 +240,26 @@ class AgentMatcher:
             card_lines = []
             for card in method_cards[:2]:  # 最多注入2张卡片，避免prompt过长
                 category = card.get("category", "")
-                content = card.get("method_text", "")
+                scope = card.get("_scope", "local")  # local=同省, universal=跨省
+                universal = card.get("universal_method", "")
+                province_ref = card.get("method_text", "")
                 errors = card.get("common_errors", "")
-                card_block = f"### {category}\n{content}"
+                source = card.get("source_province", "")
+
+                if scope == "universal":
+                    # 跨省卡片：只注入通用方法论，不含省份编号
+                    content = universal or province_ref  # 降级兜底
+                    card_block = f"### {category}（通用方法论，来自{source}经验）\n{content}"
+                else:
+                    # 同省卡片：注入完整内容
+                    if universal:
+                        card_block = f"### {category}\n{universal}"
+                        if province_ref:
+                            card_block += f"\n\n**本省定额参考：**\n{province_ref}"
+                    else:
+                        # 旧卡片降级：直接用method_text
+                        card_block = f"### {category}\n{province_ref}"
+
                 if errors:
                     card_block += f"\n**常见错误:** {errors}"
                 card_lines.append(card_block)
@@ -252,6 +269,10 @@ class AgentMatcher:
         params_text = ""
         if params:
             param_parts = []
+            # 线缆类型标签（来自 bill_cleaner 的自动识别）
+            cable_type = bill_item.get("cable_type", "")
+            if cable_type:
+                param_parts.append(f"线缆类型:{cable_type}")
             if params.get("dn"):
                 param_parts.append(f"管径DN{params['dn']}")
             if params.get("cable_section"):

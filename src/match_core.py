@@ -1,0 +1,593 @@
+# -*- coding: utf-8 -*-
+"""
+匹配核心组件 — 从 match_engine.py 拆分出的底层函数
+
+包含：
+1. 工具函数（trace、fallback标准化等）
+2. 经验库匹配（try_experience_match）
+3. 级联搜索（cascade_search）
+4. 候选准备（_prepare_candidates）
+5. Agent快速通道判定
+
+这些函数不依赖 match_pipeline 或 match_engine，只依赖外部模块。
+"""
+
+import json
+import random
+
+from loguru import logger
+
+import config
+from src.text_parser import parser as text_parser
+from src.hybrid_searcher import HybridSearcher
+from src.param_validator import ParamValidator
+
+
+# ============================================================
+# 常量
+# ============================================================
+
+# 级联搜索最少要返回的候选数量（少于此值则扩大搜索范围）
+CASCADE_MIN_CANDIDATES = 3
+# 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
+RULE_DIRECT_CONFIDENCE = 80
+# 措施项关键词（这些是工程管理费用，不套安装定额）
+MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
+
+
+# ============================================================
+# 工具函数
+# ============================================================
+
+def _safe_float_value(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_json_materials(raw_value) -> list[dict]:
+    """把主材字段收敛为 list[dict]，兼容 JSON 字符串和异常值。"""
+    if isinstance(raw_value, list):
+        return [m for m in raw_value if isinstance(m, dict)]
+    if isinstance(raw_value, str):
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return []
+        if isinstance(parsed, list):
+            return [m for m in parsed if isinstance(m, dict)]
+    return []
+
+
+def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> list[dict]:
+    """抽取候选摘要，避免 trace 过大。"""
+    summary = []
+    for c in (candidates or [])[:top_n]:
+        summary.append({
+            "quota_id": c.get("quota_id", ""),
+            "name": c.get("name", ""),
+            "param_match": bool(c.get("param_match", True)),
+            "param_score": _safe_float_value(c.get("param_score"), 0.0),
+            "rerank_score": _safe_float_value(
+                c.get("rerank_score", c.get("hybrid_score", 0)), 0.0
+            ),
+        })
+    return summary
+
+
+def _append_trace_step(result: dict, stage: str, **fields):
+    """向结果追加统一 trace 步骤。"""
+    trace = result.get("trace")
+    if not isinstance(trace, dict):
+        trace = {}
+    steps = trace.get("steps")
+    if not isinstance(steps, list):
+        steps = []
+    step = {"stage": stage}
+    for k, v in fields.items():
+        if v is not None:
+            step[k] = v
+    steps.append(step)
+    trace["steps"] = steps
+    trace["path"] = [s.get("stage", "") for s in steps if s.get("stage")]
+    trace["final_source"] = result.get("match_source", "")
+    trace["final_confidence"] = _safe_float_value(result.get("confidence"), 0.0)
+    result["trace"] = trace
+
+
+def _finalize_trace(result: dict):
+    """保证每条结果都带统一 trace 结构。"""
+    if not isinstance(result, dict):
+        return
+    trace = result.get("trace")
+    if not isinstance(trace, dict):
+        trace = {"steps": [], "path": []}
+    if not isinstance(trace.get("steps"), list):
+        trace["steps"] = []
+    if not isinstance(trace.get("path"), list):
+        trace["path"] = [s.get("stage", "") for s in trace["steps"] if s.get("stage")]
+    trace["final_source"] = result.get("match_source", "")
+    trace["final_confidence"] = _safe_float_value(result.get("confidence"), 0.0)
+    result["trace"] = trace
+
+
+def _normalize_fallbacks(value) -> list[str]:
+    """把fallback输入统一为去重后的字符串列表。"""
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    elif isinstance(value, str):
+        raw_items = [value]
+    else:
+        raw_items = []
+
+    cleaned = []
+    seen = set()
+    for item in raw_items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def _normalize_classification(classification: dict) -> dict:
+    """标准化专业分类结果，避免fallback类型异常导致后续崩溃。"""
+    base = dict(classification) if isinstance(classification, dict) else {}
+
+    primary = base.get("primary")
+    primary = str(primary).strip() if primary is not None else ""
+    primary = primary or None
+
+    fallbacks = _normalize_fallbacks(base.get("fallbacks", []))
+    if primary:
+        fallbacks = [b for b in fallbacks if b != primary]
+
+    base["primary"] = primary
+    base["fallbacks"] = fallbacks
+    return base
+
+
+# ============================================================
+# 经验库匹配
+# ============================================================
+
+def _validate_experience_params(exp_result: dict, item: dict,
+                                rule_validator=None, is_exact=False) -> dict:
+    """
+    验证经验库匹配结果的参数是否正确
+
+    问题场景：
+    - 经验库存了"配电箱安装 规格(回路以内) 4"给某个清单
+    - 当前清单虽然也是配电箱，但参数不同（如7回路）
+    - 7回路应该套"8回路以内"的定额，不能沿用经验库的"4回路以内"
+
+    验证方式：
+    1. 规则校验器：检查定额所在家族的档位是否匹配（处理回路/容量/截面等）
+    2. 参数提取器：对比清单和定额名称中的数值参数（DN/截面/kVA等）
+       注意：精确匹配(is_exact=True)时跳过方法2，因为用户已确认该文本→定额的映射，
+       简单参数对比可能因材质名称差异（如"射频同轴电缆"≠"同轴电缆"）误杀正确结果。
+
+    如果发现参数不匹配，返回 None（拒绝经验库结果，让后续流程重新匹配）
+    """
+    quotas = exp_result.get("quotas", [])
+    if not quotas:
+        return exp_result  # 没有定额信息，无法验证，保持原样
+
+    # 组合清单完整文本（名称+特征描述）
+    bill_text = f"{item.get('name', '')} {item.get('description', '')}".strip()
+
+    main_quota = quotas[0]  # 只验证主定额（第一条）
+    main_quota_id = main_quota.get("quota_id", "")
+    main_quota_name = main_quota.get("name", "")
+
+    # ===== 方法1：用规则校验器检查档位（处理回路/容量/截面等家族参数） =====
+    # 这能发现"7回路"不应该套"4回路以内"这类错误
+    rule_validated = False  # 标记规则校验器是否已验证通过
+    if rule_validator and rule_validator.rules and main_quota_id:
+        family = rule_validator.family_index.get(main_quota_id)
+        if family:
+            tiers = family.get("tiers")
+            if tiers:
+                # 从清单文本中提取参数值（如"7回路" → 7）
+                bill_value = rule_validator._extract_param_value(bill_text, family)
+                if bill_value is not None:
+                    # 计算正确的档位（向上取档：≥7的最小档 → 8）
+                    correct_tier = rule_validator._find_correct_tier(bill_value, tiers)
+                    if correct_tier is not None:
+                        correct_quota_id = rule_validator._find_quota_by_tier(
+                            family, correct_tier)
+                        if correct_quota_id and correct_quota_id != main_quota_id:
+                            # 档位不对！经验库给的定额参数范围不覆盖当前清单
+                            logger.info(
+                                f"经验库参数校验失败: '{bill_text[:40]}' "
+                                f"参数值{bill_value}→应套档位{correct_tier}, "
+                                f"但经验库给的是{main_quota_id}, 拒绝经验库结果")
+                            return None
+                        else:
+                            # 规则校验器确认档位正确（包括向上取档的情况）
+                            rule_validated = True
+
+    # ===== 方法2：用参数提取器对比基本参数（DN/截面/材质等） =====
+    # 这能发现"DN150"不应该套"DN100以内"这类错误
+    # 注意：如果方法1已验证通过（rule_validated=True），跳过方法2
+    # 注意：如果是精确匹配（is_exact=True），跳过方法2
+    # 原因：方法1理解"向上取档"（如DN75→DN100），方法2只做简单数值对比会误杀
+    #       精确匹配是用户确认过的映射，材质名差异（如"射频同轴电缆"≠"同轴电缆"）不应否决
+    if main_quota_name and not rule_validated and not is_exact:
+        bill_params = text_parser.parse(bill_text)
+        quota_params = text_parser.parse(main_quota_name)
+        if bill_params and quota_params:
+            is_match, score = text_parser.params_match(bill_params, quota_params)
+            if not is_match:
+                logger.info(
+                    f"经验库参数校验失败: '{bill_text[:40]}' "
+                    f"清单参数{bill_params} vs 定额'{main_quota_name[:30]}'参数{quota_params}, "
+                    f"拒绝经验库结果")
+                return None
+
+    return exp_result  # 参数验证通过，接受经验库结果
+
+
+def try_experience_match(query: str, item: dict, experience_db,
+                         rule_validator=None, province: str = None) -> dict:
+    """
+    尝试从经验库匹配
+
+    参数:
+        query: 清单搜索文本
+        item: 清单项目字典
+        experience_db: 经验库实例
+        rule_validator: 规则校验器实例（用于验证经验库结果的参数是否正确）
+        province: 省份（用于限定经验库查询范围）
+
+    返回:
+        匹配结果字典，如果经验库未命中则返回 None
+    """
+    if experience_db is None:
+        return None
+
+    # 在经验库中搜索相似历史记录
+    similar = experience_db.search_similar(
+        query, top_k=3,
+        min_confidence=config.EXPERIENCE_DIRECT_THRESHOLD,
+        province=province,
+    )
+
+    if not similar:
+        return None
+
+    # 取第一条可直通（非stale）的经验，避免"top1过期就整体失效"
+    best = None
+    for candidate in similar:
+        if candidate.get("match_type") != "stale":
+            best = candidate
+            break
+
+    # 全部是过期经验时，不直通
+    if best is None:
+        logger.debug(f"经验库命中但版本均过期，不直通: {query[:50]}")
+        return None
+    similarity = best.get("similarity", 0)
+    exp_materials = _safe_json_materials(best.get("materials"))
+
+    # 精确匹配（完全相同的清单文本）→ 构建结果
+    if best.get("match_type") == "exact":
+        quota_ids = best.get("quota_ids", [])
+        quota_names = best.get("quota_names", [])
+        if not quota_ids:
+            logger.debug(f"经验库精确命中但定额列表为空，跳过: {query[:50]}")
+            return None
+        confidence = min(best.get("confidence", 80), 98)  # 经验库最高98分
+
+        # 构建定额列表（一条清单可能对应多条定额）
+        quotas = []
+        for i, qid in enumerate(quota_ids):
+            quotas.append({
+                "quota_id": qid,
+                "name": quota_names[i] if i < len(quota_names) else "",
+                "unit": "",
+                "reason": f"经验库精确匹配 (置信度{confidence}%, 确认{best.get('confirm_count', 1)}次)",
+            })
+
+        result = {
+            "bill_item": item,
+            "quotas": quotas,
+            "materials": exp_materials,
+            "confidence": confidence,
+            "explanation": f"经验库精确匹配 (确认{best.get('confirm_count', 1)}次)",
+            "match_source": "experience_exact",  # 标记匹配来源
+        }
+        _append_trace_step(
+            result,
+            "experience_exact",
+            record_id=best.get("id"),
+            similarity=1.0,
+            confirm_count=best.get("confirm_count", 0),
+            quota_ids=[q.get("quota_id", "") for q in quotas],
+            materials_count=len(exp_materials),
+        )
+
+        # 参数验证：即使经验库文本完全匹配，参数也必须对
+        # （同名清单不同参数的情况，如"配电箱"7回路 vs 4回路）
+        # 精确匹配时跳过方法2（简单参数对比），只做方法1（规则校验器档位检查）
+        validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
+        if validated is None:
+            return None  # 参数不匹配，拒绝经验库结果
+        return validated
+
+    # 向量相似匹配 → 相似度≥0.75即可采纳（项目导入的正规数据可信度高）
+    if similarity >= 0.75:
+        quota_ids = best.get("quota_ids", [])
+        quota_names = best.get("quota_names", [])
+        if not quota_ids:
+            logger.debug(f"经验库相似命中但定额列表为空，跳过: {query[:50]}")
+            return None
+        # 相似匹配置信度稍低
+        confidence = min(int(similarity * best.get("confidence", 80)), 90)
+
+        quotas = []
+        for i, qid in enumerate(quota_ids):
+            quotas.append({
+                "quota_id": qid,
+                "name": quota_names[i] if i < len(quota_names) else "",
+                "unit": "",
+                "reason": f"经验库相似匹配 (相似度{similarity:.2f}, 原文: {best['bill_text'][:50]})",
+            })
+
+        result = {
+            "bill_item": item,
+            "quotas": quotas,
+            "materials": exp_materials,
+            "confidence": confidence,
+            "explanation": f"经验库相似匹配 (相似度{similarity:.2f})",
+            "match_source": "experience_similar",
+        }
+        _append_trace_step(
+            result,
+            "experience_similar",
+            record_id=best.get("id"),
+            similarity=similarity,
+            confirm_count=best.get("confirm_count", 0),
+            quota_ids=[q.get("quota_id", "") for q in quotas],
+            materials_count=len(exp_materials),
+        )
+
+        # 参数验证：相似匹配更需要校验（文本相似但参数可能不同）
+        validated = _validate_experience_params(result, item, rule_validator)
+        if validated is None:
+            return None
+        return validated
+
+    # 相似度不够高，不采纳
+    return None
+
+
+# ============================================================
+# 搜索与级联
+# ============================================================
+
+def cascade_search(searcher: HybridSearcher, search_query: str,
+                   classification: dict, top_k: int = None) -> list[dict]:
+    """
+    级联搜索：主专业+借用专业一起搜 → 不够则全库搜索
+
+    设计思想：不要只搜主专业（太窄，容易漏掉正确答案），
+    直接在"主专业+借用专业"范围内搜索，让Reranker和参数验证来挑最好的。
+
+    辅助定额库：
+    当清单项被分类为非安装专业（如A=土建、D=市政、E=园林），
+    搜索用户选择的所有辅助定额库，取最佳结果。
+
+    参数:
+        searcher: 混合搜索引擎实例（可能挂载了 aux_searchers）
+        search_query: 搜索文本
+        classification: specialty_classifier.classify() 的返回值
+        top_k: 返回候选数量
+
+    返回:
+        候选定额列表
+    """
+    top_k = top_k or config.HYBRID_TOP_K
+    classification = _normalize_classification(classification)
+    primary = classification.get("primary")
+    fallbacks = classification.get("fallbacks", [])
+
+    # 如果无法判断专业（primary=None），直接全库搜索
+    if not primary:
+        return searcher.search(search_query, top_k=top_k, books=None)
+
+    # ---- 辅助定额库路由 ----
+    # 清单项分类为非安装（A/D/E）时，搜索所有辅助定额库
+    aux_searchers = getattr(searcher, 'aux_searchers', [])
+    if aux_searchers and not primary.startswith("C"):
+        # 搜索每个辅助库，合并结果取最好的
+        all_candidates = []
+        for aux in aux_searchers:
+            try:
+                results = aux.search(search_query, top_k=top_k, books=None)
+                all_candidates.extend(results)
+            except Exception as e:
+                logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
+        if all_candidates:
+            # 按分数降序排序，取 top_k
+            all_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return all_candidates[:top_k]
+
+    # 第1步：在主专业+借用专业范围内搜索（比只搜主专业更灵活）
+    # 多取一些候选（top_k*2），让借用册有机会出现在结果中
+    # 场景：搜"镀锌钢管沟槽连接"时，C10的"镀锌钢管螺纹连接"得分高会挤掉C9的"钢管沟槽连接"
+    # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
+    search_books = [primary] + fallbacks
+    candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
+
+    # 结果足够就返回
+    if len(candidates) >= CASCADE_MIN_CANDIDATES:
+        return candidates
+
+    # 第2步：兜底全库搜索
+    candidates = searcher.search(search_query, top_k=top_k, books=None)
+    return candidates
+
+
+def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
+    """判断是否为措施项/章节分隔行，这类行不应套安装定额。"""
+    return (
+        (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
+        or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
+    )
+
+
+# ============================================================
+# 候选准备
+# ============================================================
+
+def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
+                        search_query: str, full_query: str,
+                        classification: dict) -> list[dict]:
+    """统一执行：级联搜索 → Reranker重排 → 参数验证。"""
+    candidates = cascade_search(searcher, search_query, classification)
+    # 单候选时重排无意义，可直接跳过提升速度
+    if candidates and len(candidates) > 1:
+        candidates = reranker.rerank(search_query, candidates)
+    if candidates:
+        candidates = validator.validate_candidates(
+            full_query, candidates, supplement_query=search_query)
+    return candidates
+
+
+def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
+                                      reranker, validator: ParamValidator):
+    """从统一 prepared 上下文中取字段并执行候选流水线。"""
+    ctx = prepared["ctx"]
+    full_query = ctx["full_query"]
+    search_query = ctx["search_query"]
+    classification = prepared["classification"]
+    candidates = _prepare_candidates(
+        searcher, reranker, validator, search_query, full_query, classification)
+    return (
+        ctx,
+        full_query,
+        search_query,
+        candidates,
+        prepared["exp_backup"],
+        prepared["rule_backup"],
+    )
+
+
+def _result_quota_signature(result: dict) -> tuple:
+    """返回结果中的定额编号签名，用于一致性比对。"""
+    quotas = result.get("quotas") or []
+    return tuple(str(q.get("quota_id", "")).strip() for q in quotas if q.get("quota_id"))
+
+
+# ============================================================
+# Agent快速通道
+# ============================================================
+
+def _has_fastpath_conflict(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None) -> bool:
+    """
+    快速通道冲突闸门：
+    若经验/规则备选给出中高置信且与top候选不一致，则强制走LLM。
+    """
+    if not candidates:
+        return True
+    top_id = str(candidates[0].get("quota_id", "")).strip()
+    if not top_id:
+        return True
+
+    for backup in (exp_backup, rule_backup):
+        if not backup:
+            continue
+        backup_conf = _safe_float_value(backup.get("confidence"), 0.0)
+        if backup_conf < config.CONFIDENCE_YELLOW:
+            continue
+        backup_sig = _result_quota_signature(backup)
+        if backup_sig and backup_sig[0] != top_id:
+            return True
+    return False
+
+
+def _should_skip_agent_llm(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None) -> bool:
+    """
+    Agent快速通道：参数匹配通过且分数达标的候选，跳过LLM直接采用搜索结果。
+
+    设计思路：
+    - 搜索+reranker+参数验证 已经能给出高质量候选
+    - LLM 对"同类定额不同档位"的选择帮助有限（还是靠参数匹配定档）
+    - 只有搜索结果不确定（param_match=False 或分数低）时才需要 LLM 介入
+    - 通过抽检监控快通道质量，发现问题可随时调严
+
+    快通道放行条件（全部满足才跳过LLM）：
+    1. 快通道开启
+    2. 候选列表非空
+    3. top1参数匹配通过
+    4. Reranker打分成功
+    5. 无经验库/规则冲突
+    6. param_score达标（≥0.60）
+    7. top1和top2的reranker分差足够大（≥SCORE_GAP）
+    """
+    if not config.AGENT_FASTPATH_ENABLED:
+        return False
+    if not candidates:
+        return False
+
+    top = candidates[0]
+    # 参数不匹配 → 需要LLM判断
+    if not top.get("param_match", True):
+        return False
+    # Reranker失败 → 候选排序不可信，必须走LLM
+    if any(c.get("reranker_failed") for c in candidates[:3]):
+        return False
+    # 经验库/规则与搜索结果冲突 → 需要LLM仲裁
+    if _has_fastpath_conflict(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
+        return False
+
+    top_score = _safe_float_value(top.get("param_score"), 0.0)
+    if top_score < config.AGENT_FASTPATH_SCORE:
+        return False
+
+    # ===== 搜索排名分差检查 =====
+    # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁
+    # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
+    score_gap_threshold = _safe_float_value(config.AGENT_FASTPATH_SCORE_GAP, 1.0)
+    if score_gap_threshold > 0 and len(candidates) >= 2:
+        top1_rs = _safe_float_value(
+            candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0)), 0.0)
+        top2_rs = _safe_float_value(
+            candidates[1].get("rerank_score", candidates[1].get("hybrid_score", 0)), 0.0)
+        gap = top1_rs - top2_rs
+        logger.debug(f"FastPath分差: top1={top1_rs:.3f} top2={top2_rs:.3f} gap={gap:.3f} "
+                     f"阈值={score_gap_threshold} → {'放行' if gap >= score_gap_threshold else '拦截'}")
+        if gap < score_gap_threshold:
+            return False  # 分差不够，让LLM来选
+
+    return True
+
+
+def _should_audit_fastpath() -> bool:
+    """按配置比例抽检快速通道结果。"""
+    rate = _safe_float_value(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
+    if rate <= 0:
+        return False
+    if rate >= 1:
+        return True
+    return random.random() < rate
+
+
+def _mark_agent_fastpath(result: dict):
+    """为快速通道结果打标，便于统计与审计。"""
+    result["agent_skipped"] = True
+    if result.get("match_source") == "search":
+        result["match_source"] = "agent_fastpath"
+    note = "Agent快速通道: 高置信候选，跳过LLM"
+    explanation = (result.get("explanation") or "").strip()
+    result["explanation"] = f"{explanation} | {note}" if explanation else note
+    _append_trace_step(result, "agent_fastpath", skipped_llm=True)

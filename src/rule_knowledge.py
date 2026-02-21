@@ -24,13 +24,14 @@
 
 import hashlib
 import re
-import sqlite3
 import sys
 from pathlib import Path
 
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
 
 
@@ -60,16 +61,12 @@ class RuleKnowledge:
         self._collection = None
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数，降低并发场景下锁等待失败。"""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
-        if row_factory:
-            conn.row_factory = sqlite3.Row
-        return conn
+        """统一SQLite连接参数"""
+        return _db_connect(self.db_path, row_factory=row_factory)
 
     def _init_db(self):
         """初始化SQLite数据库表结构"""
-        conn = self._connect()
+        conn = _db_connect_init(self.db_path)
         try:
             cursor = conn.cursor()
             cursor.execute("""

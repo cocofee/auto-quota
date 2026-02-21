@@ -31,6 +31,7 @@ docs/chm_dump/
 
 # 调试输出
 tests/debug_sheets.txt
+_tmp_*.log
 
 # IDE配置
 .vscode/

@@ -11,8 +11,8 @@
 
 import os
 import re
-import sqlite3
 
+from db.sqlite import connect as _db_connect
 from config import get_quota_db_path
 
 
@@ -35,7 +35,7 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
         db_path = get_quota_db_path(province)
         if not os.path.exists(db_path):
             return []
-        conn = sqlite3.connect(str(db_path))
+        conn = _db_connect(db_path)
 
     cursor = conn.cursor()
 
@@ -91,7 +91,7 @@ def search_by_id(quota_id, province=None, conn=None):
         db_path = get_quota_db_path(province)
         if not os.path.exists(db_path):
             return None
-        conn = sqlite3.connect(str(db_path))
+        conn = _db_connect(db_path)
 
     cursor = conn.cursor()
     cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?",
@@ -118,7 +118,7 @@ def search_by_id_prefix(quota_id, province=None, conn=None, limit=30):
         db_path = get_quota_db_path(province)
         if not os.path.exists(db_path):
             return []
-        conn = sqlite3.connect(str(db_path))
+        conn = _db_connect(db_path)
 
     cursor = conn.cursor()
 
@@ -154,7 +154,7 @@ def search_series(quota_id, province=None, conn=None):
         db_path = get_quota_db_path(province)
         if not os.path.exists(db_path):
             return []
-        conn = sqlite3.connect(str(db_path))
+        conn = _db_connect(db_path)
 
     cursor = conn.cursor()
 

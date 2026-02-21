@@ -21,7 +21,7 @@ if errorlevel 1 (
 set /p PROVINCE=<.tmp_selected_province.txt
 del /q .tmp_selected_province.txt 2>nul
 
-:: 读取辅助定额库（可选）
+:: 读取其他定额库（可选）
 set "AUX_PROVINCES="
 if exist .tmp_selected_aux_provinces.txt (
     set /p AUX_PROVINCES=<.tmp_selected_aux_provinces.txt
@@ -34,9 +34,9 @@ echo.
 :: ============================================================
 :WAIT_FILE
 echo ============================================================
-echo  主定额: !PROVINCE!
+echo  定额: !PROVINCE!
 if defined AUX_PROVINCES (
-    echo  辅助:   !AUX_PROVINCES!
+    echo  其他定额: !AUX_PROVINCES!
 )
 echo ============================================================
 echo.
@@ -68,9 +68,9 @@ echo.
 echo ############################################################
 echo  开始全自动流水线
 echo  文件: !CURRENT_FILE!
-echo  主定额: !PROVINCE!
+echo  定额: !PROVINCE!
 if defined AUX_PROVINCES (
-    echo  辅助: !AUX_PROVINCES!
+    echo  其他定额: !AUX_PROVINCES!
 )
 echo ############################################################
 echo.

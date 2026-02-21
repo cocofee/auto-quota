@@ -17,7 +17,6 @@ RRF算法原理：
 - k=60是标准常数，防止排名第1的权重过大
 """
 
-import sqlite3
 import re
 import time
 from pathlib import Path
@@ -29,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.bm25_engine import BM25Engine
 from src.vector_engine import VectorEngine
+from db.sqlite import connect as _db_connect
 
 
 class HybridSearcher:
@@ -340,8 +340,7 @@ class HybridSearcher:
                 self._feedback_bias_ts = now
                 return 0.0
 
-            conn = sqlite3.connect(str(exp_db), timeout=10)
-            conn.execute("PRAGMA busy_timeout=5000")
+            conn = _db_connect(exp_db)
             try:
                 rows = conn.execute(
                     """

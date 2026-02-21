@@ -423,10 +423,14 @@ def get_book_from_quota_id(quota_id: str) -> str | None:
         if book in BOOKS:
             return book
 
-    # 纯数字前缀：1-2-3 → "1"（某些省份编码格式）
+    # 纯数字前缀：1-2-3 → "C1"（江西/宁夏等省份编码格式，统一加C前缀）
+    # 13+ 的册号属于土建/装饰类，保留原始编号（不加C前缀）
     match = re.match(r'^(\d{1,2})-', quota_id)
     if match:
-        return match.group(1)
+        num = int(match.group(1))
+        if 1 <= num <= 12:
+            return f"C{num}"
+        return str(num)  # 土建/装饰册号，如 13=抹灰, 14=涂料, 15=金属装饰
 
     return None
 

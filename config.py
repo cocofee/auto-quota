@@ -377,6 +377,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-6")
 
 # OpenAI配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = "gpt-4o"
 
 # 通义千问(Qwen)配置 —— 阿里云DashScope
@@ -391,7 +392,7 @@ KIMI_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 
 # API调用配置
 LLM_MAX_RETRIES = 3           # API调用最大重试次数
-LLM_TIMEOUT = 30              # API调用超时（秒）
+LLM_TIMEOUT = 90              # API调用超时（秒）
 LLM_CONCURRENT = 5            # 并发调用数（批量匹配时）
 
 # ============================================================

@@ -15,7 +15,6 @@
 
 import json
 import re
-import sqlite3
 import time
 from pathlib import Path
 
@@ -26,6 +25,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.experience_db import ExperienceDB
+from db.sqlite import connect as _db_connect
 
 
 class FeedbackLearner:
@@ -357,8 +357,7 @@ class FeedbackLearner:
              "user_corrections": 用户修正数,
              "accuracy_rate": 准确率(百分比)}
         """
-        conn = sqlite3.connect(str(self.experience_db.db_path), timeout=10)
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn = _db_connect(self.experience_db.db_path)
         try:
             cursor = conn.cursor()
 

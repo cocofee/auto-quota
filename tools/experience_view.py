@@ -14,12 +14,13 @@ import sys
 import os
 import json
 import argparse
-import sqlite3
 from pathlib import Path
 from datetime import datetime
 
 # 确保能导入项目模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.sqlite import connect as _db_connect
 import config
 
 
@@ -97,8 +98,7 @@ def cmd_list(args):
         print("经验库为空（数据库文件不存在）")
         return
 
-    conn = sqlite3.connect(str(db_path), timeout=10)
-    conn.row_factory = sqlite3.Row
+    conn = _db_connect(db_path, row_factory=True)
     try:
         # 总数
         if province:
