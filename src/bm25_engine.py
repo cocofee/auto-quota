@@ -18,8 +18,6 @@ import jieba
 from rank_bm25 import BM25Okapi
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from db.sqlite import connect as _db_connect
 

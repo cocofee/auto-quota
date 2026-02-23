@@ -22,10 +22,10 @@ from pathlib import Path
 from datetime import datetime
 
 import openpyxl
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 
@@ -109,6 +109,23 @@ def _safe_confidence(value, default: int = 0) -> int:
 def _ensure_list(value) -> list:
     """把任意输入收敛为list，避免脏类型触发导出异常。"""
     return value if isinstance(value, list) else []
+
+
+def _safe_write_cell(ws, row: int, column: int, value=None):
+    """安全写入单元格值，遇到合并单元格时跳过。
+
+    当目标格是MergedCell（合并区域中非左上主格）时，openpyxl禁止写入
+    并抛 AttributeError。本函数检测到MergedCell后静默跳过，避免整次输出崩溃。
+
+    返回:
+        cell对象（可继续设置样式），或 None（合并单元格，已跳过）
+    """
+    cell = ws.cell(row=row, column=column)
+    if isinstance(cell, MergedCell):
+        return None
+    if value is not None:
+        cell.value = value
+    return cell
 
 
 def _is_bill_serial(a_val) -> bool:
@@ -290,13 +307,33 @@ class OutputWriter:
         for alt_idx, alt in enumerate(_ensure_list(alternatives)[:3]):
             alt_col = start_col + alt_idx
             alt_text = safe_excel_text(f"{alt.get('quota_id', '')} {alt.get('name', '')}")
-            cell_alt = ws.cell(row=row_idx, column=alt_col, value=alt_text)
-            cell_alt.font = BILL_FONT  # 和正文统一字体
-            cell_alt.border = THIN_BORDER
+            cell_alt = _safe_write_cell(ws, row_idx, alt_col, alt_text)
+            if cell_alt:
+                cell_alt.font = BILL_FONT  # 和正文统一字体
+                cell_alt.border = THIN_BORDER
 
     @staticmethod
     def _brief_explanation(explanation: str) -> str:
         return safe_excel_text(explanation[:80] if explanation else "")
+
+    @staticmethod
+    def _check_review_needed(confidence: int, quotas: list,
+                             match_source: str) -> bool:
+        """判断该条清单是否需要人工复核
+
+        标记条件（任一命中即标记）：
+        - 无匹配结果（定额为空）
+        - 置信度低于85%（★★参考 或 ★待审）
+        - 降级结果（agent_fallback / agent_error）
+        - 无经验库命中的纯搜索结果（首次出现的清单写法）
+        """
+        if not quotas:
+            return True
+        if confidence < config.CONFIDENCE_GREEN:
+            return True
+        if match_source in ("agent_fallback", "agent_error"):
+            return True
+        return False
 
     @staticmethod
     def _brief_materials(result: dict, max_items: int = 4) -> str:
@@ -333,9 +370,11 @@ class OutputWriter:
 
     @staticmethod
     def _write_no_match_row(ws, row_idx: int, no_reason: str, max_col: int):
-        ws.cell(row=row_idx, column=3, value=safe_excel_text(f"未匹配: {no_reason}"))
+        _safe_write_cell(ws, row_idx, 3, safe_excel_text(f"未匹配: {no_reason}"))
         for col in range(1, max_col + 1):
             cell = ws.cell(row=row_idx, column=col)
+            if isinstance(cell, MergedCell):
+                continue
             cell.font = Font(name="宋体", size=9, color="FF0000")
             cell.fill = RED_FILL
             cell.border = THIN_BORDER
@@ -344,6 +383,8 @@ class OutputWriter:
     def _apply_row_style(ws, row_idx: int, start_col: int, end_col: int, wrap_cols: set[int]):
         for col_idx in range(start_col, end_col + 1):
             cell = ws.cell(row=row_idx, column=col_idx)
+            if isinstance(cell, MergedCell):
+                continue
             if cell.font == Font():
                 cell.font = BILL_FONT
             cell.border = THIN_BORDER
@@ -354,7 +395,9 @@ class OutputWriter:
 
     @staticmethod
     def _set_header_cell(ws, row_idx: int, col_idx: int, value, fill):
-        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+        cell = _safe_write_cell(ws, row_idx, col_idx, value)
+        if cell is None:
+            return None  # 合并单元格，跳过
         cell.font = HEADER_FONT
         cell.fill = fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -488,16 +531,51 @@ class OutputWriter:
             used_seq.add(seq)
             row_result_pairs.append((bill_rows[seq - 1], result))
 
-        # 兼容旧结果格式：无序号映射时退回顺序匹配
+        # 兼容旧结果格式：无序号映射时退回 bill_code 匹配 → 顺序匹配
         if not can_use_seq_map:
-            if len(bill_rows) != len(results):
-                logger.warning(
-                    f"Sheet [{ws.title}]: 清单行数({len(bill_rows)}) != "
-                    f"结果数({len(results)}), 且缺少可用定位信息，按顺序匹配")
-            num_to_process = min(len(bill_rows), len(results))
-            row_result_pairs = [
-                (bill_rows[i], results[i]) for i in range(num_to_process)
-            ]
+            # 回退方案A：按 bill_code（12位清单编码）精准匹配
+            code_pairs = []
+            if results:
+                # 构建 Excel 中 {B列编码: row_idx} 映射
+                row_code_map = {}
+                for row_idx in bill_rows:
+                    b_val = ws.cell(row=row_idx, column=2).value
+                    if b_val:
+                        b_str = str(b_val).strip()
+                        if b_str not in row_code_map:  # 同编码取第一个行
+                            row_code_map[b_str] = row_idx
+
+                used_rows = set()
+                for result in results:
+                    bill_code = result.get("bill_item", {}).get("code", "")
+                    if bill_code and bill_code in row_code_map:
+                        target_row = row_code_map[bill_code]
+                        if target_row not in used_rows:
+                            code_pairs.append((target_row, result))
+                            used_rows.add(target_row)
+
+            if code_pairs:
+                row_result_pairs = code_pairs
+                unmatched_count = len(results) - len(code_pairs)
+                if unmatched_count > 0:
+                    logger.warning(
+                        f"Sheet [{ws.title}]: bill_code匹配模式下 "
+                        f"{unmatched_count}/{len(results)}条结果无法映射到Excel行"
+                        f"（bill_code在Excel中找不到对应行），这些结果将不会回写")
+                else:
+                    logger.info(
+                        f"Sheet [{ws.title}]: sheet_bill_seq不可用，"
+                        f"改用bill_code精准匹配 ({len(code_pairs)}/{len(bill_rows)})")
+            else:
+                # 回退方案B：顺序匹配（最后兜底）
+                if len(bill_rows) != len(results):
+                    logger.warning(
+                        f"Sheet [{ws.title}]: 清单行数({len(bill_rows)}) != "
+                        f"结果数({len(results)}), 且缺少可用定位信息，按顺序匹配")
+                num_to_process = min(len(bill_rows), len(results))
+                row_result_pairs = [
+                    (bill_rows[i], results[i]) for i in range(num_to_process)
+                ]
         elif len(bill_rows) != len(results):
             logger.info(
                 f"Sheet [{ws.title}]: 结果为清单子集，按sheet_bill_seq精准回写 "
@@ -599,26 +677,31 @@ class OutputWriter:
         confidence = _safe_confidence(result.get("confidence", 0), default=0)
         quotas = _ensure_list(result.get("quotas", []))
         explanation = result.get("explanation", "")
+        match_source = result.get("match_source", "")
+
+        # 判断是否需要复核（任一条件命中即标记）
+        review_needed = self._check_review_needed(confidence, quotas, match_source)
 
         # 置信度颜色
         conf_fill = self._confidence_fill(confidence)
 
-        # J列：星级推荐
+        # J列：星级推荐（安全写入，跳过合并单元格）
         conf_text = confidence_to_stars(confidence, bool(quotas))
-        cell_j = ws.cell(row=row_idx, column=10, value=conf_text)
-        cell_j.font = BILL_FONT
-        cell_j.border = THIN_BORDER
-        if quotas:
-            cell_j.fill = conf_fill
+        cell_j = _safe_write_cell(ws, row_idx, 10, conf_text)
+        if cell_j:
+            cell_j.font = BILL_FONT
+            cell_j.border = THIN_BORDER
+            if quotas:
+                cell_j.fill = conf_fill
 
-        # K列：匹配说明
-        cell_k = ws.cell(
-            row=row_idx,
-            column=11,
-            value=self._brief_explanation(explanation)
-        )
-        cell_k.font = BILL_FONT
-        cell_k.border = THIN_BORDER
+        # K列：匹配说明（需复核的条目加前缀标记）
+        brief = self._brief_explanation(explanation)
+        if review_needed:
+            brief = f"[需复核] {brief}" if brief else "[需复核]"
+        cell_k = _safe_write_cell(ws, row_idx, 11, brief)
+        if cell_k:
+            cell_k.font = BILL_FONT
+            cell_k.border = THIN_BORDER
 
         # L/M/N列：备选定额
         self._write_alternative_cells(
@@ -627,10 +710,11 @@ class OutputWriter:
 
         # O列：主材
         material_text = self._brief_materials(result)
-        cell_o = ws.cell(row=row_idx, column=15, value=material_text)
-        cell_o.font = BILL_FONT
-        cell_o.border = THIN_BORDER
-        cell_o.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        cell_o = _safe_write_cell(ws, row_idx, 15, material_text)
+        if cell_o:
+            cell_o.font = BILL_FONT
+            cell_o.border = THIN_BORDER
+            cell_o.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
     def _write_quota_rows(self, ws, current_row: int, result: dict,
                           bill_unit: str, bill_qty, max_col: int) -> int:
@@ -757,6 +841,8 @@ class OutputWriter:
 
             for col_idx in range(1, 16):  # A-O 列（1-15）
                 cell = ws.cell(row=row_idx, column=col_idx)
+                if isinstance(cell, MergedCell):
+                    continue  # 合并单元格跳过，避免写样式崩溃
 
                 # 边框：统一设 thin 边框
                 cell.border = THIN_BORDER

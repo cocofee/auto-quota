@@ -8,16 +8,12 @@
 4. 同时向量化，支持后续语义检索
 
 用法：
-    python tools/import_shandong_rules.py "C:\path\to\培训资料.txt"
+    python tools/import_shandong_rules.py "C:\\path\\to\\培训资料.txt"
 """
 
 import re
 import sys
 from pathlib import Path
-
-# 项目根目录
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
 
 from src.rule_knowledge import RuleKnowledge
 

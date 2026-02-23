@@ -16,13 +16,11 @@ Excel格式约定：
 """
 
 import re
-import sys
 from pathlib import Path
 
 import openpyxl
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.text_parser import normalize_bill_text
 
@@ -203,19 +201,20 @@ class DiffLearner:
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
         wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
+        try:
+            # 找到有效的Sheet（优先找"匹配结果明细"，否则用第一个）
+            ws = None
+            for sn in wb.sheetnames:
+                if "匹配" in sn or "明细" in sn or "结果" in sn:
+                    ws = wb[sn]
+                    break
+            if ws is None:
+                ws = wb[wb.sheetnames[0]]
 
-        # 找到有效的Sheet（优先找"匹配结果明细"，否则用第一个）
-        ws = None
-        for sn in wb.sheetnames:
-            if "匹配" in sn or "明细" in sn or "结果" in sn:
-                ws = wb[sn]
-                break
-        if ws is None:
-            ws = wb[wb.sheetnames[0]]
-
-        # 先检测表头和列映射
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
+            # 先检测表头和列映射
+            rows = list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
 
         header_row_idx, col_map = self._detect_header(rows)
 

@@ -14,12 +14,10 @@
 """
 
 import threading
+from pathlib import Path
 
 from loguru import logger
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 
@@ -177,6 +175,10 @@ class ModelCache:
         """
         path_str = str(path)
 
+        # 防御：拒绝 None 或空路径，避免在当前目录创建 "None/" 等垃圾目录
+        if not path_str or path_str == "None":
+            raise ValueError(f"ChromaDB路径无效: {path!r}，请检查调用方是否正确传入了路径")
+
         # 快速路径：已缓存且可用
         if path_str in cls._chroma_clients:
             client = cls._chroma_clients[path_str]
@@ -208,4 +210,21 @@ class ModelCache:
         logger.info("[ModelCache] 开始预加载模型...")
         cls.get_vector_model()
         cls.get_reranker_model()
+        # 启动自检提示：如果模型加载失败，提前告知用户
+        if cls._vector_model is None:
+            logger.warning("[ModelCache] 向量模型不可用，本轮将仅使用BM25关键词搜索（精度有所下降）")
+        if cls._reranker_model is None:
+            logger.warning("[ModelCache] Reranker模型不可用，本轮将跳过语义重排（排序精度有所下降）")
         logger.info("[ModelCache] 所有模型预加载完成")
+
+    @classmethod
+    def get_degradation_summary(cls, agent_matcher=None) -> dict:
+        """获取本轮运行的降级统计摘要（供日志汇总用）"""
+        from src.vector_engine import VectorEngine
+        return {
+            "vector_available": cls._vector_model is not None,
+            "reranker_available": cls._reranker_model is not None,
+            "vector_skip_count": VectorEngine._model_skip_count,
+            "llm_circuit_open": agent_matcher._llm_circuit_open if agent_matcher else False,
+            "llm_consecutive_fails": agent_matcher._llm_consecutive_fails if agent_matcher else 0,
+        }

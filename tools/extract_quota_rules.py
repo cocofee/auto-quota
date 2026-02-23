@@ -19,14 +19,12 @@
 import json
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 from datetime import datetime
 
 # 添加项目根目录到路径
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.quota_db import QuotaDB
 

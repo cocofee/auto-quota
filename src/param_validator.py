@@ -13,12 +13,9 @@
 """
 
 import math
-import sys
-from pathlib import Path
 
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.text_parser import parser as text_parser
 
@@ -102,6 +99,15 @@ class ParamValidator:
                 detail += f"; {neg_detail}"
                 if neg_penalty >= 0.3:
                     is_match = False  # 重罚时直接标记不匹配
+
+            # 品类互斥检查：清单核心品类和定额核心品类冲突 → 降分
+            cat_penalty, cat_detail = self._check_category_conflict(
+                query_text, candidate.get("name", ""))
+            if cat_penalty > 0:
+                score = max(0.0, score - cat_penalty)
+                detail += f"; {cat_detail}"
+                if cat_penalty >= 0.3:
+                    is_match = False
 
             candidate["param_score"] = score
             candidate["param_detail"] = detail
@@ -195,6 +201,33 @@ class ParamValidator:
         "涂覆": ["镀锌钢管", "镀锌"],
     }
 
+    # 品类互斥表：同组内的品类不应相互匹配
+    # 例如清单"阀门"不应匹配到"弯头"定额，清单"水泵"不应匹配到"风机"定额
+    # 按专业大类组织（C=安装, A=土建, D=市政, E=园林），方便多专业扩展
+    #
+    # 注意事项：
+    # - "法兰"不在此表中：它既是产品（法兰盘）又是连接方式修饰语（法兰蝶阀），
+    #   放在互斥组中会导致"法兰蝶阀"与"阀门安装"误报冲突
+    # - "管件"不在此表中：它是泛称（包含弯头/三通/异径管），与子类型不互斥
+    CATEGORY_CONFLICTS_BY_SPECIALTY = {
+        "install": [  # 安装工程（C1~C12）
+            {"阀门", "弯头", "三通", "异径管"},
+            {"水泵", "风机", "风口"},
+            {"桥架", "穿线管", "配管"},
+            {"配电箱", "控制柜", "端子箱"},
+            {"灯具", "开关", "插座"},
+            {"消火栓", "灭火器", "喷头"},
+            {"散热器", "地暖", "风机盘管"},
+        ],
+        # 以下专业暂时为空，待扩展时添加
+        # "civil": [],      # 土建工程
+        # "municipal": [],  # 市政工程
+        # "landscape": [],  # 园林绿化
+    }
+
+    # 兼容旧代码：不指定专业时默认用安装工程的品类表
+    CATEGORY_CONFLICTS = CATEGORY_CONFLICTS_BY_SPECIALTY["install"]
+
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:
         """
         判断两种材质是否兼容（近似匹配）
@@ -284,6 +317,41 @@ class ParamValidator:
                 details = [f"清单无'{kw}'但定额含'{kw}' 罚分-{penalty}"]
 
         return max_penalty, "; ".join(details)
+
+    @classmethod
+    def _check_category_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
+        """
+        品类互斥检查：清单核心品类和定额核心品类冲突时降分
+
+        例如：
+          - 清单"闸阀DN100"  → 定额"弯头DN100"  → 品类冲突（阀门≠弯头）
+          - 清单"消防泵"     → 定额"风机安装"    → 品类冲突（水泵≠风机）
+
+        返回: (惩罚分数, 说明文本)
+        """
+        # 找清单命中的品类
+        bill_category = None
+        for conflict_group in cls.CATEGORY_CONFLICTS:
+            for cat in conflict_group:
+                if cat in bill_text:
+                    bill_category = (cat, conflict_group)
+                    break
+            if bill_category:
+                break
+
+        if not bill_category:
+            return 0.0, ""
+
+        bill_cat_name, bill_group = bill_category
+
+        # 找定额命中的品类
+        for cat in bill_group:
+            if cat == bill_cat_name:
+                continue  # 同品类不算冲突
+            if cat in quota_name:
+                return 0.3, f"品类冲突: 清单'{bill_cat_name}' vs 定额'{cat}'"
+
+        return 0.0, ""
 
     @staticmethod
     def _connections_compatible_pv(bill_conn: str, quota_conn: str) -> bool:
@@ -383,7 +451,11 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"DN{bill_dn}≠DN{quota_dn} 不匹配(清单>定额)")
             else:
-                score_sum += 0.5
+                # 定额没有DN参数，说明该定额不按管径分档（通用定额），不算错
+                # 选0.9而非0.5的理由：通用定额（如"管道试压"不分DN）匹配通用清单是合理的
+                # 排序安全：精确匹配1.0 > 通用0.9，正确候选仍会排在前面
+                # 经L2-b benchmark验证：4组数据集均无退化（B1↑10pp, B2↑1.1pp, B3↑4.2pp）
+                score_sum += 0.9
                 details.append(f"定额无DN参数")
 
         # === 2. 电缆截面（硬性参数） ===
@@ -404,7 +476,8 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"截面{bill_sec}≠{quota_sec} 不匹配(清单>定额)")
             else:
-                score_sum += 0.5
+                # 定额没有截面参数，说明该定额不按截面分档（通用定额），不算错
+                score_sum += 0.9
                 details.append(f"定额无截面参数")
 
         # === 3. 容量kVA（硬性参数） ===
@@ -425,7 +498,7 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"容量{bill_kva}kVA≠{quota_kva}kVA 不匹配")
             else:
-                score_sum += 0.5
+                score_sum += 0.9
                 details.append(f"定额无容量参数")
 
         # === 4. 回路数（硬性参数） ===
@@ -446,7 +519,7 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"回路{bill_cir}>{quota_cir} 不匹配(清单>定额)")
             else:
-                score_sum += 0.5
+                score_sum += 0.9
                 details.append("定额无回路参数")
 
         # === 5. 电流A（硬性参数） ===
@@ -467,7 +540,7 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"电流{bill_amp}A>{quota_amp}A 不匹配(清单>定额)")
             else:
-                score_sum += 0.5
+                score_sum += 0.9
                 details.append("定额无电流参数")
 
         # === 6. 电压等级kV（软性参数） ===

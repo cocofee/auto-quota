@@ -21,8 +21,6 @@ from pathlib import Path
 import openpyxl
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.experience_db import ExperienceDB
 from db.sqlite import connect as _db_connect
@@ -130,77 +128,78 @@ class FeedbackLearner:
             return {"total": 0, "learned": 0}
 
         wb = openpyxl.load_workbook(str(path), data_only=True)
+        try:
+            stats = {"total": 0, "learned": 0}
+            quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
 
-        stats = {"total": 0, "learned": 0}
-        quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
+            for ws in wb.worksheets:
+                # 跳过辅助页
+                if ws.title in {"待审核", "统计汇总"}:
+                    continue
 
-        for ws in wb.worksheets:
-            # 跳过辅助页
-            if ws.title in {"待审核", "统计汇总"}:
-                continue
+                current_bill = None   # 当前正在处理的清单项
+                current_quotas = []   # 当前清单项对应的定额列表
 
-            current_bill = None   # 当前正在处理的清单项
-            current_quotas = []   # 当前清单项对应的定额列表
+                for row in ws.iter_rows(min_row=1, values_only=True):
+                    cells = list(row) if row else []
+                    a = str(cells[0]).strip() if len(cells) > 0 and cells[0] is not None else ""
+                    b = str(cells[1]).strip() if len(cells) > 1 and cells[1] is not None else ""
+                    c = str(cells[2]).strip() if len(cells) > 2 and cells[2] is not None else ""
+                    d = str(cells[3]).strip() if len(cells) > 3 and cells[3] is not None else ""
+                    e = str(cells[4]).strip() if len(cells) > 4 and cells[4] is not None else ""
 
-            for row in ws.iter_rows(min_row=1, values_only=True):
-                cells = list(row) if row else []
-                a = str(cells[0]).strip() if len(cells) > 0 and cells[0] is not None else ""
-                b = str(cells[1]).strip() if len(cells) > 1 and cells[1] is not None else ""
-                c = str(cells[2]).strip() if len(cells) > 2 and cells[2] is not None else ""
-                d = str(cells[3]).strip() if len(cells) > 3 and cells[3] is not None else ""
-                e = str(cells[4]).strip() if len(cells) > 4 and cells[4] is not None else ""
+                    is_labeled_bill = (a == "清单")
+                    is_labeled_quota = (a == "定额")
+                    # 兼容当前导出格式：A列为数字序号
+                    is_numbered_bill = (a.isdigit() and bool(c))
+                    # 兼容当前导出格式：A列空且B列为定额编号
+                    is_quota_row = bool(current_bill) and (
+                        is_labeled_quota or ((not a) and bool(quota_id_pattern.match(b)))
+                    )
 
-                is_labeled_bill = (a == "清单")
-                is_labeled_quota = (a == "定额")
-                # 兼容当前导出格式：A列为数字序号
-                is_numbered_bill = (a.isdigit() and bool(c))
-                # 兼容当前导出格式：A列空且B列为定额编号
-                is_quota_row = bool(current_bill) and (
-                    is_labeled_quota or ((not a) and bool(quota_id_pattern.match(b)))
-                )
+                    if is_labeled_bill or is_numbered_bill:
+                        # 如果之前有未保存的清单+定额对，先保存
+                        if current_bill and current_quotas:
+                            if self._save_bill_quota_pair(current_bill, current_quotas):
+                                stats["learned"] += 1
 
-                if is_labeled_bill or is_numbered_bill:
-                    # 如果之前有未保存的清单+定额对，先保存
-                    if current_bill and current_quotas:
-                        if self._save_bill_quota_pair(current_bill, current_quotas):
-                            stats["learned"] += 1
+                        # 开始新的清单项
+                        if is_labeled_bill:
+                            # 旧格式："清单"标记行（unit在第4列，desc在第5列）
+                            current_bill = {
+                                "name": c,
+                                "code": b,
+                                "unit": d,
+                                "description": e,
+                            }
+                        else:
+                            # 现格式：序号行（desc在第4列，unit在第5列）
+                            current_bill = {
+                                "name": c,
+                                "code": b,
+                                "unit": e,
+                                "description": d,
+                            }
+                        current_quotas = []
+                        stats["total"] += 1
 
-                    # 开始新的清单项
-                    if is_labeled_bill:
-                        # 旧格式："清单"标记行（unit在第4列，desc在第5列）
-                        current_bill = {
-                            "name": c,
-                            "code": b,
-                            "unit": d,
-                            "description": e,
-                        }
-                    else:
-                        # 现格式：序号行（desc在第4列，unit在第5列）
-                        current_bill = {
-                            "name": c,
-                            "code": b,
-                            "unit": e,
-                            "description": d,
-                        }
-                    current_quotas = []
-                    stats["total"] += 1
+                    elif is_quota_row:
+                        # 定额行，收集定额信息
+                        quota_id = b
+                        quota_name = c
+                        if quota_id:
+                            current_quotas.append({
+                                "quota_id": quota_id,
+                                "name": quota_name,
+                            })
 
-                elif is_quota_row:
-                    # 定额行，收集定额信息
-                    quota_id = b
-                    quota_name = c
-                    if quota_id:
-                        current_quotas.append({
-                            "quota_id": quota_id,
-                            "name": quota_name,
-                        })
+                # 保存最后一条
+                if current_bill and current_quotas:
+                    if self._save_bill_quota_pair(current_bill, current_quotas):
+                        stats["learned"] += 1
+        finally:
+            wb.close()
 
-            # 保存最后一条
-            if current_bill and current_quotas:
-                if self._save_bill_quota_pair(current_bill, current_quotas):
-                    stats["learned"] += 1
-
-        wb.close()
         logger.info(f"从Excel学习完成: 共{stats['total']}条清单, 学习{stats['learned']}条")
 
         return stats
@@ -256,86 +255,79 @@ class FeedbackLearner:
             return {"total": 0, "imported": 0}
 
         wb = openpyxl.load_workbook(str(path), data_only=True)
-
-        records = []
-        quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
-        for ws in wb.worksheets:
-            if ws.title in {"待审核", "统计汇总"}:
-                continue
-            current_bill = None
-            current_quotas = []
-
-            for row in ws.iter_rows(min_row=1, values_only=True):
-                if not row or not any(row):
+        try:
+            records = []
+            quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
+            for ws in wb.worksheets:
+                if ws.title in {"待审核", "统计汇总"}:
                     continue
+                current_bill = None
+                current_quotas = []
 
-                # 尝试识别行类型
-                # 兼容两类格式：
-                # 1) 旧标签格式：A列为“清单/定额”
-                # 2) 当前导出格式：清单行A列为数字序号，定额行A列为空且B列为定额编号
-                first_cell = str(row[0]).strip() if row[0] is not None else ""
-                code_cell = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-                name_cell = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
+                for row in ws.iter_rows(min_row=1, values_only=True):
+                    if not row or not any(row):
+                        continue
 
-                is_labeled_bill = (first_cell == "清单")
-                is_labeled_quota = (first_cell == "定额")
-                is_numbered_bill = first_cell.isdigit() and bool(name_cell)
-                is_quota_row = bool(current_bill) and (
-                    is_labeled_quota or ((not first_cell) and bool(quota_id_pattern.match(code_cell)))
-                )
+                    first_cell = str(row[0]).strip() if row[0] is not None else ""
+                    code_cell = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+                    name_cell = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
 
-                if is_labeled_bill or is_numbered_bill:
-                    # 清单行
-                    if current_bill and current_quotas:
-                        records.append({
-                            "bill_text": f"{current_bill.get('name', '')} {current_bill.get('description', '')}".strip(),
-                            "bill_name": current_bill.get("name"),
-                            "bill_code": current_bill.get("code"),
-                            "bill_unit": current_bill.get("unit"),
-                            "quota_ids": [q["quota_id"] for q in current_quotas],
-                            "quota_names": [q.get("name", "") for q in current_quotas],
-                        })
+                    is_labeled_bill = (first_cell == "清单")
+                    is_labeled_quota = (first_cell == "定额")
+                    is_numbered_bill = first_cell.isdigit() and bool(name_cell)
+                    is_quota_row = bool(current_bill) and (
+                        is_labeled_quota or ((not first_cell) and bool(quota_id_pattern.match(code_cell)))
+                    )
 
-                    if is_labeled_bill:
-                        # 旧格式："清单"标记行（unit在第4列，desc在第5列）
-                        current_bill = {
-                            "name": name_cell,
-                            "code": code_cell,
-                            "unit": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
-                            "description": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
-                        }
-                    else:
-                        # 现格式：序号行（desc在第4列，unit在第5列）
-                        current_bill = {
-                            "name": name_cell,
-                            "code": code_cell,
-                            "unit": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
-                            "description": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
-                        }
-                    current_quotas = []
+                    if is_labeled_bill or is_numbered_bill:
+                        # 清单行
+                        if current_bill and current_quotas:
+                            records.append({
+                                "bill_text": f"{current_bill.get('name', '')} {current_bill.get('description', '')}".strip(),
+                                "bill_name": current_bill.get("name"),
+                                "bill_code": current_bill.get("code"),
+                                "bill_unit": current_bill.get("unit"),
+                                "quota_ids": [q["quota_id"] for q in current_quotas],
+                                "quota_names": [q.get("name", "") for q in current_quotas],
+                            })
 
-                elif is_quota_row:
-                    # 定额行
-                    quota_id = code_cell
-                    quota_name = name_cell
-                    if quota_id:
-                        current_quotas.append({
-                            "quota_id": quota_id,
-                            "name": quota_name,
-                        })
+                        if is_labeled_bill:
+                            current_bill = {
+                                "name": name_cell,
+                                "code": code_cell,
+                                "unit": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
+                                "description": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
+                            }
+                        else:
+                            current_bill = {
+                                "name": name_cell,
+                                "code": code_cell,
+                                "unit": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
+                                "description": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
+                            }
+                        current_quotas = []
 
-            # 保存最后一条
-            if current_bill and current_quotas:
-                records.append({
-                    "bill_text": f"{current_bill.get('name', '')} {current_bill.get('description', '')}".strip(),
-                    "bill_name": current_bill.get("name"),
-                    "bill_code": current_bill.get("code"),
-                    "bill_unit": current_bill.get("unit"),
-                    "quota_ids": [q["quota_id"] for q in current_quotas],
-                    "quota_names": [q.get("name", "") for q in current_quotas],
-                })
+                    elif is_quota_row:
+                        quota_id = code_cell
+                        quota_name = name_cell
+                        if quota_id:
+                            current_quotas.append({
+                                "quota_id": quota_id,
+                                "name": quota_name,
+                            })
 
-        wb.close()
+                # 保存最后一条
+                if current_bill and current_quotas:
+                    records.append({
+                        "bill_text": f"{current_bill.get('name', '')} {current_bill.get('description', '')}".strip(),
+                        "bill_name": current_bill.get("name"),
+                        "bill_code": current_bill.get("code"),
+                        "bill_unit": current_bill.get("unit"),
+                        "quota_ids": [q["quota_id"] for q in current_quotas],
+                        "quota_names": [q.get("name", "") for q in current_quotas],
+                    })
+        finally:
+            wb.close()
 
         if not records:
             logger.warning("未从Excel中识别到清单→定额对应关系")

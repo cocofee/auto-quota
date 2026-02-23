@@ -9,18 +9,18 @@
 而不只是匹配关键词。与BM25互补使用效果最好。
 """
 
-from pathlib import Path
-
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from db.sqlite import connect as _db_connect
 
 
 class VectorEngine:
     """BGE向量搜索引擎（基于ChromaDB）"""
+
+    # 运行级熔断标志：向量模型不可用时只警告一次，后续静默跳过
+    _model_unavailable_warned = False
+    _model_skip_count = 0
 
     def __init__(self, province: str = None):
         """
@@ -158,6 +158,13 @@ class VectorEngine:
         返回:
             向量列表，与输入一一对应
         """
+        # 向量模型不可用时快速返回（不重复报错）
+        if self.model is None:
+            if not VectorEngine._model_unavailable_warned:
+                logger.warning("[VectorEngine] 向量模型不可用，本轮所有向量搜索将跳过（仅BM25兜底）")
+                VectorEngine._model_unavailable_warned = True
+            VectorEngine._model_skip_count += 1
+            return [None] * len(queries)
         query_prefix = "为这个句子生成表示以用于检索中文文档: "
         prefixed = [query_prefix + q for q in queries]
         embeddings = self.model.encode(
@@ -193,12 +200,16 @@ class VectorEngine:
         if precomputed_embedding is not None:
             import numpy as np
             query_embedding = np.array(precomputed_embedding).reshape(1, -1)
-        else:
+        elif self.model is not None:
             query_prefix = "为这个句子生成表示以用于检索中文文档: "
             query_embedding = self.model.encode(
                 [query_prefix + query],
                 normalize_embeddings=True
             )
+        else:
+            # 向量模型不可用且无预计算向量，无法执行向量搜索
+            VectorEngine._model_skip_count += 1
+            return []
 
         # 构建过滤条件（specialty优先，book其次）
         where_filter = None

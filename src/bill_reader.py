@@ -13,14 +13,12 @@
 
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 
 import openpyxl
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.text_parser import parser as text_parser
 
@@ -34,6 +32,42 @@ def _is_quota_code(code: str) -> bool:
         return False
     core = c[:-1] if c.endswith("换") else c
     return bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core)) or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+
+
+def _is_material_code(code: str) -> bool:
+    """判断是否是主材/材料编码（广联达导出的材料行编码格式）。
+
+    "带定额"的清单Excel中，每条清单下面有定额行和材料行。
+    定额行已由 _is_quota_code 过滤，这里过滤材料行。
+
+    常见材料编码格式：
+    - CL17067060@2（CL前缀，广联达材料编码）
+    - ZCGL170460@5（ZCGL前缀，广联达主材编码）
+    - 26010101Z@2（含Z@，广联达材料变量编码）
+    - 补充主材006@33（"补充主材"前缀，广联达补充主材）
+    - AZ04ZC005@1（含@，广联达材料变体编号）
+    """
+    if not isinstance(code, str):
+        return False
+    c = code.strip()
+    if not c:
+        return False
+    # CL开头（如CL17067060@2）
+    if re.match(r'^CL\d', c, re.IGNORECASE):
+        return True
+    # ZCGL开头（如ZCGL170460@5）
+    if re.match(r'^ZCGL\d', c, re.IGNORECASE):
+        return True
+    # 含Z@（如26010101Z@2、28110000Z@121）
+    if 'Z@' in c:
+        return True
+    # "补充主材"开头（如补充主材006@33、补充主材011）
+    if c.startswith('补充主材'):
+        return True
+    # 含@且不是标准清单编码（广联达材料变体都用@标记，清单编码不含@）
+    if '@' in c:
+        return True
+    return False
 
 
 class BillReader:
@@ -464,6 +498,11 @@ class BillReader:
         #   清单行编码为12位数字（如030402011001），定额行编码为 X-XXX 格式（如C4-4-31）
         if _is_quota_code(code):
             return None  # 定额编号格式，跳过
+
+        # 过滤材料行：编码为材料格式（如CL17067060@2、ZCGL170460@5、26010101Z@2），不是清单项
+        # "带定额"的广联达文件中，每条清单下面有定额行+材料行，材料行也要跳过
+        if _is_material_code(code):
+            return None  # 材料编码格式，跳过
 
         # 构建搜索文本（合并名称+特征描述，去除无用信息）
         search_text = text_parser.build_search_text(name, description)

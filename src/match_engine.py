@@ -4,7 +4,7 @@
 
 对外公开 API：
 - init_search_components(province, aux_provinces) — 初始化搜索引擎
-- init_experience_db(no_experience) — 初始化经验库
+- init_experience_db(no_experience, province=None) — 初始化经验库
 - match_by_mode(mode, ...) — 按模式执行匹配
 - match_search_only(...) — 纯搜索模式
 - match_agent(...) — Agent模式
@@ -178,7 +178,8 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
                                province: str = None,
                                reference_cases_cache: dict = None,
                                rules_context_cache: dict = None,
-                               method_cards_db=None):
+                               method_cards_db=None,
+                               overview_context: str = ""):
     """agent模式统一结果决策：Agent分析 + 经验/规则兜底。"""
     if reference_cases_cache is None:
         reference_cases_cache = {}
@@ -210,6 +211,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         rules_context=rules_context,
         method_cards=relevant_cards,
         search_query=search_query,
+        overview_context=overview_context,
     )
     _append_trace_step(
         result,
@@ -280,14 +282,14 @@ def init_search_components(resolved_province: str, aux_provinces: list = None):
     return searcher, validator
 
 
-def init_experience_db(no_experience: bool):
+def init_experience_db(no_experience: bool, province: str = None):
     """按配置初始化经验库（可选）。"""
     experience_db = None
     if no_experience:
         return experience_db
     try:
         from src.experience_db import ExperienceDB
-        experience_db = ExperienceDB()
+        experience_db = ExperienceDB(province=province)
         exp_stats = experience_db.get_stats()
         logger.info(f"  经验库: {exp_stats['total']} 条历史记录")
     except Exception as e:
@@ -470,6 +472,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     from src.agent_matcher import AgentMatcher
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    # 新实例自带干净的熔断器状态，无需手动重置
+
     # 初始化Agent（使用指定的或config中配置的大模型）
     agent_llm = llm_type or config.AGENT_LLM
     agent = AgentMatcher(llm_type=agent_llm, province=province)
@@ -504,6 +508,29 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     logger.info(f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}")
 
+    # 表级匹配统计（用于构建上下文摘要传给LLM，帮助保持同类清单一致性）
+    match_stats = {}  # {"清单名称片段 → 定额编号": 计数}
+
+    def _build_overview_context() -> str:
+        """从已完成的匹配结果中构建表级统计摘要"""
+        if not match_stats:
+            return ""
+        # 只取出现次数最多的前5条
+        sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+        lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
+        return f"[上下文] 当前表已处理的同类清单匹配情况：\n" + "\n".join(lines) + "\n同类清单请保持一致。"
+
+    def _update_match_stats(result: dict):
+        """从匹配结果中更新统计"""
+        bill_item_info = result.get("bill_item", {})
+        bill_name = bill_item_info.get("name", "")[:10]  # 取前10字作为摘要
+        quotas = result.get("quotas", [])
+        if quotas and bill_name:
+            main_id = quotas[0].get("quota_id", "")
+            main_name = quotas[0].get("name", "")[:15]
+            key = f"{bill_name} → {main_id}({main_name})"
+            match_stats[key] = match_stats.get(key, 0) + 1
+
     # ========== 第1阶段：串行搜索 + 快通道 ==========
     # 收集需要LLM的条目
     llm_tasks = []  # [(idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit)]
@@ -532,6 +559,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         if consumed:
             # 经验库/规则直通命中，结果在 _consumed_buf 最后一条
             results_by_idx[idx] = _consumed_buf[-1]
+            _update_match_stats(_consumed_buf[-1])
             continue
 
         ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
@@ -544,6 +572,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             _mark_agent_fastpath(fast_result)
             fastpath_hits += 1
             results_by_idx[idx] = fast_result
+            _update_match_stats(fast_result)
 
             # 质量护栏：抽检走快通道的条目（收集到LLM任务里一起并发）
             if _should_audit_fastpath():
@@ -562,6 +591,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         def _process_llm_task(task):
             """单个LLM任务处理（线程安全）"""
             idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            # 构建表级上下文摘要（在LLM调用前快照，线程安全）
+            ctx_summary = _build_overview_context()
             result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
                 agent=agent,
                 item=item,
@@ -580,7 +611,50 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 reference_cases_cache=reference_cases_cache,
                 rules_context_cache=rules_context_cache,
                 method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
             )
+            # 低置信度重试：confidence < 阈值时，扩大搜索范围重试一次
+            retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 60)
+            confidence = result.get("confidence", 100)
+            # LLM已熔断时跳过重试（避免放大失败开销）
+            if hasattr(agent, "is_circuit_open"):
+                llm_circuit_open = bool(agent.is_circuit_open())
+            else:
+                llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+            if not is_audit and confidence < retry_threshold and candidates and not llm_circuit_open:
+                logger.info(f"#{idx} 置信度{confidence}<{retry_threshold}，触发全库重试搜索")
+                try:
+                    # 全库搜索（不限册号），增加候选数
+                    retry_candidates = searcher.search(
+                        search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+                    if retry_candidates and len(retry_candidates) > 1:
+                        retry_candidates = reranker.rerank(search_query, retry_candidates)
+                    if retry_candidates:
+                        retry_candidates = validator.validate_candidates(
+                            full_query, retry_candidates, supplement_query=search_query)
+                    if retry_candidates:
+                        # 用扩展候选重新调用LLM
+                        retry_result, r_exp, r_rule = _resolve_agent_mode_result(
+                            agent=agent, item=item, candidates=retry_candidates,
+                            experience_db=experience_db, full_query=full_query,
+                            search_query=search_query, rule_kb=rule_kb,
+                            name=name, desc=desc, exp_backup=exp_backup,
+                            rule_backup=rule_backup, exp_hits=0, rule_hits=0,
+                            province=province,
+                            reference_cases_cache=reference_cases_cache,
+                            rules_context_cache=rules_context_cache,
+                            method_cards_db=method_cards_db,
+                            overview_context=ctx_summary,
+                        )
+                        retry_conf = retry_result.get("confidence", 0)
+                        if retry_conf > confidence:
+                            logger.info(f"#{idx} 重试成功: {confidence}→{retry_conf}")
+                            result = retry_result
+                            task_exp_hits = r_exp
+                            task_rule_hits = r_rule
+                except Exception as e:
+                    logger.debug(f"#{idx} 低置信度重试失败（保留原结果）: {e}")
+
             return idx, result, task_exp_hits, task_rule_hits, is_audit
 
         # 并发执行LLM任务
@@ -591,8 +665,47 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
             completed = 0
             for future in as_completed(futures):
-                idx, result, task_exp_hits, task_rule_hits, is_audit = future.result()
                 completed += 1
+                task = futures[future]
+                idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit = future.result()
+                except Exception as e:
+                    logger.error(f"LLM并发任务失败(#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"LLM杩涘害: {completed}/{len(llm_tasks)}")
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, exp_backup, rule_backup, 0, 0)
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"LLM任务降级也失败(#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM任务异常且降级失败: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM任务异常: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
 
                 if is_audit:
                     # 审计模式：对比快通道结果

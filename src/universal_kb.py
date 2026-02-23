@@ -20,13 +20,10 @@
 
 import json
 import sqlite3
-import sys
 import time
 from pathlib import Path
 
 from loguru import logger
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
@@ -361,6 +358,10 @@ class UniversalKB:
             if self.collection.count() == 0:
                 return None
 
+            # 向量模型不可用时快速跳过（通用知识库依赖向量，无模型则直接返回）
+            if self.model is None:
+                return None
+
             query_embedding = self.model.encode(
                 [bill_pattern], normalize_embeddings=True
             )
@@ -476,6 +477,8 @@ class UniversalKB:
                     return results
 
         # 2. 向量相似搜索
+        if self.model is None:
+            return results  # 向量模型不可用，只返回精确匹配结果
         if self.collection.count() == 0:
             return results
 

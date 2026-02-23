@@ -12,12 +12,9 @@
 """
 
 import re
-import sys
-from pathlib import Path
 
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.specialty_classifier import classify as classify_specialty
 from src.specialty_classifier import parse_section_title
 from src.text_parser import parser as text_parser
@@ -159,8 +156,8 @@ _WIRE_MODELS = [
     'BVR', 'BVV', 'BXF', 'BXR', 'BYJ', 'BV', 'BX', 'BY',
 ]
 
-# 按1根计算的电线（R开头）
-_SINGLE_WIRE_MODELS = ['RVSP', 'RYJS', 'RVS', 'RVV', 'RVVP', 'RYJ']
+# 多芯软导线（R开头，按芯数和线径套"软导线"定额）
+_SOFT_WIRE_MODELS = ['RVSP', 'RYJS', 'RVS', 'RVV', 'RVVP', 'RYJ']
 
 # 电缆型号（按长度倒序）
 _CABLE_MODELS = [
@@ -201,7 +198,7 @@ def _classify_cable_type(name: str, desc: str) -> str | None:
     """
     从清单名称和特征描述中识别线缆类型
 
-    返回: "电线" / "电线(单根)" / "电缆" / "光缆" / "双绞线" / None
+    返回: "电线" / "软导线" / "电缆" / "光缆" / "双绞线" / None
     """
     text = f"{name} {desc}".upper()  # 统一大写匹配型号
     text_cn = f"{name} {desc}"       # 保留中文原文匹配关键词
@@ -213,10 +210,10 @@ def _classify_cable_type(name: str, desc: str) -> str | None:
                 return cable_type
 
     # 第2步：型号前缀匹配（处理阻燃前缀如 WDZ-BYJ、WDZN-YJV 等）
-    # 按1根计算的电线（优先于普通电线，因为 RVV 不能被 BV 误匹配）
-    for model in _SINGLE_WIRE_MODELS:
+    # 多芯软导线（优先于普通电线，因为 RVV 不能被 BV 误匹配）
+    for model in _SOFT_WIRE_MODELS:
         if re.search(_CABLE_PREFIX + model + r'[\s\-\d]', text):
-            return '电线(单根)'
+            return '软导线'
 
     # 电缆（优先于电线，因为电缆型号更长更具体）
     for model in _CABLE_MODELS:

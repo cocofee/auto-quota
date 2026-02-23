@@ -26,6 +26,66 @@ from src.match_core import (
     _safe_json_materials,
     _summarize_candidates_for_trace,
 )
+from src.review_checkers import (
+    check_category_mismatch,
+    check_material_mismatch,
+    check_connection_mismatch,
+    check_pipe_usage,
+    check_parameter_deviation,
+    check_sleeve_mismatch,
+    check_electric_pair,
+    check_elevator_type,
+    check_elevator_floor,
+    extract_description_lines,
+)
+
+
+# ============================================================
+# 审核规则检查（防止经验库错误数据被无限复制）
+# ============================================================
+
+def _review_check_match_result(result: dict, item: dict) -> dict | None:
+    """
+    用审核规则检查匹配结果，拦截明显错误。
+
+    经验库直通的结果以前跳过所有审核规则，一旦有错误数据进入权威层，
+    就会被无限复制。这个函数在直通前加一道"安检"，发现问题就拒绝直通。
+
+    参数:
+        result: 匹配结果字典（含 quotas 列表）
+        item: 清单项目字典
+
+    返回:
+        审核错误字典（如果有错误），None 表示通过
+    """
+    quotas = result.get("quotas", [])
+    if not quotas:
+        return None
+
+    main_quota = quotas[0]
+    quota_name = main_quota.get("name", "")
+    quota_id = main_quota.get("quota_id", "")
+
+    if not quota_name:
+        return None
+
+    desc = item.get("description", "") or ""
+    desc_lines = extract_description_lines(desc)
+
+    # 依次运行审核检查器（短路：发现第一个错误就返回）
+    error = (
+        check_category_mismatch(item, quota_name, desc_lines)
+        or check_sleeve_mismatch(item, quota_name, desc_lines)
+        or check_material_mismatch(item, quota_name, desc_lines)
+        or check_connection_mismatch(item, quota_name, desc_lines)
+        or check_pipe_usage(item, quota_name, desc_lines)
+        or check_parameter_deviation(item, quota_name, desc_lines)
+        or check_electric_pair(item, quota_name, desc_lines)
+        or check_elevator_type(item, quota_name, desc_lines)
+        or check_elevator_floor(item, quota_name, desc_lines, quota_id=quota_id)
+    )
+
+    return error
 
 
 # ============================================================
@@ -38,7 +98,8 @@ def _build_item_context(item: dict) -> dict:
     desc = item.get("description", "") or ""
     section = item.get("section", "") or ""
     original_name = item.get("original_name", name)
-    search_query = text_parser.build_quota_query(name, desc)
+    search_query = text_parser.build_quota_query(name, desc,
+                                                  specialty=item.get("specialty", ""))
     # 线缆类型标签：追加到搜索词，帮助BM25区分电线/电缆/光缆定额
     cable_type = item.get("cable_type", "")
     if cable_type:
@@ -116,11 +177,16 @@ def _build_alternatives(candidates: list[dict], selected_ids: set = None,
         filtered.append(c)
     alternatives = []
     for alt in filtered[:top_n]:
+        quota_id = str(alt.get("quota_id", "")).strip()
+        quota_name = str(alt.get("name", "")).strip()
+        if not quota_id or not quota_name:
+            logger.warning(f"跳过异常候选（缺少quota_id/name）: {alt}")
+            continue
         alt_ps = alt.get("param_score", 0.5)
         alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
         alternatives.append({
-            "quota_id": alt["quota_id"],
-            "name": alt["name"],
+            "quota_id": quota_id,
+            "name": quota_name,
             "unit": alt.get("unit", ""),
             "confidence": alt_conf,
             "reason": alt.get("param_detail", ""),
@@ -324,15 +390,22 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     confidence = 0
     explanation = ""
 
-    if candidates:
-        matched_candidates = [c for c in candidates if c.get("param_match", True)]
+    valid_candidates = [
+        c for c in (candidates or [])
+        if str(c.get("quota_id", "")).strip() and str(c.get("name", "")).strip()
+    ]
+    if candidates and not valid_candidates:
+        logger.warning("候选列表存在，但全部缺少quota_id/name，按无匹配处理")
+
+    if valid_candidates:
+        matched_candidates = [c for c in valid_candidates if c.get("param_match", True)]
         if matched_candidates:
             best = matched_candidates[0]
             param_score = best.get("param_score", 0.5)
             confidence = int(param_score * 95)
             explanation = best.get("param_detail", "")
         else:
-            best = candidates[0]
+            best = valid_candidates[0]
             param_score = best.get("param_score", 0.0)
             confidence = max(int(param_score * 45), 15)
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
@@ -359,9 +432,9 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         candidates=_summarize_candidates_for_trace(candidates),
     )
 
-    if best and candidates:
+    if best and valid_candidates:
         result["alternatives"] = _build_alternatives(
-            candidates, skip_obj=best, top_n=3)
+            valid_candidates, skip_obj=best, top_n=3)
     if not best:
         result["no_match_reason"] = "搜索无匹配结果"
     return result
@@ -413,6 +486,23 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     classification = _build_classification(item, name, desc, ctx["section"])
     exp_result = try_experience_match(
         normalized_query, item, experience_db, rule_validator, province=province)
+
+    # 审核规则检查：经验库命中后，用审核规则验证一遍
+    # 防止错误数据进入权威层后被无限复制
+    if exp_result:
+        review_error = _review_check_match_result(exp_result, item)
+        if review_error:
+            # 在 item 上标记审核拦截（后续统计时从 result.bill_item 中读取）
+            item["_review_rejected"] = True
+            bill_name = item.get("name", "")
+            logger.warning(
+                f"经验库匹配被审核规则拦截: '{bill_name[:40]}' "
+                f"→ {review_error.get('type')}: {review_error.get('reason')}")
+            _append_trace_step(exp_result, "experience_review_rejected",
+                               error_type=review_error.get("type"),
+                               error_reason=review_error.get("reason"))
+            exp_result = None  # 丢弃，走搜索兜底
+
     exp_backup = exp_result if exp_result else None
 
     if exact_exp_direct and exp_result and exp_result.get("match_source") == "experience_exact":

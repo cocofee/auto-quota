@@ -1,25 +1,19 @@
-"""
-一键导入定额数据工具
+﻿"""
+涓€閿鍏ュ畾棰濇暟鎹伐鍏?
+鍔熻兘锛氭壂鎻忔寚瀹氱渷浠界洰褰曚笅鎵€鏈墄lsx 鈫?鑷姩璇嗗埆specialty 鈫?瀵煎叆鏁版嵁搴?鈫?鐢熸垚瑙勫垯JSON 鈫?閲嶅缓绱㈠紩
 
-功能：扫描指定省份目录下所有xlsx → 自动识别specialty → 导入数据库 → 生成规则JSON → 重建索引
-
-默认增量模式：自动跳过已导入的文件，只处理新增文件。
-用 --full 强制全量重导。
-
-用法：
-    python tools/import_all.py --province "北京2024"        # 增量导入（默认）
-    python tools/import_all.py --full                       # 全量重导
-    python tools/import_all.py --skip-index                 # 跳过索引重建
+榛樿澧為噺妯″紡锛氳嚜鍔ㄨ烦杩囧凡瀵煎叆鐨勬枃浠讹紝鍙鐞嗘柊澧炴枃浠躲€?鐢?--full 寮哄埗鍏ㄩ噺閲嶅銆?
+鐢ㄦ硶锛?    python tools/import_all.py --province "鍖椾含2024"        # 澧為噺瀵煎叆锛堥粯璁わ級
+    python tools/import_all.py --full                       # 鍏ㄩ噺閲嶅
+    python tools/import_all.py --skip-index                 # 璺宠繃绱㈠紩閲嶅缓
 """
 
-import sys
 import time
 import argparse
 from pathlib import Path
 
-# 添加项目根目录到路径
+# 娣诲姞椤圭洰鏍圭洰褰曞埌璺緞
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
 import config
@@ -27,207 +21,228 @@ from src.quota_db import QuotaDB, detect_specialty_from_excel
 
 
 def _resolve_import_province(name: str = None) -> str:
-    """解析导入目标省份，优先匹配 data/quota_data 中真实可用的省份目录。"""
-    available = config.list_all_provinces()
-
-    # 未指定：优先当前省份，不存在则回退第一个可用省份
-    if not name:
-        current = config.get_current_province()
-        if available and current not in available:
-            return available[0]
-        return current
-
-    # 没有可扫描目录时（如旧版扁平结构），保留原始输入做兼容
-    if not available:
-        return name
-
-    # 精确匹配
-    if name in available:
-        return name
-
-    # 模糊匹配（唯一命中）
-    matches = [p for p in available if name in p]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        options = ", ".join(matches)
-        raise ValueError(f"'{name}' 匹配到多个省份: {options}，请输入更精确名称")
-
-    options = ", ".join(available)
-    raise ValueError(f"找不到省份 '{name}'，可用省份: {options}")
+    """瑙ｆ瀽瀵煎叆鐩爣鐪佷唤锛屼紭鍏堝尮閰?data/quota_data 涓湡瀹炲彲鐢ㄧ殑鐪佷唤鐩綍銆?
+    濮旀墭缁?config.resolve_province(scope="data") 缁熶竴澶勭悊锛?    閬垮厤澶氬缁存姢閲嶅鐨勮В鏋愰€昏緫銆?    """
+    return config.resolve_province(name, interactive=False, scope="data")
 
 
 def _filter_new_files(xlsx_files: list[Path], db: QuotaDB) -> list[Path]:
-    """对比导入历史，筛选出未导入过的新文件
+    """Filter files for incremental import.
 
-    判断逻辑：文件名 + 文件大小 + 修改时间 全部一致 → 已导入，跳过
-    文件名相同但大小/时间变了 → 视为修改过的文件，需要重新导入
-
-    参数:
-        xlsx_files: 目录中所有xlsx文件路径列表
-        db: 定额数据库实例
-
-    返回:
-        需要导入的文件列表（新增的 + 修改过的）
+    Priority:
+    1) Compare by content hash (preferred).
+    2) Fall back to size/mtime when old records have no hash.
     """
-    history = db.get_import_history()
-    # 建立已导入文件的索引：{文件名: {file_size, file_mtime}}
-    imported_map = {
-        h["file_name"]: {"file_size": h["file_size"], "file_mtime": h["file_mtime"]}
-        for h in history
-    }
+    import hashlib
 
-    new_files = []      # 需要导入的文件
-    skipped_files = []  # 已导入跳过的文件
-    modified_files = [] # 修改过需要重新导入的文件
+    history = db.get_import_history()
+    success_history = [h for h in history if h.get("status", "success") != "error"]
+    path_map = {h["file_path"]: h for h in success_history}
+    hash_set = {h["file_hash"] for h in success_history if h.get("file_hash")}
+
+    new_files = []
+    skipped_files = []
+    modified_files = []
 
     for f in xlsx_files:
-        stat = f.stat()
-        prev = imported_map.get(f.name)
-        if prev is None:
-            # 全新文件
+        full_path = str(f.resolve())
+        try:
+            hasher = hashlib.md5()
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(8192), b""):
+                    hasher.update(chunk)
+            current_hash = hasher.hexdigest()
+        except OSError as e:
+            print(f"    [WARNING] cannot read file {f.name}: {e}; treat as new file")
             new_files.append(f)
-        elif prev["file_size"] == stat.st_size and abs(prev["file_mtime"] - stat.st_mtime) < 1:
-            # 文件名、大小、修改时间都一致 → 已导入，跳过
-            # （修改时间允许1秒误差，避免文件系统精度差异）
-            skipped_files.append(f)
-        else:
-            # 同名文件但内容变了 → 需要重新导入
-            modified_files.append(f)
+            continue
 
-    # 打印筛选结果
+        prev = path_map.get(full_path)
+
+        if prev and prev.get("file_hash"):
+            if prev["file_hash"] == current_hash:
+                skipped_files.append(f)
+            else:
+                modified_files.append(f)
+        elif current_hash in hash_set:
+            skipped_files.append(f)
+            print(f"    (same content imported from another path: {f.name})")
+        elif prev is not None:
+            stat = f.stat()
+            if prev["file_size"] == stat.st_size and abs(prev["file_mtime"] - stat.st_mtime) < 1:
+                skipped_files.append(f)
+            else:
+                modified_files.append(f)
+        else:
+            new_files.append(f)
+
     if skipped_files:
-        print(f"  ✓ 已导入（跳过）: {len(skipped_files)} 个文件")
+        print(f"  [SKIP] already imported: {len(skipped_files)} files")
         for f in skipped_files:
-            print(f"    · {f.name}")
+            print(f"    - {f.name}")
 
     if modified_files:
-        print(f"  ↻ 已修改（重新导入）: {len(modified_files)} 个文件")
+        print(f"  [REIMPORT] modified: {len(modified_files)} files")
         for f in modified_files:
-            print(f"    · {f.name}")
+            print(f"    - {f.name}")
 
     if new_files:
-        print(f"  ★ 新增（待导入）: {len(new_files)} 个文件")
+        print(f"  [NEW] pending import: {len(new_files)} files")
         for f in new_files:
-            print(f"    · {f.name}")
+            print(f"    - {f.name}")
 
     print()
     return new_files + modified_files
 
 
 def main():
-    parser = argparse.ArgumentParser(description="一键导入定额数据")
+    parser = argparse.ArgumentParser(description="One-click quota data import")
     parser.add_argument("--province", type=str, default=None,
-                        help="省份版本（如 北京2024），不指定使用默认配置")
+                        help="Province/version name, for example 'Beijing 2024'")
     parser.add_argument("--skip-index", action="store_true",
-                        help="跳过索引重建（仅导入数据和生成规则）")
+                        help="Skip rebuilding BM25/vector indexes")
     parser.add_argument("--full", action="store_true",
-                        help="全量重导（忽略导入历史，清除旧数据重新导入所有文件）")
+                        help="Full re-import (ignore import history)")
     args = parser.parse_args()
 
     try:
         province = _resolve_import_province(args.province)
     except ValueError as e:
-        print(f"错误: {e}")
+        print(f"Error: {e}")
         return
 
-    # 同步运行态省份，避免后续未显式传参模块回落到硬编码默认值
-    config.set_current_province(province)
-
-    mode_label = "全量重导" if args.full else "增量导入"
+    mode_label = "full" if args.full else "incremental"
     print("=" * 60)
-    print(f"  一键导入定额数据（{mode_label}）")
-    print(f"  省份: {province}")
+    print(f"Quota import ({mode_label})")
+    print(f"Province: {province}")
     print("=" * 60)
     print()
 
-    # ===== 第1步：扫描xlsx文件 =====
     quota_dir = config.get_quota_data_dir(province)
     if not quota_dir.exists():
-        # 兼容旧目录
         quota_dir = config.QUOTA_DATA_DIR
         if not quota_dir.exists():
-            print(f"错误：定额目录不存在: {quota_dir}")
-            print(f"请创建目录并放入广联达导出的定额Excel文件")
+            print(f"Error: quota directory does not exist: {quota_dir}")
             return
 
     xlsx_files = sorted(quota_dir.glob("*.xlsx"))
     if not xlsx_files:
-        print(f"错误：目录下没有xlsx文件: {quota_dir}")
-        print(f"请将广联达导出的定额Excel放到该目录")
+        print(f"Error: no .xlsx files found in: {quota_dir}")
         return
 
-    print(f"扫描目录: {quota_dir}")
-    print(f"发现 {len(xlsx_files)} 个Excel文件")
+    print(f"Scan dir: {quota_dir}")
+    print(f"Found {len(xlsx_files)} xlsx files")
     print()
 
-    # ===== 第2步：筛选需要导入的文件 =====
     db = QuotaDB(province=province)
 
-    # 自动检测：如果import_history表为空但数据库已有数据，说明是旧库升级
-    # 这种情况自动切换为全量模式，避免重复追加
     history = db.get_import_history()
     stats = db.get_stats()
     if not args.full and not history and stats.get("total", 0) > 0:
-        print("检测到旧数据库（无导入历史记录），自动切换为全量模式")
-        print("（后续运行将自动使用增量模式）")
+        total_existing = stats.get("total", 0)
+        print(f"[WARN] legacy database detected without import history ({total_existing} rows)")
+        print("Switching to full mode in 3 seconds (Ctrl+C to cancel)...")
+        try:
+            time.sleep(3)
+        except KeyboardInterrupt:
+            print("\nCanceled.")
+            return
         print()
         args.full = True
 
     if args.full:
-        # 全量模式：清空导入历史，所有文件都需要导入
         db.clear_import_history()
         files_to_import = xlsx_files
-        print(f"全量模式：将导入全部 {len(files_to_import)} 个文件")
+        print(f"Full mode: import all {len(files_to_import)} files")
         print()
     else:
-        # 增量模式：对比导入历史，只导入新文件
         files_to_import = _filter_new_files(xlsx_files, db)
         if not files_to_import:
-            print("所有文件已导入，无需更新。")
-            print("如需强制全量重导，请使用 --full 参数")
+            print("All files already imported. Use --full to force re-import.")
             return
 
-    # ===== 第3步：逐个导入数据库 =====
-    print(f"【第1步】导入定额到数据库（{len(files_to_import)} 个文件）...")
-    imported = {}  # {specialty: count}
+    print("Prechecking workbook format...")
+    valid_files = []
+    for xlsx_file in files_to_import:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(str(xlsx_file), read_only=True, data_only=True)
+            sheet_count = len(wb.sheetnames)
+            wb.close()
+            if sheet_count == 0:
+                print(f"  [SKIP] {xlsx_file.name}: empty workbook")
+                continue
+            valid_files.append(xlsx_file)
+        except Exception as e:
+            print(f"  [SKIP] {xlsx_file.name}: invalid workbook ({e})")
+            continue
+
+    if not valid_files:
+        print("No valid files to import.")
+        return
+    if len(valid_files) < len(files_to_import):
+        skipped = len(files_to_import) - len(valid_files)
+        print(f"Precheck passed: {len(valid_files)} files, skipped: {skipped}")
+    else:
+        print(f"Precheck passed: {len(valid_files)} files")
+    files_to_import = valid_files
+    print()
+
+    print(f"[Step 1] Import quotas into DB ({len(files_to_import)} files)...")
+    imported = {}
 
     if args.full:
-        # 全量模式：同一specialty的第一个文件清除旧数据，后续追加
         cleared_specialties = set()
         for xlsx_file in files_to_import:
             specialty = detect_specialty_from_excel(str(xlsx_file))
             is_first = specialty not in cleared_specialties
-            cleared_specialties.add(specialty)
-            mode = "清除旧数据+导入" if is_first else "追加导入"
-            print(f"  导入: {xlsx_file.name} → specialty='{specialty}' ({mode})")
-            count = db.import_excel(str(xlsx_file), specialty=specialty,
-                                    clear_existing=is_first)
-            imported[specialty] = imported.get(specialty, 0) + count
-            # 记录导入历史
-            db.record_import(str(xlsx_file), specialty, count)
-            print(f"    完成: {count}条")
+            mode = "clear+import" if is_first else "append"
+            print(f"  Import: {xlsx_file.name} -> specialty='{specialty}' ({mode})")
+            try:
+                count = db.import_excel(str(xlsx_file), specialty=specialty, clear_existing=is_first)
+                cleared_specialties.add(specialty)
+                imported[specialty] = imported.get(specialty, 0) + count
+                try:
+                    db.record_import(str(xlsx_file), specialty, count)
+                except Exception as e:
+                    print(f"    [WARN] failed to record import history: {e}")
+                print(f"    Done: {count} rows")
+            except Exception as e:
+                print(f"    [ERROR] import failed: {e}")
+                try:
+                    db.record_import(str(xlsx_file), specialty, 0, status="error", error_msg=str(e)[:200])
+                except Exception:
+                    pass
     else:
-        # 增量模式：所有文件都用追加模式，不清除旧数据
         for xlsx_file in files_to_import:
             specialty = detect_specialty_from_excel(str(xlsx_file))
-            print(f"  导入: {xlsx_file.name} → specialty='{specialty}' (增量追加)")
-            count = db.import_excel(str(xlsx_file), specialty=specialty,
-                                    clear_existing=False)
-            imported[specialty] = imported.get(specialty, 0) + count
-            # 记录导入历史
-            db.record_import(str(xlsx_file), specialty, count)
-            print(f"    完成: {count}条")
+            print(f"  Import: {xlsx_file.name} -> specialty='{specialty}' (append)")
+            try:
+                count = db.import_excel(str(xlsx_file), specialty=specialty, clear_existing=False)
+                imported[specialty] = imported.get(specialty, 0) + count
+                try:
+                    db.record_import(str(xlsx_file), specialty, count)
+                except Exception as e:
+                    print(f"    [WARN] failed to record import history: {e}")
+                print(f"    Done: {count} rows")
+            except Exception as e:
+                print(f"    [ERROR] import failed: {e}")
+                try:
+                    db.record_import(str(xlsx_file), specialty, 0, status="error", error_msg=str(e)[:200])
+                except Exception:
+                    pass
 
     total = sum(imported.values())
-    print(f"\n  本次导入: 共{total}条")
+    print(f"\nImported rows this run: {total}")
     for sp, cnt in imported.items():
-        print(f"    {sp}: {cnt}条")
+        print(f"  {sp}: {cnt}")
     print()
 
-    # ===== 第4步：生成规则JSON =====
-    print("【第2步】生成定额规则JSON...")
-    # 调用extract_quota_rules为每个specialty生成规则
+    if total == 0:
+        print("No rows imported successfully. Skip rule generation and index rebuild.")
+        return
+
+    print("[Step 2] Generate rule JSON files...")
     from tools.extract_quota_rules import process_all_chapters, generate_summary
     import json, os, tempfile
 
@@ -235,18 +250,19 @@ def main():
     rules_dir.mkdir(parents=True, exist_ok=True)
 
     for specialty in imported.keys():
-        print(f"  生成 {specialty} 规则...")
+        print(f"  Build rules for {specialty}...")
         rules = process_all_chapters(db, specialty=specialty)
 
         json_path = rules_dir / f"{specialty}定额规则.json"
-        # 原子写入
         json_tmp = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json",
+                mode="w",
+                suffix=".json",
                 prefix=f"{json_path.stem}_tmp_",
                 dir=str(json_path.parent),
-                encoding="utf-8", delete=False,
+                encoding="utf-8",
+                delete=False,
             ) as f:
                 json_tmp = f.name
                 json.dump(rules, f, ensure_ascii=False, indent=2)
@@ -258,16 +274,17 @@ def main():
                 except OSError:
                     pass
 
-        # 写摘要
         summary_path = rules_dir / f"{specialty}定额规则_摘要.txt"
         summary = generate_summary(rules)
         summary_tmp = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt",
+                mode="w",
+                suffix=".txt",
                 prefix=f"{summary_path.stem}_tmp_",
                 dir=str(summary_path.parent),
-                encoding="utf-8", delete=False,
+                encoding="utf-8",
+                delete=False,
             ) as f:
                 summary_tmp = f.name
                 f.write(summary)
@@ -280,48 +297,57 @@ def main():
                     pass
 
         meta = rules["meta"]
-        print(f"    {meta['total_quotas']}条定额 → {meta['total_families']}个家族 + {meta['total_standalone']}个独立")
-        print(f"    保存: {json_path.name}")
+        print(
+            f"    quotas={meta['total_quotas']}, families={meta['total_families']}, "
+            f"standalone={meta['total_standalone']}"
+        )
+        print(f"    Saved: {json_path.name}")
     print()
 
-    # ===== 第5步：重建搜索索引 =====
     if args.skip_index:
-        print("【跳过】索引重建（--skip-index）")
+        print("[Skip] Index rebuild (--skip-index)")
     else:
-        print("【第3步】重建搜索索引...")
-
-        # BM25索引
-        print("  构建BM25索引...")
+        print("[Step 3] Rebuild search indexes...")
+        print("  Build BM25 index...")
         from src.bm25_engine import BM25Engine
         bm25 = BM25Engine(province=province)
         bm25.build_index()
-        print(f"    完成: {len(bm25.quota_ids)}条")
+        print(f"    Done: {len(bm25.quota_ids)} items")
 
-        # 向量索引
-        print("  构建向量索引（需要GPU，耗时较长）...")
+        print("  Build vector index (may take longer)...")
         from src.vector_engine import VectorEngine
         vec = VectorEngine(province=province)
         vec.build_index()
-        print(f"    完成")
+        print("    Done")
 
     print()
 
-    # ===== 汇总 =====
+    try:
+        from src.experience_db import ExperienceDB
+        exp_db = ExperienceDB(province=province)
+        new_version = db.get_version()
+        if new_version:
+            stale_count = exp_db.mark_stale_experiences(province, new_version)
+            if stale_count > 0:
+                print(f"Marked stale experience records: {stale_count}")
+    except Exception as e:
+        logger.debug(f"Failed to mark stale experiences (non-blocking): {e}")
+
     print("=" * 60)
-    print("  导入完成!")
+    print("Import completed")
     print("=" * 60)
     stats = db.get_stats()
-    print(f"  数据库: {db.db_path}")
-    print(f"  总定额: {stats['total']}条")
-    print(f"  总章节: {stats['chapters']}个")
-    print(f"  专业数: {stats['specialties']}个")
+    print(f"DB path: {db.db_path}")
+    print(f"Total quotas: {stats['total']}")
+    print(f"Total chapters: {stats['chapters']}")
+    print(f"Total specialties: {stats['specialties']}")
     for sp, cnt in imported.items():
-        print(f"    · {sp}: {cnt}条（本次导入）")
+        print(f"  - {sp}: {cnt} (imported this run)")
     print()
-    print(f"  规则文件: data/quota_rules/{province}/*定额规则.json")
+    print(f"Rules path: data/quota_rules/{province}/*定额规则.json")
     if not args.skip_index:
-        print(f"  BM25索引: 已重建")
-        print(f"  向量索引: 已重建")
+        print("BM25 index: rebuilt")
+        print("Vector index: rebuilt")
 
 
 if __name__ == "__main__":

@@ -333,6 +333,43 @@ _CORRECTOR_DISPATCH = {
 }
 
 
+def validate_correction(error: dict, corrected_id: str, corrected_name: str) -> bool:
+    """二次验真：检查纠正结果是否真的修复了检测到的问题。
+
+    原理：自动纠错搜索到定额后，验证搜索结果中是否包含"应有"的关键词。
+    防止关键词泛化/章节重叠导致搜到的定额和原错误一样。
+
+    返回: True = 通过验真; False = 纠正结果不可信，应转人工
+    """
+    error_type = error.get("type", "")
+
+    # 材质纠错：纠正结果必须包含正确材质关键词
+    if error_type == "material_mismatch":
+        material = error.get("material", "")
+        mat_rules = MATERIAL_MAP.get(material, {})
+        should_contain = mat_rules.get("should_contain", [])
+        if should_contain and not any(kw in corrected_name for kw in should_contain):
+            return False
+
+    # 连接方式纠错：纠正结果必须包含正确连接方式关键词
+    elif error_type == "connection_mismatch":
+        connection = error.get("connection", "")
+        conn_rules = CONNECTION_MAP.get(connection, {})
+        should_contain = conn_rules.get("should_contain", [])
+        if should_contain and not any(kw in corrected_name for kw in should_contain):
+            return False
+
+    # 电气配对纠错：纠正结果必须包含正确配对关键词
+    elif error_type == "electric_pair_mismatch":
+        keyword = error.get("keyword", "")
+        rules = ELECTRIC_PAIR_RULES.get(keyword, {})
+        should_contain = rules.get("should_contain", [keyword])
+        if should_contain and not any(kw in corrected_name for kw in should_contain):
+            return False
+
+    return True
+
+
 def correct_error(item, error, dn, province=None, conn=None):
     """统一入口：根据错误类型自动调度到对应纠正函数
 
@@ -347,4 +384,8 @@ def correct_error(item, error, dn, province=None, conn=None):
     corrector = _CORRECTOR_DISPATCH.get(error["type"])
     if not corrector:
         return None
-    return corrector(item, error, dn, province, conn)
+    result = corrector(item, error, dn, province, conn)
+    # 二次验真：搜索结果是否真的修复了问题
+    if result and not validate_correction(error, result[0], result[1]):
+        return None  # 验真不通过，转人工
+    return result

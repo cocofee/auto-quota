@@ -22,13 +22,10 @@
 import json
 import re
 import sqlite3
-import sys
 import time
 from pathlib import Path
 
 from loguru import logger
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config

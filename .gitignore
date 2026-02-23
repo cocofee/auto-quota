@@ -5,6 +5,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+pytest-cache-files-*/
+
+# pip install -e . 生成的构建产物
+*.egg-info/
 
 # 数据库文件（本地生成，不上传）
 db/
@@ -40,6 +45,8 @@ _tmp_*.log
 # 系统文件
 .DS_Store
 Thumbs.db
+nul
+None/
 
 # Claude Code 本地配置
 .claude/

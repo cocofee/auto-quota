@@ -15,13 +15,10 @@
     python tools/jarvis_store.py --lookup "事故风机手动开关"
 """
 
-import sys
 import os
 import json
 import argparse
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from src.experience_db import ExperienceDB
@@ -39,19 +36,29 @@ def _parse_json_list(raw_text: str, field_name: str) -> list:
 
 
 def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
-              reason: str = "", specialty: str = "", province: str = None):
-    """存入一条纠正到经验库权威层"""
+              reason: str = "", specialty: str = "", province: str = None,
+              confirmed: bool = False):
+    """存入一条纠正到经验库
+
+    参数:
+        confirmed: True=用户已确认，直接写权威层；False=自动纠正，写候选层
+    """
     province = province or config.get_current_province()
     exp_db = ExperienceDB()
 
     bill_text = normalize_bill_text(name, desc)
 
+    # 用户确认的纠正直接写权威层（source=user_confirmed），
+    # 否则写候选层（source=auto_review）待后续审核
+    source = "user_confirmed" if confirmed else "auto_review"
+    confidence = 95 if confirmed else 85
+
     record_id = exp_db.add_experience(
         bill_text=bill_text,
         quota_ids=quota_ids,
         quota_names=quota_names,
-        source="auto_review",   # 自动审核纠正（非人工确认，区别于user_confirmed）
-        confidence=85,
+        source=source,
+        confidence=confidence,
         specialty=specialty,
         province=province,
         notes=f"[贾维斯审核] {reason}",
@@ -68,12 +75,15 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
         return False
 
 
-def store_batch(filepath: str, province: str = None):
+def store_batch(filepath: str, province: str = None, confirmed: bool = False):
     """从JSON文件批量存入纠正
 
     支持两种格式：
     格式1（jarvis.md生成）: [{seq, quota_id, quota_name, name, ...}]
     格式2（旧格式）: {"corrections": [{name, quota_ids, quota_names, ...}]}
+
+    参数:
+        confirmed: True=用户已确认，直接写权威层；False=自动纠正，写候选层
     """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -119,7 +129,8 @@ def store_batch(filepath: str, province: str = None):
                 invalid += 1
                 continue
             quota_ids = [quota_id]
-            quota_names = [quota_name] if quota_name else []
+            # 保持 quota_names 和 quota_ids 长度一致
+            quota_names = [quota_name] if quota_name else [""]
         else:
             # 旧格式: {name, quota_ids, quota_names, ...}
             name = str(item.get("name", "")).strip()
@@ -139,6 +150,7 @@ def store_batch(filepath: str, province: str = None):
             reason=item.get("reason", ""),
             specialty=item.get("specialty", ""),
             province=province,
+            confirmed=confirmed,
         )
         if ok:
             success += 1

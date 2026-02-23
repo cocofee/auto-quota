@@ -174,6 +174,13 @@ class TextParser:
         if dn is not None:
             result["dn"] = dn
 
+        # 提取电气配管管径（SC20、PC25 等管材代号）
+        # 单独存放，不参与参数验证的 DN 比较（电气配管定额不按管径分档）
+        if "dn" not in result:
+            conduit_dn = self._extract_conduit_dn(text)
+            if conduit_dn is not None:
+                result["conduit_dn"] = conduit_dn
+
         # 提取电缆截面（mm²）
         section = self._extract_cable_section(text)
         if section is not None:
@@ -276,7 +283,7 @@ class TextParser:
             r'[Dd][Nn]\s*[-_]?\s*(\d+)',                         # DN150, DN-150
             r'[ΦφΦ]\s*(\d+)',                                     # Φ150, φ150（直径符号）
             r'公称直径\s*(?:\(mm(?:以内)?\))?\s*(\d+)',            # 公称直径150
-            r'管径\s*(\d+)',                                       # 管径150
+            r'(?:管径|直径)\s*(\d+)',                              # 管径150、直径150
         ]
         for pattern in dn_patterns:
             match = re.search(pattern, text)
@@ -315,6 +322,30 @@ class TextParser:
                 if 10 <= val <= 600:
                     return val
 
+        return None
+
+    def _extract_conduit_dn(self, text: str) -> Optional[int]:
+        """
+        提取电气配管的管材代号管径（SC20、PC25、JDG20 等）
+
+        这类管径不同于给排水的 DN：
+        - 给排水 DN 用于定额分档（DN100 和 DN150 是不同定额），存为 "dn"
+        - 电气配管管径通常不影响定额选择（SC20 和 SC25 同一个定额），存为 "conduit_dn"
+
+        分开存放是为了让参数验证器不误罚：定额没有管材管径不代表匹配错误
+        """
+        # 如果已经有标准 DN（如 DN20、Φ20），不需要再从管材代号提取
+        # 注：这是 parse() 中 "dn" not in result 之外的第二层防护（防御性编程）
+        standard_dn = re.search(
+            r'[Dd][Nn]\s*[-_]?\s*\d+|[ΦφΦ]\s*\d+|(?:公称直径|管径|直径)\s*\d+',
+            text)
+        if standard_dn:
+            return None
+
+        pipe_code_match = re.search(
+            r'(?:SC|PC|JDG|KBG|RC|MT|FPC)\s*(\d+)', text)
+        if pipe_code_match:
+            return int(pipe_code_match.group(1))
         return None
 
     def _extract_cable_section(self, text: str) -> Optional[float]:
@@ -382,6 +413,19 @@ class TextParser:
         match = re.search(r'截面\s*(?:\(mm[²2]?(?:以内)?\))?\s*(\d+(?:\.\d+)?)', text)
         if match:
             return float(match.group(1))
+
+        # 导线型号格式：BV-2.5、BYJ-4、WDZN-BYJ-4、NH-BV-2.5 等
+        # 支持前缀：WDZ/WDZN/WDZZ（低烟无卤/阻燃）、NH（耐火）
+        # 支持型号：BV/BYJ/BVR/BLV/RVS/RVV
+        wire_match = re.search(
+            r'(?:WDZ[NZ]?-?|NH-?)*'         # 可选的阻燃/耐火前缀
+            r'(?:BV|BYJ|BVR|BLV|RVS|RVV)'   # 导线型号
+            r'\s*-?\s*'                       # 可选分隔符
+            r'(\d+(?:\.\d+)?)',              # 截面数值
+            text
+        )
+        if wire_match:
+            return float(wire_match.group(1))
 
         return None
 
@@ -586,6 +630,8 @@ class TextParser:
             r'(\d+)\s*回路',
             # 格式2：定额名称"回路以内) 48"，数字在括号关闭后
             r'回路[^)）]*[)）]\s*(\d+)',
+            # 格式3："X路"（排除"路灯"、"路由"、"路径"等干扰词）
+            r'(\d+)\s*路(?!灯|由|径|面)',
         ])
 
     def _extract_shape(self, text: str) -> str:
@@ -762,10 +808,11 @@ class TextParser:
 
         return text
 
-    def build_quota_query(self, name: str, description: str = "") -> str:
+    def build_quota_query(self, name: str, description: str = "",
+                          specialty: str = "") -> str:
         """构建定额搜索query（实际实现在 query_builder.py）"""
         from src.query_builder import build_quota_query as _build
-        return _build(self, name, description)
+        return _build(self, name, description, specialty=specialty)
 
     def params_match(self, bill_params: dict, quota_params: dict) -> tuple[bool, float]:
         """

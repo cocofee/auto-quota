@@ -91,7 +91,6 @@ def _resolve_run_province(province: str, interactive, json_output):
         province,
         interactive=interactive
     )
-    config.set_current_province(resolved_province)
     return resolved_province
 
 
@@ -130,6 +129,12 @@ def _build_run_stats(results: list[dict], elapsed: float) -> dict:
         if config.CONFIDENCE_YELLOW <= r.get("confidence", 0) < config.CONFIDENCE_GREEN)
     exp_matched = sum(
         1 for r in results if r.get("match_source", "").startswith("experience"))
+
+    # 从结果中统计审核规则拦截经验库直通的次数
+    review_rejected = sum(
+        1 for r in results
+        if r.get("bill_item", {}).get("_review_rejected"))
+
     return {
         "total": total,
         "matched": matched,
@@ -137,6 +142,7 @@ def _build_run_stats(results: list[dict], elapsed: float) -> dict:
         "mid_conf": mid_conf,
         "low_conf": total - high_conf - mid_conf,
         "exp_hits": exp_matched,
+        "review_rejected": review_rejected,
         "elapsed": elapsed,
     }
 
@@ -159,6 +165,9 @@ def _log_run_summary(stats: dict, has_experience_db: bool):
     logger.info(f"  未匹配/低置信度(红): {total - high_conf - mid_conf}")
     if has_experience_db:
         logger.info(f"  经验库命中: {exp_matched} ({exp_matched * 100 // max(total, 1)}%)")
+    review_rejected = stats.get("review_rejected", 0)
+    if review_rejected > 0:
+        logger.info(f"  审核规则拦截: {review_rejected}条经验库直通被拦截（已走搜索兜底）")
     logger.info(f"  耗时: {elapsed:.1f}秒")
     per_item = elapsed / max(total, 1)
     logger.info(f"  平均每条: {per_item:.2f}秒/条（含初始化）")
@@ -229,7 +238,7 @@ def run(input_file, mode="agent", output=None,
     searcher, validator = init_search_components(resolved_province, aux_provinces)
 
     # 初始化经验库（可选）
-    experience_db = init_experience_db(no_experience)
+    experience_db = init_experience_db(no_experience, province=resolved_province)
 
     # 3. 执行匹配
     logger.info(f"第3步：开始匹配 ({mode} 模式)...")
@@ -255,6 +264,15 @@ def run(input_file, mode="agent", output=None,
 
     # 5. 打印统计
     _log_run_summary(stats, has_experience_db=bool(experience_db))
+
+    # 6. 记录运行指标（准确率追踪）
+    try:
+        from src.accuracy_tracker import AccuracyTracker
+        AccuracyTracker().record_run(
+            stats, input_file=str(input_path),
+            mode=mode, province=resolved_province)
+    except Exception as e:
+        logger.debug(f"准确率追踪记录失败（不影响主流程）: {e}")
 
     return {"results": results, "stats": stats}
 

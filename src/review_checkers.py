@@ -51,6 +51,7 @@ _floor_rules_raw = _RULES.get("elevator_floor_rules", {})
 ELEVATOR_FLOOR_RULES = [
     (r[0], r[1], r[2], r[3])
     for r in _floor_rules_raw.get("rules", [])
+    if isinstance(r, (list, tuple)) and len(r) >= 4
 ]
 ELEVATOR_HIGH_FLOOR_MAP = {
     int(k): v
@@ -59,6 +60,15 @@ ELEVATOR_HIGH_FLOOR_MAP = {
 }
 
 CORRECTION_STRATEGIES = _RULES.get("correction_strategies", {})
+
+# 电梯完整性检查配置（从JSON加载，避免硬编码定额编号）
+_ELEV_COMPLETE = _RULES.get("elevator_completeness_rules", {})
+ESCALATOR_IDS = set(_ELEV_COMPLETE.get("escalator_ids", []))
+ESCALATOR_TRIM_ID = _ELEV_COMPLETE.get("trim_id", "")
+FLOOR_DIFF_IDS = set(_ELEV_COMPLETE.get("floor_diff_ids", []))
+_ELEV_PREFIX = _ELEV_COMPLETE.get("elevator_id_prefix", "C1-4-")
+_MAX_ELEV_SEQ = _ELEV_COMPLETE.get("max_elevator_seq", 67)
+ELEVATOR_IDS = {f"{_ELEV_PREFIX}{i}" for i in range(1, _MAX_ELEV_SEQ + 1)}
 
 
 # ============================================================
@@ -90,19 +100,41 @@ def extract_description_lines(desc):
 def extract_core_noun(bill_name, desc_lines):
     """从清单名+描述中提取核心名词，用于类别匹配
 
+    优先级：清单名 > 描述第一行
     按关键词长度降序匹配，确保"侧排地漏"优先于"地漏"
+    同长度关键词按出现位置靠后优先（中文复合名词核心词在最后，
+    如"配电箱路由器"重点是"路由器"而非"配电箱"）
+
+    为什么名称优先于描述？
+    描述中经常出现非主体的附带关键词（如"除锈等级:Sa2.5"中的"除锈"、
+    "敷设方式:沿桥架"中的"桥架"），这些不是清单的核心类别，
+    而名称通常直接指明清单类别。
     """
     sorted_keywords = sorted(CATEGORY_KEYWORDS.keys(), key=len, reverse=True)
 
+    # 优先从清单名称提取（名称更准确地反映核心类别）
+    # 收集所有匹配的关键词，按长度降序、同长度按位置靠后优先
+    matched = []
+    for keyword in sorted_keywords:
+        pos = bill_name.find(keyword)
+        if pos >= 0:
+            matched.append((keyword, len(keyword), pos))
+    if matched:
+        # 按长度降序（更具体优先），同长度按位置降序（靠后=核心词优先）
+        matched.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return matched[0][0]
+
+    # 名称无匹配时，从描述第一行提取
+    # 但跳过"工艺/过程类"关键词（除锈、防腐、保温等），
+    # 这些在描述中常作为附带信息出现，不代表清单的核心类别
+    _process_keywords = {"除锈", "防腐", "保温", "刷油"}
     if desc_lines:
         first_line = desc_lines[0]
         for keyword in sorted_keywords:
+            if keyword in _process_keywords:
+                continue  # 工艺类关键词不从描述提取，只从名称提取
             if keyword in first_line:
                 return keyword
-
-    for keyword in sorted_keywords:
-        if keyword in bill_name:
-            return keyword
 
     return None
 
@@ -237,9 +269,22 @@ def check_material_mismatch(item, quota_name, desc_lines):
 
 
 def check_connection_mismatch(item, quota_name, desc_lines):
-    """规则3：连接方式不匹配"""
+    """规则3：连接方式不匹配
+
+    只在定额名称本身包含连接方式关键词时才检查。
+    很多设备/阀件/附件类定额名称不含连接方式（如"减压孔板"、"坐式大便器安装"），
+    这种情况下清单描述的连接方式与定额无关，跳过检查。
+    """
     connection = extract_connection(desc_lines)
     if not connection:
+        return None
+
+    # 定额名中的所有连接方式关键词列表
+    _all_connection_words = ["沟槽", "丝扣", "螺纹", "法兰", "焊接",
+                             "电熔", "热熔", "粘接", "管箍", "承插",
+                             "卡箍", "卡压"]
+    # 如果定额名不含任何连接方式词，说明定额不区分连接方式，跳过检查
+    if not any(kw in quota_name for kw in _all_connection_words):
         return None
 
     rules = CONNECTION_MAP.get(connection, {})
@@ -306,9 +351,10 @@ def check_parameter_deviation(item, quota_name, desc_lines):
             pump_count = 4
 
         if pump_count:
-            m_quota = re.search(r'([一二三四五六]|[1-6])台', quota_name)
+            m_quota = re.search(r'([一二三四五六七八九]|[1-9])台', quota_name)
             if m_quota:
-                cn_num = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+                cn_num = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                          "六": 6, "七": 7, "八": 8, "九": 9}
                 qt = m_quota.group(1)
                 quota_count = cn_num.get(qt, int(qt) if qt.isdigit() else None)
                 if quota_count and quota_count != pump_count:
@@ -360,16 +406,36 @@ def check_elevator_type(item, quota_name, desc_lines):
 
 
 def _get_expected_elevator_id(elev_type, floors):
-    """根据电梯类型和层数，计算正确的定额编号"""
+    """根据电梯类型和层数，计算正确的定额编号
+
+    返回: 定额编号字符串（如 "C1-4-15"），或 None（无法确定时）
+    """
     if elev_type == "曳引式电梯" and floors > 30:
         seq = ELEVATOR_HIGH_FLOOR_MAP.get(floors)
         if seq:
             return f"C1-4-{seq}"
+        # 层数>30 但映射表中没有，说明规则表可能不完整
+        import logging
+        logging.getLogger(__name__).debug(
+            f"电梯层数映射缺失: {elev_type} {floors}层 不在 high_floor_map 中，"
+            f"请检查 review_rules.json 的 elevator_floor_rules.high_floor_map"
+        )
         return None
+
+    # 先检查该电梯类型是否存在任何规则（区分"无规则"和"层数超范围"）
+    type_has_rules = any(r[0] == elev_type for r in ELEVATOR_FLOOR_RULES)
 
     for rule_type, min_f, max_f, offset in ELEVATOR_FLOOR_RULES:
         if rule_type == elev_type and min_f <= floors <= max_f:
             return f"C1-4-{floors + offset}"
+
+    # 有规则但层数超出范围 → 警告规则表可能不完整
+    if type_has_rules:
+        import logging
+        logging.getLogger(__name__).debug(
+            f"电梯层数超出规则范围: {elev_type} {floors}层，"
+            f"请检查 review_rules.json 的 elevator_floor_rules.rules"
+        )
 
     return None
 
@@ -379,9 +445,12 @@ def check_elevator_floor(item, quota_name, desc_lines, quota_id=""):
     bill_name = item.get("name", "")
     full_text = bill_name + " " + " ".join(desc_lines)
 
+    # 层数提取：支持 "层数8"、"8层"、"8站"、"地上8层"、"8层8站" 等格式
     m = re.search(r'层数\s*(\d+)', full_text)
     if not m:
-        m = re.search(r'(\d+)\s*层', full_text)
+        m = re.search(r'(?:地上|地下)?(\d+)\s*层', full_text)
+    if not m:
+        m = re.search(r'(\d+)\s*站', full_text)
     if not m:
         return None
 
@@ -425,18 +494,16 @@ def check_elevator_completeness(all_results):
             if qid:
                 all_quota_ids.add(qid)
 
-    # 有扶梯但没有外饰面
-    escalator_ids = {"C1-4-68", "C1-4-69", "C1-4-70", "C1-4-71"}
-    if (all_quota_ids & escalator_ids) and "C1-4-72" not in all_quota_ids:
+    # 有扶梯但没有外饰面（ID从JSON配置读取，不硬编码）
+    if ESCALATOR_IDS and (all_quota_ids & ESCALATOR_IDS) and ESCALATOR_TRIM_ID not in all_quota_ids:
         reminders.append({
             "type": "elevator_completeness",
-            "reason": "有自动扶梯安装但未发现扶梯外饰面安装(C1-4-72)，请确认是否需要补充",
+            "reason": f"有自动扶梯安装但未发现扶梯外饰面安装({ESCALATOR_TRIM_ID})，请确认是否需要补充",
         })
 
     # 有电梯但没有增减层门（当层数≠站数时）
-    elevator_range = {f"C1-4-{i}" for i in range(1, 68)}
-    has_elevator = bool(all_quota_ids & elevator_range)
-    has_door_adjust = "C1-4-77" in all_quota_ids or "C1-4-78" in all_quota_ids
+    has_elevator = bool(all_quota_ids & ELEVATOR_IDS)
+    has_door_adjust = bool(all_quota_ids & FLOOR_DIFF_IDS)
 
     if has_elevator and not has_door_adjust:
         needs_door_adjust = False
@@ -445,7 +512,7 @@ def check_elevator_completeness(all_results):
             if not quotas or not isinstance(quotas[0], dict):
                 continue
             qid = quotas[0].get("quota_id", "")
-            if qid not in elevator_range:
+            if qid not in ELEVATOR_IDS:
                 continue
             bill_item = r.get("bill_item", {})
             full_text = f"{bill_item.get('name', '')} {bill_item.get('description', '')}"
@@ -460,9 +527,10 @@ def check_elevator_completeness(all_results):
                 break
 
         if needs_door_adjust:
+            diff_ids_str = "/".join(sorted(FLOOR_DIFF_IDS))
             reminders.append({
                 "type": "elevator_completeness",
-                "reason": "有电梯安装且层数≠站数，但未发现增减层门(C1-4-77/78)，请补充",
+                "reason": f"有电梯安装且层数≠站数，但未发现增减层门({diff_ids_str})，请补充",
             })
 
     return reminders
@@ -524,6 +592,15 @@ def check_electric_pair(item, quota_name, desc_lines):
 
         should_contain = rules.get("should_contain", [])
         should_not_contain = rules.get("should_not_contain", [])
+
+        # 互斥词对共存检查：如果清单同时含关键词和其直接对立词
+        # （如同时含"明装"和"暗装"，可能是"暗装/明装综合考虑"），
+        # 说明安装方式不确定，跳过检查。
+        # 只取 should_not_contain 的第一项（直接对立词）做共存检查，
+        # 不用全部禁止词——因为"嵌入"等词可能出现在清单中描述其他设备，
+        # 不代表当前设备的安装方式不确定。
+        if should_not_contain and should_not_contain[0] in full_text:
+            continue
 
         has_required = any(kw in quota_name for kw in should_contain)
         has_forbidden = any(kw in quota_name for kw in should_not_contain)

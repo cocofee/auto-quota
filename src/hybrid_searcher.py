@@ -23,8 +23,6 @@ from pathlib import Path
 
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.bm25_engine import BM25Engine
 from src.vector_engine import VectorEngine
@@ -47,6 +45,11 @@ class HybridSearcher:
 
         # 通用知识库（延迟初始化）
         self._universal_kb = None
+
+        # 会话级搜索缓存：相同 normalized_query + books 的搜索结果复用
+        # 同一批次中"DN25镀锌钢管"和"DN32镀锌钢管"可能生成相同的 normalized query
+        # 缓存避免重复执行向量搜索（最耗时的环节）
+        self._session_cache = {}  # {cache_key: candidates_list}
 
         # 反馈偏置缓存（用用户修正/确认数据动态校准检索权重）
         self._feedback_bias_value = 0.0
@@ -112,6 +115,15 @@ class HybridSearcher:
             bm25_weight=base_bm25_weight,
             vector_weight=base_vector_weight,
         )
+
+        # 会话缓存检查：相同query+books组合复用搜索结果
+        books_key = ",".join(sorted(books)) if books else ""
+        cache_key = f"{query}|{books_key}|{top_k}"
+        cached = self._session_cache.get(cache_key)
+        if cached is not None:
+            import copy
+            logger.debug(f"搜索缓存命中: '{query[:20]}...' ({len(cached)}条)")
+            return copy.deepcopy(cached)  # 深拷贝避免后续修改影响缓存
 
         # ============================================================
         # 第0步：查通用知识库获取搜索增强关键词
@@ -259,6 +271,11 @@ class HybridSearcher:
             f"权重(bm25={bm25_weight:.2f}, vector={vector_weight:.2f}, reason={weight_reason}) "
             f"→ 融合后 {len(top_results)} 条"
         )
+
+        # 存入会话缓存（搜索结果不变的情况下复用）
+        if top_results:
+            import copy
+            self._session_cache[cache_key] = copy.deepcopy(top_results)
 
         return top_results
 
@@ -417,11 +434,11 @@ class HybridSearcher:
         """
         构造少量高价值查询变体，避免纯原始query召回盲区。
         """
-        max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 3))
+        max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 4))
         max_variants = max(max_variants, 1)
-        raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60])
+        raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60, 0.50])
         if not isinstance(raw_weights, (list, tuple)) or not raw_weights:
-            raw_weights = [1.0, 0.75, 0.60]
+            raw_weights = [1.0, 0.75, 0.60, 0.50]
         variant_weights = [max(float(w), 0.05) for w in raw_weights]
 
         variants = []
@@ -460,11 +477,44 @@ class HybridSearcher:
         if param_tokens:
             _add(f"{normalized} {' '.join(param_tokens[:4])}", "param_boost")
 
+        # V4: 核心名词变体（去掉动作词/修饰词，只保留核心实体+参数）
+        # 目的：BM25对长query中的噪声词敏感，精简后匹配更精准
+        # 例如："管道安装 焊接钢管 镀锌 DN25" → "焊接钢管 镀锌 DN25"
+        core_noun = self._extract_core_noun_query(normalized)
+        if core_noun:
+            _add(core_noun, "core_noun")
+
         # 额外兜底：若仍不够且有知识库提示，拼接一个知识变体
         if kb_hints and len(variants) < max_variants:
             _add(f"{query} {kb_hints[0]}", "kb_hint")
 
         return variants[:max_variants]
+
+    @staticmethod
+    def _extract_core_noun_query(query: str) -> str | None:
+        """从查询中提取核心名词+参数，去掉动作词和修饰词
+
+        例如：
+          "管道安装 焊接钢管 镀锌 DN25" → "焊接钢管 镀锌 DN25"
+          "配电箱墙上明装 规格 8回路"   → "配电箱 8回路"
+          "电缆沿桥架敷设 截面 185"     → "电缆 桥架 截面 185"
+        """
+        # 去掉动作词（这些词在定额名称中通常是修饰性的）
+        ACTION_WORDS = ["安装", "敷设", "制作", "施工", "铺设", "布线", "配置"]
+        FILLER_WORDS = ["公称直径", "规格", "以内", "以上", "以下",
+                        "墙上", "柱上", "明装", "暗装", "落地"]
+        core = query
+        for word in ACTION_WORDS + FILLER_WORDS:
+            core = core.replace(word, " ")
+        core = re.sub(r"\s+", " ", core).strip()
+
+        # 如果核心文本太短（<3字符）或和原文相同，不生成变体
+        if len(core) < 3 or core == query.strip():
+            return None
+        # 如果去掉的内容太少（长度只减少了<20%），变体没有价值
+        if len(core) > len(query.strip()) * 0.8:
+            return None
+        return core
 
     def _merge_single_engine_runs(self, runs: list[dict], engine: str,
                                   k: int = 60) -> list[dict]:

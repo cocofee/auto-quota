@@ -187,11 +187,13 @@ def _validate_experience_params(exp_result: dict, item: dict,
     # ===== 方法1：用规则校验器检查档位（处理回路/容量/截面等家族参数） =====
     # 这能发现"7回路"不应该套"4回路以内"这类错误
     rule_validated = False  # 标记规则校验器是否已验证通过
+    rule_family_available = False
     if rule_validator and rule_validator.rules and main_quota_id:
         family = rule_validator.family_index.get(main_quota_id)
         if family:
             tiers = family.get("tiers")
             if tiers:
+                rule_family_available = True
                 # 从清单文本中提取参数值（如"7回路" → 7）
                 bill_value = rule_validator._extract_param_value(bill_text, family)
                 if bill_value is not None:
@@ -214,10 +216,9 @@ def _validate_experience_params(exp_result: dict, item: dict,
     # ===== 方法2：用参数提取器对比基本参数（DN/截面/材质等） =====
     # 这能发现"DN150"不应该套"DN100以内"这类错误
     # 注意：如果方法1已验证通过（rule_validated=True），跳过方法2
-    # 注意：如果是精确匹配（is_exact=True），跳过方法2
-    # 原因：方法1理解"向上取档"（如DN75→DN100），方法2只做简单数值对比会误杀
-    #       精确匹配是用户确认过的映射，材质名差异（如"射频同轴电缆"≠"同轴电缆"）不应否决
-    if main_quota_name and not rule_validated and not is_exact:
+    # 修复：只要方法1未确认（rule_validated=False），方法2都应执行兜底，
+    # 无论是否精确匹配——因为规则族可用但提参失败时，方法1等于没验证。
+    if main_quota_name and not rule_validated:
         bill_params = text_parser.parse(bill_text)
         quota_params = text_parser.parse(main_quota_name)
         if bill_params and quota_params:
@@ -260,10 +261,10 @@ def try_experience_match(query: str, item: dict, experience_db,
     if not similar:
         return None
 
-    # 取第一条可直通（非stale）的经验，避免"top1过期就整体失效"
+    # 取第一条可直通（非stale、非候选层）的经验，避免"top1过期就整体失效"
     best = None
     for candidate in similar:
-        if candidate.get("match_type") != "stale":
+        if candidate.get("match_type") not in ("stale", "candidate"):
             best = candidate
             break
 
@@ -409,12 +410,16 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
         for aux in aux_searchers:
             try:
                 results = aux.search(search_query, top_k=top_k, books=None)
+                # 给每条结果打上来源库标记，用于后续去重时区分不同库的同编号定额
+                for r in results:
+                    r["_source_province"] = aux.province
                 all_candidates.extend(results)
             except Exception as e:
                 logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
         if all_candidates:
-            # 按分数降序排序，取 top_k
-            all_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            # 按 hybrid_score 降序排序，取 top_k
+            # 注意：HybridSearcher.search() 输出的主分字段是 hybrid_score，不是 score
+            all_candidates.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
             return all_candidates[:top_k]
 
     # 第1步：在主专业+借用专业范围内搜索（比只搜主专业更灵活）
@@ -424,9 +429,25 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     search_books = [primary] + fallbacks
     candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
 
-    # 结果足够就返回
+    # 结果足够就返回（加质量门槛检查）
     if len(candidates) >= CASCADE_MIN_CANDIDATES:
-        return candidates
+        # 候选较多（>= 5个）：直接返回，不需要额外质量检查
+        if len(candidates) >= CASCADE_MIN_CANDIDATES + 2:
+            return candidates
+        # 候选较少（3-4个）：检查top候选是否有明确的分差优势
+        # 如果top1和top3分数太接近，说明搜索结果不确定，需要扩大搜索
+        top_score = candidates[0].get("hybrid_score", 0)
+        third_idx = min(2, len(candidates) - 1)
+        third_score = candidates[third_idx].get("hybrid_score", 0)
+        quality_threshold = getattr(config, "CASCADE_QUALITY_THRESHOLD", 0.3)
+        if top_score > 0 and (top_score - third_score) / top_score >= quality_threshold:
+            return candidates
+        # 分差不够，继续全库搜索补充候选
+        logger.debug(
+            f"主搜{len(candidates)}条但质量不足"
+            f"(分差比{(top_score - third_score) / max(top_score, 1e-9):.2f}"
+            f"<{quality_threshold})，触发全库补充搜索"
+        )
 
     # 第2步：兜底全库搜索
     candidates = searcher.search(search_query, top_k=top_k, books=None)
@@ -448,8 +469,29 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
 def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
                         search_query: str, full_query: str,
                         classification: dict) -> list[dict]:
-    """统一执行：级联搜索 → Reranker重排 → 参数验证。"""
+    """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     candidates = cascade_search(searcher, search_query, classification)
+
+    # 按 (quota_id + 来源库) 去重：RRF融合后同一定额可能因不同查询变体出现多次
+    # 保留hybrid_score最高的那条，避免浪费reranker和LLM的处理资源
+    # 注意：多辅助库场景下不同库可能有相同quota_id，需要用来源库区分
+    if candidates:
+        seen_ids = {}
+        for c in candidates:
+            qid = c.get("quota_id", "")
+            if not qid:
+                # 无quota_id的候选（异常数据）保留
+                seen_ids[id(c)] = c
+                continue
+            # 去重键 = quota_id + 来源库省份（没有来源标记的视为主库）
+            dedup_key = (qid, c.get("_source_province", ""))
+            existing = seen_ids.get(dedup_key)
+            if existing is None or c.get("hybrid_score", 0) > existing.get("hybrid_score", 0):
+                seen_ids[dedup_key] = c
+        candidates = list(seen_ids.values())
+        # 去重后重新按 hybrid_score 排序（防御性：覆盖替换可能打乱插入顺序）
+        candidates.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
+
     # 单候选时重排无意义，可直接跳过提升速度
     if candidates and len(candidates) > 1:
         candidates = reranker.rerank(search_query, candidates)
@@ -553,6 +595,14 @@ def _should_skip_agent_llm(candidates: list[dict],
     top_score = _safe_float_value(top.get("param_score"), 0.0)
     if top_score < config.AGENT_FASTPATH_SCORE:
         return False
+
+    # ===== 无参数候选盲区检查 =====
+    # 清单有参数（DN/截面/回路等）但top1的param_score较低（定额无参数或参数不确定）
+    # → 强制走LLM，避免无参数候选因语义得分高而盲通
+    if getattr(config, "AGENT_FASTPATH_REQUIRE_PARAM_MATCH", True):
+        top_detail = str(top.get("param_detail", ""))
+        if ("定额无" in top_detail or "未指定" in top_detail) and top_score < 0.7:
+            return False
 
     # ===== 搜索排名分差检查 =====
     # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁

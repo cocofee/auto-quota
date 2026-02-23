@@ -18,12 +18,9 @@ Reranker 重排模块
 """
 
 import re
-import sys
-from pathlib import Path
 
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 
