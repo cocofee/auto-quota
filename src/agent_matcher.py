@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent匹配器 - "造价员贾维斯"核心模块
 功能：
 1. 代码自动执行搜索+参数验证（复用现有流程，不花API钱）
@@ -15,13 +15,11 @@ Agent匹配器 - "造价员贾维斯"核心模块
 """
 
 import json
+import threading
 import time
-import sys
-from pathlib import Path
 
 from loguru import logger
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.learning_notebook import LearningNotebook, extract_pattern_key
 
@@ -36,6 +34,33 @@ class AgentMatcher:
     3. 记录推理过程到学习笔记（为后续进化积累数据）
     """
 
+    _LLM_CIRCUIT_THRESHOLD = 5
+    _LLM_COOLDOWN_SEC = 60
+
+    def _ensure_circuit_lock(self):
+        lock = getattr(self, "_circuit_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._circuit_lock = lock
+        return lock
+
+    def is_circuit_open(self) -> bool:
+        with self._ensure_circuit_lock():
+            return bool(self._llm_circuit_open)
+
+    def reset_circuit_breaker(self):
+        with self._ensure_circuit_lock():
+            self._llm_consecutive_fails = 0
+            self._llm_circuit_open = False
+            self._llm_circuit_open_time = 0.0
+
+    def _check_half_open(self) -> bool:
+        with self._ensure_circuit_lock():
+            if not self._llm_circuit_open:
+                return False
+            elapsed = time.time() - self._llm_circuit_open_time
+        return elapsed >= self._LLM_COOLDOWN_SEC
+
     def __init__(self, llm_type: str = None, province: str = None):
         """
         参数:
@@ -49,6 +74,10 @@ class AgentMatcher:
         self.province = province or config.get_current_province()
         self._client = None
         self.notebook = LearningNotebook()
+        self._llm_consecutive_fails = 0
+        self._llm_circuit_open = False
+        self._llm_circuit_open_time = 0.0
+        self._circuit_lock = threading.Lock()
 
     @property
     def client(self):
@@ -147,9 +176,20 @@ class AgentMatcher:
         )
 
         # 调用大模型
+        if self.is_circuit_open() and not self._check_half_open():
+            return self._fallback_result(bill_item, candidates, "LLM熔断（冷却中）")
         try:
             response_text = self._call_llm(prompt)
+            with self._ensure_circuit_lock():
+                self._llm_consecutive_fails = 0
+                self._llm_circuit_open = False
+                self._llm_circuit_open_time = 0.0
         except Exception as e:
+            with self._ensure_circuit_lock():
+                self._llm_consecutive_fails += 1
+                if self._llm_consecutive_fails >= self._LLM_CIRCUIT_THRESHOLD:
+                    self._llm_circuit_open = True
+                    self._llm_circuit_open_time = time.time()
             logger.error(f"Agent大模型调用失败: {e}")
             # 降级：直接用参数验证第1名
             return self._fallback_result(bill_item, candidates, str(e))
@@ -174,6 +214,7 @@ class AgentMatcher:
                 "confidence": result.get("confidence", 0),
                 "llm_type": self.llm_type,
                 "elapsed_seconds": elapsed,
+                "province": self.province,
             })
         except Exception as e:
             logger.warning(f"学习笔记记录失败: {e}")
@@ -206,9 +247,14 @@ class AgentMatcher:
         for i, c in enumerate(candidates[:20], start=1):
             param_info = c.get("param_detail", "")
             param_match = "✓参数匹配" if c.get("param_match", True) else "✗参数不匹配"
-            score = c.get("param_score", 0)
+            try:
+                score = float(c.get("param_score", 0))
+            except (TypeError, ValueError):
+                score = 0.0
+            quota_id = str(c.get("quota_id", "")).strip() or "UNKNOWN"
+            quota_name = str(c.get("name", "")).strip() or "未命名候选"
             candidate_lines.append(
-                f"{i}. [{c['quota_id']}] {c['name']} | 单位:{c.get('unit', '?')} "
+                f"{i}. [{quota_id}] {quota_name} | 单位:{c.get('unit', '?')} "
                 f"| {param_match}({score:.0%}) {param_info}"
             )
         candidates_text = "\n".join(candidate_lines)
@@ -429,20 +475,26 @@ class AgentMatcher:
         if not no_match:
             if main_idx is not None and 1 <= main_idx <= len(candidates):
                 main_c = candidates[main_idx - 1]
-                quotas.append({
-                    "quota_id": main_c["quota_id"],
-                    "name": main_c["name"],
-                    "unit": main_c.get("unit", ""),
-                    "reason": data.get("main_reason", ""),
-                    "db_id": main_c.get("id"),
-                })
+                if isinstance(main_c, dict):
+                    main_quota_id = str(main_c.get("quota_id", "")).strip()
+                    if main_quota_id:
+                        quotas.append({
+                            "quota_id": main_quota_id,
+                            "name": str(main_c.get("name", "")).strip() or "未命名候选",
+                            "unit": main_c.get("unit", ""),
+                            "reason": data.get("main_reason", ""),
+                            "db_id": main_c.get("id"),
+                        })
             elif main_id:
                 # 按编号查找（备用）
                 for c in candidates:
-                    if c["quota_id"] == main_id:
+                    if not isinstance(c, dict):
+                        continue
+                    c_id = str(c.get("quota_id", "")).strip()
+                    if c_id == main_id:
                         quotas.append({
-                            "quota_id": c["quota_id"],
-                            "name": c["name"],
+                            "quota_id": c_id,
+                            "name": str(c.get("name", "")).strip() or "未命名候选",
                             "unit": c.get("unit", ""),
                             "reason": data.get("main_reason", ""),
                             "db_id": c.get("id"),
@@ -476,15 +528,20 @@ class AgentMatcher:
                     rel_c = candidates[rel_idx - 1]
                 elif rel_id:
                     for c in candidates:
-                        if c["quota_id"] == rel_id:
+                        if not isinstance(c, dict):
+                            continue
+                        c_id = str(c.get("quota_id", "")).strip()
+                        if c_id == rel_id:
                             rel_c = c
                             break
 
-                if not rel_c:
+                if not isinstance(rel_c, dict):
                     continue
 
                 # 过滤同类定额：册号+章节相同的不算关联
-                rel_qid = rel_c["quota_id"]
+                rel_qid = str(rel_c.get("quota_id", "")).strip()
+                if not rel_qid:
+                    continue
                 rel_parts = rel_qid.split("-")
                 if len(rel_parts) >= 2 and main_quota_prefix:
                     rel_prefix = f"{rel_parts[0]}-{rel_parts[1]}"
@@ -493,8 +550,8 @@ class AgentMatcher:
                         continue
 
                 quotas.append({
-                    "quota_id": rel_c["quota_id"],
-                    "name": rel_c["name"],
+                    "quota_id": rel_qid,
+                    "name": str(rel_c.get("name", "")).strip() or "未命名候选",
                     "unit": rel_c.get("unit", ""),
                     "reason": related.get("reason", ""),
                     "db_id": rel_c.get("id"),
@@ -512,18 +569,25 @@ class AgentMatcher:
         selected_ids = {q["quota_id"] for q in quotas}
         alternatives = []
         for c in candidates:
-            if c["quota_id"] not in selected_ids:
-                ps = c.get("param_score", 0.5)
-                alt_conf = int(ps * 95) if c.get("param_match", True) else max(int(ps * 45), 15)
-                alternatives.append({
-                    "quota_id": c["quota_id"],
-                    "name": c["name"],
-                    "unit": c.get("unit", ""),
-                    "confidence": alt_conf,
-                    "reason": c.get("param_detail", ""),
-                })
-                if len(alternatives) >= 3:
-                    break
+            if not isinstance(c, dict):
+                continue
+            c_quota_id = str(c.get("quota_id", "")).strip()
+            if not c_quota_id or c_quota_id in selected_ids:
+                continue
+            try:
+                ps = float(c.get("param_score", 0.5))
+            except (TypeError, ValueError):
+                ps = 0.5
+            alt_conf = int(ps * 95) if c.get("param_match", True) else max(int(ps * 45), 15)
+            alternatives.append({
+                "quota_id": c_quota_id,
+                "name": str(c.get("name", "")).strip() or "未命名候选",
+                "unit": c.get("unit", ""),
+                "confidence": alt_conf,
+                "reason": c.get("param_detail", ""),
+            })
+            if len(alternatives) >= 3:
+                break
 
         if not quotas:
             confidence = 0
@@ -579,19 +643,32 @@ class AgentMatcher:
         confidence = 0
 
         if candidates:
-            matched = [c for c in candidates if c.get("param_match", True)]
+            valid_candidates = [c for c in candidates if isinstance(c, dict)]
+            matched = [c for c in valid_candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
-                confidence = int(best.get("param_score", 0.5) * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
+                try:
+                    score = float(best.get("param_score", 0.5))
+                except (TypeError, ValueError):
+                    score = 0.5
+                confidence = int(score * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
             else:
-                best = candidates[0]
-                confidence = max(int(best.get("param_score", 0.0) * 45), 15)
+                best = valid_candidates[0] if valid_candidates else None
+                if best:
+                    try:
+                        score = float(best.get("param_score", 0.0))
+                    except (TypeError, ValueError):
+                        score = 0.0
+                    confidence = max(int(score * 45), 15)
+
+        best_quota_id = str((best or {}).get("quota_id", "")).strip() or "UNKNOWN"
+        best_name = str((best or {}).get("name", "")).strip() or "未命名候选"
 
         return {
             "bill_item": bill_item,
             "quotas": [{
-                "quota_id": best["quota_id"],
-                "name": best["name"],
+                "quota_id": best_quota_id,
+                "name": best_name,
                 "unit": best.get("unit", ""),
                 "reason": f"Agent降级(候选策略): {error_msg}",
                 "db_id": best.get("id"),

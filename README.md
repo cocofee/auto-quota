@@ -32,6 +32,37 @@ python main.py 清单文件.xlsx --mode agent
 
 输出文件在 `output/` 目录下，格式匹配广联达标准，可直接导入。
 
+## 系统体检与代码审查（统一入口）
+
+推荐使用根目录批处理：
+
+```bat
+系统体检.bat
+```
+
+进入菜单后可选：
+
+- 快速检查（语法 + 导入 + 回归）
+- 全量检查（快速 + 全量 pytest + 数据库 schema + 经验库体检）
+- CI 门禁检查（严格）
+- 代码审查（`codex review --uncommitted`）
+- 全量检查 + 代码审查
+
+也可以直接批处理执行（便于做批任务/计划任务）：
+
+```bat
+系统体检.bat quick
+系统体检.bat full
+系统体检.bat ci
+系统体检.bat review
+系统体检.bat all
+```
+
+检查报告会输出到：
+
+- `output/health_reports/health_<mode>_<timestamp>.json`
+- `output/health_reports/health_<mode>_<timestamp>.md`
+
 ## 项目结构
 
 ```

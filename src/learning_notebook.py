@@ -16,7 +16,6 @@ import json
 import re
 import sqlite3
 import time
-import sys
 from pathlib import Path
 from collections import Counter
 
@@ -24,7 +23,6 @@ from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 
@@ -196,7 +194,7 @@ class LearningNotebook:
                 note.get("confidence", 0),
                 note.get("llm_type", ""),
                 note.get("elapsed_seconds", 0),
-                note.get("province", config.get_current_province()),
+                note.get("province", ""),  # 省份必须由调用方显式提供，不再回退全局值
                 note.get("project_name", ""),
                 time.time(),
             ))

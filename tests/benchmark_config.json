@@ -1,0 +1,44 @@
+{
+  "_说明": "Jarvis固定benchmark数据集定义。路径不存在的数据集会跳过（不阻塞其他集的测试）。",
+  "_更新日期": "2026-02-23",
+  "datasets": {
+    "B1_公厕给排水": {
+      "path": "D:/广联达临时文件/2025/2025.11.15-文浩-门卫、公厕/公厕-给排水-小栗AI自动编清单202511152049.xlsx",
+      "expected_items_range": [20, 50],
+      "focus": "经验库命中+参数匹配（给排水管道为主，DN/材质参数丰富）",
+      "province": "北京2024"
+    },
+    "B2_华佑电气": {
+      "path": "D:/广联达临时文件/2025/2025.10.19-沙工-华佑厂房安装预算/华佑厂房-2025.10.30/武汉华佑数控设备有限公司厂房-电气系统.xlsx",
+      "expected_items_range": [200, 300],
+      "focus": "跨省匹配+多Sheet+电气专业（配电箱/配管/配线/电缆/灯具）",
+      "province": "北京2024"
+    },
+    "B3_配套楼混合": {
+      "path": "output/temp/7#配套楼-小栗AI自动编清单202602072236.xlsx",
+      "expected_items_range": [30, 150],
+      "focus": "多专业混合+合并单元格（给排水+电气+消防+通风）",
+      "province": "北京2024"
+    },
+    "B4_脏数据": {
+      "path": "tests/fixtures/dirty_data_sample.xlsx",
+      "expected_items_range": [15, 25],
+      "focus": "缺字段/单位异常/描述噪声/名称歧义（鲁棒性测试）",
+      "province": "北京2024"
+    }
+  },
+  "metrics": [
+    "total",
+    "green_rate",
+    "yellow_rate",
+    "red_rate",
+    "exp_hit_rate",
+    "fallback_rate",
+    "avg_time_sec"
+  ],
+  "regression_tolerance": {
+    "_说明": "回归测试允许的浮动范围（绝对值），超出视为退化",
+    "green_rate": 0.02,
+    "red_rate": 0.03
+  }
+}

@@ -10,15 +10,9 @@
     python tools/experience_view.py list --province "北京2024" # 按省份过滤
 """
 
-import sys
-import os
 import json
 import argparse
-from pathlib import Path
 from datetime import datetime
-
-# 确保能导入项目模块
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.sqlite import connect as _db_connect
 import config

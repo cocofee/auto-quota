@@ -7,12 +7,10 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import openpyxl
 
-sys.path.insert(0, ".")
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator

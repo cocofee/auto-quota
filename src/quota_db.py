@@ -14,8 +14,6 @@ import datetime  # 用于检测Excel误解析的日期类型
 from pathlib import Path
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.text_parser import parser as text_parser
 from db.sqlite import connect as _db_connect
@@ -96,15 +94,18 @@ class QuotaDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS import_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_name TEXT NOT NULL,          -- 文件名（不含路径）
+                file_path TEXT NOT NULL,          -- 文件完整路径（用于区分同名文件）
+                file_name TEXT NOT NULL,          -- 文件名（便于展示）
                 file_size INTEGER,                -- 文件大小(字节)
                 file_mtime REAL,                  -- 文件最后修改时间(时间戳)
                 specialty TEXT,                   -- 专业（安装/土建/市政）
                 quota_count INTEGER DEFAULT 0,    -- 导入的定额条数
                 imported_at REAL,                 -- 导入时间(时间戳)
-                UNIQUE(file_name)                 -- 同名文件只保留最新一条记录
+                UNIQUE(file_path)                 -- 同一路径文件只保留最新一条记录
             )
         """)
+        self._migrate_import_history_schema(cursor)
+        self._migrate_import_history_hash(cursor)
 
         # 兼容旧库：检查book列是否存在，不存在则添加
         # （旧版数据库没有book字段，直接建索引会报错"no such column"）
@@ -165,6 +166,56 @@ class QuotaDB:
         conn.close()
         logger.info(f"数据库初始化完成: {self.db_path}")
 
+    def _migrate_import_history_schema(self, cursor):
+        """将旧版 import_history(file_name 唯一) 升级为 file_path 唯一。"""
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(import_history)").fetchall()}
+        if "file_path" in columns:
+            return
+
+        cursor.execute("DROP TABLE IF EXISTS import_history_new")
+        cursor.execute("""
+            CREATE TABLE import_history_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_size INTEGER,
+                file_mtime REAL,
+                specialty TEXT,
+                quota_count INTEGER DEFAULT 0,
+                imported_at REAL,
+                UNIQUE(file_path)
+            )
+        """)
+        cursor.execute("""
+            INSERT OR REPLACE INTO import_history_new
+                (file_path, file_name, file_size, file_mtime, specialty, quota_count, imported_at)
+            SELECT
+                file_name AS file_path,
+                file_name,
+                file_size,
+                file_mtime,
+                specialty,
+                quota_count,
+                imported_at
+            FROM import_history
+        """)
+        cursor.execute("DROP TABLE import_history")
+        cursor.execute("ALTER TABLE import_history_new RENAME TO import_history")
+        logger.info("已将import_history迁移为按file_path去重")
+
+    def _migrate_import_history_hash(self, cursor):
+        """为 import_history 表增加 file_hash/status/error_msg 列"""
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(import_history)").fetchall()}
+        if "file_hash" not in columns:
+            cursor.execute("ALTER TABLE import_history ADD COLUMN file_hash TEXT")
+            logger.info("import_history 已新增 file_hash 列")
+        if "status" not in columns:
+            cursor.execute("ALTER TABLE import_history ADD COLUMN status TEXT DEFAULT 'success'")
+            logger.info("import_history 已新增 status 列")
+        if "error_msg" not in columns:
+            cursor.execute("ALTER TABLE import_history ADD COLUMN error_msg TEXT DEFAULT ''")
+            logger.info("import_history 已新增 error_msg 列")
+
     def import_excel(self, excel_path: str, specialty: str = "安装",
                      clear_existing: bool = True):
         """
@@ -205,19 +256,20 @@ class QuotaDB:
         import openpyxl
 
         wb = openpyxl.load_workbook(str(excel_path), read_only=True, data_only=True)
-        quotas = []
+        try:
+            quotas = []
 
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            chapter = sheet_name.strip()
-            logger.info(f"  读取Sheet: {chapter}")
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                chapter = sheet_name.strip()
+                logger.info(f"  读取Sheet: {chapter}")
 
-            for row in ws.iter_rows(min_row=1, values_only=True):
-                quota = self._parse_row(row, chapter, specialty)
-                if quota:
-                    quotas.append(quota)
-
-        wb.close()
+                for row in ws.iter_rows(min_row=1, values_only=True):
+                    quota = self._parse_row(row, chapter, specialty)
+                    if quota:
+                        quotas.append(quota)
+        finally:
+            wb.close()
         return quotas
 
     def _read_with_zip_xml(self, excel_path: Path, specialty: str) -> list[dict]:
@@ -433,47 +485,53 @@ class QuotaDB:
         conn = self._connect()
         cursor = conn.cursor()
 
-        # 按专业删除旧数据（不影响其他专业）
-        if clear_existing:
-            if specialty:
-                cursor.execute("DELETE FROM quotas WHERE specialty = ?", (specialty,))
-                logger.info(f"已清空 specialty='{specialty}' 的旧数据")
+        try:
+            # 删除+插入在同一事务中，失败时自动回滚，避免删了旧数据但插入失败导致数据丢失
+            # 按专业删除旧数据（不影响其他专业）
+            if clear_existing:
+                if specialty:
+                    cursor.execute("DELETE FROM quotas WHERE specialty = ?", (specialty,))
+                    logger.info(f"已清空 specialty='{specialty}' 的旧数据")
+                else:
+                    cursor.execute("DELETE FROM quotas")
+                    logger.info("已清空全部旧数据")
             else:
-                cursor.execute("DELETE FROM quotas")
-                logger.info("已清空全部旧数据")
-        else:
-            logger.info(f"追加模式: 保留 specialty='{specialty}' 的已有数据")
+                logger.info(f"追加模式: 保留 specialty='{specialty}' 的已有数据")
 
-        # 批量插入
-        insert_sql = """
-            INSERT OR IGNORE INTO quotas
-            (quota_id, name, unit, work_type, specialty, chapter,
-             dn, cable_section, kva, kv, ampere, weight_t, material, connection,
-             circuits, shape, perimeter, large_side, elevator_stops, elevator_speed,
-             search_text, book)
-            VALUES
-            (?, ?, ?, ?, ?, ?,
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-             ?, ?)
-        """
+            # 批量插入
+            insert_sql = """
+                INSERT OR IGNORE INTO quotas
+                (quota_id, name, unit, work_type, specialty, chapter,
+                 dn, cable_section, kva, kv, ampere, weight_t, material, connection,
+                 circuits, shape, perimeter, large_side, elevator_stops, elevator_speed,
+                 search_text, book)
+                VALUES
+                (?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 ?, ?)
+            """
 
-        batch = []
-        for q in quotas:
-            batch.append((
-                q["quota_id"], q["name"], q["unit"], q["work_type"],
-                q["specialty"], q["chapter"],
-                q["dn"], q["cable_section"], q["kva"], q["kv"],
-                q["ampere"], q["weight_t"], q["material"], q["connection"],
-                q["circuits"], q["shape"], q["perimeter"], q["large_side"],
-                q["elevator_stops"], q["elevator_speed"],
-                q["search_text"], q.get("book", ""),
-            ))
+            batch = []
+            for q in quotas:
+                batch.append((
+                    q["quota_id"], q["name"], q["unit"], q["work_type"],
+                    q["specialty"], q["chapter"],
+                    q["dn"], q["cable_section"], q["kva"], q["kv"],
+                    q["ampere"], q["weight_t"], q["material"], q["connection"],
+                    q["circuits"], q["shape"], q["perimeter"], q["large_side"],
+                    q["elevator_stops"], q["elevator_speed"],
+                    q["search_text"], q.get("book", ""),
+                ))
 
-        cursor.executemany(insert_sql, batch)
-        conn.commit()
-        conn.close()
-
-        logger.info(f"写入数据库: {len(batch)}条记录")
+            cursor.executemany(insert_sql, batch)
+            conn.commit()
+            logger.info(f"写入数据库: {len(batch)}条记录")
+        except Exception:
+            conn.rollback()
+            logger.error(f"数据库写入失败，已回滚（specialty={specialty}）")
+            raise
+        finally:
+            conn.close()
 
     def _update_version(self, quota_count: int):
         """更新定额库版本号
@@ -519,26 +577,49 @@ class QuotaDB:
     # 导入历史（用于增量导入）
     # ================================================================
 
-    def record_import(self, file_path: str, specialty: str, quota_count: int):
+    def record_import(self, file_path: str, specialty: str, quota_count: int,
+                      status: str = "success", error_msg: str = ""):
         """记录一个文件的导入信息，用于下次增量导入时判断是否已导入过
 
         参数:
             file_path: Excel文件的完整路径
             specialty: 专业类别
             quota_count: 本次导入的定额条数
+            status: 导入状态（success/error）
+            error_msg: 错误信息（status=error时记录）
         """
+        self.init_db()
         import time as _time
+        import hashlib
         p = Path(file_path)
-        stat = p.stat()
+        full_path = str(p.resolve())
+
+        # 计算文件内容MD5（定额Excel通常几MB，秒级完成）
+        file_hash = ""
+        file_size = 0
+        file_mtime = 0.0
+        try:
+            stat = p.stat()
+            file_size = stat.st_size
+            file_mtime = stat.st_mtime
+            hasher = hashlib.md5()
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    hasher.update(chunk)
+            file_hash = hasher.hexdigest()
+        except OSError:
+            pass  # 文件不可读时仍记录历史（status=error场景）
 
         conn = self._connect()
         try:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO import_history
-                    (file_name, file_size, file_mtime, specialty, quota_count, imported_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (p.name, stat.st_size, stat.st_mtime, specialty, quota_count, _time.time()))
+                    (file_path, file_name, file_size, file_mtime, file_hash,
+                     specialty, quota_count, imported_at, status, error_msg)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (full_path, p.name, file_size, file_mtime, file_hash,
+                  specialty, quota_count, _time.time(), status, error_msg))
             conn.commit()
         finally:
             conn.close()
@@ -547,14 +628,19 @@ class QuotaDB:
         """获取所有已导入文件的记录
 
         返回:
-            [{"file_name": "安装.xlsx", "file_size": 12345, "file_mtime": 1700000000.0,
+            [{"file_path": "D:/quota/安装.xlsx", "file_name": "安装.xlsx",
+              "file_size": 12345, "file_mtime": 1700000000.0, "file_hash": "abc123...",
               "specialty": "安装", "quota_count": 3000, "imported_at": 1700000000.0}, ...]
         """
         self.init_db()  # 确保表存在（兼容旧数据库）
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT file_name, file_size, file_mtime, specialty, quota_count, imported_at FROM import_history")
+            cursor.execute(
+                "SELECT file_path, file_name, file_size, file_mtime, file_hash, "
+                "specialty, quota_count, imported_at, status, error_msg "
+                "FROM import_history"
+            )
             return [dict(r) for r in cursor.fetchall()]
         finally:
             conn.close()
@@ -882,15 +968,17 @@ def detect_specialty_from_excel(excel_path: str) -> str:
     import openpyxl
     try:
         wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-        type_counts = {}
-        for sheet_name in wb.sheetnames:  # 扫描所有Sheet
-            ws = wb[sheet_name]
-            for j, row in enumerate(ws.iter_rows(min_row=1, max_row=30, values_only=True)):
-                if row and len(row) > 3 and row[3]:
-                    val = str(row[3]).strip()
-                    if val and val not in ("工作类型", "类型", "类别"):  # 跳过表头
-                        type_counts[val] = type_counts.get(val, 0) + 1
-        wb.close()
+        try:
+            type_counts = {}
+            for sheet_name in wb.sheetnames:  # 扫描所有Sheet
+                ws = wb[sheet_name]
+                for j, row in enumerate(ws.iter_rows(min_row=1, max_row=30, values_only=True)):
+                    if row and len(row) > 3 and row[3]:
+                        val = str(row[3]).strip()
+                        if val and val not in ("工作类型", "类型", "类别"):  # 跳过表头
+                            type_counts[val] = type_counts.get(val, 0) + 1
+        finally:
+            wb.close()
 
         if type_counts:
             return max(type_counts, key=type_counts.get)

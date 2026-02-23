@@ -20,8 +20,6 @@ from collections import Counter, defaultdict
 
 from loguru import logger
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from db.sqlite import connect as _db_connect
 

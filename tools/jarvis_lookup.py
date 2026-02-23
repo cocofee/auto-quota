@@ -15,11 +15,8 @@ Jarvis 定额查询工具 - 从定额库中查询定额编号和名称
     4. 输出完整的档位列表
 """
 import sys
-import os
 import argparse
 
-# 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.quota_search import search_quota_db, search_by_id_prefix, search_series
 
 

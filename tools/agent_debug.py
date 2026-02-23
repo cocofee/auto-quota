@@ -13,14 +13,10 @@ import io
 import time
 import json
 import argparse
-from pathlib import Path
 
 # 修复Windows终端GBK编码问题（支持中文和Unicode特殊字符）
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-
-# 添加项目根目录到搜索路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from src.hybrid_searcher import HybridSearcher
@@ -32,9 +28,8 @@ from src.agent_matcher import AgentMatcher
 
 
 def _resolve_runtime_province(name: str = None) -> str:
-    """Resolve province and sync runtime province for downstream modules."""
+    """Resolve province for this run without mutating process-global runtime state."""
     province = config.resolve_province(name, interactive=False)
-    config.set_current_province(province)
     return province
 
 
@@ -129,7 +124,7 @@ def debug_single(bill_name: str, bill_desc: str = "",
     reference_cases = None
     try:
         from src.experience_db import ExperienceDB
-        exp_db = ExperienceDB()
+        exp_db = ExperienceDB(province=province)
         reference_cases = exp_db.get_reference_cases(full_text, top_k=3, province=province)
         if reference_cases:
             print(f"\n[6] 经验库参考案例:")

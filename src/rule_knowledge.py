@@ -24,12 +24,10 @@
 
 import hashlib
 import re
-import sys
+import time
 from pathlib import Path
 
 from loguru import logger
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
@@ -38,6 +36,9 @@ import config
 class RuleKnowledge:
     """定额规则知识库"""
 
+    # 向量禁用冷却时间（秒），禁用后超过此时间自动尝试恢复
+    _VECTOR_COOLDOWN_SEC = 300  # 5分钟
+
     def __init__(self, province: str = None):
         """
         参数:
@@ -45,6 +46,11 @@ class RuleKnowledge:
                       传None时检索所有省份的规则。
         """
         self.province = province  # None表示全局检索
+
+        # 实例级向量禁用标志（每个请求独立，互不干扰）
+        self._vector_disabled = False
+        self._vector_disable_reason = ""
+        self._vector_disable_time = 0.0  # 禁用时间戳（用于冷却恢复）
 
         # SQLite数据库路径（通用数据库，所有省份共用一个库）
         self.db_path = config.COMMON_DB_DIR / "rule_knowledge.db"
@@ -285,7 +291,16 @@ class RuleKnowledge:
         seen_ids = set()
 
         # 第1路：向量检索（可能漏掉一些中文词，但能捕捉语义相似）
-        if self.collection:
+        # 已标记不可用时直接跳过（不重复失败浪费时间）
+        # 冷却恢复：禁用超过5分钟后自动尝试恢复
+        if self._vector_disabled and self._vector_disable_time > 0:
+            elapsed = time.time() - self._vector_disable_time
+            if elapsed >= self._VECTOR_COOLDOWN_SEC:
+                logger.info(f"向量禁用已过{elapsed:.0f}秒（>{self._VECTOR_COOLDOWN_SEC}），尝试恢复")
+                self._vector_disabled = False
+                self._vector_disable_reason = ""
+
+        if self.collection and not self._vector_disabled:
             try:
                 vector_results = self._vector_search(query, top_k, province)
                 for r in vector_results:
@@ -294,7 +309,16 @@ class RuleKnowledge:
                         seen_ids.add(rid)
                         results.append(r)
             except Exception as e:
-                logger.debug(f"向量检索失败: {e}")
+                # 权限错误（onnx模型缓存不可写）等不可恢复问题→禁用（带冷却恢复）
+                err_str = str(e)
+                if "Permission" in err_str or "Access" in err_str or "denied" in err_str:
+                    if not self._vector_disabled:
+                        self._vector_disabled = True
+                        self._vector_disable_reason = err_str
+                        self._vector_disable_time = time.time()
+                        logger.warning(f"规则知识库向量检索权限异常，已禁用向量路（仅用关键词兜底）: {e}")
+                else:
+                    logger.debug(f"向量检索失败: {e}")
 
         # 第2路：关键词检索（精确匹配中文词，弥补英文向量模型的不足）
         keyword_results = self._keyword_search(query, top_k, province)

@@ -21,9 +21,6 @@ import re
 import argparse
 from pathlib import Path
 
-# 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from db.sqlite import connect as _db_connect
 from config import get_quota_db_path, OUTPUT_DIR, CURRENT_PROVINCE
 
@@ -115,6 +112,9 @@ def _detect_phase(results):
                 "bill_item": bill,
                 "quota_id": quota_id,
                 "quota_name": quota_name,
+                "sheet_name": bill.get("sheet_name", ""),
+                "sheet_bill_seq": bill.get("sheet_bill_seq"),
+                "source_row": bill.get("source_row"),
                 "error": error,
                 "dn": dn,
                 "confidence": confidence,
@@ -152,6 +152,9 @@ def _correct_phase(detected_errors, province, db_conn):
             "name": bill.get("name", ""),
             "desc_short": desc_lines[0] if desc_lines else "",
             "dn": d["dn"],
+            "sheet_name": d.get("sheet_name", ""),
+            "sheet_bill_seq": d.get("sheet_bill_seq"),
+            "source_row": d.get("source_row"),
             "current_quota_id": d["quota_id"],
             "current_quota_name": d["quota_name"],
             "error_type": d["error"]["type"],
@@ -228,6 +231,9 @@ def auto_review(json_path, province=None):
                 "quota_id": item["corrected_quota_id"],
                 "quota_name": item["corrected_quota_name"],
                 "name": item["name"],
+                "sheet_name": item.get("sheet_name", ""),
+                "sheet_bill_seq": item.get("sheet_bill_seq"),
+                "source_row": item.get("source_row"),
             })
 
     return summary, auto_corrections, manual_items, measure_items

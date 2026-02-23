@@ -3,29 +3,42 @@
 Jarvis 批处理流水线 - 一键完成匹配+审核+纠正
 
 替代 Web 界面，全流程命令行完成：
-  清单.xlsx → 匹配定额 → 自动审核 → 纠正Excel → 存经验库(可选)
+  清单.xlsx → 匹配定额 → 自动审核 → 纠正Excel → 存经验库(默认开启)
 
 用法：
     python tools/jarvis_pipeline.py "清单.xlsx"
     python tools/jarvis_pipeline.py "清单.xlsx" --province "北京2024"
-    python tools/jarvis_pipeline.py "清单.xlsx" --store      # 纠正结果存入经验库
+    python tools/jarvis_pipeline.py "清单.xlsx" --no-store   # 不存经验库
 """
 
 import sys
 import os
 import json
 import argparse
+import secrets
 from pathlib import Path
 from datetime import datetime
 
-# 确保能导入项目模块
-sys.path.insert(0, str(Path(__file__).parent.parent))
-# 确保能导入 tools/ 下的兄弟模块（jarvis_auto_review 等）
-sys.path.insert(0, str(Path(__file__).parent))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _generate_run_id() -> str:
+    """生成唯一运行ID（毫秒时间戳 + 6位随机hex），用于文件命名防碰撞。
+
+    格式示例：20260223_074512_123_a3f1b2
+    - 前15位是秒级时间戳（可读）
+    - 中间3位是毫秒（同秒区分）
+    - 末尾6位是随机hex（同毫秒兜底）
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]  # 截取到毫秒（3位）
+    rand = secrets.token_hex(3)  # 6位随机hex
+    return f"{ts}_{rand}"
 
 
 def pipeline(excel_path, province=None, aux_provinces=None,
-             use_experience=True, store=False, quiet=False):
+             use_experience=True, store=True, quiet=False):
     """Jarvis 批处理流水线（匹配 → 审核 → 纠正 → 存经验库）
 
     参数:
@@ -51,15 +64,16 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         os.environ["TQDM_DISABLE"] = "1"
         os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
-    # ---- 生成时间戳和文件名前缀（后续所有输出共用）----
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # ---- 生成唯一运行ID（后续所有输出共用，防止并发碰撞）----
+    run_id = _generate_run_id()
     stem = Path(excel_path).stem[:30]
 
     # ---- 为本次运行创建独立日志文件 ----
     log_dir = OUTPUT_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = str(log_dir / f"jarvis_{stem}_{timestamp}.log")
+    log_file = str(log_dir / f"jarvis_{stem}_{run_id}.log")
     # loguru的add返回id，运行结束后移除，避免日志串到后续运行
     log_id = logger.add(
         log_file, encoding="utf-8", level="DEBUG",
@@ -67,177 +81,225 @@ def pipeline(excel_path, province=None, aux_provinces=None,
     )
     logger.info(f"Jarvis流水线启动 | 文件: {excel_path} | 主定额: {province} | 辅助: {aux_provinces}")
 
-    # ---- 启动检查：方法卡片是否需要更新 ----
+    json_path = None
+    corr_json = None
     try:
-        from src.method_cards import MethodCards
-        mc = MethodCards()
-        mc_stats = mc.get_stats()
-        if mc_stats["total_cards"] == 0:
-            # 没有方法卡片，尝试增量生成
-            logger.info("检测到方法卡片为空，尝试自动生成...")
-            print("  检查方法卡片...")
-            from tools.gen_method_cards import incremental_generate
-            card_result = incremental_generate(province=province, min_samples=5)
-            if card_result["generated"] > 0:
-                print(f"  已自动生成 {card_result['generated']} 张方法卡片")
-                logger.info(f"方法卡片自动生成: {card_result['generated']}张")
+        # ---- 启动检查：方法卡片是否需要更新 ----
+        try:
+            from src.method_cards import MethodCards
+            mc = MethodCards()
+            mc_stats = mc.get_stats()
+            if mc_stats["total_cards"] == 0:
+                # 没有方法卡片，尝试增量生成
+                logger.info("检测到方法卡片为空，尝试自动生成...")
+                print("  检查方法卡片...")
+                from tools.gen_method_cards import incremental_generate
+                card_result = incremental_generate(province=province, min_samples=5)
+                if card_result["generated"] > 0:
+                    print(f"  已自动生成 {card_result['generated']} 张方法卡片")
+                    logger.info(f"方法卡片自动生成: {card_result['generated']}张")
+                else:
+                    print("  经验数据不足，暂无方法卡片可生成")
             else:
-                print("  经验数据不足，暂无方法卡片可生成")
-        else:
-            logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
-    except Exception as e:
-        logger.debug(f"方法卡片检查跳过（不影响主流程）: {e}")
+                logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
+        except Exception as e:
+            logger.debug(f"方法卡片检查跳过（不影响主流程）: {e}")
 
-    # ---- 第1步：匹配定额 ----
-    print("=" * 60)
-    print("第1步：匹配定额")
-    print("=" * 60)
-
-    from main import run
-
-    output_excel = str(OUTPUT_DIR / f"匹配结果_{stem}_{timestamp}.xlsx")
-
-    data = run(
-        input_file=excel_path,
-        mode="agent",
-        output=output_excel,
-        province=province,
-        aux_provinces=aux_provinces,
-        no_experience=not use_experience,
-        interactive=False,  # 省份已在 main() 中提前解析，这里无需交互
-    )
-
-    results = data.get("results", [])
-    if not results:
-        print("没有匹配结果，请检查清单文件格式。")
-        logger.warning("匹配结果为空，流水线终止")
-        logger.remove(log_id)
-        return None
-
-    logger.info(f"匹配完成: {len(results)}条")
-
-    # ---- 第2步：自动审核 ----
-    print()
-    print("=" * 60)
-    print("第2步：自动审核")
-    print("=" * 60)
-
-    # auto_review() 需要JSON文件路径，先保存中间结果
-    temp_dir = OUTPUT_DIR / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    json_path = str(temp_dir / f"pipeline_{stem}_{timestamp}.json")
-
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    from jarvis_auto_review import auto_review
-
-    summary, auto_corrections, manual_items, measure_items = auto_review(
-        json_path, province
-    )
-
-    print(summary)
-    logger.info(f"审核完成: 自动纠正{len(auto_corrections)}条, 需人工{len(manual_items)}条, 措施项{len(measure_items)}条")
-
-    # ---- 第3步：纠正Excel ----
-    corrected_excel = output_excel  # 默认用匹配结果（无纠正时不生成新文件）
-
-    if auto_corrections:
-        print()
+        # ---- 第1步：匹配定额 ----
         print("=" * 60)
-        print(f"第3步：纠正Excel（{len(auto_corrections)}处）")
+        print("第1步：匹配定额")
         print("=" * 60)
 
-        from jarvis_correct import correct_excel
+        from main import run
 
-        corrected_excel = correct_excel(output_excel, auto_corrections)
-        print(f"  已审核Excel: {corrected_excel}")
-    else:
-        print("\n第3步：无需纠正，跳过")
+        output_excel = str(OUTPUT_DIR / f"匹配结果_{stem}_{run_id}.xlsx")
 
-    # ---- 第4步：存经验库（可选）----
-    if store and auto_corrections:
-        print()
-        print("=" * 60)
-        print("第4步：存入经验库")
-        print("=" * 60)
-
-        # 保存纠正JSON供 store_batch 读取
-        corr_json = str(temp_dir / f"corrections_{stem}_{timestamp}.json")
-        with open(corr_json, "w", encoding="utf-8") as f:
-            json.dump(auto_corrections, f, ensure_ascii=False, indent=2)
-
-        from jarvis_store import store_batch
-
-        store_batch(corr_json, province)
-        print("  已存入经验库")
-    elif store:
-        print("\n第4步：无纠正项，跳过经验库存储")
-
-    # ---- 汇总 ----
-    stats = {
-        "total": len(results),
-        "correct": len(results) - len(auto_corrections) - len(manual_items) - len(measure_items),
-        "auto_corrected": len(auto_corrections),
-        "manual": len(manual_items),
-        "measure": len(measure_items),
-    }
-
-    # 记录每条结果的关键信息到日志（用于事后分析）
-    logger.info("=" * 60)
-    logger.info("逐条匹配结果:")
-    logger.info("=" * 60)
-    for i, r in enumerate(results, 1):
-        name = r.get("bill_name", r.get("name", ""))
-        matched_id = ""
-        matched_name = ""
-        score = 0
-        source = r.get("match_source", "")
-        quotas = r.get("quotas", [])
-        if quotas:
-            main_q = quotas[0]
-            matched_id = main_q.get("quota_id", "")
-            matched_name = main_q.get("name", "")[:20]
-            score = main_q.get("score", 0)
-        # 标记搜索无结果的项
-        status = "OK"
-        if not quotas:
-            status = "无结果"
-        elif r.get("rule_corrected"):
-            status = "已纠正"
-        logger.info(
-            f"  [{i:3d}] {status:<4} | {name[:25]:<25} → {matched_id} {matched_name} "
-            f"| 分数:{score:.2f} | 来源:{source}"
+        data = run(
+            input_file=excel_path,
+            mode="agent",
+            output=output_excel,
+            province=province,
+            aux_provinces=aux_provinces,
+            no_experience=not use_experience,
+            interactive=False,  # 省份已在 main() 中提前解析，这里无需交互
         )
 
-    logger.info("=" * 60)
-    logger.info(f"汇总: 总{stats['total']} 正确{stats['correct']} "
-                f"自动纠正{stats['auto_corrected']} 人工{stats['manual']} 措施{stats['measure']}")
-    logger.info(f"日志文件: {log_file}")
+        results = data.get("results", [])
+        if not results:
+            print("没有匹配结果，请检查清单文件格式。")
+            logger.warning("匹配结果为空，流水线终止")
+            return None
 
-    # 移除本次运行的日志handler
-    logger.remove(log_id)
+        logger.info(f"匹配完成: {len(results)}条")
 
-    print()
-    print("=" * 60)
-    print("流水线完成")
-    print(f"  匹配结果: {output_excel}")
-    if corrected_excel != output_excel:
-        print(f"  已审核版: {corrected_excel}")
-    print(f"  总条数:   {stats['total']}")
-    print(f"  正确:     {stats['correct']}")
-    print(f"  自动纠正: {stats['auto_corrected']}条")
-    print(f"  需人工审: {stats['manual']}条")
-    print(f"  措施项:   {stats['measure']}条（已跳过）")
-    print(f"  运行日志: {log_file}")
-    print("=" * 60)
+        # ---- 第2步：自动审核 ----
+        print()
+        print("=" * 60)
+        print("第2步：自动审核")
+        print("=" * 60)
 
-    return {
-        "output_excel": corrected_excel,
-        "summary": summary,
-        "stats": stats,
-        "log_file": log_file,
-    }
+        # auto_review() 需要JSON文件路径，先保存中间结果
+        temp_dir = OUTPUT_DIR / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        json_path = str(temp_dir / f"pipeline_{stem}_{run_id}.json")
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        try:
+            from tools.jarvis_auto_review import auto_review
+        except ImportError:
+            from jarvis_auto_review import auto_review
+
+        summary, auto_corrections, manual_items, measure_items = auto_review(
+            json_path, province
+        )
+
+        print(summary)
+        logger.info(f"审核完成: 自动纠正{len(auto_corrections)}条, 需人工{len(manual_items)}条, 措施项{len(measure_items)}条")
+
+        # 记录审核统计到追踪器
+        try:
+            from src.accuracy_tracker import AccuracyTracker
+            correct_count = len(results) - len(auto_corrections) - len(manual_items) - len(measure_items)
+            # 扣除无匹配结果的项（quotas为空=系统没给出定额，不算"正确"）
+            no_match = sum(1 for r in results if not r.get("quotas"))
+            correct_count -= no_match
+            AccuracyTracker().record_review(
+                input_file=excel_path,
+                province=province,
+                total=len(results),
+                auto_corrections=len(auto_corrections),
+                manual_items=len(manual_items),
+                measure_items=len(measure_items),
+                correct_count=max(correct_count, 0),
+            )
+        except Exception as e:
+            logger.debug(f"审核统计记录失败（不影响主流程）: {e}")
+
+        # ---- 第3步：纠正Excel ----
+        corrected_excel = output_excel  # 默认用匹配结果（无纠正时不生成新文件）
+
+        if auto_corrections:
+            print()
+            print("=" * 60)
+            print(f"第3步：纠正Excel（{len(auto_corrections)}处）")
+            print("=" * 60)
+
+            try:
+                from tools.jarvis_correct import correct_excel
+            except ImportError:
+                from jarvis_correct import correct_excel
+
+            corrected_excel = correct_excel(output_excel, auto_corrections)
+            print(f"  已审核Excel: {corrected_excel}")
+        else:
+            print("\n第3步：无需纠正，跳过")
+
+        # ---- 第4步：存经验库（可选）----
+        if store and auto_corrections:
+            print()
+            print("=" * 60)
+            print("第4步：存入经验库")
+            print("=" * 60)
+
+            # 保存纠正JSON供 store_batch 读取
+            corr_json = str(temp_dir / f"corrections_{stem}_{run_id}.json")
+            with open(corr_json, "w", encoding="utf-8") as f:
+                json.dump(auto_corrections, f, ensure_ascii=False, indent=2)
+
+            try:
+                from tools.jarvis_store import store_batch
+            except ImportError:
+                from jarvis_store import store_batch
+
+            # confirmed=False: 自动纠正未经人工确认，写入候选层(auto_review)
+            # 用户后续通过 experience_promote.py 审核晋升为权威层
+            store_batch(corr_json, province, confirmed=False)
+            print("  已存入经验库")
+        elif store:
+            print("\n第4步：无纠正项，跳过经验库存储")
+
+        # ---- 汇总 ----
+        fallback_count = sum(1 for r in results if r.get("match_source") == "agent_fallback")
+        stats = {
+            "total": len(results),
+            "correct": len(results) - len(auto_corrections) - len(manual_items) - len(measure_items),
+            "auto_corrected": len(auto_corrections),
+            "manual": len(manual_items),
+            "measure": len(measure_items),
+            "fallback": fallback_count,
+        }
+
+        # 记录每条结果的关键信息到日志（用于事后分析）
+        logger.info("=" * 60)
+        logger.info("逐条匹配结果:")
+        logger.info("=" * 60)
+        for i, r in enumerate(results, 1):
+            name = r.get("bill_name", r.get("name", ""))
+            matched_id = ""
+            matched_name = ""
+            confidence = r.get("confidence", 0)  # 用结果级置信度（非定额级score）
+            source = r.get("match_source", "")
+            quotas = r.get("quotas", [])
+            if quotas:
+                main_q = quotas[0]
+                matched_id = main_q.get("quota_id", "")
+                matched_name = main_q.get("name", "")[:20]
+            # 标记状态（区分正常/降级/无结果/已纠正）
+            status = "OK"
+            if not quotas:
+                status = "无结果"
+            elif r.get("rule_corrected"):
+                status = "已纠正"
+            elif source == "agent_fallback":
+                status = "降级"
+            logger.info(
+                f"  [{i:3d}] {status:<4} | {name[:25]:<25} → {matched_id} {matched_name} "
+                f"| 置信:{confidence:3d} | 来源:{source}"
+            )
+
+        logger.info("=" * 60)
+        summary_line = (f"汇总: 总{stats['total']} 正确{stats['correct']} "
+                        f"自动纠正{stats['auto_corrected']} 人工{stats['manual']} 措施{stats['measure']}")
+        if stats['fallback'] > 0:
+            pct = stats['fallback'] * 100 / max(stats['total'], 1)
+            summary_line += f" 降级{stats['fallback']}({pct:.0f}%)"
+        logger.info(summary_line)
+        logger.info(f"日志文件: {log_file}")
+
+        print()
+        print("=" * 60)
+        print("流水线完成")
+        print(f"  匹配结果: {output_excel}")
+        if corrected_excel != output_excel:
+            print(f"  已审核版: {corrected_excel}")
+        print(f"  总条数:   {stats['total']}")
+        print(f"  正确:     {stats['correct']}")
+        print(f"  自动纠正: {stats['auto_corrected']}条")
+        print(f"  需人工审: {stats['manual']}条")
+        print(f"  措施项:   {stats['measure']}条（已跳过）")
+        print(f"  运行日志: {log_file}")
+        print("=" * 60)
+
+        return {
+            "output_excel": corrected_excel,
+            "summary": summary,
+            "stats": stats,
+            "log_file": log_file,
+        }
+    finally:
+        try:
+            logger.remove(log_id)
+        except Exception:
+            pass
+        try:
+            if json_path and os.path.exists(json_path):
+                os.remove(json_path)
+            if corr_json and os.path.exists(corr_json):
+                os.remove(corr_json)
+        except Exception:
+            pass
 
 
 def main():
@@ -250,7 +312,7 @@ def main():
   python tools/jarvis_pipeline.py "清单.xlsx" --province "北京2024"
   python tools/jarvis_pipeline.py "清单.xlsx" --province "广东安装" --aux-province "广东土建,广东市政"
   python tools/jarvis_pipeline.py "清单.xlsx" --no-experience  # 关闭经验库
-  python tools/jarvis_pipeline.py "清单.xlsx" --store
+  python tools/jarvis_pipeline.py "清单.xlsx" --no-store  # 不存经验库
 """,
     )
     parser.add_argument("excel_path", help="清单Excel文件路径")
@@ -259,8 +321,8 @@ def main():
                         help="辅助定额库（逗号分隔，如\"广东土建,广东市政\"）")
     parser.add_argument("--no-experience", action="store_true",
                         help="关闭经验库（默认开启）")
-    parser.add_argument("--store", action="store_true",
-                        help="将自动纠正结果存入经验库（默认关闭）")
+    parser.add_argument("--no-store", action="store_true",
+                        help="不存经验库（默认自动存入候选层）")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="静默模式，抑制进度条")
     args = parser.parse_args()
@@ -308,7 +370,7 @@ def main():
         province=province,
         aux_provinces=aux_provinces if aux_provinces else None,
         use_experience=not args.no_experience,
-        store=args.store,
+        store=not args.no_store,
         quiet=args.quiet,
     )
 

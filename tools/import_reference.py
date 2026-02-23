@@ -30,7 +30,6 @@ from pathlib import Path
 
 # 把项目根目录加入路径，这样才能导入 src/ 下的模块
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
 from src.text_parser import normalize_bill_text

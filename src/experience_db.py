@@ -24,13 +24,10 @@
 import json
 import re
 import sqlite3
-import sys
 import time
 from pathlib import Path
 
 from loguru import logger
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 from src.specialty_classifier import get_book_from_quota_id
@@ -40,7 +37,8 @@ import config
 class ExperienceDB:
     """经验库：存储和查询历史匹配记录"""
 
-    def __init__(self):
+    def __init__(self, province: str = None):
+        self.province = province or config.get_current_province()
         self.db_path = config.get_experience_db_path()
         self.chroma_dir = config.get_chroma_experience_dir()
 
@@ -163,6 +161,7 @@ class ExperienceDB:
         candidate（候选层，仅供参考）：
           - auto_match: 系统自动匹配（未经人工验证）
           - auto_review: 贾维斯自动审核纠正（未经人工验证）
+          - project_import_suspect: 项目导入但审核规则检测到问题（待人工确认）
         """
         authority_sources = ("user_correction", "user_confirmed", "project_import")
         return "authority" if source in authority_sources else "candidate"
@@ -337,7 +336,7 @@ class ExperienceDB:
 
     def _get_quota_map(self, province: str = None) -> dict:
         """获取定额库映射（按省份缓存，避免重复读取）"""
-        province = province or config.get_current_province()
+        province = province or self.province
         cache_by_province = getattr(self, "_quota_map_cache_by_province", {})
         if province in cache_by_province:
             return cache_by_province[province]
@@ -407,7 +406,7 @@ class ExperienceDB:
         返回:
             新记录的ID，校验失败返回 -1
         """
-        province = province or config.get_current_province()
+        province = province or self.province
         now = time.time()
 
         # ========== 自动推断专业册号（调用方没传 specialty 时从定额编号推断）==========
@@ -509,10 +508,11 @@ class ExperienceDB:
         """更新已有的经验记录
 
         按来源分级处理，防止 auto_match 不断膨胀置信度：
-        - user_correction: 用户手动换了定额 → 更新定额 + 大幅涨分(+10)
-        - user_confirmed: 用户点了"确认正确" → 涨分(+5) + 确认次数+1
-        - project_import: 从已完成项目导入 → 小幅涨分(+2)
-        - auto_match:     系统自动匹配 → 只更新时间戳，不涨分不涨确认次数
+        - user_correction:       用户手动换了定额 → 更新定额 + 大幅涨分(+10)
+        - user_confirmed:        用户点了"确认正确" → 涨分(+5) + 确认次数+1
+        - project_import:        从已完成项目导入 → 小幅涨分(+2)
+        - project_import_suspect:导入时审核不通过 → 降级到候选层，不涨分
+        - auto_match:            系统自动匹配 → 只更新时间戳，不涨分不涨确认次数
         """
         now = time.time()
 
@@ -562,6 +562,7 @@ class ExperienceDB:
                   specialty or '', now, record_id))
         elif source == "project_import":
             # 已完成项目导入 → 中等信任：小幅涨分，刷新定额和主材（解析改进后重新导入能修正旧数据）
+            # 同时晋升：如果之前是 project_import_suspect（候选层），此次干净导入应恢复为权威层
             project_floor = self._clamp(confidence_floor, 0, 95)
             cursor.execute("""
                 UPDATE experiences SET
@@ -569,6 +570,8 @@ class ExperienceDB:
                     quota_names = ?,
                     confidence = MIN(MAX(confidence + 2, ?), 95),
                     confirm_count = confirm_count + 1,
+                    layer = 'authority',
+                    source = 'project_import',
                     materials = CASE
                         WHEN ? != '[]' THEN ?
                         ELSE materials
@@ -576,23 +579,69 @@ class ExperienceDB:
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
-                WHERE id = ? AND source != 'user_correction'
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed')
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
                 project_floor, materials_json or '[]', materials_json or '[]',
                 quota_db_version, specialty or '', now, record_id,
             ))
-        else:
-            # auto_match 或其他未知来源 → 不涨分、不涨确认次数，只记录时间
-            # 但仍然补全空的 specialty（从定额编号自动推断）
+        elif source == "project_import_suspect":
+            # 导入时审核不通过 → 降级到候选层，不涨分，更新定额（方便后续人工审核）
             cursor.execute("""
                 UPDATE experiences SET
+                    quota_ids = ?,
+                    quota_names = ?,
+                    layer = 'candidate',
+                    source = 'project_import_suspect',
+                    confidence = MIN(confidence, ?),
+                    materials = CASE
+                        WHEN ? != '[]' THEN ?
+                        ELSE materials
+                    END,
+                    quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
+                    updated_at = ?
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed')
+            """, (
+                self._json_dump(quota_ids),
+                self._json_dump(quota_names or []),
+                confidence_floor, materials_json or '[]', materials_json or '[]',
+                quota_db_version, specialty or '', now, record_id,
+            ))
+        else:
+            # auto_match / auto_review 或其他未知来源
+            # 如果定额编号一致（多次匹配结果相同），递增确认次数；否则只记录时间
+            cursor.execute("""
+                UPDATE experiences SET
+                    confirm_count = CASE
+                        WHEN quota_ids = ? THEN confirm_count + 1
+                        ELSE confirm_count
+                    END,
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
                 WHERE id = ?
-            """, (quota_db_version, specialty or '', now, record_id))
+            """, (self._json_dump(quota_ids), quota_db_version,
+                  specialty or '', now, record_id))
+
+        # ========== 自动晋升：候选层达到门槛自动晋升为权威层 ==========
+        # 多次独立匹配结果一致 = 数据可信，无需人工逐条审核
+        # 门槛按置信度分级：高置信度要求少、低置信度要求多
+        # 注意：project_import_suspect 是审核不通过被强制降级的，不参与自动晋升
+        if source != "project_import_suspect":
+            cursor.execute("""
+                UPDATE experiences SET layer = 'authority'
+                WHERE id = ? AND layer = 'candidate'
+                  AND source != 'project_import_suspect'
+                  AND (
+                    (confidence >= 95 AND confirm_count >= 2)
+                    OR (confidence >= 90 AND confirm_count >= 3)
+                    OR (confidence >= 85 AND confirm_count >= 5)
+                  )
+            """, (record_id,))
+            if cursor.rowcount > 0:
+                logger.info(f"经验库自动晋升: ID={record_id} 候选层→权威层（达到确认门槛）")
 
         if commit:
             conn.commit()
@@ -633,7 +682,7 @@ class ExperienceDB:
     def _add_to_vector_index(self, record_id: int, bill_text: str,
                              province: str = None):
         """将经验记录添加到向量索引（带省份metadata，支持按省份过滤）"""
-        province = province or config.get_current_province()
+        province = province or self.province
         try:
             embedding = self.model.encode(
                 [bill_text],
@@ -673,7 +722,7 @@ class ExperienceDB:
             相似的经验记录列表，每条包含:
             {id, bill_text, quota_ids, quota_names, similarity, confidence, ...}
         """
-        province = province or config.get_current_province()
+        province = province or self.province
 
         # 获取当前定额库版本（用于校验经验记录是否过期）
         current_version = config.get_current_quota_version(province)
@@ -690,8 +739,10 @@ class ExperienceDB:
             if current_version and record_version and record_version == current_version:
                 exact["match_type"] = "exact"
             elif not current_version or not record_version:
-                # 版本信息缺失（老数据或尚未导入定额）→ 暂时当 exact 用
-                exact["match_type"] = "exact"
+                # 版本信息缺失（老数据或尚未导入定额）→ 降级为 stale
+                # 缺版本号说明是早期数据，定额可能已更新，不应直通高置信匹配
+                exact["match_type"] = "stale"
+                logger.debug(f"经验库版本信息缺失（经验:'{record_version}' 当前:'{current_version}'），降级为参考")
             else:
                 # 版本不一致 → 降级为"过期参考"，不应直通
                 exact["match_type"] = "stale"
@@ -704,9 +755,15 @@ class ExperienceDB:
         collection_count = self.collection.count()
         if collection_count == 0:
             return [stale_exact] if stale_exact else []
-        n_results = min(top_k * 2, collection_count)
+        # 多取一些结果，避免候选层记录在向量层面挤掉权威层记录
+        # 后续排序时会优先保留权威层，再截断到 top_k
+        n_results = min(max(top_k * 3, 15), collection_count)
 
         try:
+            # 向量模型不可用时快速跳过（不重复报错，依赖精确匹配兜底）
+            if self.model is None:
+                return [stale_exact] if stale_exact else []
+
             query_prefix = "为这个句子生成表示以用于检索中文文档: "
             query_embedding = self.model.encode(
                 [query_prefix + query_text],
@@ -770,12 +827,13 @@ class ExperienceDB:
             try:
                 cursor = conn.cursor()
                 placeholders = ",".join(["?"] * len(matched_ids))
+                # 同时查权威层和候选层，候选层记录后续标记 match_type="candidate"
                 cursor.execute(f"""
                     SELECT * FROM experiences
                     WHERE id IN ({placeholders})
                     AND province = ?
                     AND confidence >= ?
-                    AND layer = 'authority'
+                    AND layer IN ('authority', 'candidate')
                 """, matched_ids + [province, min_confidence])
                 rows = {row["id"]: dict(row) for row in cursor.fetchall()}
             finally:
@@ -789,31 +847,56 @@ class ExperienceDB:
                     record["similarity"] = sim
                     self._normalize_record_quota_fields(record)
 
-                    # 版本校验：版本一致→"similar"，版本不一致→"stale"
-                    record_version = record.get("quota_db_version", "")
-                    if current_version and record_version and record_version != current_version:
-                        record["match_type"] = "stale"
+                    # 候选层记录标记为 "candidate"，不参与直通，仅作参考
+                    if record.get("layer") == "candidate":
+                        record["match_type"] = "candidate"
+                    # 权威层记录做版本校验：
+                    # 仅"当前版本+记录版本"均存在且一致时，才可标记为 similar；
+                    # 其余情况（缺版本号或不一致）一律降级为 stale。
                     else:
-                        record["match_type"] = "similar"
+                        record_version = record.get("quota_db_version", "")
+                        if current_version and record_version and record_version == current_version:
+                            record["match_type"] = "similar"
+                        else:
+                            record["match_type"] = "stale"
 
                     similar_records.append(record)
 
-            # 按相似度降序排序
-            similar_records.sort(key=lambda x: x["similarity"], reverse=True)
+            # 按相似度降序排序，同相似度下权威层优先于候选层
+            # 避免 top_k 截断时候选层记录挤掉有效的权威层记录
+            _layer_priority = {"authority": 0, "candidate": 1}
+            similar_records.sort(
+                key=lambda x: (-x["similarity"],
+                               _layer_priority.get(x.get("layer", "candidate"), 1))
+            )
+
+            # 权威层优先截断：先取权威层记录，再用候选层补齐到 top_k
+            # 这样即使候选层相似度更高，也不会把权威层挤出结果
+            authority_recs = [r for r in similar_records if r.get("layer") == "authority"]
+            candidate_recs = [r for r in similar_records if r.get("layer") != "authority"]
+            truncated = authority_recs[:top_k]
+            remaining = top_k - len(truncated)
+            if remaining > 0:
+                truncated.extend(candidate_recs[:remaining])
+            # 合并后重新按相似度排序，保持结果的自然顺序
+            truncated.sort(
+                key=lambda x: (-x["similarity"],
+                               _layer_priority.get(x.get("layer", "candidate"), 1))
+            )
 
             # 精确命中过期时，保留为首条参考，但不阻断后续有效记录
             if stale_exact:
                 merged = [stale_exact]
                 seen = {stale_exact.get("id")}
-                for rec in similar_records:
+                for rec in truncated:
                     rec_id = rec.get("id")
                     if rec_id in seen:
                         continue
                     merged.append(rec)
                     seen.add(rec_id)
-                similar_records = merged
+                truncated = merged
 
-            return similar_records[:top_k]
+            return truncated[:top_k]
 
         except Exception as e:
             logger.warning(f"经验库向量搜索失败: {e}")
@@ -841,7 +924,7 @@ class ExperienceDB:
             limit_val = 20
         limit_val = max(1, min(limit_val, 100))
 
-        province = province or config.get_current_province()
+        province = province or self.province
         like_pattern = f"%{text}%"
         text_match_condition = """
             (
@@ -894,204 +977,9 @@ class ExperienceDB:
             records.append(self._normalize_record_quota_fields(item))
         return records
 
-    def get_reference_cases(self, query_text: str, top_k: int = 3,
-                            province: str = None,
-                            specialty: str = None) -> list[dict]:
-        """
-        获取参考案例（供大模型 few-shot 使用）
-
-        与 search_similar 的区别：
-        - 这个方法用于给大模型提供参考（不要求高相似度）
-        - 返回格式更简洁，适合放入 Prompt
-        - 支持按专业过滤，优先返回同专业的案例
-
-        参数:
-            specialty: 专业分类（如"C10"），传入后同专业案例优先排在前面
-
-        返回:
-            [{"bill": "清单描述", "quotas": ["定额1", "定额2"]}, ...]
-        """
-        # 多搜一些候选，后面按专业重排序再截断
-        fetch_k = top_k * 2 if specialty else top_k
-        records = self.search_similar(
-            query_text, top_k=fetch_k, min_confidence=70, province=province)
-
-        cases = []
-        for r in records:
-            # 过期经验不进入few-shot上下文，避免把旧版定额注入提示词
-            if r.get("match_type") == "stale":
-                continue
-            # 把定额编号和名称拼在一起
-            quota_strs = []
-            ids = r.get("quota_ids", [])
-            names = r.get("quota_names", [])
-            for i, qid in enumerate(ids):
-                name = names[i] if i < len(names) else ""
-                quota_strs.append(f"{qid} {name}".strip())
-
-            cases.append({
-                "bill": r["bill_text"],
-                "quotas": quota_strs,
-                "confidence": r.get("confidence", 0),
-                "specialty": r.get("specialty", ""),  # 保留专业字段用于排序
-            })
-
-        # 按专业优先排序：同专业的案例排前面，避免跨专业误导Agent
-        if specialty and len(cases) > top_k:
-            same = [c for c in cases if c.get("specialty") == specialty]
-            diff = [c for c in cases if c.get("specialty") != specialty]
-            cases = (same + diff)[:top_k]
-        else:
-            cases = cases[:top_k]
-
-        return cases
-
-    # ================================================================
-    # 批量导入
-    # ================================================================
-
-    def import_from_project(self, records: list[dict],
-                            project_name: str = None,
-                            province: str = None) -> dict:
-        """
-        从已完成项目批量导入经验
-
-        参数:
-            records: 导入记录列表，每条包含：
-                {
-                    "bill_text": "清单文本",
-                    "bill_name": "项目名称",
-                    "bill_code": "清单编码",
-                    "bill_unit": "单位",
-                    "quota_ids": ["定额编号1", "定额编号2"],
-                    "quota_names": ["定额名称1", "定额名称2"],
-                }
-            project_name: 项目名称（标记来源）
-            province: 省份
-
-        返回:
-            {"total": 总数, "added": 新增数, "updated": 更新数, "skipped": 跳过数}
-        """
-        province = province or config.get_current_province()
-        quota_db_ver = config.get_current_quota_version(province)
-        stats = {"total": len(records), "added": 0, "updated": 0, "skipped": 0}
-
-        for record in records:
-            bill_text = record.get("bill_text", "").strip()
-            quota_ids = record.get("quota_ids", [])
-
-            if not bill_text or not quota_ids:
-                stats["skipped"] += 1
-                continue
-
-            # 导入时规范化文本（去掉废话、空值字段等，统一格式）
-            try:
-                from src.text_parser import normalize_bill_text
-                bill_name = record.get("bill_name", "")
-                if bill_name:
-                    desc = bill_text[len(bill_name):].strip() if bill_text.startswith(bill_name) else bill_text
-                    bill_text = normalize_bill_text(bill_name, desc)
-            except Exception as e:
-                logger.debug(f"经验导入文本规范化失败，使用原文本: {e}")
-
-            # 检查是否已存在
-            existing = self._find_exact_match(bill_text, province)
-            if existing:
-                # 已有记录，增加确认次数（同时补全空的specialty）
-                inferred_spec = None
-                if quota_ids:
-                    for qid in quota_ids:
-                        inferred_spec = get_book_from_quota_id(qid)
-                        if inferred_spec:
-                            break
-                self._update_experience(
-                    existing["id"], quota_ids,
-                    record.get("quota_names"),
-                    "project_import", 85,
-                    quota_db_version=quota_db_ver,
-                    specialty=inferred_spec,
-                )
-                stats["updated"] += 1
-            else:
-                record_id = self.add_experience(
-                    bill_text=bill_text,
-                    quota_ids=quota_ids,
-                    quota_names=record.get("quota_names"),
-                    bill_name=record.get("bill_name"),
-                    bill_code=record.get("bill_code"),
-                    bill_unit=record.get("bill_unit"),
-                    source="project_import",
-                    confidence=85,
-                    province=province,
-                    project_name=project_name,
-                )
-                if record_id > 0:
-                    stats["added"] += 1
-                else:
-                    stats["skipped"] += 1
-
-        logger.info(f"项目导入完成: 总{stats['total']}条, "
-                    f"新增{stats['added']}, 更新{stats['updated']}, 跳过{stats['skipped']}")
-
-        return stats
-
-    def rebuild_vector_index(self):
-        """
-        重建经验库的向量索引（当SQLite数据更新但向量索引不同步时使用）
-        重建后带省份metadata，支持按省份过滤向量搜索
-        """
-        logger.info("重建经验库向量索引...")
-
-        conn = self._connect(row_factory=True)
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, bill_text, province FROM experiences")
-            rows = cursor.fetchall()
-        finally:
-            conn.close()
-
-        if not rows:
-            logger.info("经验库为空，无需重建")
-            return
-
-        # 清空旧索引
-        import chromadb
-        self.chroma_dir.mkdir(parents=True, exist_ok=True)
-        self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
-        try:
-            self._chroma_client.delete_collection("experiences")
-        except Exception as e:
-            logger.debug(f"经验库旧向量集合删除跳过: {e}")
-        self._collection = self._chroma_client.create_collection(
-            name="experiences",
-            metadata={"hnsw:space": "cosine"}
-        )
-
-        # 批量向量化（带省份metadata）
-        batch_size = 256
-        total = len(rows)
-        for start in range(0, total, batch_size):
-            end = min(start + batch_size, total)
-            batch = rows[start:end]
-
-            ids = [str(row["id"]) for row in batch]
-            texts = [row["bill_text"] for row in batch]
-            metadatas = [{"province": row["province"] or ""} for row in batch]
-
-            embeddings = self.model.encode(
-                texts,
-                batch_size=batch_size,
-                normalize_embeddings=True
-            )
-
-            self.collection.add(
-                ids=ids,
-                documents=texts,
-                embeddings=embeddings.tolist(),
-                metadatas=metadatas,
-            )
-
-        logger.info(f"经验库向量索引重建完成: {total}条记录（含省份metadata）")
+    # get_reference_cases — 已拆分到 experience_manager.py
+    # import_from_project — 已拆分到 experience_importer.py
+    # rebuild_vector_index — 已拆分到 experience_importer.py
 
     # ================================================================
     # 统计信息
@@ -1152,6 +1040,26 @@ class ExperienceDB:
             "avg_confidence": round(avg_confidence, 1),
             "vector_count": vector_count,
         }
+
+    # demote_to_candidate / promote_to_authority / mark_stale_experiences
+    # get_authority_records / get_candidate_records
+    # — 已拆分到 experience_manager.py
+
+# ================================================================
+# 方法重绑定：把拆分出去的函数挂回 ExperienceDB 类
+# 调用方仍然用 db.import_from_project(...) 等，无需感知拆分
+# ================================================================
+from src import experience_importer as _exp_importer
+from src import experience_manager as _exp_manager
+
+ExperienceDB.import_from_project = _exp_importer.import_from_project
+ExperienceDB.rebuild_vector_index = _exp_importer.rebuild_vector_index
+ExperienceDB.get_reference_cases = _exp_manager.get_reference_cases
+ExperienceDB.demote_to_candidate = _exp_manager.demote_to_candidate
+ExperienceDB.promote_to_authority = _exp_manager.promote_to_authority
+ExperienceDB.mark_stale_experiences = _exp_manager.mark_stale_experiences
+ExperienceDB.get_authority_records = _exp_manager.get_authority_records
+ExperienceDB.get_candidate_records = _exp_manager.get_candidate_records
 
 # ================================================================
 # 命令行入口：查看经验库状态

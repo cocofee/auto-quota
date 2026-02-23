@@ -9,7 +9,74 @@
 避免循环依赖。
 """
 
+import json
 import re
+from pathlib import Path
+
+from loguru import logger
+
+_LAMP_RULE_EXCLUDE_PATTERN = r"灯杆|灯塔|路灯基础|灯槽|灯箱|灯带槽"
+
+# ===== 工程同义词表（清单常用名 → 定额库常用名） =====
+# 只加载一次，后续复用缓存
+_SYNONYMS_CACHE = None
+
+
+def _load_synonyms() -> dict:
+    """加载工程同义词表（惰性加载，只读一次文件）"""
+    global _SYNONYMS_CACHE
+    if _SYNONYMS_CACHE is not None:
+        return _SYNONYMS_CACHE
+
+    synonyms_path = Path(__file__).parent.parent / "data" / "engineering_synonyms.json"
+    try:
+        with open(synonyms_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        # 过滤掉说明字段和空值，只保留有效的同义词映射
+        _SYNONYMS_CACHE = {
+            k: v[0] for k, v in raw.items()
+            if not k.startswith("_") and isinstance(v, list) and v
+        }
+        # 按key长度降序排列，优先匹配长词（避免"PE管"先于"HDPE管"匹配）
+        _SYNONYMS_CACHE = dict(
+            sorted(_SYNONYMS_CACHE.items(), key=lambda x: len(x[0]), reverse=True)
+        )
+    except Exception as e:
+        logger.debug(f"工程同义词表加载失败（不影响基础搜索）: {e}")
+        _SYNONYMS_CACHE = {}
+
+    return _SYNONYMS_CACHE
+
+
+def _apply_synonyms(query: str, specialty: str = "") -> str:
+    """应用工程同义词替换：把清单常用名替换为定额常用名
+
+    例如：
+      "镀锌钢管 DN25" → "焊接钢管 镀锌 DN25"
+      "PPR管 热熔连接" → "PP-R管 热熔连接"
+
+    参数:
+        query: 搜索query字符串
+        specialty: 清单所属专业册号（如"C10"、"A"等）
+            当前同义词表仅覆盖安装专业（C1~C12），
+            非安装专业时跳过同义词替换，避免误替换。
+    """
+    # 当前同义词表仅适用于安装专业（C开头的册号）
+    # 没有 specialty 时也应用（兼容旧调用、无分类信息的场景）
+    if specialty and not specialty.upper().startswith("C"):
+        return query
+
+    synonyms = _load_synonyms()
+    if not synonyms:
+        return query
+
+    for key, replacement in synonyms.items():
+        if key in query:
+            query = query.replace(key, replacement, 1)  # 只替换第一次出现
+            break  # 只做一次替换，避免连锁替换引发副作用
+
+    return query
+_SPECIAL_LAMP_PATTERN = r"紫外|杀菌|消毒|舞台|投光|泛光|景观|水下|地埋|航空障碍|手术|无影|植物|补光|洗墙|轨道"
 
 
 def _format_number_for_query(value: float) -> str:
@@ -61,7 +128,7 @@ def _normalize_bill_name(name: str) -> str:
         return name.replace("电力电缆头", "电缆终端头").replace("电缆头", "电缆终端头")
 
     # 灯具类：去掉"LED"前缀和瓦数/电压等噪声（定额不按光源和瓦数分类）
-    if "灯" in name:
+    if "灯" in name and not re.search(_LAMP_RULE_EXCLUDE_PATTERN, name):
         cleaned = re.sub(r'LED\s*', '', name, flags=re.IGNORECASE)
         # 去掉瓦数（12W、2×28W、1*28W等）和电压（220V等）—— 定额不按这些分类
         cleaned = re.sub(r'\d+[×*]\d+\s*W', '', cleaned, flags=re.IGNORECASE)
@@ -82,6 +149,10 @@ def _normalize_bill_name(name: str) -> str:
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         cleaned = re.sub(r'\(\s*\)', '', cleaned).strip()
         cleaned = re.sub(r'\[\s*\]', '', cleaned).strip()
+
+        # 特殊灯具优先保留原始语义，避免被通用灯具规则过度归类
+        if re.search(_SPECIAL_LAMP_PATTERN, cleaned):
+            return cleaned
 
         # ===== 按灯具类型映射到定额搜索名称 =====
 
@@ -105,9 +176,13 @@ def _normalize_bill_name(name: str) -> str:
         if ("防水" in cleaned or "防尘" in cleaned or "防潮" in cleaned) and "灯" in cleaned:
             return "防水防尘灯安装"
 
-        # 直管灯/灯管/线槽灯 → LED灯带 灯管式
-        if re.search(r'直管|灯管|线槽灯', cleaned):
+        # 线槽灯 → LED灯带 灯管式（线槽灯安装在线槽内，安装工艺接近LED灯带）
+        if "线槽灯" in cleaned:
             return "LED灯带 灯管式"
+
+        # 直管灯/灯管 → 荧光灯具安装（管状灯具不论LED还是荧光，套荧光灯安装定额）
+        if re.search(r'直管|灯管', cleaned):
+            return "荧光灯具安装 单管"
 
         # 井道灯 → 密闭灯安装（井道用密闭灯）
         if "井道灯" in cleaned:
@@ -164,6 +239,12 @@ def _normalize_bill_name(name: str) -> str:
 
         # 应急灯/应急照明灯
         if "应急" in cleaned:
+            # 应急+指示灯 → 标志灯方向（不是荧光灯）
+            # 例如"应急疏散指示灯"是标志灯，不是照明灯
+            if "指示" in cleaned:
+                if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
+                    return "标志、诱导灯安装 壁式"
+                return "标志、诱导灯安装 壁式"
             if "吸顶" in cleaned:
                 return "普通灯具安装 吸顶灯"
             if "疏散" in cleaned or "照明" in cleaned:
@@ -201,7 +282,8 @@ def _normalize_bill_name(name: str) -> str:
     return name
 
 
-def build_quota_query(parser, name: str, description: str = "") -> str:
+def build_quota_query(parser, name: str, description: str = "",
+                      specialty: str = "") -> str:
     """
     构建定额搜索query（模仿定额命名风格）
 
@@ -215,6 +297,7 @@ def build_quota_query(parser, name: str, description: str = "") -> str:
         parser: TextParser 实例（用于调用 parser.parse()）
         name: 清单项目名称（如"复合管"、"成套配电箱"）
         description: 清单项目特征描述
+        specialty: 清单所属专业册号（如"C10"），用于同义词范围限定
 
     返回:
         构建好的搜索query
@@ -274,8 +357,7 @@ def build_quota_query(parser, name: str, description: str = "") -> str:
         if material and "管" in material and name and name != material:
             query_parts.append(name)
 
-        return " ".join(query_parts)
-
+        return _apply_synonyms(" ".join(query_parts), specialty)
     # ===== 电梯类：有电梯参数时构建专用搜索query =====
     # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
     # 例如 "载货电梯" 速度1.0m/s 10站 → "载货电梯 运行速度2m/s以下 层数 站数"
@@ -446,4 +528,4 @@ def build_quota_query(parser, name: str, description: str = "") -> str:
         if circuits:
             query_parts.append(circuits)
 
-    return " ".join(query_parts)
+    return _apply_synonyms(" ".join(query_parts), specialty)

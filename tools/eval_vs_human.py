@@ -17,13 +17,8 @@
 
 import argparse
 import re
-import sys
 from pathlib import Path
 from collections import OrderedDict
-
-# 把项目根目录加入路径
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
 import config
@@ -403,7 +398,8 @@ def main():
     args = parser.parse_args()
 
     if args.province:
-        config.set_current_province(config.resolve_province(args.province))
+        # Validate/normalize province input without mutating global runtime state.
+        config.resolve_province(args.province)
 
     # 1. 解析两个文件
     human_pairs = parse_human_budget(args.human_excel)
