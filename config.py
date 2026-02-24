@@ -487,6 +487,26 @@ AGENT_FASTPATH_REQUIRE_PARAM_MATCH = True
 # 扩大搜索 = 不限册号全库搜 + 增加候选数
 LOW_CONFIDENCE_RETRY_THRESHOLD = 60
 
+# ============================================================
+# L3 一致性反思（同类清单定额一致性检查）
+# ============================================================
+# 匹配全部完成后，检查同类清单是否套了同一个定额，不一致时用加权投票纠正。
+# 纯Python后处理，不调LLM，耗时可忽略。
+
+# 总开关（True=启用，False=跳过）
+REFLECTION_ENABLED = True
+
+# 投票决策阈值：winner票权至少是runner-up的多少倍才纠正
+# 低于此比例的只标记冲突，不强制纠正
+REFLECTION_MIN_VOTE_RATIO = 1.5
+
+# 高置信度保护：置信度>=此值的结果不被反思纠正
+# 经验库精确匹配通常>=90，不应被搜索结果投票推翻
+REFLECTION_SKIP_HIGH_CONFIDENCE = 90
+
+# 纠正后的置信度扣分（提示用户关注）
+REFLECTION_CONFIDENCE_PENALTY = 5
+
 # 学习笔记数据库路径
 def get_learning_notes_db_path():
     return COMMON_DB_DIR / "learning_notes.db"

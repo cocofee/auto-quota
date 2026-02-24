@@ -438,6 +438,14 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
     # 规则后置校验：对搜索出来的结果校验档位，纠正选错的档位
     rule_validator.validate_results(results)
+
+    # L3 一致性反思：同类清单定额一致性检查
+    try:
+        from src.consistency_checker import check_and_fix
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
     for result in results:
         _append_trace_step(
             result,
@@ -453,7 +461,8 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 validator: ParamValidator,
                 experience_db=None, llm_type: str = None,
-                province: str = None) -> list[dict]:
+                province: str = None,
+                project_overview: str = "") -> list[dict]:
     """
     Agent模式（造价员贾维斯）：经验库 → 规则 → 搜索+Agent分析
 
@@ -512,13 +521,20 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     match_stats = {}  # {"清单名称片段 → 定额编号": 计数}
 
     def _build_overview_context() -> str:
-        """从已完成的匹配结果中构建表级统计摘要"""
-        if not match_stats:
-            return ""
-        # 只取出现次数最多的前5条
-        sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-        lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
-        return f"[上下文] 当前表已处理的同类清单匹配情况：\n" + "\n".join(lines) + "\n同类清单请保持一致。"
+        """合并项目概览 + 已处理项统计，构建完整的上下文摘要"""
+        parts = []
+
+        # 第1部分：项目整体概览（来自 analyze_project_context，匹配前就生成好的）
+        if project_overview:
+            parts.append(project_overview)
+
+        # 第2部分：已处理项的匹配统计（随匹配进度动态积累）
+        if match_stats:
+            sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+            lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
+            parts.append("已处理的同类清单匹配情况：\n" + "\n".join(lines))
+
+        return "\n".join(parts) if parts else ""
 
     def _update_match_stats(result: dict):
         """从匹配结果中更新统计"""
@@ -731,6 +747,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 else:
                     # 正常LLM结果
                     results_by_idx[idx] = result
+                    _update_match_stats(result)
                     exp_hits += task_exp_hits
                     rule_hits += task_rule_hits
                     agent_hits += 1
@@ -755,6 +772,14 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # 规则后置校验
     rule_validator.validate_results(results)
+
+    # L3 一致性反思：同类清单定额一致性检查
+    try:
+        from src.consistency_checker import check_and_fix
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
     for result in results:
         _append_trace_step(
             result,
@@ -773,7 +798,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
 def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
                   validator: ParamValidator, experience_db,
-                  resolved_province: str, agent_llm: str = None) -> list[dict]:
+                  resolved_province: str, agent_llm: str = None,
+                  project_overview: str = "") -> list[dict]:
     """按模式执行匹配。"""
     if mode == "search":
         return match_search_only(
@@ -781,5 +807,6 @@ def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
     if mode == "agent":
         return match_agent(
             bill_items, searcher, validator, experience_db,
-            llm_type=agent_llm, province=resolved_province)
+            llm_type=agent_llm, province=resolved_province,
+            project_overview=project_overview)
     raise ValueError(f"不支持的匹配模式: {mode}")
