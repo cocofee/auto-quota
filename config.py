@@ -539,6 +539,19 @@ AGENT_BATCH_ENABLED = True              # 是否启用批量审核
 AGENT_BATCH_SIZE = 8                     # 每批最多几条
 AGENT_BATCH_MIN_SCORE = 0.45             # 候选top1 param_score >= 此值才走批量（低于走逐条）
 
+# ============================================================
+# L7 搜索召回率优化
+# ============================================================
+
+# 经验库模糊匹配（通过 normalized_text 字段，容忍空格/标点/DN格式差异）
+EXPERIENCE_FUZZY_MATCH_ENABLED = True
+
+# 自动同义词表（从经验库挖掘的同义词，由 tools/synonym_miner.py 生成）
+AUTO_SYNONYMS_ENABLED = True
+
+# BM25 同义词扩展变体（在混合搜索中增加同义词反向替换变体）
+BM25_SYNONYM_EXPANSION_ENABLED = True
+
 # 学习笔记数据库路径
 def get_learning_notes_db_path():
     return COMMON_DB_DIR / "learning_notes.db"

@@ -484,6 +484,14 @@ class HybridSearcher:
         if core_noun:
             _add(core_noun, "core_noun")
 
+        # V5（L7新增）: 同义词反向替换变体
+        # query_builder已做"清单名→定额名"替换（如"白铁管"→"镀锌钢管"），
+        # 这里做反向替换生成额外变体，覆盖定额库中可能存在的清单原始写法。
+        if getattr(config, "BM25_SYNONYM_EXPANSION_ENABLED", False) and len(variants) < max_variants:
+            syn_variant = self._build_synonym_variant(normalized)
+            if syn_variant:
+                _add(syn_variant, "synonym_expand")
+
         # 额外兜底：若仍不够且有知识库提示，拼接一个知识变体
         if kb_hints and len(variants) < max_variants:
             _add(f"{query} {kb_hints[0]}", "kb_hint")
@@ -515,6 +523,47 @@ class HybridSearcher:
         if len(core) > len(query.strip()) * 0.8:
             return None
         return core
+
+    @staticmethod
+    def _build_synonym_variant(query: str) -> str | None:
+        """生成同义词反向替换变体（L7）
+
+        _apply_synonyms 做"清单名→定额名"替换（如"镀锌钢管"→"焊接钢管 镀锌"），
+        到达混合搜索时query中已经是定额名了。
+
+        这里构建反向映射：定额名→清单名，生成一个用"清单原始写法"的变体。
+        因为定额库的 search_text 可能包含清单常用写法。
+
+        例如：query="焊接钢管 镀锌 DN25"（已被替换过）
+             反向变体="镀锌钢管 DN25"（清单原始写法）
+        """
+        try:
+            from src.query_builder import _load_synonyms
+            synonyms = _load_synonyms()
+        except ImportError:
+            return None
+
+        if not synonyms:
+            return None
+
+        # 构建反向映射：定额写法 → 清单写法列表
+        reverse_map = {}
+        for bill_term, quota_term in synonyms.items():
+            if quota_term not in reverse_map:
+                reverse_map[quota_term] = []
+            reverse_map[quota_term].append(bill_term)
+
+        # 在query中查找被替换过的定额术语，按长度降序匹配
+        variant = query
+        for quota_term in sorted(reverse_map.keys(), key=len, reverse=True):
+            if quota_term in variant:
+                # 用最短的清单术语替换（通常更通用）
+                bill_terms = reverse_map[quota_term]
+                shortest = min(bill_terms, key=len)
+                variant = variant.replace(quota_term, shortest, 1)
+                break  # 只做一次替换
+
+        return variant if variant != query else None
 
     def _merge_single_engine_runs(self, runs: list[dict], engine: str,
                                   k: int = 60) -> list[dict]:

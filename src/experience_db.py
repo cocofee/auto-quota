@@ -107,6 +107,13 @@ class ExperienceDB:
                 cursor.execute("ALTER TABLE experiences ADD COLUMN materials TEXT DEFAULT '[]'")
                 logger.info("经验库已升级：新增 materials 字段（主材信息）")
 
+            # L7: 归一化文本字段（模糊匹配用）
+            try:
+                cursor.execute("SELECT normalized_text FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN normalized_text TEXT DEFAULT ''")
+                logger.info("经验库已升级：新增 normalized_text 字段（模糊匹配支持）")
+
             # 全文搜索索引（加速精确文本查找）
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_bill_text
@@ -123,12 +130,56 @@ class ExperienceDB:
                 CREATE INDEX IF NOT EXISTS idx_province_bill_text
                 ON experiences(province, bill_text)
             """)
+            # L7: 归一化文本+省份组合索引（加速模糊匹配查询）
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_province_normalized_text
+                ON experiences(province, normalized_text)
+            """)
 
             conn.commit()
+
+            # L7: 一次性迁移旧记录的 normalized_text（只在字段为空时执行）
+            self._migrate_normalized_text(conn)
         finally:
             conn.close()
 
         logger.debug(f"经验库数据库已初始化: {self.db_path}")
+
+    def _migrate_normalized_text(self, conn):
+        """一次性批量迁移旧记录的 normalized_text（L7模糊匹配）
+
+        只处理 normalized_text 为空的记录，已有值的跳过。
+        约12K条记录，纯正则操作，<15秒完成。
+        """
+        try:
+            from src.text_normalizer import normalize_for_match
+        except ImportError:
+            logger.debug("text_normalizer 模块不可用，跳过 normalized_text 迁移")
+            return
+
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM experiences WHERE normalized_text IS NULL OR normalized_text = ''"
+        )
+        empty_count = cursor.fetchone()[0]
+        if empty_count == 0:
+            return
+
+        logger.info(f"经验库迁移：{empty_count} 条旧记录需要生成 normalized_text...")
+        cursor.execute(
+            "SELECT id, bill_text FROM experiences "
+            "WHERE normalized_text IS NULL OR normalized_text = ''"
+        )
+        batch = []
+        for row in cursor.fetchall():
+            norm = normalize_for_match(row[1]) if row[1] else ""
+            batch.append((norm, row[0]))
+
+        cursor.executemany(
+            "UPDATE experiences SET normalized_text = ? WHERE id = ?", batch
+        )
+        conn.commit()
+        logger.info(f"经验库迁移完成：{len(batch)} 条记录已更新 normalized_text")
 
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
@@ -443,6 +494,13 @@ class ExperienceDB:
         quota_names_json = self._json_dump(quota_names or [])
         materials_json = self._json_dump(materials or [])
 
+        # L7: 生成归一化文本（模糊匹配用）
+        try:
+            from src.text_normalizer import normalize_for_match
+            normalized_text = normalize_for_match(bill_text)
+        except Exception:
+            normalized_text = ""
+
         inserted_new = False
         conn = self._connect()
         cursor = conn.cursor()
@@ -471,8 +529,9 @@ class ExperienceDB:
                     (bill_text, bill_name, bill_code, bill_unit,
                      quota_ids, quota_names, materials, source, confidence,
                      confirm_count, province, project_name,
-                     created_at, updated_at, notes, quota_db_version, layer, specialty)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                     created_at, updated_at, notes, quota_db_version, layer, specialty,
+                     normalized_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     bill_text, bill_name, bill_code, bill_unit,
                     quota_ids_json,
@@ -481,6 +540,7 @@ class ExperienceDB:
                     source, confidence,
                     province, project_name, now, now, notes,
                     quota_db_ver, layer, specialty,
+                    normalized_text,
                 ))
                 record_id = int(cursor.lastrowid)
                 inserted_new = True
@@ -655,7 +715,11 @@ class ExperienceDB:
 
     def _find_exact_match(self, bill_text: str, province: str,
                           authority_only: bool = False) -> dict:
-        """精确查找相同清单文本的经验记录
+        """精确查找相同清单文本的经验记录（含L7归一化模糊匹配）
+
+        匹配优先级：
+          第1级：bill_text 完全相同（最精确）
+          第2级：normalized_text 相同（L7模糊匹配，容忍空格/标点/格式差异）
 
         参数:
             bill_text: 清单文本
@@ -666,19 +730,41 @@ class ExperienceDB:
         try:
             cursor = conn.cursor()
             authority_clause = " AND layer = 'authority'" if authority_only else ""
+
+            # 第1级：完全精确匹配（现有逻辑不变）
             cursor.execute(f"""
                 SELECT * FROM experiences
                 WHERE bill_text = ? AND province = ?{authority_clause}
                 ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
                 LIMIT 1
             """, (bill_text, province))
-
             row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            # 第2级：L7 归一化匹配（容忍格式差异）
+            if getattr(config, 'EXPERIENCE_FUZZY_MATCH_ENABLED', False):
+                try:
+                    from src.text_normalizer import normalize_for_match
+                    norm_text = normalize_for_match(bill_text)
+                    if norm_text:  # 归一化后非空才查（避免空字符串匹配所有空记录）
+                        cursor.execute(f"""
+                            SELECT * FROM experiences
+                            WHERE normalized_text = ? AND province = ?
+                                  AND normalized_text != ''{authority_clause}
+                            ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                            LIMIT 1
+                        """, (norm_text, province))
+                        row = cursor.fetchone()
+                        if row:
+                            result = dict(row)
+                            result["_match_method"] = "normalized"  # 标记匹配方式（调试用）
+                            return result
+                except Exception as e:
+                    logger.debug(f"归一化匹配异常（不影响主流程）: {e}")
         finally:
             conn.close()
 
-        if row:
-            return dict(row)
         return None
 
     def _add_to_vector_index(self, record_id: int, bill_text: str,
