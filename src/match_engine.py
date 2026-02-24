@@ -538,16 +538,20 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     agent = AgentMatcher(llm_type=agent_llm, province=province)
 
     # 初始化方法卡片（从经验中提炼的选定额方法论，注入Agent Prompt）
+    # L6: 可通过配置关闭方法卡片注入，策略已融入固定提示词
     method_cards_db = None
-    try:
-        from src.method_cards import MethodCards
-        mc = MethodCards()
-        mc_stats = mc.get_stats()
-        if mc_stats["total_cards"] > 0:
-            method_cards_db = mc
-            logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
-    except Exception as e:
-        logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+    if getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True):
+        try:
+            from src.method_cards import MethodCards
+            mc = MethodCards()
+            mc_stats = mc.get_stats()
+            if mc_stats["total_cards"] > 0:
+                method_cards_db = mc
+                logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
+        except Exception as e:
+            logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+    else:
+        logger.info("L6: 方法卡片注入已关闭（AGENT_METHOD_CARDS_IN_PROMPT=False）")
 
     # 结果数组：按原始顺序存放，用 index 定位
     results_by_idx = {}  # {idx: result}
@@ -561,7 +565,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
     # 查规则知识库（Agent需要规则上下文）
-    rule_kb = _load_rule_kb(province=province)
+    # L6: 可通过配置关闭规则知识注入prompt，改由代码校验替代
+    if getattr(config, "AGENT_RULES_IN_PROMPT", True):
+        rule_kb = _load_rule_kb(province=province)
+    else:
+        rule_kb = None
+        logger.info("L6: 规则知识prompt注入已关闭（AGENT_RULES_IN_PROMPT=False）")
     reference_cases_cache = {}
     reference_cases_cache_lock = threading.Lock()
     rules_context_cache = {}
@@ -659,6 +668,68 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # ========== 第2阶段：并发LLM调用 ==========
     if llm_tasks:
+        # L6: 批量审核分组 — 中置信度项打包审核，低置信度逐条分析
+        batch_tasks = []      # 批量审核（中置信度）
+        individual_tasks = [] # 逐条分析（低置信度 + 审计项）
+
+        batch_enabled = getattr(config, "AGENT_BATCH_ENABLED", False)
+        batch_min_score = getattr(config, "AGENT_BATCH_MIN_SCORE", 0.45)
+        batch_size = getattr(config, "AGENT_BATCH_SIZE", 8)
+
+        for task in llm_tasks:
+            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            if is_audit or not batch_enabled:
+                # 审计项 / 批量关闭 → 走逐条
+                individual_tasks.append(task)
+            elif candidates:
+                # 根据搜索候选质量分组
+                top_score = float(candidates[0].get("param_score", 0) or 0)
+                if top_score >= batch_min_score:
+                    batch_tasks.append(task)
+                else:
+                    individual_tasks.append(task)
+            else:
+                individual_tasks.append(task)
+
+        batch_count = len(batch_tasks)
+        individual_count = len(individual_tasks)
+        if batch_count > 0:
+            logger.info(f"L6分组: 批量审核{batch_count}条, 逐条分析{individual_count}条")
+
+        # ===== L6 批量审核处理 =====
+        if batch_tasks:
+            # 分批（每批最多 batch_size 条）
+            batches = [batch_tasks[i:i + batch_size]
+                       for i in range(0, len(batch_tasks), batch_size)]
+            for bi, batch in enumerate(batches, 1):
+                logger.info(f"批量审核第{bi}/{len(batches)}批: {len(batch)}条")
+                batch_items_for_agent = []
+                batch_task_refs = []  # 保持对原task的引用
+                for task in batch:
+                    idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+                    batch_items_for_agent.append({
+                        "bill_item": item,
+                        "candidates": candidates,
+                        "search_query": search_query,
+                    })
+                    batch_task_refs.append(task)
+
+                try:
+                    batch_results = agent.match_batch(batch_items_for_agent)
+                except Exception as e:
+                    logger.warning(f"批量审核失败，降级为逐条: {e}")
+                    # 降级：把这批放回逐条队列
+                    individual_tasks.extend(batch)
+                    continue
+
+                # 把批量结果写入 results_by_idx
+                for j, (task, result) in enumerate(zip(batch_task_refs, batch_results)):
+                    task_idx = task[0]  # idx
+                    results_by_idx[task_idx] = result
+                    _update_match_stats(result)
+                    agent_hits += 1
+
+        # ===== 逐条LLM分析（原有逻辑）=====
         def _process_llm_task(task):
             """单个LLM任务处理（线程安全）"""
             idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
@@ -732,12 +803,13 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
             return idx, result, task_exp_hits, task_rule_hits, is_audit
 
-        # 并发执行LLM任务
+        # 并发执行逐条LLM任务（L6: 只处理individual_tasks，批量已在上面处理）
         concurrent = max(1, config.LLM_CONCURRENT)
-        logger.info(f"第2阶段: {len(llm_tasks)}条LLM任务，{concurrent}路并发")
+        if individual_tasks:
+            logger.info(f"第2阶段逐条: {len(individual_tasks)}条LLM任务，{concurrent}路并发")
 
         with ThreadPoolExecutor(max_workers=concurrent) as pool:
-            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            futures = {pool.submit(_process_llm_task, task): task for task in individual_tasks}
             completed = 0
             for future in as_completed(futures):
                 completed += 1
@@ -756,8 +828,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                                 error=str(e),
                                 mode="audit_keep_fastpath",
                             )
-                        if completed % 10 == 0 or completed == len(llm_tasks):
-                            logger.info(f"LLM杩涘害: {completed}/{len(llm_tasks)}")
+                        if completed % 10 == 0 or completed == len(individual_tasks):
+                            logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
                         continue
                     try:
                         result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
@@ -811,8 +883,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     rule_hits += task_rule_hits
                     agent_hits += 1
 
-                if completed % 10 == 0 or completed == len(llm_tasks):
-                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                if completed % 10 == 0 or completed == len(individual_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
 
     # ========== 组装最终结果（按原始顺序）==========
     results = []
@@ -861,11 +933,43 @@ def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
                   project_overview: str = "") -> list[dict]:
     """按模式执行匹配。"""
     if mode == "search":
-        return match_search_only(
+        results = match_search_only(
             bill_items, searcher, validator, experience_db, province=resolved_province)
-    if mode == "agent":
-        return match_agent(
+    elif mode == "agent":
+        results = match_agent(
             bill_items, searcher, validator, experience_db,
             llm_type=agent_llm, province=resolved_province,
             project_overview=project_overview)
-    raise ValueError(f"不支持的匹配模式: {mode}")
+    else:
+        raise ValueError(f"不支持的匹配模式: {mode}")
+
+    # L6: 规则知识后置校验——给每条匹配结果添加相关规则提示
+    _apply_rule_hints(results, bill_items, resolved_province)
+
+    return results
+
+
+def _apply_rule_hints(results: list[dict], bill_items: list[dict],
+                      province: str = None):
+    """给匹配结果添加规则知识提示（L6规则代码化）
+
+    从 rule_knowledge.db 搜索相关规则，提取系数、包含/不包含等信息，
+    写入 result["rule_hints"] 供输出时显示。
+
+    这是"提醒"而非"校验"——不影响匹配结果，用户可参考或忽略。
+    """
+    try:
+        from src.rule_post_checker import check_by_rules, format_rule_hints
+    except ImportError:
+        return  # 模块不存在时静默跳过
+
+    hint_count = 0
+    for result in results:
+        item = result.get("bill_item", {})
+        hints = check_by_rules(item, result, province=province)
+        if hints:
+            result["rule_hints"] = format_rule_hints(hints)
+            hint_count += 1
+
+    if hint_count > 0:
+        logger.info(f"L6规则提示: {hint_count}/{len(results)}条匹配结果附带规则提示")

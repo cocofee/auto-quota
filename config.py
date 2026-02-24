@@ -523,6 +523,22 @@ CROSS_PROVINCE_MIN_SIMILARITY = 0.80
 # 跨省搜索的最低置信度（只用高置信的权威数据）
 CROSS_PROVINCE_MIN_CONFIDENCE = 85
 
+
+# ============================================================
+# L6 Agent瘦身
+# ============================================================
+
+# 是否在Agent prompt中注入规则知识（关闭后由代码校验替代，节省~300-500 tokens/条）
+AGENT_RULES_IN_PROMPT = False
+
+# 是否在Agent prompt中注入方法卡片（关闭后策略已融入固定提示词，节省~200-400 tokens/条）
+AGENT_METHOD_CARDS_IN_PROMPT = False
+
+# 批量审核模式（中置信度项打包一次LLM调用，减少API调用次数）
+AGENT_BATCH_ENABLED = True              # 是否启用批量审核
+AGENT_BATCH_SIZE = 8                     # 每批最多几条
+AGENT_BATCH_MIN_SCORE = 0.45             # 候选top1 param_score >= 此值才走批量（低于走逐条）
+
 # 学习笔记数据库路径
 def get_learning_notes_db_path():
     return COMMON_DB_DIR / "learning_notes.db"
