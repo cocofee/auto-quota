@@ -39,9 +39,31 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
 
     cursor = conn.cursor()
 
+    raw_keywords = []
+    if keywords is None:
+        raw_keywords = []
+    elif isinstance(keywords, str):
+        raw_keywords = [keywords]
+    else:
+        raw_keywords = list(keywords)
+
+    normalized_keywords = []
+    for kw in raw_keywords:
+        if kw is None:
+            continue
+        text = str(kw).strip()
+        if text:
+            normalized_keywords.append(text)
+
+    # 没有关键词也没有章节时，不执行全表查询，直接返回空
+    if not normalized_keywords and not section:
+        if own_conn:
+            conn.close()
+        return []
+
     conditions = []
     params = []
-    for kw in keywords:
+    for kw in normalized_keywords:
         conditions.append("name LIKE ?")
         params.append(f"%{kw}%")
 
@@ -50,7 +72,8 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
         params.append(f"{section}%")
 
     where = " AND ".join(conditions)
-    sql = f"SELECT quota_id, name, unit FROM quotas WHERE {where} ORDER BY quota_id LIMIT ?"
+    where_clause = f" WHERE {where}" if where else ""
+    sql = f"SELECT quota_id, name, unit FROM quotas{where_clause} ORDER BY quota_id LIMIT ?"
     params.append(limit)
 
     cursor.execute(sql, params)

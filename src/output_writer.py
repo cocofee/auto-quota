@@ -694,9 +694,16 @@ class OutputWriter:
             if quotas:
                 cell_j.fill = conf_fill
 
-        # K列：匹配说明（需复核的条目加前缀标记）
+        # K列：匹配说明（L4请教/同类待定/需复核 前缀标记）
         brief = self._brief_explanation(explanation)
-        if review_needed:
+        if result.get("l4_representative"):
+            # L4代表项：用户只需改这条，同类自动学习
+            group_label = result.get("l4_group_label", "")
+            group_size = result.get("l4_group_size", 0)
+            brief = f"[请教] {group_label}类{group_size}条不确定，请修正此条（同类自动学习）"
+        elif result.get("l4_follower"):
+            brief = f"[同类待定] {brief}" if brief else "[同类待定]"
+        elif review_needed:
             brief = f"[需复核] {brief}" if brief else "[需复核]"
         cell_k = _safe_write_cell(ws, row_idx, 11, brief)
         if cell_k:
@@ -980,12 +987,19 @@ class OutputWriter:
         # 筛选出置信度 < CONFIDENCE_GREEN（85%）的条目
         current_row = 2
         review_count = 0
+        follower_count = 0  # L4从属项计数（不逐条显示，末尾汇总）
 
         for idx, result in enumerate(results, start=1):
             confidence = _safe_confidence(result.get("confidence", 0), default=0)
 
             # 只列出黄色和红色的（< 85%）
             if confidence >= config.CONFIDENCE_GREEN:
+                continue
+
+            # L4从属项不在待审核Sheet逐条显示（用户只看代表项即可）
+            # 但会在末尾汇总提示，避免从属项被完全遗漏
+            if result.get("l4_follower"):
+                follower_count += 1
                 continue
 
             bill = result.get("bill_item", {})
@@ -1014,10 +1028,16 @@ class OutputWriter:
             cell_conf = ws.cell(row=current_row, column=6, value=conf_text)
             cell_conf.fill = conf_fill
 
+            # 问题说明（代表项加 [请教] 前缀）
+            brief_text = self._brief_explanation(explanation)
+            if result.get("l4_representative"):
+                group_label = result.get("l4_group_label", "")
+                group_size = result.get("l4_group_size", 0)
+                brief_text = f"[请教] {group_label}类{group_size}条，改此条同类自动学习"
             ws.cell(
                 row=current_row,
                 column=7,
-                value=self._brief_explanation(explanation)
+                value=brief_text
             )
 
             # 备选定额
@@ -1031,6 +1051,19 @@ class OutputWriter:
 
             current_row += 1
             review_count += 1
+
+        # L4从属项汇总提示（不逐条列出，但告知用户数量）
+        if follower_count > 0:
+            current_row += 1  # 空一行
+            summary_text = (
+                f"另有 {follower_count} 条同类从属项未逐条列出，"
+                f"修正上方[请教]代表项后，下次同类自动生效"
+            )
+            cell = ws.cell(row=current_row, column=1, value=summary_text)
+            cell.font = Font(name="微软雅黑", size=10, italic=True, color="808080")
+            ws.merge_cells(
+                start_row=current_row, start_column=1,
+                end_row=current_row, end_column=11)
 
         # 如果没有待审核项，写个提示
         if review_count == 0:

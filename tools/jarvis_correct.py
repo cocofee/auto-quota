@@ -61,6 +61,29 @@ def _is_bill_serial(a_val) -> bool:
     return bool(re.fullmatch(r"\d+\.0+", text))
 
 
+def _parse_bill_serial(a_val) -> int | None:
+    """Parse serial marker to positive int, return None when invalid."""
+    if a_val is None:
+        return None
+    if isinstance(a_val, int):
+        return a_val if a_val > 0 else None
+    if isinstance(a_val, float):
+        if a_val > 0 and a_val.is_integer():
+            return int(a_val)
+        return None
+    text = str(a_val).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        value = int(text)
+        return value if value > 0 else None
+    m = re.fullmatch(r"(\d+)\.0+", text)
+    if m:
+        value = int(m.group(1))
+        return value if value > 0 else None
+    return None
+
+
 def _find_bill_rows(ws) -> list[int]:
     """Find all bill rows in one sheet by A-column serial marker."""
     rows: list[int] = []
@@ -82,19 +105,13 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
     legacy_seq_to_quota_row: dict[int, int] = {}
     for row in range(1, ws_active.max_row + 1):
         seq_val = ws_active.cell(row=row, column=1).value
-        if seq_val is None:
-            continue
-        try:
-            seq = int(seq_val)
-        except (ValueError, TypeError):
+        seq = _parse_bill_serial(seq_val)
+        if seq is None:
             continue
 
         quota_row = row + 1
         if quota_row <= ws_active.max_row:
             legacy_seq_to_quota_row[seq] = quota_row
-
-    if not legacy_seq_to_quota_row:
-        raise RuntimeError("Excel中未找到有效序号行，请检查文件结构")
 
     applied = 0
     skipped: list[str] = []
@@ -147,6 +164,11 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
                 continue
         else:
             # 回退：兼容旧格式（仅活动Sheet）
+            if not legacy_seq_to_quota_row:
+                raise RuntimeError(
+                    "Excel中未找到有效序号行；请检查文件结构，"
+                    "或在纠正项中提供sheet_name和sheet_bill_seq"
+                )
             quota_row = legacy_seq_to_quota_row.get(seq_int)
             if quota_row is None:
                 skipped.append(f"序号{seq_int}在Excel中未找到")

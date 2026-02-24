@@ -37,6 +37,47 @@ def _generate_run_id() -> str:
     return f"{ts}_{rand}"
 
 
+def _count_manual_review_rows(manual_items) -> tuple[int, int]:
+    """统计人工审核项中真正对应清单行的数量。
+
+    返回: (manual_rows, manual_reminders)
+    - manual_rows: 需要人工处理的清单行（seq>0）
+    - manual_reminders: 跨项提醒（seq<=0 且 name=【跨项提醒】），不占清单行
+    """
+    manual_rows = 0
+    manual_reminders = 0
+    for item in manual_items or []:
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            seq_raw = item.get("seq", 1)
+            try:
+                seq = int(seq_raw)
+            except (TypeError, ValueError):
+                seq = 1
+            if seq <= 0 and name == "【跨项提醒】":
+                manual_reminders += 1
+                continue
+        manual_rows += 1
+    return manual_rows, manual_reminders
+
+
+def _build_pipeline_stats(results, auto_corrections, manual_items, measure_items) -> dict:
+    """统一构建流水线统计，避免跨项提醒污染正确率。"""
+    manual_rows, manual_reminders = _count_manual_review_rows(manual_items)
+    total = len(results)
+    fallback_count = sum(1 for r in results if r.get("match_source") == "agent_fallback")
+    correct = total - len(auto_corrections) - manual_rows - len(measure_items)
+    return {
+        "total": total,
+        "correct": max(correct, 0),
+        "auto_corrected": len(auto_corrections),
+        "manual": manual_rows,
+        "manual_reminders": manual_reminders,
+        "measure": len(measure_items),
+        "fallback": fallback_count,
+    }
+
+
 def pipeline(excel_path, province=None, aux_provinces=None,
              use_experience=True, store=True, quiet=False):
     """Jarvis 批处理流水线（匹配 → 审核 → 纠正 → 存经验库）
@@ -161,18 +202,17 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         # 记录审核统计到追踪器
         try:
             from src.accuracy_tracker import AccuracyTracker
-            correct_count = len(results) - len(auto_corrections) - len(manual_items) - len(measure_items)
-            # 扣除无匹配结果的项（quotas为空=系统没给出定额，不算"正确"）
-            no_match = sum(1 for r in results if not r.get("quotas"))
-            correct_count -= no_match
+            stats_for_tracker = _build_pipeline_stats(
+                results, auto_corrections, manual_items, measure_items
+            )
             AccuracyTracker().record_review(
                 input_file=excel_path,
                 province=province,
                 total=len(results),
                 auto_corrections=len(auto_corrections),
-                manual_items=len(manual_items),
+                manual_items=stats_for_tracker["manual"],
                 measure_items=len(measure_items),
-                correct_count=max(correct_count, 0),
+                correct_count=stats_for_tracker["correct"],
             )
         except Exception as e:
             logger.debug(f"审核统计记录失败（不影响主流程）: {e}")
@@ -221,15 +261,7 @@ def pipeline(excel_path, province=None, aux_provinces=None,
             print("\n第4步：无纠正项，跳过经验库存储")
 
         # ---- 汇总 ----
-        fallback_count = sum(1 for r in results if r.get("match_source") == "agent_fallback")
-        stats = {
-            "total": len(results),
-            "correct": len(results) - len(auto_corrections) - len(manual_items) - len(measure_items),
-            "auto_corrected": len(auto_corrections),
-            "manual": len(manual_items),
-            "measure": len(measure_items),
-            "fallback": fallback_count,
-        }
+        stats = _build_pipeline_stats(results, auto_corrections, manual_items, measure_items)
 
         # 记录每条结果的关键信息到日志（用于事后分析）
         logger.info("=" * 60)
@@ -278,6 +310,8 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         print(f"  正确:     {stats['correct']}")
         print(f"  自动纠正: {stats['auto_corrected']}条")
         print(f"  需人工审: {stats['manual']}条")
+        if stats.get("manual_reminders", 0):
+            print(f"  跨项提醒: {stats['manual_reminders']}条")
         print(f"  措施项:   {stats['measure']}条（已跳过）")
         print(f"  运行日志: {log_file}")
         print("=" * 60)

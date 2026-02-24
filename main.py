@@ -262,6 +262,13 @@ def run(input_file, mode="agent", output=None,
     elapsed = time.time() - start_time
     stats = _build_run_stats(results, elapsed)
 
+    # 4.5 L4 主动学习：不确定项分组标注（在输出前标注，让Excel显示[请教]标记）
+    try:
+        from src.active_learner import mark_learning_groups
+        mark_learning_groups(results)
+    except Exception as e:
+        logger.warning(f"L4主动学习标注跳过（不影响输出）: {e}")
+
     # 生成Excel（基于原始文件结构，保留分部小节标题）
     logger.info("第4步：生成结果Excel...")
     writer = OutputWriter()
