@@ -526,78 +526,79 @@ def run_db_sample_test(province, book_filter=None):
         return
 
     conn = _db_connect(db_path)
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    # 定义互斥配对测试组（从同一类中抽两条不同的定额交叉检测）
-    pair_groups = [
-        # (搜索词A, 搜索词B, 期望检测到错误)
-        # 安装工程
-        ("单控开关", "双控开关", True),
-        ("明装", "暗装", True),
-        ("桥架", "线槽", True),
-        ("塑料管", "铸铁管", True),
-        # A册 土建
-        ("卷材防水", "涂膜防水", True),
-        ("挤塑聚苯板", "岩棉", True),
-        ("木门", "铝合金门", True),
-        ("乳胶漆", "真石漆", True),
-        # D册 市政
-        ("检查井", "雨水口", True),
-    ]
+        # 定义互斥配对测试组（从同一类中抽两条不同的定额交叉检测）
+        pair_groups = [
+            # (搜索词A, 搜索词B, 期望检测到错误)
+            # 安装工程
+            ("单控开关", "双控开关", True),
+            ("明装", "暗装", True),
+            ("桥架", "线槽", True),
+            ("塑料管", "铸铁管", True),
+            # A册 土建
+            ("卷材防水", "涂膜防水", True),
+            ("挤塑聚苯板", "岩棉", True),
+            ("木门", "铝合金门", True),
+            ("乳胶漆", "真石漆", True),
+            # D册 市政
+            ("检查井", "雨水口", True),
+        ]
 
-    if book_filter:
-        book_cond = f"AND quota_id LIKE '{book_filter}%'"
-    else:
-        book_cond = ""
-
-    print()
-    print("=" * 60)
-    print(f"定额库交叉配对测试 (省份: {province})")
-    print("=" * 60)
-
-    tested = 0
-    detected = 0
-
-    for kw_a, kw_b, expect_error in pair_groups:
-        # 从库中各取一条含关键词的定额
-        sql_a = f"SELECT quota_id, name FROM quotas WHERE name LIKE ? {book_cond} LIMIT 1"
-        sql_b = f"SELECT quota_id, name FROM quotas WHERE name LIKE ? {book_cond} LIMIT 1"
-
-        cursor.execute(sql_a, (f"%{kw_a}%",))
-        row_a = cursor.fetchone()
-        cursor.execute(sql_b, (f"%{kw_b}%",))
-        row_b = cursor.fetchone()
-
-        if not row_a or not row_b:
-            print(f"  [跳过] {kw_a} vs {kw_b} — 库中未找到对应定额")
-            continue
-
-        # 用A的名称做清单描述，B的定额做匹配结果（故意错配）
-        bill_item = {"name": row_a[1], "description": row_a[1]}
-        desc_lines = extract_description_lines(row_a[1])
-        quota_name = row_b[1]
-
-        error = run_checks(bill_item, quota_name, desc_lines)
-        tested += 1
-
-        if error and expect_error:
-            detected += 1
-            print(f"  [+] {kw_a} vs {kw_b}: 检测到 {error['type']}")
-            print(f"       清单: {row_a[1][:40]}")
-            print(f"       定额: {row_b[1][:40]}")
-        elif not error and not expect_error:
-            detected += 1
-            print(f"  [+] {kw_a} vs {kw_b}: 正确放行")
+        if book_filter:
+            book_cond = f"AND quota_id LIKE '{book_filter}%'"
         else:
-            print(f"  [X] {kw_a} vs {kw_b}: {'未检测到' if expect_error else '误报'}")
-            print(f"       清单: {row_a[1][:40]}")
-            print(f"       定额: {row_b[1][:40]}")
+            book_cond = ""
 
-    conn.close()
+        print()
+        print("=" * 60)
+        print(f"定额库交叉配对测试 (省份: {province})")
+        print("=" * 60)
 
-    print()
-    print(f"定额库测试: {detected}/{tested} 检测正确")
-    print()
+        tested = 0
+        detected = 0
+
+        for kw_a, kw_b, expect_error in pair_groups:
+            # 从库中各取一条含关键词的定额
+            sql_a = f"SELECT quota_id, name FROM quotas WHERE name LIKE ? {book_cond} LIMIT 1"
+            sql_b = f"SELECT quota_id, name FROM quotas WHERE name LIKE ? {book_cond} LIMIT 1"
+
+            cursor.execute(sql_a, (f"%{kw_a}%",))
+            row_a = cursor.fetchone()
+            cursor.execute(sql_b, (f"%{kw_b}%",))
+            row_b = cursor.fetchone()
+
+            if not row_a or not row_b:
+                print(f"  [跳过] {kw_a} vs {kw_b} — 库中未找到对应定额")
+                continue
+
+            # 用A的名称做清单描述，B的定额做匹配结果（故意错配）
+            bill_item = {"name": row_a[1], "description": row_a[1]}
+            desc_lines = extract_description_lines(row_a[1])
+            quota_name = row_b[1]
+
+            error = run_checks(bill_item, quota_name, desc_lines)
+            tested += 1
+
+            if error and expect_error:
+                detected += 1
+                print(f"  [+] {kw_a} vs {kw_b}: 检测到 {error['type']}")
+                print(f"       清单: {row_a[1][:40]}")
+                print(f"       定额: {row_b[1][:40]}")
+            elif not error and not expect_error:
+                detected += 1
+                print(f"  [+] {kw_a} vs {kw_b}: 正确放行")
+            else:
+                print(f"  [X] {kw_a} vs {kw_b}: {'未检测到' if expect_error else '误报'}")
+                print(f"       清单: {row_a[1][:40]}")
+                print(f"       定额: {row_b[1][:40]}")
+
+        print()
+        print(f"定额库测试: {detected}/{tested} 检测正确")
+        print()
+    finally:
+        conn.close()
 
 
 def main():

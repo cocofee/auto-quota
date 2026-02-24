@@ -22,6 +22,7 @@ from pathlib import Path
 from loguru import logger
 
 import config
+from db.sqlite import connect_init as _db_connect_init
 
 
 # 数据库路径：和经验库放一起
@@ -31,7 +32,7 @@ _DB_PATH = config.COMMON_DB_DIR / "run_history.db"
 def _get_conn() -> sqlite3.Connection:
     """获取数据库连接，不存在则自动创建表。"""
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_DB_PATH))
+    conn = _db_connect_init(_DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS run_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +95,7 @@ class AccuracyTracker:
         run_time = time.strftime("%H:%M:%S", now)
         file_name = Path(input_file).name if input_file else ""
 
+        conn = None
         try:
             conn = _get_conn()
             conn.execute("""
@@ -115,10 +117,12 @@ class AccuracyTracker:
                 time.time(),
             ))
             conn.commit()
-            conn.close()
             logger.debug(f"运行记录已保存: {run_date} {run_time}")
         except Exception as e:
             logger.warning(f"保存运行记录失败（不影响主流程）: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
     def record_review(self, input_file: str = "", province: str = "",
                       total: int = 0, auto_corrections: int = 0,
@@ -141,6 +145,7 @@ class AccuracyTracker:
         run_time = time.strftime("%H:%M:%S", now)
         file_name = Path(input_file).name if input_file else ""
 
+        conn = None
         try:
             conn = _get_conn()
             conn.execute("""
@@ -155,10 +160,12 @@ class AccuracyTracker:
                 measure_items, correct_count, time.time(),
             ))
             conn.commit()
-            conn.close()
             logger.debug(f"审核记录已保存: {run_date} {run_time}")
         except Exception as e:
             logger.warning(f"保存审核记录失败（不影响主流程）: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
     def show_trend(self, last_n: int = 20):
         """
@@ -166,6 +173,7 @@ class AccuracyTracker:
 
         输出格式：每行一条运行记录，显示关键比率。
         """
+        conn = None
         try:
             conn = _get_conn()
             rows = conn.execute("""
@@ -176,10 +184,12 @@ class AccuracyTracker:
                 ORDER BY id DESC
                 LIMIT ?
             """, (last_n,)).fetchall()
-            conn.close()
         except Exception as e:
             print(f"读取运行记录失败: {e}")
             return
+        finally:
+            if conn is not None:
+                conn.close()
 
         if not rows:
             print("暂无匹配运行记录。")
@@ -257,6 +267,7 @@ class AccuracyTracker:
 
     def _show_review_history(self, last_n: int = 10):
         """显示最近的Jarvis审核纠正记录。"""
+        conn = None
         try:
             conn = _get_conn()
             rows = conn.execute("""
@@ -267,9 +278,11 @@ class AccuracyTracker:
                 ORDER BY id DESC
                 LIMIT ?
             """, (last_n,)).fetchall()
-            conn.close()
         except Exception:
             return
+        finally:
+            if conn is not None:
+                conn.close()
 
         if not rows:
             return

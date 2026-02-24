@@ -22,7 +22,11 @@ from src.review_checkers import (
 
 def _run_search_chain(search_list, dn, section, province, conn):
     """按顺序尝试多组关键词搜索，第一个命中即返回"""
+    if not isinstance(search_list, (list, tuple)):
+        return None
     for keywords in search_list:
+        if keywords is None or keywords == "":
+            continue
         results = search_quota_db(keywords, dn=dn, section=section,
                                   province=province, conn=conn)
         if results:
@@ -72,7 +76,10 @@ def _find_category_by_strategy(core_noun, dn, desc_lines, province, conn):
 
         if result:
             return result, True
-        return None, stop
+        if stop:
+            return None, True
+        # stop=False 表示该策略失败后允许继续尝试后续策略
+        continue
 
     return None, False
 
@@ -96,8 +103,10 @@ def _correct_category(item, error, dn, province, conn):
         return None
 
     # 通用搜索：不限制章节
-    expected = error.get("expected", [core_noun])
-    kw = expected[0]
+    expected = error.get("expected") or [core_noun]
+    kw = expected[0] if expected else core_noun
+    if not kw:
+        return None
     results = search_quota_db([kw], dn=dn, province=province, conn=conn)
     if results:
         return results[0][0], results[0][1]
@@ -381,7 +390,10 @@ def correct_error(item, error, dn, province=None, conn=None):
         conn: 可选的共享数据库连接
     返回: (quota_id, quota_name) 或 None
     """
-    corrector = _CORRECTOR_DISPATCH.get(error["type"])
+    error_type = ""
+    if isinstance(error, dict):
+        error_type = str(error.get("type", ""))
+    corrector = _CORRECTOR_DISPATCH.get(error_type)
     if not corrector:
         return None
     result = corrector(item, error, dn, province, conn)

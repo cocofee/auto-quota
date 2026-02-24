@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 
 def _make_matcher():
     from src.agent_matcher import AgentMatcher
@@ -7,6 +10,7 @@ def _make_matcher():
     matcher = AgentMatcher.__new__(AgentMatcher)
     matcher.province = "test-province"
     matcher.llm_type = "deepseek"
+    matcher._client = None
     matcher._llm_consecutive_fails = 0
     matcher._llm_circuit_open = False
     matcher._llm_circuit_open_time = 0.0
@@ -70,3 +74,32 @@ def test_fallback_result_keeps_valid_quota_id():
     assert result["quotas"]
     assert result["quotas"][0]["quota_id"] == "C1-1"
     assert result["match_source"] == "agent_fallback"
+
+
+def test_client_lazy_init_is_threadsafe():
+    matcher = _make_matcher()
+    created = []
+    create_count = 0
+    count_lock = threading.Lock()
+
+    def _create_client():
+        nonlocal create_count
+        time.sleep(0.01)
+        with count_lock:
+            create_count += 1
+            idx = create_count
+        obj = {"client": idx}
+        created.append(obj)
+        return obj
+
+    matcher._create_client = _create_client
+
+    def _read_client(_):
+        return matcher.client
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        clients = list(pool.map(_read_client, range(40)))
+
+    assert create_count == 1
+    assert len(created) == 1
+    assert all(c is created[0] for c in clients)

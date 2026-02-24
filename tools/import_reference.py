@@ -468,8 +468,10 @@ def _select_quota_db() -> str:
         if db_path.exists():
             try:
                 conn = _db_connect(db_path)
-                count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
-                conn.close()
+                try:
+                    count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
+                finally:
+                    conn.close()
                 db_info = f"{count}条定额"
             except Exception:
                 db_info = "数据库已存在"

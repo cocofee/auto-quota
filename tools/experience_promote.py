@@ -106,16 +106,22 @@ def interactive_review(province=None, source=None, limit=50):
                 print("  × 晋升失败（可能已不在候选层）")
         elif choice == "d":
             # 删除候选层记录
+            conn = None
             try:
                 conn = db._connect()
                 conn.execute("DELETE FROM experiences WHERE id = ? AND layer = 'candidate'",
                              (r["id"],))
                 conn.commit()
-                conn.close()
                 deleted += 1
                 print("  × 已删除")
             except Exception as e:
                 print(f"  删除失败: {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
         else:
             skipped += 1
             print("  - 跳过")
