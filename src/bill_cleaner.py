@@ -231,3 +231,219 @@ def _classify_cable_type(name: str, desc: str) -> str | None:
             return '电线'
 
     return None
+
+
+# ============================================================
+# 项目上下文分析（L2：项目级感知）
+# ============================================================
+
+# 专业册号 → 中文简称（用于生成概览文本）
+_SPECIALTY_SHORT_NAMES = {
+    "C1": "机械设备", "C2": "热力设备", "C3": "静置设备",
+    "C4": "电气", "C5": "智能化", "C6": "仪表",
+    "C7": "通风空调", "C8": "工业管道", "C9": "消防",
+    "C10": "给排水", "C11": "通信", "C12": "刷油防腐保温",
+    "A": "土建", "D": "市政", "E": "园林",
+}
+
+
+def analyze_project_context(items: list[dict]) -> dict:
+    """分析清单整体情况，生成项目级上下文
+
+    在 clean_bill_items() 之后调用，利用已打好的专业标签和提取的参数，
+    汇总成项目级信息。纯 Python 统计，不调 API。
+
+    参数:
+        items: clean_bill_items() 处理后的清单项列表
+
+    返回:
+        项目上下文字典，包含专业分布、参数范围、关键内容摘要等
+    """
+    from collections import Counter
+
+    if not items:
+        return {"total_items": 0}
+
+    # 统计专业分布
+    specialty_counter = Counter()
+    for item in items:
+        sp = item.get("specialty")
+        if sp:
+            specialty_counter[sp] += 1
+
+    # 主专业（数量最多的）
+    primary_sp = specialty_counter.most_common(1)[0][0] if specialty_counter else ""
+    primary_sp_name = _SPECIALTY_SHORT_NAMES.get(primary_sp, "")
+
+    # 收集参数分布
+    dn_values = []    # 管径
+    cable_sections = []  # 电缆截面
+    for item in items:
+        params = item.get("params", {})
+        if not params:
+            continue
+        dn = params.get("dn")
+        if dn:
+            try:
+                dn_values.append(int(float(dn)))
+            except (ValueError, TypeError):
+                pass
+        cs = params.get("cable_section")
+        if cs:
+            try:
+                cable_sections.append(float(cs))
+            except (ValueError, TypeError):
+                pass
+
+    # 按名称关键词分组统计（生成"主要内容"摘要）
+    key_items = _summarize_key_items(items)
+
+    context = {
+        "total_items": len(items),
+        "primary_specialty": primary_sp,
+        "primary_specialty_name": primary_sp_name,
+        "specialty_distribution": dict(specialty_counter.most_common()),
+        "dn_range": sorted(set(dn_values)) if dn_values else [],
+        "cable_sections": sorted(set(cable_sections)) if cable_sections else [],
+        "key_items": key_items,
+    }
+
+    logger.info(f"项目分析: {len(items)}条清单, "
+                f"主专业={primary_sp_name}({primary_sp}), "
+                f"涉及{len(specialty_counter)}个专业")
+
+    return context
+
+
+def _summarize_key_items(items: list[dict], max_groups: int = 8) -> list[str]:
+    """按关键词分组统计清单内容，生成摘要列表
+
+    把清单按常见造价类别分组，输出如：
+    ["给水管道(DN25~DN100): 15条", "阀门: 8条", "电缆敷设: 12条"]
+    """
+    from collections import Counter
+
+    # 分组关键词（按优先级匹配，命中第一个即停）
+    group_patterns = [
+        ("给水管道", ["给水管", "给水钢管", "给水塑料管"]),
+        ("排水管道", ["排水管", "排水铸铁", "排水塑料"]),
+        ("消防管道", ["消防管", "消火栓管", "喷淋管"]),
+        ("采暖管道", ["采暖管", "供暖管", "地暖管"]),
+        ("通风风管", ["风管", "风道", "风口"]),
+        ("阀门", ["阀门", "闸阀", "蝶阀", "球阀", "止回阀", "截止阀", "减压阀"]),
+        ("水泵", ["水泵", "循环泵", "加压泵", "排污泵"]),
+        ("配电箱", ["配电箱", "配电柜", "开关柜", "控制箱"]),
+        ("灯具", ["灯", "灯具", "照明"]),
+        ("开关插座", ["开关", "插座", "面板"]),
+        ("电缆敷设", ["电缆", "电力电缆"]),
+        ("电线穿管", ["电线", "穿线", "导线", "BV", "BYJ"]),
+        ("桥架", ["桥架", "线槽"]),
+        ("消火栓", ["消火栓", "消防栓"]),
+        ("灭火器", ["灭火器"]),
+        ("喷淋头", ["喷淋头", "喷头", "洒水喷头"]),
+        ("卫生器具", ["洗脸盆", "坐便器", "蹲便器", "小便器", "洗涤盆", "拖布池"]),
+        ("管件", ["管件", "弯头", "三通", "法兰"]),
+        ("保温", ["保温", "绝热"]),
+        ("刷油防腐", ["刷油", "防腐", "油漆"]),
+        ("电梯", ["电梯", "扶梯"]),
+        ("套管", ["套管", "穿墙管"]),
+        ("支架", ["支架", "吊架", "管卡"]),
+    ]
+
+    group_counter = Counter()
+    group_dn_range = {}  # 记录每组的DN范围
+
+    for item in items:
+        name = item.get("name", "")
+        desc = item.get("description", "") or ""
+        text = f"{name} {desc}"
+
+        matched_group = None
+        for group_name, keywords in group_patterns:
+            for kw in keywords:
+                if kw in text:
+                    matched_group = group_name
+                    break
+            if matched_group:
+                break
+
+        if matched_group:
+            group_counter[matched_group] += 1
+            # 记录该组的DN范围
+            dn = (item.get("params") or {}).get("dn")
+            if dn:
+                try:
+                    dn_val = int(float(dn))
+                    if matched_group not in group_dn_range:
+                        group_dn_range[matched_group] = [dn_val, dn_val]
+                    else:
+                        r = group_dn_range[matched_group]
+                        r[0] = min(r[0], dn_val)
+                        r[1] = max(r[1], dn_val)
+                except (ValueError, TypeError):
+                    pass
+
+    # 生成摘要（按数量降序，取前 max_groups 个）
+    summaries = []
+    for group_name, count in group_counter.most_common(max_groups):
+        dn_r = group_dn_range.get(group_name)
+        if dn_r and dn_r[0] != dn_r[1]:
+            summaries.append(f"{group_name}(DN{dn_r[0]}~DN{dn_r[1]}): {count}条")
+        elif dn_r:
+            summaries.append(f"{group_name}(DN{dn_r[0]}): {count}条")
+        else:
+            summaries.append(f"{group_name}: {count}条")
+
+    return summaries
+
+
+def format_project_overview(context: dict) -> str:
+    """把项目上下文格式化成大模型可读的文本
+
+    参数:
+        context: analyze_project_context() 返回的字典
+
+    返回:
+        项目概览文本，用于注入到 Agent Prompt 中
+    """
+    total = context.get("total_items", 0)
+    if total == 0:
+        return ""
+
+    primary = context.get("primary_specialty_name", "")
+    primary_code = context.get("primary_specialty", "")
+    dist = context.get("specialty_distribution", {})
+    dn_range = context.get("dn_range", [])
+    cable_secs = context.get("cable_sections", [])
+    key_items = context.get("key_items", [])
+
+    parts = []
+
+    # 基本信息
+    if primary:
+        parts.append(f"本项目共{total}条清单，主专业为{primary}({primary_code})。")
+    else:
+        parts.append(f"本项目共{total}条清单。")
+
+    # 专业分布
+    if dist:
+        dist_parts = []
+        for code, count in dist.items():
+            name = _SPECIALTY_SHORT_NAMES.get(code, code)
+            dist_parts.append(f"{name}{count}条")
+        parts.append("专业分布：" + "、".join(dist_parts) + "。")
+
+    # 参数范围
+    if dn_range:
+        parts.append(f"管径范围：DN{dn_range[0]}~DN{dn_range[-1]}。")
+    if cable_secs:
+        parts.append(f"电缆截面：{cable_secs[0]}~{cable_secs[-1]}mm²。")
+
+    # 主要内容
+    if key_items:
+        parts.append("主要内容：" + "、".join(key_items) + "。")
+
+    # 一致性提示
+    parts.append("同类清单请保持套定额一致。")
+
+    return "\n".join(parts)

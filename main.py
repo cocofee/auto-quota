@@ -234,6 +234,17 @@ def run(input_file, mode="agent", output=None,
     # 1. 读取清单
     bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
 
+    # 1.5 分析项目上下文（L2：项目级感知，让匹配有全局视角）
+    # 容错：分析失败不影响主流程，降级为空上下文
+    project_overview_text = ""
+    if mode == "agent":
+        try:
+            from src.bill_cleaner import analyze_project_context, format_project_overview
+            project_context = analyze_project_context(bill_items)
+            project_overview_text = format_project_overview(project_context)
+        except Exception as e:
+            logger.warning(f"项目上下文分析失败（不影响匹配）: {e}")
+
     # 2. 初始化搜索引擎
     searcher, validator = init_search_components(resolved_province, aux_provinces)
 
@@ -244,7 +255,8 @@ def run(input_file, mode="agent", output=None,
     logger.info(f"第3步：开始匹配 ({mode} 模式)...")
     results = match_by_mode(
         mode, bill_items, searcher, validator, experience_db,
-        resolved_province, agent_llm=agent_llm)
+        resolved_province, agent_llm=agent_llm,
+        project_overview=project_overview_text)
 
     # 4. 输出结果
     elapsed = time.time() - start_time
