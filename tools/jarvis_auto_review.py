@@ -200,10 +200,11 @@ def auto_review(json_path, province=None):
     if os.path.exists(db_path):
         db_conn = _db_connect(db_path)
 
-    error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
-
-    if db_conn:
-        db_conn.close()
+    try:
+        error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
+    finally:
+        if db_conn:
+            db_conn.close()
 
     # 跨项完整性检查（规则9：电梯）
     completeness_reminders = check_elevator_completeness(results)

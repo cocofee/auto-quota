@@ -74,9 +74,17 @@ def compute_metrics(results: list[dict], elapsed: float) -> dict:
             "exp_hit_rate": 0, "fallback_rate": 0, "avg_time_sec": 0,
         }
 
-    # 置信度分布（阈值与 config.py 保持一致：绿≥85, 黄60-84, 红<60）
-    high_conf = sum(1 for r in results if r.get("confidence", 0) >= 85)
-    mid_conf = sum(1 for r in results if 60 <= r.get("confidence", 0) < 85)
+    def _safe_confidence(value) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # 置信度分布（阈值：绿≥85, 黄60-84, 红<60）
+    high_conf = sum(1 for r in results if _safe_confidence(r.get("confidence", 0)) >= 85)
+    mid_conf = sum(
+        1 for r in results if 60 <= _safe_confidence(r.get("confidence", 0)) < 85
+    )
     low_conf = total - high_conf - mid_conf
 
     # 经验库命中（match_source 以 "experience" 开头）
@@ -84,10 +92,10 @@ def compute_metrics(results: list[dict], elapsed: float) -> dict:
         1 for r in results
         if str(r.get("match_source", "")).startswith("experience"))
 
-    # Agent fallback 降级数
+    # Agent降级数（包含可恢复降级和任务异常降级）
     fallbacks = sum(
         1 for r in results
-        if r.get("match_source") == "agent_fallback")
+        if r.get("match_source") in {"agent_fallback", "agent_error"})
 
     return {
         "total": total,

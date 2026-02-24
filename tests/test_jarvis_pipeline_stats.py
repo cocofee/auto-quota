@@ -24,3 +24,15 @@ def test_build_pipeline_stats_not_affected_by_reminders():
     assert stats["manual"] == 0
     assert stats["manual_reminders"] == 1
     assert stats["correct"] == 2
+
+
+def test_build_pipeline_stats_counts_agent_error_as_fallback():
+    results = [
+        {"match_source": "agent"},
+        {"match_source": "agent_fallback"},
+        {"match_source": "agent_error"},
+    ]
+
+    stats = _build_pipeline_stats(results, [], [], [])
+
+    assert stats["fallback"] == 2

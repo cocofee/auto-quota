@@ -65,7 +65,10 @@ def _build_pipeline_stats(results, auto_corrections, manual_items, measure_items
     """统一构建流水线统计，避免跨项提醒污染正确率。"""
     manual_rows, manual_reminders = _count_manual_review_rows(manual_items)
     total = len(results)
-    fallback_count = sum(1 for r in results if r.get("match_source") == "agent_fallback")
+    fallback_sources = {"agent_fallback", "agent_error"}
+    fallback_count = sum(
+        1 for r in results if r.get("match_source") in fallback_sources
+    )
     correct = total - len(auto_corrections) - manual_rows - len(measure_items)
     return {
         "total": total,
@@ -195,9 +198,14 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         summary, auto_corrections, manual_items, measure_items = auto_review(
             json_path, province
         )
+        manual_rows, manual_reminders = _count_manual_review_rows(manual_items)
 
         print(summary)
-        logger.info(f"审核完成: 自动纠正{len(auto_corrections)}条, 需人工{len(manual_items)}条, 措施项{len(measure_items)}条")
+        logger.info(
+            f"审核完成: 自动纠正{len(auto_corrections)}条, "
+            f"需人工{manual_rows}条, 跨项提醒{manual_reminders}条, "
+            f"措施项{len(measure_items)}条"
+        )
 
         # 记录审核统计到追踪器
         try:

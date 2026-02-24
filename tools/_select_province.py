@@ -36,13 +36,16 @@ def _get_db_count(province_name: str) -> str:
     db_path = config.get_quota_db_path(province_name)
     if not db_path.exists():
         return "首次导入"
+    conn = None
     try:
         conn = _db_connect(db_path)
         count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
-        conn.close()
         return f"{count}条"
     except Exception:
         return "已存在"
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def main(allow_new=False):

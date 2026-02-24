@@ -991,9 +991,12 @@ class OutputWriter:
 
         for idx, result in enumerate(results, start=1):
             confidence = _safe_confidence(result.get("confidence", 0), default=0)
+            quotas = _ensure_list(result.get("quotas", []))
+            match_source = result.get("match_source", "")
+            review_needed = self._check_review_needed(confidence, quotas, match_source)
 
-            # 只列出黄色和红色的（< 85%）
-            if confidence >= config.CONFIDENCE_GREEN:
+            # 统一与主表逻辑：无匹配 / 低置信度 / 降级来源 都进入待审核
+            if not review_needed:
                 continue
 
             # L4从属项不在待审核Sheet逐条显示（用户只看代表项即可）
@@ -1003,7 +1006,6 @@ class OutputWriter:
                 continue
 
             bill = result.get("bill_item", {})
-            quotas = _ensure_list(result.get("quotas", []))
             explanation = result.get("explanation", "")
             alternatives = _ensure_list(result.get("alternatives", []))
 

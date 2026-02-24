@@ -76,11 +76,12 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
     sql = f"SELECT quota_id, name, unit FROM quotas{where_clause} ORDER BY quota_id LIMIT ?"
     params.append(limit)
 
-    cursor.execute(sql, params)
-    results = cursor.fetchall()
-
-    if own_conn:
-        conn.close()
+    try:
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+    finally:
+        if own_conn:
+            conn.close()
 
     # 如果指定了 DN，优先返回参数匹配的
     if dn and results:
@@ -117,12 +118,13 @@ def search_by_id(quota_id, province=None, conn=None):
         conn = _db_connect(db_path)
 
     cursor = conn.cursor()
-    cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?",
-                   (quota_id,))
-    row = cursor.fetchone()
-
-    if own_conn:
-        conn.close()
+    try:
+        cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?",
+                       (quota_id,))
+        row = cursor.fetchone()
+    finally:
+        if own_conn:
+            conn.close()
     return row
 
 
@@ -144,22 +146,22 @@ def search_by_id_prefix(quota_id, province=None, conn=None, limit=30):
         conn = _db_connect(db_path)
 
     cursor = conn.cursor()
-
-    # 先尝试精确匹配
-    cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?",
-                   (quota_id,))
-    results = cursor.fetchall()
-
-    # 没有精确匹配则用前缀
-    if not results:
-        cursor.execute(
-            "SELECT quota_id, name, unit FROM quotas WHERE quota_id LIKE ? ORDER BY quota_id LIMIT ?",
-            (f"{quota_id}%", limit)
-        )
+    try:
+        # 先尝试精确匹配
+        cursor.execute("SELECT quota_id, name, unit FROM quotas WHERE quota_id = ?",
+                       (quota_id,))
         results = cursor.fetchall()
 
-    if own_conn:
-        conn.close()
+        # 没有精确匹配则用前缀
+        if not results:
+            cursor.execute(
+                "SELECT quota_id, name, unit FROM quotas WHERE quota_id LIKE ? ORDER BY quota_id LIMIT ?",
+                (f"{quota_id}%", limit)
+            )
+            results = cursor.fetchall()
+    finally:
+        if own_conn:
+            conn.close()
     return results
 
 
@@ -180,26 +182,24 @@ def search_series(quota_id, province=None, conn=None):
         conn = _db_connect(db_path)
 
     cursor = conn.cursor()
+    try:
+        # 先找到这条定额的名称
+        cursor.execute("SELECT name FROM quotas WHERE quota_id = ?", (quota_id,))
+        row = cursor.fetchone()
+        if not row:
+            return []
 
-    # 先找到这条定额的名称
-    cursor.execute("SELECT name FROM quotas WHERE quota_id = ?", (quota_id,))
-    row = cursor.fetchone()
-    if not row:
+        # 提取名称的"家族前缀"（去掉最后的数字参数部分）
+        name = row[0]
+        parts = name.rsplit(" ", 1)
+        family_name = parts[0] if len(parts) > 1 else name
+
+        cursor.execute(
+            "SELECT quota_id, name, unit FROM quotas WHERE name LIKE ? ORDER BY quota_id",
+            (f"{family_name}%",)
+        )
+        results = cursor.fetchall()
+    finally:
         if own_conn:
             conn.close()
-        return []
-
-    # 提取名称的"家族前缀"（去掉最后的数字参数部分）
-    name = row[0]
-    parts = name.rsplit(" ", 1)
-    family_name = parts[0] if len(parts) > 1 else name
-
-    cursor.execute(
-        "SELECT quota_id, name, unit FROM quotas WHERE name LIKE ? ORDER BY quota_id",
-        (f"{family_name}%",)
-    )
-    results = cursor.fetchall()
-
-    if own_conn:
-        conn.close()
     return results

@@ -74,3 +74,31 @@ def test_run_single_dataset_returns_failed_marker_on_runtime_error(monkeypatch):
         assert "simulated" in metrics.get("error", "")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_compute_metrics_counts_agent_error_as_fallback():
+    results = [
+        {"confidence": 90, "match_source": "agent"},
+        {"confidence": 70, "match_source": "agent_fallback"},
+        {"confidence": 30, "match_source": "agent_error"},
+    ]
+
+    metrics = rb.compute_metrics(results, elapsed=3.0)
+
+    assert metrics["total"] == 3
+    assert metrics["fallback_rate"] == 0.6667
+
+
+def test_compute_metrics_handles_non_numeric_confidence():
+    results = [
+        {"confidence": "90", "match_source": "agent"},
+        {"confidence": None, "match_source": "agent"},
+        {"confidence": "bad", "match_source": "agent"},
+    ]
+
+    metrics = rb.compute_metrics(results, elapsed=3.0)
+
+    assert metrics["total"] == 3
+    assert metrics["green_rate"] == 0.3333
+    assert metrics["yellow_rate"] == 0.0
+    assert metrics["red_rate"] == 0.6667
