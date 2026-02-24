@@ -259,6 +259,31 @@ def try_experience_match(query: str, item: dict, experience_db,
     )
 
     if not similar:
+        # L5跨省预热：本省无经验时，查其他省份的经验作为搜索参考
+        if getattr(config, "CROSS_PROVINCE_WARMUP_ENABLED", False) and experience_db:
+            try:
+                cross_refs = experience_db.search_cross_province(
+                    query, current_province=province or "")
+                if cross_refs:
+                    hint_keywords = []
+                    for ref in cross_refs:
+                        names = ref.get("quota_names", [])
+                        # 防御：确保是字符串列表，避免字符串被拆成单字符
+                        if isinstance(names, str):
+                            names = [names]
+                        elif isinstance(names, list):
+                            names = [str(n) for n in names if n]
+                        else:
+                            names = []
+                        hint_keywords.extend(names)
+                    if hint_keywords:
+                        # 存到item上，供后续搜索使用（不直通）
+                        item["_cross_province_hints"] = hint_keywords[:5]
+                        logger.debug(
+                            f"L5跨省预热: {query[:30]} → "
+                            f"提示={hint_keywords[:3]}")
+            except Exception as e:
+                logger.debug(f"L5跨省搜索跳过: {e}")
         return None
 
     # 取第一条可直通（非stale、非候选层）的经验，避免"top1过期就整体失效"
@@ -508,6 +533,16 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
     full_query = ctx["full_query"]
     search_query = ctx["search_query"]
     classification = prepared["classification"]
+
+    # L5跨省预热：如果经验库miss时留下了跨省提示，增强搜索查询
+    item = ctx.get("item", {})
+    cross_hints = item.get("_cross_province_hints", []) if isinstance(item, dict) else []
+    if cross_hints:
+        # 取前3个提示关键词追加到搜索查询（不影响原始query）
+        # 防御：确保每个元素都是字符串
+        hint_text = " ".join(str(h) for h in cross_hints[:3] if h)
+        search_query = f"{search_query} {hint_text}"
+
     candidates = _prepare_candidates(
         searcher, reranker, validator, search_query, full_query, classification)
     return (

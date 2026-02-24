@@ -113,6 +113,7 @@ def _build_item_context(item: dict) -> dict:
         "full_query": f"{name} {desc}".strip(),
         "normalized_query": normalize_bill_text(original_name, desc),
         "search_query": search_query,
+        "item": item,  # L5：供跨省预热读取 _cross_province_hints
     }
 
 
