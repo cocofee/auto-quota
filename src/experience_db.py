@@ -794,7 +794,7 @@ class ExperienceDB:
                 )
 
             if not results or not results.get("ids") or not results.get("ids")[0]:
-                return []
+                return [stale_exact] if stale_exact else []
 
             # 获取匹配的记录ID和相似度（防御性处理长度不一致/非法ID）
             raw_ids = results.get("ids", [[]])[0]

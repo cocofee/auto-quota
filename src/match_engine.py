@@ -12,6 +12,7 @@
 底层组件见 match_core.py，处理流水线见 match_pipeline.py。
 """
 
+import threading
 import time
 
 from loguru import logger
@@ -177,7 +178,9 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
                                exp_hits: int, rule_hits: int,
                                province: str = None,
                                reference_cases_cache: dict = None,
+                               reference_cases_cache_lock=None,
                                rules_context_cache: dict = None,
+                               rules_context_cache_lock=None,
                                method_cards_db=None,
                                overview_context: str = ""):
     """agent模式统一结果决策：Agent分析 + 经验/规则兜底。"""
@@ -190,9 +193,11 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reference_cases_cache, experience_db, full_query, province=province,
         top_k=3, specialty=item.get("specialty"),
         tolerate_error=True, default=None,
-        error_prefix="参考案例获取失败（不影响Agent主流程）")
+        error_prefix="参考案例获取失败（不影响Agent主流程）",
+        cache_lock=reference_cases_cache_lock)
     rules_context = _get_agent_rules_context_cached(
-        rules_context_cache, rule_kb, name, desc, province=province, top_k=3)
+        rules_context_cache, rule_kb, name, desc, province=province, top_k=3,
+        cache_lock=rules_context_cache_lock)
 
     # 查询方法论卡片（按清单名称+专业匹配）
     relevant_cards = None
@@ -320,9 +325,33 @@ def _get_reference_cases_cached(cache: dict, experience_db, full_query: str,
                                 province: str = None, top_k: int = 3,
                                 specialty: str = None,
                                 tolerate_error: bool = False, default=None,
-                                error_prefix: str = "参考案例获取失败（不影响主流程）"):
+                                error_prefix: str = "参考案例获取失败（不影响主流程）",
+                                cache_lock=None):
     """带缓存获取经验案例，减少重复查询。specialty传入后同专业优先。"""
     key = (province or "", full_query, top_k, specialty or "", tolerate_error)
+    if cache_lock:
+        # 快速路径：锁内只检查缓存（不做昂贵计算）
+        with cache_lock:
+            if key in cache:
+                return cache[key]
+            # 获取/创建 per-key 锁（不同key可并行，同key单飞）
+            _lk = ("_lock_", key)
+            if _lk not in cache:
+                cache[_lk] = threading.Lock()
+            key_lock = cache[_lk]
+        # per-key 锁：同key等待不重复计算，不同key互不阻塞
+        with key_lock:
+            with cache_lock:
+                if key in cache:
+                    return cache[key]
+            value = _get_reference_cases(
+                experience_db, full_query, province=province, top_k=top_k,
+                specialty=specialty,
+                tolerate_error=tolerate_error, default=default,
+                error_prefix=error_prefix)
+            with cache_lock:
+                cache[key] = value
+            return value
     if key not in cache:
         cache[key] = _get_reference_cases(
             experience_db, full_query, province=province, top_k=top_k,
@@ -345,9 +374,30 @@ def _get_agent_rules_context(rule_kb, name: str, desc: str, province: str = None
 
 
 def _get_agent_rules_context_cached(cache: dict, rule_kb, name: str, desc: str,
-                                    province: str = None, top_k: int = 3):
+                                    province: str = None, top_k: int = 3,
+                                    cache_lock=None):
     """带缓存获取规则上下文，减少重复检索。"""
     key = (province or "", name, desc, top_k)
+    if cache_lock:
+        # 快速路径：锁内只检查缓存
+        with cache_lock:
+            if key in cache:
+                return cache[key]
+            # 获取/创建 per-key 锁（不同key可并行，同key单飞）
+            _lk = ("_lock_", key)
+            if _lk not in cache:
+                cache[_lk] = threading.Lock()
+            key_lock = cache[_lk]
+        # per-key 锁：同key等待不重复计算，不同key互不阻塞
+        with key_lock:
+            with cache_lock:
+                if key in cache:
+                    return cache[key]
+            value = _get_agent_rules_context(
+                rule_kb, name, desc, province=province, top_k=top_k)
+            with cache_lock:
+                cache[key] = value
+            return value
     if key not in cache:
         cache[key] = _get_agent_rules_context(
             rule_kb, name, desc, province=province, top_k=top_k)
@@ -513,12 +563,15 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     # 查规则知识库（Agent需要规则上下文）
     rule_kb = _load_rule_kb(province=province)
     reference_cases_cache = {}
+    reference_cases_cache_lock = threading.Lock()
     rules_context_cache = {}
+    rules_context_cache_lock = threading.Lock()
 
     logger.info(f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}")
 
     # 表级匹配统计（用于构建上下文摘要传给LLM，帮助保持同类清单一致性）
     match_stats = {}  # {"清单名称片段 → 定额编号": 计数}
+    match_stats_lock = threading.Lock()
 
     def _build_overview_context() -> str:
         """合并项目概览 + 已处理项统计，构建完整的上下文摘要"""
@@ -529,10 +582,11 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             parts.append(project_overview)
 
         # 第2部分：已处理项的匹配统计（随匹配进度动态积累）
-        if match_stats:
-            sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-            lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
-            parts.append("已处理的同类清单匹配情况：\n" + "\n".join(lines))
+        with match_stats_lock:
+            if match_stats:
+                sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+                lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
+                parts.append("已处理的同类清单匹配情况：\n" + "\n".join(lines))
 
         return "\n".join(parts) if parts else ""
 
@@ -545,7 +599,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             main_id = quotas[0].get("quota_id", "")
             main_name = quotas[0].get("name", "")[:15]
             key = f"{bill_name} → {main_id}({main_name})"
-            match_stats[key] = match_stats.get(key, 0) + 1
+            with match_stats_lock:
+                match_stats[key] = match_stats.get(key, 0) + 1
 
     # ========== 第1阶段：串行搜索 + 快通道 ==========
     # 收集需要LLM的条目
@@ -625,7 +680,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 rule_hits=0,
                 province=province,
                 reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
                 rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
                 method_cards_db=method_cards_db,
                 overview_context=ctx_summary,
             )
@@ -658,7 +715,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                             rule_backup=rule_backup, exp_hits=0, rule_hits=0,
                             province=province,
                             reference_cases_cache=reference_cases_cache,
+                            reference_cases_cache_lock=reference_cases_cache_lock,
                             rules_context_cache=rules_context_cache,
+                            rules_context_cache_lock=rules_context_cache_lock,
                             method_cards_db=method_cards_db,
                             overview_context=ctx_summary,
                         )

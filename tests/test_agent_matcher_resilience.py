@@ -48,7 +48,25 @@ def test_fallback_result_handles_invalid_candidate_without_keyerror():
 
     result = matcher._fallback_result(bill_item, candidates, "test error")
 
+    assert result["quotas"] == []
+    assert result["confidence"] == 0
+    assert result["no_match_reason"] == "降级候选缺少有效定额编号"
+    assert result["match_source"] == "agent_fallback"
+
+
+def test_fallback_result_keeps_valid_quota_id():
+    matcher = _make_matcher()
+    bill_item = {"name": "test item"}
+    candidates = [{
+        "quota_id": "C1-1",
+        "name": "测试定额",
+        "unit": "m",
+        "param_match": True,
+        "param_score": 0.8,
+    }]
+
+    result = matcher._fallback_result(bill_item, candidates, "test error")
+
     assert result["quotas"]
-    assert result["quotas"][0]["quota_id"] == "UNKNOWN"
-    assert result["quotas"][0]["name"] == "未命名候选"
+    assert result["quotas"][0]["quota_id"] == "C1-1"
     assert result["match_source"] == "agent_fallback"

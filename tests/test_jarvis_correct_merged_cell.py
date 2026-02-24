@@ -149,3 +149,69 @@ def test_correct_excel_locates_by_sheet_and_sheet_bill_seq():
         assert out_s2.cell(row=2, column=10).value == "★★★已审核"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_correct_excel_sheet_locator_works_when_active_sheet_has_no_serial():
+    tmp_dir = _new_tmp_dir()
+    try:
+        input_path = tmp_dir / "cover_first.xlsx"
+        output_path = tmp_dir / "cover_first_out.xlsx"
+
+        wb = openpyxl.Workbook()
+        ws_cover = wb.active
+        ws_cover.title = "Cover"
+        ws_cover.cell(row=1, column=1, value="封面")
+
+        ws_data = wb.create_sheet("Data")
+        ws_data.cell(row=2, column=1, value=1)
+        ws_data.cell(row=3, column=2, value="OLD-ID")
+        ws_data.cell(row=3, column=3, value="OLD-NAME")
+        ws_data.cell(row=2, column=10, value="OLD-MARK")
+        ws_data.cell(row=2, column=11, value="OLD-REASON")
+        wb.save(input_path)
+
+        corrections = [{
+            "seq": 1,
+            "quota_id": "NEW-ID",
+            "quota_name": "NEW-NAME",
+            "sheet_name": "Data",
+            "sheet_bill_seq": 1,
+        }]
+        correct_excel(str(input_path), corrections, str(output_path))
+
+        out_wb = openpyxl.load_workbook(output_path)
+        out_ws = out_wb["Data"]
+        assert out_ws.cell(row=3, column=2).value == "NEW-ID"
+        assert out_ws.cell(row=3, column=3).value == "NEW-NAME"
+        assert out_ws.cell(row=2, column=10).value == "★★★已审核"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_correct_excel_legacy_mode_accepts_text_serial_float():
+    tmp_dir = _new_tmp_dir()
+    try:
+        input_path = tmp_dir / "legacy_text_serial.xlsx"
+        output_path = tmp_dir / "legacy_text_serial_out.xlsx"
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=2, column=1, value="1.0")
+        ws.cell(row=3, column=2, value="OLD-ID")
+        ws.cell(row=3, column=3, value="OLD-NAME")
+        ws.cell(row=2, column=10, value="OLD-MARK")
+        ws.cell(row=2, column=11, value="OLD-REASON")
+        wb.save(input_path)
+
+        correct_excel(
+            str(input_path),
+            [{"seq": 1, "quota_id": "NEW-ID", "quota_name": "NEW-NAME"}],
+            str(output_path),
+        )
+
+        out_wb = openpyxl.load_workbook(output_path)
+        out_ws = out_wb.active
+        assert out_ws.cell(row=3, column=2).value == "NEW-ID"
+        assert out_ws.cell(row=3, column=3).value == "NEW-NAME"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

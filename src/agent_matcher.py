@@ -37,6 +37,13 @@ class AgentMatcher:
     _LLM_CIRCUIT_THRESHOLD = 5
     _LLM_COOLDOWN_SEC = 60
 
+    def _ensure_client_lock(self):
+        lock = getattr(self, "_client_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._client_lock = lock
+        return lock
+
     def _ensure_circuit_lock(self):
         lock = getattr(self, "_circuit_lock", None)
         if lock is None:
@@ -77,13 +84,16 @@ class AgentMatcher:
         self._llm_consecutive_fails = 0
         self._llm_circuit_open = False
         self._llm_circuit_open_time = 0.0
+        self._client_lock = threading.Lock()
         self._circuit_lock = threading.Lock()
 
     @property
     def client(self):
         """延迟初始化API客户端（和 llm_matcher.py 相同的方式）"""
         if self._client is None:
-            self._client = self._create_client()
+            with self._ensure_client_lock():
+                if self._client is None:
+                    self._client = self._create_client()
         return self._client
 
     def _create_client(self):
@@ -643,7 +653,14 @@ class AgentMatcher:
         confidence = 0
 
         if candidates:
-            valid_candidates = [c for c in candidates if isinstance(c, dict)]
+            valid_candidates = []
+            for c in candidates:
+                if not isinstance(c, dict):
+                    continue
+                quota_id = str(c.get("quota_id", "")).strip()
+                if not quota_id:
+                    continue
+                valid_candidates.append(c)
             matched = [c for c in valid_candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
@@ -661,10 +678,13 @@ class AgentMatcher:
                         score = 0.0
                     confidence = max(int(score * 45), 15)
 
-        best_quota_id = str((best or {}).get("quota_id", "")).strip() or "UNKNOWN"
+        best_quota_id = str((best or {}).get("quota_id", "")).strip()
         best_name = str((best or {}).get("name", "")).strip() or "未命名候选"
+        has_valid_best = bool(best and best_quota_id)
+        if not has_valid_best:
+            confidence = 0
 
-        return {
+        result = {
             "bill_item": bill_item,
             "quotas": [{
                 "quota_id": best_quota_id,
@@ -672,12 +692,15 @@ class AgentMatcher:
                 "unit": best.get("unit", ""),
                 "reason": f"Agent降级(候选策略): {error_msg}",
                 "db_id": best.get("id"),
-            }] if best else [],
+            }] if has_valid_best else [],
             "confidence": confidence,
             "explanation": f"Agent降级为候选策略: {error_msg}",
             "match_source": "agent_fallback",
             "candidates_count": len(candidates),
         }
+        if not has_valid_best:
+            result["no_match_reason"] = "降级候选缺少有效定额编号"
+        return result
 
     def _extract_json(self, text: str) -> str | None:
         """从大模型回复中提取JSON字符串（和 llm_matcher 同逻辑）"""
