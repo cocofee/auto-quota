@@ -23,29 +23,58 @@ _SYNONYMS_CACHE = None
 
 
 def _load_synonyms() -> dict:
-    """加载工程同义词表（惰性加载，只读一次文件）"""
+    """加载工程同义词表（手工表 + 自动挖掘表合并，惰性加载）
+
+    合并规则：手工表优先覆盖自动表（人工审核的更可靠）。
+    自动表由 tools/synonym_miner.py 生成，开关由 config.AUTO_SYNONYMS_ENABLED 控制。
+    """
     global _SYNONYMS_CACHE
     if _SYNONYMS_CACHE is not None:
         return _SYNONYMS_CACHE
 
-    synonyms_path = Path(__file__).parent.parent / "data" / "engineering_synonyms.json"
+    base_path = Path(__file__).parent.parent / "data"
+
+    # 1. 加载手工同义词表（必须存在）
+    manual = _load_synonym_file(base_path / "engineering_synonyms.json")
+
+    # 2. 加载自动挖掘的同义词表（可选，开关控制）
+    auto = {}
     try:
-        with open(synonyms_path, "r", encoding="utf-8") as f:
+        import config as _cfg
+        auto_enabled = getattr(_cfg, 'AUTO_SYNONYMS_ENABLED', True)
+    except ImportError:
+        auto_enabled = True
+
+    if auto_enabled:
+        auto = _load_synonym_file(base_path / "auto_synonyms.json")
+
+    # 3. 合并：自动的先放，手工的覆盖（手工优先）
+    merged = {}
+    merged.update(auto)
+    merged.update(manual)
+
+    # 按key长度降序排列，优先匹配长词（避免"PE管"先于"HDPE管"匹配）
+    _SYNONYMS_CACHE = dict(
+        sorted(merged.items(), key=lambda x: len(x[0]), reverse=True)
+    )
+    return _SYNONYMS_CACHE
+
+
+def _load_synonym_file(path: Path) -> dict:
+    """从单个JSON文件加载同义词映射（内部工具函数）"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
         # 过滤掉说明字段和空值，只保留有效的同义词映射
-        _SYNONYMS_CACHE = {
+        return {
             k: v[0] for k, v in raw.items()
             if not k.startswith("_") and isinstance(v, list) and v
         }
-        # 按key长度降序排列，优先匹配长词（避免"PE管"先于"HDPE管"匹配）
-        _SYNONYMS_CACHE = dict(
-            sorted(_SYNONYMS_CACHE.items(), key=lambda x: len(x[0]), reverse=True)
-        )
+    except FileNotFoundError:
+        return {}
     except Exception as e:
-        logger.debug(f"工程同义词表加载失败（不影响基础搜索）: {e}")
-        _SYNONYMS_CACHE = {}
-
-    return _SYNONYMS_CACHE
+        logger.debug(f"同义词表加载失败 {path.name}（不影响基础搜索）: {e}")
+        return {}
 
 
 def _apply_synonyms(query: str, specialty: str = "") -> str:
