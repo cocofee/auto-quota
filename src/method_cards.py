@@ -55,46 +55,48 @@ class MethodCards:
     def _init_db(self):
         """初始化数据库表"""
         conn = _db_connect_init(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS method_cards (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,       -- 类别（如"管道安装"、"电缆敷设"）
-                specialty TEXT,               -- 专业分类（如"C10"、"C4"）
-                pattern_keys TEXT DEFAULT '[]', -- 匹配的模式键列表(JSON数组)
-                keywords TEXT DEFAULT '[]',   -- 关键词列表(JSON数组)，用于快速匹配
-                method_text TEXT NOT NULL,     -- 方法论正文（自然语言）
-                common_errors TEXT DEFAULT '', -- 常见错误提示
-                sample_count INTEGER DEFAULT 0,  -- 基于多少条样本生成
-                confirm_rate REAL DEFAULT 0,     -- 样本确认率
-                source_province TEXT DEFAULT '', -- 生成时用的省份数据
-                version INTEGER DEFAULT 1,       -- 版本号（每次更新+1）
-                created_at REAL,
-                updated_at REAL
-            )
-        """)
-        # 索引：按专业快速查询
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_method_specialty
-            ON method_cards(specialty)
-        """)
-        # 索引：按类别查询
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_method_category
-            ON method_cards(category)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_method_source_province
-            ON method_cards(source_province)
-        """)
-        # 迁移：为已有数据库添加 universal_method 字段（跨省通用方法论）
         try:
-            conn.execute(
-                "ALTER TABLE method_cards ADD COLUMN universal_method TEXT DEFAULT ''"
-            )
-        except sqlite3.OperationalError:
-            pass  # 字段已存在，忽略
-        conn.commit()
-        conn.close()
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS method_cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,       -- 类别（如"管道安装"、"电缆敷设"）
+                    specialty TEXT,               -- 专业分类（如"C10"、"C4"）
+                    pattern_keys TEXT DEFAULT '[]', -- 匹配的模式键列表(JSON数组)
+                    keywords TEXT DEFAULT '[]',   -- 关键词列表(JSON数组)，用于快速匹配
+                    method_text TEXT NOT NULL,     -- 方法论正文（自然语言）
+                    common_errors TEXT DEFAULT '', -- 常见错误提示
+                    sample_count INTEGER DEFAULT 0,  -- 基于多少条样本生成
+                    confirm_rate REAL DEFAULT 0,     -- 样本确认率
+                    source_province TEXT DEFAULT '', -- 生成时用的省份数据
+                    version INTEGER DEFAULT 1,       -- 版本号（每次更新+1）
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+            # 索引：按专业快速查询
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_method_specialty
+                ON method_cards(specialty)
+            """)
+            # 索引：按类别查询
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_method_category
+                ON method_cards(category)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_method_source_province
+                ON method_cards(source_province)
+            """)
+            # 迁移：为已有数据库添加 universal_method 字段（跨省通用方法论）
+            try:
+                conn.execute(
+                    "ALTER TABLE method_cards ADD COLUMN universal_method TEXT DEFAULT ''"
+                )
+            except sqlite3.OperationalError:
+                pass  # 字段已存在，忽略
+            conn.commit()
+        finally:
+            conn.close()
 
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
