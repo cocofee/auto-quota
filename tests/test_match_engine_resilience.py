@@ -57,6 +57,8 @@ def test_match_agent_isolates_single_future_exception(monkeypatch):
     monkeypatch.setattr(match_engine, "_resolve_agent_mode_result", fake_resolve_agent_mode_result)
     monkeypatch.setattr(match_engine, "_resolve_search_mode_result", fake_resolve_search_mode_result)
     monkeypatch.setattr(match_engine.config, "LLM_CONCURRENT", 2)
+    # 禁用L6批量模式，本测试专门测试逐条LLM异常隔离
+    monkeypatch.setattr(match_engine.config, "AGENT_BATCH_ENABLED", False)
 
     items = [{"name": "good-item", "description": ""}, {"name": "bad-item", "description": ""}]
     results = match_engine.match_agent(

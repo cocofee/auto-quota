@@ -231,6 +231,214 @@ class AgentMatcher:
 
         return result
 
+    def match_batch(self, batch_items: list[dict]) -> list[dict]:
+        """批量审核模式 — 多条清单打包一次LLM调用（L6）
+
+        适用于"中置信度"项：搜索结果不错但没达到快通道门槛。
+        Agent 作为"总监"审核一批结果，确认或纠正推荐的定额。
+
+        参数:
+            batch_items: 待审核项列表，每项格式：
+                {
+                    "bill_item": {...},           # 清单项
+                    "candidates": [...],          # 搜索候选（已排序）
+                    "search_query": str,          # 搜索query
+                }
+
+        返回:
+            结果列表，每项是标准匹配结果字典（和 match_single 一致）
+        """
+        if not batch_items:
+            return []
+
+        # 熔断检查
+        if self.is_circuit_open() and not self._check_half_open():
+            return [
+                self._fallback_result(item["bill_item"], item["candidates"], "LLM熔断")
+                for item in batch_items
+            ]
+
+        # 构建批量审核prompt
+        prompt = self._build_batch_prompt(batch_items)
+
+        # 调用LLM
+        try:
+            response_text = self._call_llm(prompt)
+            with self._ensure_circuit_lock():
+                self._llm_consecutive_fails = 0
+                self._llm_circuit_open = False
+                self._llm_circuit_open_time = 0.0
+        except Exception as e:
+            with self._ensure_circuit_lock():
+                self._llm_consecutive_fails += 1
+                if self._llm_consecutive_fails >= self._LLM_CIRCUIT_THRESHOLD:
+                    self._llm_circuit_open = True
+                    self._llm_circuit_open_time = time.time()
+            logger.error(f"批量审核LLM调用失败: {e}")
+            return [
+                self._fallback_result(item["bill_item"], item["candidates"], str(e))
+                for item in batch_items
+            ]
+
+        # 解析批量返回
+        results = self._parse_batch_response(response_text, batch_items)
+        return results
+
+    def _build_batch_prompt(self, batch_items: list[dict]) -> str:
+        """构建批量审核的Prompt（L6）
+
+        每条清单只展示推荐定额和2个备选，Agent确认或纠正。
+        比逐条prompt精简很多（每条~300-500 tokens vs 2000-3500）。
+        """
+        items_text = []
+        for i, bi in enumerate(batch_items, 1):
+            item = bi["bill_item"]
+            candidates = bi["candidates"]
+            name = item.get("name", "")
+            desc = (item.get("description", "") or "")[:60]
+            unit = item.get("unit", "")
+            specialty = item.get("specialty", "")
+
+            # 推荐定额（top1）
+            top = candidates[0] if candidates else {}
+            top_id = top.get("quota_id", "?")
+            top_name = top.get("name", "?")
+
+            # 备选（top2、top3）
+            alts = []
+            for c in candidates[1:3]:
+                alts.append(f"{c.get('quota_id', '?')} {c.get('name', '?')[:20]}")
+            alt_text = " / ".join(alts) if alts else "无"
+
+            items_text.append(
+                f"### 第{i}条\n"
+                f"- 清单: {name}\n"
+                f"- 描述: {desc}\n"
+                f"- 单位: {unit}  专业: {specialty}\n"
+                f"- 推荐: {top_id} {top_name}\n"
+                f"- 备选: {alt_text}"
+            )
+
+        prompt = f"""你是经验丰富的造价总监，精通{self.province}版安装工程定额。
+以下是一批搜索匹配结果，请逐条审核——确认推荐定额是否正确，或从备选中纠正。
+
+{chr(10).join(items_text)}
+
+## 审核要求
+- 推荐定额正确 → approve=true
+- 推荐定额有误、备选更合适 → approve=false，给出 corrected_index（备选序号，2或3）
+- 所有候选都不对 → approve=false，corrected_index=0
+- confidence: 你对审核结论的把握（0-100）
+
+## 输出格式（JSON数组）
+```json
+[
+    {{"seq": 1, "approve": true, "confidence": 90}},
+    {{"seq": 2, "approve": false, "corrected_index": 2, "confidence": 85, "reason": "材质不匹配"}}
+]
+```"""
+        return prompt
+
+    def _parse_batch_response(self, response_text: str,
+                              batch_items: list[dict]) -> list[dict]:
+        """解析批量审核的LLM返回（L6）
+
+        解析失败时降级为逐条 fallback 结果（不丢数据）。
+        """
+        # 提取JSON
+        json_str = self._extract_json(response_text)
+        if not json_str:
+            logger.warning(f"批量审核无法提取JSON，降级为fallback: {response_text[:200]}")
+            return [
+                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核解析失败")
+                for bi in batch_items
+            ]
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.warning(f"批量审核JSON解析失败: {e}")
+            return [
+                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核JSON失败")
+                for bi in batch_items
+            ]
+
+        if not isinstance(data, list):
+            logger.warning(f"批量审核返回不是数组: {type(data).__name__}")
+            return [
+                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核格式错误")
+                for bi in batch_items
+            ]
+
+        # 按 seq 映射审核结果
+        review_map = {}
+        for item in data:
+            if isinstance(item, dict):
+                seq = self._to_int(item.get("seq"))
+                if seq is not None:
+                    review_map[seq] = item
+
+        # 构建标准结果
+        results = []
+        for i, bi in enumerate(batch_items, 1):
+            bill_item = bi["bill_item"]
+            candidates = bi["candidates"]
+            review = review_map.get(i)
+
+            if not review:
+                # 该条没有审核结果，降级为fallback
+                results.append(
+                    self._fallback_result(bill_item, candidates, "批量审核缺少该条结果"))
+                continue
+
+            approved = self._to_bool(review.get("approve", True))
+            confidence = self._to_int(review.get("confidence")) or 80
+            reason = str(review.get("reason", ""))
+
+            if approved and candidates:
+                # 确认推荐的 top1
+                top = candidates[0]
+                quotas = [{
+                    "quota_id": str(top.get("quota_id", "")),
+                    "name": str(top.get("name", "")),
+                }]
+                explanation = f"批量审核确认: {reason}" if reason else "批量审核确认"
+            elif not approved:
+                corrected_idx = self._to_int(review.get("corrected_index")) or 0
+                if 1 <= corrected_idx <= len(candidates):
+                    # 从候选中纠正
+                    corr = candidates[corrected_idx - 1]
+                    quotas = [{
+                        "quota_id": str(corr.get("quota_id", "")),
+                        "name": str(corr.get("name", "")),
+                    }]
+                    explanation = f"批量审核纠正(选第{corrected_idx}): {reason}"
+                elif candidates:
+                    # 所有候选都不对但有候选 → 降级用top1
+                    top = candidates[0]
+                    quotas = [{
+                        "quota_id": str(top.get("quota_id", "")),
+                        "name": str(top.get("name", "")),
+                    }]
+                    confidence = min(confidence, 50)  # 降低置信度
+                    explanation = f"批量审核否决所有候选，降级使用top1: {reason}"
+                else:
+                    quotas = []
+                    explanation = f"批量审核: 无匹配 {reason}"
+            else:
+                quotas = []
+                explanation = "批量审核: 无候选"
+
+            results.append({
+                "bill_item": bill_item,
+                "quotas": quotas,
+                "confidence": confidence,
+                "explanation": explanation,
+                "match_source": "agent_batch",
+            })
+
+        return results
+
     def _build_agent_prompt(self, bill_item: dict, candidates: list[dict],
                             reference_cases: list[dict] = None,
                             rules_context: list[dict] = None,
@@ -706,7 +914,8 @@ class AgentMatcher:
         """从大模型回复中提取JSON字符串（和 llm_matcher 同逻辑）"""
         text = text.strip()
 
-        if text.startswith("{"):
+        # 纯JSON（对象或数组）
+        if text.startswith("{") or text.startswith("["):
             return text
 
         if "```json" in text:
@@ -720,12 +929,20 @@ class AgentMatcher:
             end = text.find("```", start)
             if end > start:
                 extracted = text[start:end].strip()
-                if extracted.startswith("{"):
+                if extracted.startswith("{") or extracted.startswith("["):
                     return extracted
 
+        # 最后尝试：找第一个 { 或 [ 到最后一个 } 或 ]
         first_brace = text.find("{")
+        first_bracket = text.find("[")
         last_brace = text.rfind("}")
+        last_bracket = text.rfind("]")
+
+        # 优先匹配 {} 对象
         if first_brace >= 0 and last_brace > first_brace:
             return text[first_brace:last_brace + 1]
+        # 其次匹配 [] 数组
+        if first_bracket >= 0 and last_bracket > first_bracket:
+            return text[first_bracket:last_bracket + 1]
 
         return None

@@ -705,6 +705,10 @@ class OutputWriter:
             brief = f"[同类待定] {brief}" if brief else "[同类待定]"
         elif review_needed:
             brief = f"[需复核] {brief}" if brief else "[需复核]"
+        # L6: 追加规则提示（如有）
+        rule_hints = result.get("rule_hints", "")
+        if rule_hints:
+            brief = f"{brief} [规则]{rule_hints}" if brief else f"[规则]{rule_hints}"
         cell_k = _safe_write_cell(ws, row_idx, 11, brief)
         if cell_k:
             cell_k.font = BILL_FONT
