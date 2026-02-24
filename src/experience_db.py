@@ -55,76 +55,78 @@ class ExperienceDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         conn = _db_connect_init(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS experiences (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bill_text TEXT NOT NULL,              -- 清单文本（项目名称+特征描述）
-                bill_name TEXT,                       -- 项目名称（单独存，方便展示）
-                bill_code TEXT,                       -- 清单编码（参考用）
-                bill_unit TEXT,                       -- 计量单位
-                quota_ids TEXT NOT NULL,              -- 正确的定额编号列表（JSON数组）
-                quota_names TEXT,                     -- 对应定额名称列表（JSON数组）
-                source TEXT DEFAULT 'auto_match',     -- 来源：user_correction/project_import/auto_match
-                confidence INTEGER DEFAULT 80,        -- 置信度（0-100）
-                confirm_count INTEGER DEFAULT 1,      -- 被确认次数
-                province TEXT,                        -- 所属省份/版本
-                project_name TEXT,                    -- 来源项目名称
-                created_at REAL,                      -- 创建时间戳
-                updated_at REAL,                      -- 最后更新时间戳
-                notes TEXT,                           -- 备注
-                quota_db_version TEXT DEFAULT '',      -- 写入时的定额库版本号（用于版本校验）
-                layer TEXT DEFAULT 'candidate',         -- 数据层级：authority=权威层 / candidate=候选层
-                specialty TEXT,                         -- 所属专业册号（如"C10"），用于按专业过滤
-                materials TEXT DEFAULT '[]'             -- 主材列表（JSON数组），格式：[{"quota_code":"4-14","name":"开关","code":"260101Z@2","unit":"只"},...]
-            )
-        """)
-
-        # 兼容旧数据库：如果表已存在但缺少新列，自动加上
         try:
-            cursor.execute("SELECT quota_db_version FROM experiences LIMIT 1")
-        except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE experiences ADD COLUMN quota_db_version TEXT DEFAULT ''")
-            logger.info("经验库已升级：新增 quota_db_version 字段")
+            cursor = conn.cursor()
 
-        try:
-            cursor.execute("SELECT layer FROM experiences LIMIT 1")
-        except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE experiences ADD COLUMN layer TEXT DEFAULT 'candidate'")
-            logger.info("经验库已升级：新增 layer 字段（两层机制）")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS experiences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bill_text TEXT NOT NULL,              -- 清单文本（项目名称+特征描述）
+                    bill_name TEXT,                       -- 项目名称（单独存，方便展示）
+                    bill_code TEXT,                       -- 清单编码（参考用）
+                    bill_unit TEXT,                       -- 计量单位
+                    quota_ids TEXT NOT NULL,              -- 正确的定额编号列表（JSON数组）
+                    quota_names TEXT,                     -- 对应定额名称列表（JSON数组）
+                    source TEXT DEFAULT 'auto_match',     -- 来源：user_correction/project_import/auto_match
+                    confidence INTEGER DEFAULT 80,        -- 置信度（0-100）
+                    confirm_count INTEGER DEFAULT 1,      -- 被确认次数
+                    province TEXT,                        -- 所属省份/版本
+                    project_name TEXT,                    -- 来源项目名称
+                    created_at REAL,                      -- 创建时间戳
+                    updated_at REAL,                      -- 最后更新时间戳
+                    notes TEXT,                           -- 备注
+                    quota_db_version TEXT DEFAULT '',      -- 写入时的定额库版本号（用于版本校验）
+                    layer TEXT DEFAULT 'candidate',         -- 数据层级：authority=权威层 / candidate=候选层
+                    specialty TEXT,                         -- 所属专业册号（如"C10"），用于按专业过滤
+                    materials TEXT DEFAULT '[]'             -- 主材列表（JSON数组），格式：[{"quota_code":"4-14","name":"开关","code":"260101Z@2","unit":"只"},...]
+                )
+            """)
 
-        try:
-            cursor.execute("SELECT specialty FROM experiences LIMIT 1")
-        except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE experiences ADD COLUMN specialty TEXT")
-            logger.info("经验库已升级：新增 specialty 字段（专业分类）")
+            # 兼容旧数据库：如果表已存在但缺少新列，自动加上
+            try:
+                cursor.execute("SELECT quota_db_version FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN quota_db_version TEXT DEFAULT ''")
+                logger.info("经验库已升级：新增 quota_db_version 字段")
 
-        try:
-            cursor.execute("SELECT materials FROM experiences LIMIT 1")
-        except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE experiences ADD COLUMN materials TEXT DEFAULT '[]'")
-            logger.info("经验库已升级：新增 materials 字段（主材信息）")
+            try:
+                cursor.execute("SELECT layer FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN layer TEXT DEFAULT 'candidate'")
+                logger.info("经验库已升级：新增 layer 字段（两层机制）")
 
-        # 全文搜索索引（加速精确文本查找）
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_bill_text
-            ON experiences(bill_text)
-        """)
+            try:
+                cursor.execute("SELECT specialty FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN specialty TEXT")
+                logger.info("经验库已升级：新增 specialty 字段（专业分类）")
 
-        # 省份索引
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_province
-            ON experiences(province)
-        """)
-        # 组合索引：加速按省份+清单文本查重
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_province_bill_text
-            ON experiences(province, bill_text)
-        """)
+            try:
+                cursor.execute("SELECT materials FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN materials TEXT DEFAULT '[]'")
+                logger.info("经验库已升级：新增 materials 字段（主材信息）")
 
-        conn.commit()
-        conn.close()
+            # 全文搜索索引（加速精确文本查找）
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_bill_text
+                ON experiences(bill_text)
+            """)
+
+            # 省份索引
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_province
+                ON experiences(province)
+            """)
+            # 组合索引：加速按省份+清单文本查重
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_province_bill_text
+                ON experiences(province, bill_text)
+            """)
+
+            conn.commit()
+        finally:
+            conn.close()
 
         logger.debug(f"经验库数据库已初始化: {self.db_path}")
 
@@ -901,6 +903,121 @@ class ExperienceDB:
         except Exception as e:
             logger.warning(f"经验库向量搜索失败: {e}")
             return [stale_exact] if stale_exact else []
+
+    def search_cross_province(self, query_text: str, current_province: str,
+                              top_k: int = 3) -> list[dict]:
+        """L5跨省搜索：查其他省份的经验作为搜索参考
+
+        只搜权威层+高置信度数据，排除当前省份。
+        返回定额名称（不含编号）作为搜索提示，不直通匹配。
+
+        参数:
+            query_text: 清单文本
+            current_province: 当前省份（将被排除）
+            top_k: 返回条数
+
+        返回:
+            [{quota_names: [...], similarity: float, source_province: str}, ...]
+        """
+        min_similarity = getattr(config, "CROSS_PROVINCE_MIN_SIMILARITY", 0.80)
+        min_confidence = getattr(config, "CROSS_PROVINCE_MIN_CONFIDENCE", 85)
+
+        collection_count = self.collection.count()
+        if collection_count == 0:
+            return []
+
+        try:
+            if self.model is None:
+                return []
+
+            query_prefix = "为这个句子生成表示以用于检索中文文档: "
+            query_embedding = self.model.encode(
+                [query_prefix + query_text],
+                normalize_embeddings=True
+            )
+
+            # 向量搜索全库（不按省份过滤）
+            n_results = min(max(top_k * 5, 20), collection_count)
+            results = self.collection.query(
+                query_embeddings=query_embedding.tolist(),
+                n_results=n_results,
+            )
+
+            if not results or not results.get("ids") or not results["ids"][0]:
+                return []
+
+            raw_ids = results["ids"][0]
+            raw_distances = results.get("distances", [[]])[0]
+            distances = list(raw_distances[:len(raw_ids)])
+            if len(distances) < len(raw_ids):
+                distances.extend([1.0] * (len(raw_ids) - len(distances)))
+
+            matched_ids = []
+            similarities = []
+            for mid, dist in zip(raw_ids, distances):
+                try:
+                    db_id = int(mid)
+                except (TypeError, ValueError):
+                    continue
+                sim = max(0.0, min(1.0, 1 - dist))
+                if sim >= min_similarity:
+                    matched_ids.append(db_id)
+                    similarities.append(sim)
+
+            if not matched_ids:
+                return []
+
+            # SQL过滤：排除当前省份，只取权威层+高置信度
+            conn = self._connect(row_factory=True)
+            try:
+                cursor = conn.cursor()
+                placeholders = ",".join(["?"] * len(matched_ids))
+                cursor.execute(f"""
+                    SELECT id, bill_text, quota_names, province, confidence
+                    FROM experiences
+                    WHERE id IN ({placeholders})
+                    AND province != ?
+                    AND layer = 'authority'
+                    AND confidence >= ?
+                """, matched_ids + [current_province, min_confidence])
+                rows = {row["id"]: dict(row) for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+            # 组装结果（只返回定额名称，不返回编号）
+            cross_refs = []
+            for db_id, sim in zip(matched_ids, similarities):
+                if db_id in rows:
+                    record = rows[db_id]
+                    quota_names_raw = record.get("quota_names", "[]")
+                    try:
+                        import json
+                        quota_names = json.loads(quota_names_raw) if isinstance(
+                            quota_names_raw, str) else quota_names_raw
+                    except (json.JSONDecodeError, TypeError):
+                        quota_names = []
+                    # 归一化为 list[str]：防止字符串被extend拆成单字符
+                    if isinstance(quota_names, str):
+                        quota_names = [quota_names]
+                    elif isinstance(quota_names, list):
+                        quota_names = [str(n) for n in quota_names if n]
+                    else:
+                        quota_names = []
+                    if quota_names:
+                        cross_refs.append({
+                            "quota_names": quota_names,
+                            "similarity": sim,
+                            "source_province": record.get("province", ""),
+                            "confidence": record.get("confidence", 0),
+                        })
+
+            # 按相似度排序，截断
+            cross_refs.sort(key=lambda x: -x["similarity"])
+            return cross_refs[:top_k]
+
+        except Exception as e:
+            logger.debug(f"L5跨省搜索失败（不影响主流程）: {e}")
+            return []
 
     def find_experience(self, bill_text: str, province: str = None,
                         limit: int = 20) -> list[dict]:

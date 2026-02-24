@@ -28,6 +28,24 @@ from src.text_parser import normalize_bill_text
 class DiffLearner:
     """两文件对比学习器"""
 
+    def _sync_to_universal_kb(self, normalized_text: str,
+                              quota_names: list[str], province: str):
+        """L5跨省迁移：将修正同步到全国通用知识库（只存定额名称，不存编号）"""
+        if not getattr(config, "UNIVERSAL_KB_SYNC_ENABLED", False):
+            return
+        if not quota_names:
+            return
+        try:
+            from src.universal_kb import UniversalKB
+            kb = UniversalKB()
+            kb.learn_from_correction(
+                bill_text=normalized_text,
+                quota_names=quota_names,
+                province=province,
+            )
+        except Exception as e:
+            logger.debug(f"L5通用知识库同步跳过（不影响经验库）: {e}")
+
     def diff_and_learn(self, original_path: str, corrected_path: str,
                        province: str = None) -> dict:
         """
@@ -119,6 +137,10 @@ class DiffLearner:
                         logger.warning(
                             f"diff_learner确认写入被拦截: {normalized_text[:60]} -> {corr_quotas}"
                         )
+                    else:
+                        # L5：同步到通用知识库（跨省迁移）
+                        self._sync_to_universal_kb(
+                            normalized_text, corr_names, province)
             else:
                 # 已修改 → 用户纠正了定额
                 corrected += 1
@@ -155,6 +177,10 @@ class DiffLearner:
                         logger.warning(
                             f"diff_learner修正写入被拦截: {normalized_text[:60]} -> {corr_quotas}"
                         )
+                    else:
+                        # L5：同步到通用知识库（跨省迁移）
+                        self._sync_to_universal_kb(
+                            normalized_text, corr_names, province)
 
         total = len(original_mapping)
         result = {

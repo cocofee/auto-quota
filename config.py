@@ -507,6 +507,22 @@ REFLECTION_SKIP_HIGH_CONFIDENCE = 90
 # 纠正后的置信度扣分（提示用户关注）
 REFLECTION_CONFIDENCE_PENALTY = 5
 
+# ============================================================
+# L5 跨省迁移学习
+# ============================================================
+
+# 通用知识库自动同步（用户修正时自动同步定额名称到全国通用知识库）
+UNIVERSAL_KB_SYNC_ENABLED = True
+
+# 跨省置信度预热（新省份无经验时，查其他省份经验作为搜索参考）
+CROSS_PROVINCE_WARMUP_ENABLED = True
+
+# 跨省搜索的最低相似度门槛（比省内0.75高，降低误匹配风险）
+CROSS_PROVINCE_MIN_SIMILARITY = 0.80
+
+# 跨省搜索的最低置信度（只用高置信的权威数据）
+CROSS_PROVINCE_MIN_CONFIDENCE = 85
+
 # 学习笔记数据库路径
 def get_learning_notes_db_path():
     return COMMON_DB_DIR / "learning_notes.db"

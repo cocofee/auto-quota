@@ -32,6 +32,24 @@ class FeedbackLearner:
     def __init__(self):
         self.experience_db = ExperienceDB()
 
+    def _sync_to_universal_kb(self, bill_text: str,
+                              quota_names: list[str], province: str = None):
+        """L5跨省迁移：将修正同步到全国通用知识库（只存定额名称，不存编号）"""
+        if not getattr(config, "UNIVERSAL_KB_SYNC_ENABLED", False):
+            return
+        if not quota_names:
+            return
+        try:
+            from src.universal_kb import UniversalKB
+            kb = UniversalKB()
+            kb.learn_from_correction(
+                bill_text=bill_text,
+                quota_names=quota_names,
+                province=province,
+            )
+        except Exception as e:
+            logger.debug(f"L5通用知识库同步跳过（不影响经验库）: {e}")
+
     def learn_from_corrections(self, original_results: list[dict],
                                 corrected_results: list[dict]) -> dict:
         """
@@ -93,6 +111,8 @@ class FeedbackLearner:
                 )
                 if record_id > 0:
                     stats["corrections"] += 1
+                    # L5：同步到通用知识库（跨省迁移）
+                    self._sync_to_universal_kb(bill_text, quota_names)
                 else:
                     logger.warning(
                         f"反馈学习写入被拦截: {bill_text[:60]} -> {quota_ids}"
@@ -230,6 +250,8 @@ class FeedbackLearner:
         if record_id <= 0:
             logger.warning(f"Excel学习写入被拦截: {bill_text[:60]} -> {quota_ids}")
             return False
+        # L5：同步到通用知识库（跨省迁移）
+        self._sync_to_universal_kb(bill_text, quota_names)
         return True
 
     def import_completed_project(self, excel_path: str,
