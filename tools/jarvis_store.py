@@ -66,6 +66,22 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
 
     if record_id > 0:
         print(f"  存入成功 (id={record_id}): {name} → {quota_ids}")
+        # L5跨省闭环：同步到通用知识库（定额名称跨省通用）
+        if getattr(config, "UNIVERSAL_KB_SYNC_ENABLED", False) and quota_names:
+            try:
+                from src.universal_kb import UniversalKB
+                kb = UniversalKB()
+                # 过滤空字符串
+                valid_names = [str(n) for n in quota_names if n]
+                if valid_names:
+                    kb.learn_from_correction(
+                        bill_text=bill_text,
+                        quota_names=valid_names,
+                        province=province,
+                    )
+            except Exception as e:
+                # 不影响经验库存入，静默跳过
+                pass
         return True
     elif record_id == -1:
         print(f"  被校验拦截: {name} → {quota_ids} (定额编号可能不存在)")
