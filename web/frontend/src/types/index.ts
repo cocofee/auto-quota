@@ -114,6 +114,7 @@ export type ReviewStatus = 'pending' | 'confirmed' | 'corrected';
 export interface MatchResult {
   id: string;
   index: number;
+  bill_code: string;
   bill_name: string;
   bill_description: string;
   bill_unit: string;

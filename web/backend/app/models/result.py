@@ -43,6 +43,9 @@ class MatchResult(Base):
     # 清单项信息（从原始Excel读取）
     # ============================================================
 
+    # 清单项编码（如 "031001007001"，12位编码）
+    bill_code: Mapped[str] = mapped_column(String(100), default="")
+
     # 清单项名称（如 "给水管道安装"）
     bill_name: Mapped[str] = mapped_column(String(500))
 
