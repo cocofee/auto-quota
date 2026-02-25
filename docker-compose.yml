@@ -1,0 +1,152 @@
+# auto-quota 一键部署
+#
+# 启动命令:
+#   docker-compose up -d              # 后台启动所有服务
+#   docker-compose up -d --build      # 重新构建后启动
+#   docker-compose logs -f backend    # 查看后端日志
+#   docker-compose down               # 停止所有服务
+#
+# 首次启动后需要初始化数据库:
+#   docker-compose exec backend python -c "
+#     from app.database import engine, Base
+#     from app.models import User, Task, MatchResult
+#     import asyncio
+#     asyncio.run(engine.begin().__aenter__().then(lambda c: c.run_sync(Base.metadata.create_all)))
+#   "
+#   或者用 Alembic:
+#   docker-compose exec backend alembic upgrade head
+#
+# 服务端口:
+#   http://localhost:3000   — 前端页面（Nginx）
+#   http://localhost:8000   — 后端API（直连，调试用）
+#   http://localhost:8000/docs — API文档（Swagger）
+
+services:
+  # ============================================================
+  # PostgreSQL 数据库
+  # ============================================================
+  postgres:
+    image: docker.1ms.run/postgres:16-alpine
+    container_name: autoquota-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: autoquota
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autoquota}
+      POSTGRES_DB: autoquota
+    volumes:
+      # 数据持久化（不会因容器删除而丢失）
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # 开发时可以直接连数据库调试，生产可去掉此映射
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoquota"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Redis（Celery消息队列）
+  # ============================================================
+  redis:
+    image: docker.1ms.run/redis:7-alpine
+    container_name: autoquota-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # 后端 API（FastAPI）
+  # ============================================================
+  backend:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    container_name: autoquota-backend
+    restart: unless-stopped
+    # FastAPI 启动命令
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+      --log-level info
+    working_dir: /app/web/backend
+    ports:
+      - "8000:8000"
+    environment:
+      # 数据库连接（Docker内部网络，用服务名postgres作为主机名）
+      DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
+      # Redis连接
+      REDIS_URL: redis://redis:6379/0
+      # JWT密钥（生产环境必须设固定值）
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      # CORS（允许前端Nginx容器访问）
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+    env_file:
+      # 加载 .env 中的大模型API Key等配置
+      - .env
+    volumes:
+      # 挂载数据目录（定额库数据、上传文件、输出结果）
+      - ./data:/app/data
+      - ./db:/app/db
+      - ./output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ============================================================
+  # Celery Worker（后台匹配任务执行）
+  # ============================================================
+  celery-worker:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    container_name: autoquota-celery
+    restart: unless-stopped
+    # Celery Worker 启动命令（Docker容器是Linux环境，用prefork池支持多进程并发）
+    command: >
+      celery -A app.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --pool=prefork
+    working_dir: /app/web/backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./db:/app/db
+      - ./output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ============================================================
+  # 前端（Nginx 托管 React 静态文件 + 反向代理 API）
+  # ============================================================
+  frontend:
+    build:
+      context: web/frontend
+      dockerfile: Dockerfile
+    container_name: autoquota-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+# 数据卷（持久化存储）
+volumes:
+  postgres_data:

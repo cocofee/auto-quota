@@ -1,0 +1,27 @@
+# auto-quota Web后端依赖
+# 安装命令: pip install -r requirements.txt
+
+# === Web框架 ===
+fastapi>=0.110.0,<1.0.0           # 异步Web框架
+uvicorn[standard]>=0.27.0,<1.0.0  # ASGI服务器
+python-multipart>=0.0.9,<1.0.0    # 文件上传支持
+
+# === 数据库 ===
+sqlalchemy>=2.0.0,<3.0.0          # ORM（对象关系映射，把Python类映射到数据库表）
+asyncpg>=0.29.0,<1.0.0            # PostgreSQL异步驱动（FastAPI用）
+psycopg2-binary>=2.9.0,<3.0.0    # PostgreSQL同步驱动（Celery worker用）
+alembic>=1.13.0,<2.0.0            # 数据库迁移工具（管理表结构变更）
+
+# === 认证 ===
+python-jose[cryptography]>=3.3.0,<4.0.0  # JWT Token生成和验证
+bcrypt>=4.0.0,<5.0.0                     # 密码哈希（直接用bcrypt，不用passlib，兼容性更好）
+
+# === 任务队列 ===
+celery>=5.3.0,<6.0.0              # 异步任务队列（后台执行耗时的匹配任务）
+redis>=5.0.0,<6.0.0               # Redis客户端（Celery的消息中间件）
+
+# === 工具 ===
+python-dotenv>=1.0.0,<2.0.0       # 读取.env配置
+loguru>=0.7.0,<1.0.0              # 日志
+sse-starlette>=2.0.0,<3.0.0       # SSE（服务端推送事件，用于实时进度）
+pydantic[email]>=2.0.0,<3.0.0     # 邮箱格式验证
