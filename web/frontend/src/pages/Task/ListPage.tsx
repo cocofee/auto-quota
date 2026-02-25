@@ -8,7 +8,7 @@
  * 功能：按状态筛选、分页、查看结果、下载Excel、上传反馈、删除任务、进度条、自动刷新
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card, Table, Tag, Button, Space, Progress, Select, Popconfirm, App, Upload, Modal,
@@ -64,14 +64,20 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     loadTasks();
   }, [loadTasks]);
 
-  // 定时刷新（有进行中的任务时每5秒刷新一次）
+  // 用 ref 保存最新的 loadTasks（避免 setInterval 闭包捕获旧引用导致 timer 不断重建）
+  const loadTasksRef = useRef(loadTasks);
+  useEffect(() => {
+    loadTasksRef.current = loadTasks;
+  }, [loadTasks]);
+
+  // 定时刷新（有进行中的任务时每 5 秒刷新一次）
   useEffect(() => {
     const hasRunning = tasks.some((t) => t.status === 'running' || t.status === 'pending');
     if (!hasRunning) return;
 
-    const timer = setInterval(loadTasks, 3000);
+    const timer = setInterval(() => loadTasksRef.current(), 5000);
     return () => clearInterval(timer);
-  }, [tasks, loadTasks]);
+  }, [tasks]);
 
   /** 删除任务 */
   const deleteTask = async (taskId: string) => {

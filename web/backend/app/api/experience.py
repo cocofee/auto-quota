@@ -52,7 +52,7 @@ async def experience_stats(
         return stats
     except Exception as e:
         logger.error(f"获取经验库统计失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取经验库统计失败: {e}")
+        raise HTTPException(status_code=500, detail="获取经验库统计失败")
 
 
 @router.get("/records")
@@ -100,7 +100,7 @@ async def experience_records(
         }
     except Exception as e:
         logger.error(f"获取经验记录失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取经验记录失败: {e}")
+        raise HTTPException(status_code=500, detail="获取经验记录失败")
 
 
 @router.get("/search")
@@ -123,20 +123,22 @@ async def experience_search(
             db = _get_experience_db()
             # 管理员搜索：不选省份时搜全库（直接用SQL查，绕过 find_experience 的省份默认值）
             text = q.strip()
-            like_pattern = f"%{text}%"
+            # 转义 LIKE 通配符（防止用户输入 % 或 _ 改变查询语义）
+            escaped = text.replace("%", "\\%").replace("_", "\\_")
+            like_pattern = f"%{escaped}%"
             conn = db._connect(row_factory=True)
             try:
                 cursor = conn.cursor()
                 text_match = """(
                     bill_text = ? OR COALESCE(bill_name, '') = ?
-                    OR bill_text LIKE ? OR COALESCE(bill_name, '') LIKE ?
+                    OR bill_text LIKE ? ESCAPE '\\' OR COALESCE(bill_name, '') LIKE ? ESCAPE '\\'
                 )"""
                 rank_order = """
                     CASE
                         WHEN bill_text = ? THEN 0
                         WHEN COALESCE(bill_name, '') = ? THEN 1
-                        WHEN bill_text LIKE ? THEN 2
-                        WHEN COALESCE(bill_name, '') LIKE ? THEN 3
+                        WHEN bill_text LIKE ? ESCAPE '\\' THEN 2
+                        WHEN COALESCE(bill_name, '') LIKE ? ESCAPE '\\' THEN 3
                         ELSE 4
                     END ASC,
                     confidence DESC, id DESC
@@ -165,7 +167,7 @@ async def experience_search(
         return {"items": results, "total": len(results)}
     except Exception as e:
         logger.error(f"搜索经验库失败: {e}")
-        raise HTTPException(status_code=500, detail=f"搜索经验库失败: {e}")
+        raise HTTPException(status_code=500, detail="搜索经验库失败")
 
 
 @router.post("/{record_id}/promote")
@@ -187,7 +189,7 @@ async def promote_experience(
         raise
     except Exception as e:
         logger.error(f"晋升经验记录失败: {e}")
-        raise HTTPException(status_code=500, detail=f"晋升失败: {e}")
+        raise HTTPException(status_code=500, detail="晋升失败")
 
 
 @router.post("/{record_id}/demote")
@@ -209,7 +211,7 @@ async def demote_experience(
         raise
     except Exception as e:
         logger.error(f"降级经验记录失败: {e}")
-        raise HTTPException(status_code=500, detail=f"降级失败: {e}")
+        raise HTTPException(status_code=500, detail="降级失败")
 
 
 @router.delete("/{record_id}")
@@ -240,4 +242,4 @@ async def delete_experience(
         raise
     except Exception as e:
         logger.error(f"删除经验记录失败: {e}")
-        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+        raise HTTPException(status_code=500, detail="删除失败")

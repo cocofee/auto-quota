@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.database import get_db
 from app.models.user import User
@@ -73,20 +74,25 @@ async def list_users(
     count_query = select(func.count()).select_from(User)
     total = (await db.execute(count_query)).scalar()
 
-    # 分页查询用户
+    # 分页查询用户 + 任务计数（子查询避免 N+1）
+    task_count_sub = (
+        select(func.count())
+        .where(Task.user_id == User.id)
+        .correlate(User)
+        .scalar_subquery()
+    )
     query = (
-        select(User)
+        select(User, task_count_sub.label("task_count"))
         .order_by(desc(User.created_at))
         .offset((page - 1) * size)
         .limit(size)
     )
-    users = (await db.execute(query)).scalars().all()
+    rows = (await db.execute(query)).all()
 
-    # 查每个用户的任务数
     items = []
-    for u in users:
-        task_count_q = select(func.count()).select_from(Task).where(Task.user_id == u.id)
-        task_count = (await db.execute(task_count_q)).scalar() or 0
+    for row in rows:
+        u = row[0]          # User 对象
+        task_count = row[1]  # 子查询的 task_count
         items.append(UserItem(
             id=u.id,
             email=u.email,
@@ -95,7 +101,7 @@ async def list_users(
             is_admin=u.is_admin,
             created_at=u.created_at.isoformat() if u.created_at else "",
             last_login_at=u.last_login_at.isoformat() if u.last_login_at else None,
-            task_count=task_count,
+            task_count=task_count or 0,
         ))
 
     return UserListResponse(items=items, total=total)

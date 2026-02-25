@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,9 +112,20 @@ def _call_claude_chat(messages: list[dict], system: str = "") -> str:
         if system:
             body["system"] = system
         resp = httpx.post(url, headers=headers, json=body, timeout=90)
-        resp.raise_for_status()
+        # 解析错误响应（Claude API 返回的 error JSON）
+        if resp.status_code != 200:
+            try:
+                err_data = resp.json()
+                err_msg = err_data.get("error", {}).get("message", resp.text[:200])
+            except Exception:
+                err_msg = resp.text[:200]
+            raise RuntimeError(f"Claude API 错误 ({resp.status_code}): {err_msg}")
         data = resp.json()
-        return data["content"][0]["text"]
+        # 防御性检查响应结构
+        content_list = data.get("content", [])
+        if not content_list or not isinstance(content_list, list):
+            raise RuntimeError(f"Claude API 返回了意外的响应结构: {str(data)[:200]}")
+        return content_list[0].get("text", "")
     else:
         # 官方 API 模式
         import anthropic
@@ -264,11 +276,12 @@ async def upload_chat_image(
         )
 
     content = await file.read()
-    max_size = UPLOAD_MAX_MB * 1024 * 1024
-    if len(content) > max_size:
+    # 图片限制 10MB（比通用 UPLOAD_MAX_MB 更严格，避免 base64 膨胀后过大）
+    image_max_size = min(UPLOAD_MAX_MB, 10) * 1024 * 1024
+    if len(content) > image_max_size:
         raise HTTPException(
             status_code=400,
-            detail=f"图片过大（{len(content) / 1024 / 1024:.1f}MB），最大允许{UPLOAD_MAX_MB}MB"
+            detail=f"图片过大（{len(content) / 1024 / 1024:.1f}MB），最大允许{min(UPLOAD_MAX_MB, 10)}MB"
         )
 
     # 保存原图
@@ -628,3 +641,42 @@ async def review_submission(
         "stored_count": stored_count,
         "total_items": len(submission.submitted_items) if submission.submitted_items else 0,
     }
+
+
+# ============================================================
+# 端点8：管理员查看咨询图片
+# ============================================================
+
+@router.get("/admin/image")
+async def admin_view_image(
+    path: str,
+    admin: User = Depends(require_admin),
+):
+    """管理员查看咨询上传的图片
+
+    参数 path 为相对于 UPLOAD_DIR 的路径（如 consult/{user_id}/xxx.png）。
+    安全校验：只允许访问 consult/ 子目录下的文件，防止路径穿越攻击。
+    """
+    # 安全校验：路径必须以 consult/ 开头，不允许 .. 穿越
+    if not path or ".." in path or not path.startswith("consult/"):
+        raise HTTPException(status_code=400, detail="非法路径")
+
+    file_path = UPLOAD_DIR / path
+    # 确保 resolve 后的路径仍在 UPLOAD_DIR 下（防止符号链接穿越）
+    try:
+        resolved = file_path.resolve()
+        upload_resolved = UPLOAD_DIR.resolve()
+        if not str(resolved).startswith(str(upload_resolved)):
+            raise HTTPException(status_code=400, detail="非法路径")
+    except Exception:
+        raise HTTPException(status_code=400, detail="非法路径")
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    # 校验扩展名
+    allowed_ext = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+    if file_path.suffix.lower() not in allowed_ext:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+
+    return FileResponse(str(file_path))

@@ -6,7 +6,7 @@
  * 2. 右侧：当前定额库统计 + 章节列表 + 导入Excel + 导入历史
  */
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Row, Col, Statistic,
   Upload, Empty, Descriptions, Modal, Input, Collapse, Badge, Select,
@@ -108,14 +108,20 @@ export default function QuotaManage() {
       .sort((a, b) => b.totalQuotas - a.totalQuotas);
   }, [provinces]);
 
+  // 用 ref 跟踪当前选中的省份（避免 loadProvinces 的 useCallback 依赖 selectedProvince）
+  const selectedProvinceRef = useRef(selectedProvince);
+  useEffect(() => {
+    selectedProvinceRef.current = selectedProvince;
+  }, [selectedProvince]);
+
   // 加载省份列表
   const loadProvinces = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get<{ items: ProvinceInfo[] }>('/admin/quotas/provinces');
       setProvinces(data.items);
-      // 自动选中第一个有定额的
-      if (data.items.length > 0 && !selectedProvince) {
+      // 自动选中第一个有定额的（仅当前没有选中时）
+      if (data.items.length > 0 && !selectedProvinceRef.current) {
         const withData = data.items.find((p) => p.total_quotas > 0);
         setSelectedProvince(withData ? withData.name : data.items[0].name);
       }
@@ -124,7 +130,7 @@ export default function QuotaManage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedProvince]);
+  }, []);
 
   // 加载指定定额库的章节列表和导入历史
   const loadProvinceDetail = useCallback(async (province: string) => {
@@ -254,7 +260,7 @@ export default function QuotaManage() {
               导入
             </Button>
           }
-          bodyStyle={{ padding: '0 0 12px 0' }}
+          styles={{ body: { padding: '0 0 12px 0' } }}
         >
           {provinces.length === 0 ? (
             <div style={{ padding: 24 }}>

@@ -67,24 +67,41 @@ async def upload_feedback(
     # 保存上传文件
     feedback_dir = UPLOAD_DIR / "feedback" / str(task_id)
     feedback_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name  # 防止路径穿越
+    safe_name = Path(file.filename).name  # 去掉目录部分
+    # 额外安全校验：文件名不能为空或特殊值
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="文件名非法")
     save_path = feedback_dir / safe_name
 
-    content = await file.read()
+    # resolve 后校验路径确实在目标目录内（防止符号链接等穿越攻击）
+    resolved_path = save_path.resolve()
+    resolved_dir = feedback_dir.resolve()
+    if not resolved_path.is_relative_to(resolved_dir):
+        raise HTTPException(status_code=400, detail="文件路径非法")
 
-    # 限制文件大小（最大30MB），防止内存压力
+    # 流式写入 + 分块大小检查（避免一次性读入内存导致 OOM）
     from app.config import UPLOAD_MAX_MB
     max_size = UPLOAD_MAX_MB * 1024 * 1024
-    if len(content) > max_size:
+    size = 0
+    try:
+        with open(save_path, "wb") as f:
+            while chunk := await file.read(8192):
+                size += len(chunk)
+                if size > max_size:
+                    break
+                f.write(chunk)
+    except Exception:
+        save_path.unlink(missing_ok=True)
+        raise
+
+    if size > max_size:
+        save_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,
-            detail=f"文件过大（{len(content) / 1024 / 1024:.1f}MB），最大允许{UPLOAD_MAX_MB}MB"
+            detail=f"文件过大（超过{UPLOAD_MAX_MB}MB），最大允许{UPLOAD_MAX_MB}MB"
         )
 
-    with open(save_path, "wb") as f:
-        f.write(content)
-
-    logger.info(f"反馈Excel已保存: {save_path}（{len(content)} bytes）")
+    logger.info(f"反馈Excel已保存: {save_path}（{size} bytes）")
 
     # 调用核心学习函数（同步操作，放线程池避免阻塞）
     def _learn():
@@ -101,7 +118,7 @@ async def upload_feedback(
             save_path.unlink()
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail=f"反馈学习失败: {e}")
+        raise HTTPException(status_code=500, detail="反馈学习失败，请联系管理员")
 
     # 更新 Task 记录
     task.feedback_path = str(save_path)
