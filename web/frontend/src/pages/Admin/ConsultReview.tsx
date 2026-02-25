@@ -15,6 +15,7 @@ import {
   CheckOutlined, CloseOutlined, ReloadOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/error';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -109,9 +110,7 @@ export default function ConsultReviewPage() {
       setReviewVisible(false);
       loadData();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '审核失败');
+      message.error(getErrorMessage(err, '审核失败'));
     } finally {
       setReviewing(false);
     }

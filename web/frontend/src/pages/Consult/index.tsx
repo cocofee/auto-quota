@@ -4,7 +4,7 @@
  * 用户输入问题（可贴图）→ 贾维斯回答 → 多轮交流 → 确认提取 → 提交审核。
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Card, Button, Input, Select, Space, Tag, Upload, App,
   Typography, Divider, Table, Popconfirm, Empty, Spin,
@@ -15,6 +15,9 @@ import {
   ReloadOutlined, PictureOutlined, CheckCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { useProvinceStore } from '../../stores/province';
+import { extractRegion } from '../../utils/region';
+import { getErrorMessage } from '../../utils/error';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -50,9 +53,43 @@ interface SubmissionRecord {
 export default function ConsultPage() {
   const { message } = App.useApp();
 
-  // 省份
-  const [provinces, setProvinces] = useState<string[]>([]);
+  // 省份（两级联动：地区 → 定额库）
+  const { provinces: allProvinces, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
+  const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
   const [selectedProvince, setSelectedProvince] = useState<string>('');
+
+  // 按地区分组
+  const regionMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const name of allProvinces) {
+      const region = extractRegion(name);
+      if (!map.has(region)) map.set(region, []);
+      map.get(region)!.push(name);
+    }
+    return map;
+  }, [allProvinces]);
+
+  // 地区下拉选项
+  const regionOptions = useMemo(() => {
+    return Array.from(regionMap.entries()).map(([region, items]) => ({
+      label: `${region}（${items.length} 个定额库）`,
+      value: region,
+    }));
+  }, [regionMap]);
+
+  // 当前地区下的定额库选项
+  const dbOptions = useMemo(() => {
+    if (!selectedRegion) return [];
+    const items = regionMap.get(selectedRegion) || [];
+    return items.map((name) => ({ label: name, value: name }));
+  }, [selectedRegion, regionMap]);
+
+  // 切换地区时自动选第一个定额库
+  const onRegionChange = (region: string) => {
+    setSelectedRegion(region);
+    const items = regionMap.get(region) || [];
+    setSelectedProvince(items.length > 0 ? items[0] : '');
+  };
 
   // 对话
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -76,15 +113,18 @@ export default function ConsultPage() {
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // 加载省份
+  // 加载省份（从全局 store 获取，有缓存则跳过请求）
   useEffect(() => {
-    api.get('/provinces').then((res) => {
-      setProvinces(res.data.provinces || []);
-      if (res.data.provinces?.length > 0) {
-        setSelectedProvince(res.data.provinces[0]);
+    fetchProvinces().then((list) => {
+      if (list.length > 0 && !selectedProvince) {
+        const firstRegion = extractRegion(list[0]);
+        setSelectedRegion(firstRegion);
+        const firstDb = list.find((p) => extractRegion(p) === firstRegion);
+        setSelectedProvince(firstDb || list[0]);
       }
-    }).catch(() => message.error('获取省份列表失败'));
-  }, [message]);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchProvinces]); // 注意：不加 selectedProvince 依赖，只在初始为空时设默认值
 
   // 加载历史
   const loadHistory = useCallback(() => {
@@ -145,9 +185,7 @@ export default function ConsultPage() {
       };
       setMessages([...newMessages, assistantMsg]);
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '发送失败');
+      message.error(getErrorMessage(err, '发送失败'));
       // 移除刚发的用户消息（发送失败）
       setMessages(messages);
     } finally {
@@ -179,9 +217,7 @@ export default function ConsultPage() {
 
       message.success('图片已准备好，输入文字后一起发送');
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '图片上传失败');
+      message.error(getErrorMessage(err, '图片上传失败'));
     }
     return false;
   };
@@ -212,9 +248,7 @@ export default function ConsultPage() {
         message.warning('未能从对话中提取出定额信息');
       }
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '提取失败');
+      message.error(getErrorMessage(err, '提取失败'));
     } finally {
       setExtracting(false);
     }
@@ -259,9 +293,7 @@ export default function ConsultPage() {
       setUploadedImagePaths([]);
       loadHistory();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '提交失败');
+      message.error(getErrorMessage(err, '提交失败'));
     } finally {
       setSubmitting(false);
     }
@@ -346,16 +378,33 @@ export default function ConsultPage() {
         和贾维斯对话，确认定额后提交管理员审核。
       </Text>
 
-      {/* 省份选择 */}
+      {/* 省份 + 定额库选择 */}
       <Card style={{ marginTop: 16 }}>
-        <Space>
+        <Space wrap>
           <Text>省份：</Text>
           <Select
-            value={selectedProvince}
+            value={selectedRegion}
+            onChange={onRegionChange}
+            style={{ width: 200 }}
+            placeholder="先选择省份"
+            options={regionOptions}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
+          <Text>定额库：</Text>
+          <Select
+            value={selectedProvince || undefined}
             onChange={setSelectedProvince}
             style={{ width: 360 }}
-            placeholder="选择省份"
-            options={provinces.map((p) => ({ label: p, value: p }))}
+            placeholder={selectedRegion ? '选择该省份的定额库' : '请先选择省份'}
+            disabled={!selectedRegion}
+            options={dbOptions}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
           />
           <Button onClick={handleClear} disabled={messages.length === 0}>
             清空对话

@@ -4,12 +4,13 @@
  * 如果用户未登录，自动跳转到 /login。
  */
 
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth';
 import { Spin } from 'antd';
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
+  const location = useLocation();
 
   // 正在加载用户信息时显示loading
   if (loading) {
@@ -23,9 +24,9 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     );
   }
 
-  // 未登录，跳转到登录页
+  // 未登录，跳转到登录页（保存当前路径，登录后跳回来）
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
   return <>{children}</>;

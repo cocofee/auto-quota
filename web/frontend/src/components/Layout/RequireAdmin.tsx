@@ -5,14 +5,22 @@
  */
 
 import { Navigate } from 'react-router-dom';
-import { Result, Button } from 'antd';
+import { Result, Button, Spin } from 'antd';
 import { useAuthStore } from '../../stores/auth';
 
 export default function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
 
-  // 还在加载用户信息，不做判断
-  if (loading) return null;
+  // 还在加载用户信息，显示加载状态（和 RequireAuth 一致）
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin size="large" tip="加载中...">
+          <div style={{ padding: 50 }} />
+        </Spin>
+      </div>
+    );
+  }
 
   // 未登录直接跳转登录页
   if (!user) return <Navigate to="/login" replace />;

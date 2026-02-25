@@ -6,16 +6,19 @@
  * 匹配模式和大模型由后端配置统一控制，用户不需要选择。
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps,
+  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
+import { useProvinceStore } from '../../stores/province';
 import type { TaskInfo } from '../../types';
+import { extractRegion } from '../../utils/region';
+import { getErrorMessage } from '../../utils/error';
 
 const { Dragger } = Upload;
 
@@ -27,36 +30,67 @@ export default function TaskCreatePage() {
 
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0); // 上传进度百分比
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
-  const [provinceOptions, setProvinceOptions] = useState<{ label: string; value: string }[]>([]);
-  const [provincesLoading, setProvincesLoading] = useState(false);
+  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
+  const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
 
   // 客户2步流程，管理员3步流程
   const steps = isAdmin
     ? [{ title: '上传文件' }, { title: '配置参数' }, { title: '开始匹配' }]
     : [{ title: '上传文件' }, { title: '开始匹配' }];
 
-  // 从后端动态加载省份列表
+  // 按省份（地区）分组：{ "北京": ["北京市建设工程...(2024)", ...], "广东": [...] }
+  const regionMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const name of allProvinces) {
+      const region = extractRegion(name);
+      if (!map.has(region)) map.set(region, []);
+      map.get(region)!.push(name);
+    }
+    return map;
+  }, [allProvinces]);
+
+  // 省份（地区）下拉选项
+  const regionOptions = useMemo(() => {
+    return Array.from(regionMap.entries()).map(([region, items]) => ({
+      label: `${region}（${items.length} 个定额库）`,
+      value: region,
+    }));
+  }, [regionMap]);
+
+  // 当前省份下的定额库下拉选项
+  const dbOptions = useMemo(() => {
+    if (!selectedRegion) return [];
+    const items = regionMap.get(selectedRegion) || [];
+    return items.map((name) => ({ label: name, value: name }));
+  }, [selectedRegion, regionMap]);
+
+  // 从全局 store 加载定额库列表（有缓存则跳过请求）
   useEffect(() => {
-    const loadProvinces = async () => {
-      setProvincesLoading(true);
-      try {
-        const { data } = await api.get<{ provinces: string[] }>('/provinces');
-        setProvinceOptions(
-          data.provinces.map((p) => ({ label: p, value: p })),
-        );
-        if (data.provinces.length > 0 && !form.getFieldValue('province')) {
-          form.setFieldValue('province', data.provinces[0]);
+    fetchProvinces().then((list) => {
+      if (list.length > 0 && !form.getFieldValue('province')) {
+        const firstRegion = extractRegion(list[0]);
+        setSelectedRegion(firstRegion);
+        const firstDb = list.find((p) => extractRegion(p) === firstRegion);
+        if (firstDb) {
+          form.setFieldValue('province', firstDb);
         }
-      } catch {
-        message.error('加载省份列表失败');
-      } finally {
-        setProvincesLoading(false);
       }
-    };
-    loadProvinces();
-  }, [form, message]);
+    });
+  }, [fetchProvinces, form]);
+
+  // 切换省份时：自动选中该省份下的第一个定额库
+  const onRegionChange = (region: string) => {
+    setSelectedRegion(region);
+    const items = regionMap.get(region) || [];
+    if (items.length > 0) {
+      form.setFieldValue('province', items[0]);
+    } else {
+      form.setFieldValue('province', undefined);
+    }
+  };
 
   /** 提交任务 */
   const onSubmit = async () => {
@@ -68,7 +102,7 @@ export default function TaskCreatePage() {
 
       // 手动验证关键字段（因为 validateFields 无法验证未渲染的字段）
       if (!values.province) {
-        message.warning('请先选择省份');
+        message.warning('请先选择定额库');
         setCurrentStep(0);
         return;
       }
@@ -80,9 +114,11 @@ export default function TaskCreatePage() {
       }
 
       setLoading(true);
+      setUploadPercent(0);
 
       const formData = new FormData();
-      formData.append('file', fileList[0].originFileObj as Blob);
+      const file = fileList[0].originFileObj as Blob;
+      formData.append('file', file);
       formData.append('province', values.province);
 
       // 管理员设置的高级参数；客户用默认值
@@ -97,17 +133,24 @@ export default function TaskCreatePage() {
         }
       }
 
+      // 根据文件大小动态计算超时（至少 60s，每 MB 加 10s）
+      const fileSizeMB = file.size / 1024 / 1024;
+      const timeout = Math.max(60000, Math.ceil(fileSizeMB * 10000) + 30000);
+
       const { data } = await api.post<TaskInfo>('/tasks', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 60000,
+        timeout,
+        onUploadProgress: (e) => {
+          if (e.total) {
+            setUploadPercent(Math.round((e.loaded / e.total) * 100));
+          }
+        },
       });
 
       message.success(`任务"${data.name}"创建成功，开始匹配！`);
       navigate('/tasks');
     } catch (err: unknown) {
-      const errorDetail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(errorDetail || '创建任务失败，请重试');
+      message.error(getErrorMessage(err, '创建任务失败，请重试'));
     } finally {
       setLoading(false);
     }
@@ -171,14 +214,32 @@ export default function TaskCreatePage() {
             </Form.Item>
 
             <Form.Item
-              name="province"
-              label="省份定额库"
-              rules={[{ required: true, message: '请选择省份' }]}
+              label="选择省份"
+              required
             >
               <Select
-                options={provinceOptions}
+                options={regionOptions}
                 loading={provincesLoading}
-                placeholder="选择省份定额库"
+                placeholder="先选择省份"
+                value={selectedRegion}
+                onChange={onRegionChange}
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="province"
+              label="选择定额库"
+              rules={[{ required: true, message: '请选择定额库' }]}
+            >
+              <Select
+                options={dbOptions}
+                loading={provincesLoading}
+                placeholder={selectedRegion ? '选择该省份的定额库' : '请先选择省份'}
+                disabled={!selectedRegion}
                 showSearch
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
@@ -244,7 +305,7 @@ export default function TaskCreatePage() {
           <>
             <Card type="inner" title="任务配置确认" style={{ marginBottom: 24 }}>
               <p><strong>文件：</strong>{fileList[0]?.name || '-'}</p>
-              <p><strong>省份：</strong>{form.getFieldValue('province')}</p>
+              <p><strong>定额库：</strong>{form.getFieldValue('province')}</p>
               {isAdmin && (
                 <>
                   {form.getFieldValue('sheet') && (
@@ -258,8 +319,26 @@ export default function TaskCreatePage() {
               )}
             </Card>
 
+            {/* 上传进度条（上传中显示） */}
+            {loading && uploadPercent < 100 && (
+              <Progress
+                percent={uploadPercent}
+                status="active"
+                format={(p) => `上传中 ${p}%`}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            {loading && uploadPercent >= 100 && (
+              <Progress
+                percent={100}
+                status="active"
+                format={() => '正在创建任务...'}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+
             <div style={{ display: 'flex', gap: 12 }}>
-              <Button block onClick={() => setCurrentStep(isAdmin ? 1 : 0)}>
+              <Button block onClick={() => setCurrentStep(isAdmin ? 1 : 0)} disabled={loading}>
                 上一步
               </Button>
               <Button

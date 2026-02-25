@@ -8,17 +8,19 @@
  * 4. 表格展示记录 + 晋升/降级/删除操作
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Tabs, Statistic, Row, Col,
-  Input, Popconfirm, Select,
+  Input, Popconfirm, Select, Modal,
 } from 'antd';
 import {
   ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
   SearchOutlined, ReloadOutlined, DatabaseOutlined,
-  EnvironmentOutlined,
+  EnvironmentOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { extractRegion } from '../../utils/region';
+import { getErrorMessage } from '../../utils/error';
 
 interface ExperienceRecord {
   id: number;
@@ -61,9 +63,42 @@ export default function ExperienceManage() {
   const [searchResults, setSearchResults] = useState<ExperienceRecord[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // 省份筛选
+  // 批量晋升
+  const [batchLoading, setBatchLoading] = useState(false);
+
+  // 省份筛选（两级联动：地区 → 省份定额库）
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
+  const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
   const [selectedProvince, setSelectedProvince] = useState<string | undefined>(undefined);
+
+  // 按地区分组省份列表
+  const regionMap = useMemo(() => {
+    const map = new Map<string, ProvinceItem[]>();
+    for (const p of provinces) {
+      const region = extractRegion(p.province);
+      if (!map.has(region)) map.set(region, []);
+      map.get(region)!.push(p);
+    }
+    return map;
+  }, [provinces]);
+
+  // 地区下拉选项
+  const regionOptions = useMemo(() => {
+    return Array.from(regionMap.entries()).map(([region, items]) => ({
+      label: `${region}（${items.length} 个）`,
+      value: region,
+    }));
+  }, [regionMap]);
+
+  // 当前地区下的省份定额库选项
+  const provinceDbOptions = useMemo(() => {
+    if (!selectedRegion) return [];
+    const items = regionMap.get(selectedRegion) || [];
+    return items.map((p) => ({
+      label: `${p.province}（${p.count} 条）`,
+      value: p.province,
+    }));
+  }, [selectedRegion, regionMap]);
 
   // 加载统计（同时从 by_province 提取省份列表，避免重复请求）
   const loadStats = useCallback(async () => {
@@ -112,6 +147,19 @@ export default function ExperienceManage() {
     }
   }, [activeTab, page, loadRecords]);
 
+  // 切换地区时：自动选中该地区第一个省份，重置分页
+  const onRegionChange = (value: string | undefined) => {
+    setSelectedRegion(value);
+    if (value) {
+      const items = regionMap.get(value) || [];
+      setSelectedProvince(items.length > 0 ? items[0].province : undefined);
+    } else {
+      // 清空地区 → 清空省份（显示全部）
+      setSelectedProvince(undefined);
+    }
+    setPage(1);
+  };
+
   // 切换省份时重置分页
   const onProvinceChange = (value: string | undefined) => {
     setSelectedProvince(value);
@@ -150,8 +198,7 @@ export default function ExperienceManage() {
       loadRecords(activeTab, page);
       loadStats();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(detail || '晋升失败');
+      message.error(getErrorMessage(err, '晋升失败'));
     }
   };
 
@@ -163,8 +210,7 @@ export default function ExperienceManage() {
       loadRecords(activeTab, page);
       loadStats();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      message.error(detail || '降级失败');
+      message.error(getErrorMessage(err, '降级失败'));
     }
   };
 
@@ -177,6 +223,76 @@ export default function ExperienceManage() {
       loadStats();
     } catch {
       message.error('删除失败');
+    }
+  };
+
+  // 智能批量晋升
+  const handleBatchPromote = async () => {
+    setBatchLoading(true);
+    try {
+      // 先预览（dry_run=true）
+      const { data: preview } = await api.post<{
+        total: number; promoted: number; skipped: number;
+        errors: string[]; dry_run: boolean;
+      }>('/admin/experience/batch-promote', {
+        province: selectedProvince || null,
+        dry_run: true,
+      }, { timeout: 120000 });
+
+      setBatchLoading(false);
+
+      if (preview.total === 0) {
+        message.info('没有可晋升的候选层记录');
+        return;
+      }
+
+      // 弹窗确认
+      const scopeText = selectedProvince ? `「${selectedProvince}」` : '全部省份';
+      Modal.confirm({
+        title: '智能批量晋升预览',
+        width: 500,
+        content: (
+          <div>
+            <p>范围：{scopeText}</p>
+            <p>候选层记录：<strong>{preview.total}</strong> 条</p>
+            <p style={{ color: '#52c41a' }}>
+              校验通过（可晋升）：<strong>{preview.promoted}</strong> 条
+            </p>
+            {preview.skipped > 0 && (
+              <p style={{ color: '#faad14' }}>
+                校验不通过（跳过）：<strong>{preview.skipped}</strong> 条
+              </p>
+            )}
+            {preview.errors.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+                <div>不通过示例：</div>
+                {preview.errors.map((e, i) => (
+                  <div key={i}>• {e}</div>
+                ))}
+              </div>
+            )}
+            <p style={{ marginTop: 12 }}>确定要晋升 {preview.promoted} 条记录到权威层吗？</p>
+          </div>
+        ),
+        okText: `确认晋升 ${preview.promoted} 条`,
+        cancelText: '取消',
+        onOk: async () => {
+          // 实际执行（dry_run=false）
+          const { data: result } = await api.post<{
+            total: number; promoted: number; skipped: number;
+          }>('/admin/experience/batch-promote', {
+            province: selectedProvince || null,
+            dry_run: false,
+          }, { timeout: 300000 });
+
+          message.success(`批量晋升完成：${result.promoted} 条已晋升到权威层`);
+          loadRecords(activeTab, page);
+          loadStats();
+        },
+      });
+    } catch {
+      message.error('批量晋升失败');
+      setBatchLoading(false);
     }
   };
 
@@ -285,19 +401,34 @@ export default function ExperienceManage() {
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       {/* 省份选择器 + 统计卡片 */}
       <Card>
-        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <EnvironmentOutlined style={{ fontSize: 16 }} />
+          <span style={{ fontWeight: 500 }}>选择地区：</span>
+          <Select
+            allowClear
+            placeholder="全部地区"
+            value={selectedRegion}
+            onChange={onRegionChange}
+            style={{ width: 200 }}
+            options={regionOptions}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
           <span style={{ fontWeight: 500 }}>选择省份：</span>
           <Select
             allowClear
-            placeholder="全部省份"
+            placeholder={selectedRegion ? '该地区全部省份' : '请先选择地区'}
             value={selectedProvince}
             onChange={onProvinceChange}
+            disabled={!selectedRegion}
             style={{ width: 300 }}
-            options={provinces.map((p) => ({
-              value: p.province,
-              label: `${p.province}（${p.count} 条）`,
-            }))}
+            options={provinceDbOptions}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
           />
           {selectedProvince && (
             <Tag color="blue">
@@ -343,9 +474,21 @@ export default function ExperienceManage() {
           onChange={(key) => { setActiveTab(key); setPage(1); }}
           tabBarExtraContent={
             activeTab !== 'search' && (
-              <Button icon={<ReloadOutlined />} onClick={() => loadRecords(activeTab, page)}>
-                刷新
-              </Button>
+              <Space>
+                {activeTab === 'candidate' && (
+                  <Button
+                    type="primary"
+                    icon={<ThunderboltOutlined />}
+                    onClick={handleBatchPromote}
+                    loading={batchLoading}
+                  >
+                    智能批量晋升
+                  </Button>
+                )}
+                <Button icon={<ReloadOutlined />} onClick={() => loadRecords(activeTab, page)}>
+                  刷新
+                </Button>
+              </Space>
             )
           }
           items={[

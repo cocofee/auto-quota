@@ -14,10 +14,12 @@ import {
 import {
   DatabaseOutlined, BookOutlined, UploadOutlined,
   ReloadOutlined, HistoryOutlined,
-  PlusOutlined, RightOutlined,
+  PlusOutlined, RightOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import api from '../../services/api';
+import { extractRegion } from '../../utils/region';
+import { getErrorMessage } from '../../utils/error';
 
 // 定额库信息
 interface ProvinceInfo {
@@ -51,29 +53,6 @@ interface RegionGroup {
   totalQuotas: number;     // 该地区总定额数
 }
 
-/**
- * 从定额库全名中提取地区名
- * 例如：
- *   "北京市建设工程施工消耗量标准(2024)" → "北京"
- *   "广东省通用安装工程综合定额(2018)"   → "广东"
- *   "宁夏回族自治区装配式钢结构..."       → "宁夏"
- *   "佛山市海绵城市..."                  → "佛山"
- */
-function extractRegion(name: string): string {
-  // 找"省"、"市"位置，取其前面部分
-  for (let i = 0; i < name.length && i < 10; i++) {
-    if (name[i] === '省' || name[i] === '市') {
-      return name.slice(0, i);
-    }
-    // "宁夏回族自治区" → 取"回"前面的部分
-    if (name.slice(i, i + 2) === '回族') {
-      return name.slice(0, i);
-    }
-  }
-  // 默认取前2个字符
-  return name.slice(0, 2);
-}
-
 export default function QuotaManage() {
   const { message } = App.useApp();
   const [provinces, setProvinces] = useState<ProvinceInfo[]>([]);
@@ -84,11 +63,15 @@ export default function QuotaManage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  // 导入对话框
+  // 导入对话框（先选地区，再选文件夹上传）
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [newProvinceName, setNewProvinceName] = useState('');
-  const [importProvince, setImportProvince] = useState<string>('');  // 导入时选择的省份
-  const [isNewProvince, setIsNewProvince] = useState(false);         // 是否新建省份
+  const [importRegion, setImportRegion] = useState<string>('');    // 选择的地区（已有或新建）
+  const [isNewRegion, setIsNewRegion] = useState(false);           // 是否新建地区
+  const [newRegionName, setNewRegionName] = useState('');           // 新地区名称
+  const [folderName, setFolderName] = useState('');                // 从文件夹名自动提取的定额库名
+  const [folderFiles, setFolderFiles] = useState<File[]>([]);      // 文件夹中的 .xlsx 文件
+  const [folderProgress, setFolderProgress] = useState('');        // 导入进度提示
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // 按地区分组
   const regionGroups: RegionGroup[] = useMemo(() => {
@@ -107,6 +90,76 @@ export default function QuotaManage() {
       }))
       .sort((a, b) => b.totalQuotas - a.totalQuotas);
   }, [provinces]);
+
+  // 导入弹窗：地区下拉选项（从已有定额库中提取）
+  const importRegionOptions = useMemo(() => {
+    return regionGroups.map((g) => ({
+      label: `${g.region}（${g.items.length} 个定额库）`,
+      value: g.region,
+    }));
+  }, [regionGroups]);
+
+  // 文件夹选择：提取文件夹名和 .xlsx 文件列表
+  const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const xlsxFiles = files.filter((f) => f.name.endsWith('.xlsx'));
+    if (xlsxFiles.length === 0) {
+      message.warning('所选文件夹中没有 .xlsx 文件');
+      return;
+    }
+    // 从 webkitRelativePath 提取顶层文件夹名："FolderName/file.xlsx" → "FolderName"
+    const firstPath = xlsxFiles[0].webkitRelativePath;
+    const topFolder = firstPath.split('/')[0];
+    setFolderName(topFolder);
+    setFolderFiles(xlsxFiles);
+  };
+
+  // 上传文件夹中的所有 .xlsx 文件
+  const handleFolderUpload = async () => {
+    if (!folderName || folderFiles.length === 0) return;
+    setUploading(true);
+    let successCount = 0;
+    let totalQuotas = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < folderFiles.length; i++) {
+      setFolderProgress(`正在导入第 ${i + 1}/${folderFiles.length} 个文件：${folderFiles[i].name}`);
+      const formData = new FormData();
+      formData.append('file', folderFiles[i]);
+      formData.append('province', folderName);
+      try {
+        const { data } = await api.post('/admin/quotas/import', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 300000,
+        });
+        successCount++;
+        totalQuotas += data.imported_count || 0;
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (successCount > 0) {
+      message.success(
+        `导入完成：${successCount} 个文件，共 ${totalQuotas} 条定额` +
+        (failCount > 0 ? `（${failCount} 个文件失败）` : ''),
+      );
+    } else {
+      message.error('导入失败');
+    }
+
+    // 重置弹窗状态
+    setImportRegion('');
+    setIsNewRegion(false);
+    setNewRegionName('');
+    setFolderFiles([]);
+    setFolderName('');
+    setFolderProgress('');
+    setImportModalOpen(false);
+    setUploading(false);
+    loadProvinces();
+    if (selectedProvince) loadProvinceDetail(selectedProvince);
+  };
 
   // 用 ref 跟踪当前选中的省份（避免 loadProvinces 的 useCallback 依赖 selectedProvince）
   const selectedProvinceRef = useRef(selectedProvince);
@@ -163,23 +216,22 @@ export default function QuotaManage() {
     }
   }, [selectedProvince, loadProvinceDetail]);
 
-  // 上传配置
+  // 右侧"导入Excel到此定额库"按钮的上传配置（单文件导入到当前选中的定额库）
   const uploadProps: UploadProps = {
     name: 'file',
     accept: '.xlsx',
     showUploadList: false,
     customRequest: async (options) => {
       const { file, onSuccess, onError } = options;
-      const province = isNewProvince ? newProvinceName : (importProvince || selectedProvince);
-      if (!province) {
-        message.error('请先选择省份或输入新省份名称');
+      if (!selectedProvince) {
+        message.error('请先在左侧选择一个定额库');
         return;
       }
 
       setUploading(true);
       const formData = new FormData();
       formData.append('file', file as Blob);
-      formData.append('province', province);
+      formData.append('province', selectedProvince);
 
       try {
         const { data } = await api.post('/admin/quotas/import', formData, {
@@ -189,16 +241,10 @@ export default function QuotaManage() {
         message.success(`导入成功：${data.imported_count} 条定额`);
         onSuccess?.(data);
         loadProvinces();
-        if (selectedProvince) loadProvinceDetail(selectedProvince);
-        // 导入成功后重置对话框状态
-        setImportModalOpen(false);
-        setIsNewProvince(false);
-        setImportProvince('');
-        setNewProvinceName('');
+        loadProvinceDetail(selectedProvince);
       } catch (err: unknown) {
-        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-        message.error(detail || '导入失败');
-        onError?.(new Error(detail || '导入失败'));
+        message.error(getErrorMessage(err, '导入失败'));
+        onError?.(new Error(getErrorMessage(err, '导入失败')));
       } finally {
         setUploading(false);
       }
@@ -403,76 +449,134 @@ export default function QuotaManage() {
         )}
       </Col>
 
-      {/* 导入对话框 */}
+      {/* 隐藏的文件夹选择器 */}
+      <input
+        type="file"
+        ref={folderInputRef}
+        style={{ display: 'none' }}
+        onChange={handleFolderSelect}
+        multiple
+      />
+
+      {/* 导入对话框（先选地区，再选文件夹） */}
       <Modal
-        title="导入定额Excel"
+        title="导入定额"
         open={importModalOpen}
         onCancel={() => {
           setImportModalOpen(false);
-          setIsNewProvince(false);
-          setImportProvince('');
-          setNewProvinceName('');
+          setImportRegion('');
+          setIsNewRegion(false);
+          setNewRegionName('');
+          setFolderFiles([]);
+          setFolderName('');
+          setFolderProgress('');
         }}
         footer={null}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {/* 第一步：选择地区 */}
           <div>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择定额库</div>
-            {!isNewProvince ? (
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>1. 选择地区</div>
+            {!isNewRegion ? (
               <Space direction="vertical" style={{ width: '100%' }} size="small">
                 <Select
-                  placeholder="选择已有定额库"
-                  value={importProvince || undefined}
-                  onChange={(v) => setImportProvince(v)}
+                  placeholder="选择已有地区"
+                  value={importRegion || undefined}
+                  onChange={(v) => setImportRegion(v)}
                   style={{ width: '100%' }}
-                  showSearch
-                  filterOption={(input, option) =>
-                    (option?.label as string)?.toLowerCase().includes(input.toLowerCase()) ?? false
-                  }
-                  options={provinces.map((p) => ({
-                    value: p.name,
-                    label: `${p.name}（${p.total_quotas.toLocaleString()} 条）`,
-                  }))}
+                  options={importRegionOptions}
                 />
                 <Button
                   type="link"
                   icon={<PlusOutlined />}
-                  onClick={() => { setIsNewProvince(true); setImportProvince(''); }}
+                  onClick={() => { setIsNewRegion(true); setImportRegion(''); }}
                   style={{ padding: 0 }}
                 >
-                  新建定额库
+                  新建地区
                 </Button>
               </Space>
             ) : (
               <Space direction="vertical" style={{ width: '100%' }} size="small">
                 <Input
-                  placeholder="输入完整名称，如：北京市建设工程施工消耗量标准(2024)"
-                  value={newProvinceName}
-                  onChange={(e) => setNewProvinceName(e.target.value)}
+                  placeholder="输入地区名称，如：山东"
+                  value={newRegionName}
+                  onChange={(e) => {
+                    setNewRegionName(e.target.value);
+                    setImportRegion(e.target.value);
+                  }}
                 />
                 <Button
                   type="link"
-                  onClick={() => { setIsNewProvince(false); setNewProvinceName(''); }}
+                  onClick={() => { setIsNewRegion(false); setNewRegionName(''); setImportRegion(''); }}
                   style={{ padding: 0 }}
                 >
-                  返回选择已有定额库
+                  返回选择已有地区
                 </Button>
               </Space>
             )}
           </div>
-          <div>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择定额Excel文件</div>
-            <Upload {...uploadProps}>
+
+          {/* 第二步：选择文件夹（地区选了之后才能操作） */}
+          {importRegion && (
+            <div>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>2. 选择文件夹</div>
+              <div style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>
+                文件夹名将作为定额库名称，里面所有 .xlsx 文件都会被导入到「{importRegion}」地区
+              </div>
               <Button
-                type="primary"
-                icon={<UploadOutlined />}
-                loading={uploading}
-                disabled={isNewProvince ? !newProvinceName : !importProvince}
+                icon={<FolderOpenOutlined />}
+                onClick={() => {
+                  if (folderInputRef.current) {
+                    folderInputRef.current.setAttribute('webkitdirectory', '');
+                    folderInputRef.current.setAttribute('directory', '');
+                    folderInputRef.current.value = '';
+                    folderInputRef.current.click();
+                  }
+                }}
               >
-                选择并上传 .xlsx 文件
+                选择文件夹
               </Button>
-            </Upload>
-          </div>
+            </div>
+          )}
+
+          {/* 选完文件夹后显示预览 */}
+          {folderName && (
+            <Card size="small" style={{ background: '#fafafa' }}>
+              <p style={{ margin: '0 0 4px 0' }}>
+                <strong>地区：</strong>{importRegion}
+              </p>
+              <p style={{ margin: '0 0 4px 0' }}>
+                <strong>定额库名称：</strong>{folderName}
+              </p>
+              <p style={{ margin: '0 0 4px 0' }}>
+                <strong>Excel 文件：</strong>{folderFiles.length} 个
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {folderFiles.map((f, i) => (
+                  <Tag key={i}>{f.name}</Tag>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* 导入进度 */}
+          {folderProgress && (
+            <div style={{ color: '#1677ff', fontSize: 13 }}>{folderProgress}</div>
+          )}
+
+          {/* 开始导入按钮 */}
+          {folderName && (
+            <Button
+              type="primary"
+              icon={<UploadOutlined />}
+              onClick={handleFolderUpload}
+              loading={uploading}
+              block
+            >
+              开始导入 {folderFiles.length} 个文件到「{folderName}」
+            </Button>
+          )}
+
           <div style={{ color: '#999', fontSize: 13 }}>
             定额Excel格式：A列=编号，B列=名称，C列=单位，D列=工作类型。支持增量导入。
           </div>

@@ -5,17 +5,22 @@
  */
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, Form, Input, Button, App, Tabs } from 'antd';
 import { MailOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import { getErrorMessage } from '../../utils/error';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
   const navigate = useNavigate();
+  const location = useLocation();
   const { login, register } = useAuthStore();
   const { message } = App.useApp();
+
+  // 登录前访问的页面（RequireAuth 跳转时传过来的）
+  const from = (location.state as { from?: string })?.from || '/dashboard';
 
   /** 登录 */
   const onLogin = async (values: { email: string; password: string }) => {
@@ -23,11 +28,9 @@ export default function LoginPage() {
     try {
       await login(values.email, values.password);
       message.success('登录成功');
-      navigate('/dashboard');
+      navigate(from);
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '登录失败');
+      message.error(getErrorMessage(err, '登录失败'));
     } finally {
       setLoading(false);
     }
@@ -39,11 +42,9 @@ export default function LoginPage() {
     try {
       await register(values.email, values.password, values.nickname);
       message.success('注册成功，已自动登录');
-      navigate('/dashboard');
+      navigate(from);
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '注册失败');
+      message.error(getErrorMessage(err, '注册失败'));
     } finally {
       setLoading(false);
     }
