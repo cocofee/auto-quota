@@ -70,8 +70,14 @@ const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
 };
 
 // ============================================================
-// 展示行类型（清单行 + 定额行混合扁平数组）
+// 展示行类型（分部标题行 + 清单行 + 定额行混合扁平数组）
 // ============================================================
+
+interface SectionDisplayRow {
+  _rowType: 'section';
+  _rowKey: string;
+  _title: string;              // 分部标题文字（如"【给排水】给水工程"）
+}
 
 interface BillDisplayRow {
   _rowType: 'bill';
@@ -88,12 +94,38 @@ interface QuotaDisplayRow {
   _quota: QuotaItem;           // 定额数据
 }
 
-type DisplayRow = BillDisplayRow | QuotaDisplayRow;
+type DisplayRow = SectionDisplayRow | BillDisplayRow | QuotaDisplayRow;
 
-/** 将 MatchResult[] 展平为 DisplayRow[]（清单行+定额子行） */
+/** 将 MatchResult[] 展平为 DisplayRow[]（分部标题行+清单行+定额子行） */
 function flattenResults(results: MatchResult[]): DisplayRow[] {
   const rows: DisplayRow[] = [];
+  let currentSheet = '';
+  let currentSection = '';
+
   for (const r of results) {
+    // 检查是否需要插入分部标题行（sheet或section变化时）
+    const sheet = r.sheet_name || '';
+    const section = r.section || '';
+    if (sheet && (sheet !== currentSheet || section !== currentSection)) {
+      // 组合标题：有section就显示"【Sheet名】分部名"，没有就只显示Sheet名
+      const title = section ? `【${sheet}】${section}` : sheet;
+      rows.push({
+        _rowType: 'section',
+        _rowKey: `section_${rows.length}`,
+        _title: title,
+      });
+      currentSheet = sheet;
+      currentSection = section;
+    } else if (!sheet && section && section !== currentSection) {
+      // 没有sheet但有section变化
+      rows.push({
+        _rowType: 'section',
+        _rowKey: `section_${rows.length}`,
+        _title: section,
+      });
+      currentSection = section;
+    }
+
     const quotas = r.corrected_quotas || r.quotas || [];
     // 清单行
     rows.push({
@@ -282,13 +314,26 @@ export default function ResultsPage() {
   // ============================================================
 
   const columns = [
-    // 序号列：清单行显示数字，定额行空
+    // 序号列：清单行显示数字，定额行空，分部标题行跨全列显示标题
     {
       title: '序号',
       key: 'serial',
       width: 42,
       align: 'center' as const,
+      onCell: (row: DisplayRow) => {
+        if (row._rowType === 'section') {
+          return { colSpan: 20 };  // 跨所有列（数字大于实际列数即可）
+        }
+        return {};
+      },
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'section') {
+          return (
+            <span style={{ fontWeight: 'bold', fontSize: 13, color: '#333' }}>
+              {row._title}
+            </span>
+          );
+        }
         if (row._rowType === 'bill') return <b>{row._result.index + 1}</b>;
         return null;
       },
@@ -298,7 +343,9 @@ export default function ResultsPage() {
       title: '项目编码',
       key: 'code',
       width: 130,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
           const code = row._result.bill_code;
           return code ? (
@@ -317,7 +364,9 @@ export default function ResultsPage() {
       key: 'name',
       ellipsis: true,
       width: 180,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
           return <span style={{ fontWeight: 500 }}>{row._result.bill_name}</span>;
         }
@@ -335,6 +384,7 @@ export default function ResultsPage() {
       title: '项目特征',
       key: 'description',
       width: 260,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const desc = row._result.bill_description;
@@ -373,7 +423,9 @@ export default function ResultsPage() {
       key: 'unit',
       width: 55,
       align: 'center' as const,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') return row._result.bill_unit || '-';
         return row._quota.unit || '';
       },
@@ -384,11 +436,10 @@ export default function ResultsPage() {
       key: 'quantity',
       width: 80,
       align: 'right' as const,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
-        if (row._rowType === 'bill') {
-          return row._result.bill_quantity != null ? row._result.bill_quantity : '-';
-        }
-        return null;
+        if (row._rowType !== 'bill') return null;
+        return row._result.bill_quantity != null ? row._result.bill_quantity : '-';
       },
     },
     // 推荐度（只在清单行显示，单元格着色）
@@ -396,6 +447,7 @@ export default function ResultsPage() {
       title: '推荐度',
       key: 'stars',
       width: 140,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const r = row._result;
@@ -419,19 +471,19 @@ export default function ResultsPage() {
         );
       },
     },
-    // 匹配说明（只在清单行显示）
+    // 匹配说明（只在清单行显示，自动换行）
     {
       title: '匹配说明',
       key: 'explanation',
-      width: 200,
-      ellipsis: true,
+      width: 220,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const text = row._result.explanation;
         return text ? (
-          <Tooltip title={text} placement="topLeft">
-            <span style={{ fontSize: 12, color: '#666' }}>{text}</span>
-          </Tooltip>
+          <div style={{ fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
+            {text}
+          </div>
         ) : <span style={{ color: '#ccc' }}>-</span>;
       },
     },
@@ -440,7 +492,9 @@ export default function ResultsPage() {
       title: '审核',
       key: 'review',
       width: 120,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
           const status = row._result.review_status;
           const info = REVIEW_MAP[status] || { color: 'default', text: status };
@@ -460,18 +514,21 @@ export default function ResultsPage() {
           );
         }
         // 定额行：删除按钮
-        return (
-          <Tooltip title="删除此条定额">
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={(e) => { e.stopPropagation(); removeQuota(row); }}
-              style={{ padding: 0 }}
-            />
-          </Tooltip>
-        );
+        if (row._rowType === 'quota') {
+          return (
+            <Tooltip title="删除此条定额">
+              <Button
+                type="link"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={(e) => { e.stopPropagation(); removeQuota(row); }}
+                style={{ padding: 0 }}
+              />
+            </Tooltip>
+          );
+        }
+        return null;
       },
     }] : []),
   ];
@@ -571,8 +628,16 @@ export default function ResultsPage() {
               return originNode;
             },
           } : undefined}
-          // 行样式区分：清单行按置信度着色，定额行浅灰
+          // 行样式区分：分部标题行深灰粗体，清单行按置信度着色，定额行浅灰
           onRow={(row: DisplayRow) => {
+            if (row._rowType === 'section') {
+              return {
+                style: {
+                  backgroundColor: '#E0E0E0',
+                  fontWeight: 'bold' as const,
+                },
+              };
+            }
             if (row._rowType === 'bill') {
               const r = row._result;
               const quotas = r.corrected_quotas || r.quotas || [];

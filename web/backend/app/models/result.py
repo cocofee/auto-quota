@@ -61,6 +61,12 @@ class MatchResult(Base):
     # 所属专业册号（如 "C10"）
     specialty: Mapped[str] = mapped_column(String(20), default="")
 
+    # 所属Sheet页名称（如 "给排水"、"电气"，用于前端分组显示）
+    sheet_name: Mapped[str] = mapped_column(String(100), default="")
+
+    # 所属分部工程名称（如 "给水工程"、"强电系统"，用于前端分部标题行）
+    section: Mapped[str] = mapped_column(String(200), default="")
+
     # ============================================================
     # 匹配结果
     # ============================================================

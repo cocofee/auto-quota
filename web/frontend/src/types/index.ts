@@ -122,6 +122,8 @@ export interface MatchResult {
   bill_unit: string;
   bill_quantity: number | null;
   specialty: string;
+  sheet_name: string;   // 所属Sheet页名（如"给排水"、"电气"）
+  section: string;      // 所属分部工程名（如"给水工程"、"强电系统"）
   quotas: QuotaItem[] | null;
   confidence: number;
   match_source: string;

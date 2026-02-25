@@ -123,6 +123,8 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
             bill_unit=bill_item.get("unit", ""),
             bill_quantity=bill_item.get("quantity"),
             specialty=bill_item.get("specialty", ""),
+            sheet_name=bill_item.get("sheet_name", ""),
+            section=bill_item.get("section", ""),
             quotas=quotas if quotas else None,
             confidence=result.get("confidence", 0),
             match_source=result.get("match_source", ""),

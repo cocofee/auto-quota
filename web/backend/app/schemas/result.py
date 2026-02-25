@@ -27,6 +27,8 @@ class MatchResultResponse(BaseModel):
     bill_unit: str
     bill_quantity: float | None
     specialty: str
+    sheet_name: str = ""
+    section: str = ""
     quotas: list[QuotaItem] | None
     confidence: int
     match_source: str

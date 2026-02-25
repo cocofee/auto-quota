@@ -124,6 +124,9 @@ async def init_db():
         migrations = [
             # 2026-02-25: match_results 表新增 bill_code 列（清单项编码）
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_code VARCHAR(100) DEFAULT ''",
+            # 2026-02-25: match_results 表新增 sheet_name 和 section 列（分部分项展示用）
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS sheet_name VARCHAR(100) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS section VARCHAR(200) DEFAULT ''",
         ]
         from sqlalchemy import text
         for sql in migrations:
