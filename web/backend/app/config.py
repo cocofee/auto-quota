@@ -106,6 +106,23 @@ COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
 
 
 # ============================================================
+# 匹配任务默认配置
+# ============================================================
+
+# 匹配模式：agent（大模型智能匹配）或 search（纯搜索）
+# 当前固定 agent，后续可在 .env 中切换
+MATCH_MODE = os.getenv("MATCH_MODE", "agent")
+if MATCH_MODE not in ("search", "agent"):
+    raise ValueError(f"MATCH_MODE 必须是 search 或 agent，当前值: {MATCH_MODE}")
+
+# Agent 模式使用的大模型（claude / deepseek / kimi / qwen）
+# 当前固定 claude，后续可在 .env 中切换
+MATCH_LLM = os.getenv("MATCH_LLM", "claude")
+if MATCH_LLM not in ("claude", "deepseek", "kimi", "qwen", "openai"):
+    raise ValueError(f"MATCH_LLM 值不合法: {MATCH_LLM}，可选: claude/deepseek/kimi/qwen/openai")
+
+
+# ============================================================
 # 配置验证（启动时检查关键配置）
 # ============================================================
 

@@ -96,6 +96,8 @@ services:
       - ./data:/app/data
       - ./db:/app/db
       - ./output:/app/output
+      # 日志持久化（容器重启后日志不丢失）
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,6 +129,10 @@ services:
       - ./data:/app/data
       - ./db:/app/db
       - ./output:/app/output
+      # 日志持久化（和后端共享同一个 logs 目录）
+      - ./logs:/app/logs
+      # 模型缓存持久化（避免每次重建容器都重新下载 ~2GB 的AI模型）
+      - model_cache:/root/.cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,3 +156,6 @@ services:
 # 数据卷（持久化存储）
 volumes:
   postgres_data:
+  # AI模型缓存（HuggingFace向量模型、重排序模型、ChromaDB ONNX模型）
+  # 容器重建后不用重新下载，节省约10分钟启动时间
+  model_cache:

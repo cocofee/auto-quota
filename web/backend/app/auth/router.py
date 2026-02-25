@@ -93,10 +93,11 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     )
     db.add(user)
 
-    # flush让数据库生成ID和时间戳，但不提交（提交由get_db统一处理）
+    # 显式 commit 确保用户数据立即持久化
+    # （如果只 flush 不 commit，客户端立即登录可能在 auto-commit 之前到达，导致 401）
     # 捕获IntegrityError处理并发注册相同邮箱的情况（两个请求同时通过了上面的检查）
     try:
-        await db.flush()
+        await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
