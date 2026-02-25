@@ -178,30 +178,23 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
 
         old_id = target_ws.cell(row=quota_row, column=2).value or ""
 
-        write_ok = [
-            _safe_write_cell(
-                target_ws, quota_row, 2, quota_id, skipped, seq_int, "定额编号"
-            ),
+        # 原子化写入：先写核心列（定额编号B列），成功了再写辅助列（名称C列、审核标记J/K列）
+        # 如果B列写入失败（如合并单元格），不写J/K列，避免数据不一致
+        b_ok = _safe_write_cell(
+            target_ws, quota_row, 2, quota_id, skipped, seq_int, "定额编号"
+        )
+        if b_ok:
             _safe_write_cell(
                 target_ws, quota_row, 3, quota_name, skipped, seq_int, "定额名称"
-            ),
+            )
             _safe_write_cell(
                 target_ws, item_row, 10, "★★★已审核", skipped, seq_int, "审核标记"
-            ),
+            )
             _safe_write_cell(
-                target_ws,
-                item_row,
-                11,
+                target_ws, item_row, 11,
                 f"Jarvis纠正: {old_id} → {quota_id}",
-                skipped,
-                seq_int,
-                "纠正说明",
-            ),
-        ]
-
-        # 定额编号（B列）是核心写入，必须成功才算纠正成功
-        # 审核标记（J列）和说明（K列）是辅助信息，失败不影响判定
-        if write_ok[0]:  # write_ok[0] = 定额编号写入是否成功
+                skipped, seq_int, "纠正说明",
+            )
             applied += 1
 
     if not output_path:

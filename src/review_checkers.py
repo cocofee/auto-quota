@@ -11,6 +11,8 @@ import re
 import json
 from pathlib import Path
 
+from loguru import logger
+
 
 # ============================================================
 # 规则表加载（从外部 JSON 文件读取）
@@ -20,6 +22,7 @@ def _load_review_rules():
     """从 data/review_rules.json 加载审核规则表"""
     rules_path = Path(__file__).parent.parent / "data" / "review_rules.json"
     if not rules_path.exists():
+        logger.error(f"审核规则文件不存在: {rules_path}，所有检测规则将失效！")
         return {}
     try:
         with open(rules_path, "r", encoding="utf-8") as f:
@@ -31,7 +34,8 @@ def _load_review_rules():
                 data[key] = {k: v for k, v in data[key].items()
                              if not k.startswith("_")}
         return data
-    except Exception:
+    except Exception as e:
+        logger.error(f"审核规则文件加载失败: {rules_path}，原因: {e}，所有检测规则将失效！")
         return {}
 
 

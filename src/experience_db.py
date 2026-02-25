@@ -424,7 +424,7 @@ class ExperienceDB:
         }
 
     def _get_quota_map(self, province: str = None) -> dict:
-        """获取定额库映射（按省份缓存，避免重复读取）"""
+        """获取定额库映射（按省份缓存，最多保留3个省份，避免内存无限增长）"""
         province = province or self.province
         cache_by_province = getattr(self, "_quota_map_cache_by_province", {})
         if province in cache_by_province:
@@ -458,6 +458,11 @@ class ExperienceDB:
                 }
                 for row in rows
             }
+            # 缓存上限：最多保留3个省份的映射，超出时删除最早加载的
+            if len(cache_by_province) >= 3:
+                oldest_key = next(iter(cache_by_province))
+                del cache_by_province[oldest_key]
+                logger.debug(f"定额映射缓存已满，清除最早的省份: {oldest_key}")
             cache_by_province[province] = quota_map
             self._quota_map_cache_by_province = cache_by_province
             return quota_map

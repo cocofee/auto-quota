@@ -331,7 +331,7 @@ class OutputWriter:
             return True
         if confidence < config.CONFIDENCE_GREEN:
             return True
-        if match_source in ("agent_fallback", "agent_error"):
+        if match_source in ("agent_fallback", "agent_error", "agent_circuit_break"):
             return True
         return False
 

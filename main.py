@@ -310,7 +310,7 @@ def run(input_file, mode="agent", output=None,
             stats, input_file=str(input_path),
             mode=mode, province=resolved_province)
     except Exception as e:
-        logger.debug(f"准确率追踪记录失败（不影响主流程）: {e}")
+        logger.error(f"准确率追踪记录失败: {e}")
 
     return {"results": results, "stats": stats}
 

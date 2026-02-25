@@ -23,6 +23,7 @@ from pathlib import Path
 
 from db.sqlite import connect as _db_connect
 from config import get_quota_db_path, OUTPUT_DIR, CURRENT_PROVINCE
+from loguru import logger
 
 # 检测器：纯规则判断，不查DB
 from src.review_checkers import (
@@ -200,11 +201,34 @@ def auto_review(json_path, province=None):
     if os.path.exists(db_path):
         db_conn = _db_connect(db_path)
 
-    try:
-        error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
-    finally:
-        if db_conn:
-            db_conn.close()
+    if db_conn is None and detected:
+        # 定额库不存在，无法搜索纠正定额，所有错误转人工审核
+        logger.warning(f"定额库不存在({db_path})，纠正阶段跳过，{len(detected)}条错误全部转人工审核")
+        error_items = []
+        manual_from_correction = []
+        for d in detected:
+            bill = d["bill_item"]
+            desc_lines = extract_description_lines(bill.get("description", ""))
+            manual_from_correction.append({
+                "seq": d["seq"],
+                "name": bill.get("name", ""),
+                "desc_short": desc_lines[0] if desc_lines else "",
+                "dn": d["dn"],
+                "sheet_name": d.get("sheet_name", ""),
+                "sheet_bill_seq": d.get("sheet_bill_seq"),
+                "source_row": d.get("source_row"),
+                "current_quota_id": d["quota_id"],
+                "current_quota_name": d["quota_name"],
+                "error_type": d["error"]["type"],
+                "error_reason": d["error"]["reason"],
+                "confidence": d["confidence"],
+            })
+    else:
+        try:
+            error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
+        finally:
+            if db_conn:
+                db_conn.close()
 
     # 跨项完整性检查（规则9：电梯）
     completeness_reminders = check_elevator_completeness(results)

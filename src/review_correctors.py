@@ -9,6 +9,8 @@ DB 搜索工具在 src/quota_search.py 中，本模块直接导入使用。
 
 import re
 
+from loguru import logger
+
 from src.quota_search import search_quota_db
 from src.review_checkers import (
     MATERIAL_MAP, CONNECTION_MAP, CORRECTION_STRATEGIES, ELECTRIC_PAIR_RULES,
@@ -389,15 +391,27 @@ def correct_error(item, error, dn, province=None, conn=None):
         province: 省份
         conn: 可选的共享数据库连接
     返回: (quota_id, quota_name) 或 None
+           失败时返回 None，失败原因记录到日志
     """
     error_type = ""
     if isinstance(error, dict):
         error_type = str(error.get("type", ""))
     corrector = _CORRECTOR_DISPATCH.get(error_type)
     if not corrector:
+        logger.debug(f"纠正跳过: 未知错误类型 '{error_type}'")
         return None
-    result = corrector(item, error, dn, province, conn)
+    try:
+        result = corrector(item, error, dn, province, conn)
+    except Exception as e:
+        # 搜索过程出错（如DB连接异常），记录错误并返回 None（转人工）
+        bill_name = item.get("name", "")[:30]
+        logger.error(f"纠正搜索出错: [{error_type}] {bill_name} - {e}")
+        return None
     # 二次验真：搜索结果是否真的修复了问题
     if result and not validate_correction(error, result[0], result[1]):
+        logger.debug(f"纠正验真不通过: [{error_type}] 纠正结果 {result[0]} 未通过验真，转人工")
         return None  # 验真不通过，转人工
+    if not result:
+        bill_name = item.get("name", "")[:30]
+        logger.debug(f"纠正无结果: [{error_type}] {bill_name} 搜索未找到合适定额，转人工")
     return result
