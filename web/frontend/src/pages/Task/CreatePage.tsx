@@ -13,7 +13,7 @@ import {
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
-import { read, utils } from 'xlsx';
+import { read } from 'xlsx';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useProvinceStore } from '../../stores/province';

@@ -519,7 +519,7 @@ function UniversalKBTab() {
                   {((item.quota_patterns as string[]) || []).map((p, j) => <Tag key={j} color="green">{p}</Tag>)}
                 </Space>
               </div>
-              {item.associated_patterns && (item.associated_patterns as string[]).length > 0 && (
+              {Array.isArray(item.associated_patterns) && item.associated_patterns.length > 0 && (
                 <div>
                   <strong>关联定额：</strong>
                   {(item.associated_patterns as string[]).join('、')}
@@ -799,8 +799,8 @@ function RulesTab() {
             <Card key={i} size="small" style={{ marginBottom: 8 }}>
               <div style={{ marginBottom: 4 }}>
                 <Tag color="blue">{String(item.province || '')}</Tag>
-                {item.specialty && <Tag>{String(item.specialty)}</Tag>}
-                {item.chapter && <Tag>{String(item.chapter)}</Tag>}
+                {!!item.specialty && <Tag>{String(item.specialty)}</Tag>}
+                {!!item.chapter && <Tag>{String(item.chapter)}</Tag>}
                 {item.similarity != null && (
                   <span style={{ color: '#999', fontSize: 12 }}>
                     相似度：{((item.similarity as number) * 100).toFixed(0)}%

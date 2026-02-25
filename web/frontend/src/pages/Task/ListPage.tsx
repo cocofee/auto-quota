@@ -20,9 +20,6 @@ import {
   DownloadOutlined,
   UploadOutlined,
   StopOutlined,
-  CheckCircleFilled,
-  LoadingOutlined,
-  ClockCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
