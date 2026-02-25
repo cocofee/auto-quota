@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 class QuotaItem(BaseModel):
     """定额项信息（quotas 和 corrected_quotas 字段的元素结构）"""
-    quota_id: str = Field(description="定额编号，如 C10-2-45")
-    name: str = Field(description="定额名称")
+    quota_id: str = Field(min_length=1, max_length=50, description="定额编号，如 C10-2-45")
+    name: str = Field(min_length=1, max_length=200, description="定额名称")
     unit: str = Field(default="", description="计量单位")
     param_score: float | None = Field(default=None, description="参数匹配度 (0~1)")
     rerank_score: float | None = Field(default=None, description="重排得分 (0~1)")

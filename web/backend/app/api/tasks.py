@@ -248,6 +248,40 @@ async def delete_task(
     logger.info(f"删除任务 {task_id}（已清理关联文件）")
 
 
+@router.post("/{task_id}/cancel", status_code=200)
+async def cancel_task(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """取消正在运行或排队中的任务
+
+    通过 Celery revoke 终止后台任务，并将状态标记为 cancelled。
+    """
+    task = await get_user_task(task_id, user, db)
+
+    if task.status not in ("pending", "running"):
+        raise HTTPException(status_code=409, detail=f"任务状态为 {task.status}，无法取消")
+
+    # 通过 Celery revoke 终止后台任务
+    if task.celery_task_id:
+        try:
+            from app.celery_app import celery_app
+            celery_app.control.revoke(task.celery_task_id, terminate=True, signal="SIGTERM")
+            logger.info(f"已发送 Celery revoke: {task.celery_task_id}")
+        except Exception as e:
+            logger.warning(f"Celery revoke 失败（任务可能已结束）: {e}")
+
+    # 更新任务状态
+    task.status = "cancelled"
+    task.progress_message = "用户取消"
+    task.error_message = "任务已被用户取消"
+    await db.commit()
+
+    logger.info(f"任务 {task_id} 已取消")
+    return {"message": "任务已取消"}
+
+
 @router.get("/{task_id}/progress")
 async def task_progress(task_id: uuid.UUID, request: Request):
     """SSE 实时进度推送

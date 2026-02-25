@@ -8,6 +8,7 @@
     POST   /api/admin/experience/{id}/promote — 晋升到权威层
     POST   /api/admin/experience/{id}/demote  — 降级到候选层
     DELETE /api/admin/experience/{id}         — 删除记录
+    POST   /api/admin/experience/batch-promote — 智能批量晋升候选层
 
 注意：原 /provinces 端点已合并到 /stats（通过 by_province 字段返回省份数据）。
 前端从 stats 响应中提取省份列表，避免重复请求。
@@ -19,6 +20,7 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from loguru import logger
 
 from app.models.user import User
@@ -243,3 +245,102 @@ async def delete_experience(
     except Exception as e:
         logger.error(f"删除经验记录失败: {e}")
         raise HTTPException(status_code=500, detail="删除失败")
+
+
+# ============================================================
+# 智能批量晋升候选层
+# ============================================================
+
+class BatchPromoteRequest(BaseModel):
+    province: str | None = None  # 按省份过滤（None=全部）
+    dry_run: bool = True         # 预览模式（不实际修改）
+
+
+@router.post("/batch-promote")
+async def batch_promote(
+    req: BatchPromoteRequest,
+    admin: User = Depends(require_admin),
+):
+    """智能批量晋升候选层记录
+
+    逻辑：
+    1. 取出候选层记录（排除 project_import_suspect 来源）
+    2. 对每条运行定额校验
+    3. 校验通过 → 晋升权威层
+    4. 校验失败 → 跳过
+
+    dry_run=true 时只返回预览统计，不实际修改。
+    """
+    try:
+        def _batch():
+            import json as _json
+            db = _get_experience_db()
+
+            # 取候选层记录（不限数量）
+            records = db.get_candidate_records(province=req.province, limit=0)
+
+            # 排除 project_import_suspect（这些被审核规则检测到问题，不能自动晋升）
+            records = [r for r in records if r.get("source") != "project_import_suspect"]
+
+            promoted = 0
+            skipped = 0
+            errors = []  # 记录前几条失败原因（便于前端展示）
+
+            for r in records:
+                # 解析定额编号
+                quota_ids_raw = r.get("quota_ids", "[]")
+                if isinstance(quota_ids_raw, str):
+                    try:
+                        quota_ids = _json.loads(quota_ids_raw)
+                    except Exception:
+                        quota_ids = []
+                else:
+                    quota_ids = quota_ids_raw
+
+                if not quota_ids:
+                    skipped += 1
+                    if len(errors) < 5:
+                        bill = r.get("bill_name") or r.get("bill_text", "")[:30]
+                        errors.append(f"{bill}: 无定额编号")
+                    continue
+
+                # 运行定额校验
+                bill_text = r.get("bill_text", "")
+                try:
+                    validation = db._validate_quota_ids(bill_text, quota_ids, r.get("province", ""))
+                except Exception:
+                    # 校验方法异常（如定额库未找到），视为跳过
+                    skipped += 1
+                    continue
+
+                if not validation.get("valid", False):
+                    skipped += 1
+                    if len(errors) < 5:
+                        bill = r.get("bill_name") or bill_text[:30]
+                        err_msg = "; ".join(validation.get("errors", []))[:50]
+                        errors.append(f"{bill}: {err_msg}")
+                    continue
+
+                # 校验通过：dry_run 模式下只计数，不修改
+                if not req.dry_run:
+                    ok = db.promote_to_authority(r["id"], reason="智能批量晋升（定额校验通过）")
+                    if ok:
+                        promoted += 1
+                    else:
+                        skipped += 1
+                else:
+                    promoted += 1  # 预览模式下计为"可晋升"
+
+            return {
+                "total": len(records),
+                "promoted": promoted,
+                "skipped": skipped,
+                "errors": errors,
+                "dry_run": req.dry_run,
+            }
+
+        result = await asyncio.to_thread(_batch)
+        return result
+    except Exception as e:
+        logger.error(f"批量晋升失败: {e}")
+        raise HTTPException(status_code=500, detail="批量晋升失败")
