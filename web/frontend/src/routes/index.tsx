@@ -23,6 +23,7 @@ import UserManage from '../pages/Admin/UserManage';
 import SettingsPage from '../pages/Admin/SettingsPage';
 import QuotaManage from '../pages/Admin/QuotaManage';
 import LogViewer from '../pages/Admin/LogViewer';
+import KnowledgeManage from '../pages/Admin/KnowledgeManage';
 
 const router = createBrowserRouter([
   // 登录页（不需要布局和登录状态）
@@ -53,6 +54,7 @@ const router = createBrowserRouter([
       { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
       { path: 'admin/experience', element: <RequireAdmin><ExperienceManage /></RequireAdmin> },
       { path: 'admin/quotas', element: <RequireAdmin><QuotaManage /></RequireAdmin> },
+      { path: 'admin/knowledge', element: <RequireAdmin><KnowledgeManage /></RequireAdmin> },
       { path: 'admin/feedback', element: <RequireAdmin><FeedbackReview /></RequireAdmin> },
       { path: 'admin/analytics', element: <RequireAdmin><AnalyticsPage /></RequireAdmin> },
       { path: 'admin/users', element: <RequireAdmin><UserManage /></RequireAdmin> },
