@@ -524,6 +524,10 @@ class HybridSearcher:
             return None
         return core
 
+    # 同义词反向映射缓存（类级，避免每次搜索重建）
+    _synonym_reverse_cache: dict | None = None
+    _synonym_reverse_cache_id: int = 0  # 追踪源同义词表的id，变化时自动失效
+
     @staticmethod
     def _build_synonym_variant(query: str) -> str | None:
         """生成同义词反向替换变体（L7）
@@ -546,19 +550,26 @@ class HybridSearcher:
         if not synonyms:
             return None
 
-        # 构建反向映射：定额写法 → 清单写法列表
-        reverse_map = {}
-        for bill_term, quota_term in synonyms.items():
-            if quota_term not in reverse_map:
-                reverse_map[quota_term] = []
-            reverse_map[quota_term].append(bill_term)
+        # 使用类级缓存，避免每次调用都重建反向映射（批量场景下几百次调用只建一次）
+        # 通过 id(synonyms) 检测源同义词表是否被重置（测试场景 _SYNONYMS_CACHE=None 后重加载）
+        syn_id = id(synonyms)
+        if HybridSearcher._synonym_reverse_cache is None or HybridSearcher._synonym_reverse_cache_id != syn_id:
+            reverse_map = {}
+            for bill_term, quota_term in synonyms.items():
+                if quota_term not in reverse_map:
+                    reverse_map[quota_term] = []
+                reverse_map[quota_term].append(bill_term)
+            # 按定额术语长度降序排列（预排序，避免每次调用排序）
+            HybridSearcher._synonym_reverse_cache = dict(
+                sorted(reverse_map.items(), key=lambda x: len(x[0]), reverse=True)
+            )
+            HybridSearcher._synonym_reverse_cache_id = syn_id
 
-        # 在query中查找被替换过的定额术语，按长度降序匹配
+        # 在query中查找被替换过的定额术语
         variant = query
-        for quota_term in sorted(reverse_map.keys(), key=len, reverse=True):
+        for quota_term, bill_terms in HybridSearcher._synonym_reverse_cache.items():
             if quota_term in variant:
                 # 用最短的清单术语替换（通常更通用）
-                bill_terms = reverse_map[quota_term]
                 shortest = min(bill_terms, key=len)
                 variant = variant.replace(quota_term, shortest, 1)
                 break  # 只做一次替换
