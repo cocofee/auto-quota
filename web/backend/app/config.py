@@ -88,6 +88,10 @@ UPLOAD_MAX_MB = 30
 TASK_OUTPUT_DIR = PROJECT_ROOT / "output" / "tasks"
 TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# 日志目录（loguru 按天写入，Docker 挂载到宿主机持久化）
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 # ============================================================
 # CORS 跨域配置
 # ============================================================

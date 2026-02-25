@@ -13,11 +13,9 @@ from loguru import logger
 
 from app.models.user import User
 from app.auth.permissions import require_admin
+from app.config import LOG_DIR
 
 router = APIRouter()
-
-# 日志目录（和 main.py / celery_app.py 中的 LOG_DIR 保持一致）
-LOG_DIR = Path(__file__).parent.parent.parent.parent.parent / "logs"
 
 
 def _safe_filename(filename: str) -> Path:

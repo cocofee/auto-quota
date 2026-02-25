@@ -69,7 +69,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     const hasRunning = tasks.some((t) => t.status === 'running' || t.status === 'pending');
     if (!hasRunning) return;
 
-    const timer = setInterval(loadTasks, 5000);
+    const timer = setInterval(loadTasks, 3000);
     return () => clearInterval(timer);
   }, [tasks, loadTasks]);
 
@@ -106,10 +106,10 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     }
   };
 
-  /** 上传反馈（纠正后的Excel） */
-  const [feedbackUploading, setFeedbackUploading] = useState(false);
+  /** 上传反馈（纠正后的Excel）——用 Set 追踪正在上传的 taskId，避免影响其他行 */
+  const [uploadingTaskIds, setUploadingTaskIds] = useState<Set<string>>(new Set());
   const uploadFeedback = async (taskId: string, file: File) => {
-    setFeedbackUploading(true);
+    setUploadingTaskIds((prev) => new Set(prev).add(taskId));
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -128,7 +128,11 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
         ?.response?.data?.detail;
       message.error(detail || '反馈上传失败');
     } finally {
-      setFeedbackUploading(false);
+      setUploadingTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
     }
   };
 
@@ -175,6 +179,9 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
                 showInfo={false}
                 style={{ marginTop: 4 }}
               />
+              {record.progress_message && (
+                <span style={{ fontSize: 11, color: '#999' }}>{record.progress_message}</span>
+              )}
             </Space>
           );
         }
@@ -247,7 +254,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
                     type="link"
                     size="small"
                     icon={<UploadOutlined />}
-                    loading={feedbackUploading}
+                    loading={uploadingTaskIds.has(record.id)}
                   >
                     反馈
                   </Button>

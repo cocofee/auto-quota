@@ -23,4 +23,5 @@ export const STATUS_OPTIONS = [
   { label: '匹配中', value: 'running' },
   { label: '已完成', value: 'completed' },
   { label: '失败', value: 'failed' },
+  { label: '已取消', value: 'cancelled' },
 ];

@@ -49,27 +49,28 @@ export default function LogViewer() {
   const [keyword, setKeyword] = useState('');
   const [lines, setLines] = useState(200);
 
-  // 加载文件列表
+  // 加载文件列表（只在首次加载和手动刷新时调用）
   const loadFiles = useCallback(() => {
     setLoadingFiles(true);
     api.get('/admin/logs/files')
       .then((res) => {
         const items: LogFile[] = res.data.items || [];
         setFiles(items);
-        // 自动选中最新文件
-        if (items.length > 0 && !selectedFile) {
-          setSelectedFile(items[0].filename);
-        }
+        // 自动选中最新文件（仅首次加载时）
+        setSelectedFile((prev) => {
+          if (!prev && items.length > 0) return items[0].filename;
+          return prev;
+        });
       })
       .catch(() => {})
       .finally(() => setLoadingFiles(false));
-  }, [selectedFile]);
+  }, []);
 
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
 
-  // 加载日志内容
+  // 加载日志内容（keyword 不放依赖数组，只在回车/点击刷新时触发搜索）
   const loadContent = useCallback(() => {
     if (!selectedFile) return;
     setLoadingContent(true);
@@ -83,7 +84,8 @@ export default function LogViewer() {
         setLogContent(null);
       })
       .finally(() => setLoadingContent(false));
-  }, [selectedFile, lines, keyword]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFile, lines]);
 
   useEffect(() => {
     loadContent();
@@ -140,7 +142,7 @@ export default function LogViewer() {
               loading={loadingFiles}
             />
           }
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
         >
           {files.length === 0 ? (
             <Empty

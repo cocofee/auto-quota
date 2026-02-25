@@ -217,7 +217,7 @@ async def export_results(
 
     下载匹配完成后生成的广联达格式Excel文件。
     """
-    task = await _get_user_task(task_id, user, db)
+    task = await get_user_task(task_id, user, db)
 
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="任务尚未完成，无法导出")

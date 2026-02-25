@@ -317,12 +317,20 @@ export default function ExperienceManage() {
           </Col>
           <Col span={8}>
             <Card>
-              <Statistic title="权威层" value={stats?.authority || 0} valueStyle={{ color: '#52c41a' }} />
+              <Statistic
+                title={selectedProvince ? '权威层（全部省份）' : '权威层'}
+                value={stats?.authority || 0}
+                valueStyle={{ color: '#52c41a' }}
+              />
             </Card>
           </Col>
           <Col span={8}>
             <Card>
-              <Statistic title="候选层" value={stats?.candidate || 0} valueStyle={{ color: '#faad14' }} />
+              <Statistic
+                title={selectedProvince ? '候选层（全部省份）' : '候选层'}
+                value={stats?.candidate || 0}
+                valueStyle={{ color: '#faad14' }}
+              />
             </Card>
           </Col>
         </Row>

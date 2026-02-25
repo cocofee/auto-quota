@@ -128,7 +128,7 @@ export default function DashboardPage() {
       width: 80,
       render: (_: unknown, record: TaskInfo) => {
         if (!record.stats || !record.stats.total) return '-';
-        const rate = Math.round((record.stats.matched / record.stats.total) * 100);
+        const rate = Math.round(((record.stats.matched ?? 0) / record.stats.total) * 100);
         return `${rate}%`;
       },
     },

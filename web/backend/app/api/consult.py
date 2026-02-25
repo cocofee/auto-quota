@@ -233,7 +233,7 @@ async def chat(
         )
     except Exception as e:
         logger.error(f"贾维斯对话失败: {e}")
-        raise HTTPException(status_code=500, detail=f"AI 回复失败: {e}")
+        raise HTTPException(status_code=500, detail="AI 回复失败，请稍后重试")
 
     return {"reply": reply}
 
@@ -347,7 +347,7 @@ async def extract_results(
         )
     except Exception as e:
         logger.error(f"提取对话结果失败: {e}")
-        raise HTTPException(status_code=500, detail=f"提取失败: {e}")
+        raise HTTPException(status_code=500, detail="提取失败，请稍后重试")
 
     parsed = _parse_extract_response(raw_text)
     items = [
@@ -581,13 +581,30 @@ async def review_submission(
             for item in submission.submitted_items
             if item.get("quota_id", "").strip()
         ]
+        # 审核场景需要严格保证一致性：写入失败时必须回滚审核状态
+        # 不使用 store_experience_batch（那个会吞异常），直接调用 store_one
         try:
-            stored_count = await store_experience_batch(
-                records=batch_records,
-                province=submission.province,
-                reason=f"Web端咨询审核通过 by {admin.email}",
-                confirmed=True,
-            )
+            from tools.jarvis_store import store_one
+
+            def _store_all():
+                count = 0
+                for rec in batch_records:
+                    if rec.get("quota_ids"):
+                        ok = store_one(
+                            name=rec["name"],
+                            desc="",
+                            quota_ids=rec["quota_ids"],
+                            quota_names=rec.get("quota_names", []),
+                            reason=f"Web端咨询审核通过 by {admin.email}",
+                            specialty="",
+                            province=submission.province,
+                            confirmed=True,
+                        )
+                        if ok:
+                            count += 1
+                return count
+
+            stored_count = await asyncio.to_thread(_store_all)
         except Exception as e:
             # 经验库写入失败 → 回滚审核状态为 pending，避免"已通过但没写入"的不一致
             logger.error(f"咨询审核写入经验库失败: {e}")
@@ -598,7 +615,7 @@ async def review_submission(
             await db.flush()
             raise HTTPException(
                 status_code=500,
-                detail=f"经验库写入失败，审核已回滚为待审核状态: {e}",
+                detail="经验库写入失败，审核已回滚为待审核状态",
             )
 
     await db.flush()
