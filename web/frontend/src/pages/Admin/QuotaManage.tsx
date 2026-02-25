@@ -1,0 +1,477 @@
+/**
+ * 管理员 — 定额库管理
+ *
+ * 功能：
+ * 1. 左侧：按省份（地区）折叠分组展示定额库列表
+ * 2. 右侧：当前定额库统计 + 章节列表 + 导入Excel + 导入历史
+ */
+
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import {
+  Card, Table, Tag, Button, Space, App, Row, Col, Statistic,
+  Upload, Empty, Descriptions, Modal, Input, Collapse, Badge, Select,
+} from 'antd';
+import {
+  DatabaseOutlined, BookOutlined, UploadOutlined,
+  ReloadOutlined, HistoryOutlined,
+  PlusOutlined, RightOutlined,
+} from '@ant-design/icons';
+import type { UploadProps } from 'antd';
+import api from '../../services/api';
+
+// 定额库信息
+interface ProvinceInfo {
+  name: string;
+  total_quotas: number;
+  chapter_count: number;
+  version: string;
+}
+
+// 章节信息
+interface ChapterInfo {
+  chapter: string;
+  count: number;
+}
+
+// 导入历史
+interface ImportRecord {
+  file_path: string;
+  file_name: string;
+  file_size: number;
+  specialty: string;
+  quota_count: number;
+  imported_at: number;
+  status: string;
+}
+
+// 按地区分组后的结构
+interface RegionGroup {
+  region: string;          // 地区名（北京、广东、宁夏等）
+  items: ProvinceInfo[];   // 该地区下的所有定额库
+  totalQuotas: number;     // 该地区总定额数
+}
+
+/**
+ * 从定额库全名中提取地区名
+ * 例如：
+ *   "北京市建设工程施工消耗量标准(2024)" → "北京"
+ *   "广东省通用安装工程综合定额(2018)"   → "广东"
+ *   "宁夏回族自治区装配式钢结构..."       → "宁夏"
+ *   "佛山市海绵城市..."                  → "佛山"
+ */
+function extractRegion(name: string): string {
+  // 找"省"、"市"位置，取其前面部分
+  for (let i = 0; i < name.length && i < 10; i++) {
+    if (name[i] === '省' || name[i] === '市') {
+      return name.slice(0, i);
+    }
+    // "宁夏回族自治区" → 取"回"前面的部分
+    if (name.slice(i, i + 2) === '回族') {
+      return name.slice(0, i);
+    }
+  }
+  // 默认取前2个字符
+  return name.slice(0, 2);
+}
+
+export default function QuotaManage() {
+  const { message } = App.useApp();
+  const [provinces, setProvinces] = useState<ProvinceInfo[]>([]);
+  const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
+  const [chapters, setChapters] = useState<ChapterInfo[]>([]);
+  const [history, setHistory] = useState<ImportRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // 导入对话框
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [newProvinceName, setNewProvinceName] = useState('');
+  const [importProvince, setImportProvince] = useState<string>('');  // 导入时选择的省份
+  const [isNewProvince, setIsNewProvince] = useState(false);         // 是否新建省份
+
+  // 按地区分组
+  const regionGroups: RegionGroup[] = useMemo(() => {
+    const map = new Map<string, ProvinceInfo[]>();
+    for (const p of provinces) {
+      const region = extractRegion(p.name);
+      if (!map.has(region)) map.set(region, []);
+      map.get(region)!.push(p);
+    }
+    // 转为数组，按定额总数降序排列
+    return Array.from(map.entries())
+      .map(([region, items]) => ({
+        region,
+        items: items.sort((a, b) => b.total_quotas - a.total_quotas),
+        totalQuotas: items.reduce((sum, i) => sum + i.total_quotas, 0),
+      }))
+      .sort((a, b) => b.totalQuotas - a.totalQuotas);
+  }, [provinces]);
+
+  // 加载省份列表
+  const loadProvinces = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get<{ items: ProvinceInfo[] }>('/admin/quotas/provinces');
+      setProvinces(data.items);
+      // 自动选中第一个有定额的
+      if (data.items.length > 0 && !selectedProvince) {
+        const withData = data.items.find((p) => p.total_quotas > 0);
+        setSelectedProvince(withData ? withData.name : data.items[0].name);
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedProvince]);
+
+  // 加载指定定额库的章节列表和导入历史
+  const loadProvinceDetail = useCallback(async (province: string) => {
+    setDetailLoading(true);
+    try {
+      const [chaptersRes, historyRes] = await Promise.allSettled([
+        api.get<{ items: ChapterInfo[] }>(`/admin/quotas/${encodeURIComponent(province)}/chapters`),
+        api.get<{ items: ImportRecord[] }>(`/admin/quotas/${encodeURIComponent(province)}/import-history`),
+      ]);
+      if (chaptersRes.status === 'fulfilled') {
+        setChapters(chaptersRes.value.data.items);
+      }
+      if (historyRes.status === 'fulfilled') {
+        setHistory(historyRes.value.data.items);
+      }
+    } catch {
+      message.error('加载详情失败');
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    loadProvinces();
+  }, [loadProvinces]);
+
+  useEffect(() => {
+    if (selectedProvince) {
+      loadProvinceDetail(selectedProvince);
+    }
+  }, [selectedProvince, loadProvinceDetail]);
+
+  // 上传配置
+  const uploadProps: UploadProps = {
+    name: 'file',
+    accept: '.xlsx',
+    showUploadList: false,
+    customRequest: async (options) => {
+      const { file, onSuccess, onError } = options;
+      const province = isNewProvince ? newProvinceName : (importProvince || selectedProvince);
+      if (!province) {
+        message.error('请先选择省份或输入新省份名称');
+        return;
+      }
+
+      setUploading(true);
+      const formData = new FormData();
+      formData.append('file', file as Blob);
+      formData.append('province', province);
+
+      try {
+        const { data } = await api.post('/admin/quotas/import', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 300000,
+        });
+        message.success(`导入成功：${data.imported_count} 条定额`);
+        onSuccess?.(data);
+        loadProvinces();
+        if (selectedProvince) loadProvinceDetail(selectedProvince);
+        // 导入成功后重置对话框状态
+        setImportModalOpen(false);
+        setIsNewProvince(false);
+        setImportProvince('');
+        setNewProvinceName('');
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        message.error(detail || '导入失败');
+        onError?.(new Error(detail || '导入失败'));
+      } finally {
+        setUploading(false);
+      }
+    },
+  };
+
+  // 当前选中的定额库信息
+  const currentProvince = provinces.find((p) => p.name === selectedProvince);
+  const totalQuotas = currentProvince?.total_quotas || 0;
+
+  // 章节表格列
+  const chapterColumns = [
+    {
+      title: '序号',
+      key: 'index',
+      width: 60,
+      render: (_: unknown, __: unknown, index: number) => index + 1,
+    },
+    {
+      title: '章节名称',
+      dataIndex: 'chapter',
+      key: 'chapter',
+    },
+    {
+      title: '定额条数',
+      dataIndex: 'count',
+      key: 'count',
+      width: 120,
+      render: (v: number) => <Tag color="green">{v} 条</Tag>,
+    },
+  ];
+
+  // 格式化时间戳
+  const formatTime = (ts: number) => {
+    if (!ts) return '-';
+    return new Date(ts * 1000).toLocaleString('zh-CN');
+  };
+
+  // 格式化文件大小
+  const formatSize = (bytes: number) => {
+    if (!bytes) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
+
+  // 找到当前选中项所在的地区，用于默认展开
+  const selectedRegion = selectedProvince ? extractRegion(selectedProvince) : undefined;
+
+  return (
+    <Row gutter={16} style={{ height: '100%' }}>
+      {/* 左侧：按地区折叠分组 */}
+      <Col span={7}>
+        <Card
+          title={<><DatabaseOutlined /> 定额库</>}
+          loading={loading}
+          extra={
+            <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => setImportModalOpen(true)}>
+              导入
+            </Button>
+          }
+          bodyStyle={{ padding: '0 0 12px 0' }}
+        >
+          {provinces.length === 0 ? (
+            <div style={{ padding: 24 }}>
+              <Empty description="暂无定额库" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+                <Button type="primary" onClick={() => setImportModalOpen(true)}>
+                  导入第一个定额库
+                </Button>
+              </Empty>
+            </div>
+          ) : (
+            <Collapse
+              bordered={false}
+              defaultActiveKey={selectedRegion ? [selectedRegion] : regionGroups.length > 0 ? [regionGroups[0].region] : []}
+              expandIcon={({ isActive }) => <RightOutlined rotate={isActive ? 90 : 0} style={{ fontSize: 11 }} />}
+              style={{ background: 'transparent' }}
+              items={regionGroups.map((group) => ({
+                key: group.region,
+                label: (
+                  <span style={{ fontWeight: 600 }}>
+                    {group.region}
+                    <Badge
+                      count={group.items.length}
+                      style={{ marginLeft: 8, backgroundColor: '#1677ff' }}
+                      size="small"
+                    />
+                    <span style={{ fontWeight: 400, color: '#999', fontSize: 12, marginLeft: 8 }}>
+                      {group.totalQuotas.toLocaleString()} 条
+                    </span>
+                  </span>
+                ),
+                children: (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {group.items.map((item) => (
+                      <div
+                        key={item.name}
+                        onClick={() => setSelectedProvince(item.name)}
+                        style={{
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          background: selectedProvince === item.name ? '#e6f4ff' : undefined,
+                          border: selectedProvince === item.name ? '1px solid #91caff' : '1px solid transparent',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <div style={{
+                          fontSize: 13,
+                          fontWeight: selectedProvince === item.name ? 600 : 400,
+                          color: selectedProvince === item.name ? '#1677ff' : undefined,
+                          lineHeight: 1.4,
+                        }}>
+                          {item.name}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#999' }}>
+                          {item.total_quotas.toLocaleString()} 条定额 · {item.chapter_count} 章节
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ),
+              }))}
+            />
+          )}
+        </Card>
+      </Col>
+
+      {/* 右侧：定额库详情 */}
+      <Col span={17}>
+        {selectedProvince ? (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            {/* 统计卡片 */}
+            <Row gutter={16}>
+              <Col span={8}>
+                <Card>
+                  <Statistic title="总定额数" value={totalQuotas} prefix={<DatabaseOutlined />} />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card>
+                  <Statistic title="章节数" value={chapters.length} prefix={<BookOutlined />} />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card>
+                  <Statistic title="导入文件数" value={history.length} prefix={<HistoryOutlined />} />
+                </Card>
+              </Col>
+            </Row>
+
+            {/* 章节列表 */}
+            <Card
+              title={<><BookOutlined /> 章节列表 — {selectedProvince}</>}
+              loading={detailLoading}
+              extra={
+                <Space>
+                  <Upload {...uploadProps}>
+                    <Button icon={<UploadOutlined />} loading={uploading}>
+                      导入Excel到此定额库
+                    </Button>
+                  </Upload>
+                  <Button icon={<ReloadOutlined />} onClick={() => loadProvinceDetail(selectedProvince)}>
+                    刷新
+                  </Button>
+                </Space>
+              }
+            >
+              <Table
+                rowKey="chapter"
+                dataSource={chapters}
+                columns={chapterColumns}
+                size="small"
+                pagination={chapters.length > 20 ? { pageSize: 20, showTotal: (t) => `共 ${t} 个章节` } : false}
+              />
+            </Card>
+
+            {/* 导入历史 */}
+            {history.length > 0 && (
+              <Card title={<><HistoryOutlined /> 导入历史</>}>
+                <Descriptions bordered column={1} size="small">
+                  {history.map((h, i) => (
+                    <Descriptions.Item key={i} label={h.file_name || h.file_path.split(/[/\\]/).pop()}>
+                      <Space>
+                        <Tag color={h.status === 'success' ? 'green' : 'red'}>
+                          {h.status === 'success' ? '成功' : '失败'}
+                        </Tag>
+                        <span>{h.quota_count} 条</span>
+                        <span style={{ color: '#999' }}>{formatSize(h.file_size)}</span>
+                        <span style={{ color: '#999' }}>{formatTime(h.imported_at)}</span>
+                      </Space>
+                    </Descriptions.Item>
+                  ))}
+                </Descriptions>
+              </Card>
+            )}
+          </Space>
+        ) : (
+          <Card style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Empty description="请从左侧选择一个定额库查看详情" />
+          </Card>
+        )}
+      </Col>
+
+      {/* 导入对话框 */}
+      <Modal
+        title="导入定额Excel"
+        open={importModalOpen}
+        onCancel={() => {
+          setImportModalOpen(false);
+          setIsNewProvince(false);
+          setImportProvince('');
+          setNewProvinceName('');
+        }}
+        footer={null}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择定额库</div>
+            {!isNewProvince ? (
+              <Space direction="vertical" style={{ width: '100%' }} size="small">
+                <Select
+                  placeholder="选择已有定额库"
+                  value={importProvince || undefined}
+                  onChange={(v) => setImportProvince(v)}
+                  style={{ width: '100%' }}
+                  showSearch
+                  filterOption={(input, option) =>
+                    (option?.label as string)?.toLowerCase().includes(input.toLowerCase()) ?? false
+                  }
+                  options={provinces.map((p) => ({
+                    value: p.name,
+                    label: `${p.name}（${p.total_quotas.toLocaleString()} 条）`,
+                  }))}
+                />
+                <Button
+                  type="link"
+                  icon={<PlusOutlined />}
+                  onClick={() => { setIsNewProvince(true); setImportProvince(''); }}
+                  style={{ padding: 0 }}
+                >
+                  新建定额库
+                </Button>
+              </Space>
+            ) : (
+              <Space direction="vertical" style={{ width: '100%' }} size="small">
+                <Input
+                  placeholder="输入完整名称，如：北京市建设工程施工消耗量标准(2024)"
+                  value={newProvinceName}
+                  onChange={(e) => setNewProvinceName(e.target.value)}
+                />
+                <Button
+                  type="link"
+                  onClick={() => { setIsNewProvince(false); setNewProvinceName(''); }}
+                  style={{ padding: 0 }}
+                >
+                  返回选择已有定额库
+                </Button>
+              </Space>
+            )}
+          </div>
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择定额Excel文件</div>
+            <Upload {...uploadProps}>
+              <Button
+                type="primary"
+                icon={<UploadOutlined />}
+                loading={uploading}
+                disabled={isNewProvince ? !newProvinceName : !importProvince}
+              >
+                选择并上传 .xlsx 文件
+              </Button>
+            </Upload>
+          </div>
+          <div style={{ color: '#999', fontSize: 13 }}>
+            定额Excel格式：A列=编号，B列=名称，C列=单位，D列=工作类型。支持增量导入。
+          </div>
+        </Space>
+      </Modal>
+    </Row>
+  );
+}

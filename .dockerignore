@@ -1,0 +1,53 @@
+# Docker 构建时忽略的文件（减小构建上下文体积，加快构建速度）
+
+# 版本控制
+.git
+.gitignore
+
+# 敏感配置文件（含API Key等，绝不能打包进镜像）
+.env
+.env.*
+!.env.example
+
+# Python 缓存
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+pytest-cache-files-*
+
+# 虚拟环境
+.venv
+venv
+env
+
+# Node.js（前端有自己的 Dockerfile，不需要在后端上下文中）
+web/frontend/node_modules
+web/frontend/dist
+web/frontend/.vite
+
+# IDE
+.vscode
+.idea
+*.suo
+
+# 临时文件
+*.log
+.pytest-tmp
+jarvis-correct-*
+nul
+
+# 文档（构建不需要）
+docs/
+*.md
+!README.md
+
+# 测试（生产镜像不需要）
+tests/
+
+# 开发脚本
+scripts/
+
+# 大文件/数据（通过 volume 挂载，不打包进镜像）
+output/
+logs/
