@@ -135,7 +135,7 @@ python tools/system_health_check.py --mode quick
 python tools/system_health_check.py --mode full
 
 # 也可以用批处理脚本
-scripts\dev\代码审查.bat
+系统体检.bat review
 ```
 
 ## 执行协议
@@ -151,7 +151,7 @@ scripts\dev\代码审查.bat
 2. **自测**：`python -m pytest tests/ -q`（405+条全部通过才算过）
 3. **健康检查**：`python tools/system_health_check.py --mode full`（9项全通过）
 4. **benchmark跑分**：`python tools/run_benchmark.py`（对比基线，确认不退化）
-5. **Codex审查**：`scripts\dev\代码审查.bat`（需要codex命令行工具+网络）
+5. **Codex审查**：`系统体检.bat review`（需要codex命令行工具+网络）
 6. **处理审查意见**：Codex会列出问题，逐条修复后重新跑自测
 7. **提交**：全部通过后才提交代码
 
