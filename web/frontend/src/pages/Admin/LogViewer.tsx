@@ -1,0 +1,261 @@
+/**
+ * 系统日志查看页面（管理员专属）
+ *
+ * 左侧：日志文件列表
+ * 右侧：日志内容显示（等宽字体，高亮 ERROR/WARNING）
+ * 支持关键词搜索和行数控制
+ */
+
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Card, List, Input, Select, Button, Space, Typography, Tag, Empty, Spin,
+} from 'antd';
+import {
+  ReloadOutlined, FileTextOutlined, SearchOutlined,
+} from '@ant-design/icons';
+import api from '../../services/api';
+
+const { Title, Text } = Typography;
+
+// 日志文件信息
+interface LogFile {
+  filename: string;
+  size: number;
+  size_display: string;
+  modified_at: number;
+}
+
+// 日志内容响应
+interface LogContent {
+  filename: string;
+  total_lines: number;
+  returned_lines: number;
+  content: string;
+}
+
+export default function LogViewer() {
+  // 文件列表
+  const [files, setFiles] = useState<LogFile[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+
+  // 当前选中的文件
+  const [selectedFile, setSelectedFile] = useState('');
+
+  // 日志内容
+  const [logContent, setLogContent] = useState<LogContent | null>(null);
+  const [loadingContent, setLoadingContent] = useState(false);
+
+  // 搜索参数
+  const [keyword, setKeyword] = useState('');
+  const [lines, setLines] = useState(200);
+
+  // 加载文件列表
+  const loadFiles = useCallback(() => {
+    setLoadingFiles(true);
+    api.get('/admin/logs/files')
+      .then((res) => {
+        const items: LogFile[] = res.data.items || [];
+        setFiles(items);
+        // 自动选中最新文件
+        if (items.length > 0 && !selectedFile) {
+          setSelectedFile(items[0].filename);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingFiles(false));
+  }, [selectedFile]);
+
+  useEffect(() => {
+    loadFiles();
+  }, [loadFiles]);
+
+  // 加载日志内容
+  const loadContent = useCallback(() => {
+    if (!selectedFile) return;
+    setLoadingContent(true);
+    api.get('/admin/logs/read', {
+      params: { filename: selectedFile, lines, keyword: keyword || undefined },
+    })
+      .then((res) => {
+        setLogContent(res.data);
+      })
+      .catch(() => {
+        setLogContent(null);
+      })
+      .finally(() => setLoadingContent(false));
+  }, [selectedFile, lines, keyword]);
+
+  useEffect(() => {
+    loadContent();
+  }, [loadContent]);
+
+  // 高亮日志行中的 ERROR/WARNING 等关键词
+  const renderLogLine = (line: string, index: number) => {
+    const isError = /\bERROR\b/i.test(line);
+    const isWarning = /\bWARNING\b/i.test(line);
+
+    let color = 'inherit';
+    if (isError) color = '#ff4d4f';
+    if (isWarning) color = '#faad14';
+
+    return (
+      <div
+        key={index}
+        style={{
+          color,
+          fontWeight: isError ? 'bold' : 'normal',
+          padding: '1px 0',
+          borderBottom: '1px solid #f5f5f5',
+        }}
+      >
+        {line}
+      </div>
+    );
+  };
+
+  // 文件列表中正在选中的项高亮
+  const fileTypeTag = (filename: string) => {
+    if (filename.startsWith('web_')) return <Tag color="blue">Web</Tag>;
+    if (filename.startsWith('celery_')) return <Tag color="green">Celery</Tag>;
+    return <Tag>其他</Tag>;
+  };
+
+  return (
+    <div>
+      <Title level={3}>系统日志</Title>
+      <Text type="secondary">
+        查看后端和 Celery 的运行日志，定位错误和异常。
+      </Text>
+
+      <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
+        {/* 左侧：文件列表 */}
+        <Card
+          title="日志文件"
+          style={{ width: 300, flexShrink: 0 }}
+          extra={
+            <Button
+              icon={<ReloadOutlined />}
+              size="small"
+              onClick={loadFiles}
+              loading={loadingFiles}
+            />
+          }
+          bodyStyle={{ padding: 0 }}
+        >
+          {files.length === 0 ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暂无日志文件"
+              style={{ padding: 24 }}
+            />
+          ) : (
+            <List
+              size="small"
+              dataSource={files}
+              renderItem={(file) => (
+                <List.Item
+                  onClick={() => setSelectedFile(file.filename)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '8px 16px',
+                    background: file.filename === selectedFile ? '#e6f4ff' : 'transparent',
+                  }}
+                >
+                  <div style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <FileTextOutlined />
+                      {fileTypeTag(file.filename)}
+                      <Text style={{ fontSize: 12 }}>
+                        {file.filename.replace(/^(web_|celery_)/, '').replace('.log', '')}
+                      </Text>
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      {file.size_display}
+                    </Text>
+                  </div>
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
+
+        {/* 右侧：日志内容 */}
+        <Card
+          title={selectedFile ? `${selectedFile}` : '选择一个日志文件'}
+          style={{ flex: 1, minWidth: 0 }}
+          extra={
+            <Space>
+              <Input
+                placeholder="搜索关键词"
+                prefix={<SearchOutlined />}
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                onPressEnter={loadContent}
+                style={{ width: 180 }}
+                size="small"
+                allowClear
+              />
+              <Select
+                value={lines}
+                onChange={setLines}
+                size="small"
+                style={{ width: 100 }}
+                options={[
+                  { label: '100 行', value: 100 },
+                  { label: '200 行', value: 200 },
+                  { label: '500 行', value: 500 },
+                  { label: '1000 行', value: 1000 },
+                  { label: '全部', value: 5000 },
+                ]}
+              />
+              <Button
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={loadContent}
+                loading={loadingContent}
+              >
+                刷新
+              </Button>
+            </Space>
+          }
+        >
+          {loadingContent ? (
+            <div style={{ textAlign: 'center', padding: 40 }}>
+              <Spin tip="加载中..." />
+            </div>
+          ) : !logContent ? (
+            <Empty description="选择左侧的日志文件查看内容" />
+          ) : logContent.content === '' ? (
+            <Empty description={keyword ? `未找到包含"${keyword}"的日志行` : '日志文件为空'} />
+          ) : (
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  共 {logContent.total_lines} 行，显示最后 {logContent.returned_lines} 行
+                  {keyword && `（过滤: "${keyword}"）`}
+                </Text>
+              </div>
+              <div
+                style={{
+                  fontFamily: 'Consolas, "Courier New", monospace',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  maxHeight: 'calc(100vh - 320px)',
+                  overflow: 'auto',
+                  background: '#fafafa',
+                  padding: 12,
+                  borderRadius: 4,
+                  border: '1px solid #f0f0f0',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {logContent.content.split('\n').map(renderLogLine)}
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
