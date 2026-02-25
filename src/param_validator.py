@@ -25,6 +25,7 @@ class ParamValidator:
     TIER_PARAMS = [
         "dn", "cable_section", "kva", "circuits", "ampere",
         "weight_t", "perimeter", "large_side", "elevator_stops",
+        "ground_bar_width",  # 接地扁钢宽度（如40×4中的40mm）
     ]
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
@@ -54,6 +55,11 @@ class ParamValidator:
             for key, value in supplement_params.items():
                 if key not in bill_params:
                     bill_params[key] = value
+
+        # 电气配管管径(conduit_dn)映射为dn参与参数验证
+        # 场景：清单"配管SC20"提取了conduit_dn=20，定额"公称直径(mm以内) 20"有dn分档
+        if "conduit_dn" in bill_params and "dn" not in bill_params:
+            bill_params["dn"] = bill_params.pop("conduit_dn")
 
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
@@ -92,6 +98,17 @@ class ParamValidator:
                     if neg_penalty >= 0.3:
                         c["param_match"] = False
 
+            # 即使无清单参数，也需融合排序（否则搜索引擎原始顺序主导，
+            # 正确候选可能因reranker分低排在后面，如"断接卡子"ps=1.0排在铜制ps=0.8后面）
+            candidates.sort(
+                key=lambda x: (
+                    x["param_match"],
+                    x["param_score"] * 0.8 + (
+                        x.get("rerank_score", x.get("hybrid_score", 0))
+                    ) * 0.2,
+                ),
+                reverse=True,
+            )
             return candidates
 
         # 逐个验证候选定额
@@ -135,17 +152,17 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # L8：排序融合 reranker 分数
-        # 之前用纯递阶排序 (param_match, param_score, rerank_score)，
-        # rerank_score 几乎无用（只有 param_score 完全相等时才起作用）。
-        # 改为加权融合：param_score * 0.7 + rerank_score * 0.3，
-        # 让 Reranker 的语义精排在参数相近的候选间发挥差异化排序能力。
+        # L8→L10：排序融合 reranker 分数
+        # 加权融合：param_score * 0.8 + rerank_score * 0.2
+        # 参数分占80%主导排序（精确匹配定额稳排在通用定额前面），
+        # reranker占20%在参数相近时发挥差异化能力。
+        # （L8原始权重0.7/0.3导致通用定额可能因reranker高分排到精确匹配前面）
         validated.sort(
             key=lambda x: (
                 x["param_match"],     # 第一级不变：匹配vs不匹配
-                x["param_score"] * 0.7 + (  # 第二级：参数分70% + 语义精排30%
+                x["param_score"] * 0.8 + (  # 第二级：参数分80% + 语义精排20%
                     x.get("rerank_score", x.get("hybrid_score", 0))
-                ) * 0.3,
+                ) * 0.2,
             ),
             reverse=True,
         )
@@ -607,42 +624,53 @@ class ParamValidator:
                 details.append(f"电压{bill_params['kv']}kV≠{quota_params['kv']}kV")
 
         # === 7. 材质（硬性参数：钢塑≠铝塑，材质错了直接降权） ===
-        if "material" in bill_params and "material" in quota_params:
-            check_count += 1
-            bill_mat = bill_params["material"]
-            quota_mat = quota_params["material"]
-            if bill_mat == quota_mat:
-                score_sum += 1.0
-                details.append(f"材质'{bill_mat}'匹配")
-            elif self._materials_compatible(bill_mat, quota_mat):
-                # 同族材质（如"钢塑"和"钢塑复合管"），给部分分
-                score_sum += 0.7
-                details.append(f"材质'{bill_mat}'≈'{quota_mat}' 近似匹配")
+        if "material" in bill_params:
+            if "material" in quota_params:
+                check_count += 1
+                bill_mat = bill_params["material"]
+                quota_mat = quota_params["material"]
+                if bill_mat == quota_mat:
+                    score_sum += 1.0
+                    details.append(f"材质'{bill_mat}'匹配")
+                elif self._materials_compatible(bill_mat, quota_mat):
+                    # 同族材质（如"钢塑"和"钢塑复合管"），给部分分
+                    score_sum += 0.7
+                    details.append(f"材质'{bill_mat}'≈'{quota_mat}' 近似匹配")
+                else:
+                    # 不同材质（如"钢塑"和"铝塑"），硬性不匹配
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"材质'{bill_mat}'≠'{quota_mat}' 不匹配")
             else:
-                # 不同材质（如"钢塑"和"铝塑"），硬性不匹配
-                has_hard_fail = True
-                score_sum += 0.0
-                details.append(f"材质'{bill_mat}'≠'{quota_mat}' 不匹配")
+                # 清单有材质但定额无材质信息 → 信息缺失微惩罚
+                # 通用定额不分材质是正常的，不算hard_fail，但排序应低于精确匹配
+                check_count += 1
+                score_sum += 0.7
+                details.append(f"清单有材质'{bill_params['material']}'但定额无材质信息")
 
         # === 8. 连接方式（硬性参数：螺纹≠沟槽、热熔≠粘接 必须匹配） ===
-        if "connection" in bill_params and "connection" in quota_params:
-            check_count += 1
-            bill_c = bill_params["connection"]
-            quota_c = quota_params["connection"]
-            if bill_c == quota_c:
-                score_sum += 1.0
-                details.append(f"连接方式'{bill_c}'匹配")
-            elif self._connections_compatible_pv(bill_c, quota_c):
-                # 兼容的连接方式（子串包含、法兰系、行业同义词）
-                score_sum += 0.8
-                details.append(f"连接方式'{bill_c}'≈'{quota_c}' 兼容")
+        if "connection" in bill_params:
+            if "connection" in quota_params:
+                check_count += 1
+                bill_c = bill_params["connection"]
+                quota_c = quota_params["connection"]
+                if bill_c == quota_c:
+                    score_sum += 1.0
+                    details.append(f"连接方式'{bill_c}'匹配")
+                elif self._connections_compatible_pv(bill_c, quota_c):
+                    # 兼容的连接方式（子串包含、法兰系、行业同义词）
+                    score_sum += 0.8
+                    details.append(f"连接方式'{bill_c}'≈'{quota_c}' 兼容")
+                else:
+                    # L8：连接方式不匹配升级为硬性失败
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"连接方式'{bill_c}'≠'{quota_c}' 不匹配")
             else:
-                # L8：连接方式不匹配升级为硬性失败
-                # 清单已明确指定连接方式（如"螺纹"），定额用了完全不兼容的方式（如"沟槽"）
-                # → 硬性不匹配，排到匹配候选后面，交给LLM最终判断
-                has_hard_fail = True
-                score_sum += 0.0
-                details.append(f"连接方式'{bill_c}'≠'{quota_c}' 不匹配")
+                # 清单有连接方式但定额无 → 信息缺失微惩罚
+                check_count += 1
+                score_sum += 0.7
+                details.append(f"清单有连接方式'{bill_params['connection']}'但定额无连接方式信息")
         # === 9. 风管形状（硬性参数：矩形≠圆形，形状错了定额完全不同） ===
         if "shape" in bill_params:
             quota_shape = quota_params.get("shape", "")
@@ -743,6 +771,23 @@ class ParamValidator:
                 else:
                     score_sum += 1.0
                     details.append(f"电梯速度{bill_speed}m/s匹配")
+
+        # === 15. 接地扁钢宽度（硬性参数：按宽度取档，如40×4中的40mm） ===
+        if "ground_bar_width" in bill_params and "ground_bar_width" in quota_params:
+            check_count += 1
+            bill_gbw = bill_params["ground_bar_width"]
+            quota_gbw = quota_params["ground_bar_width"]
+            if bill_gbw == quota_gbw:
+                score_sum += 1.0
+                details.append(f"扁钢宽{bill_gbw}={quota_gbw} 精确匹配")
+            elif bill_gbw < quota_gbw:
+                tier_score = self._tier_up_score(bill_gbw, quota_gbw)
+                score_sum += tier_score
+                details.append(f"扁钢宽{bill_gbw}→{quota_gbw} 向上取档")
+            else:
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"扁钢宽{bill_gbw}>{quota_gbw} 不匹配(清单>定额)")
 
         # 计算最终分数
         if check_count == 0:

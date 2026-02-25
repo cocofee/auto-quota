@@ -181,10 +181,16 @@ class TextParser:
             if conduit_dn is not None:
                 result["conduit_dn"] = conduit_dn
 
-        # 提取电缆截面（mm²）
-        section = self._extract_cable_section(text)
-        if section is not None:
-            result["cable_section"] = section
+        # 提取接地扁钢宽度（在电缆截面之前，避免扁钢规格40×4被误识别为截面4）
+        ground_bar_width = self._extract_ground_bar_width(text)
+        if ground_bar_width is not None:
+            result["ground_bar_width"] = ground_bar_width
+
+        # 提取电缆截面（mm²）—— 接地扁钢已提取时跳过
+        if "ground_bar_width" not in result:
+            section = self._extract_cable_section(text)
+            if section is not None:
+                result["cable_section"] = section
 
         # 提取容量（kVA）
         kva = self._extract_kva(text)
@@ -426,6 +432,20 @@ class TextParser:
         )
         if wire_match:
             return float(wire_match.group(1))
+
+        # 兜底：从"规格：N"格式提取截面（导线/电缆类清单常见格式）
+        # 场景：清单特征描述中写"规格：4"或"规格：2.5"，不带mm²也不带×号
+        # 守卫条件：文本必须包含导线/电缆相关关键词，避免和DN提取冲突
+        _cable_keywords = ["导线", "电缆", "穿线", "配线", "BV", "BYJ", "BVR",
+                           "YJV", "RVS", "RVV", "管内穿"]
+        _standard_sections = {1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95,
+                              120, 150, 185, 240, 300, 400, 500}
+        if any(kw in text for kw in _cable_keywords):
+            spec_match = re.search(r'规格[：:]\s*(\d+(?:\.\d+)?)\s*(?:\s|$|[,，])', text)
+            if spec_match:
+                val = float(spec_match.group(1))
+                if val in _standard_sections:
+                    return val
 
         return None
 
@@ -774,6 +794,34 @@ class TextParser:
             speed = float(match.group(1))
             if 0.1 <= speed <= 20.0:  # 合理范围校验（电梯速度一般0.25~10m/s）
                 return speed
+        return None
+
+    def _extract_ground_bar_width(self, text: str) -> Optional[float]:
+        """
+        提取接地扁钢/母带宽度（如"40*4"→40，"60×6"→60）
+
+        接地母线/母带用扁钢制作，规格用"宽×厚"表示（单位mm）。
+        特征：宽度远大于厚度（比值≥3），如40×4、60×6、25×4。
+        定额按宽度分档，所以提取宽度作为参数。
+
+        与电缆截面的区别：
+        - 电缆"4×185"：芯数×截面积，第二个数较大
+        - 扁钢"40×4"：宽×厚，第一个数远大于第二个（比值≥3）
+        """
+        # 只在接地相关上下文中提取
+        ground_keywords = ["接地", "母线", "母带", "扁钢", "扁铁"]
+        if not any(kw in text for kw in ground_keywords):
+            return None
+
+        # 匹配"W×H"格式（支持"规格：40*4"和定额名中的"60×6"）
+        match = re.search(r'(\d+)\s*[*×xX]\s*(\d+)', text)
+        if match:
+            a, b = float(match.group(1)), float(match.group(2))
+            width = max(a, b)      # 宽度（大的那个值）
+            thickness = min(a, b)  # 厚度（小的那个值）
+            # 扁钢特征：宽/厚比≥3，且宽度在合理范围（通常20-100mm）
+            if thickness > 0 and width / thickness >= 3 and 10 <= width <= 200:
+                return width
         return None
 
     def build_search_text(self, name: str, description: str = "") -> str:

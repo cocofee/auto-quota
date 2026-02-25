@@ -248,6 +248,25 @@ def run(input_file, mode="agent", output=None,
     bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
     _notify(15, 0, f"清单读取完成，共{len(bill_items)}条")
 
+    # 1.1 保存清单预览文件（供前端实时展示每条清单的匹配进度）
+    if json_output:
+        try:
+            preview_path = Path(json_output).parent / "bill_preview.json"
+            preview = [
+                {
+                    "code": it.get("code", ""),
+                    "name": it.get("name", ""),
+                    "description": it.get("description", ""),
+                    "unit": it.get("unit", ""),
+                    "quantity": it.get("quantity"),
+                    "specialty_name": it.get("specialty_name", ""),
+                }
+                for it in bill_items
+            ]
+            preview_path.write_text(json.dumps(preview, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"清单预览文件写入失败（不影响匹配）: {e}")
+
     # 1.5 分析项目上下文（L2：项目级感知，让匹配有全局视角）
     # 容错：分析失败不影响主流程，降级为空上下文
     project_overview_text = ""

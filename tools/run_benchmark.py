@@ -67,10 +67,11 @@ def compute_metrics(results: list[dict], elapsed: float) -> dict:
     返回:
         包含各项指标的字典
     """
-    total = len(results)
-    if total == 0:
+    total_all = len(results)
+    if total_all == 0:
         return {
-            "total": 0, "green_rate": 0, "yellow_rate": 0, "red_rate": 0,
+            "total": 0, "skip_measure": 0,
+            "green_rate": 0, "yellow_rate": 0, "red_rate": 0,
             "exp_hit_rate": 0, "fallback_rate": 0, "avg_time_sec": 0,
         }
 
@@ -80,10 +81,18 @@ def compute_metrics(results: list[dict], elapsed: float) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    # 置信度分布（阈值：绿≥85, 黄60-84, 红<60）
-    high_conf = sum(1 for r in results if _safe_confidence(r.get("confidence", 0)) >= 85)
+    # 措施项（正确跳过的非定额项）不计入绿/黄/红率分母
+    skip_measure = sum(
+        1 for r in results if r.get("match_source") == "skip_measure"
+    )
+    # 参与准确率计算的有效条目数
+    total = total_all - skip_measure
+
+    # 置信度分布（阈值：绿≥85, 黄60-84, 红<60）——仅统计有效条目
+    matchable = [r for r in results if r.get("match_source") != "skip_measure"]
+    high_conf = sum(1 for r in matchable if _safe_confidence(r.get("confidence", 0)) >= 85)
     mid_conf = sum(
-        1 for r in results if 60 <= _safe_confidence(r.get("confidence", 0)) < 85
+        1 for r in matchable if 60 <= _safe_confidence(r.get("confidence", 0)) < 85
     )
     low_conf = total - high_conf - mid_conf
 
@@ -97,14 +106,16 @@ def compute_metrics(results: list[dict], elapsed: float) -> dict:
         1 for r in results
         if r.get("match_source") in {"agent_fallback", "agent_error"})
 
+    denom = max(total, 1)  # 防除零
     return {
-        "total": total,
-        "green_rate": round(high_conf / total, 4),
-        "yellow_rate": round(mid_conf / total, 4),
-        "red_rate": round(low_conf / total, 4),
-        "exp_hit_rate": round(exp_hits / total, 4),
-        "fallback_rate": round(fallbacks / total, 4),
-        "avg_time_sec": round(elapsed / total, 2),
+        "total": total_all,
+        "skip_measure": skip_measure,
+        "green_rate": round(high_conf / denom, 4),
+        "yellow_rate": round(mid_conf / denom, 4),
+        "red_rate": round(low_conf / denom, 4),
+        "exp_hit_rate": round(exp_hits / total_all, 4),
+        "fallback_rate": round(fallbacks / total_all, 4),
+        "avg_time_sec": round(elapsed / total_all, 2),
     }
 
 
@@ -187,7 +198,9 @@ def print_metrics_table(all_metrics: dict[str, dict], mode: str):
             err = str(m.get("error", "unknown"))[:42]
             print(f"{name:<20s}  {'失败（'+err+'）':>50s}")
             continue
-        print(f"{name:<20s} {m['total']:5d} "
+        skip = m.get('skip_measure', 0)
+        skip_str = f"(-{skip})" if skip > 0 else ""
+        print(f"{name:<20s} {m['total']:5d}{skip_str:<5s}"
               f"{format_rate(m['green_rate']):>7s} "
               f"{format_rate(m['yellow_rate']):>7s} "
               f"{format_rate(m['red_rate']):>7s} "
