@@ -6,7 +6,7 @@
   修复后所有写入点通过 _safe_write_cell() 检测并跳过 MergedCell。
 
 复现证据：
-  docs/阶段J_贾维斯系统性审查findings.md #P1-1
+  历史 merged-cell 崩溃问题记录（已归档/清理）。
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@
   3. LLM 熔断器实例隔离（请求A不影响请求B）
   4. 规则向量禁用实例隔离（实例A不影响实例B）
 
-来源：docs/阶段M_多用户可用性findings.md
+来源：多用户可用性问题历史记录（已归档/清理）。
 """
 
 from __future__ import annotations
