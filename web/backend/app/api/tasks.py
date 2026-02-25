@@ -342,7 +342,7 @@ async def task_progress(task_id: uuid.UUID, request: Request):
                         select(
                             Task.status, Task.progress,
                             Task.progress_message, Task.stats,
-                            Task.error_message,
+                            Task.error_message, Task.started_at,
                         ).where(Task.id == task_id)
                     )
                     row = result.one_or_none()
@@ -360,6 +360,7 @@ async def task_progress(task_id: uuid.UUID, request: Request):
                     "message": row.progress_message,
                     "stats": row.stats,
                     "error": row.error_message,
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
                 }
                 yield {
                     "event": "progress",
