@@ -72,6 +72,26 @@ class ParamValidator:
                 else:
                     c["param_score"] = 1.0  # 无参数可验证，默认通过
                     c["param_detail"] = "无参数可验证"
+                c["param_match"] = True  # 默认为匹配
+
+                # 即使无参数，仍需检查品类冲突（如"喷淋泵"不应配"喷头"定额）
+                cat_penalty, cat_detail = self._check_category_conflict(
+                    query_text, c.get("name", ""))
+                if cat_penalty > 0:
+                    c["param_score"] = max(0.0, c["param_score"] - cat_penalty)
+                    c["param_detail"] += f"; {cat_detail}"
+                    if cat_penalty >= 0.3:
+                        c["param_match"] = False
+
+                # 即使无参数，仍需检查负向关键词（如"普通插座"不应配"防爆插座"）
+                neg_penalty, neg_detail = self._check_negative_keywords(
+                    query_text, c.get("name", ""))
+                if neg_penalty > 0:
+                    c["param_score"] = max(0.0, c["param_score"] - neg_penalty)
+                    c["param_detail"] += f"; {neg_detail}"
+                    if neg_penalty >= 0.3:
+                        c["param_match"] = False
+
             return candidates
 
         # 逐个验证候选定额
@@ -215,7 +235,7 @@ class ParamValidator:
     CATEGORY_CONFLICTS_BY_SPECIALTY = {
         "install": [  # 安装工程（C1~C12）
             {"阀门", "弯头", "三通", "异径管"},
-            {"水泵", "风机", "风口"},
+            {"泵", "风机", "风口"},  # "水泵"改为"泵"，覆盖所有泵类（喷淋泵/消防泵/加压泵等）
             {"桥架", "穿线管", "配管"},
             {"配电箱", "控制柜", "端子箱"},
             {"灯具", "开关", "插座"},
@@ -230,6 +250,20 @@ class ParamValidator:
 
     # 兼容旧代码：不指定专业时默认用安装工程的品类表
     CATEGORY_CONFLICTS = CATEGORY_CONFLICTS_BY_SPECIALTY["install"]
+
+    # 跨品类硬排斥表：清单含某关键词 → 定额名称不能含这些词
+    # 与 CATEGORY_CONFLICTS（组内冲突）不同，这里检测的是跨组的品类错配
+    # 例如："泵"在组2，"喷头"在组6，它们属于不同组，组内检查拦不住
+    CATEGORY_HARD_REJECTS = {
+        "泵": ["喷头", "消火栓", "灭火器", "散流器", "风口"],
+        "喷头": ["泵", "消火栓箱", "灭火器"],
+        "消火栓": ["喷头", "泵", "灭火器"],
+        "灭火器": ["消火栓", "喷头", "泵"],
+        "电缆": ["导线", "双绞线"],
+        "导线": ["电缆"],
+        "桥架": ["穿线管"],
+        "穿线管": ["桥架"],
+    }
 
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:
         """
@@ -343,16 +377,30 @@ class ParamValidator:
                 break
 
         if not bill_category:
+            # 组内没命中，继续检查跨品类硬排斥
+            for bill_kw, reject_list in cls.CATEGORY_HARD_REJECTS.items():
+                if bill_kw in bill_text:
+                    for reject_kw in reject_list:
+                        if reject_kw in quota_name:
+                            return 0.3, f"品类硬排斥: 清单含'{bill_kw}' ≠ 定额含'{reject_kw}'"
             return 0.0, ""
 
         bill_cat_name, bill_group = bill_category
 
-        # 找定额命中的品类
+        # 找定额命中的品类（组内冲突检查）
         for cat in bill_group:
             if cat == bill_cat_name:
                 continue  # 同品类不算冲突
             if cat in quota_name:
                 return 0.3, f"品类冲突: 清单'{bill_cat_name}' vs 定额'{cat}'"
+
+        # 组内没冲突，继续检查跨品类硬排斥
+        # 例如："泵"在组2匹配到了，但定额含"喷头"（组6），组内检查拦不住
+        for bill_kw, reject_list in cls.CATEGORY_HARD_REJECTS.items():
+            if bill_kw in bill_text:
+                for reject_kw in reject_list:
+                    if reject_kw in quota_name:
+                        return 0.3, f"品类硬排斥: 清单含'{bill_kw}' ≠ 定额含'{reject_kw}'"
 
         return 0.0, ""
 
