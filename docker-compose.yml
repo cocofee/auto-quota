@@ -52,8 +52,8 @@ services:
     image: docker.1ms.run/redis:7-alpine
     container_name: autoquota-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # ports:  # 6379 端口被 Hyper-V 保留，Redis 只需容器内部通信，不需要暴露
+    #   - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
