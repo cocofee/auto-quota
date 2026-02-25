@@ -34,9 +34,10 @@ data/quota_data/
 # 文档导出（CHM解包等大量生成文件）
 docs/chm_dump/
 
-# 调试输出
+# 调试输出 / 临时文件
 tests/debug_sheets.txt
 _tmp_*.log
+tmp_*.txt
 
 # IDE配置
 .vscode/

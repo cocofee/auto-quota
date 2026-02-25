@@ -1,0 +1,613 @@
+"""
+定额咨询 API
+
+用户和贾维斯多轮对话 → 确认后提取结果 → 提交管理员审核 → 存入经验库。
+支持文字提问和贴图。
+
+路由:
+    POST /api/consult/chat                  — 多轮对话（发消息给贾维斯）
+    POST /api/consult/extract               — 从对话中提取清单→定额对应关系
+    POST /api/consult/submit                — 用户确认提交审核
+    GET  /api/consult/submissions           — 用户查看自己的提交
+    GET  /api/consult/admin/pending         — 管理员查看待审列表
+    POST /api/consult/admin/{id}/review     — 管理员审批（通过/拒绝）
+"""
+
+import asyncio
+import base64
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from loguru import logger
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.consult import ConsultSubmission
+from app.models.user import User
+from app.auth.deps import get_current_user
+from app.auth.permissions import require_admin
+from app.config import UPLOAD_DIR, UPLOAD_MAX_MB
+from app.schemas.consult import (
+    ConsultSubmitRequest, ConsultReviewRequest,
+    ChatRequest, ChatMessage, ParsedItem,
+)
+from app.api.shared import store_experience_batch
+
+router = APIRouter()
+
+# 每日对话次数限制（每个用户每天最多发送的消息数）
+DAILY_CHAT_LIMIT = 50
+
+# 简单的内存计数器（key: "user_id:日期", value: 已用次数）
+# 单进程足够用，重启后计数清零（宽容设计）
+_daily_usage: dict[str, int] = {}
+
+
+def _check_daily_limit(user_id: uuid.UUID) -> None:
+    """检查用户当日是否超出对话次数限制"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    key = f"{user_id}:{today}"
+
+    # 清理过期的计数（只保留今天的）
+    expired = [k for k in _daily_usage if not k.endswith(today)]
+    for k in expired:
+        del _daily_usage[k]
+
+    count = _daily_usage.get(key, 0)
+    if count >= DAILY_CHAT_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"今日对话次数已达上限（{DAILY_CHAT_LIMIT}次），请明天再试"
+        )
+    _daily_usage[key] = count + 1
+
+
+# 贾维斯的系统提示词
+JARVIS_SYSTEM_PROMPT = """你是贾维斯（Jarvis），一个专业的工程造价AI助手。
+你的专长是帮助造价人员确定清单项应该套用哪些定额子目。
+
+工作方式：
+1. 用户会描述一个清单项（名称、规格、用途等），可能附带截图
+2. 你根据造价知识推荐最合适的定额编号和名称
+3. 解释你的推荐理由
+4. 如果用户有疑问，继续讨论直到达成一致
+
+回答要求：
+- 定额编号格式：C开头+册号-章-节，如 C10-6-30、C4-11-25
+- 12大册分类：C1机械设备、C4电气、C5智能化、C7通风空调、C8工业管道、C9消防、C10给排水、C12刷油防腐等
+- 给出推荐时，说清楚理由（为什么选这个定额而不是其他的）
+- 如果不确定，说明可能的几个选项让用户选择
+- 用简洁专业的语言，不要废话"""
+
+
+def _call_claude_chat(messages: list[dict], system: str = "") -> str:
+    """调用 Claude API 进行多轮对话
+
+    支持文字和图片混合消息。
+    中转模式和官方模式两种（和 agent_matcher.py 保持一致）。
+    """
+    import config as quota_config
+
+    if quota_config.CLAUDE_BASE_URL:
+        # 中转模式
+        import httpx
+
+        url = f"{quota_config.CLAUDE_BASE_URL.rstrip('/')}/v1/messages"
+        headers = {
+            "x-api-key": quota_config.CLAUDE_API_KEY,
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        body = {
+            "model": quota_config.CLAUDE_MODEL,
+            "max_tokens": 4000,
+            "temperature": 0.3,
+            "messages": messages,
+        }
+        if system:
+            body["system"] = system
+        resp = httpx.post(url, headers=headers, json=body, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["content"][0]["text"]
+    else:
+        # 官方 API 模式
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=quota_config.CLAUDE_API_KEY)
+        kwargs = {
+            "model": quota_config.CLAUDE_MODEL,
+            "max_tokens": 4000,
+            "temperature": 0.3,
+            "messages": messages,
+        }
+        if system:
+            kwargs["system"] = system
+        message = client.messages.create(**kwargs)
+        return message.content[0].text
+
+
+def _parse_extract_response(raw_text: str) -> list[dict]:
+    """从 AI 提取结果中解析 JSON 数组"""
+    text = raw_text.strip()
+
+    # 去掉 markdown 代码块标记
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    try:
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
+        for key in ("items", "data", "results"):
+            if key in result and isinstance(result[key], list):
+                return result[key]
+        return []
+    except json.JSONDecodeError:
+        logger.warning(f"AI 提取结果无法解析为 JSON: {text[:200]}...")
+        return []
+
+
+def _save_chat_image(content: bytes, user_id: uuid.UUID, filename: str) -> str:
+    """保存对话中的图片，返回相对于 UPLOAD_DIR 的路径（不暴露服务器绝对路径）"""
+    consult_dir = UPLOAD_DIR / "consult" / str(user_id)
+    consult_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    # 加 uuid4 短码避免同一秒上传同名文件时覆盖
+    unique_suffix = uuid.uuid4().hex[:8]
+    safe_name = f"{timestamp}_{unique_suffix}_{Path(filename).name}"
+    save_path = consult_dir / safe_name
+    with open(save_path, "wb") as f:
+        f.write(content)
+    # 返回相对路径（如 consult/{user_id}/20260225_abc12345_xxx.png）
+    return str(save_path.relative_to(UPLOAD_DIR))
+
+
+# ============================================================
+# 端点1：多轮对话
+# ============================================================
+
+@router.post("/chat")
+async def chat(
+    req: ChatRequest,
+    user: User = Depends(get_current_user),
+):
+    """和贾维斯对话
+
+    前端维护完整的对话历史，每次请求带上所有历史消息。
+    支持文字消息和图片消息（图片用 base64 编码）。
+    """
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
+    # 每日使用次数检查
+    _check_daily_limit(user.id)
+
+    # 限制对话长度（防止 token 过多）
+    if len(req.messages) > 30:
+        raise HTTPException(status_code=400, detail="对话轮次过多（最多15轮），请开始新对话")
+
+    # 构造 Claude API 的消息格式
+    api_messages = []
+    for msg in req.messages:
+        if msg.role not in ("user", "assistant"):
+            continue
+
+        if msg.role == "assistant":
+            # AI 回复只有文字
+            api_messages.append({"role": "assistant", "content": msg.content})
+        else:
+            # 用户消息：可能包含文字+图片
+            if msg.image_base64 and msg.image_type:
+                # 图文混合消息
+                api_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": msg.image_type,
+                                "data": msg.image_base64,
+                            },
+                        },
+                        {"type": "text", "text": msg.content},
+                    ],
+                })
+            else:
+                # 纯文字消息
+                api_messages.append({"role": "user", "content": msg.content})
+
+    try:
+        reply = await asyncio.to_thread(
+            _call_claude_chat, api_messages, JARVIS_SYSTEM_PROMPT
+        )
+    except Exception as e:
+        logger.error(f"贾维斯对话失败: {e}")
+        raise HTTPException(status_code=500, detail=f"AI 回复失败: {e}")
+
+    return {"reply": reply}
+
+
+# ============================================================
+# 端点2：上传对话中的图片
+# ============================================================
+
+@router.post("/upload-image")
+async def upload_chat_image(
+    file: UploadFile = File(description="对话中的图片"),
+    user: User = Depends(get_current_user),
+):
+    """上传对话中的图片
+
+    返回 base64 编码和 MIME 类型，前端存入消息历史中。
+    同时保存原图到服务器（审核时可查看）。
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+
+    allowed_ext = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in allowed_ext:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的图片格式 {ext}，请上传 {', '.join(allowed_ext)}"
+        )
+
+    content = await file.read()
+    max_size = UPLOAD_MAX_MB * 1024 * 1024
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"图片过大（{len(content) / 1024 / 1024:.1f}MB），最大允许{UPLOAD_MAX_MB}MB"
+        )
+
+    # 保存原图
+    save_path = _save_chat_image(content, user.id, file.filename)
+
+    # 返回 base64
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    }
+    media_type = mime_map.get(ext, "image/png")
+    image_base64 = base64.b64encode(content).decode("utf-8")
+
+    return {
+        "image_base64": image_base64,
+        "image_type": media_type,
+        "image_path": save_path,
+    }
+
+
+# ============================================================
+# 端点3：从对话中提取结果
+# ============================================================
+
+@router.post("/extract")
+async def extract_results(
+    req: ChatRequest,
+    user: User = Depends(get_current_user),
+):
+    """从对话历史中提取已确认的清单→定额对应关系
+
+    发送完整对话给 AI，要求提取结构化数据。
+    """
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="对话历史不能为空")
+
+    # 构造提取指令：在对话末尾加一条用户消息要求提取
+    api_messages = []
+    for msg in req.messages:
+        if msg.role == "assistant":
+            api_messages.append({"role": "assistant", "content": msg.content})
+        elif msg.role == "user":
+            if msg.image_base64 and msg.image_type:
+                api_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": msg.image_type,
+                                "data": msg.image_base64,
+                            },
+                        },
+                        {"type": "text", "text": msg.content},
+                    ],
+                })
+            else:
+                api_messages.append({"role": "user", "content": msg.content})
+
+    # 加提取指令
+    extract_prompt = (
+        "请从以上对话中提取所有已讨论确认的清单→定额对应关系。\n"
+        "返回纯 JSON 数组，格式如下：\n"
+        '[{"bill_name": "清单名称", "quota_id": "定额编号", "quota_name": "定额名称", "unit": "单位"}]\n\n'
+        "注意：\n"
+        "- 只提取对话中明确讨论过的项目\n"
+        "- 如果对话中没有确认任何定额，返回空数组 []\n"
+        "- 只返回 JSON，不要加其他文字"
+    )
+    api_messages.append({"role": "user", "content": extract_prompt})
+
+    try:
+        raw_text = await asyncio.to_thread(
+            _call_claude_chat, api_messages, JARVIS_SYSTEM_PROMPT
+        )
+    except Exception as e:
+        logger.error(f"提取对话结果失败: {e}")
+        raise HTTPException(status_code=500, detail=f"提取失败: {e}")
+
+    parsed = _parse_extract_response(raw_text)
+    items = [
+        ParsedItem(
+            bill_name=str(item.get("bill_name", "")),
+            quota_id=str(item.get("quota_id", "")),
+            quota_name=str(item.get("quota_name", "")),
+            unit=str(item.get("unit", "")),
+        )
+        for item in parsed
+    ]
+
+    return {"items": items}
+
+
+# ============================================================
+# 端点4：用户确认提交
+# ============================================================
+
+@router.post("/submit")
+async def submit_consult(
+    req: ConsultSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """用户确认对话结果并提交
+
+    提交后状态为 pending（待管理员审核）。
+    数据暂不写入经验库，等管理员审核通过后再写。
+    """
+    if not req.items:
+        raise HTTPException(status_code=400, detail="提交内容不能为空")
+    if not req.province or not req.province.strip():
+        raise HTTPException(status_code=400, detail="省份不能为空")
+
+    # image_path 可选（对话模式可能没有图片）
+    # 前端传的是相对路径（相对于 UPLOAD_DIR），后端拼接后校验
+    image_path = ""
+    if req.image_path:
+        try:
+            # 防止路径穿越：不允许 .. 或绝对路径
+            rel = req.image_path.replace("\\", "/")
+            if ".." in rel or rel.startswith("/"):
+                raise HTTPException(status_code=400, detail="图片路径非法")
+            image_resolved = (UPLOAD_DIR / rel).resolve()
+            upload_resolved = UPLOAD_DIR.resolve()
+            # 校验拼接后仍在 UPLOAD_DIR 内
+            if not image_resolved.is_relative_to(upload_resolved):
+                raise HTTPException(status_code=400, detail="图片路径非法")
+            # 校验图片路径属于当前用户（路径格式: UPLOAD_DIR/consult/{user_id}/...）
+            user_dir = upload_resolved / "consult" / str(user.id)
+            if not image_resolved.is_relative_to(user_dir):
+                raise HTTPException(status_code=400, detail="图片路径非法（不属于当前用户）")
+            # 校验文件确实存在
+            if not image_resolved.is_file():
+                raise HTTPException(status_code=400, detail="图片文件不存在")
+            image_path = str(image_resolved)
+        except HTTPException:
+            raise
+        except (ValueError, OSError):
+            raise HTTPException(status_code=400, detail="图片路径非法")
+
+    submission = ConsultSubmission(
+        user_id=user.id,
+        image_path=image_path,
+        parsed_items=[item.model_dump() for item in req.items],
+        submitted_items=[item.model_dump() for item in req.items],
+        province=req.province,
+        status="pending",
+    )
+    db.add(submission)
+    await db.flush()
+
+    logger.info(f"咨询提交成功: {submission.id}（{len(req.items)} 条，省份: {req.province}）")
+
+    return {
+        "message": "提交成功，等待管理员审核",
+        "submission_id": str(submission.id),
+        "item_count": len(req.items),
+    }
+
+
+# ============================================================
+# 端点5：用户查看自己的提交历史
+# ============================================================
+
+@router.get("/submissions")
+async def my_submissions(
+    page: int = 1,
+    size: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """查看当前用户的咨询提交历史"""
+    if page < 1:
+        page = 1
+    if size < 1 or size > 100:
+        size = 20
+
+    count_result = await db.execute(
+        select(func.count()).select_from(ConsultSubmission)
+        .where(ConsultSubmission.user_id == user.id)
+    )
+    total = count_result.scalar() or 0
+
+    offset = (page - 1) * size
+    result = await db.execute(
+        select(ConsultSubmission)
+        .where(ConsultSubmission.user_id == user.id)
+        .order_by(ConsultSubmission.created_at.desc())
+        .offset(offset)
+        .limit(size)
+    )
+    submissions = result.scalars().all()
+
+    items = [
+        {
+            "id": str(s.id),
+            "province": s.province,
+            "item_count": len(s.submitted_items) if s.submitted_items else 0,
+            "status": s.status,
+            "review_note": s.review_note,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "reviewed_at": s.reviewed_at.isoformat() if s.reviewed_at else None,
+        }
+        for s in submissions
+    ]
+
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+# ============================================================
+# 端点6：管理员查看待审列表
+# ============================================================
+
+@router.get("/admin/pending")
+async def admin_pending(
+    page: int = 1,
+    size: int = 20,
+    status_filter: str = "pending",
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员查看咨询提交列表"""
+    if page < 1:
+        page = 1
+    if size < 1 or size > 100:
+        size = 20
+
+    base_query = select(ConsultSubmission)
+    count_query = select(func.count()).select_from(ConsultSubmission)
+
+    if status_filter != "all":
+        base_query = base_query.where(ConsultSubmission.status == status_filter)
+        count_query = count_query.where(ConsultSubmission.status == status_filter)
+
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+
+    offset = (page - 1) * size
+    result = await db.execute(
+        base_query
+        .order_by(ConsultSubmission.created_at.desc())
+        .offset(offset)
+        .limit(size)
+    )
+    submissions = result.scalars().all()
+
+    items = [
+        {
+            "id": str(s.id),
+            "user_id": str(s.user_id),
+            "province": s.province,
+            "item_count": len(s.submitted_items) if s.submitted_items else 0,
+            "submitted_items": s.submitted_items,
+            "image_path": s.image_path,
+            "status": s.status,
+            "review_note": s.review_note,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "reviewed_at": s.reviewed_at.isoformat() if s.reviewed_at else None,
+        }
+        for s in submissions
+    ]
+
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+# ============================================================
+# 端点7：管理员审批
+# ============================================================
+
+@router.post("/admin/{submission_id}/review")
+async def review_submission(
+    submission_id: uuid.UUID,
+    req: ConsultReviewRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """管理员审核咨询提交
+
+    - approve: 通过 → 将数据写入经验库权威层
+    - reject: 拒绝 → 标记为已拒绝，不写入经验库
+    """
+    if req.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action 必须是 approve 或 reject")
+
+    result = await db.execute(
+        select(ConsultSubmission).where(ConsultSubmission.id == submission_id)
+    )
+    submission = result.scalar_one_or_none()
+    if not submission:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+
+    if submission.status != "pending":
+        raise HTTPException(status_code=400, detail=f"该提交已{submission.status}，不能重复审核")
+
+    submission.status = "approved" if req.action == "approve" else "rejected"
+    submission.reviewed_by = admin.id
+    submission.reviewed_at = datetime.now(timezone.utc)
+    submission.review_note = req.note
+
+    stored_count = 0
+    if req.action == "approve" and submission.submitted_items:
+        # 构造批量写入记录
+        batch_records = [
+            {
+                "name": item.get("bill_name", ""),
+                "quota_ids": [item.get("quota_id", "").strip()],
+                "quota_names": [item.get("quota_name", "")],
+            }
+            for item in submission.submitted_items
+            if item.get("quota_id", "").strip()
+        ]
+        try:
+            stored_count = await store_experience_batch(
+                records=batch_records,
+                province=submission.province,
+                reason=f"Web端咨询审核通过 by {admin.email}",
+                confirmed=True,
+            )
+        except Exception as e:
+            # 经验库写入失败 → 回滚审核状态为 pending，避免"已通过但没写入"的不一致
+            logger.error(f"咨询审核写入经验库失败: {e}")
+            submission.status = "pending"
+            submission.reviewed_by = None
+            submission.reviewed_at = None
+            submission.review_note = f"[经验库写入失败，审核已回滚: {e}]"
+            await db.flush()
+            raise HTTPException(
+                status_code=500,
+                detail=f"经验库写入失败，审核已回滚为待审核状态: {e}",
+            )
+
+    await db.flush()
+
+    action_text = "通过" if req.action == "approve" else "拒绝"
+    logger.info(f"咨询审核{action_text}: {submission_id}（写入经验库 {stored_count} 条）")
+
+    return {
+        "message": f"审核{action_text}",
+        "stored_count": stored_count,
+        "total_items": len(submission.submitted_items) if submission.submitted_items else 0,
+    }

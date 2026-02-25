@@ -2,7 +2,8 @@
  * 新建任务页
  *
  * 客户（普通用户）：上传Excel + 选省份 → 直接开始匹配（2步流程）
- * 管理员：额外显示 模式选择、模型选择、Sheet指定、限制条数、经验库开关（3步流程）
+ * 管理员：额外显示 Sheet指定、限制条数、经验库开关（3步流程）
+ * 匹配模式和大模型由后端配置统一控制，用户不需要选择。
  */
 
 import { useState, useEffect } from 'react';
@@ -18,14 +19,6 @@ import type { TaskInfo } from '../../types';
 
 const { Dragger } = Upload;
 
-/** 可选的大模型（仅管理员可见） */
-const LLM_OPTIONS = [
-  { label: 'DeepSeek（推荐）', value: 'deepseek' },
-  { label: 'Claude', value: 'claude' },
-  { label: 'Kimi', value: 'kimi' },
-  { label: '通义千问', value: 'qwen' },
-];
-
 export default function TaskCreatePage() {
   const navigate = useNavigate();
   const { message } = App.useApp();
@@ -38,9 +31,6 @@ export default function TaskCreatePage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [provinceOptions, setProvinceOptions] = useState<{ label: string; value: string }[]>([]);
   const [provincesLoading, setProvincesLoading] = useState(false);
-
-  // 当前模式（控制大模型选项的显示，仅管理员用到）
-  const mode = Form.useWatch('mode', form);
 
   // 客户2步流程，管理员3步流程
   const steps = isAdmin
@@ -71,7 +61,17 @@ export default function TaskCreatePage() {
   /** 提交任务 */
   const onSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      // 用 getFieldsValue(true) 获取所有字段值（包括被条件渲染隐藏的字段）
+      // 注意：不能用 validateFields()，因为它只返回当前页面上可见的字段，
+      // 省份字段在步骤0，到确认步骤时已不在页面上，会返回 undefined
+      const values = form.getFieldsValue(true);
+
+      // 手动验证关键字段（因为 validateFields 无法验证未渲染的字段）
+      if (!values.province) {
+        message.warning('请先选择省份');
+        setCurrentStep(0);
+        return;
+      }
 
       if (fileList.length === 0) {
         message.warning('请先上传清单文件');
@@ -86,7 +86,6 @@ export default function TaskCreatePage() {
       formData.append('province', values.province);
 
       // 管理员设置的高级参数；客户用默认值
-      formData.append('mode', isAdmin ? values.mode : 'search');
       formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));
 
       if (isAdmin) {
@@ -95,9 +94,6 @@ export default function TaskCreatePage() {
         }
         if (values.limit_count) {
           formData.append('limit_count', String(values.limit_count));
-        }
-        if (values.mode === 'agent' && values.agent_llm) {
-          formData.append('agent_llm', values.agent_llm);
         }
       }
 
@@ -135,9 +131,7 @@ export default function TaskCreatePage() {
         form={form}
         layout="vertical"
         initialValues={{
-          mode: 'search',
           use_experience: true,
-          agent_llm: 'deepseek',
         }}
       >
         {/* 步骤1：上传文件 + 选省份 */}
@@ -206,21 +200,6 @@ export default function TaskCreatePage() {
         {/* 步骤2（仅管理员）：高级参数配置 */}
         {isParamStep && (
           <>
-            <Form.Item name="mode" label="匹配模式">
-              <Select
-                options={[
-                  { label: '搜索模式（免费，速度快）', value: 'search' },
-                  { label: 'Agent模式（需API Key，更智能）', value: 'agent' },
-                ]}
-              />
-            </Form.Item>
-
-            {mode === 'agent' && (
-              <Form.Item name="agent_llm" label="大模型">
-                <Select options={LLM_OPTIONS} />
-              </Form.Item>
-            )}
-
             <Form.Item name="sheet" label="指定Sheet（可选）">
               <Select
                 placeholder="默认处理全部Sheet"
@@ -268,10 +247,6 @@ export default function TaskCreatePage() {
               <p><strong>省份：</strong>{form.getFieldValue('province')}</p>
               {isAdmin && (
                 <>
-                  <p><strong>模式：</strong>{form.getFieldValue('mode') === 'agent' ? 'Agent' : '搜索'}</p>
-                  {form.getFieldValue('mode') === 'agent' && (
-                    <p><strong>大模型：</strong>{form.getFieldValue('agent_llm')}</p>
-                  )}
                   {form.getFieldValue('sheet') && (
                     <p><strong>Sheet：</strong>{form.getFieldValue('sheet')}</p>
                   )}

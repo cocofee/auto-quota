@@ -14,15 +14,18 @@ import DashboardPage from '../pages/Dashboard';
 import TaskCreatePage from '../pages/Task/CreatePage';
 import TaskListPage from '../pages/Task/ListPage';
 import ResultsPage from '../pages/Results';
+import ConsultPage from '../pages/Consult';
 
 // 管理员页面
 import TaskListAll from '../pages/Admin/TaskListAll';
 import ExperienceManage from '../pages/Admin/ExperienceManage';
 import FeedbackReview from '../pages/Admin/FeedbackReview';
+import ConsultReview from '../pages/Admin/ConsultReview';
 import AnalyticsPage from '../pages/Admin/AnalyticsPage';
 import UserManage from '../pages/Admin/UserManage';
 import SettingsPage from '../pages/Admin/SettingsPage';
 import QuotaManage from '../pages/Admin/QuotaManage';
+import LogViewer from '../pages/Admin/LogViewer';
 
 const router = createBrowserRouter([
   // 登录页（不需要布局和登录状态）
@@ -48,15 +51,18 @@ const router = createBrowserRouter([
       { path: 'tasks/create', element: <TaskCreatePage /> },
       { path: 'tasks', element: <TaskListPage /> },
       { path: 'tasks/:taskId/results', element: <ResultsPage /> },
+      { path: 'consult', element: <ConsultPage /> },
 
       // === 管理员专属页面（RequireAdmin 包裹） ===
       { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
       { path: 'admin/experience', element: <RequireAdmin><ExperienceManage /></RequireAdmin> },
       { path: 'admin/quotas', element: <RequireAdmin><QuotaManage /></RequireAdmin> },
       { path: 'admin/feedback', element: <RequireAdmin><FeedbackReview /></RequireAdmin> },
+      { path: 'admin/consult-review', element: <RequireAdmin><ConsultReview /></RequireAdmin> },
       { path: 'admin/analytics', element: <RequireAdmin><AnalyticsPage /></RequireAdmin> },
       { path: 'admin/users', element: <RequireAdmin><UserManage /></RequireAdmin> },
       { path: 'admin/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
+      { path: 'admin/logs', element: <RequireAdmin><LogViewer /></RequireAdmin> },
     ],
   },
 ]);

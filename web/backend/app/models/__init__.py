@@ -4,5 +4,6 @@ from app.models.user import User
 from app.models.task import Task
 from app.models.result import MatchResult
 from app.models.refresh_token import RefreshToken
+from app.models.consult import ConsultSubmission
 
-__all__ = ["User", "Task", "MatchResult", "RefreshToken"]
+__all__ = ["User", "Task", "MatchResult", "RefreshToken", "ConsultSubmission"]
