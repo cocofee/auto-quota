@@ -50,6 +50,7 @@ class HybridSearcher:
         # 同一批次中"DN25镀锌钢管"和"DN32镀锌钢管"可能生成相同的 normalized query
         # 缓存避免重复执行向量搜索（最耗时的环节）
         self._session_cache = {}  # {cache_key: candidates_list}
+        self._SESSION_CACHE_MAX = 1000  # 缓存上限，防止长时间运行内存泄漏
 
         # 反馈偏置缓存（用用户修正/确认数据动态校准检索权重）
         self._feedback_bias_value = 0.0
@@ -275,6 +276,12 @@ class HybridSearcher:
         # 存入会话缓存（搜索结果不变的情况下复用）
         if top_results:
             import copy
+            # 缓存超限时清除最早的一半，避免内存持续增长
+            if len(self._session_cache) >= self._SESSION_CACHE_MAX:
+                keys_to_remove = list(self._session_cache.keys())[:len(self._session_cache) // 2]
+                for k in keys_to_remove:
+                    del self._session_cache[k]
+                logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
             self._session_cache[cache_key] = copy.deepcopy(top_results)
 
         return top_results
