@@ -5,6 +5,8 @@
 提供 get_db() 依赖注入函数，在每个API请求中获取数据库会话。
 """
 
+import threading
+
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -64,12 +66,14 @@ async def get_db():
 # ============================================================
 
 _sync_session_factory = None
+_sync_lock = threading.Lock()
 
 
 def get_sync_session():
     """获取同步数据库会话（Celery worker 中使用）
 
     首次调用时自动创建同步引擎和会话工厂。
+    使用线程锁保证多线程并发时只初始化一次。
     需要安装 psycopg2-binary 依赖。
 
     用法:
@@ -85,26 +89,45 @@ def get_sync_session():
     """
     global _sync_session_factory
     if _sync_session_factory is None:
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from app.config import DATABASE_URL_SYNC
+        with _sync_lock:
+            # 双重检查锁（进入锁后再检查一次，避免重复初始化）
+            if _sync_session_factory is None:
+                from sqlalchemy import create_engine
+                from sqlalchemy.orm import sessionmaker
+                from app.config import DATABASE_URL_SYNC
 
-        sync_engine = create_engine(
-            DATABASE_URL_SYNC,
-            pool_size=5,
-            pool_recycle=3600,
-            pool_pre_ping=True,
-        )
-        _sync_session_factory = sessionmaker(sync_engine)
+                sync_engine = create_engine(
+                    DATABASE_URL_SYNC,
+                    pool_size=5,
+                    pool_recycle=3600,
+                    pool_pre_ping=True,
+                )
+                _sync_session_factory = sessionmaker(sync_engine)
 
     return _sync_session_factory()
 
 
 async def init_db():
-    """初始化数据库（创建所有表）
+    """初始化数据库（创建所有表 + 自动迁移新列）
 
     注意: 调用前必须先 import app.models，否则 Base.metadata 为空，不会创建任何表。
     仅开发环境使用，生产环境应该用 Alembic 迁移。
+
+    create_all 只能创建新表，不能给已有表加列。
+    所以在 create_all 之后执行手动迁移语句，用 IF NOT EXISTS 保证幂等。
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # 手动迁移：给已有表添加新列（create_all 不会做这件事）
+        # 每条语句用 IF NOT EXISTS 保证可重复执行不报错
+        migrations = [
+            # 2026-02-25: match_results 表新增 bill_code 列（清单项编码）
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_code VARCHAR(100) DEFAULT ''",
+        ]
+        from sqlalchemy import text
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                logger.warning(f"迁移语句执行跳过（可能已存在）: {e}")

@@ -17,7 +17,7 @@ import shutil
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, true as sa_true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 from loguru import logger
@@ -181,7 +181,7 @@ async def list_tasks(
     # 构建查询条件
     # 管理员传 all_users=true 时不过滤 user_id，查看全部用户任务
     if all_users and user.is_admin:
-        base_filter = True  # 不过滤
+        base_filter = sa_true()  # 不过滤（SQLAlchemy 的 true() 表达式）
         if status_filter:
             base_filter = Task.status == status_filter
     else:
@@ -244,7 +244,7 @@ async def delete_task(
             shutil.rmtree(d, ignore_errors=True)
 
     await db.delete(task)
-    await db.flush()
+    await db.commit()
     logger.info(f"删除任务 {task_id}（已清理关联文件）")
 
 

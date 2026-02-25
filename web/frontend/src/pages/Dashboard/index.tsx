@@ -5,7 +5,7 @@
  * 管理员：额外显示 平均置信度、进行中任务数、模式列
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Row, Col, Statistic, Table, Tag, Button, Space, App } from 'antd';
 import {
@@ -31,11 +31,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [total, setTotal] = useState(0);
 
-  useEffect(() => {
-    loadRecentTasks();
-  }, []);
-
-  const loadRecentTasks = async () => {
+  const loadRecentTasks = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get<TaskListResponse>('/tasks', {
@@ -48,7 +44,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [message]);
+
+  useEffect(() => {
+    loadRecentTasks();
+  }, [loadRecentTasks]);
 
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const runningTasks = tasks.filter((t) => t.status === 'running' || t.status === 'pending');

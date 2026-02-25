@@ -4,7 +4,7 @@
  * 查看所有注册用户，支持启用/禁用账号、设置/取消管理员。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Switch, Popconfirm,
   Statistic, Row, Col,
@@ -38,11 +38,11 @@ export default function UserManage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
 
-  const loadUsers = async (p = page) => {
+  const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get<UserListResponse>('/admin/users', {
-        params: { page: p, size: 20 },
+        params: { page, size: 20 },
       });
       setUsers(data.items);
       setTotal(data.total);
@@ -51,9 +51,9 @@ export default function UserManage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, message]);
 
-  useEffect(() => { loadUsers(); }, [page]);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
 
   /** 修改用户属性 */
   const updateUser = async (userId: string, field: string, value: boolean) => {

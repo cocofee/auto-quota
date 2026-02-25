@@ -85,8 +85,17 @@ async def read_log_file(
         raise HTTPException(status_code=404, detail="日志文件不存在")
 
     try:
-        # 读取整个文件（日志文件通常不会太大，按天轮转）
-        content = filepath.read_text(encoding="utf-8", errors="replace")
+        # 检查文件大小，超过 50MB 的日志只读取末尾部分（防止内存问题）
+        file_size = filepath.stat().st_size
+        max_read_size = 50 * 1024 * 1024  # 50MB
+        if file_size > max_read_size:
+            # 只读取文件末尾 max_read_size 字节
+            with open(filepath, "rb") as f:
+                f.seek(-max_read_size, 2)
+                raw = f.read()
+            content = raw.decode("utf-8", errors="replace")
+        else:
+            content = filepath.read_text(encoding="utf-8", errors="replace")
         all_lines = content.splitlines()
 
         # 按关键词过滤
@@ -105,7 +114,7 @@ async def read_log_file(
         }
     except Exception as e:
         logger.error(f"读取日志文件失败: {e}")
-        raise HTTPException(status_code=500, detail=f"读取日志文件失败: {e}")
+        raise HTTPException(status_code=500, detail="读取日志文件失败")
 
 
 def _format_size(size_bytes: int) -> str:

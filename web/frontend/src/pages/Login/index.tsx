@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, message, Tabs } from 'antd';
+import { Card, Form, Input, Button, App, Tabs } from 'antd';
 import { MailOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const [activeTab, setActiveTab] = useState('login');
   const navigate = useNavigate();
   const { login, register } = useAuthStore();
+  const { message } = App.useApp();
 
   /** 登录 */
   const onLogin = async (values: { email: string; password: string }) => {

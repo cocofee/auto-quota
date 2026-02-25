@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Card, Button, Input, Select, Space, message, Tag, Upload,
+  Card, Button, Input, Select, Space, Tag, Upload, App,
   Typography, Divider, Table, Popconfirm, Empty, Spin,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -48,6 +48,8 @@ interface SubmissionRecord {
 }
 
 export default function ConsultPage() {
+  const { message } = App.useApp();
+
   // 省份
   const [provinces, setProvinces] = useState<string[]>([]);
   const [selectedProvince, setSelectedProvince] = useState<string>('');
@@ -82,7 +84,7 @@ export default function ConsultPage() {
         setSelectedProvince(res.data.provinces[0]);
       }
     }).catch(() => message.error('获取省份列表失败'));
-  }, []);
+  }, [message]);
 
   // 加载历史
   const loadHistory = useCallback(() => {
@@ -375,7 +377,7 @@ export default function ConsultPage() {
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} style={{
+            <div key={`${msg.role}-${i}`} style={{
               display: 'flex',
               justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
               marginBottom: 12,
