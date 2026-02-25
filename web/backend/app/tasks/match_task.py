@@ -84,6 +84,16 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
         task.started_at = datetime.now(timezone.utc)
         session.commit()
 
+        # ---- 文件存在性检查：避免文件丢失导致任务卡死 ----
+        if not Path(file_path).exists():
+            error_msg = f"上传文件不存在: {file_path}（可能已被清理或磁盘故障）"
+            logger.error(f"任务 {task_id}: {error_msg}")
+            task.status = "failed"
+            task.error_message = error_msg
+            task.completed_at = datetime.now(timezone.utc)
+            session.commit()
+            return
+
         # ---- 第2步：准备输出路径 ----
         output_dir = get_task_output_dir(task_uuid)
         json_output = str(output_dir / "results.json")
