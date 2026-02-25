@@ -80,8 +80,9 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
                         province=province,
                     )
             except Exception as e:
-                # 不影响经验库存入，静默跳过
-                pass
+                # 不影响经验库存入，仅记录日志
+                from loguru import logger as _logger
+                _logger.debug(f"通用知识库同步跳过: {e}")
         return True
     elif record_id == -1:
         print(f"  被校验拦截: {name} → {quota_ids} (定额编号可能不存在)")
