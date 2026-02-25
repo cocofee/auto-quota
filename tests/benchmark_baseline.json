@@ -1,16 +1,16 @@
 {
-  "version": "L9_baseline",
-  "date": "2026-02-25 09:49:00",
+  "version": "L9+_baseline",
+  "date": "2026-02-25 11:16:00",
   "mode": "search",
   "datasets": {
     "B1_公厕给排水": {
       "total": 20,
-      "green_rate": 0.85,
+      "green_rate": 0.9,
       "yellow_rate": 0.05,
-      "red_rate": 0.1,
+      "red_rate": 0.05,
       "exp_hit_rate": 0.1,
       "fallback_rate": 0.0,
-      "avg_time_sec": 1.89
+      "avg_time_sec": 1.26
     },
     "B2_华佑电气": {
       "total": 283,
@@ -19,7 +19,7 @@
       "red_rate": 0.1131,
       "exp_hit_rate": 0.1696,
       "fallback_rate": 0.0,
-      "avg_time_sec": 0.42
+      "avg_time_sec": 0.19
     },
     "B3_配套楼混合": {
       "total": 95,
@@ -28,7 +28,7 @@
       "red_rate": 0.0,
       "exp_hit_rate": 0.3684,
       "fallback_rate": 0.0,
-      "avg_time_sec": 0.20
+      "avg_time_sec": 0.15
     },
     "B4_脏数据": {
       "total": 19,
