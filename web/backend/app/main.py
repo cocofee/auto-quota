@@ -18,15 +18,13 @@ from fastapi import FastAPI, HTTPException, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.config import CORS_ORIGINS
+from app.config import CORS_ORIGINS, LOG_DIR
 
 # 把项目根目录加入Python路径，这样后端代码可以直接 import main, config, src.* 等
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 # 日志持久化：写入文件（按天轮转，保留30天）
 # 容器内路径 /app/logs/ 通过 docker-compose volumes 挂载到宿主机 ./logs/
-LOG_DIR = PROJECT_ROOT / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger.add(
     str(LOG_DIR / "web_{time:YYYY-MM-DD}.log"),
     rotation="00:00",     # 每天零点新建一个日志文件
