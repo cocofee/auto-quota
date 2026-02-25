@@ -215,17 +215,17 @@ def _validate_experience_params(exp_result: dict, item: dict,
 
     # ===== 方法2：用参数提取器对比基本参数（DN/截面/材质等） =====
     # 这能发现"DN150"不应该套"DN100以内"这类错误
-    # 注意：如果方法1已验证通过（rule_validated=True），跳过方法2
-    # 修复：只要方法1未确认（rule_validated=False），方法2都应执行兜底，
-    # 无论是否精确匹配——因为规则族可用但提参失败时，方法1等于没验证。
-    if main_quota_name and not rule_validated:
+    # 方法1只验证"家族参数"（如回路数），方法2验证DN/截面/材质等基础参数。
+    # 即使方法1已通过，非精确匹配时方法2仍应执行兜底（防止回路对但DN不对的情况）。
+    # 精确匹配(is_exact=True)且方法1已验证时跳过方法2（用户确认的映射不应被误杀）。
+    if main_quota_name and not (rule_validated and is_exact):
         bill_params = text_parser.parse(bill_text)
         quota_params = text_parser.parse(main_quota_name)
         if bill_params and quota_params:
             is_match, score = text_parser.params_match(bill_params, quota_params)
             if not is_match:
                 logger.info(
-                    f"经验库参数校验失败: '{bill_text[:40]}' "
+                    f"经验库参数校验失败(方法2): '{bill_text[:40]}' "
                     f"清单参数{bill_params} vs 定额'{main_quota_name[:30]}'参数{quota_params}, "
                     f"拒绝经验库结果")
                 return None

@@ -1,43 +1,37 @@
 {
-  "version": "L9+_baseline",
-  "date": "2026-02-25 11:16:00",
+  "version": "L2-a_baseline",
+  "date": "2026-02-25 23:05:18",
   "mode": "search",
   "datasets": {
     "B1_公厕给排水": {
       "total": 20,
+      "skip_measure": 0,
       "green_rate": 0.9,
-      "yellow_rate": 0.05,
-      "red_rate": 0.05,
+      "yellow_rate": 0.1,
+      "red_rate": 0.0,
       "exp_hit_rate": 0.1,
       "fallback_rate": 0.0,
-      "avg_time_sec": 1.26
+      "avg_time_sec": 1.33
     },
     "B2_华佑电气": {
       "total": 283,
-      "green_rate": 0.8375,
-      "yellow_rate": 0.0495,
-      "red_rate": 0.1131,
-      "exp_hit_rate": 0.1696,
+      "skip_measure": 27,
+      "green_rate": 0.9688,
+      "yellow_rate": 0.0312,
+      "red_rate": 0.0,
+      "exp_hit_rate": 0.159,
       "fallback_rate": 0.0,
       "avg_time_sec": 0.19
     },
-    "B3_配套楼混合": {
-      "total": 95,
-      "green_rate": 0.9474,
-      "yellow_rate": 0.0526,
-      "red_rate": 0.0,
-      "exp_hit_rate": 0.3684,
-      "fallback_rate": 0.0,
-      "avg_time_sec": 0.15
-    },
     "B4_脏数据": {
       "total": 19,
-      "green_rate": 0.8947,
+      "skip_measure": 0,
+      "green_rate": 0.9474,
       "yellow_rate": 0.0,
-      "red_rate": 0.1053,
+      "red_rate": 0.0526,
       "exp_hit_rate": 0.0,
       "fallback_rate": 0.0,
-      "avg_time_sec": 0.20
+      "avg_time_sec": 0.23
     }
   }
 }

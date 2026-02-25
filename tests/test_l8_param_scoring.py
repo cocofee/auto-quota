@@ -165,7 +165,7 @@ class TestSortingFusion:
         candidates.sort(
             key=lambda x: (
                 x["param_match"],
-                x["param_score"] * 0.7 + x.get("rerank_score", 0) * 0.3,
+                x["param_score"] * 0.8 + x.get("rerank_score", 0) * 0.2,
             ),
             reverse=True,
         )
@@ -189,12 +189,12 @@ class TestSortingFusion:
         candidates.sort(
             key=lambda x: (
                 x["param_match"],
-                x["param_score"] * 0.7 + x.get("rerank_score", 0) * 0.3,
+                x["param_score"] * 0.8 + x.get("rerank_score", 0) * 0.2,
             ),
             reverse=True,
         )
-        # A: 1.0*0.7 + 0.3*0.3 = 0.79
-        # B: 0.55*0.7 + 0.95*0.3 = 0.67
+        # A: 1.0*0.8 + 0.3*0.2 = 0.86
+        # B: 0.55*0.8 + 0.95*0.2 = 0.63
         assert candidates[0]["quota_id"] == "A", \
             "param_score差距大时应以param为主"
 
@@ -215,7 +215,7 @@ class TestSortingFusion:
         candidates.sort(
             key=lambda x: (
                 x["param_match"],
-                x["param_score"] * 0.7 + x.get("rerank_score", 0) * 0.3,
+                x["param_score"] * 0.8 + x.get("rerank_score", 0) * 0.2,
             ),
             reverse=True,
         )
@@ -239,7 +239,7 @@ class TestSortingFusion:
         candidates.sort(
             key=lambda x: (
                 x["param_match"],
-                x["param_score"] * 0.7 + x.get("rerank_score", x.get("hybrid_score", 0)) * 0.3,
+                x["param_score"] * 0.8 + x.get("rerank_score", x.get("hybrid_score", 0)) * 0.2,
             ),
             reverse=True,
         )
