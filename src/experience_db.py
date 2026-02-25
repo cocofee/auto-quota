@@ -302,73 +302,105 @@ class ExperienceDB:
         for i, qid in enumerate(quota_ids):
             qname = quota_names[i] if i < len(quota_names) else ""
             original_qid = qid
+            skip_this = False  # 标记是否跳过当前定额
 
             # --- 校验1: 清洗编号（去"换"后缀、"借"前缀、空格、乘数后缀） ---
-            qid_clean = qid.strip().replace(" ", "")
-            qid_clean = re.sub(r'换$', '', qid_clean)       # 去"换"后缀
-            if qid_clean.startswith("借"):
-                qid_clean = qid_clean[1:]                    # 去"借"前缀
-            qid_clean = re.sub(r'\*[\d.]+$', '', qid_clean)  # 去"*数量"后缀
-            qid_clean = qid_clean.strip()
-            if qid_clean != original_qid.strip():
-                warnings.append(f"定额编号'{original_qid}'已清洗为'{qid_clean}'")
+            try:
+                qid_clean = qid.strip().replace(" ", "")
+                qid_clean = re.sub(r'换$', '', qid_clean)       # 去"换"后缀
+                if qid_clean.startswith("借"):
+                    qid_clean = qid_clean[1:]                    # 去"借"前缀
+                qid_clean = re.sub(r'\*[\d.]+$', '', qid_clean)  # 去"*数量"后缀
+                qid_clean = qid_clean.strip()
+                if qid_clean != original_qid.strip():
+                    warnings.append(f"定额编号'{original_qid}'已清洗为'{qid_clean}'")
+            except Exception as e:
+                logger.warning(f"经验库校验规则1（编号清洗）异常，跳过此规则: {e}")
+                qid_clean = qid.strip()  # 清洗失败用原始值
 
             # --- 校验2: 编号是否存在（补子目直接跳过，不报错） ---
-            if qid_clean.startswith("补子目"):
-                warnings.append(f"跳过补子目: '{original_qid}'")
-                continue
-            if quota_map and qid_clean not in quota_map:
-                # 降级为警告，不阻止导入（人工预算中的编号可能是换算/借用后的变体）
-                warnings.append(f"定额编号'{qid_clean}'不在定额库中（仍保留导入）")
+            try:
+                if qid_clean.startswith("补子目"):
+                    warnings.append(f"跳过补子目: '{original_qid}'")
+                    continue
+                if quota_map and qid_clean not in quota_map:
+                    # 降级为警告，不阻止导入（人工预算中的编号可能是换算/借用后的变体）
+                    warnings.append(f"定额编号'{qid_clean}'不在定额库中（仍保留导入）")
+            except Exception as e:
+                logger.warning(f"经验库校验规则2（编号存在性）异常，跳过此规则: {e}")
 
             # --- 校验3: 配电箱 vs 接线箱 ---
-            if '配电箱' in bill_text and '接线箱' not in bill_text:
-                q_info = quota_map.get(qid_clean, {})
-                q_name = q_info.get('name', qname)
-                if '接线箱' in q_name and '配电' not in q_name:
-                    errors.append(f"清单是配电箱，但定额'{qid_clean}'是接线箱，不匹配")
-                    continue
+            try:
+                if '配电箱' in bill_text and '接线箱' not in bill_text:
+                    q_info = quota_map.get(qid_clean, {})
+                    q_name = q_info.get('name', qname)
+                    if '接线箱' in q_name and '配电' not in q_name:
+                        errors.append(f"清单是配电箱，但定额'{qid_clean}'是接线箱，不匹配")
+                        skip_this = True
+            except Exception as e:
+                logger.warning(f"经验库校验规则3（配电箱vs接线箱）异常，跳过此规则: {e}")
+
+            if skip_this:
+                continue
 
             # --- 校验4: 穿线 vs 电缆 ---
-            if ('穿线' in bill_text or '穿铜芯线' in bill_text) and '电缆' not in bill_text:
-                q_info = quota_map.get(qid_clean, {})
-                q_name = q_info.get('name', qname)
-                if '电缆' in q_name and '穿线' not in q_name and '穿铜芯' not in q_name:
-                    errors.append(f"清单是穿线，但定额'{qid_clean}'是电缆定额，不匹配")
-                    continue
+            try:
+                if ('穿线' in bill_text or '穿铜芯线' in bill_text) and '电缆' not in bill_text:
+                    q_info = quota_map.get(qid_clean, {})
+                    q_name = q_info.get('name', qname)
+                    if '电缆' in q_name and '穿线' not in q_name and '穿铜芯' not in q_name:
+                        errors.append(f"清单是穿线，但定额'{qid_clean}'是电缆定额，不匹配")
+                        skip_this = True
+            except Exception as e:
+                logger.warning(f"经验库校验规则4（穿线vs电缆）异常，跳过此规则: {e}")
+
+            if skip_this:
+                continue
 
             # --- 校验5: DN严重超档 ---
-            bill_dn_m = re.search(r'DN\s*(\d+)', bill_text, re.IGNORECASE)
-            if bill_dn_m and quota_map:
-                q_info = quota_map.get(qid_clean, {})
-                q_dn = q_info.get('dn')
-                if q_dn:
-                    bill_dn = float(bill_dn_m.group(1))
-                    quota_dn = float(q_dn)
-                    if bill_dn > quota_dn * 2:
-                        errors.append(f"DN严重超档：清单DN{int(bill_dn)}，定额'{qid_clean}'只到DN{int(quota_dn)}")
-                        continue
+            try:
+                bill_dn_m = re.search(r'DN\s*(\d+)', bill_text, re.IGNORECASE)
+                if bill_dn_m and quota_map:
+                    q_info = quota_map.get(qid_clean, {})
+                    q_dn = q_info.get('dn')
+                    if q_dn:
+                        bill_dn = float(bill_dn_m.group(1))
+                        quota_dn = float(q_dn)
+                        if bill_dn > quota_dn * 2:
+                            errors.append(f"DN严重超档：清单DN{int(bill_dn)}，定额'{qid_clean}'只到DN{int(quota_dn)}")
+                            skip_this = True
+            except Exception as e:
+                logger.warning(f"经验库校验规则5（DN超档）异常，跳过此规则: {e}")
+
+            if skip_this:
+                continue
 
             # --- 校验6: 回路数严重不匹配 ---
-            bill_circuit_m = re.search(r'(\d+)\s*回路', bill_text)
-            if bill_circuit_m and quota_map:
-                q_info = quota_map.get(qid_clean, {})
-                q_name = q_info.get('name', qname)
-                q_circuits = q_info.get('circuits')
-                if q_circuits is not None:
-                    bc = int(bill_circuit_m.group(1))
-                    qc = int(q_circuits)
-                    if bc > qc:
-                        errors.append(f"回路超档：清单{bc}回路 > 定额'{qid_clean}'的{qc}回路")
-                        continue
-                else:
-                    q_circuit_m = re.search(r'(\d+)', q_name) if '回路' in q_name else None
-                    if q_circuit_m:
+            try:
+                bill_circuit_m = re.search(r'(\d+)\s*回路', bill_text)
+                if bill_circuit_m and quota_map:
+                    q_info = quota_map.get(qid_clean, {})
+                    q_name = q_info.get('name', qname)
+                    q_circuits = q_info.get('circuits')
+                    if q_circuits is not None:
                         bc = int(bill_circuit_m.group(1))
-                        qc = int(q_circuit_m.group(1))
+                        qc = int(q_circuits)
                         if bc > qc:
                             errors.append(f"回路超档：清单{bc}回路 > 定额'{qid_clean}'的{qc}回路")
-                            continue
+                            skip_this = True
+                    else:
+                        q_circuit_m = re.search(r'(\d+)', q_name) if '回路' in q_name else None
+                        if q_circuit_m:
+                            bc = int(bill_circuit_m.group(1))
+                            qc = int(q_circuit_m.group(1))
+                            if bc > qc:
+                                errors.append(f"回路超档：清单{bc}回路 > 定额'{qid_clean}'的{qc}回路")
+                                skip_this = True
+            except Exception as e:
+                logger.warning(f"经验库校验规则6（回路超档）异常，跳过此规则: {e}")
+
+            if skip_this:
+                continue
 
             # 通过所有校验，保留此定额
             cleaned_ids.append(qid_clean)

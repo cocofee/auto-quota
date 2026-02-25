@@ -187,7 +187,8 @@ class AgentMatcher:
 
         # 调用大模型
         if self.is_circuit_open() and not self._check_half_open():
-            return self._fallback_result(bill_item, candidates, "LLM熔断（冷却中）")
+            return self._fallback_result(bill_item, candidates, "LLM熔断（冷却中）",
+                                         match_source="agent_circuit_break")
         try:
             response_text = self._call_llm(prompt)
             with self._ensure_circuit_lock():
@@ -254,7 +255,8 @@ class AgentMatcher:
         # 熔断检查
         if self.is_circuit_open() and not self._check_half_open():
             return [
-                self._fallback_result(item["bill_item"], item["candidates"], "LLM熔断")
+                self._fallback_result(item["bill_item"], item["candidates"], "LLM熔断",
+                                      match_source="agent_circuit_break")
                 for item in batch_items
             ]
 
@@ -851,7 +853,8 @@ class AgentMatcher:
         return bool(value)
 
     def _fallback_result(self, bill_item: dict, candidates: list[dict],
-                         error_msg: str) -> dict:
+                         error_msg: str,
+                         match_source: str = "agent_fallback") -> dict:
         """
         降级处理：大模型调用失败时，回退到参数验证第1名
 
@@ -903,7 +906,7 @@ class AgentMatcher:
             }] if has_valid_best else [],
             "confidence": confidence,
             "explanation": f"Agent降级为候选策略: {error_msg}",
-            "match_source": "agent_fallback",
+            "match_source": match_source,  # 区分 agent_fallback（普通失败）和 agent_circuit_break（熔断降级）
             "candidates_count": len(candidates),
         }
         if not has_valid_best:
