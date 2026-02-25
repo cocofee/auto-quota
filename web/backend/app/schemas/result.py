@@ -21,6 +21,7 @@ class MatchResultResponse(BaseModel):
     """单条匹配结果"""
     id: uuid.UUID
     index: int
+    bill_code: str = ""
     bill_name: str
     bill_description: str
     bill_unit: str

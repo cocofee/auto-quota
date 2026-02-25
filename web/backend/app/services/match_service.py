@@ -117,6 +117,7 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
         match_result = MatchResult(
             task_id=task_id,
             index=idx,
+            bill_code=bill_item.get("code", ""),
             bill_name=bill_item.get("name", ""),
             bill_description=bill_item.get("spec", bill_item.get("description", "")),
             bill_unit=bill_item.get("unit", ""),
