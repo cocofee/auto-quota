@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Table, Tag, Button, Space, Progress, Select, Popconfirm, App, Upload, Modal,
+  Card, Table, Tag, Button, Space, Progress, Select, Popconfirm, App, Upload, Modal, Tooltip,
 } from 'antd';
 import {
   EyeOutlined,
@@ -20,12 +20,44 @@ import {
   DownloadOutlined,
   UploadOutlined,
   StopOutlined,
+  CheckCircleFilled,
+  LoadingOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
 import { STATUS_MAP, STATUS_OPTIONS } from '../../constants/task';
 import { getErrorMessage } from '../../utils/error';
+
+/** 从定额库全名提取简短标签，如 "广东·安装" */
+function shortenProvince(full: string): string {
+  if (!full) return '-';
+  // 提取省份名（2~3个字，遇到"省/市/回族/壮族"等行政后缀就截断）
+  const provMatch = full.match(/^(.{2,3}?)(省|市|回族|壮族|维吾尔)/);
+  const prov = provMatch ? provMatch[1] : full.substring(0, 2);
+  // 从定额库全名中识别工程类别关键词
+  const categories: [RegExp, string][] = [
+    [/安装/, '安装'],
+    [/市政/, '市政'],
+    [/房屋建筑|建筑装饰|房屋修|建筑与装饰/, '土建'],
+    [/园林绿化/, '园林'],
+    [/道路养护/, '养护'],
+    [/综合管廊/, '管廊'],
+    [/轨道交通/, '轨道'],
+    [/环境卫生/, '环卫'],
+    [/海绵城市/, '海绵'],
+    [/装配式/, '装配式'],
+    [/古驿道|传统建筑/, '修缮'],
+    [/绿色建筑/, '绿建'],
+    [/建设工程|施工消耗/, '综合'],
+  ];
+  let cat = '';
+  for (const [re, label] of categories) {
+    if (re.test(full)) { cat = label; break; }
+  }
+  return cat ? `${prov}·${cat}` : prov;
+}
 
 /** 组件属性 */
 interface TaskListPageProps {
@@ -39,6 +71,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalBills, setTotalBills] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [statusFilter, setStatusFilter] = useState('');
@@ -55,6 +88,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       const { data } = await api.get<TaskListResponse>('/tasks', { params });
       setTasks(data.items);
       setTotal(data.total);
+      setTotalBills(data.total_bills ?? 0);
     } catch {
       message.error('加载任务列表失败');
     } finally {
@@ -110,6 +144,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
                 ? {
                     ...t,
                     progress: data.progress ?? t.progress,
+                    progress_current: data.current_idx ?? t.progress_current,
                     progress_message: data.message ?? t.progress_message,
                     status: data.status ?? t.status,
                     stats: data.stats || t.stats,
@@ -205,6 +240,52 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     }
   };
 
+  /** 清单预览项 */
+  interface BillPreviewItem {
+    code: string; name: string; description: string;
+    unit: string; quantity: number | null; specialty_name: string;
+  }
+  /** 实时匹配结果项 */
+  interface LiveResult {
+    idx: number; quota_id: string; quota_name: string;
+    confidence: number; match_source: string;
+  }
+  /** 缓存：清单列表 + 匹配结果 */
+  const [billPreviews, setBillPreviews] = useState<Record<string, BillPreviewItem[]>>({});
+  const [liveResults, setLiveResults] = useState<Record<string, Record<number, LiveResult>>>({});
+
+  /** 加载某个任务的清单预览 + 实时结果 */
+  const loadBillPreview = async (taskId: string) => {
+    try {
+      const { data } = await api.get<{ items: BillPreviewItem[]; results: Record<number, LiveResult> }>(
+        `/tasks/${taskId}/bill-preview`,
+      );
+      if (data.items.length > 0) {
+        setBillPreviews((prev) => ({ ...prev, [taskId]: data.items }));
+      }
+      if (data.results && Object.keys(data.results).length > 0) {
+        setLiveResults((prev) => ({ ...prev, [taskId]: data.results }));
+      }
+    } catch {
+      // 文件还没生成，稍后重试
+    }
+  };
+
+  // 展开的运行中任务：每 3 秒刷新一次结果
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+  useEffect(() => {
+    // 找出已展开且正在运行的任务
+    const expandedRunning = expandedRowKeys.filter((id) =>
+      tasks.find((t) => t.id === id && t.status === 'running'),
+    );
+    if (expandedRunning.length === 0) return;
+    const timer = setInterval(() => {
+      expandedRunning.forEach((id) => loadBillPreview(id));
+    }, 3000);
+    return () => clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedRowKeys, tasks]);
+
   /** 上传反馈（纠正后的Excel）——用 Set 追踪正在上传的 taskId，避免影响其他行 */
   const [uploadingTaskIds, setUploadingTaskIds] = useState<Set<string>>(new Set());
   const uploadFeedback = async (taskId: string, file: File) => {
@@ -236,16 +317,35 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   // 表格列定义
   const columns = [
     {
+      title: '#',
+      key: 'index',
+      width: 50,
+      render: (_: unknown, __: TaskInfo, index: number) => (
+        <span style={{ color: '#999' }}>{(page - 1) * pageSize + index + 1}</span>
+      ),
+    },
+    {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
-      ellipsis: true,
+      width: 200,
+      ellipsis: { showTitle: false },
+      render: (name: string) => (
+        <Tooltip title={name} placement="topLeft">
+          <span>{name}</span>
+        </Tooltip>
+      ),
     },
     {
-      title: '省份',
+      title: '定额库',
       dataIndex: 'province',
       key: 'province',
       width: 100,
+      render: (province: string) => (
+        <Tooltip title={province}>
+          <Tag style={{ margin: 0 }}>{shortenProvince(province)}</Tag>
+        </Tooltip>
+      ),
     },
     {
       title: '模式',
@@ -442,18 +542,111 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
         columns={columns}
         loading={loading}
         size="middle"
+        expandable={{
+          expandedRowKeys,
+          onExpandedRowsChange: (keys) => setExpandedRowKeys(keys as string[]),
+          // 展开行：显示清单 + 匹配定额
+          expandedRowRender: (record: TaskInfo) => {
+            const items = billPreviews[record.id];
+            if (!items || items.length === 0) {
+              return <span style={{ color: '#999' }}>清单加载中...</span>;
+            }
+            const current = record.progress_current || 0;
+            const isDone = record.status === 'completed';
+            const results = liveResults[record.id] || {};
+            return (
+              <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+                      <th style={{ width: 30, padding: '4px 8px', textAlign: 'center' }}>#</th>
+                      <th style={{ width: 24, padding: '4px' }}></th>
+                      <th style={{ padding: '4px 8px', textAlign: 'left' }}>清单名称</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'left', width: 60 }}>单位</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'left' }}>→ 匹配定额</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'center', width: 50 }}>置信</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, idx) => {
+                      const seq = idx + 1;
+                      const r = results[seq]; // 该条的匹配结果
+                      let icon: React.ReactNode;
+                      let rowColor: string;
+                      if (isDone || seq <= current) {
+                        icon = <CheckCircleFilled style={{ color: '#52c41a' }} />;
+                        rowColor = '#333';
+                      } else if (seq === current + 1 && record.status === 'running') {
+                        icon = <LoadingOutlined style={{ color: '#1890ff' }} />;
+                        rowColor = '#1890ff';
+                      } else {
+                        icon = <ClockCircleOutlined style={{ color: '#d9d9d9' }} />;
+                        rowColor = '#ccc';
+                      }
+                      // 置信度颜色
+                      let confColor = '#999';
+                      if (r) {
+                        if (r.confidence >= 85) confColor = '#52c41a';
+                        else if (r.confidence >= 60) confColor = '#faad14';
+                        else confColor = '#ff4d4f';
+                      }
+                      return (
+                        <tr key={idx} style={{ color: rowColor, borderBottom: '1px solid #f5f5f5' }}>
+                          <td style={{ padding: '3px 8px', textAlign: 'center' }}>{seq}</td>
+                          <td style={{ padding: '3px 4px', textAlign: 'center' }}>{icon}</td>
+                          <td style={{ padding: '3px 8px' }}>
+                            <div>{item.name}</div>
+                            {item.description && (
+                              <div style={{ fontSize: 11, color: '#999' }}>{item.description}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '3px 8px' }}>{item.unit}</td>
+                          <td style={{ padding: '3px 8px' }}>
+                            {r ? (
+                              <span>
+                                {r.quota_id && <Tag style={{ fontSize: 11 }}>{r.quota_id}</Tag>}
+                                {r.quota_name}
+                              </span>
+                            ) : (
+                              seq <= current ? <span style={{ color: '#999' }}>-</span> : ''
+                            )}
+                          </td>
+                          <td style={{ padding: '3px 8px', textAlign: 'center', color: confColor, fontWeight: 600 }}>
+                            {r ? `${r.confidence}%` : ''}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          },
+          // 只有运行中和已完成的任务可展开
+          rowExpandable: (record: TaskInfo) =>
+            record.status === 'running' || record.status === 'completed',
+          // 展开时加载清单预览
+          onExpand: (expanded: boolean, record: TaskInfo) => {
+            if (expanded) loadBillPreview(record.id);
+          },
+        }}
         pagination={{
           current: page,
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (t) => `共 ${t} 个任务，${totalBills} 条清单`,
           onChange: (p, s) => {
             setPage(p);
             setPageSize(s);
           },
         }}
         locale={{ emptyText: '暂无任务' }}
+        footer={() => total > 0 ? (
+          <div style={{ textAlign: 'right', color: '#666', fontSize: 13 }}>
+            合计：<b>{total}</b> 个任务，<b>{totalBills}</b> 条清单
+          </div>
+        ) : null}
       />
     </Card>
   );

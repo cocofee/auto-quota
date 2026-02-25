@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Tabs, Statistic, Row, Col,
-  Input, Popconfirm, Select, Modal,
+  Input, Popconfirm, Select, Modal, Tooltip,
 } from 'antd';
 import {
   ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
@@ -304,38 +304,75 @@ export default function ExperienceManage() {
   // 表格列
   const columns = [
     {
-      title: 'ID',
+      title: '#',
       dataIndex: 'id',
       key: 'id',
-      width: 60,
+      width: 50,
+      render: (v: number) => <span style={{ color: '#999' }}>{v}</span>,
     },
     {
       title: '清单文本',
       dataIndex: 'bill_text',
       key: 'bill_text',
-      ellipsis: true,
+      width: 300,
+      render: (v: string) => {
+        if (!v) return '-';
+        // 在"名称:" "型号:" "规格:" 等关键词前换行，让内容结构清晰
+        const formatted = v.replace(/ +(名称|型号|规格|单位|数量|安装方式|材质|材料|功率|电压|容量|尺寸|含|做法|特征)[:：]/g, '\n$1:');
+        return (
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.6 }}>
+            {formatted}
+          </div>
+        );
+      },
     },
     {
       title: '定额编号',
       dataIndex: 'quota_ids',
       key: 'quota_ids',
-      width: 150,
-      ellipsis: true,
-      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-',
+      width: 120,
+      render: (v: string | string[]) => {
+        const ids = Array.isArray(v) ? v : (typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return [v]; } })() : []);
+        return ids.length > 0 ? (
+          <Space size={2} wrap>{ids.map((id: string, i: number) => <Tag key={i} color="blue" style={{ fontSize: 11 }}>{id}</Tag>)}</Space>
+        ) : '-';
+      },
+    },
+    {
+      title: '定额名称',
+      dataIndex: 'quota_names',
+      key: 'quota_names',
+      width: 200,
+      ellipsis: { showTitle: false },
+      render: (v: string | string[]) => {
+        const names = Array.isArray(v) ? v : (typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return v ? [v] : []; } })() : []);
+        if (names.length === 0) return '-';
+        const text = names.join('；');
+        return (
+          <Tooltip title={text} placement="topLeft">
+            <span style={{ fontSize: 12 }}>{text}</span>
+          </Tooltip>
+        );
+      },
     },
     // 选了省份就不显示省份列（节省空间）
     ...(!selectedProvince ? [{
       title: '省份',
       dataIndex: 'province',
       key: 'province',
-      width: 120,
-      ellipsis: true,
+      width: 100,
+      ellipsis: { showTitle: false } as const,
+      render: (v: string) => (
+        <Tooltip title={v}>
+          <span style={{ fontSize: 12 }}>{v}</span>
+        </Tooltip>
+      ),
     }] : []),
     {
       title: '层级',
       dataIndex: 'layer_type',
       key: 'layer_type',
-      width: 80,
+      width: 70,
       render: (v: string) => (
         <Tag color={v === 'authority' ? 'green' : 'orange'}>
           {v === 'authority' ? '权威' : '候选'}
@@ -346,20 +383,20 @@ export default function ExperienceManage() {
       title: '来源',
       dataIndex: 'source',
       key: 'source',
-      width: 100,
+      width: 80,
       render: (v: string) => <Tag>{v || '-'}</Tag>,
     },
     {
-      title: '置信度',
+      title: '置信',
       dataIndex: 'confidence',
       key: 'confidence',
-      width: 80,
+      width: 60,
       render: (v: number) => v != null ? `${v}` : '-',
     },
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 150,
       render: (_: unknown, record: ExperienceRecord) => (
         <Space size="small">
           {record.layer_type === 'candidate' && (

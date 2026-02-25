@@ -38,3 +38,33 @@ export function extractRegion(name: string): string {
   // 地级市归入所属省份
   return CITY_TO_PROVINCE[region] || region;
 }
+
+/**
+ * 从定额库全名中提取年份
+ *
+ * 例如："宁夏安装工程计价定额(2019)" → "2019"
+ */
+function extractYear(name: string): string {
+  const m = name.match(/[（(](\d{4})[)）]/);
+  return m ? m[1] : '';
+}
+
+/**
+ * 查找同省份、同年份的兄弟定额库（不含自己）
+ *
+ * 例如：主库"宁夏安装工程计价定额(2019)"，从全列表中找出
+ * 宁夏市政(2019)、宁夏土建(2019)等同批库。
+ */
+export function getSiblingProvinces(
+  mainProvince: string,
+  allProvinces: string[],
+): string[] {
+  const mainRegion = extractRegion(mainProvince);
+  const mainYear = extractYear(mainProvince);
+  if (!mainYear) return [];
+
+  return allProvinces.filter((p) => {
+    if (p === mainProvince) return false;
+    return extractRegion(p) === mainRegion && extractYear(p) === mainYear;
+  });
+}

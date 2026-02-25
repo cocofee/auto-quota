@@ -18,7 +18,7 @@ import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useProvinceStore } from '../../stores/province';
 import type { TaskInfo } from '../../types';
-import { extractRegion } from '../../utils/region';
+import { extractRegion, getSiblingProvinces } from '../../utils/region';
 import { getErrorMessage } from '../../utils/error';
 
 const { Dragger } = Upload;
@@ -37,6 +37,13 @@ export default function TaskCreatePage() {
   const [currentStep, setCurrentStep] = useState(0);
   const { provinces: allProvinces, loading: provincesLoading, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
+  const selectedProvince = Form.useWatch('province', form); // 监听选中的定额库
+
+  // 计算同批兄弟库（同省份+同年份，自动挂载为辅助库）
+  const siblingDbs = useMemo(() => {
+    if (!selectedProvince) return [];
+    return getSiblingProvinces(selectedProvince, allProvinces);
+  }, [selectedProvince, allProvinces]);
 
   // 客户2步流程，管理员3步流程
   const steps = isAdmin
@@ -262,6 +269,20 @@ export default function TaskCreatePage() {
               />
             </Form.Item>
 
+            {/* 同批兄弟库提示：告知用户自动挂载了哪些辅助库 */}
+            {siblingDbs.length > 0 && (
+              <div style={{ marginTop: -16, marginBottom: 16, fontSize: 13 }}>
+                <div style={{ color: '#52c41a', marginBottom: 4 }}>
+                  同时使用同批辅助库（共 {siblingDbs.length} 个）：
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 20, color: '#666' }}>
+                  {siblingDbs.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <Button
               type="primary"
               block
@@ -315,6 +336,16 @@ export default function TaskCreatePage() {
             <Card type="inner" title="任务配置确认" style={{ marginBottom: 24 }}>
               <p><strong>文件：</strong>{fileList[0]?.name || '-'}</p>
               <p><strong>定额库：</strong>{form.getFieldValue('province')}</p>
+              {siblingDbs.length > 0 && (
+                <div>
+                  <strong>辅助库：</strong>同批 {siblingDbs.length} 个库自动挂载
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 20, color: '#666', fontSize: 13 }}>
+                    {siblingDbs.map((name) => (
+                      <li key={name}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {isAdmin && (
                 <>
                   {form.getFieldValue('sheet') && (
