@@ -7,7 +7,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Collapse,
-  Upload, Empty, Modal, Input, Select,
+  Empty, Modal, Input, Select,
 } from 'antd';
 import {
   DatabaseOutlined, UploadOutlined, ReloadOutlined,
@@ -15,7 +15,6 @@ import {
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { extractRegion } from '../../utils/region';
-import { getErrorMessage } from '../../utils/error';
 
 // 定额库信息
 interface ProvinceInfo {
