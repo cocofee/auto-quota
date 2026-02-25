@@ -64,6 +64,7 @@ services:
   # 后端 API（FastAPI）
   # ============================================================
   backend:
+    image: auto-quota-app:latest
     build:
       context: .
       dockerfile: web/backend/Dockerfile
@@ -108,9 +109,7 @@ services:
   # Celery Worker（后台匹配任务执行）
   # ============================================================
   celery-worker:
-    build:
-      context: .
-      dockerfile: web/backend/Dockerfile
+    image: auto-quota-app:latest
     container_name: autoquota-celery
     restart: unless-stopped
     # Celery Worker 启动命令（Docker容器是Linux环境，用prefork池支持多进程并发）

@@ -75,14 +75,23 @@ async def experience_records(
         def _query():
             db = _get_experience_db()
             # 根据层级调用不同方法（取全部记录，在内存中分页）
+            # 由于底层方法不返回 layer 字段，这里手动补上 layer_type
             if layer == "authority":
                 records = db.get_authority_records(province=province, limit=0)
+                for r in records:
+                    r["layer_type"] = "authority"
             elif layer == "candidate":
                 records = db.get_candidate_records(province=province, limit=0)
+                for r in records:
+                    r["layer_type"] = "candidate"
             else:
                 # 获取全部：权威层 + 候选层
                 auth = db.get_authority_records(province=province, limit=0)
+                for r in auth:
+                    r["layer_type"] = "authority"
                 cand = db.get_candidate_records(province=province, limit=0)
+                for r in cand:
+                    r["layer_type"] = "candidate"
                 records = auth + cand
             return records
 
@@ -161,7 +170,11 @@ async def experience_search(
                     LIMIT ?
                 """, params)
                 rows = cursor.fetchall()
-                return [db._normalize_record_quota_fields(dict(row)) for row in rows]
+                records = [db._normalize_record_quota_fields(dict(row)) for row in rows]
+                # 补上 layer_type 字段（数据库字段叫 layer，前端期望 layer_type）
+                for r in records:
+                    r["layer_type"] = r.get("layer", "candidate")
+                return records
             finally:
                 conn.close()
 

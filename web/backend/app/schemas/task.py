@@ -37,6 +37,7 @@ class TaskResponse(BaseModel):
     agent_llm: str | None
     status: str
     progress: int
+    progress_current: int
     progress_message: str
     error_message: str | None
     stats: dict | None
@@ -50,6 +51,7 @@ class TaskResponse(BaseModel):
 class TaskListResponse(BaseModel):
     """任务列表（分页）"""
     items: list[TaskResponse]
-    total: int  # 总条数
-    page: int   # 当前页码
-    size: int   # 每页条数
+    total: int         # 任务总条数
+    total_bills: int   # 所有任务的清单条数合计
+    page: int          # 当前页码
+    size: int          # 每页条数

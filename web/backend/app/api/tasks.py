@@ -17,7 +17,7 @@ import shutil
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
-from sqlalchemy import select, func, desc, true as sa_true
+from sqlalchemy import select, func, desc, true as sa_true, cast, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 from loguru import logger
@@ -28,7 +28,7 @@ from app.models.user import User
 from app.auth.deps import get_current_user
 from app.auth.utils import decode_token
 from app.schemas.task import TaskResponse, TaskListResponse
-from app.services.match_service import save_upload_file
+from app.services.match_service import save_upload_file, get_task_output_dir
 from app.tasks.match_task import execute_match
 from app.config import UPLOAD_DIR, TASK_OUTPUT_DIR, ACCESS_TOKEN_COOKIE_NAME
 from app.api.shared import get_user_task
@@ -189,9 +189,14 @@ async def list_tasks(
         if status_filter:
             base_filter = (Task.user_id == user.id) & (Task.status == status_filter)
 
-    # 查总数
-    count_query = select(func.count()).select_from(Task).where(base_filter)
-    total = (await db.execute(count_query)).scalar()
+    # 查总数 + 清单条数合计（stats 是 JSON 字段，取其中 total 值求和）
+    count_query = select(
+        func.count(),
+        func.coalesce(func.sum(cast(Task.stats["total"].as_string(), Integer)), 0),
+    ).select_from(Task).where(base_filter)
+    row = (await db.execute(count_query)).one()
+    total = row[0]
+    total_bills = int(row[1])
 
     # 分页查询
     query = (
@@ -203,7 +208,7 @@ async def list_tasks(
     )
     tasks = (await db.execute(query)).scalars().all()
 
-    return TaskListResponse(items=tasks, total=total, page=page, size=size)
+    return TaskListResponse(items=tasks, total=total, page=page, size=size, total_bills=total_bills)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -282,6 +287,44 @@ async def cancel_task(
     return {"message": "任务已取消"}
 
 
+@router.get("/{task_id}/bill-preview")
+async def get_bill_preview(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """获取任务的清单预览 + 实时匹配结果
+
+    返回 items（清单列表）和 results（已匹配的定额结果，按序号索引）。
+    """
+    await get_user_task(task_id, user, db)
+
+    output_dir = get_task_output_dir(task_id)
+
+    # 读取清单预览
+    items = []
+    preview_path = output_dir / "bill_preview.json"
+    if preview_path.exists():
+        try:
+            items = json.loads(preview_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # 读取实时匹配结果（jsonl 格式，每行一条）
+    results = {}
+    live_path = output_dir / "results_live.jsonl"
+    if live_path.exists():
+        try:
+            for line in live_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    r = json.loads(line)
+                    results[r["idx"]] = r  # 按序号索引
+        except Exception:
+            pass
+
+    return {"items": items, "results": results}
+
+
 @router.get("/{task_id}/progress")
 async def task_progress(task_id: uuid.UUID, request: Request):
     """SSE 实时进度推送
@@ -340,7 +383,7 @@ async def task_progress(task_id: uuid.UUID, request: Request):
                 async with async_session() as session:
                     result = await session.execute(
                         select(
-                            Task.status, Task.progress,
+                            Task.status, Task.progress, Task.progress_current,
                             Task.progress_message, Task.stats,
                             Task.error_message, Task.started_at,
                         ).where(Task.id == task_id)
@@ -357,6 +400,7 @@ async def task_progress(task_id: uuid.UUID, request: Request):
                 data = {
                     "status": row.status,
                     "progress": row.progress,
+                    "current_idx": row.progress_current,
                     "message": row.progress_message,
                     "stats": row.stats,
                     "error": row.error_message,

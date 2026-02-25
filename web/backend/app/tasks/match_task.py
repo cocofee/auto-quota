@@ -25,21 +25,45 @@ from app.models.task import Task
 from app.services.match_service import save_results_to_db, get_task_output_dir
 
 
-def _make_progress_callback(session, task):
+def _make_progress_callback(session, task, output_dir):
     """创建进度回调函数：每次被调用时更新数据库中的任务进度
 
     限制更新频率（至少间隔2秒），避免频繁写数据库。
+    同时将匹配结果实时写入 results_live.jsonl（每行一条结果）。
     """
     last_update = [0]  # 用列表包装，让闭包可以修改
+    live_path = output_dir / "results_live.jsonl" if output_dir else None
 
-    def callback(progress, current_idx, message):
+    def callback(progress, current_idx, message, result=None):
         now = time.time()
+
+        # 实时写入匹配结果（不受2秒限频，每条都写）
+        if result and live_path:
+            try:
+                import json as _json
+                # 提取轻量摘要（不写完整 candidates/trace）
+                quotas = result.get("quotas") or []
+                bill = result.get("bill_item") or {}
+                line = _json.dumps({
+                    "idx": current_idx,
+                    "quota_id": quotas[0]["quota_id"] if quotas else "",
+                    "quota_name": quotas[0]["name"] if quotas else "",
+                    "confidence": result.get("confidence", 0),
+                    "match_source": result.get("match_source", ""),
+                    "bill_name": bill.get("name", ""),
+                }, ensure_ascii=False)
+                with open(live_path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except Exception:
+                pass  # 写入失败不影响匹配
+
         # 至少间隔2秒更新一次（进度>=95%时不限频，确保关键节点立即更新）
         if now - last_update[0] < 2 and progress < 95:
             return
         last_update[0] = now
         try:
             task.progress = progress
+            task.progress_current = current_idx
             task.progress_message = message
             session.commit()
         except Exception as e:
@@ -107,15 +131,23 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
         )
 
         import main as auto_quota_main  # 延迟导入，避免循环依赖
+        import config as quota_config
+
+        # 自动挂载同批辅助定额库（同省份+同年份的兄弟库）
+        province = params.get("province", "")
+        aux_provinces = quota_config.get_sibling_provinces(province)
+        if aux_provinces:
+            logger.info(f"任务 {task_id}: 自动挂载同批辅助库: {aux_provinces}")
 
         # 创建进度回调（匹配过程中实时更新数据库进度）
-        progress_cb = _make_progress_callback(session, task)
+        progress_cb = _make_progress_callback(session, task, output_dir)
 
         result = auto_quota_main.run(
             input_file=file_path,
             mode=params.get("mode", "search"),
             output=excel_output,
             province=params.get("province"),
+            aux_provinces=aux_provinces or None,  # 同批兄弟库自动挂载
             sheet=params.get("sheet"),
             limit=params.get("limit"),
             agent_llm=params.get("agent_llm"),
