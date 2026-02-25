@@ -26,8 +26,6 @@ import {
   MessageOutlined,
   AppstoreOutlined,
   BookOutlined,
-  SearchOutlined,
-  AuditOutlined,
   FileTextOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
@@ -62,11 +60,6 @@ export default function MainLayout() {
         icon: <UnorderedListOutlined />,
         label: '我的任务',
       },
-      {
-        key: '/consult',
-        icon: <SearchOutlined />,
-        label: '定额咨询',
-      },
     ];
 
     if (!isAdmin) return base;
@@ -98,11 +91,6 @@ export default function MainLayout() {
             key: '/admin/feedback',
             icon: <MessageOutlined />,
             label: '反馈审核',
-          },
-          {
-            key: '/admin/consult-review',
-            icon: <AuditOutlined />,
-            label: '咨询审核',
           },
           {
             key: '/admin/analytics',

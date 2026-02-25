@@ -286,7 +286,7 @@ export default function ResultsPage() {
     {
       title: '序号',
       key: 'serial',
-      width: 55,
+      width: 42,
       align: 'center' as const,
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'bill') return <b>{row._result.index + 1}</b>;
@@ -330,20 +330,41 @@ export default function ResultsPage() {
         );
       },
     },
-    // 项目特征（只在清单行显示）
+    // 项目特征（只在清单行显示，按编号拆行展示）
     {
       title: '项目特征',
       key: 'description',
-      width: 200,
-      ellipsis: true,
+      width: 260,
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const desc = row._result.bill_description;
-        return desc ? (
-          <Tooltip title={desc} placement="topLeft">
-            <span style={{ fontSize: 12 }}>{desc}</span>
-          </Tooltip>
-        ) : <span style={{ color: '#ccc' }}>-</span>;
+        if (!desc) return <span style={{ color: '#ccc' }}>-</span>;
+
+        // 按换行或编号前缀拆分成多行
+        let lines = desc.split(/[\r\n]+/).map((s: string) => s.trim()).filter(Boolean);
+        // 如果原文没换行但有多个编号（如"1.名称:xx 2.规格:yy"），按编号拆
+        if (lines.length <= 1 && /\d+[.、．]/.test(desc)) {
+          lines = desc.split(/(?=\d+[.、．])/).map((s: string) => s.trim()).filter(Boolean);
+        }
+
+        // 过滤废话行（详见图纸、其他：详见、空值字段等）
+        const filtered = lines.filter((line: string) => {
+          const clean = line.replace(/^\d+[.、．]\s*/, '');
+          if (!clean.trim()) return false;
+          if (/详见图纸|详见设计|按图施工|按规范/.test(clean)) return false;
+          if (/^其他[：:]\s*(详见|见|按|\/|无|—|-)\s*/.test(clean)) return false;
+          return true;
+        });
+
+        if (filtered.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+
+        return (
+          <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+            {filtered.map((line: string, idx: number) => (
+              <div key={idx}>{line}</div>
+            ))}
+          </div>
+        );
       },
     },
     // 单位

@@ -61,6 +61,7 @@ export interface TaskInfo {
   agent_llm: string | null;
   status: TaskStatus;
   progress: number;
+  progress_current: number;  // 当前处理到第几条清单（从1开始）
   progress_message: string;
   error_message: string | null;
   stats: TaskStats | null;
@@ -89,6 +90,7 @@ export interface TaskStats {
 export interface TaskListResponse {
   items: TaskInfo[];
   total: number;
+  total_bills: number;  // 所有任务的清单条数合计
   page: number;
   size: number;
 }
