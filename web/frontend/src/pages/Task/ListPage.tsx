@@ -8,7 +8,7 @@
  * 功能：按状态筛选、分页、查看结果、下载Excel、上传反馈、删除任务、进度条、自动刷新
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card, Table, Tag, Button, Space, Progress, Select, Popconfirm, App, Upload, Modal,
@@ -24,6 +24,7 @@ import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
 import { STATUS_MAP, STATUS_OPTIONS } from '../../constants/task';
+import { getErrorMessage } from '../../utils/error';
 
 /** 组件属性 */
 interface TaskListPageProps {
@@ -64,20 +65,93 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     loadTasks();
   }, [loadTasks]);
 
-  // 用 ref 保存最新的 loadTasks（避免 setInterval 闭包捕获旧引用导致 timer 不断重建）
+  // 用 ref 保存最新的 loadTasks（避免闭包捕获旧引用）
   const loadTasksRef = useRef(loadTasks);
   useEffect(() => {
     loadTasksRef.current = loadTasks;
   }, [loadTasks]);
 
-  // 定时刷新（有进行中的任务时每 5 秒刷新一次）
-  useEffect(() => {
-    const hasRunning = tasks.some((t) => t.status === 'running' || t.status === 'pending');
-    if (!hasRunning) return;
+  // 找出当前正在运行的任务 ID（用于建立 SSE 连接）
+  const runningIds = useMemo(
+    () => tasks.filter((t) => t.status === 'running' || t.status === 'pending').map((t) => t.id),
+    [tasks],
+  );
+  const runningKey = runningIds.join(',');
 
-    const timer = setInterval(() => loadTasksRef.current(), 5000);
+  // SSE 实时进度推送（替代旧的 5s 轮询）
+  const sseMapRef = useRef<Map<string, EventSource>>(new Map());
+  useEffect(() => {
+    const sseMap = sseMapRef.current;
+    const apiBase = import.meta.env.VITE_API_BASE || '/api';
+
+    // 关闭不再运行的任务的 SSE 连接
+    for (const [id, es] of sseMap) {
+      if (!runningIds.includes(id)) {
+        es.close();
+        sseMap.delete(id);
+      }
+    }
+
+    // 为新的运行中任务建立 SSE 连接
+    for (const id of runningIds) {
+      if (sseMap.has(id)) continue; // 已连接
+
+      const url = `${apiBase}/tasks/${id}/progress`;
+      const es = new EventSource(url, { withCredentials: true });
+
+      es.addEventListener('progress', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // 实时更新这条任务的进度（不需要重新请求整个列表）
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    progress: data.progress ?? t.progress,
+                    progress_message: data.message ?? t.progress_message,
+                    status: data.status ?? t.status,
+                    stats: data.stats || t.stats,
+                    error_message: data.error ?? t.error_message,
+                  }
+                : t,
+            ),
+          );
+          // 任务结束：关闭 SSE，重新加载完整列表获取最终状态
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            es.close();
+            sseMap.delete(id);
+            loadTasksRef.current();
+          }
+        } catch {
+          // JSON 解析失败，忽略
+        }
+      });
+
+      es.onerror = () => {
+        es.close();
+        sseMap.delete(id);
+      };
+
+      sseMap.set(id, es);
+    }
+
+    return () => {
+      // 组件卸载时关闭所有 SSE 连接
+      for (const es of sseMap.values()) {
+        es.close();
+      }
+      sseMap.clear();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningKey]);
+
+  // 兜底轮询：SSE 可能连接失败，每 10 秒刷新一次（仅在有运行中任务时）
+  useEffect(() => {
+    if (runningIds.length === 0) return;
+    const timer = setInterval(() => loadTasksRef.current(), 10000);
     return () => clearInterval(timer);
-  }, [tasks]);
+  }, [runningIds.length]);
 
   /** 删除任务 */
   const deleteTask = async (taskId: string) => {
@@ -86,9 +160,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       message.success('任务已删除');
       loadTasks();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '删除失败');
+      message.error(getErrorMessage(err, '删除失败'));
     }
   };
 
@@ -130,9 +202,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       });
       loadTasks(); // 刷新列表，更新反馈状态
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '反馈上传失败');
+      message.error(getErrorMessage(err, '反馈上传失败'));
     } finally {
       setUploadingTaskIds((prev) => {
         const next = new Set(prev);

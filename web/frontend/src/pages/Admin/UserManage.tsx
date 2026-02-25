@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/error';
 
 interface UserItem {
   id: string;
@@ -62,9 +63,7 @@ export default function UserManage() {
       message.success('修改成功');
       loadUsers();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      message.error(detail || '修改失败');
+      message.error(getErrorMessage(err, '修改失败'));
     }
   };
 
