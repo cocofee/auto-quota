@@ -106,23 +106,6 @@ export default function SettingsPage() {
         </Row>
       </Card>
 
-      {/* 已导入的省份定额库 */}
-      <Card title="已导入的省份定额库" loading={loading}>
-        {provinces.length === 0 ? (
-          <div style={{ color: '#999', textAlign: 'center', padding: 20 }}>
-            暂无定额库，请先导入省份定额数据
-          </div>
-        ) : (
-          <Space wrap>
-            {provinces.map((p) => (
-              <Tag key={p} color="blue" style={{ fontSize: 14, padding: '4px 12px' }}>
-                {p}
-              </Tag>
-            ))}
-          </Space>
-        )}
-      </Card>
-
       {/* 大模型配置 */}
       <Card title="大模型配置">
         <Table
