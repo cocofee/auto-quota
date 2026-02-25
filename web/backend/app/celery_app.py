@@ -14,12 +14,24 @@ import sys
 from pathlib import Path
 
 from celery import Celery
+from loguru import logger
 from app.config import REDIS_URL, PROJECT_ROOT
 
 # 把项目根目录加入 Python 路径
 # Celery worker 需要 import main（现有匹配入口）和 config（定额配置）等
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# 日志持久化：Celery worker 的日志写入文件（和 Web 后端共享 /app/logs/ 目录）
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger.add(
+    str(LOG_DIR / "celery_{time:YYYY-MM-DD}.log"),
+    rotation="00:00",     # 每天零点新建一个日志文件
+    retention="30 days",  # 保留30天
+    encoding="utf-8",
+    level="INFO",
+)
 
 # 创建 Celery 应用实例
 # broker: 消息中间件（Redis），任务发送到这里排队
