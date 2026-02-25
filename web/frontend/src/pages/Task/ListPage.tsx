@@ -19,6 +19,7 @@ import {
   ReloadOutlined,
   DownloadOutlined,
   UploadOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
@@ -113,6 +114,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
                     status: data.status ?? t.status,
                     stats: data.stats || t.stats,
                     error_message: data.error ?? t.error_message,
+                    started_at: data.started_at ?? t.started_at,
                   }
                 : t,
             ),
@@ -152,6 +154,25 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     const timer = setInterval(() => loadTasksRef.current(), 10000);
     return () => clearInterval(timer);
   }, [runningIds.length]);
+
+  // 每秒刷新一次当前时间，让"已用时间"实时跳动
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (runningIds.length === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [runningIds.length]);
+
+  /** 取消运行中/排队中的任务 */
+  const cancelTask = async (taskId: string) => {
+    try {
+      await api.post(`/tasks/${taskId}/cancel`);
+      message.success('任务已取消');
+      loadTasks();
+    } catch (err: unknown) {
+      message.error(getErrorMessage(err, '取消失败'));
+    }
+  };
 
   /** 删除任务 */
   const deleteTask = async (taskId: string) => {
@@ -244,7 +265,6 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       width: 120,
       render: (status: TaskStatus, record: TaskInfo) => {
         const info = STATUS_MAP[status] || { color: 'default', text: status };
-        // 进行中的任务额外显示进度条
         if (status === 'running') {
           return (
             <Space direction="vertical" size={0} style={{ width: '100%' }}>
@@ -252,7 +272,6 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
               <Progress
                 percent={record.progress}
                 size="small"
-                showInfo={false}
                 style={{ marginTop: 4 }}
               />
               {record.progress_message && (
@@ -262,6 +281,41 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
           );
         }
         return <Tag color={info.color}>{info.text}</Tag>;
+      },
+    },
+    {
+      title: '清单',
+      key: 'bill_total',
+      width: 70,
+      render: (_: unknown, record: TaskInfo) => {
+        // 优先从 stats.total 取（完成后有）；运行中从 progress_message 提取（格式"匹配中 3/100"）
+        if (record.stats?.total) return `${record.stats.total}条`;
+        const msg = record.progress_message || '';
+        const m = msg.match(/\/(\d+)/);
+        if (m) return `${m[1]}条`;
+        return '-';
+      },
+    },
+    {
+      title: '用时',
+      key: 'elapsed',
+      width: 80,
+      render: (_: unknown, record: TaskInfo) => {
+        // 已完成：用 stats.elapsed（后端返回的总耗时秒数）
+        if (record.stats?.elapsed) {
+          const sec = Math.round(record.stats.elapsed);
+          const min = Math.floor(sec / 60);
+          const s = sec % 60;
+          return min > 0 ? `${min}分${s}秒` : `${s}秒`;
+        }
+        // 运行中：用 now - started_at 实时计算
+        if (record.status === 'running' && record.started_at) {
+          const elapsed = Math.floor((now - new Date(record.started_at).getTime()) / 1000);
+          const min = Math.floor(elapsed / 60);
+          const sec = elapsed % 60;
+          return min > 0 ? `${min}分${sec}秒` : `${sec}秒`;
+        }
+        return '-';
       },
     },
     {
@@ -338,17 +392,25 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
               )}
             </>
           )}
-          {record.status !== 'running' && (
+          {(record.status === 'running' || record.status === 'pending') && (
             <Popconfirm
-              title="确定删除此任务？"
-              description="关联的匹配结果也会一起删除"
-              onConfirm={() => deleteTask(record.id)}
+              title="确定取消此任务？"
+              onConfirm={() => cancelTask(record.id)}
             >
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                删除
+              <Button type="link" size="small" danger icon={<StopOutlined />}>
+                取消
               </Button>
             </Popconfirm>
           )}
+          <Popconfirm
+            title="确定删除此任务？"
+            description="关联的匹配结果也会一起删除"
+            onConfirm={() => deleteTask(record.id)}
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },

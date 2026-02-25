@@ -13,6 +13,7 @@ import {
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
+import { read, utils } from 'xlsx';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useProvinceStore } from '../../stores/province';
@@ -32,6 +33,7 @@ export default function TaskCreatePage() {
   const [loading, setLoading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0); // 上传进度百分比
   const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [sheetNames, setSheetNames] = useState<string[]>([]); // 从上传的Excel中读取的工作表名列表
   const [currentStep, setCurrentStep] = useState(0);
   const { provinces: allProvinces, loading: provincesLoading, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
@@ -201,9 +203,22 @@ export default function TaskCreatePage() {
                     return Upload.LIST_IGNORE;
                   }
                   setFileList([{ ...file, originFileObj: file } as UploadFile]);
+
+                  // 读取Excel中的工作表（Sheet）名列表
+                  const reader = new FileReader();
+                  reader.onload = (e) => {
+                    try {
+                      const wb = read(e.target?.result, { type: 'array', bookSheets: true });
+                      setSheetNames(wb.SheetNames || []);
+                    } catch {
+                      setSheetNames([]);
+                    }
+                  };
+                  reader.readAsArrayBuffer(file);
+
                   return false;
                 }}
-                onRemove={() => setFileList([])}
+                onRemove={() => { setFileList([]); setSheetNames([]); }}
               >
                 <p className="ant-upload-drag-icon">
                   <InboxOutlined />
@@ -265,14 +280,8 @@ export default function TaskCreatePage() {
               <Select
                 placeholder="默认处理全部Sheet"
                 allowClear
-                options={[
-                  { label: '全部Sheet', value: '' },
-                  { label: '给排水', value: '给排水' },
-                  { label: '电气', value: '电气' },
-                  { label: '消防', value: '消防' },
-                  { label: '通风空调', value: '通风空调' },
-                  { label: '智能化', value: '智能化' },
-                ]}
+                options={sheetNames.map((name) => ({ label: name, value: name }))}
+                notFoundContent={fileList.length === 0 ? '请先上传文件' : '未读取到Sheet'}
               />
             </Form.Item>
 
