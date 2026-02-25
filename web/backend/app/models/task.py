@@ -71,6 +71,9 @@ class Task(Base):
     # 匹配进度（0~100的百分比，running状态时实时更新）
     progress: Mapped[int] = mapped_column(Integer, default=0)
 
+    # 当前处理到第几条清单（从1开始，配合 bill_preview.json 展示逐条进度）
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+
     # 当前正在处理的清单项名称（进度显示用）
     progress_message: Mapped[str] = mapped_column(String(255), default="")
 
