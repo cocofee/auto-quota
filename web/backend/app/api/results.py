@@ -11,7 +11,6 @@
     GET    /api/tasks/{id}/export               — 导出Excel
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -22,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.task import Task
 from app.models.result import MatchResult
 from app.models.user import User
 from app.auth.deps import get_current_user
@@ -30,30 +28,13 @@ from app.schemas.result import (
     MatchResultResponse, ResultListResponse,
     CorrectResultRequest, ConfirmResultsRequest,
 )
+from app.api.shared import get_user_task, store_experience, store_experience_batch
 
 router = APIRouter()
 
 # 置信度分档阈值（和 config.py 的 CONFIDENCE_GREEN / CONFIDENCE_YELLOW 保持一致）
 _GREEN_THRESHOLD = 85
 _YELLOW_THRESHOLD = 70
-
-
-async def _get_user_task(
-    task_id: uuid.UUID, user: User, db: AsyncSession
-) -> Task:
-    """获取任务（辅助函数，找不到就抛404）
-
-    普通用户只能查自己的任务，管理员可以查所有用户的任务。
-    """
-    query = select(Task).where(Task.id == task_id)
-    # 管理员可以查看所有用户的任务，普通用户只能查自己的
-    if not user.is_admin:
-        query = query.where(Task.user_id == user.id)
-    result = await db.execute(query)
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return task
 
 
 @router.get("/tasks/{task_id}/results", response_model=ResultListResponse)
@@ -66,7 +47,7 @@ async def list_results(
 
     返回所有匹配结果（按序号排序），附带置信度分布统计。
     """
-    await _get_user_task(task_id, user, db)
+    await get_user_task(task_id, user, db)
 
     # 查询所有结果
     result = await db.execute(
@@ -105,7 +86,7 @@ async def get_result(
 
     包含清单信息、匹配定额、置信度、匹配说明等。
     """
-    await _get_user_task(task_id, user, db)
+    await get_user_task(task_id, user, db)
 
     result = await db.execute(
         select(MatchResult).where(
@@ -132,7 +113,7 @@ async def correct_result(
     用户手动选择正确的定额，替换系统匹配的结果。
     纠正后 review_status 变为 "corrected"。
     """
-    await _get_user_task(task_id, user, db)
+    await get_user_task(task_id, user, db)
 
     result = await db.execute(
         select(MatchResult).where(
@@ -151,26 +132,17 @@ async def correct_result(
     await db.flush()
 
     # 纠正数据回流经验库（候选层，待管理员审核后晋升权威层）
-    try:
-        from tools.jarvis_store import store_one
-        task = await _get_user_task(task_id, user, db)
-        quota_ids = [q.quota_id for q in req.corrected_quotas]
-        quota_names = [q.name for q in req.corrected_quotas]
-        if quota_ids:  # 有定额才写
-            await asyncio.to_thread(
-                store_one,
-                name=match_result.bill_name,
-                desc=match_result.bill_description or "",
-                quota_ids=quota_ids,
-                quota_names=quota_names,
-                reason=f"Web端纠正: {req.review_note or ''}",
-                specialty=match_result.specialty or "",
-                province=task.province,
-                confirmed=False,  # 纠正 → 候选层
-            )
-    except Exception as e:
-        # 经验库写入是增值功能，失败不影响纠正操作
-        logger.warning(f"纠正数据回流经验库失败（不影响纠正操作）: {e}")
+    task = await get_user_task(task_id, user, db)
+    await store_experience(
+        name=match_result.bill_name,
+        desc=match_result.bill_description or "",
+        quota_ids=[q.quota_id for q in req.corrected_quotas],
+        quota_names=[q.name for q in req.corrected_quotas],
+        reason=f"Web端纠正: {req.review_note or ''}",
+        specialty=match_result.specialty or "",
+        province=task.province,
+        confirmed=False,  # 纠正 → 候选层
+    )
 
     return match_result
 
@@ -187,7 +159,7 @@ async def confirm_results(
     用户确认系统匹配正确的结果（通常是高置信度的绿色项）。
     确认后 review_status 变为 "confirmed"。
     """
-    await _get_user_task(task_id, user, db)
+    await get_user_task(task_id, user, db)
 
     # 批量查询要确认的结果
     result = await db.execute(
@@ -224,29 +196,13 @@ async def confirm_results(
 
     # 确认数据回流经验库（权威层，系统匹配+用户确认=双重保障）
     if confirmed_records:
-        try:
-            from tools.jarvis_store import store_one
-            task = await _get_user_task(task_id, user, db)
-
-            def _store_all():
-                """批量写入经验库（同步操作，在线程池中执行）"""
-                for rec in confirmed_records:
-                    if rec["quota_ids"]:  # 有定额才写
-                        store_one(
-                            name=rec["name"],
-                            desc=rec["desc"],
-                            quota_ids=rec["quota_ids"],
-                            quota_names=rec["quota_names"],
-                            reason="Web端确认",
-                            specialty=rec["specialty"],
-                            province=task.province,
-                            confirmed=True,  # 确认 → 权威层
-                        )
-
-            await asyncio.to_thread(_store_all)
-        except Exception as e:
-            # 经验库写入是增值功能，失败不影响确认操作
-            logger.warning(f"确认数据回流经验库失败（不影响确认操作）: {e}")
+        task = await get_user_task(task_id, user, db)
+        await store_experience_batch(
+            records=confirmed_records,
+            province=task.province,
+            reason="Web端确认",
+            confirmed=True,  # 确认 → 权威层
+        )
 
     return {"confirmed": updated, "skipped_corrected": skipped, "total": len(req.result_ids)}
 

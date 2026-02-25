@@ -19,15 +19,7 @@ import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
-
-/** 任务状态对应的颜色和文本 */
-const STATUS_MAP: Record<TaskStatus, { color: string; text: string }> = {
-  pending: { color: 'default', text: '等待中' },
-  running: { color: 'processing', text: '匹配中' },
-  completed: { color: 'success', text: '已完成' },
-  failed: { color: 'error', text: '失败' },
-  cancelled: { color: 'warning', text: '已取消' },
-};
+import { STATUS_MAP } from '../../constants/task';
 
 export default function DashboardPage() {
   const navigate = useNavigate();

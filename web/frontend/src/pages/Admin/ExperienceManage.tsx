@@ -65,21 +65,17 @@ export default function ExperienceManage() {
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
   const [selectedProvince, setSelectedProvince] = useState<string | undefined>(undefined);
 
-  // 加载省份列表
-  const loadProvinces = useCallback(async () => {
-    try {
-      const { data } = await api.get<{ items: ProvinceItem[] }>('/admin/experience/provinces');
-      setProvinces(data.items);
-    } catch {
-      // 静默失败
-    }
-  }, []);
-
-  // 加载统计
+  // 加载统计（同时从 by_province 提取省份列表，避免重复请求）
   const loadStats = useCallback(async () => {
     try {
       const { data } = await api.get<ExperienceStats>('/admin/experience/stats');
       setStats(data);
+      // 从统计数据中提取省份列表（替代原来单独的 /provinces 接口）
+      const byProvince = data.by_province || {};
+      const provinceList: ProvinceItem[] = Object.entries(byProvince)
+        .map(([name, count]) => ({ province: name, count: count as number }))
+        .sort((a, b) => b.count - a.count);
+      setProvinces(provinceList);
     } catch {
       // 静默失败（经验库可能还没初始化）
     }
@@ -107,9 +103,8 @@ export default function ExperienceManage() {
   }, [message, selectedProvince]);
 
   useEffect(() => {
-    loadProvinces();
     loadStats();
-  }, [loadProvinces, loadStats]);
+  }, [loadStats]);
 
   useEffect(() => {
     if (activeTab !== 'search') {
