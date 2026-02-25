@@ -26,12 +26,61 @@ python main.py "<Excel路径>" --mode agent       # agent模式（Jarvis，需AP
 python main.py "<Excel路径>" --limit 10         # 只处理前10条（调试用）
 python main.py "<Excel路径>" --sheet "给排水"   # 只处理指定Sheet
 
-# Jarvis全流程（匹配+审核+纠正）
+# Jarvis全流程（匹配+审核+纠正，俗称"自动炮"）
 python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024"
+python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024" --no-store  # 不存经验库
+python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024" --no-experience  # 不用经验库
 
 # 经验库查看
 python tools/experience_view.py stats            # 统计
 python tools/experience_view.py search "镀锌钢管"  # 搜索
+```
+
+## Jarvis 自动炮（全流程说明）
+
+Jarvis 流水线是系统的核心功能，一键完成"匹配→审核→纠正→存经验库"4个步骤。
+
+```
+清单Excel → 第1步:匹配定额 → 第2步:AI审核(找出错误) → 第3步:自动纠正(改Excel)
+         → 第4步:存经验库(下次同类清单直接命中) → 输出已审核Excel
+```
+
+### 4个步骤做了什么
+
+| 步骤 | 做什么 | 对应代码 |
+|------|--------|----------|
+| 第1步 匹配 | 读Excel，每条清单搜索最合适的定额 | `main.py` (mode=agent) |
+| 第2步 审核 | AI检查匹配结果，找出明显错误 | `tools/jarvis_auto_review.py` |
+| 第3步 纠正 | 把审核发现的错误自动改到Excel里 | `tools/jarvis_correct.py` |
+| 第4步 存库 | 纠正结果写入经验库候选层，人工确认后晋升权威层 | `tools/jarvis_store.py` |
+
+### 输出结果怎么看
+
+运行结束后会打印汇总，例如：
+```
+汇总: 总283 正确240 自动纠正12 人工31 措施0
+```
+
+| 状态 | 含义 |
+|------|------|
+| 正确 | 系统匹配的定额没问题，直接用 |
+| 自动纠正 | AI发现错了并自动改好了 |
+| 人工 | AI不确定，需要你自己看一眼 |
+| 措施 | 措施费项目（脚手架等），不需要套定额 |
+
+### 相关工具
+
+```bash
+# 查看经验库
+python tools/experience_view.py stats            # 统计
+python tools/experience_view.py search "镀锌钢管"  # 搜索
+
+# 学习已确认的匹配结果（把人工确认的结果导入经验库权威层）
+python tools/jarvis_learn.py "<已确认Excel>"
+
+# 查定额（按编号或名称搜索）
+python tools/jarvis_lookup.py "C10-1-10"          # 按编号查
+python tools/jarvis_lookup.py "管道安装"           # 按名称搜
 ```
 
 ## Benchmark 跑分（给系统打分的考试）
@@ -91,6 +140,21 @@ scripts\dev\代码审查.bat
 
 ## 执行协议
 
+### 代码改动的完整流程
+
+```
+改代码 → 自测(pytest) → 健康检查(quick/full) → benchmark跑分
+      → Codex审查 → 根据审查意见修改 → 重新自测 → 提交
+```
+
+1. **改代码**：按需求修改，一次只改一个目标问题
+2. **自测**：`python -m pytest tests/ -q`（405+条全部通过才算过）
+3. **健康检查**：`python tools/system_health_check.py --mode full`（9项全通过）
+4. **benchmark跑分**：`python tools/run_benchmark.py`（对比基线，确认不退化）
+5. **Codex审查**：`scripts\dev\代码审查.bat`（需要codex命令行工具+网络）
+6. **处理审查意见**：Codex会列出问题，逐条修复后重新跑自测
+7. **提交**：全部通过后才提交代码
+
 ### 执行规则
 1. 默认直接改代码并自测，除非用户要求"只给方案"。
 2. 一次只处理一个目标问题（small patch）。
@@ -102,7 +166,6 @@ scripts\dev\代码审查.bat
 1. 改了什么（文件 + 关键改动）
 2. 验收命令与结果
 3. 风险点（有真实风险时才写，无风险不用凑）
-4. 提醒：`代码已改完，请双击"代码审查.bat"运行 Codex 5.3 审查。`
 
 ### 质量门禁与放行条件
 
