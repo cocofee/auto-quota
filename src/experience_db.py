@@ -33,6 +33,12 @@ from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 from src.specialty_classifier import get_book_from_quota_id
 import config
 
+# L7: 经验库模糊匹配用的文本归一化函数（顶层导入，避免每次查询重复import）
+try:
+    from src.text_normalizer import normalize_for_match as _normalize_for_match
+except ImportError:
+    _normalize_for_match = None
+
 
 class ExperienceDB:
     """经验库：存储和查询历史匹配记录"""
@@ -151,9 +157,7 @@ class ExperienceDB:
         只处理 normalized_text 为空的记录，已有值的跳过。
         约12K条记录，纯正则操作，<15秒完成。
         """
-        try:
-            from src.text_normalizer import normalize_for_match
-        except ImportError:
+        if not _normalize_for_match:
             logger.debug("text_normalizer 模块不可用，跳过 normalized_text 迁移")
             return
 
@@ -172,7 +176,7 @@ class ExperienceDB:
         )
         batch = []
         for row in cursor.fetchall():
-            norm = normalize_for_match(row[1]) if row[1] else ""
+            norm = _normalize_for_match(row[1]) if row[1] else ""
             batch.append((norm, row[0]))
 
         cursor.executemany(
@@ -495,11 +499,7 @@ class ExperienceDB:
         materials_json = self._json_dump(materials or [])
 
         # L7: 生成归一化文本（模糊匹配用）
-        try:
-            from src.text_normalizer import normalize_for_match
-            normalized_text = normalize_for_match(bill_text)
-        except Exception:
-            normalized_text = ""
+        normalized_text = _normalize_for_match(bill_text) if _normalize_for_match else ""
 
         inserted_new = False
         conn = self._connect()
@@ -743,10 +743,9 @@ class ExperienceDB:
                 return dict(row)
 
             # 第2级：L7 归一化匹配（容忍格式差异）
-            if getattr(config, 'EXPERIENCE_FUZZY_MATCH_ENABLED', False):
+            if getattr(config, 'EXPERIENCE_FUZZY_MATCH_ENABLED', False) and _normalize_for_match:
                 try:
-                    from src.text_normalizer import normalize_for_match
-                    norm_text = normalize_for_match(bill_text)
+                    norm_text = _normalize_for_match(bill_text)
                     if norm_text:  # 归一化后非空才查（避免空字符串匹配所有空记录）
                         cursor.execute(f"""
                             SELECT * FROM experiences

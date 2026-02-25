@@ -115,14 +115,17 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # 按参数匹配分数排序（不匹配的排到后面，但不删除——让大模型做最终判断）
-        # 平局排序：优先用 rerank_score（Reranker的语义精排比hybrid_score更准确）
-        # 没有Reranker时回退到 hybrid_score
+        # L8：排序融合 reranker 分数
+        # 之前用纯递阶排序 (param_match, param_score, rerank_score)，
+        # rerank_score 几乎无用（只有 param_score 完全相等时才起作用）。
+        # 改为加权融合：param_score * 0.7 + rerank_score * 0.3，
+        # 让 Reranker 的语义精排在参数相近的候选间发挥差异化排序能力。
         validated.sort(
             key=lambda x: (
-                x["param_match"],     # 匹配的排前面
-                x["param_score"],     # 分数高的排前面
-                x.get("rerank_score", x.get("hybrid_score", 0)),  # Reranker分优先，否则用搜索分
+                x["param_match"],     # 第一级不变：匹配vs不匹配
+                x["param_score"] * 0.7 + (  # 第二级：参数分70% + 语义精排30%
+                    x.get("rerank_score", x.get("hybrid_score", 0))
+                ) * 0.3,
             ),
             reverse=True,
         )
@@ -451,12 +454,11 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"DN{bill_dn}≠DN{quota_dn} 不匹配(清单>定额)")
             else:
-                # 定额没有DN参数，说明该定额不按管径分档（通用定额），不算错
-                # 选0.9而非0.5的理由：通用定额（如"管道试压"不分DN）匹配通用清单是合理的
-                # 排序安全：精确匹配1.0 > 通用0.9，正确候选仍会排在前面
-                # 经L2-b benchmark验证：4组数据集均无退化（B1↑10pp, B2↑1.1pp, B3↑4.2pp）
-                score_sum += 0.9
-                details.append(f"定额无DN参数")
+                # L8：定额无DN参数（通用定额），降权到0.55
+                # 之前给0.9导致通用定额confidence=85（绿灯），和精确匹配几乎无差别
+                # 0.55刚好是向上取档下界，通用定额排在分档定额后面但仍param_match=True
+                score_sum += 0.55
+                details.append(f"定额无DN参数(通用定额降权)")
 
         # === 2. 电缆截面（硬性参数） ===
         if "cable_section" in bill_params:
@@ -476,9 +478,9 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"截面{bill_sec}≠{quota_sec} 不匹配(清单>定额)")
             else:
-                # 定额没有截面参数，说明该定额不按截面分档（通用定额），不算错
-                score_sum += 0.9
-                details.append(f"定额无截面参数")
+                # L8：通用定额降权
+                score_sum += 0.55
+                details.append(f"定额无截面参数(通用定额降权)")
 
         # === 3. 容量kVA（硬性参数） ===
         if "kva" in bill_params:
@@ -498,8 +500,9 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"容量{bill_kva}kVA≠{quota_kva}kVA 不匹配")
             else:
-                score_sum += 0.9
-                details.append(f"定额无容量参数")
+                # L8：通用定额降权
+                score_sum += 0.55
+                details.append(f"定额无容量参数(通用定额降权)")
 
         # === 4. 回路数（硬性参数） ===
         if "circuits" in bill_params:
@@ -519,8 +522,9 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"回路{bill_cir}>{quota_cir} 不匹配(清单>定额)")
             else:
-                score_sum += 0.9
-                details.append("定额无回路参数")
+                # L8：通用定额降权
+                score_sum += 0.55
+                details.append("定额无回路参数(通用定额降权)")
 
         # === 5. 电流A（硬性参数） ===
         if "ampere" in bill_params:
@@ -540,8 +544,9 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"电流{bill_amp}A>{quota_amp}A 不匹配(清单>定额)")
             else:
-                score_sum += 0.9
-                details.append("定额无电流参数")
+                # L8：通用定额降权
+                score_sum += 0.55
+                details.append("定额无电流参数(通用定额降权)")
 
         # === 6. 电压等级kV（软性参数） ===
         if "kv" in bill_params and "kv" in quota_params:
@@ -584,11 +589,12 @@ class ParamValidator:
                 score_sum += 0.8
                 details.append(f"连接方式'{bill_c}'≈'{quota_c}' 兼容")
             else:
-                # 连接方式不同（如螺纹≠沟槽）→ 重度降权但非硬性失败
-                # 理由：定额库可能没有清单指定的连接方式（如PSP双热熔→只有螺纹），
-                #       此时最接近的定额（材质+DN都对）仍是最佳选择，不应完全排除
-                score_sum += 0.2
-                details.append(f"连接方式'{bill_c}'≠'{quota_c}' 不匹配(降权)")
+                # L8：连接方式不匹配升级为硬性失败
+                # 清单已明确指定连接方式（如"螺纹"），定额用了完全不兼容的方式（如"沟槽"）
+                # → 硬性不匹配，排到匹配候选后面，交给LLM最终判断
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"连接方式'{bill_c}'≠'{quota_c}' 不匹配")
         # === 9. 风管形状（硬性参数：矩形≠圆形，形状错了定额完全不同） ===
         if "shape" in bill_params:
             quota_shape = quota_params.get("shape", "")
