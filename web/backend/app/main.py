@@ -121,6 +121,9 @@ app.include_router(consult_router, prefix="/api/consult", tags=["定额咨询"])
 from app.api.logs import router as logs_router
 app.include_router(logs_router, prefix="/api/admin/logs", tags=["管理员-系统日志"])
 
+from app.api.knowledge import router as knowledge_router
+app.include_router(knowledge_router, prefix="/api/admin/knowledge", tags=["管理员-知识库"])
+
 
 # ============================================================
 # 基础端点（健康检查）

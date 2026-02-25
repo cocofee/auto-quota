@@ -27,6 +27,7 @@ import {
   AppstoreOutlined,
   BookOutlined,
   FileTextOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 
@@ -86,6 +87,11 @@ export default function MainLayout() {
             key: '/admin/quotas',
             icon: <BookOutlined />,
             label: '定额库',
+          },
+          {
+            key: '/admin/knowledge',
+            icon: <BulbOutlined />,
+            label: '知识库',
           },
           {
             key: '/admin/feedback',
