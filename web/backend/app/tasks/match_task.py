@@ -12,6 +12,7 @@ Celery worker 启动命令:
     celery -A app.celery_app worker --loglevel=info --pool=solo
 """
 
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,34 @@ from app.celery_app import celery_app
 from app.database import get_sync_session
 from app.models.task import Task
 from app.services.match_service import save_results_to_db, get_task_output_dir
+
+
+def _make_progress_callback(session, task):
+    """创建进度回调函数：每次被调用时更新数据库中的任务进度
+
+    限制更新频率（至少间隔2秒），避免频繁写数据库。
+    """
+    last_update = [0]  # 用列表包装，让闭包可以修改
+
+    def callback(progress, current_idx, message):
+        now = time.time()
+        # 至少间隔2秒更新一次（进度>=95%时不限频，确保关键节点立即更新）
+        if now - last_update[0] < 2 and progress < 95:
+            return
+        last_update[0] = now
+        try:
+            task.progress = progress
+            task.progress_message = message
+            session.commit()
+        except Exception as e:
+            # 数据库写入失败不影响匹配主流程
+            logger.debug(f"进度更新写入DB失败（不影响匹配）: {e}")
+            try:
+                session.rollback()
+            except Exception:
+                pass
+
+    return callback
 
 
 @celery_app.task(bind=True, name="execute_match")
@@ -69,6 +98,9 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
 
         import main as auto_quota_main  # 延迟导入，避免循环依赖
 
+        # 创建进度回调（匹配过程中实时更新数据库进度）
+        progress_cb = _make_progress_callback(session, task)
+
         result = auto_quota_main.run(
             input_file=file_path,
             mode=params.get("mode", "search"),
@@ -80,6 +112,7 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
             json_output=json_output,
             no_experience=params.get("no_experience", False),
             interactive=False,  # Web调用不需要交互式提示
+            progress_callback=progress_cb,
         )
 
         # ---- 第4步：保存匹配结果到数据库 ----

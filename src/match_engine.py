@@ -428,7 +428,8 @@ def _create_rule_validator_and_reranker(province: str = None):
 def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
                       validator: ParamValidator,
                       experience_db=None,
-                      province: str = None) -> list[dict]:
+                      province: str = None,
+                      progress_callback=None) -> list[dict]:
     """
     纯搜索模式：经验库 → 混合搜索 + 参数验证（不调用大模型API）
 
@@ -448,11 +449,22 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
+    total = len(bill_items)
+
+    # 进度回调辅助（30%~90% 之间线性映射）
+    def _notify_progress(current_idx):
+        if progress_callback:
+            try:
+                pct = 30 + int(60 * current_idx / max(total, 1))
+                progress_callback(pct, current_idx, f"匹配中 {current_idx}/{total}")
+            except Exception:
+                pass
+
     for idx, item in enumerate(bill_items, start=1):
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
             idx=idx,
-            total=len(bill_items),
+            total=total,
             results=results,
             exp_hits=exp_hits,
             rule_hits=rule_hits,
@@ -467,6 +479,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             log_types={"rule_direct"},
         )
         if consumed:
+            _notify_progress(idx)
             continue
 
         _, _, _, candidates, exp_backup, rule_backup = prepared_bundle
@@ -475,9 +488,10 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
 
         _append_search_result_and_log(
-            results, result, idx, len(bill_items), exp_hits, rule_hits)
+            results, result, idx, total, exp_hits, rule_hits)
+        _notify_progress(idx)
 
-    _log_exp_rule_summary(exp_hits, rule_hits, len(bill_items))
+    _log_exp_rule_summary(exp_hits, rule_hits, total)
 
     # 纯匹配耗时统计（不含模型加载）
     match_elapsed = time.time() - match_start_time
@@ -512,7 +526,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 validator: ParamValidator,
                 experience_db=None, llm_type: str = None,
                 province: str = None,
-                project_overview: str = "") -> list[dict]:
+                project_overview: str = "",
+                progress_callback=None) -> list[dict]:
     """
     Agent模式（造价员贾维斯）：经验库 → 规则 → 搜索+Agent分析
 
@@ -615,6 +630,24 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     # 收集需要LLM的条目
     llm_tasks = []  # [(idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit)]
     _consumed_buf = []  # _prepare_match_iteration 会往这里 append 消耗掉的结果
+    total = len(bill_items)
+
+    # 进度回调辅助（第1阶段: 30%~60%, 第2阶段: 60%~90%）
+    def _notify_progress(current_idx, phase=1, phase_total=None):
+        if not progress_callback:
+            return
+        try:
+            if phase == 1:
+                # 第1阶段: 30% ~ 60%
+                pct = 30 + int(30 * current_idx / max(total, 1))
+                progress_callback(pct, current_idx, f"搜索中 {current_idx}/{total}")
+            else:
+                # 第2阶段: 60% ~ 90%
+                pt = phase_total or 1
+                pct = 60 + int(30 * current_idx / max(pt, 1))
+                progress_callback(pct, current_idx, f"AI分析中 {current_idx}/{pt}")
+        except Exception:
+            pass
 
     for idx, item in enumerate(bill_items, start=1):
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
@@ -640,6 +673,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             # 经验库/规则直通命中，结果在 _consumed_buf 最后一条
             results_by_idx[idx] = _consumed_buf[-1]
             _update_match_stats(_consumed_buf[-1])
+            _notify_progress(idx, phase=1)
             continue
 
         ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
@@ -663,6 +697,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             # 需要LLM分析
             llm_tasks.append((idx, item, candidates, full_query, search_query,
                               name, desc, exp_backup, rule_backup, False))  # False=正常模式
+
+        _notify_progress(idx, phase=1)
 
     logger.info(f"第1阶段完成: 快通道{fastpath_hits}条, 需LLM{len(llm_tasks)}条")
 
@@ -830,6 +866,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                             )
                         if completed % 10 == 0 or completed == len(individual_tasks):
                             logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(individual_tasks))
                         continue
                     try:
                         result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
@@ -885,6 +922,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
                 if completed % 10 == 0 or completed == len(individual_tasks):
                     logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(individual_tasks))
 
     # ========== 组装最终结果（按原始顺序）==========
     results = []
@@ -930,16 +968,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
                   validator: ParamValidator, experience_db,
                   resolved_province: str, agent_llm: str = None,
-                  project_overview: str = "") -> list[dict]:
+                  project_overview: str = "",
+                  progress_callback=None) -> list[dict]:
     """按模式执行匹配。"""
     if mode == "search":
         results = match_search_only(
-            bill_items, searcher, validator, experience_db, province=resolved_province)
+            bill_items, searcher, validator, experience_db, province=resolved_province,
+            progress_callback=progress_callback)
     elif mode == "agent":
         results = match_agent(
             bill_items, searcher, validator, experience_db,
             llm_type=agent_llm, province=resolved_province,
-            project_overview=project_overview)
+            project_overview=project_overview,
+            progress_callback=progress_callback)
     else:
         raise ValueError(f"不支持的匹配模式: {mode}")
 
