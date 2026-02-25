@@ -71,8 +71,6 @@ auto-quota/
 ├── config.py            # 配置文件（置信度阈值、路径等）
 ├── .env                 # API密钥（不要泄露！不会上传git）
 ├── requirements.txt     # Python依赖
-├── 运行匹配.bat          # 双击运行的快捷方式
-│
 ├── src/                 # 源代码（核心逻辑）
 │   ├── bill_reader.py       # 读取清单Excel
 │   ├── text_parser.py       # 从文字中提取参数（DN、材质、连接方式等）
