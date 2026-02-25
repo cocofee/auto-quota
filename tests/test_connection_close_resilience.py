@@ -10,7 +10,6 @@ import tools._select_province as sp
 import tools.experience_promote as experience_promote
 import tools.import_reference as import_reference
 import tools.jarvis_auto_review as auto_review_mod
-import tools.test_review_rules as review_rules
 
 
 def _new_tmp_dir(prefix: str) -> Path:
@@ -38,17 +37,6 @@ class _FailingImportReferenceConn:
 
     def execute(self, *args, **kwargs):
         raise RuntimeError("count failed")
-
-    def close(self):
-        self.closed = True
-
-
-class _FailingReviewRulesConn:
-    def __init__(self):
-        self.closed = False
-
-    def cursor(self):
-        raise RuntimeError("cursor init failed")
 
     def close(self):
         self.closed = True
@@ -143,23 +131,6 @@ def test_select_quota_db_closes_connection_on_count_error():
         assert selected == "省A"
         assert conn_a.closed is True
         assert conn_b.closed is True
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-def test_run_db_sample_test_closes_connection_on_cursor_error():
-    tmp_dir = _new_tmp_dir("review-rules")
-    try:
-        db_path = tmp_dir / "quota.db"
-        db_path.write_text("x", encoding="utf-8")
-        conn = _FailingReviewRulesConn()
-
-        with patch.object(review_rules, "get_quota_db_path", return_value=str(db_path)):
-            with patch.object(review_rules, "_db_connect", return_value=conn):
-                with pytest.raises(RuntimeError, match="cursor init failed"):
-                    review_rules.run_db_sample_test("测试省份")
-
-        assert conn.closed is True
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

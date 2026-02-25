@@ -5,7 +5,7 @@
   2. 基线文件存在且包含有效指标
   3. 指标字段结构完整（不做实际运行，实际运行用 run_benchmark.py）
 
-来源：docs/Jarvis_L1-L6升级路线图_Claude执行版.md L2-a
+来源：历史 benchmark 基线建设记录（已归档/清理）。
 """
 from __future__ import annotations
 

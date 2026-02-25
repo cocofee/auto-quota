@@ -223,7 +223,7 @@ def pipeline(excel_path, province=None, aux_provinces=None,
                 correct_count=stats_for_tracker["correct"],
             )
         except Exception as e:
-            logger.debug(f"审核统计记录失败（不影响主流程）: {e}")
+            logger.error(f"审核统计记录失败: {e}")
 
         # ---- 第3步：纠正Excel ----
         corrected_excel = output_excel  # 默认用匹配结果（无纠正时不生成新文件）

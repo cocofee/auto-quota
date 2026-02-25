@@ -8,7 +8,7 @@
   - LLM 连续失败 5 次后熔断，剩余清单走确定性兜底
 
 复现证据：
-  docs/阶段J_贾维斯系统性审查findings.md #P1-2, #P1-3
+  历史稳定性问题记录（已归档/清理）。
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ class TestLLMCircuitBreaker:
                 result = matcher.match_single(bill, candidates)
                 mock_llm.assert_not_called()  # LLM不应被调用
 
-        assert result.get("match_source") == "agent_fallback"
+        assert result.get("match_source") == "agent_circuit_break"
 
     def test_success_resets_fail_count(self):
         """LLM成功一次后，连续失败计数归零"""
