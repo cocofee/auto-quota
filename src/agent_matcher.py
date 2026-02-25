@@ -578,6 +578,7 @@ class AgentMatcher:
 3. **比对候选**：哪条定额的类型、材质、参数最吻合？
 4. **参数取档**：数值参数要"向上取档"（如DN32应选DN40以内的定额）
 5. **关联定额**：是否需要配套定额？（管道需要管卡/试压，设备需要调试等）
+6. **搜索建议**：如果候选列表中没有你认为正确类型的定额（如清单是水泵但候选全是冷水机组），请在 suggested_search 填写你建议的搜索关键词（如"水泵安装 离心泵"），帮助系统找到正确方向。如果候选中已有合适定额，此字段留空字符串。
 
 ## 注意事项
 - "以内"表示≤，如"DN150以内"适用于DN≤150
@@ -599,7 +600,8 @@ class AgentMatcher:
         {{"index": 5, "quota_id": "编号", "reason": "需要配套XX定额"}}
     ],
     "confidence": 85,
-    "explanation": "整体分析说明"
+    "explanation": "整体分析说明",
+    "suggested_search": "建议搜索关键词（候选不合适时填写，否则留空）"
 }}
 ```"""
         return prompt
@@ -721,6 +723,12 @@ class AgentMatcher:
                         })
                         break
 
+        # AI推荐的定额编号不在候选中 — 标记为需要AI引导重新搜索
+        _ai_recommended_not_found = False
+        if not no_match and main_id and not quotas:
+            _ai_recommended_not_found = True
+            logger.info(f"Agent推荐定额 {main_id} 不在候选列表中，标记为需要重搜")
+
         # 关联定额（过滤同类：关联定额不能和主定额同册同章节）
         main_quota_prefix = ""
         if quotas:
@@ -820,7 +828,13 @@ class AgentMatcher:
             "candidates_count": len(candidates),
             "match_source": "agent",
             "alternatives": alternatives,
+            "suggested_search": str(data.get("suggested_search", "")).strip(),
         }
+
+        # AI推荐的定额不在候选中 — 传递标记给上游触发重搜
+        if _ai_recommended_not_found:
+            result["_ai_recommended_id"] = main_id
+            result["_ai_recommended_not_found"] = True
 
         if not quotas:
             result["no_match_reason"] = data.get("no_match_reason") or "大模型未选中任何定额"

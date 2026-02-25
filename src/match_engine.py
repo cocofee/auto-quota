@@ -452,11 +452,11 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     total = len(bill_items)
 
     # 进度回调辅助（30%~90% 之间线性映射）
-    def _notify_progress(current_idx):
+    def _notify_progress(current_idx, result=None):
         if progress_callback:
             try:
                 pct = 30 + int(60 * current_idx / max(total, 1))
-                progress_callback(pct, current_idx, f"匹配中 {current_idx}/{total}")
+                progress_callback(pct, current_idx, f"匹配中 {current_idx}/{total}", result=result)
             except Exception:
                 pass
 
@@ -479,7 +479,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             log_types={"rule_direct"},
         )
         if consumed:
-            _notify_progress(idx)
+            _notify_progress(idx, result=results[-1] if results else None)
             continue
 
         _, _, _, candidates, exp_backup, rule_backup = prepared_bundle
@@ -489,7 +489,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
         _append_search_result_and_log(
             results, result, idx, total, exp_hits, rule_hits)
-        _notify_progress(idx)
+        _notify_progress(idx, result=result)
 
     _log_exp_rule_summary(exp_hits, rule_hits, total)
 
@@ -793,31 +793,38 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 method_cards_db=method_cards_db,
                 overview_context=ctx_summary,
             )
-            # 低置信度重试：confidence < 阈值时，扩大搜索范围重试一次
-            retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 60)
+            # 低置信度重试 或 AI推荐定额不在候选中 → 用AI建议的搜索词重搜
+            retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
             confidence = result.get("confidence", 100)
+            ai_not_found = result.get("_ai_recommended_not_found", False)
             # LLM已熔断时跳过重试（避免放大失败开销）
             if hasattr(agent, "is_circuit_open"):
                 llm_circuit_open = bool(agent.is_circuit_open())
             else:
                 llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
-            if not is_audit and confidence < retry_threshold and candidates and not llm_circuit_open:
-                logger.info(f"#{idx} 置信度{confidence}<{retry_threshold}，触发全库重试搜索")
+            need_retry = (confidence < retry_threshold) or ai_not_found
+            if not is_audit and need_retry and candidates and not llm_circuit_open:
+                # 优先用AI建议的搜索词，其次用AI推荐的定额编号，最后用原始query
+                ai_suggested = result.get("suggested_search", "")
+                ai_rec_id = result.get("_ai_recommended_id", "")
+                retry_query = ai_suggested or ai_rec_id or search_query
+                retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+                logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_query}'")
                 try:
                     # 全库搜索（不限册号），增加候选数
                     retry_candidates = searcher.search(
-                        search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+                        retry_query, top_k=config.HYBRID_TOP_K + 5, books=None)
                     if retry_candidates and len(retry_candidates) > 1:
-                        retry_candidates = reranker.rerank(search_query, retry_candidates)
+                        retry_candidates = reranker.rerank(retry_query, retry_candidates)
                     if retry_candidates:
                         retry_candidates = validator.validate_candidates(
-                            full_query, retry_candidates, supplement_query=search_query)
+                            full_query, retry_candidates, supplement_query=retry_query)
                     if retry_candidates:
                         # 用扩展候选重新调用LLM
                         retry_result, r_exp, r_rule = _resolve_agent_mode_result(
                             agent=agent, item=item, candidates=retry_candidates,
                             experience_db=experience_db, full_query=full_query,
-                            search_query=search_query, rule_kb=rule_kb,
+                            search_query=retry_query, rule_kb=rule_kb,
                             name=name, desc=desc, exp_backup=exp_backup,
                             rule_backup=rule_backup, exp_hits=0, rule_hits=0,
                             province=province,
@@ -830,12 +837,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         )
                         retry_conf = retry_result.get("confidence", 0)
                         if retry_conf > confidence:
-                            logger.info(f"#{idx} 重试成功: {confidence}→{retry_conf}")
+                            logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
                             result = retry_result
                             task_exp_hits = r_exp
                             task_rule_hits = r_rule
                 except Exception as e:
-                    logger.debug(f"#{idx} 低置信度重试失败（保留原结果）: {e}")
+                    logger.debug(f"#{idx} AI引导重试失败（保留原结果）: {e}")
 
             return idx, result, task_exp_hits, task_rule_hits, is_audit
 

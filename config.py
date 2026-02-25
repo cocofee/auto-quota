@@ -192,6 +192,42 @@ def list_db_provinces():
     return provinces
 
 
+def get_sibling_provinces(main_province: str) -> list[str]:
+    """查找与主定额库同省份、同年份的兄弟库（自动挂载用）
+
+    例如：输入"宁夏安装工程计价定额(2019)"
+    返回：["宁夏市政工程计价定额(2019)", "宁夏房屋建筑装饰工程计价定额(2019)", ...]
+
+    分组规则：提取省份名（前2-3字）+ 年份（括号中4位数字），两者都相同才算同批。
+    """
+    import re
+
+    def _extract_region_year(name: str):
+        """从定额库名提取(省份, 年份)"""
+        # 年份：括号中的4位数字
+        year_match = re.search(r'[（(](\d{4})[)）]', name)
+        year = year_match.group(1) if year_match else ''
+        # 省份：前2-3个汉字（遇到省/市/回族等截断）
+        region_match = re.match(
+            r'^([\u4e00-\u9fff]{2,3}?)(省|市|回族|壮族|维吾尔)', name)
+        region = region_match.group(1) if region_match else name[:2]
+        return region, year
+
+    main_region, main_year = _extract_region_year(main_province)
+    if not main_year:
+        return []  # 无法提取年份，不做自动挂载
+
+    siblings = []
+    for p in list_db_provinces():
+        if p == main_province:
+            continue  # 跳过自己
+        r, y = _extract_region_year(p)
+        if r == main_region and y == main_year:
+            siblings.append(p)
+
+    return siblings
+
+
 def _split_keywords(text: str) -> list[str]:
     """将用户输入拆成关键词列表（按中文/数字/字母的自然边界拆分）
 
@@ -483,9 +519,9 @@ AGENT_FASTPATH_AUDIT_RATE = max(0.0, min(
 # 清单有参数但top1无参数时，强制走LLM（避免无参数候选因语义得分高而盲通）
 AGENT_FASTPATH_REQUIRE_PARAM_MATCH = True
 
-# 低置信度重试：Agent返回confidence低于此值时，自动扩大搜索范围重试一次
-# 扩大搜索 = 不限册号全库搜 + 增加候选数
-LOW_CONFIDENCE_RETRY_THRESHOLD = 60
+# 低置信度重试：Agent返回confidence低于此值时，自动用AI建议的搜索词重试
+# 或当AI推荐的定额不在候选列表中时也触发重试
+LOW_CONFIDENCE_RETRY_THRESHOLD = 70
 
 # ============================================================
 # L3 一致性反思（同类清单定额一致性检查）
