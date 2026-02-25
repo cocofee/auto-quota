@@ -25,25 +25,9 @@ from app.models.user import User
 from app.auth.deps import get_current_user
 from app.auth.permissions import require_admin
 from app.config import UPLOAD_DIR
+from app.api.shared import get_user_task
 
 router = APIRouter()
-
-
-async def _get_user_task(
-    task_id: uuid.UUID, user: User, db: AsyncSession
-) -> Task:
-    """获取任务（辅助函数，和 results.py 同逻辑）
-
-    普通用户只能查自己的任务，管理员可以查所有。
-    """
-    query = select(Task).where(Task.id == task_id)
-    if not user.is_admin:
-        query = query.where(Task.user_id == user.id)
-    result = await db.execute(query)
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return task
 
 
 # ============================================================
@@ -66,7 +50,7 @@ async def upload_feedback(
     4. 调用 FeedbackLearner.learn_from_corrected_excel() 自动学习
     5. 更新 Task 的反馈字段
     """
-    task = await _get_user_task(task_id, user, db)
+    task = await get_user_task(task_id, user, db)
 
     # 验证：任务必须已完成
     if task.status != "completed":

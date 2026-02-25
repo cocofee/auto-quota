@@ -1,12 +1,11 @@
 /**
- * 任务列表页
+ * 任务列表页（同时用于"我的任务"和"管理员-所有任务"）
  *
- * 显示所有历史任务，支持：
- * - 按状态筛选
- * - 分页
- * - 查看结果、删除任务
- * - 进行中的任务显示进度条
- * - 有运行中任务时自动每5秒刷新
+ * 通过 adminView 属性区分两种模式：
+ * - 默认模式：显示当前用户自己的任务
+ * - 管理员模式：显示所有用户的任务（调用 API 时带 all_users=true）
+ *
+ * 功能：按状态筛选、分页、查看结果、下载Excel、上传反馈、删除任务、进度条、自动刷新
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -24,26 +23,15 @@ import {
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
+import { STATUS_MAP, STATUS_OPTIONS } from '../../constants/task';
 
-/** 任务状态选项 */
-const STATUS_OPTIONS = [
-  { label: '全部状态', value: '' },
-  { label: '等待中', value: 'pending' },
-  { label: '匹配中', value: 'running' },
-  { label: '已完成', value: 'completed' },
-  { label: '失败', value: 'failed' },
-];
+/** 组件属性 */
+interface TaskListPageProps {
+  /** 管理员视图：显示所有用户的任务 */
+  adminView?: boolean;
+}
 
-/** 状态对应的Tag颜色和文本 */
-const STATUS_MAP: Record<TaskStatus, { color: string; text: string }> = {
-  pending: { color: 'default', text: '等待中' },
-  running: { color: 'processing', text: '匹配中' },
-  completed: { color: 'success', text: '已完成' },
-  failed: { color: 'error', text: '失败' },
-  cancelled: { color: 'warning', text: '已取消' },
-};
-
-export default function TaskListPage() {
+export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   const navigate = useNavigate();
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
@@ -59,6 +47,8 @@ export default function TaskListPage() {
     try {
       const params: Record<string, unknown> = { page, size: pageSize };
       if (statusFilter) params.status_filter = statusFilter;
+      // 管理员模式：请求所有用户的任务
+      if (adminView) params.all_users = true;
 
       const { data } = await api.get<TaskListResponse>('/tasks', { params });
       setTasks(data.items);
@@ -68,7 +58,7 @@ export default function TaskListPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, message]);
+  }, [page, pageSize, statusFilter, adminView, message]);
 
   useEffect(() => {
     loadTasks();
@@ -283,7 +273,7 @@ export default function TaskListPage() {
 
   return (
     <Card
-      title="任务列表"
+      title={adminView ? '所有任务（管理员）' : '任务列表'}
       extra={
         <Space>
           <Select

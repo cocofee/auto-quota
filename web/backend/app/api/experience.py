@@ -2,12 +2,15 @@
 经验库管理 API（管理员专属）
 
 路由挂载在 /api/admin/experience 前缀下:
-    GET    /api/admin/experience/stats       — 统计概览
+    GET    /api/admin/experience/stats       — 统计概览（含 by_province 省份数据）
     GET    /api/admin/experience/records      — 记录列表（支持按层级筛选）
     GET    /api/admin/experience/search       — 搜索经验记录
     POST   /api/admin/experience/{id}/promote — 晋升到权威层
     POST   /api/admin/experience/{id}/demote  — 降级到候选层
     DELETE /api/admin/experience/{id}         — 删除记录
+
+注意：原 /provinces 端点已合并到 /stats（通过 by_province 字段返回省份数据）。
+前端从 stats 响应中提取省份列表，避免重复请求。
 
 通过 asyncio.to_thread() 调用核心引擎的 ExperienceDB（SQLite同步操作），
 避免阻塞 FastAPI 的异步事件循环。
@@ -25,35 +28,14 @@ router = APIRouter()
 
 
 def _get_experience_db():
-    """获取经验库实例（懒加载，每次调用新建避免线程安全问题）"""
-    import config as quota_config
+    """获取经验库实例（懒加载，每次调用新建避免线程安全问题）
+
+    不传 province 参数，让 ExperienceDB 使用默认省份。
+    搜索时由调用方显式传入 province 参数覆盖。
+    """
     from src.experience_db import ExperienceDB
 
-    db_path = quota_config.get_experience_db_path()
-    return ExperienceDB(db_path)
-
-
-@router.get("/provinces")
-async def experience_provinces(
-    admin: User = Depends(require_admin),
-):
-    """获取经验库中所有省份列表（含各省份记录数）"""
-    try:
-        def _query():
-            db = _get_experience_db()
-            stats = db.get_stats()
-            by_province = stats.get("by_province", {})
-            # 转换为列表格式，方便前端使用
-            return [
-                {"province": name, "count": count}
-                for name, count in sorted(by_province.items(), key=lambda x: -x[1])
-            ]
-
-        provinces = await asyncio.to_thread(_query)
-        return {"items": provinces}
-    except Exception as e:
-        logger.error(f"获取经验库省份列表失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取省份列表失败: {e}")
+    return ExperienceDB()
 
 
 @router.get("/stats")
@@ -132,14 +114,52 @@ async def experience_search(
     if not q.strip():
         raise HTTPException(status_code=400, detail="搜索关键词不能为空")
 
+    # 限制查询条数，防止过大查询影响性能
+    if limit < 1 or limit > 200:
+        limit = 20
+
     try:
         def _query():
             db = _get_experience_db()
-            return db.find_experience(
-                bill_text=q.strip(),
-                province=province,
-                limit=limit,
-            )
+            # 管理员搜索：不选省份时搜全库（直接用SQL查，绕过 find_experience 的省份默认值）
+            text = q.strip()
+            like_pattern = f"%{text}%"
+            conn = db._connect(row_factory=True)
+            try:
+                cursor = conn.cursor()
+                text_match = """(
+                    bill_text = ? OR COALESCE(bill_name, '') = ?
+                    OR bill_text LIKE ? OR COALESCE(bill_name, '') LIKE ?
+                )"""
+                rank_order = """
+                    CASE
+                        WHEN bill_text = ? THEN 0
+                        WHEN COALESCE(bill_name, '') = ? THEN 1
+                        WHEN bill_text LIKE ? THEN 2
+                        WHEN COALESCE(bill_name, '') LIKE ? THEN 3
+                        ELSE 4
+                    END ASC,
+                    confidence DESC, id DESC
+                """
+                if province:
+                    where = f"province = ? AND {text_match}"
+                    params = [province, text, text, like_pattern, like_pattern,
+                              text, text, like_pattern, like_pattern, limit]
+                else:
+                    where = text_match
+                    params = [text, text, like_pattern, like_pattern,
+                              text, text, like_pattern, like_pattern, limit]
+
+                cursor.execute(f"""
+                    SELECT * FROM experiences
+                    WHERE {where}
+                    ORDER BY {rank_order}
+                    LIMIT ?
+                """, params)
+                rows = cursor.fetchall()
+                return [db._normalize_record_quota_fields(dict(row)) for row in rows]
+            finally:
+                conn.close()
 
         results = await asyncio.to_thread(_query)
         return {"items": results, "total": len(results)}

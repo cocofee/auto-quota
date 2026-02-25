@@ -31,6 +31,7 @@ from app.schemas.task import TaskResponse, TaskListResponse
 from app.services.match_service import save_upload_file
 from app.tasks.match_task import execute_match
 from app.config import UPLOAD_DIR, TASK_OUTPUT_DIR, ACCESS_TOKEN_COOKIE_NAME
+from app.api.shared import get_user_task
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ def _normalize_create_task_inputs(
 ) -> tuple[str, str | None, str | None]:
     """规范化并校验创建任务的文本参数，避免DB层报错。"""
     province_norm = (province or "").strip()
-    if not province_norm:
+    if not province_norm or province_norm.lower() == "undefined":
         raise HTTPException(status_code=400, detail="province 不能为空")
     if len(province_norm) > 255:
         raise HTTPException(status_code=400, detail="province 长度不能超过 255")
@@ -60,15 +61,13 @@ def _normalize_create_task_inputs(
     return province_norm, sheet_norm, llm_norm
 
 
-@router.post("/", response_model=TaskResponse, status_code=201)
+@router.post("", response_model=TaskResponse, status_code=201)
 async def create_task(
     file: UploadFile = File(description="清单Excel文件（.xlsx/.xls）"),
     province: str = Form(description="省份定额库名称"),
-    mode: str = Form(default="search", description="匹配模式: search 或 agent"),
     sheet: str | None = Form(default=None, description="指定Sheet名称"),
     limit_count: int | None = Form(default=None, description="限制处理条数"),
     use_experience: bool = Form(default=True, description="是否使用经验库"),
-    agent_llm: str | None = Form(default=None, description="Agent模式的大模型"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -76,13 +75,17 @@ async def create_task(
 
     上传清单Excel文件 + 配置匹配参数 → 任务进入Celery队列等待执行。
     立即返回任务信息，前端可通过 /progress 端点跟踪进度。
+    匹配模式和大模型由后端配置统一控制（MATCH_MODE / MATCH_LLM）。
     """
     # 1. 校验参数
-    if mode not in ("search", "agent"):
-        raise HTTPException(status_code=400, detail="mode 必须是 search 或 agent")
     if limit_count is not None and (limit_count < 1 or limit_count > 10000):
         raise HTTPException(status_code=400, detail="limit_count 必须在 1~10000 之间")
-    province, sheet, agent_llm = _normalize_create_task_inputs(province, sheet, agent_llm)
+    province, sheet, _ = _normalize_create_task_inputs(province, sheet, None)
+
+    # 匹配模式和大模型从后端配置读取（用户不需要选择）
+    from app.config import MATCH_MODE, MATCH_LLM
+    mode = MATCH_MODE
+    agent_llm = MATCH_LLM
 
     # 2. 生成任务ID并保存上传文件
     #    save_upload_file 是同步磁盘I/O，用 to_thread 避免阻塞事件循环
@@ -155,7 +158,7 @@ async def create_task(
     return task
 
 
-@router.get("/", response_model=TaskListResponse)
+@router.get("", response_model=TaskListResponse)
 async def list_tasks(
     page: int = 1,
     size: int = 20,
@@ -213,14 +216,7 @@ async def get_task(
 
     管理员可查看任意任务，普通用户只能查看自己的。
     """
-    query = select(Task).where(Task.id == task_id)
-    if not user.is_admin:
-        query = query.where(Task.user_id == user.id)
-    result = await db.execute(query)
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return task
+    return await get_user_task(task_id, user, db)
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -235,13 +231,7 @@ async def delete_task(
     正在运行中的任务不允许删除。
     管理员可删除任意任务，普通用户只能删除自己的。
     """
-    query = select(Task).where(Task.id == task_id)
-    if not user.is_admin:
-        query = query.where(Task.user_id == user.id)
-    result = await db.execute(query)
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+    task = await get_user_task(task_id, user, db)
 
     if task.status == "running":
         raise HTTPException(status_code=409, detail="任务正在运行中，无法删除")
