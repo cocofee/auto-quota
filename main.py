@@ -201,7 +201,8 @@ def _log_run_banner(input_path: Path, mode: str, province: str,
 def run(input_file, mode="agent", output=None,
         limit=None, province=None, aux_provinces=None,
         no_experience=False, sheet=None,
-        json_output=None, agent_llm=None, interactive=None):
+        json_output=None, agent_llm=None, interactive=None,
+        progress_callback=None):
     """执行匹配的核心逻辑（供命令行和其他模块直接调用）
 
     参数:
@@ -217,6 +218,10 @@ def run(input_file, mode="agent", output=None,
         agent_llm: Agent模式使用的大模型
         interactive: 是否允许交互式提示（如省份选择）。
                      默认None=自动判断（命令行调用时True，程序调用建议传False）
+        progress_callback: 进度回调函数（可选），签名: callback(percent, current_idx, message)
+                           percent: 0~100 进度百分比
+                           current_idx: 当前处理到第几条
+                           message: 进度描述文字
 
     返回: {"results": [...], "stats": {...}}
     """
@@ -231,8 +236,17 @@ def run(input_file, mode="agent", output=None,
 
     start_time = time.time()
 
+    # 进度回调辅助函数（容错：callback为None或调用出错都不影响主流程）
+    def _notify(percent, idx, msg):
+        if progress_callback:
+            try:
+                progress_callback(percent, idx, msg)
+            except Exception:
+                pass
+
     # 1. 读取清单
     bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
+    _notify(15, 0, f"清单读取完成，共{len(bill_items)}条")
 
     # 1.5 分析项目上下文（L2：项目级感知，让匹配有全局视角）
     # 容错：分析失败不影响主流程，降级为空上下文
@@ -250,13 +264,17 @@ def run(input_file, mode="agent", output=None,
 
     # 初始化经验库（可选）
     experience_db = init_experience_db(no_experience, province=resolved_province)
+    _notify(25, 0, "搜索引擎就绪")
 
     # 3. 执行匹配
     logger.info(f"第3步：开始匹配 ({mode} 模式)...")
+    _notify(30, 0, "开始匹配...")
     results = match_by_mode(
         mode, bill_items, searcher, validator, experience_db,
         resolved_province, agent_llm=agent_llm,
-        project_overview=project_overview_text)
+        project_overview=project_overview_text,
+        progress_callback=progress_callback)
+    _notify(90, len(bill_items), "匹配完成，生成结果中...")
 
     # 4. 输出结果
     elapsed = time.time() - start_time
@@ -275,6 +293,7 @@ def run(input_file, mode="agent", output=None,
     output_path = writer.write_results(
         results, output, original_file=str(input_path))
     logger.info(f"  输出文件: {output_path}")
+    _notify(95, len(results), "结果已生成")
 
     # 如果指定了JSON输出，也保存一份JSON（供审核工具读取）
     if json_output:
