@@ -890,10 +890,11 @@ class ExperienceDB:
             stale_exact = exact
 
         # 向量相似搜索（ChromaDB不可用时跳过，依赖精确匹配兜底）
-        if self.collection is None:
+        coll = self.collection  # 缓存到局部变量，避免多次访问属性
+        if coll is None:
             logger.warning("经验库向量索引不可用（ChromaDB未初始化），跳过相似搜索")
             return [stale_exact] if stale_exact else []
-        collection_count = self.collection.count()
+        collection_count = coll.count()
         if collection_count == 0:
             return [stale_exact] if stale_exact else []
         # 多取一些结果，避免候选层记录在向量层面挤掉权威层记录
@@ -913,7 +914,7 @@ class ExperienceDB:
 
             # 先尝试按省份过滤的向量搜索
             try:
-                results = self.collection.query(
+                results = coll.query(
                     query_embeddings=query_embedding.tolist(),
                     n_results=n_results,
                     where={"province": province},  # 按省份过滤向量搜索
@@ -922,14 +923,14 @@ class ExperienceDB:
                 # 旧索引可能没有province metadata，where过滤会报错
                 logger.warning(f"经验库按省份过滤失败({where_err})，降级为全库搜索。"
                               f"建议重建向量索引以获得更好的多省份隔离")
-                results = self.collection.query(
+                results = coll.query(
                     query_embeddings=query_embedding.tolist(),
                     n_results=n_results,
                 )
 
             # 兼容旧索引：按省份过滤后无结果时，尝试无过滤搜索（SQL层仍会过滤省份）
             if not results or not results.get("ids") or not results.get("ids")[0]:
-                results = self.collection.query(
+                results = coll.query(
                     query_embeddings=query_embedding.tolist(),
                     n_results=n_results,
                 )
@@ -1064,7 +1065,8 @@ class ExperienceDB:
         if self.collection is None:
             logger.warning("经验库向量索引不可用，跳过跨省搜索")
             return []
-        collection_count = self.collection.count()
+        coll = self.collection  # 缓存到局部变量
+        collection_count = coll.count()
         if collection_count == 0:
             return []
 
@@ -1080,7 +1082,7 @@ class ExperienceDB:
 
             # 向量搜索全库（不按省份过滤）
             n_results = min(max(top_k * 5, 20), collection_count)
-            results = self.collection.query(
+            results = coll.query(
                 query_embeddings=query_embedding.tolist(),
                 n_results=n_results,
             )
