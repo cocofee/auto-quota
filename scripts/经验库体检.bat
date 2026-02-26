@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal enabledelayedexpansion
 title 经验库体检
 cd /d "%~dp0.."

@@ -1,0 +1,78 @@
+lzc-sdk-version: "0.1"
+name: Auto Quota
+package: cloud.lazycat.app.autoquota
+version: 0.1.8
+description: Auto quota web service
+license: https://choosealicense.com/licenses/mit/
+homepage:
+author:
+application:
+  subdomain: autoquota
+  routes:
+    - /=http://frontend.cloud.lazycat.app.autoquota.lzcapp:80/
+
+services:
+  frontend:
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:latest
+    depends_on:
+      - backend
+
+  backend:
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
+    command: sh -c "cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ""
+      CORS_ORIGINS: http://frontend.cloud.lazycat.app.autoquota.lzcapp
+      AGENT_LLM: claude
+      CLAUDE_API_KEY: sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585
+      CLAUDE_BASE_URL: http://47.243.74.21:8080
+      CLAUDE_MODEL: claude-opus-4-6
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+    binds:
+      - /lzcapp/var/data:/app/data
+      - /lzcapp/var/db:/app/db
+      - /lzcapp/var/output:/app/output
+      - /lzcapp/var/logs:/app/logs
+      - /lzcapp/var/model_cache:/root/.cache
+    depends_on:
+      - postgres
+      - redis
+
+  celery-worker:
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
+    command: sh -c "cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
+      REDIS_URL: redis://redis:6379/0
+      AGENT_LLM: claude
+      CLAUDE_API_KEY: sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585
+      CLAUDE_BASE_URL: http://47.243.74.21:8080
+      CLAUDE_MODEL: claude-opus-4-6
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+    binds:
+      - /lzcapp/var/data:/app/data
+      - /lzcapp/var/db:/app/db
+      - /lzcapp/var/output:/app/output
+      - /lzcapp/var/logs:/app/logs
+      - /lzcapp/var/model_cache:/root/.cache
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: docker.1ms.run/postgres:16-alpine
+    environment:
+      POSTGRES_USER: autoquota
+      POSTGRES_PASSWORD: autoquota
+      POSTGRES_DB: autoquota
+    binds:
+      - /lzcapp/var/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: docker.1ms.run/redis:7-alpine

@@ -1,4 +1,4 @@
-@echo off
+锘緻echo off
 setlocal enabledelayedexpansion
 title 导入带定额清单
 cd /d "%~dp0.."

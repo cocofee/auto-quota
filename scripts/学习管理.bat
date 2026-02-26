@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 title Jarvis 学习管理

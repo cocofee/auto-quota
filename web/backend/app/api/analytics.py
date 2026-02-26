@@ -2,11 +2,15 @@
 准确率分析 API（管理员专属）
 
 路由挂载在 /api/admin/analytics 前缀下:
-    GET  /api/admin/analytics/overview      — 总体统计
-    GET  /api/admin/analytics/trends        — 按日期趋势（最近30天）
-    GET  /api/admin/analytics/by-province   — 按省份统计
-    GET  /api/admin/analytics/by-specialty  — 按专业统计
+    GET  /api/admin/analytics/overview            — 总体统计
+    GET  /api/admin/analytics/trends              — 按日期趋势（最近30天）
+    GET  /api/admin/analytics/by-province         — 按省份统计
+    GET  /api/admin/analytics/by-specialty        — 按专业统计
+    GET  /api/admin/analytics/benchmark-history   — Benchmark跑分历史
 """
+
+import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, cast, Date
@@ -17,8 +21,12 @@ from app.models.user import User
 from app.models.task import Task
 from app.models.result import MatchResult
 from app.auth.permissions import require_admin
+from app.config import PROJECT_ROOT
 
 router = APIRouter()
+
+# benchmark_history.json 的路径（项目根目录/tests/）
+_BENCHMARK_HISTORY_PATH = PROJECT_ROOT / "tests" / "benchmark_history.json"
 
 
 @router.get("/overview")
@@ -179,3 +187,27 @@ async def analytics_by_specialty(
         })
 
     return {"items": items}
+
+
+@router.get("/benchmark-history")
+async def benchmark_history(
+    admin: User = Depends(require_admin),
+):
+    """Benchmark 跑分历史
+
+    读取 tests/benchmark_history.json 返回全部跑分记录，
+    用于前端展示算法改动的好坏趋势。
+    """
+    if not _BENCHMARK_HISTORY_PATH.exists():
+        return {"items": []}
+
+    try:
+        data = json.loads(_BENCHMARK_HISTORY_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"items": []}
+
+    # data 是一个数组，每条记录包含 version/date/mode/note/datasets
+    if not isinstance(data, list):
+        return {"items": []}
+
+    return {"items": data}

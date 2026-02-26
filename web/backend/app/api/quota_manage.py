@@ -81,13 +81,14 @@ def _get_chapter_list(db) -> list[dict]:
 async def quota_provinces(
     admin: User = Depends(require_admin),
 ):
-    """获取已导入（已构建数据库）的省份列表，含定额总数"""
+    """获取已导入（已构建数据库）的省份列表，含定额总数和分组信息"""
     try:
         def _query():
             import config as quota_config
             from src.quota_db import QuotaDB
 
             provinces = quota_config.list_db_provinces()
+            groups = quota_config.get_province_groups()
             result = []
             for name in provinces:
                 try:
@@ -100,6 +101,7 @@ async def quota_provinces(
                         "total_quotas": total,
                         "chapter_count": len(chapters),
                         "version": version,
+                        "group": groups.get(name, name[:2]),
                     })
                 except Exception as e:
                     logger.warning(f"读取省份 {name} 定额库失败: {e}")
@@ -108,6 +110,7 @@ async def quota_provinces(
                         "total_quotas": 0,
                         "chapter_count": 0,
                         "version": "",
+                        "group": groups.get(name, name[:2]),
                     })
             return result
 

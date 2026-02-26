@@ -141,11 +141,16 @@ async def health_check():
 
 @app.get("/api/provinces", tags=["系统"])
 async def list_provinces():
-    """获取可用省份列表 —— 前端下拉选择用"""
+    """获取可用省份列表 —— 前端下拉选择用
+
+    返回 provinces（名称列表）和 groups（分组映射），
+    分组来自 data/quota_data/ 的文件夹结构。
+    """
     try:
         import config as quota_config
         provinces = quota_config.list_db_provinces()
-        return {"provinces": provinces}
+        groups = quota_config.get_province_groups()
+        return {"provinces": provinces, "groups": groups}
     except Exception as e:
         logger.error(f"获取省份列表失败: {e}")
         raise HTTPException(

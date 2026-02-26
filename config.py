@@ -182,12 +182,26 @@ def list_db_provinces():
     """扫描 db/provinces/ 下所有已构建的省份数据库目录
 
     返回省份名称列表（即目录名），如 ['北京2024消耗量', '北京2021消耗量', ...]
+    跳过空目录和测试目录（无 quota.db 或定额条数为0的目录）。
     """
     provinces = []
     if not PROVINCES_DB_DIR.exists():
         return provinces
     for item in sorted(PROVINCES_DB_DIR.iterdir()):
         if item.is_dir():
+            quota_db = item / "quota.db"
+            if not quota_db.exists():
+                continue  # 无数据库文件，跳过（测试残留的空目录）
+            # 检查是否有实际定额数据
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(quota_db))
+                count = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
+                conn.close()
+                if count == 0:
+                    continue  # 空数据库，跳过
+            except Exception:
+                continue  # 表不存在或损坏，跳过
             provinces.append(item.name)
     return provinces
 
@@ -377,6 +391,37 @@ def list_all_provinces():
                 if sub.is_dir() and any(sub.glob("*.xlsx")):
                     provinces.append(sub.name)
     return provinces
+
+
+def get_province_groups() -> dict[str, str]:
+    """获取每个定额库的分组名（来自 data/quota_data/ 的父文件夹名）
+
+    返回 {定额库名: 分组名} 的映射，如 {"石化安装预算2019": "石油", "石油预算2022": "石油"}
+    嵌套结构下父文件夹名即分组名；扁平结构（无父文件夹）用定额库名前2字作为分组。
+    同时扫描 db/provinces/ 下已有但不在 data/ 中的定额库，用前2字兜底。
+    """
+    groups = {}
+    # 从 data/quota_data/ 读取真实文件夹分组
+    if QUOTA_DATA_DIR.exists():
+        for item in sorted(QUOTA_DATA_DIR.iterdir()):
+            if not item.is_dir():
+                continue
+            has_xlsx = any(item.glob("*.xlsx"))
+            if has_xlsx:
+                # 扁平结构：无父文件夹，用名称前2字
+                groups[item.name] = item.name[:2]
+            else:
+                # 嵌套结构：父文件夹名即分组
+                for sub in sorted(item.iterdir()):
+                    if sub.is_dir():
+                        groups[sub.name] = item.name
+
+    # 补充 db/provinces/ 下已构建但不在 data/ 中的定额库
+    for name in list_db_provinces():
+        if name not in groups:
+            groups[name] = name[:2]
+
+    return groups
 
 # 兼容旧代码：保留QUOTA_EXCEL_FILES但标记为废弃
 QUOTA_EXCEL_FILES = {
@@ -569,6 +614,19 @@ AGENT_RULES_IN_PROMPT = False
 
 # 是否在Agent prompt中注入方法卡片（关闭后策略已融入固定提示词，节省~200-400 tokens/条）
 AGENT_METHOD_CARDS_IN_PROMPT = False
+
+# ============================================================
+# LLM后验证（匹配后逐条审核纠正）
+# ============================================================
+
+# 是否启用LLM后验证（启用后每条匹配结果都会经过LLM审核）
+LLM_VERIFY_ENABLED = os.getenv("LLM_VERIFY_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# 跳过验证的置信度阈值（高于此值不验证，节省API费用）
+# 设为100表示全部验证（前期保质量）；后期稳定后可调低到90节省API费用
+VERIFY_SKIP_THRESHOLD = int(os.getenv("VERIFY_SKIP_THRESHOLD", "100"))
 
 # 批量审核模式（中置信度项打包一次LLM调用，减少API调用次数）
 AGENT_BATCH_ENABLED = True              # 是否启用批量审核

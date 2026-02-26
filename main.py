@@ -293,7 +293,25 @@ def run(input_file, mode="agent", output=None,
         resolved_province, agent_llm=agent_llm,
         project_overview=project_overview_text,
         progress_callback=progress_callback)
-    _notify(90, len(bill_items), "匹配完成，生成结果中...")
+    _notify(90, len(bill_items), "匹配完成，验证中...")
+
+    # 3.5 LLM后验证：逐条审核匹配结果，错误的自动纠正重搜
+    if mode == "agent" and config.LLM_VERIFY_ENABLED:
+        try:
+            from src.llm_verifier import LLMVerifier
+            logger.info("第3.5步：LLM后验证（逐条审核+纠正）...")
+            verifier = LLMVerifier(llm_type=agent_llm)
+            results = verifier.verify_batch(
+                results, searcher=searcher,
+                progress_callback=progress_callback)
+            vs = verifier.stats
+            logger.info(f"  验证汇总: 纠正{vs['corrected']}条, "
+                        f"确认{vs['correct']}条, "
+                        f"未纠正{vs['correct_failed']}条")
+        except Exception as e:
+            logger.warning(f"LLM后验证跳过（不影响输出）: {e}")
+
+    _notify(92, len(bill_items), "生成结果中...")
 
     # 4. 输出结果
     elapsed = time.time() - start_time

@@ -41,7 +41,7 @@ let pendingRequests: Array<{
   reject: (error: unknown) => void;
 }> = [];
 
-const AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/refresh'];
+const AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/me'];
 
 api.interceptors.response.use(
   (response) => response,

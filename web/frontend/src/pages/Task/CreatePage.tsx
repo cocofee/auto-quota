@@ -18,7 +18,7 @@ import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useProvinceStore } from '../../stores/province';
 import type { TaskInfo } from '../../types';
-import { extractRegion, getSiblingProvinces } from '../../utils/region';
+import { getSiblingProvinces } from '../../utils/region';
 import { getErrorMessage } from '../../utils/error';
 
 const { Dragger } = Upload;
@@ -35,7 +35,7 @@ export default function TaskCreatePage() {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [sheetNames, setSheetNames] = useState<string[]>([]); // 从上传的Excel中读取的工作表名列表
   const [currentStep, setCurrentStep] = useState(0);
-  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
+  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
   const selectedProvince = Form.useWatch('province', form); // 监听选中的定额库
 
@@ -50,16 +50,16 @@ export default function TaskCreatePage() {
     ? [{ title: '上传文件' }, { title: '配置参数' }, { title: '开始匹配' }]
     : [{ title: '上传文件' }, { title: '开始匹配' }];
 
-  // 按省份（地区）分组：{ "北京": ["北京市建设工程...(2024)", ...], "广东": [...] }
+  // 按分组（来自后端文件夹结构）：{ "北京": ["北京市建设工程...(2024)", ...], "石油": [...] }
   const regionMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const name of allProvinces) {
-      const region = extractRegion(name);
+      const region = getGroup(name);
       if (!map.has(region)) map.set(region, []);
       map.get(region)!.push(name);
     }
     return map;
-  }, [allProvinces]);
+  }, [allProvinces, getGroup]);
 
   // 省份（地区）下拉选项
   const regionOptions = useMemo(() => {
@@ -80,9 +80,9 @@ export default function TaskCreatePage() {
   useEffect(() => {
     fetchProvinces().then((list) => {
       if (list.length > 0 && !form.getFieldValue('province')) {
-        const firstRegion = extractRegion(list[0]);
+        const firstRegion = getGroup(list[0]);
         setSelectedRegion(firstRegion);
-        const firstDb = list.find((p) => extractRegion(p) === firstRegion);
+        const firstDb = list.find((p) => getGroup(p) === firstRegion);
         if (firstDb) {
           form.setFieldValue('province', firstDb);
         }

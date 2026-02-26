@@ -20,6 +20,10 @@ import {
   CheckCircleOutlined,
   CheckOutlined,
   DeleteOutlined,
+  RightOutlined,
+  DownOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
@@ -76,7 +80,9 @@ const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
 interface SectionDisplayRow {
   _rowType: 'section';
   _rowKey: string;
-  _title: string;              // 分部标题文字（如"【给排水】给水工程"）
+  _title: string;              // 分部标题文字（如"给水工程"）
+  _sectionLevel: 'specialty' | 'section';  // 专业级（如"消防电工"）or 分部级（如"预留预埋"）
+  _parentSpecialtyKey?: string;  // 分部级section的所属专业key（折叠时用）
 }
 
 interface BillDisplayRow {
@@ -84,6 +90,8 @@ interface BillDisplayRow {
   _rowKey: string;
   _result: MatchResult;        // 原始数据引用（操作时需要）
   _quotaCount: number;
+  _parentSpecialtyKey: string;  // 所属专业的key（折叠用）
+  _parentSectionKey: string;    // 所属分部的key（折叠用）
 }
 
 interface QuotaDisplayRow {
@@ -92,37 +100,81 @@ interface QuotaDisplayRow {
   _parentResult: MatchResult;  // 所属清单的原始数据
   _quotaIndex: number;         // 在定额列表中的索引
   _quota: QuotaItem;           // 定额数据
+  _parentSpecialtyKey: string;  // 所属专业的key（折叠用）
+  _parentSectionKey: string;    // 所属分部的key（折叠用）
 }
 
 type DisplayRow = SectionDisplayRow | BillDisplayRow | QuotaDisplayRow;
 
-/** 将 MatchResult[] 展平为 DisplayRow[]（分部标题行+清单行+定额子行） */
+/** 清理Sheet名称：从冗长的Excel Sheet名中提取有意义的部分
+ *  例如 "表-08+分部分项工程和单价措施项目清单与计价表【消防电工】" → "消防电工"
+ */
+function cleanSheetName(sheet: string): string {
+  if (!sheet) return sheet;
+  // 提取最后一对【】中的内容（通常是专业名称，如"消防电工"、"给排水"）
+  const brackets = sheet.match(/【([^【】]+)】/g);
+  if (brackets && brackets.length > 0) {
+    const last = brackets[brackets.length - 1];
+    return last.replace(/[【】]/g, '');
+  }
+  return sheet;
+}
+
+/** 判断文本是否像定额编号（如"C10-2-123"、"SC20"、"C4-13-6 换"）
+ *  定额编号不应作为分部标题显示，需要过滤掉
+ */
+function isQuotaCode(text: string): boolean {
+  if (!text || !text.trim()) return false;
+  const trimmed = text.trim();
+  // 定额编号格式：1-4个字母 + 数字(可含连字符) + 可选空格+"换/增/减"后缀
+  return /^[A-Za-z]{1,4}\d[\d-]*(\s*(换|增|减))?$/.test(trimmed);
+}
+
+/** 将 MatchResult[] 展平为 DisplayRow[]（分部标题行+清单行+定额子行）
+ *  - 过滤掉像定额编号的分部名（如"C10-2-123 换"、"SC20"）
+ *  - 记录每行所属的专业/分部key（用于折叠功能）
+ */
 function flattenResults(results: MatchResult[]): DisplayRow[] {
   const rows: DisplayRow[] = [];
   let currentSheet = '';
   let currentSection = '';
+  let currentSpecialtyKey = '';   // 当前专业section的_rowKey
+  let currentSectionKey = '';     // 当前分部section的_rowKey
 
   for (const r of results) {
-    // 检查是否需要插入分部标题行（sheet或section变化时）
     const sheet = r.sheet_name || '';
     const section = r.section || '';
-    if (sheet && (sheet !== currentSheet || section !== currentSection)) {
-      // 组合标题：有section就显示"【Sheet名】分部名"，没有就只显示Sheet名
-      const title = section ? `【${sheet}】${section}` : sheet;
+
+    // 专业变化（Sheet变化）时，插入专业标题行
+    if (sheet && sheet !== currentSheet) {
+      const specialty = cleanSheetName(sheet);
+      const key = `sheet_${rows.length}`;
       rows.push({
         _rowType: 'section',
-        _rowKey: `section_${rows.length}`,
-        _title: title,
+        _rowKey: key,
+        _title: `━━ ${specialty} ━━`,
+        _sectionLevel: 'specialty',
       });
       currentSheet = sheet;
-      currentSection = section;
-    } else if (!sheet && section && section !== currentSection) {
-      // 没有sheet但有section变化
-      rows.push({
-        _rowType: 'section',
-        _rowKey: `section_${rows.length}`,
-        _title: section,
-      });
+      currentSection = '';       // 专业变了，分部也要重新显示
+      currentSpecialtyKey = key;
+      currentSectionKey = '';    // 清空当前分部
+    }
+
+    // 分部变化时，插入分部标题行
+    // 跳过看起来像定额编号的分部名（如"C10-2-123 换"、"SC20"）
+    if (section && section !== currentSection) {
+      if (!isQuotaCode(section)) {
+        const key = `section_${rows.length}`;
+        rows.push({
+          _rowType: 'section',
+          _rowKey: key,
+          _title: section,
+          _sectionLevel: 'section',
+          _parentSpecialtyKey: currentSpecialtyKey,
+        });
+        currentSectionKey = key;
+      }
       currentSection = section;
     }
 
@@ -133,6 +185,8 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
       _rowKey: r.id,
       _result: r,
       _quotaCount: quotas.length,
+      _parentSpecialtyKey: currentSpecialtyKey,
+      _parentSectionKey: currentSectionKey,
     });
     // 定额子行
     quotas.forEach((q, idx) => {
@@ -142,6 +196,8 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
         _parentResult: r,
         _quotaIndex: idx,
         _quota: q,
+        _parentSpecialtyKey: currentSpecialtyKey,
+        _parentSectionKey: currentSectionKey,
       });
     });
   }
@@ -201,6 +257,87 @@ export default function ResultsPage() {
   }, [results, page, pageSize]);
 
   const displayRows = useMemo(() => flattenResults(pagedResults), [pagedResults]);
+
+  // 分部折叠/展开状态（key = 分部section行的_rowKey，只管分部级别）
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  /** 点击单个分部小节：折叠/展开该小节的清单 */
+  const toggleSection = useCallback((sectionKey: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionKey)) {
+        next.delete(sectionKey);
+      } else {
+        next.add(sectionKey);
+      }
+      return next;
+    });
+  }, []);
+
+  /** 点击专业标题：批量折叠/展开它下面所有分部小节 */
+  const toggleSpecialtySections = useCallback((specialtyKey: string) => {
+    // 找出该专业下所有分部小节的key
+    const childKeys = displayRows
+      .filter(r => r._rowType === 'section' && r._sectionLevel === 'section'
+                   && r._parentSpecialtyKey === specialtyKey)
+      .map(r => r._rowKey);
+    if (childKeys.length === 0) return;
+
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      // 如果所有子节都已折叠 → 全部展开；否则 → 全部折叠
+      const allCollapsed = childKeys.every(k => next.has(k));
+      if (allCollapsed) {
+        childKeys.forEach(k => next.delete(k));
+      } else {
+        childKeys.forEach(k => next.add(k));
+      }
+      return next;
+    });
+  }, [displayRows]);
+
+  /** 一键折叠所有分部（只看专业+分部名称，清单全部收起） */
+  const collapseAll = useCallback(() => {
+    const allSectionKeys = displayRows
+      .filter(r => r._rowType === 'section' && r._sectionLevel === 'section')
+      .map(r => r._rowKey);
+    setCollapsedSections(new Set(allSectionKeys));
+  }, [displayRows]);
+
+  /** 一键展开所有分部 */
+  const expandAll = useCallback(() => {
+    setCollapsedSections(new Set());
+  }, []);
+
+  // 根据折叠状态过滤可见行
+  // 专业标题和分部标题始终可见，只有清单/定额行会被折叠隐藏
+  const visibleRows = useMemo(() => {
+    const result: DisplayRow[] = [];
+    for (const row of displayRows) {
+      if (row._rowType === 'section') {
+        // 标题行（专业和分部）始终显示
+        result.push(row);
+      } else {
+        // 清单/定额行：所属分部未折叠时才显示
+        const secCollapsed = row._parentSectionKey && collapsedSections.has(row._parentSectionKey);
+        if (!secCollapsed) {
+          result.push(row);
+        }
+      }
+    }
+    return result;
+  }, [displayRows, collapsedSections]);
+
+  // 每个分部小节包含的清单条数（显示在标题后面）
+  const sectionBillCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const row of displayRows) {
+      if (row._rowType === 'bill' && row._parentSectionKey) {
+        counts[row._parentSectionKey] = (counts[row._parentSectionKey] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [displayRows]);
 
   // ============================================================
   // 管理员操作
@@ -322,15 +459,42 @@ export default function ResultsPage() {
       align: 'center' as const,
       onCell: (row: DisplayRow) => {
         if (row._rowType === 'section') {
-          return { colSpan: 20 };  // 跨所有列（数字大于实际列数即可）
+          // 跨所有列 + 强制左对齐（序号列默认居中，标题行需要覆盖）
+          return { colSpan: 20, style: { textAlign: 'left' as const, paddingLeft: 12 } };
         }
         return {};
       },
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') {
+          const isSpecialty = row._sectionLevel === 'specialty';
+          // 专业标题：看子节是否全部折叠；分部标题：看自己是否折叠
+          let isCollapsed: boolean;
+          if (isSpecialty) {
+            const childKeys = displayRows
+              .filter(r => r._rowType === 'section' && r._sectionLevel === 'section'
+                           && r._parentSpecialtyKey === row._rowKey)
+              .map(r => r._rowKey);
+            isCollapsed = childKeys.length > 0 && childKeys.every(k => collapsedSections.has(k));
+          } else {
+            isCollapsed = collapsedSections.has(row._rowKey);
+          }
+          const count = !isSpecialty ? sectionBillCounts[row._rowKey] || 0 : 0;
           return (
-            <span style={{ fontWeight: 'bold', fontSize: 13, color: '#333' }}>
+            <span style={{
+              fontWeight: 'bold',
+              fontSize: isSpecialty ? 14 : 13,
+              color: isSpecialty ? '#fff' : '#1565C0',
+              userSelect: 'none',
+            }}>
+              {isCollapsed
+                ? <RightOutlined style={{ fontSize: 10, marginRight: 6 }} />
+                : <DownOutlined style={{ fontSize: 10, marginRight: 6 }} />}
               {row._title}
+              {!isSpecialty && count > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 'normal', opacity: 0.55, marginLeft: 8 }}>
+                  {count}条
+                </span>
+              )}
             </span>
           );
         }
@@ -358,24 +522,22 @@ export default function ResultsPage() {
         return <Tag color="blue" style={{ margin: 0 }}>{row._quota.quota_id}</Tag>;
       },
     },
-    // 项目名称 / 定额名称
+    // 项目名称 / 定额名称（定额行允许换行显示完整名称）
     {
       title: '项目名称',
       key: 'name',
-      ellipsis: true,
-      width: 180,
+      width: 200,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
           return <span style={{ fontWeight: 500 }}>{row._result.bill_name}</span>;
         }
+        // 定额行：完整显示名称，允许换行
         return (
-          <Tooltip title={row._quota.name}>
-            <span style={{ fontSize: 13, color: '#555', paddingLeft: 8 }}>
-              {row._quota.name}
-            </span>
-          </Tooltip>
+          <span style={{ fontSize: 13, color: '#555', paddingLeft: 8, whiteSpace: 'normal', wordBreak: 'break-all' }}>
+            {row._quota.name}
+          </span>
         );
       },
     },
@@ -459,19 +621,20 @@ export default function ResultsPage() {
         return (
           <span style={{
             color: textColor,
-            fontWeight: 'bold',
-            fontSize: 13,
+            fontWeight: 600,
+            fontSize: 12,
             whiteSpace: 'nowrap',
             backgroundColor: bgColor,
-            padding: '2px 6px',
-            borderRadius: 3,
+            padding: '3px 10px',
+            borderRadius: 12,
+            display: 'inline-block',
           }}>
             {stars}
           </span>
         );
       },
     },
-    // 匹配说明（只在清单行显示，自动换行）
+    // 匹配说明（只在清单行显示，自动换行；AI纠正/存疑结果高亮）
     {
       title: '匹配说明',
       key: 'explanation',
@@ -480,6 +643,31 @@ export default function ResultsPage() {
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const text = row._result.explanation;
+        const matchSource = row._result.match_source;
+
+        // AI纠正：橙色标签 + 纠正详情
+        if (matchSource === 'llm_corrected' || (text && text.startsWith('[AI纠正]'))) {
+          const detail = text ? text.replace(/^\[AI纠正\]\s*/, '') : '';
+          return (
+            <div style={{ fontSize: 12, lineHeight: '1.5' }}>
+              <Tag color="orange" style={{ marginBottom: 4 }}>AI纠正</Tag>
+              <div style={{ color: '#666', whiteSpace: 'pre-wrap' }}>{detail}</div>
+            </div>
+          );
+        }
+
+        // AI存疑：红色标签 + 存疑说明
+        if (text && text.startsWith('[AI存疑]')) {
+          const detail = text.replace(/^\[AI存疑\]\s*/, '');
+          return (
+            <div style={{ fontSize: 12, lineHeight: '1.5' }}>
+              <Tag color="red" style={{ marginBottom: 4 }}>AI存疑</Tag>
+              <div style={{ color: '#666', whiteSpace: 'pre-wrap' }}>{detail}</div>
+            </div>
+          );
+        }
+
+        // 普通匹配说明
         return text ? (
           <div style={{ fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
             {text}
@@ -539,15 +727,24 @@ export default function ResultsPage() {
 
   const renderSummary = () => {
     const { total, high_confidence, mid_confidence, low_confidence, no_match } = summary;
+    const pill = (bg: string, color: string): React.CSSProperties => ({
+      padding: '2px 12px',
+      borderRadius: 12,
+      backgroundColor: bg,
+      color,
+      fontSize: 13,
+      fontWeight: 500,
+      display: 'inline-block',
+    });
     return (
-      <Space size="middle" wrap style={{ fontSize: 13 }}>
-        <span>共 <b>{total}</b> 条</span>
-        <span style={{ color: '#2e7d32' }}>★★★高 <b>{high_confidence}</b></span>
-        <span style={{ color: '#e65100' }}>★★中 <b>{mid_confidence}</b></span>
-        <span style={{ color: '#c62828' }}>★低 <b>{low_confidence}</b></span>
-        {no_match > 0 && <span style={{ color: '#999' }}>未匹配 <b>{no_match}</b></span>}
+      <Space size="small" wrap>
+        <span style={pill('#f0f0f0', '#333')}>共 <b>{total}</b> 条</span>
+        <span style={pill('#E8F5E9', '#2e7d32')}>★★★ <b>{high_confidence}</b></span>
+        <span style={pill('#FFF8E1', '#e65100')}>★★ <b>{mid_confidence}</b></span>
+        <span style={pill('#FFEBEE', '#c62828')}>★ <b>{low_confidence}</b></span>
+        {no_match > 0 && <span style={pill('#f5f5f5', '#999')}>未匹配 <b>{no_match}</b></span>}
         {total > 0 && (
-          <span style={{ color: '#999' }}>
+          <span style={pill('#E3F2FD', '#1565C0')}>
             准确率 <b>{Math.round((high_confidence ?? 0) / total * 100)}%</b>
           </span>
         )}
@@ -606,10 +803,67 @@ export default function ResultsPage() {
       </Card>
 
       {/* 结果表格（Excel 广联达风格） */}
-      <Card size="small" title={renderSummary()}>
+      <Card
+        size="small"
+        title={renderSummary()}
+        extra={
+          <Space size="small">
+            <Button size="small" icon={<MenuFoldOutlined />} onClick={collapseAll}>
+              全部折叠
+            </Button>
+            <Button size="small" icon={<MenuUnfoldOutlined />} onClick={expandAll}>
+              全部展开
+            </Button>
+          </Space>
+        }
+      >
+        {/* 表格视觉增强 */}
+        <style>{`
+          /* td 继承 tr 背景色（Ant Design 默认白色会覆盖） */
+          .result-table .ant-table-tbody > tr > td {
+            background: inherit !important;
+            transition: filter 0.15s ease;
+            border-bottom: 1px solid #f0f0f0;
+          }
+          /* 表格圆角 + 外边框 */
+          .result-table .ant-table {
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #e8e8e8;
+          }
+          /* 表头加粗 + 底部双线 */
+          .result-table .ant-table-thead > tr > th {
+            background: #fafafa !important;
+            font-weight: 600 !important;
+            font-size: 13px;
+            border-bottom: 2px solid #d9d9d9 !important;
+          }
+          /* 清单行悬停变暗一点 */
+          .result-table .ant-table-tbody > tr.bill-row:hover > td {
+            filter: brightness(0.96);
+          }
+          /* 分部标题行悬停 */
+          .result-table .ant-table-tbody > tr.section-row:hover > td {
+            filter: brightness(0.92);
+          }
+          /* 定额行左侧蓝色竖线 — 视觉上关联到上方清单行 */
+          .result-table .ant-table-tbody > tr.quota-row > td:nth-child(1),
+          .result-table .ant-table-tbody > tr.quota-row > td:nth-child(2) {
+            border-left: 3px solid #91caff;
+          }
+          /* 定额行悬停 */
+          .result-table .ant-table-tbody > tr.quota-row:hover > td {
+            filter: brightness(0.97);
+          }
+          /* 专业标题行取消底部边框（和下面的分部标题视觉连贯） */
+          .result-table .ant-table-tbody > tr.specialty-row > td {
+            border-bottom: none;
+          }
+        `}</style>
         <Table
+          className="result-table"
           rowKey="_rowKey"
-          dataSource={displayRows}
+          dataSource={visibleRows}
           columns={columns}
           loading={loading}
           size="small"
@@ -631,17 +885,25 @@ export default function ResultsPage() {
           // 行样式区分：分部标题行深灰粗体，清单行按置信度着色，定额行浅灰
           onRow={(row: DisplayRow) => {
             if (row._rowType === 'section') {
+              // 专业标题：深蓝底白字；分部标题：浅蓝底深色字
+              const isSpecialty = row._sectionLevel === 'specialty';
               return {
+                className: isSpecialty ? 'section-row specialty-row' : 'section-row',
                 style: {
-                  backgroundColor: '#E0E0E0',
+                  backgroundColor: isSpecialty ? '#1565C0' : '#BBDEFB',
                   fontWeight: 'bold' as const,
+                  cursor: 'pointer',
                 },
+                onClick: () => isSpecialty
+                  ? toggleSpecialtySections(row._rowKey)   // 专业标题：批量切子节
+                  : toggleSection(row._rowKey),             // 分部标题：切自己
               };
             }
             if (row._rowType === 'bill') {
               const r = row._result;
               const quotas = r.corrected_quotas || r.quotas || [];
               return {
+                className: 'bill-row',
                 style: {
                   backgroundColor: getBillRowBgColor(r.confidence, quotas.length > 0),
                   fontWeight: 500,
@@ -649,6 +911,7 @@ export default function ResultsPage() {
               };
             }
             return {
+              className: 'quota-row',
               style: {
                 backgroundColor: '#FAFAFA',
                 fontSize: 13,

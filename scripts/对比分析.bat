@@ -1,4 +1,4 @@
-@echo off
+锘緻echo off
 setlocal enabledelayedexpansion
 title 对比分析 - 人工定额 vs 贾维斯定额
 cd /d "%~dp0.."

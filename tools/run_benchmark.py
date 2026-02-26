@@ -38,6 +38,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_PATH = PROJECT_ROOT / "tests" / "benchmark_config.json"
 BASELINE_PATH = PROJECT_ROOT / "tests" / "benchmark_baseline.json"
+HISTORY_PATH = PROJECT_ROOT / "tests" / "benchmark_history.json"  # 跑分历史记录
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -279,8 +280,8 @@ def compare_with_baseline(all_metrics: dict[str, dict], baseline: dict):
     return not has_regression
 
 
-def save_baseline(all_metrics: dict[str, dict], mode: str):
-    """保存基线到 JSON 文件"""
+def save_baseline(all_metrics: dict[str, dict], mode: str, note: str = ""):
+    """保存基线到 JSON 文件，同时追加到历史记录"""
     baseline = {
         "version": "L2-a_baseline",
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -297,6 +298,34 @@ def save_baseline(all_metrics: dict[str, dict], mode: str):
         encoding="utf-8")
     print(f"\n[OK] 基线已保存到 {BASELINE_PATH}")
     print(f"  包含 {len(baseline['datasets'])} 个数据集的指标")
+
+    # 追加到历史记录
+    _append_history(baseline, note)
+
+
+def _append_history(baseline: dict, note: str = ""):
+    """将本次跑分结果追加到历史记录文件
+
+    历史记录是一个JSON数组，每条记录一次跑分，
+    用于在前端展示算法改动的好坏趋势。
+    """
+    # 读取已有历史
+    history = []
+    if HISTORY_PATH.exists():
+        try:
+            history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            history = []
+
+    # 构造历史条目（在baseline基础上加note字段）
+    entry = {**baseline, "note": note}
+    history.append(entry)
+
+    # 写回文件
+    HISTORY_PATH.write_text(
+        json.dumps(history, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    print(f"[OK] 历史记录已追加（共 {len(history)} 条）: {HISTORY_PATH}")
 
 
 def show_baseline():
@@ -351,6 +380,9 @@ def main():
     parser.add_argument(
         "--show-baseline", action="store_true",
         help="显示当前基线内容")
+    parser.add_argument(
+        "--note", default="",
+        help="跑分备注（说明本次改动了什么，例如 '优化参数排序'）")
 
     args = parser.parse_args()
 
@@ -405,7 +437,7 @@ def main():
         if failed_datasets:
             print(f"\n[FAIL] 存在失败数据集，不保存基线: {', '.join(failed_datasets)}")
             return 1
-        save_baseline(all_metrics, args.mode)
+        save_baseline(all_metrics, args.mode, note=args.note)
 
     if failed_datasets:
         print(f"\n[FAIL] 存在失败数据集: {', '.join(failed_datasets)}")

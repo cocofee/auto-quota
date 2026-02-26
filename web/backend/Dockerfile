@@ -11,6 +11,10 @@ FROM docker.1ms.run/python:3.12-slim
 # 设置工作目录
 WORKDIR /app
 
+# 使用阿里云Debian镜像（国内网络更稳定）
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; true
+
 # 安装系统依赖（PostgreSQL客户端库、构建工具等）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \

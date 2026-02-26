@@ -1,0 +1,424 @@
+# -*- coding: utf-8 -*-
+"""
+LLM后验证模块 — 匹配结果的质量关卡
+
+功能：
+在搜索引擎返回匹配结果后，用大模型逐条验证：
+1. 清单描述和匹配的定额是否属于同一类东西？
+2. 如果不对，正确方向是什么？
+3. 错误的结果用新方向重新搜索并替换
+
+设计原则：
+- 宁慢勿错：每条都过审，速度可以慢
+- 错误纠正：发现错误后自动重搜，不只是标记
+- 知识积累：纠正的结果自动补充到通用知识库
+
+调用位置：
+- match_engine.py 的 match_agent() 第3阶段调用
+"""
+
+import json
+import threading
+import time
+
+import httpx
+from loguru import logger
+
+import config
+
+
+class LLMVerifier:
+    """匹配结果的LLM后验证器"""
+
+    def __init__(self, llm_type: str = None):
+        """
+        参数:
+            llm_type: 大模型类型（claude/kimi/deepseek等），默认读config
+        """
+        self.llm_type = llm_type or config.AGENT_LLM
+        self._client = None
+        self._client_lock = threading.Lock()
+
+        # 统计
+        self.stats = {
+            "verified": 0,       # 已验证条数
+            "correct": 0,        # 判定正确
+            "wrong": 0,          # 判定错误
+            "corrected": 0,      # 成功纠正
+            "correct_failed": 0, # 纠正失败（重搜也没找到）
+            "skipped": 0,        # 跳过（经验库直通等高置信度）
+            "llm_error": 0,      # LLM调用失败
+        }
+
+    @property
+    def client(self):
+        """延迟创建LLM客户端"""
+        if self._client is None:
+            with self._client_lock:
+                if self._client is None:
+                    self._client = self._create_client()
+        return self._client
+
+    def _create_client(self):
+        """创建LLM客户端（复用agent_matcher的逻辑）"""
+        if self.llm_type == "claude":
+            if config.CLAUDE_BASE_URL:
+                # 中转模式用httpx
+                return httpx.Client(timeout=config.LLM_TIMEOUT)
+            else:
+                import anthropic
+                return anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
+        else:
+            # OpenAI兼容的模型
+            from openai import OpenAI
+            key_map = {
+                "deepseek": config.DEEPSEEK_API_KEY,
+                "kimi": config.KIMI_API_KEY,
+                "qwen": config.QWEN_API_KEY,
+                "openai": config.OPENAI_API_KEY,
+            }
+            url_map = {
+                "deepseek": config.DEEPSEEK_BASE_URL,
+                "kimi": config.KIMI_BASE_URL,
+                "qwen": config.QWEN_BASE_URL,
+                "openai": getattr(config, "OPENAI_BASE_URL", None),
+            }
+            api_key = key_map.get(self.llm_type)
+            base_url = url_map.get(self.llm_type)
+            if not api_key:
+                raise ValueError(f"未配置{self.llm_type}的API Key")
+            return OpenAI(api_key=api_key, base_url=base_url)
+
+    def _call_llm(self, prompt: str) -> str:
+        """调用大模型"""
+        if self.llm_type == "claude":
+            return self._call_claude(prompt)
+        else:
+            return self._call_openai_compatible(prompt)
+
+    def _call_claude(self, prompt: str) -> str:
+        """调用Claude API"""
+        if config.CLAUDE_BASE_URL:
+            url = f"{config.CLAUDE_BASE_URL.rstrip('/')}/v1/messages"
+            headers = {
+                "x-api-key": config.CLAUDE_API_KEY,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01",
+            }
+            data = {
+                "model": config.CLAUDE_MODEL,
+                "max_tokens": 800,
+                "temperature": 0.0,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            response = self.client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            result = response.json()
+            return result["content"][0]["text"]
+        else:
+            response = self.client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            )
+            return response.content[0].text
+
+    def _call_openai_compatible(self, prompt: str) -> str:
+        """调用OpenAI兼容API"""
+        model_map = {
+            "deepseek": config.DEEPSEEK_MODEL,
+            "kimi": config.KIMI_MODEL,
+            "qwen": config.QWEN_MODEL,
+            "openai": config.OPENAI_MODEL,
+        }
+        model = model_map.get(self.llm_type, config.DEEPSEEK_MODEL)
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=800,
+            timeout=config.LLM_TIMEOUT,
+        )
+        return response.choices[0].message.content
+
+    # ============================================================
+    # 核心验证逻辑
+    # ============================================================
+
+    def verify_result(self, result: dict, searcher=None) -> dict:
+        """
+        验证单条匹配结果，如果错误则尝试纠正
+
+        参数:
+            result: 匹配结果字典（包含 bill_item, quotas, confidence 等）
+            searcher: 搜索引擎实例（用于纠正时重新搜索）
+
+        返回:
+            验证/纠正后的结果（原地修改并返回）
+        """
+        confidence = result.get("confidence", 0) or 0
+
+        # 高置信度跳过验证（经验库直通/规则命中等）
+        skip_threshold = getattr(config, "VERIFY_SKIP_THRESHOLD", 95)
+        if confidence >= skip_threshold:
+            self.stats["skipped"] += 1
+            return result
+
+        # 无匹配结果的也跳过（没东西可验证）
+        quotas = result.get("quotas", [])
+        if not quotas:
+            self.stats["skipped"] += 1
+            return result
+
+        bill_item = result.get("bill_item", {})
+        bill_name = bill_item.get("name", "")
+        bill_desc = bill_item.get("description", "")
+        main_quota = quotas[0]
+        quota_name = main_quota.get("name", "")
+
+        # 构造验证prompt
+        prompt = self._build_verify_prompt(bill_name, bill_desc, quota_name)
+
+        try:
+            llm_response = self._call_llm(prompt)
+            verdict = self._parse_verdict(llm_response)
+        except Exception as e:
+            logger.warning(f"LLM验证调用失败: {e}")
+            self.stats["llm_error"] += 1
+            return result
+
+        self.stats["verified"] += 1
+
+        if verdict["correct"]:
+            # 验证通过
+            self.stats["correct"] += 1
+            # 可以适当提升置信度
+            if confidence < 85:
+                result["confidence"] = min(confidence + 10, 90)
+                result["confidence_text"] = self._confidence_text(result["confidence"])
+            result["verify_status"] = "verified_ok"
+            return result
+
+        # 验证失败 — 尝试纠正
+        self.stats["wrong"] += 1
+        correct_direction = verdict.get("direction", "")
+        reason = verdict.get("reason", "")
+        logger.info(f"LLM验证: [{bill_name}] 匹配错误 "
+                    f"({quota_name} → 应为: {correct_direction})")
+
+        if searcher and correct_direction:
+            corrected = self._try_correct(
+                result, correct_direction, searcher)
+            if corrected:
+                self.stats["corrected"] += 1
+                result["verify_status"] = "corrected"
+                result["verify_original"] = quota_name
+                result["verify_direction"] = correct_direction
+
+                # 把纠正信息写入explanation字段（存入数据库，前端能读到）
+                new_quota_name = result["quotas"][0]["name"] if result.get("quotas") else ""
+                correction_note = (
+                    f"[AI纠正] 原匹配「{quota_name}」→ 纠正为「{new_quota_name}」"
+                )
+                if reason:
+                    correction_note += f"\n理由: {reason}"
+                result["explanation"] = correction_note
+
+                # 纠正后的知识写入通用知识库（积累经验）
+                self._sync_to_kb(bill_name, bill_desc, correct_direction)
+                return result
+
+        # 纠正失败（重搜也没找到正确的）
+        self.stats["correct_failed"] += 1
+        result["verify_status"] = "wrong_unfixed"
+        result["verify_direction"] = correct_direction
+        # 降低置信度，标记需要人工处理
+        result["confidence"] = max(confidence - 20, 10)
+        result["confidence_text"] = self._confidence_text(result["confidence"])
+        # 把存疑信息写入explanation字段
+        wrong_note = f"[AI存疑] 匹配「{quota_name}」可能有误"
+        if correct_direction:
+            wrong_note += f"，建议方向: {correct_direction}"
+        if reason:
+            wrong_note += f"\n理由: {reason}"
+        result["explanation"] = wrong_note
+        return result
+
+    def _build_verify_prompt(self, bill_name: str, bill_desc: str,
+                              quota_name: str) -> str:
+        """构造验证用的prompt"""
+        prompt = (
+            "你是工程造价专家。请判断以下匹配是否正确。\n\n"
+            f"清单项目: {bill_name}\n"
+            f"清单描述: {bill_desc}\n"
+            f"匹配的定额: {quota_name}\n\n"
+            "判断标准:\n"
+            "1. 清单描述的设备/材料 和 匹配的定额 是否属于同一类东西?\n"
+            "2. 比如管道安装匹配管道定额=正确, 管道安装匹配阀门定额=错误\n"
+            "3. 参数(DN/规格)方向大致对应即可\n\n"
+            "请用JSON格式回答:\n"
+            '{"correct": true/false, "reason": "一句话理由", '
+            '"direction": "如果错误,应该搜什么定额(关键词)"}\n\n'
+            "只输出JSON,不要其他文字。"
+        )
+        return prompt
+
+    def _parse_verdict(self, response: str) -> dict:
+        """解析LLM验证回复"""
+        # 提取JSON
+        text = response.strip()
+
+        # 尝试提取被```json包裹的内容
+        if "```json" in text:
+            start = text.index("```json") + 7
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
+        elif "```" in text:
+            start = text.index("```") + 3
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
+
+        # 找到第一个 { 和最后一个 }
+        brace_start = text.find("{")
+        brace_end = text.rfind("}")
+        if brace_start >= 0 and brace_end > brace_start:
+            text = text[brace_start:brace_end + 1]
+
+        try:
+            data = json.loads(text)
+            return {
+                "correct": bool(data.get("correct", True)),
+                "reason": str(data.get("reason", "")),
+                "direction": str(data.get("direction", "")),
+            }
+        except (json.JSONDecodeError, ValueError):
+            # 解析失败时，根据文本内容简单判断
+            lower = response.lower()
+            if '"correct": false' in lower or '"correct":false' in lower:
+                return {"correct": False, "reason": "解析失败但检测到错误标记",
+                        "direction": ""}
+            # 默认认为正确（保守策略，不误改）
+            return {"correct": True, "reason": "解析失败,默认通过", "direction": ""}
+
+    def _try_correct(self, result: dict, direction: str,
+                      searcher) -> bool:
+        """
+        用LLM给出的方向重新搜索，替换匹配结果
+
+        参数:
+            result: 原匹配结果
+            direction: LLM建议的正确搜索方向
+            searcher: 搜索引擎
+
+        返回:
+            True=纠正成功, False=纠正失败
+        """
+        bill_item = result.get("bill_item", {})
+        bill_desc = bill_item.get("description", "")
+
+        # 用LLM给的方向作为搜索词
+        try:
+            new_candidates = searcher.search(direction, top_k=5)
+        except Exception as e:
+            logger.warning(f"纠正重搜失败: {e}")
+            return False
+
+        if not new_candidates:
+            return False
+
+        # 取第一个候选作为新结果
+        best = new_candidates[0]
+        new_quota = {
+            "quota_id": best.get("quota_id", ""),
+            "name": best.get("name", ""),
+            "unit": best.get("unit", ""),
+            "reason": f"LLM纠正: {direction}",
+            "db_id": best.get("id"),
+        }
+
+        # 替换结果
+        result["quotas"] = [new_quota]
+        result["confidence"] = 75  # 纠正后给一个中等置信度
+        result["confidence_text"] = self._confidence_text(75)
+        result["match_source"] = "llm_corrected"
+        return True
+
+    def _sync_to_kb(self, bill_name: str, bill_desc: str,
+                     correct_direction: str):
+        """将纠正结果同步到通用知识库"""
+        try:
+            from src.universal_kb import UniversalKB
+            kb = UniversalKB()
+            # 用清单名称+描述作为模式
+            pattern = bill_name
+            if bill_desc and len(bill_desc) < 100:
+                pattern = f"{bill_name} {bill_desc[:50]}"
+
+            kb.add_knowledge(
+                bill_pattern=pattern,
+                quota_patterns=[correct_direction],
+                layer="candidate",   # 自动纠正的进候选层
+                confidence=70,
+                source_project="llm_verifier_auto",
+            )
+            logger.debug(f"纠正知识已同步到通用知识库: {pattern} → {correct_direction}")
+        except Exception as e:
+            logger.debug(f"同步通用知识库失败（不影响主流程）: {e}")
+
+    def _confidence_text(self, confidence: int) -> str:
+        """生成置信度文本"""
+        if confidence >= 85:
+            return f"★★★推荐({confidence}%)"
+        elif confidence >= 60:
+            return f"★★参考({confidence}%)"
+        else:
+            return f"★待审({confidence}%)"
+
+    # ============================================================
+    # 批量验证
+    # ============================================================
+
+    def verify_batch(self, results: list[dict], searcher=None,
+                      progress_callback=None) -> list[dict]:
+        """
+        批量验证匹配结果
+
+        参数:
+            results: 匹配结果列表
+            searcher: 搜索引擎（用于纠正）
+            progress_callback: 进度回调 callback(percent, idx, message)
+
+        返回:
+            验证后的结果列表（原地修改）
+        """
+        total = len(results)
+        logger.info(f"LLM验证开始: 共{total}条待验证")
+
+        for idx, result in enumerate(results, start=1):
+            self.verify_result(result, searcher=searcher)
+
+            # 进度回调
+            if progress_callback and idx % 5 == 0:
+                try:
+                    pct = int(90 + 9 * idx / max(total, 1))
+                    progress_callback(pct, idx,
+                                      f"验证中 {idx}/{total} "
+                                      f"(纠正{self.stats['corrected']}条)")
+                except Exception:
+                    pass
+
+        # 打印汇总
+        s = self.stats
+        logger.info(
+            f"LLM验证完成: "
+            f"验证{s['verified']}条, "
+            f"正确{s['correct']}, "
+            f"错误{s['wrong']}("
+            f"纠正{s['corrected']}, "
+            f"未纠正{s['correct_failed']}), "
+            f"跳过{s['skipped']}, "
+            f"LLM失败{s['llm_error']}"
+        )
+
+        return results
