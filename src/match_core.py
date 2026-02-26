@@ -485,14 +485,17 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
     #
     # 行业定额兼容：石油/电力等行业定额不使用C1-C12编号体系，
-    # book字段是纯数字"1"-"9"，需要把C-book翻译成行业定额的实际book值
+    # 用数据驱动的册号分类（基于定额名称的词频统计）替代C-book硬规则
     if searcher.uses_standard_books:
         search_books = [primary] + fallbacks
     else:
-        # 行业定额：把C-book翻译成实际book值（去C前缀 + 加入相关册号）
-        search_books = _translate_books_for_industry(
-            [primary] + fallbacks, searcher.bm25_engine.quota_books
-        )
+        # 行业定额：用词频统计判断清单属于哪个册
+        search_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
+        if not search_books:
+            # 词频无法判断时，尝试C-book编号翻译作为兜底
+            search_books = _translate_books_for_industry(
+                [primary] + fallbacks, searcher.bm25_engine.quota_books
+            )
     candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
 
     # 结果足够就返回（加质量门槛检查）

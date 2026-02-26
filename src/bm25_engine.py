@@ -203,6 +203,101 @@ class BM25Engine:
         if not self.load_index():
             self.build_index()
 
+    def _build_token_book_index(self):
+        """构建"词→册号"倒排索引（用于行业定额的数据驱动册号分类）
+
+        对每个分词，统计它在各册号中出现的定额条数。
+        查询时用关键词命中的册号得分来判断清单属于哪个册。
+
+        性能：构建一次（跟随ensure_index），后续查询O(关键词数)。
+        """
+        from collections import defaultdict
+        self._token_book_counts = defaultdict(lambda: defaultdict(int))
+        # token → {book: 包含此token的定额条数}
+        for i, db_id in enumerate(self.quota_ids):
+            book = self.quota_books.get(db_id, "")
+            if not book:
+                continue
+            seen_tokens = set()  # 每条定额中同一个token只计一次
+            for token in self.tokenized_corpus[i]:
+                if token not in seen_tokens:
+                    self._token_book_counts[token][book] += 1
+                    seen_tokens.add(token)
+
+        # 每个book的总定额数（用于计算token在book中的重要性）
+        from collections import Counter
+        self._book_total_counts = Counter(
+            v for v in self.quota_books.values() if v
+        )
+
+    def classify_to_books(self, query: str, top_k: int = 3) -> list[str] | None:
+        """根据查询文本判断最可能属于哪些册号（数据驱动，不依赖C1-C12规则）
+
+        原理：对查询分词，统计每个词在各册号中出现的频率，
+        得分最高的册号最可能是正确答案。
+
+        用IDF加权：只出现在少数册中的词更有区分度。
+        例如"接地"只在第4册出现 → 强信号；"安装"在所有册都出现 → 弱信号。
+
+        参数:
+            query: 清单文本
+            top_k: 返回最相关的册号数量
+
+        返回:
+            册号列表（按相关度排序），如 ["4", "9"]；
+            无法判断时返回 None（由调用方决定是否搜全库）
+        """
+        if not hasattr(self, '_token_book_counts') or not self._token_book_counts:
+            self._build_token_book_index()
+
+        import math
+        total_books = len(self._book_total_counts)
+        if total_books == 0:
+            return None
+
+        # 对查询分词
+        tokens = [w for w in jieba.cut(query) if len(w.strip()) > 1]
+        if not tokens:
+            return None
+
+        # 第一步：过滤停用词（出现在70%以上册中的词没有区分度，如"安装"、"制作"）
+        # 这些词在每个册都大量出现，无法帮助判断清单属于哪个册
+        stopword_threshold = total_books * 0.7
+        discriminative_tokens = []
+        for token in tokens:
+            if token not in self._token_book_counts:
+                continue
+            df = len(self._token_book_counts[token])
+            if df < stopword_threshold:
+                discriminative_tokens.append(token)
+
+        # 如果所有词都是停用词（如查询只有"安装"），降级用全部词
+        scoring_tokens = discriminative_tokens if discriminative_tokens else [
+            t for t in tokens if t in self._token_book_counts
+        ]
+
+        # 第二步：计算每个book的得分（TF-IDF风格）
+        from collections import defaultdict as _dd
+        book_scores = _dd(float)
+        for token in scoring_tokens:
+            book_counts = self._token_book_counts[token]
+            # IDF：这个词出现在多少个不同的册中
+            df = len(book_counts)  # document frequency（这里document=册）
+            idf = math.log(total_books / df + 1)  # +1平滑，避免log(1)=0
+
+            for book, count in book_counts.items():
+                # TF：这个词在该册中出现的定额条数 / 该册总条数
+                total = self._book_total_counts.get(book, 1)
+                tf = count / total
+                book_scores[book] += tf * idf
+
+        if not book_scores:
+            return None
+
+        # 按得分排序，返回top_k
+        sorted_books = sorted(book_scores.items(), key=lambda x: x[1], reverse=True)
+        return [b for b, s in sorted_books[:top_k]]
+
     def search(self, query: str, top_k: int = None, books: list[str] = None,
                specialty: str = None) -> list[dict]:
         """
