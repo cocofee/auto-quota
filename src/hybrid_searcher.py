@@ -56,6 +56,28 @@ class HybridSearcher:
         self._feedback_bias_value = 0.0
         self._feedback_bias_ts = 0.0
 
+        # 编号体系检测缓存（行业定额用纯数字book，不兼容C1-C12搜索）
+        self._uses_standard_books = None
+
+    @property
+    def uses_standard_books(self) -> bool:
+        """检测当前定额库是否使用标准C1-C12编号体系
+
+        行业定额（石油、电力等）用纯数字book("1","2"...),
+        不兼容C1-C12分类搜索，需要跳过book过滤搜全库。
+        """
+        if self._uses_standard_books is None:
+            # 确保BM25索引已加载（quota_books在ensure_index后才有值）
+            self.bm25_engine.ensure_index()
+            books = self.bm25_engine.quota_books
+            if not books:
+                self._uses_standard_books = True  # 无数据时默认标准
+            else:
+                # 有任何一个C开头的book → 标准体系
+                has_c = any(v.startswith("C") for v in books.values() if v)
+                self._uses_standard_books = has_c
+        return self._uses_standard_books
+
     @property
     def bm25_engine(self):
         """延迟加载BM25引擎"""

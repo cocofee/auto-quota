@@ -252,16 +252,27 @@ class ExperienceDB:
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
-        from src.model_cache import ModelCache
-        client = ModelCache.get_chroma_client(str(self.chroma_dir))
-        # 客户端变了（被重建过），需要刷新collection
-        if client is not self._chroma_client:
-            self._chroma_client = client
-            self._collection = client.get_or_create_collection(
-                name="experiences",
-                metadata={"hnsw:space": "cosine"}
-            )
+        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）
+
+        修复：先创建collection再保存client引用，防止get_or_create_collection失败后
+        self._chroma_client已赋值导致后续调用跳过初始化、返回None的问题。
+        """
+        try:
+            from src.model_cache import ModelCache
+            client = ModelCache.get_chroma_client(str(self.chroma_dir))
+            # 客户端变了（被重建过），需要刷新collection
+            if client is not self._chroma_client:
+                # 先创建collection，成功后再保存client引用
+                # （如果get_or_create_collection失败，下次还会重试）
+                coll = client.get_or_create_collection(
+                    name="experiences",
+                    metadata={"hnsw:space": "cosine"}
+                )
+                self._collection = coll
+                self._chroma_client = client
+        except Exception as e:
+            logger.warning(f"ChromaDB collection初始化失败: {e}")
+            # 返回None，调用方需要处理
         return self._collection
 
     # ================================================================
@@ -808,6 +819,9 @@ class ExperienceDB:
         """将经验记录添加到向量索引（带省份metadata，支持按省份过滤）"""
         province = province or self.province
         try:
+            if self.collection is None:
+                logger.warning("向量索引不可用，跳过添加")
+                return
             embedding = self.model.encode(
                 [bill_text],
                 normalize_embeddings=True
@@ -875,7 +889,10 @@ class ExperienceDB:
                 return [exact]
             stale_exact = exact
 
-        # 向量相似搜索
+        # 向量相似搜索（ChromaDB不可用时跳过，依赖精确匹配兜底）
+        if self.collection is None:
+            logger.warning("经验库向量索引不可用（ChromaDB未初始化），跳过相似搜索")
+            return [stale_exact] if stale_exact else []
         collection_count = self.collection.count()
         if collection_count == 0:
             return [stale_exact] if stale_exact else []
@@ -1044,6 +1061,9 @@ class ExperienceDB:
         min_similarity = getattr(config, "CROSS_PROVINCE_MIN_SIMILARITY", 0.80)
         min_confidence = getattr(config, "CROSS_PROVINCE_MIN_CONFIDENCE", 85)
 
+        if self.collection is None:
+            logger.warning("经验库向量索引不可用，跳过跨省搜索")
+            return []
         collection_count = self.collection.count()
         if collection_count == 0:
             return []
@@ -1265,7 +1285,7 @@ class ExperienceDB:
 
         # 向量索引数量
         try:
-            vector_count = self.collection.count()
+            vector_count = self.collection.count() if self.collection is not None else 0
         except Exception as e:
             logger.debug(f"经验库向量索引计数失败，按0返回: {e}")
             vector_count = 0
