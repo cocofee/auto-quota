@@ -198,10 +198,14 @@ def rebuild_vector_index(self):
         self._chroma_client.delete_collection("experiences")
     except Exception as e:
         logger.debug(f"经验库旧向量集合删除跳过: {e}")
-    self._collection = self._chroma_client.create_collection(
-        name="experiences",
-        metadata={"hnsw:space": "cosine"}
-    )
+    try:
+        self._collection = self._chroma_client.create_collection(
+            name="experiences",
+            metadata={"hnsw:space": "cosine"}
+        )
+    except Exception as e:
+        logger.error(f"经验库向量集合创建失败: {e}")
+        return
 
     # 批量向量化（带省份metadata）
     batch_size = 256

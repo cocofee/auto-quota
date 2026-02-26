@@ -422,7 +422,7 @@ def _translate_books_for_industry(c_books: list[str],
     valid = [b for b in translated if b in actual_books]
 
     # 如果翻译后完全没有匹配的册号，说明映射失效，
-    # 退化到不限book（让BM25的P1修复保底：book=""的定额不排除）
+    # 退化到搜全库（books=None），由后续Reranker和参数验证过滤噪音
     if not valid:
         return None
 
