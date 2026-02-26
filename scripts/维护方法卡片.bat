@@ -1,4 +1,4 @@
-@echo off
+ï»¿@echo off
 setlocal enabledelayedexpansion
 title ·½·¨¿¨Æ¬Î¬»¤
 cd /d "%~dp0.."

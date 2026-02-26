@@ -14,7 +14,6 @@ import {
   PlusOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
-import { extractRegion } from '../../utils/region';
 
 // 定额库信息
 interface ProvinceInfo {
@@ -22,6 +21,7 @@ interface ProvinceInfo {
   total_quotas: number;
   chapter_count: number;
   version: string;
+  group?: string; // 分组名（来自后端文件夹结构）
 }
 
 export default function QuotaManage() {
@@ -41,11 +41,14 @@ export default function QuotaManage() {
   const [folderProgress, setFolderProgress] = useState('');
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  // 地区列表（从定额库名自动提取）
+  // 获取分组名（优先用后端返回的group字段，兜底取前2字）
+  const getGroup = useCallback((p: ProvinceInfo) => p.group || p.name.slice(0, 2), []);
+
+  // 地区列表（从后端文件夹分组获取）
   const regionOptions = useMemo(() => {
     const map = new Map<string, number>();
     for (const p of provinces) {
-      const region = extractRegion(p.name);
+      const region = getGroup(p);
       map.set(region, (map.get(region) || 0) + 1);
     }
     return Array.from(map.entries())
@@ -54,7 +57,7 @@ export default function QuotaManage() {
         label: `${region}（${count}）`,
         value: region,
       }));
-  }, [provinces]);
+  }, [provinces, getGroup]);
 
   // 导入弹窗地区选项
   const importRegionOptions = useMemo(() => {
@@ -64,8 +67,8 @@ export default function QuotaManage() {
   // 按地区筛选后的列表
   const filteredProvinces = useMemo(() => {
     if (!regionFilter) return provinces;
-    return provinces.filter((p) => extractRegion(p.name) === regionFilter);
-  }, [provinces, regionFilter]);
+    return provinces.filter((p) => getGroup(p) === regionFilter);
+  }, [provinces, regionFilter, getGroup]);
 
   // 统计
   const totalQuotas = filteredProvinces.reduce((sum, p) => sum + p.total_quotas, 0);
@@ -150,7 +153,7 @@ export default function QuotaManage() {
   const regionGroups = useMemo(() => {
     const map = new Map<string, ProvinceInfo[]>();
     for (const p of filteredProvinces) {
-      const region = extractRegion(p.name);
+      const region = getGroup(p);
       if (!map.has(region)) map.set(region, []);
       map.get(region)!.push(p);
     }
@@ -161,7 +164,7 @@ export default function QuotaManage() {
         return { region, items, total };
       })
       .sort((a, b) => b.total - a.total);
-  }, [filteredProvinces]);
+  }, [filteredProvinces, getGroup]);
 
   return (
     <Card

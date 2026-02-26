@@ -6,15 +6,18 @@
  * 2. 省份分布
  * 3. 专业统计（置信度对比）
  * 4. 任务趋势
+ * 5. 算法跑分趋势（Benchmark历史）
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
-  Card, Row, Col, Statistic, Table, Tag, Space, App, Progress,
+  Card, Row, Col, Statistic, Table, Tag, Space, App, Progress, Tooltip,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import {
   CheckCircleOutlined, BarChartOutlined, FileTextOutlined,
   UserOutlined, SafetyOutlined, ExperimentOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, MinusOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -46,6 +49,58 @@ interface TrendItem {
   task_count: number;
 }
 
+/* Benchmark 历史记录的数据结构 */
+interface DatasetMetrics {
+  total: number;
+  skip_measure?: number;
+  green_rate: number;
+  yellow_rate: number;
+  red_rate: number;
+  exp_hit_rate: number;
+  fallback_rate: number;
+  avg_time_sec: number;
+}
+
+interface BenchmarkRecord {
+  version: string;
+  date: string;
+  mode: string;
+  note?: string;
+  datasets: Record<string, DatasetMetrics>;
+}
+
+/* 趋势箭头：对比前一次跑分的某个指标 */
+function TrendArrow({ current, previous, higherIsBetter }: {
+  current: number;
+  previous: number | undefined;
+  higherIsBetter: boolean;  // true = 数值越高越好（如绿率），false = 越低越好（如红率）
+}) {
+  if (previous === undefined) {
+    // 第一条记录，没有对比对象
+    return null;
+  }
+  const diff = current - previous;
+  if (Math.abs(diff) < 0.001) {
+    // 变化太小，视为不变
+    return <MinusOutlined style={{ color: '#999', fontSize: 10, marginLeft: 4 }} />;
+  }
+  const isGood = higherIsBetter ? diff > 0 : diff < 0;
+  const diffPp = `${diff > 0 ? '+' : ''}${(diff * 100).toFixed(1)}pp`;
+  return (
+    <Tooltip title={diffPp}>
+      {isGood
+        ? <ArrowUpOutlined style={{ color: '#52c41a', fontSize: 10, marginLeft: 4 }} />
+        : <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: 10, marginLeft: 4 }} />
+      }
+    </Tooltip>
+  );
+}
+
+/* 格式化比率为百分比字符串 */
+function fmtRate(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
 export default function AnalyticsPage() {
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
@@ -53,6 +108,7 @@ export default function AnalyticsPage() {
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
   const [specialties, setSpecialties] = useState<SpecialtyItem[]>([]);
   const [trends, setTrends] = useState<TrendItem[]>([]);
+  const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>([]);
 
   useEffect(() => {
     loadAll();
@@ -61,16 +117,18 @@ export default function AnalyticsPage() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [ovRes, provRes, specRes, trendRes] = await Promise.all([
+      const [ovRes, provRes, specRes, trendRes, bmRes] = await Promise.all([
         api.get<OverviewData>('/admin/analytics/overview'),
         api.get<{ items: ProvinceItem[] }>('/admin/analytics/by-province'),
         api.get<{ items: SpecialtyItem[] }>('/admin/analytics/by-specialty'),
         api.get<{ items: TrendItem[] }>('/admin/analytics/trends'),
+        api.get<{ items: BenchmarkRecord[] }>('/admin/analytics/benchmark-history'),
       ]);
       setOverview(ovRes.data);
       setProvinces(provRes.data.items);
       setSpecialties(specRes.data.items);
       setTrends(trendRes.data.items);
+      setBenchmarkHistory(bmRes.data.items);
     } catch {
       message.error('加载分析数据失败');
     } finally {
@@ -83,6 +141,101 @@ export default function AnalyticsPage() {
   const highPct = Math.round(((overview?.high_confidence || 0) / totalResults) * 100);
   const midPct = Math.round(((overview?.mid_confidence || 0) / totalResults) * 100);
   const lowPct = Math.round(((overview?.low_confidence || 0) / totalResults) * 100);
+
+  // 收集所有出现过的数据集名称（用于动态列）
+  const datasetNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const record of benchmarkHistory) {
+      for (const dsName of Object.keys(record.datasets)) {
+        names.add(dsName);
+      }
+    }
+    return Array.from(names);
+  }, [benchmarkHistory]);
+
+  // Benchmark 历史表格列定义（动态生成）
+  const benchmarkColumns = useMemo<ColumnsType<BenchmarkRecord>>(() => {
+    // 基础列：序号、日期、备注
+    const baseCols: ColumnsType<BenchmarkRecord> = [
+      {
+        title: '#',
+        key: '_index',
+        width: 45,
+        align: 'center',
+        render: (_: unknown, __: BenchmarkRecord, index: number) => index + 1,
+      },
+      {
+        title: '日期',
+        dataIndex: 'date',
+        key: 'date',
+        width: 140,
+        render: (v: string) => {
+          // 只显示日期部分（去掉时间）
+          return v?.split(' ')[0] || v;
+        },
+      },
+      {
+        title: '备注',
+        dataIndex: 'note',
+        key: 'note',
+        width: 180,
+        ellipsis: true,
+        render: (v: string) => v || '-',
+      },
+    ];
+
+    // 为每个数据集生成 绿率 + 红率 两列
+    const dsCols: ColumnsType<BenchmarkRecord> = [];
+    for (const dsName of datasetNames) {
+      // 数据集名称简化显示（去掉 B1_ B2_ 等前缀里的下划线后面部分太长时截断）
+      const shortName = dsName.replace(/^B\d+_/, '');
+      dsCols.push({
+        title: <Tooltip title={dsName}>{shortName}</Tooltip>,
+        key: dsName,
+        children: [
+          {
+            title: '绿率',
+            key: `${dsName}_green`,
+            width: 90,
+            align: 'center',
+            render: (_: unknown, record: BenchmarkRecord, index: number) => {
+              const metrics = record.datasets[dsName];
+              if (!metrics) return '-';
+              const prev = index > 0 ? benchmarkHistory[index - 1]?.datasets[dsName]?.green_rate : undefined;
+              return (
+                <span>
+                  <Tag color="green" style={{ margin: 0 }}>{fmtRate(metrics.green_rate)}</Tag>
+                  <TrendArrow current={metrics.green_rate} previous={prev} higherIsBetter />
+                </span>
+              );
+            },
+          },
+          {
+            title: '红率',
+            key: `${dsName}_red`,
+            width: 90,
+            align: 'center',
+            render: (_: unknown, record: BenchmarkRecord, index: number) => {
+              const metrics = record.datasets[dsName];
+              if (!metrics) return '-';
+              const prev = index > 0 ? benchmarkHistory[index - 1]?.datasets[dsName]?.red_rate : undefined;
+              return (
+                <span>
+                  <Tag color={metrics.red_rate > 0.05 ? 'red' : metrics.red_rate > 0 ? 'orange' : 'green'}
+                    style={{ margin: 0 }}>
+                    {fmtRate(metrics.red_rate)}
+                  </Tag>
+                  <TrendArrow current={metrics.red_rate} previous={prev} higherIsBetter={false} />
+                </span>
+              );
+            },
+          },
+        ],
+      });
+    }
+
+    return [...baseCols, ...dsCols];
+  }, [datasetNames, benchmarkHistory]);
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -221,6 +374,38 @@ export default function AnalyticsPage() {
                 ),
               },
             ]}
+          />
+        )}
+      </Card>
+
+      {/* 算法跑分趋势（Benchmark历史） */}
+      <Card
+        title="算法跑分趋势"
+        loading={loading}
+        extra={
+          <span style={{ fontSize: 12, color: '#999' }}>
+            每次算法改动后跑分，追踪绿率/红率变化趋势
+          </span>
+        }
+      >
+        {benchmarkHistory.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>
+            暂无跑分历史数据
+            <br />
+            <span style={{ fontSize: 12 }}>
+              运行 python tools/run_benchmark.py --save --note "改动说明" 生成跑分记录
+            </span>
+          </div>
+        ) : (
+          <Table
+            rowKey={(_, index) => String(index)}
+            dataSource={benchmarkHistory}
+            columns={benchmarkColumns}
+            size="small"
+            pagination={false}
+            bordered
+            scroll={{ x: 'max-content' }}
+            locale={{ emptyText: '暂无数据' }}
           />
         )}
       </Card>

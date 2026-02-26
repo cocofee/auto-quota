@@ -1,4 +1,4 @@
-@echo off
+ï»¿@echo off
 setlocal enabledelayedexpansion
 title Jarvis - Ò»¼üÉóºË
 cd /d "%~dp0.."

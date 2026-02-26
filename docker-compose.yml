@@ -78,8 +78,8 @@ services:
       --workers 2
       --log-level info
     working_dir: /app/web/backend
-    ports:
-      - "8000:8000"
+    # ports:
+    #   - "8000:8000"  # Hyper-V保留了8000端口，且后端通过Nginx反代访问，无需暴露
     environment:
       # 数据库连接（Docker内部网络，用服务名postgres作为主机名）
       DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
@@ -99,6 +99,8 @@ services:
       - ./output:/app/output
       # 日志持久化（容器重启后日志不丢失）
       - ./logs:/app/logs
+      # Benchmark历史记录（前端跑分趋势页面读取）
+      - ./tests:/app/tests
     depends_on:
       postgres:
         condition: service_healthy

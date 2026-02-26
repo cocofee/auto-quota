@@ -215,3 +215,83 @@ async def feedback_details(
         "created_at": task.created_at,
         "completed_at": task.completed_at,
     }
+
+
+# ============================================================
+# 端点4：管理员导入带定额清单（不依赖已有任务）
+# ============================================================
+
+@router.post("/admin/feedback/import")
+async def import_quota_excel(
+    file: UploadFile = File(description="带定额编号的清单Excel文件"),
+    province: str = "北京市建设工程施工消耗量标准(2024)",
+    admin: User = Depends(require_admin),
+):
+    """管理员直接导入带定额的Excel到经验库
+
+    不需要先创建匹配任务。直接上传一个"清单+定额"的Excel，
+    系统自动提取清单→定额对应关系，写入经验库候选层。
+
+    参数:
+        file: Excel文件（.xlsx格式，包含清单行和定额行）
+        province: 省份名称（用于绑定经验库的省份）
+    """
+    # 验证文件格式
+    if not file.filename or not file.filename.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 格式的Excel文件")
+
+    # 保存上传文件到临时目录
+    import_dir = UPLOAD_DIR / "imports"
+    import_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename).name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="文件名非法")
+
+    # 用时间戳避免文件名冲突
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    save_path = import_dir / f"{ts}_{safe_name}"
+
+    # resolve 后校验路径安全
+    resolved_path = save_path.resolve()
+    resolved_dir = import_dir.resolve()
+    if not resolved_path.is_relative_to(resolved_dir):
+        raise HTTPException(status_code=400, detail="文件路径非法")
+
+    # 流式写入 + 大小检查
+    from app.config import UPLOAD_MAX_MB
+    max_size = UPLOAD_MAX_MB * 1024 * 1024
+    size = 0
+    try:
+        with open(save_path, "wb") as f:
+            while chunk := await file.read(8192):
+                size += len(chunk)
+                if size > max_size:
+                    break
+                f.write(chunk)
+    except Exception:
+        save_path.unlink(missing_ok=True)
+        raise
+
+    if size > max_size:
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件过大（超过{UPLOAD_MAX_MB}MB），最大允许{UPLOAD_MAX_MB}MB"
+        )
+
+    logger.info(f"导入Excel已保存: {save_path}（{size} bytes）, 省份={province}")
+
+    # 调用 FeedbackLearner.import_completed_project() 导入经验库
+    def _import():
+        from src.feedback_learner import FeedbackLearner
+        fl = FeedbackLearner()
+        return fl.import_completed_project(str(save_path), project_name=safe_name)
+
+    try:
+        stats = await asyncio.to_thread(_import)
+    except Exception as e:
+        logger.error(f"导入学习失败: {e}")
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"导入失败: {e}")
+
+    return {"message": "导入成功", "stats": stats}

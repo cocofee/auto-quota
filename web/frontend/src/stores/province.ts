@@ -11,16 +11,21 @@ import api from '../services/api';
 interface ProvinceStore {
   /** 所有定额库名列表（如 ["北京市建设工程施工消耗量标准(2024)", ...] */
   provinces: string[];
+  /** 分组映射：定额库名 → 分组名（来自后端文件夹结构） */
+  groups: Record<string, string>;
   /** 是否正在加载 */
   loading: boolean;
   /** 是否已加载过（避免重复请求） */
   loaded: boolean;
   /** 加载省份列表（有缓存则跳过，force=true 强制刷新） */
   fetchProvinces: (force?: boolean) => Promise<string[]>;
+  /** 获取定额库的分组名（优先用后端返回的文件夹分组） */
+  getGroup: (name: string) => string;
 }
 
 export const useProvinceStore = create<ProvinceStore>((set, get) => ({
   provinces: [],
+  groups: {},
   loading: false,
   loaded: false,
 
@@ -45,13 +50,20 @@ export const useProvinceStore = create<ProvinceStore>((set, get) => ({
 
     set({ loading: true });
     try {
-      const { data } = await api.get<{ provinces: string[] }>('/provinces');
+      const { data } = await api.get<{ provinces: string[]; groups?: Record<string, string> }>('/provinces');
       const list = data.provinces || [];
-      set({ provinces: list, loaded: true, loading: false });
+      const groups = data.groups || {};
+      set({ provinces: list, groups, loaded: true, loading: false });
       return list;
     } catch {
       set({ loading: false });
       return state.provinces; // 失败时返回旧数据
     }
+  },
+
+  getGroup: (name: string) => {
+    const { groups } = get();
+    // 优先用后端返回的分组，兜底取前2字
+    return groups[name] || name.slice(0, 2);
   },
 }));

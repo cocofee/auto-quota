@@ -3,11 +3,15 @@
  *
  * 显示所有用户上传的反馈列表，包含学习统计。
  * 管理员可以查看每条反馈的详细信息。
+ * 支持直接导入带定额的清单Excel。
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { Card, Table, Statistic, Row, Col, Tag, App, Modal, Descriptions } from 'antd';
-import { MessageOutlined, BookOutlined } from '@ant-design/icons';
+import {
+  Card, Table, Statistic, Row, Col, Tag, App, Modal, Descriptions,
+  Button, Upload, Select, Space,
+} from 'antd';
+import { MessageOutlined, BookOutlined, UploadOutlined, ImportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 
@@ -35,6 +39,14 @@ interface FeedbackDetail {
   completed_at: string | null;
 }
 
+/* 常用省份选项 */
+const PROVINCE_OPTIONS = [
+  '北京市建设工程施工消耗量标准(2024)',
+  '湖北省建设工程公共专业消耗量定额及全费用基价表(2018)',
+  '河南省建设工程标准定额(2016)',
+  '广东省建设工程计价通则(2018)',
+];
+
 export default function FeedbackReview() {
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
@@ -47,6 +59,12 @@ export default function FeedbackReview() {
   const [detailVisible, setDetailVisible] = useState(false);
   const [detail, setDetail] = useState<FeedbackDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // 导入弹窗
+  const [importVisible, setImportVisible] = useState(false);
+  const [importProvince, setImportProvince] = useState(PROVINCE_OPTIONS[0]);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // 加载反馈列表
   const loadList = useCallback(async () => {
@@ -79,6 +97,36 @@ export default function FeedbackReview() {
       message.error('加载反馈详情失败');
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  // 执行导入
+  const handleImport = async () => {
+    if (!importFile) {
+      message.warning('请先选择Excel文件');
+      return;
+    }
+    setImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', importFile);
+      formData.append('province', importProvince);
+      const { data } = await api.post('/admin/feedback/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        params: { province: importProvince },
+      });
+      const stats = data.stats || {};
+      message.success(
+        `导入成功！共 ${stats.total || 0} 条，新增 ${stats.added || stats.imported || 0} 条`
+      );
+      setImportVisible(false);
+      setImportFile(null);
+      loadList(); // 刷新列表
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail || '导入失败');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -144,7 +192,7 @@ export default function FeedbackReview() {
     <>
       {/* 顶部统计卡片 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={12}>
+        <Col span={8}>
           <Card>
             <Statistic
               title="总反馈数"
@@ -153,7 +201,7 @@ export default function FeedbackReview() {
             />
           </Card>
         </Col>
-        <Col span={12}>
+        <Col span={8}>
           <Card>
             <Statistic
               title="总学习条数"
@@ -161,6 +209,18 @@ export default function FeedbackReview() {
               prefix={<BookOutlined />}
               valueStyle={{ color: '#3f8600' }}
             />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 100 }}>
+            <Button
+              type="primary"
+              icon={<ImportOutlined />}
+              size="large"
+              onClick={() => setImportVisible(true)}
+            >
+              导入带定额清单
+            </Button>
           </Card>
         </Col>
       </Row>
@@ -230,6 +290,49 @@ export default function FeedbackReview() {
             </Descriptions.Item>
           </Descriptions>
         )}
+      </Modal>
+
+      {/* 导入弹窗 */}
+      <Modal
+        title="导入带定额清单"
+        open={importVisible}
+        onCancel={() => { setImportVisible(false); setImportFile(null); }}
+        onOk={handleImport}
+        confirmLoading={importing}
+        okText="开始导入"
+        cancelText="取消"
+        width={500}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择省份</div>
+            <Select
+              value={importProvince}
+              onChange={setImportProvince}
+              style={{ width: '100%' }}
+              showSearch
+              options={PROVINCE_OPTIONS.map(p => ({ label: p, value: p }))}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>选择Excel文件</div>
+            <Upload
+              accept=".xlsx"
+              maxCount={1}
+              beforeUpload={(file) => {
+                setImportFile(file);
+                return false; // 阻止自动上传
+              }}
+              onRemove={() => setImportFile(null)}
+              fileList={importFile ? [{ uid: '-1', name: importFile.name, status: 'done' }] : []}
+            >
+              <Button icon={<UploadOutlined />}>选择文件</Button>
+            </Upload>
+            <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
+              支持 .xlsx 格式，文件中需包含清单行和定额行
+            </div>
+          </div>
+        </Space>
       </Modal>
     </>
   );

@@ -1,4 +1,4 @@
-@echo off
+锘緻echo off
 setlocal enabledelayedexpansion
 title 导入修正 - 自动学习
 cd /d "%~dp0.."
