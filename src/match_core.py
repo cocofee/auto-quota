@@ -396,6 +396,38 @@ def try_experience_match(query: str, item: dict, experience_db,
 # 搜索与级联
 # ============================================================
 
+def _translate_books_for_industry(c_books: list[str],
+                                  quota_books: dict) -> list[str]:
+    """把C1-C12翻译成行业定额实际使用的book值
+
+    行业定额（石油/电力等）不使用C1-C12前缀，book字段是纯数字"1"-"9"。
+    翻译规则：C4 → "4"，C10 → "10"，非C开头的保持原样。
+    最后只保留定额库中实际存在的book值（不乱搜）。
+    """
+    # 收集定额库中实际存在的book值
+    actual_books = set(quota_books.values()) if quota_books else set()
+
+    translated = set()
+    for book in c_books:
+        if not book:
+            continue
+        if book.startswith("C") and book[1:].isdigit():
+            # C4 → "4", C10 → "10"
+            translated.add(book[1:])
+        else:
+            # 非C开头（如"A","D","E"等）保持原样
+            translated.add(book)
+
+    # 只保留定额库中实际存在的book值（避免乱搜不存在的册号）
+    valid = [b for b in translated if b in actual_books]
+
+    # 如果翻译后完全没有匹配的册号，说明映射失效，
+    # 退化到不限book（让BM25的P1修复保底：book=""的定额不排除）
+    if not valid:
+        return None
+
+    return valid
+
 def cascade_search(searcher: HybridSearcher, search_query: str,
                    classification: dict, top_k: int = None) -> list[dict]:
     """
@@ -451,7 +483,16 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     # 多取一些候选（top_k*2），让借用册有机会出现在结果中
     # 场景：搜"镀锌钢管沟槽连接"时，C10的"镀锌钢管螺纹连接"得分高会挤掉C9的"钢管沟槽连接"
     # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
-    search_books = [primary] + fallbacks
+    #
+    # 行业定额兼容：石油/电力等行业定额不使用C1-C12编号体系，
+    # book字段是纯数字"1"-"9"，需要把C-book翻译成行业定额的实际book值
+    if searcher.uses_standard_books:
+        search_books = [primary] + fallbacks
+    else:
+        # 行业定额：把C-book翻译成实际book值（去C前缀 + 加入相关册号）
+        search_books = _translate_books_for_industry(
+            [primary] + fallbacks, searcher.bm25_engine.quota_books
+        )
     candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
 
     # 结果足够就返回（加质量门槛检查）
