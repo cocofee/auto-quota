@@ -35,7 +35,7 @@ import config
 
 
 # 笔记目录（和规则库分开，方便管理）
-NOTES_DIR = config.KNOWLEDGE_DIR / "笔记"
+NOTES_DIR = config.KNOWLEDGE_DIR / "notes"
 
 
 def add_note(text: str, province: str = None,

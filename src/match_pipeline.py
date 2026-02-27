@@ -117,14 +117,17 @@ def _build_item_context(item: dict) -> dict:
     }
 
 
-def _build_classification(item: dict, name: str, desc: str, section: str) -> dict:
+def _build_classification(item: dict, name: str, desc: str, section: str,
+                          province: str = None) -> dict:
     """获取并标准化专业分类结果。"""
     classification = {
         "primary": item.get("specialty"),
         "fallbacks": item.get("specialty_fallbacks", []),
     }
     if not classification["primary"]:
-        classification = classify_specialty(name, desc, section_title=section)
+        classification = classify_specialty(
+            name, desc, section_title=section, province=province
+        )
     return _normalize_classification(classification)
 
 
@@ -263,7 +266,8 @@ def _apply_similar_exp_backup(result: dict, exp_backup: dict, exp_hits: int,
     """经验库相似匹配兜底比较：置信度更高则替换当前结果。"""
     if not exp_backup:
         return result, exp_hits
-    if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
+    # 严格大于才替换（等分时保持当前结果，因为搜索+参数验证更针对当前query）
+    if exp_backup.get("confidence", 0) > result.get("confidence", 0):
         _append_trace_step(
             exp_backup,
             "experience_backup_override",
@@ -359,7 +363,8 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
             f"搜索{search_conf}分 > 经验{exp_conf}分(降级)")
         return result, exp_hits
 
-    if exp_backup.get("confidence", 0) >= result.get("confidence", 0):
+    # 严格大于才替换（等分时保持当前结果，因为搜索+参数验证更针对当前query）
+    if exp_backup.get("confidence", 0) > result.get("confidence", 0):
         _append_trace_step(
             exp_backup,
             "experience_similar_override",
@@ -484,7 +489,9 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             "early_type": "skip_measure",
         }
 
-    classification = _build_classification(item, name, desc, ctx["section"])
+    classification = _build_classification(
+        item, name, desc, ctx["section"], province=province
+    )
     exp_result = try_experience_match(
         normalized_query, item, experience_db, rule_validator, province=province)
 

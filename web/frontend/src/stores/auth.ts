@@ -10,7 +10,7 @@ interface AuthState {
   user: UserInfo | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, nickname?: string) => Promise<void>;
+  register: (email: string, password: string, nickname: string | undefined, invite_code: string) => Promise<void>;
   logout: () => Promise<void>;
   fetchUser: () => Promise<void>;
 }
@@ -25,8 +25,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: userRes.data, loading: false });
   },
 
-  register: async (email, password, nickname) => {
-    await api.post('/auth/register', { email, password, nickname });
+  register: async (email, password, nickname, invite_code) => {
+    await api.post('/auth/register', { email, password, nickname, invite_code });
     await api.post('/auth/login', { email, password });
     const userRes = await api.get<UserInfo>('/auth/me');
     set({ user: userRes.data, loading: false });

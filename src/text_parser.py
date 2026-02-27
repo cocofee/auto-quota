@@ -15,6 +15,7 @@ import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
+import threading
 
 from loguru import logger
 
@@ -63,6 +64,7 @@ class TextParser:
         # 解析结果缓存（热点文本会被多次解析：规则校验/经验校验/主流程）
         self._parse_cache = OrderedDict()
         self._parse_cache_max = 4096
+        self._parse_cache_lock = threading.Lock()  # 线程安全锁（Celery多线程场景）
 
     def _ensure_vocab_loaded(self):
         """确保词汇列表已加载（合并基础列表 + 定额库提取的词汇）"""
@@ -134,18 +136,20 @@ class TextParser:
 
     def _get_parse_cache(self, text: str) -> Optional[dict]:
         """读取解析缓存（LRU 命中后刷新活跃度）。"""
-        cached = self._parse_cache.get(text)
-        if cached is None:
-            return None
-        self._parse_cache.move_to_end(text)
-        return dict(cached)
+        with self._parse_cache_lock:
+            cached = self._parse_cache.get(text)
+            if cached is None:
+                return None
+            self._parse_cache.move_to_end(text)
+            return dict(cached)
 
     def _set_parse_cache(self, text: str, result: dict):
         """写入解析缓存并维护 LRU 上限。"""
-        self._parse_cache[text] = dict(result)
-        self._parse_cache.move_to_end(text)
-        if len(self._parse_cache) > self._parse_cache_max:
-            self._parse_cache.popitem(last=False)
+        with self._parse_cache_lock:
+            self._parse_cache[text] = dict(result)
+            self._parse_cache.move_to_end(text)
+            if len(self._parse_cache) > self._parse_cache_max:
+                self._parse_cache.popitem(last=False)
 
     def parse(self, text: str) -> dict:
         """
@@ -239,6 +243,11 @@ class TextParser:
             # 如果从"规格：W*H"计算出了周长，说明cable_section是误提取（同一个W*H源）
             if "cable_section" in result:
                 del result["cable_section"]
+
+        # 提取半周长（配电箱悬挂/嵌入式按半周长取档，全国通用）
+        half_perimeter = self._extract_half_perimeter(text)
+        if half_perimeter is not None:
+            result["half_perimeter"] = half_perimeter
 
         # 提取大边长（弯头导流叶片、矩形风管等按大边长取档）
         large_side = self._extract_large_side(text)
@@ -685,6 +694,39 @@ class TextParser:
         3. 三维规格："规格：400*120*1000" → 周长 = (400+120)*2 = 1040（忽略长度）
         """
         return self._extract_named_mm_or_spec(text, "周长", use_perimeter=True)
+
+    def _extract_half_perimeter(self, text: str) -> Optional[float]:
+        """
+        提取半周长参数（配电箱悬挂/嵌入式按半周长取档，全国通用）
+
+        来源：
+        1. 定额名称："半周长1.0m" → 1000 (mm)
+        2. 定额名称："半周长(mm以内) 1000" → 1000
+        3. 清单规格："规格：420*470*120" → 半周长 = 420+470 = 890 (mm)
+        4. 清单无规格但含"配电箱" → 默认1500mm（行业惯例按1.5m套用）
+        """
+        # 优先：定额名称中的 "半周长X.Xm" 格式
+        m_match = re.search(r'半周长\s*(\d+(?:\.\d+)?)\s*m', text)
+        if m_match:
+            return float(m_match.group(1)) * 1000  # m → mm
+
+        # 其次：标准 "半周长(mm以内) 数字" 格式
+        named = self._search_first_float(
+            text, [r'半周长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)'])
+        if named is not None:
+            return named
+
+        # 从清单规格 W*H 计算 (W+H)
+        spec_wh = self._extract_spec_wh(text)
+        if spec_wh:
+            w, h = spec_wh
+            return w + h  # 半周长 = W + H（单位mm）
+
+        # 清单无规格但含"配电箱"关键词 → 默认按1.5m套用（行业惯例）
+        if re.search(r'配电箱|配电柜|动力箱|照明箱', text):
+            return 1500.0
+
+        return None
 
     def _extract_large_side(self, text: str) -> Optional[float]:
         """

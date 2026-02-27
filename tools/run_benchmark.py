@@ -38,7 +38,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_PATH = PROJECT_ROOT / "tests" / "benchmark_config.json"
 BASELINE_PATH = PROJECT_ROOT / "tests" / "benchmark_baseline.json"
-HISTORY_PATH = PROJECT_ROOT / "tests" / "benchmark_history.json"  # 跑分历史记录
+HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"  # 跑分历史记录（放 data/ 目录，部署时有挂载）
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -46,8 +46,7 @@ if str(PROJECT_ROOT) not in sys.path:
 def load_config() -> dict:
     """加载 benchmark 配置文件"""
     if not CONFIG_PATH.exists():
-        print(f"错误：配置文件不存在: {CONFIG_PATH}")
-        sys.exit(1)
+        raise FileNotFoundError(f"配置文件不存在: {CONFIG_PATH}")
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 

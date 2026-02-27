@@ -30,6 +30,8 @@ interface UserItem {
 interface UserListResponse {
   items: UserItem[];
   total: number;
+  admin_count: number;   // 全局管理员数量（后端统计）
+  active_count: number;  // 全局活跃用户数量（后端统计）
 }
 
 export default function UserManage() {
@@ -37,6 +39,8 @@ export default function UserManage() {
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [adminCount, setAdminCount] = useState(0);
+  const [activeCount, setActiveCount] = useState(0);
   const [page, setPage] = useState(1);
 
   const loadUsers = useCallback(async () => {
@@ -47,6 +51,8 @@ export default function UserManage() {
       });
       setUsers(data.items);
       setTotal(data.total);
+      setAdminCount(data.admin_count);
+      setActiveCount(data.active_count);
     } catch {
       message.error('加载用户列表失败');
     } finally {
@@ -66,9 +72,6 @@ export default function UserManage() {
       message.error(getErrorMessage(err, '修改失败'));
     }
   };
-
-  const adminCount = users.filter((u) => u.is_admin).length;
-  const activeCount = users.filter((u) => u.is_active).length;
 
   const columns = [
     {

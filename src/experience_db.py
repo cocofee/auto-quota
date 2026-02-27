@@ -514,6 +514,29 @@ class ExperienceDB:
         province = province or self.province
         now = time.time()
 
+        # ========== 校验 quota_ids / quota_names 长度一致 ==========
+        # 两个列表必须等长，否则存进去数据是错乱的（第i个name对不上第i个id）
+        if quota_names and len(quota_names) != len(quota_ids):
+            logger.warning(
+                f"经验库写入拒绝: quota_ids({len(quota_ids)})与quota_names({len(quota_names)})"
+                f"长度不一致, bill_text='{bill_text[:50]}'"
+            )
+            return -1
+
+        # ========== 过滤空的 quota_id ==========
+        # 空字符串的定额编号是无效数据，过滤掉避免污染经验库
+        if quota_ids:
+            cleaned_pairs = [
+                (qid, quota_names[i] if quota_names and i < len(quota_names) else "")
+                for i, qid in enumerate(quota_ids)
+                if qid and str(qid).strip()
+            ]
+            if not cleaned_pairs:
+                logger.warning(f"经验库写入拒绝: 所有quota_id均为空, bill_text='{bill_text[:50]}'")
+                return -1
+            quota_ids = [p[0] for p in cleaned_pairs]
+            quota_names = [p[1] for p in cleaned_pairs]
+
         # ========== 自动推断专业册号（调用方没传 specialty 时从定额编号推断）==========
         if not specialty and quota_ids:
             for qid in quota_ids:

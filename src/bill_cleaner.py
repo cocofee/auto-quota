@@ -25,7 +25,7 @@ def _section_has_specialty(section: str) -> bool:
     return parse_section_title(section) is not None
 
 
-def clean_bill_items(items: list[dict]) -> list[dict]:
+def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
     """
     批量清洗清单项目列表
 
@@ -36,6 +36,7 @@ def clean_bill_items(items: list[dict]) -> list[dict]:
 
     参数:
         items: bill_reader.read_excel() 返回的清单项列表
+        province: 省份名称（传给数据驱动分类器），为None时用默认省份
 
     返回:
         清洗后的清单项列表（原地修改并返回）
@@ -60,15 +61,19 @@ def clean_bill_items(items: list[dict]) -> list[dict]:
         section_for_classify = section
         if not _section_has_specialty(section):
             # section识别不了专业，判断是否该用 sheet_name 兜底
-            # 定额编号格式（C开头+数字+横杠）不用兜底，其他情况可以
-            is_quota_id = bool(section and re.match(r'^C\d+-', section))
+            # 定额编号格式不用兜底（"自动加定额"格式文件的 section 是定额编号）
+            # 标准格式：C10-5-38；行业格式：4-14-379、SY-3-21 等
+            is_quota_id = bool(
+                section and re.match(r'^(?:C\d+-|[A-Z]{1,3}-?\d+-|\d+-\d+-)', section)
+            )
             if not is_quota_id:
                 sheet = item.get("sheet_name", "") or ""
                 if sheet and _section_has_specialty(sheet):
                     section_for_classify = sheet
 
         classification = classify_specialty(
-            item["name"], desc, section_title=section_for_classify
+            item["name"], desc, section_title=section_for_classify,
+            province=province
         )
         item["specialty"] = classification.get("primary")
         item["specialty_name"] = classification.get("primary_name")

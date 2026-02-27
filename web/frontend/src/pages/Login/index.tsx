@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, Form, Input, Button, App, Tabs } from 'antd';
-import { MailOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
+import { MailOutlined, LockOutlined, UserOutlined, KeyOutlined } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { getErrorMessage } from '../../utils/error';
 
@@ -37,10 +37,10 @@ export default function LoginPage() {
   };
 
   /** 注册 */
-  const onRegister = async (values: { email: string; password: string; nickname?: string }) => {
+  const onRegister = async (values: { email: string; password: string; nickname?: string; invite_code: string }) => {
     setLoading(true);
     try {
-      await register(values.email, values.password, values.nickname);
+      await register(values.email, values.password, values.nickname, values.invite_code);
       message.success('注册成功，已自动登录');
       navigate(from);
     } catch (err: unknown) {
@@ -57,13 +57,30 @@ export default function LoginPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f0f2f5',
+        // 渐变背景：从浅蓝到浅灰，比纯灰色更有层次感
+        background: 'linear-gradient(135deg, #dbeafe 0%, #f1f5f9 50%, #e2e8f0 100%)',
       }}
     >
-      <Card style={{ width: 400 }}>
-        <h2 style={{ textAlign: 'center', marginBottom: 24 }}>auto-quota</h2>
-        <p style={{ textAlign: 'center', color: '#666', marginBottom: 24 }}>
-          自动套定额系统
+      <Card
+        style={{
+          width: 420,
+          borderRadius: 12,
+          border: 'none',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
+        }}
+      >
+        <h2 style={{
+          textAlign: 'center',
+          marginBottom: 4,
+          letterSpacing: 4,
+          fontSize: 24,
+          fontWeight: 700,
+          color: '#2563eb',
+        }}>
+          J.A.R.V.I.S
+        </h2>
+        <p style={{ textAlign: 'center', color: '#64748b', marginBottom: 28, fontSize: 14 }}>
+          智能造价系统
         </p>
 
         <Tabs
@@ -124,6 +141,12 @@ export default function LoginPage() {
                   </Form.Item>
                   <Form.Item name="nickname">
                     <Input prefix={<UserOutlined />} placeholder="昵称（可选）" />
+                  </Form.Item>
+                  <Form.Item
+                    name="invite_code"
+                    rules={[{ required: true, message: '请输入邀请码' }]}
+                  >
+                    <Input prefix={<KeyOutlined />} placeholder="邀请码（向管理员获取）" />
                   </Form.Item>
                   <Form.Item>
                     <Button type="primary" htmlType="submit" loading={loading} block>

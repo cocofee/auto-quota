@@ -257,10 +257,17 @@ async def import_quota(
             count = db.import_excel(str(temp_path), clear_existing=False)
             db.record_import(str(temp_path), "安装", count)
 
-            # 重建搜索索引
+            # 重建搜索索引（BM25 + 向量）
             try:
-                from src.quota_search import build_search_index
-                build_search_index(province)
+                from src.bm25_engine import BM25Engine
+                from src.vector_engine import VectorEngine
+
+                bm25 = BM25Engine(province)
+                bm25.build_index()
+
+                vec = VectorEngine(province)
+                vec.build_index()
+
                 index_ok = True
             except Exception as e:
                 logger.warning(f"索引重建失败（定额已导入）: {e}")

@@ -94,7 +94,8 @@ def _resolve_run_province(province: str, interactive, json_output):
     return resolved_province
 
 
-def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None):
+def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None,
+                             province=None):
     """读取并清洗清单数据，按需截断数量。"""
     logger.info("第1步：读取清单文件...")
     reader = BillReader()
@@ -104,7 +105,7 @@ def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None):
         raise RuntimeError("未读取到任何清单项目，请检查文件格式")
 
     # 清单数据清洗（名称修正+专业分类+参数提取）
-    bill_items = clean_bill_items(bill_items)
+    bill_items = clean_bill_items(bill_items, province=province)
 
     # 限制数量（调试用）
     if limit:
@@ -245,7 +246,9 @@ def run(input_file, mode="agent", output=None,
                 pass
 
     # 1. 读取清单
-    bill_items = _load_bill_items_for_run(input_path, sheet=sheet, limit=limit)
+    bill_items = _load_bill_items_for_run(
+        input_path, sheet=sheet, limit=limit, province=resolved_province
+    )
     _notify(15, 0, f"清单读取完成，共{len(bill_items)}条")
 
     # 1.1 保存清单预览文件（供前端实时展示每条清单的匹配进度）

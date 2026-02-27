@@ -1,4 +1,4 @@
-/* 全局样式（配合 Ant Design 使用，保持简洁） */
+/* 全局样式（配合 Ant Design 使用，清新专业风格） */
 
 * {
   margin: 0;
@@ -11,8 +11,37 @@ body {
     'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: #f1f5f9;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* 全局过渡动画（让交互更顺滑） */
+.ant-card,
+.ant-btn,
+.ant-menu-item,
+.ant-input,
+.ant-input-password {
+  transition: all 0.2s ease !important;
+}
+
+/* 自定义滚动条（Chrome/Edge） */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

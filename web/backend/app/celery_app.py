@@ -66,5 +66,5 @@ celery_app.conf.update(
     worker_concurrency=2,
 
     # 自动发现 app/tasks/ 目录下的任务
-    include=["app.tasks.match_task"],
+    include=["app.tasks.match_task", "app.tasks.benchmark_task"],
 )

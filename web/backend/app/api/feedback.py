@@ -103,6 +103,12 @@ async def upload_feedback(
 
     logger.info(f"反馈Excel已保存: {save_path}（{size} bytes）")
 
+    # 先更新 Task 记录（标记已上传），防止学习失败时状态不一致
+    # （如果不先保存 feedback_path，学习失败后文件被清理，但经验库可能已部分写入）
+    task.feedback_path = str(save_path)
+    task.feedback_uploaded_at = datetime.now(timezone.utc)
+    await db.flush()
+
     # 调用核心学习函数（同步操作，放线程池避免阻塞）
     def _learn():
         from src.feedback_learner import FeedbackLearner
@@ -113,16 +119,15 @@ async def upload_feedback(
         stats = await asyncio.to_thread(_learn)
     except Exception as e:
         logger.error(f"反馈学习失败: {e}")
-        # 学习失败时清理临时文件
-        try:
-            save_path.unlink()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail="反馈学习失败，请联系管理员")
+        # 学习失败但文件已保存，记录错误状态（不删除文件，保留人工排查）
+        task.feedback_stats = {"error": str(e)[:500], "status": "learn_failed"}
+        await db.flush()
+        raise HTTPException(
+            status_code=500,
+            detail="反馈文件已保存，但自动学习失败。管理员可手动处理。"
+        )
 
-    # 更新 Task 记录
-    task.feedback_path = str(save_path)
-    task.feedback_uploaded_at = datetime.now(timezone.utc)
+    # 更新学习统计
     task.feedback_stats = stats
     await db.flush()
 

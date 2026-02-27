@@ -249,6 +249,14 @@ class QuotaDB:
         self._update_version(len(quotas))
 
         logger.info(f"导入完成: {specialty}定额 共{len(quotas)}条 → {self.db_path}")
+
+        # 失效BookClassifier缓存（定额库变了，需要重新学习"词→册"概率）
+        try:
+            from src.book_classifier import BookClassifier
+            BookClassifier.invalidate_cache(self.province)
+        except Exception:
+            pass  # BookClassifier未初始化时忽略
+
         return len(quotas)
 
     def _read_with_openpyxl(self, excel_path: Path, specialty: str) -> list[dict]:

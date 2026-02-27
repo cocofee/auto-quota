@@ -82,6 +82,16 @@ async def create_task(
         raise HTTPException(status_code=400, detail="limit_count 必须在 1~10000 之间")
     province, sheet, _ = _normalize_create_task_inputs(province, sheet, None)
 
+    # 额度预检查：余额为0时拦截（创建时不知道实际条数，只做基本检查）
+    # 如果指定了 limit_count，可以做更精确的预检
+    min_required = limit_count if limit_count else 1
+    if user.quota_balance < min_required:
+        raise HTTPException(
+            status_code=402,
+            detail=f"额度不足，请先购买额度。当前余额: {user.quota_balance}条"
+                   + (f"，本次任务至少需要{limit_count}条" if limit_count else ""),
+        )
+
     # 匹配模式和大模型从后端配置读取（用户不需要选择）
     from app.config import MATCH_MODE, MATCH_LLM
     mode = MATCH_MODE
@@ -358,20 +368,19 @@ async def task_progress(task_id: uuid.UUID, request: Request):
     # 验证用户存在且未禁用，再校验任务归属
     async with async_session() as session:
         user_result = await session.execute(
-            select(User.is_active).where(User.id == user_id)
+            select(User.is_active, User.is_admin).where(User.id == user_id)
         )
-        is_active = user_result.scalar_one_or_none()
-        if is_active is None:
+        user_row = user_result.one_or_none()
+        if user_row is None:
             raise HTTPException(status_code=401, detail="用户不存在")
-        if not is_active:
+        if not user_row.is_active:
             raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员")
 
-        result = await session.execute(
-            select(Task.id, Task.user_id).where(
-                Task.id == task_id,
-                Task.user_id == user_id,
-            )
-        )
+        # 管理员可查看所有用户的任务进度，普通用户只能看自己的
+        task_query = select(Task.id).where(Task.id == task_id)
+        if not user_row.is_admin:
+            task_query = task_query.where(Task.user_id == user_id)
+        result = await session.execute(task_query)
         row = result.one_or_none()
         if not row:
             raise HTTPException(status_code=404, detail="任务不存在")

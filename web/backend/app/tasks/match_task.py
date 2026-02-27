@@ -157,8 +157,53 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
             progress_callback=progress_cb,
         )
 
-        # ---- 第4步：保存匹配结果到数据库 ----
+        # ---- 第4步：扣减用户额度（必须在保存结果之前） ----
+        # 先扣费再保存结果，防止余额不足时用户白拿匹配结果
         results_list = result.get("results", [])
+        actual_count = len(results_list)
+        quota_deducted = False  # 标记是否成功扣减
+        if actual_count > 0:
+            try:
+                from app.services.quota_service import deduct_quota_sync
+                new_balance = deduct_quota_sync(
+                    session=session,
+                    user_id=task.user_id,
+                    count=actual_count,
+                    task_id=str(task_uuid),
+                    task_name=task.name or "未命名任务",
+                )
+                if new_balance < 0:
+                    # 余额不足，标记任务为失败，不保存匹配结果
+                    logger.warning(
+                        f"任务 {task_id}: 额度不足，无法扣减 {actual_count} 条，"
+                        f"匹配结果不予保存"
+                    )
+                    task.status = "failed"
+                    task.progress = 100
+                    task.progress_message = "额度不足"
+                    task.error_message = (
+                        f"额度不足：本次匹配 {actual_count} 条，"
+                        f"但余额不够扣减。请购买额度后重新提交任务。"
+                    )
+                    task.completed_at = datetime.now(timezone.utc)
+                    session.commit()
+                    return
+                quota_deducted = True
+            except Exception as quota_err:
+                # 额度扣减异常（数据库故障等），标记任务失败，不保存结果
+                # 避免异常时用户白拿匹配结果
+                logger.error(f"任务 {task_id}: 额度扣减异常: {quota_err}")
+                task.status = "failed"
+                task.progress = 100
+                task.progress_message = "额度扣减异常"
+                task.error_message = (
+                    f"额度扣减出错，匹配结果未保存。请联系管理员处理。"
+                )
+                task.completed_at = datetime.now(timezone.utc)
+                session.commit()
+                return
+
+        # ---- 第4.5步：保存匹配结果到数据库 ----
         save_results_to_db(session, task_uuid, results_list)
 
         # ---- 第5步：更新任务状态为"已完成" ----

@@ -26,6 +26,7 @@ class ParamValidator:
         "dn", "cable_section", "kva", "circuits", "ampere",
         "weight_t", "perimeter", "large_side", "elevator_stops",
         "ground_bar_width",  # 接地扁钢宽度（如40×4中的40mm）
+        "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
     ]
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
@@ -473,7 +474,9 @@ class ParamValidator:
 
         ratio = quota_value / bill_value
         if ratio <= 1.0:
-            return 1.0  # 不应发生（已在外层判断），但保险起见
+            # 清单参数 >= 定额参数，不应走升档逻辑（外层已判断 bill < quota）
+            # 如果意外进入，返回0分（不匹配），而不是1分（满分）
+            return 0.0
 
         # score = 1.0 - 0.1 * log2(ratio)，限制在 [0.55, 1.0]
         score = 1.0 - 0.1 * math.log2(ratio)
@@ -700,6 +703,23 @@ class ParamValidator:
                 has_hard_fail = True
                 score_sum += 0.0
                 details.append(f"周长{bill_p}>{quota_p} 不匹配(清单>定额)")
+
+        # === 10.5 半周长（硬性参数：配电箱悬挂/嵌入式按半周长取档） ===
+        if "half_perimeter" in bill_params and "half_perimeter" in quota_params:
+            check_count += 1
+            bill_hp = bill_params["half_perimeter"]
+            quota_hp = quota_params["half_perimeter"]
+            if bill_hp == quota_hp:
+                score_sum += 1.0
+                details.append(f"半周长{bill_hp}={quota_hp} 精确匹配")
+            elif bill_hp <= quota_hp:
+                tier_score = self._tier_up_score(bill_hp, quota_hp)
+                score_sum += tier_score
+                details.append(f"半周长{bill_hp}→{quota_hp} 向上取档")
+            else:
+                has_hard_fail = True
+                score_sum += 0.0
+                details.append(f"半周长{bill_hp}>{quota_hp} 不匹配(清单>定额)")
 
         # === 11. 大边长（硬性参数：弯头导流叶片等按大边长取档） ===
         if "large_side" in bill_params and "large_side" in quota_params:

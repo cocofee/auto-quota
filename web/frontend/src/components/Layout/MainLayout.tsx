@@ -9,7 +9,7 @@
 
 import { useState, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Dropdown, theme, Tag } from 'antd';
+import { Layout, Menu, Button, Dropdown, Tag } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
@@ -28,6 +28,7 @@ import {
   BookOutlined,
   FileTextOutlined,
   BulbOutlined,
+  WalletOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 
@@ -38,8 +39,6 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  const { token: themeToken } = theme.useToken();
-
   const isAdmin = user?.is_admin ?? false;
 
   // 根据角色动态生成菜单
@@ -60,6 +59,12 @@ export default function MainLayout() {
         key: '/tasks',
         icon: <UnorderedListOutlined />,
         label: '我的任务',
+      },
+      { type: 'divider' },
+      {
+        key: '/quota/logs',
+        icon: <WalletOutlined />,
+        label: '使用记录',
       },
     ];
 
@@ -118,6 +123,11 @@ export default function MainLayout() {
             icon: <FileTextOutlined />,
             label: '系统日志',
           },
+          {
+            key: '/admin/billing',
+            icon: <WalletOutlined />,
+            label: '额度管理',
+          },
         ],
       },
     ];
@@ -151,19 +161,28 @@ export default function MainLayout() {
         collapsible
         collapsed={collapsed}
         width={isAdmin ? 200 : 180}
-        style={{ background: themeToken.colorBgContainer }}
+        style={{
+          background: '#ffffff',
+          borderRight: '1px solid #e2e8f0',
+        }}
       >
+        {/* 品牌Logo区域 */}
         <div
           style={{
             height: 64,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            borderBottom: `1px solid ${themeToken.colorBorderSecondary}`,
+            borderBottom: '1px solid #f1f5f9',
           }}
         >
-          <span style={{ fontSize: collapsed ? 16 : 20, fontWeight: 'bold' }}>
-            {collapsed ? 'AQ' : 'auto-quota'}
+          <span style={{
+            fontSize: collapsed ? 18 : 20,
+            fontWeight: 700,
+            color: '#2563eb',
+            letterSpacing: collapsed ? 0 : 2,
+          }}>
+            {collapsed ? 'J' : 'J.A.R.V.I.S'}
           </span>
         </div>
         <Menu
@@ -171,7 +190,7 @@ export default function MainLayout() {
           selectedKeys={[location.pathname]}
           items={menuItems}
           onClick={onMenuClick}
-          style={{ borderRight: 0 }}
+          style={{ borderRight: 0, padding: '8px 0' }}
         />
       </Sider>
 
@@ -180,27 +199,29 @@ export default function MainLayout() {
         <Header
           style={{
             padding: '0 24px',
-            background: themeToken.colorBgContainer,
+            background: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            borderBottom: `1px solid ${themeToken.colorBorderSecondary}`,
+            borderBottom: '1px solid #e2e8f0',
+            boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)',
           }}
         >
           <Button
             type="text"
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={() => setCollapsed(!collapsed)}
+            style={{ color: '#64748b' }}
           />
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <Button type="text" icon={<UserOutlined />}>
+            <Button type="text" icon={<UserOutlined />} style={{ color: '#334155' }}>
               {user?.nickname || user?.email || '用户'}
-              {isAdmin && <Tag color="red" style={{ marginLeft: 8 }}>管理员</Tag>}
+              {isAdmin && <Tag color="blue" style={{ marginLeft: 8 }}>管理员</Tag>}
             </Button>
           </Dropdown>
         </Header>
 
-        {/* 内容区（子路由渲染在这里） */}
+        {/* 内容区 */}
         <Content style={{ margin: 24, minHeight: 280 }}>
           <Outlet />
         </Content>

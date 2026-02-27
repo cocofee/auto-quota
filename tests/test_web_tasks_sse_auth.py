@@ -53,9 +53,11 @@ def test_task_progress_rejects_disabled_user():
     user_id = uuid.uuid4()
     task_id = uuid.uuid4()
     request = SimpleNamespace(headers={'Authorization': 'Bearer valid-token'}, cookies={})
+    # mock 返回带 is_active / is_admin 属性的对象（模拟 select(User.is_active, User.is_admin) 的结果行）
+    user_row = SimpleNamespace(is_active=False, is_admin=False)
 
     with patch('app.api.tasks.decode_token', return_value={'type': 'access', 'sub': str(user_id)}):
-        with patch('app.api.tasks.async_session', return_value=_SessionCtx([False])):
+        with patch('app.api.tasks.async_session', return_value=_SessionCtx([user_row])):
             with pytest.raises(HTTPException) as exc:
                 asyncio.run(task_progress(task_id, request))
 
@@ -67,9 +69,13 @@ def test_task_progress_accepts_cookie_access_token():
     user_id = uuid.uuid4()
     task_id = uuid.uuid4()
     request = SimpleNamespace(headers={}, cookies={'access_token': 'cookie-token'})
+    # 第1次 execute: 用户行（活跃+非管理员）
+    user_row = SimpleNamespace(is_active=True, is_admin=False)
+    # 第2次 execute: 任务行（非管理员走 Task.user_id == user_id 过滤）
+    task_row = SimpleNamespace(id=task_id)
 
     with patch('app.api.tasks.decode_token', return_value={'type': 'access', 'sub': str(user_id)}):
-        with patch('app.api.tasks.async_session', return_value=_SessionCtx([True, (task_id, user_id)])):
+        with patch('app.api.tasks.async_session', return_value=_SessionCtx([user_row, task_row])):
             resp = asyncio.run(task_progress(task_id, request))
 
     assert isinstance(resp, EventSourceResponse)

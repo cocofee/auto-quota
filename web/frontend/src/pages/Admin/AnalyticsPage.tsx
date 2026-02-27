@@ -9,15 +9,17 @@
  * 5. 算法跑分趋势（Benchmark历史）
  */
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   Card, Row, Col, Statistic, Table, Tag, Space, App, Progress, Tooltip,
+  Button, Modal, Input,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   CheckCircleOutlined, BarChartOutlined, FileTextOutlined,
   UserOutlined, SafetyOutlined, ExperimentOutlined,
   ArrowUpOutlined, ArrowDownOutlined, MinusOutlined,
+  PlayCircleOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -110,6 +112,13 @@ export default function AnalyticsPage() {
   const [trends, setTrends] = useState<TrendItem[]>([]);
   const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>([]);
 
+  // 跑分相关状态
+  const [bmRunning, setBmRunning] = useState(false);           // 是否正在跑分
+  const [bmProgress, setBmProgress] = useState('');            // 进度文字（如"正在跑 B2_华佑电气 (2/4)"）
+  const [bmModalOpen, setBmModalOpen] = useState(false);       // 确认弹窗是否打开
+  const [bmNote, setBmNote] = useState('');                    // 用户输入的备注
+  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);  // 轮询定时器
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -134,6 +143,67 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 组件卸载时清理轮询定时器
+  useEffect(() => {
+    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+  }, []);
+
+  /** 轮询跑分任务状态 */
+  const pollBenchmarkStatus = useCallback((taskId: string) => {
+    pollTimer.current = setInterval(async () => {
+      try {
+        const res = await api.get(`/admin/analytics/benchmark-status/${taskId}`);
+        const { state, progress, result, error } = res.data;
+
+        if (state === 'PROGRESS' && progress) {
+          // 正在跑分中，更新进度文字
+          setBmProgress(`正在跑 ${progress.dataset} (${progress.current + 1}/${progress.total})`);
+        } else if (state === 'SUCCESS') {
+          // 跑分完成
+          clearInterval(pollTimer.current!);
+          setBmRunning(false);
+          setBmProgress('');
+          message.success(result?.message || '跑分完成');
+          // 刷新历史表格
+          const bmRes = await api.get<{ items: BenchmarkRecord[] }>('/admin/analytics/benchmark-history');
+          setBenchmarkHistory(bmRes.data.items);
+        } else if (state === 'FAILURE') {
+          // 跑分失败
+          clearInterval(pollTimer.current!);
+          setBmRunning(false);
+          setBmProgress('');
+          message.error(`跑分失败: ${error || '未知错误'}`);
+        }
+        // PENDING 状态继续等待
+      } catch {
+        // 网络错误不终止轮询，等下次重试
+      }
+    }, 3000); // 每3秒轮询一次
+  }, [message]);
+
+  /** 确认并启动跑分 */
+  const startBenchmark = async () => {
+    setBmModalOpen(false);
+    setBmRunning(true);
+    setBmProgress('正在启动...');
+
+    try {
+      const res = await api.post('/admin/analytics/run-benchmark', {
+        mode: 'search',
+        note: bmNote.trim(),
+      });
+      const { task_id } = res.data;
+      // 开始轮询任务状态
+      pollBenchmarkStatus(task_id);
+    } catch {
+      setBmRunning(false);
+      setBmProgress('');
+      message.error('启动跑分失败');
+    }
+
+    setBmNote(''); // 清空备注
   };
 
   // 置信度分布百分比
@@ -383,9 +453,23 @@ export default function AnalyticsPage() {
         title="算法跑分趋势"
         loading={loading}
         extra={
-          <span style={{ fontSize: 12, color: '#999' }}>
-            每次算法改动后跑分，追踪绿率/红率变化趋势
-          </span>
+          <Space>
+            {bmRunning && (
+              <span style={{ fontSize: 12, color: '#1677ff' }}>
+                <LoadingOutlined style={{ marginRight: 4 }} />
+                {bmProgress}
+              </span>
+            )}
+            <Button
+              type="primary"
+              icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
+              disabled={bmRunning}
+              onClick={() => setBmModalOpen(true)}
+              size="small"
+            >
+              {bmRunning ? '跑分中...' : '运行跑分'}
+            </Button>
+          </Space>
         }
       >
         {benchmarkHistory.length === 0 ? (
@@ -393,7 +477,7 @@ export default function AnalyticsPage() {
             暂无跑分历史数据
             <br />
             <span style={{ fontSize: 12 }}>
-              运行 python tools/run_benchmark.py --save --note "改动说明" 生成跑分记录
+              点击右上角"运行跑分"按钮开始第一次跑分
             </span>
           </div>
         ) : (
@@ -409,6 +493,26 @@ export default function AnalyticsPage() {
           />
         )}
       </Card>
+
+      {/* 跑分确认弹窗 */}
+      <Modal
+        title="运行跑分"
+        open={bmModalOpen}
+        onOk={startBenchmark}
+        onCancel={() => setBmModalOpen(false)}
+        okText="开始跑分"
+        cancelText="取消"
+      >
+        <p style={{ color: '#666', marginBottom: 12 }}>
+          将对所有可用的测试数据集运行一次完整跑分，耗时约5-15分钟。
+        </p>
+        <Input
+          placeholder="这次改了什么？（选填，如：优化了管道参数匹配）"
+          value={bmNote}
+          onChange={e => setBmNote(e.target.value)}
+          onPressEnter={startBenchmark}
+        />
+      </Modal>
     </Space>
   );
 }
