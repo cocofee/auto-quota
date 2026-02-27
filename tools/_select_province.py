@@ -48,17 +48,54 @@ def _get_db_count(province_name: str) -> str:
             conn.close()
 
 
-def main(allow_new=False):
+def main(allow_new=False, only_new=False):
     """
     定额库选择主流程
 
     参数:
         allow_new: 是否允许选择未导入的库（导入场景True，匹配场景False）
+        only_new: 只显示未导入的库（导入场景优化，跳过已导入的）
     """
     db_provinces = config.list_db_provinces()
     data_provinces = config.list_all_provinces()
     not_imported = [p for p in data_provinces if p not in db_provinces]
-    all_provinces = db_provinces + not_imported
+
+    # only_new模式：只显示未导入的省份，加速选择
+    if only_new:
+        # 未导入 = data目录有Excel但db目录没数据或没索引的
+        need_import = []
+        for p in data_provinces:
+            info = _get_db_count(p)
+            if info == "首次导入":
+                need_import.append(p)
+            else:
+                # 已有数据但缺索引的也算需要导入
+                bm25_path = config.get_province_db_dir(p) / "bm25_index.json"
+                if not bm25_path.exists():
+                    need_import.append(p)
+
+        if not need_import:
+            print()
+            print("  所有定额库已导入完毕！")
+            print()
+            print("  如需重新导入某个库，请选 [r]")
+            print()
+            try:
+                choice = input("  [r] 重新导入已有库  [q] 退出: ").strip().lower()
+            except EOFError:
+                sys.exit(1)
+            if choice == "r":
+                # 切换为全量模式，显示所有库
+                only_new = False
+            else:
+                sys.exit(0)
+
+        if only_new:
+            all_provinces = need_import
+        else:
+            all_provinces = db_provinces + not_imported
+    else:
+        all_provinces = db_provinces + not_imported
 
     if not all_provinces:
         print()
@@ -180,4 +217,8 @@ def main(allow_new=False):
 if __name__ == "__main__":
     # --allow-new 参数：导入场景允许选未导入的库
     allow_new = "--allow-new" in sys.argv
-    main(allow_new=allow_new)
+    # --only-new 参数：只显示未导入的库（导入场景优化）
+    only_new = "--only-new" in sys.argv
+    if only_new:
+        allow_new = True  # only-new隐含allow-new
+    main(allow_new=allow_new, only_new=only_new)

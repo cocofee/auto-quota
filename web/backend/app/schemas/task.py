@@ -44,6 +44,10 @@ class TaskResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    # 反馈上传相关字段（用户纠正Excel上传后填入）
+    feedback_path: str | None = None
+    feedback_uploaded_at: datetime | None = None
+    feedback_stats: dict | None = None
 
     model_config = {"from_attributes": True}
 

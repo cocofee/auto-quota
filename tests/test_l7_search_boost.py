@@ -366,3 +366,116 @@ class TestBM25SynonymExpansion:
         variants = searcher._build_query_variants("焊接钢管 镀锌 DN25", [])
         tags = [v["tag"] for v in variants]
         assert "synonym_expand" not in tags
+
+
+class TestActionWordOverrides:
+    """核心动作词覆盖规则测试（解决背景词误导专业分类）"""
+
+    def test_zaocao_overrides_to_c4(self):
+        """凿槽：即使名称含'砌块墙'，也应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("砌块墙电气管凿槽")
+        assert result["primary"] == "C4"
+
+    def test_ticao_overrides_to_c4(self):
+        """剔槽：即使名称含'混凝土墙'，也应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("混凝土墙剔槽配管")
+        assert result["primary"] == "C4"
+
+    def test_grounding_overrides_to_c4(self):
+        """接地极：即使名称含'底板钢筋'，也应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("利用底板钢筋作接地极")
+        assert result["primary"] == "C4"
+
+    def test_down_conductor_overrides_to_c4(self):
+        """引下线：即使名称含'柱内钢筋'，也应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("利用柱内钢筋作引下线")
+        assert result["primary"] == "C4"
+
+    def test_lightning_strip_overrides_to_c4(self):
+        """避雷带：即使名称含'结构钢筋'，也应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("利用结构钢筋作避雷带")
+        assert result["primary"] == "C4"
+
+    def test_equipotential_overrides_to_c4(self):
+        """等电位联结应归C4电气"""
+        from src.specialty_classifier import classify
+        result = classify("等电位联结")
+        assert result["primary"] == "C4"
+
+    def test_normal_masonry_still_goes_to_a(self):
+        """普通砌体/钢筋项目不受影响，仍归A册"""
+        from src.specialty_classifier import classify
+        result = classify("砌体墙砌筑")
+        assert result["primary"] == "A"
+
+    def test_normal_rebar_still_goes_to_a(self):
+        """普通钢筋项目不受影响"""
+        from src.specialty_classifier import classify
+        result = classify("钢筋制安")
+        assert result["primary"] == "A"
+
+
+class TestHalfPerimeter:
+    """配电箱半周长参数提取和验证（全国通用规则）"""
+
+    def test_quota_name_half_perimeter_m(self):
+        """定额名"半周长1.0m" → 1000mm"""
+        from src.text_parser import parser
+        result = parser.parse("成套配电箱安装 悬挂、嵌入式半周长1.0m")
+        assert result.get("half_perimeter") == 1000.0
+
+    def test_quota_name_half_perimeter_25m(self):
+        """定额名"半周长2.5m" → 2500mm"""
+        from src.text_parser import parser
+        result = parser.parse("成套配电箱安装 悬挂、嵌入式半周长2.5m")
+        assert result.get("half_perimeter") == 2500.0
+
+    def test_quota_name_half_perimeter_05m(self):
+        """定额名"半周长0.5m" → 500mm"""
+        from src.text_parser import parser
+        result = parser.parse("成套配电箱安装 悬挂、嵌入式半周长0.5m")
+        assert result.get("half_perimeter") == 500.0
+
+    def test_bill_spec_half_perimeter(self):
+        """清单规格"规格:420*470*120" → 半周长=890mm"""
+        from src.text_parser import parser
+        result = parser.parse("配电箱1AL 规格:420*470*120 距地1.5m安装")
+        assert result.get("half_perimeter") == 890.0
+
+    def test_bill_spec_large_box(self):
+        """大配电箱"规格:600*800*200" → 半周长=1400mm"""
+        from src.text_parser import parser
+        result = parser.parse("动力配电箱AP1 规格:600*800*200")
+        assert result.get("half_perimeter") == 1400.0
+
+    def test_no_spec_default_1500(self):
+        """配电箱无规格时默认1500mm（行业惯例按1.5m套用）"""
+        from src.text_parser import parser
+        result = parser.parse("配电箱1AL 无端子接线 距地1.5m安装")
+        assert result.get("half_perimeter") == 1500.0
+
+    def test_no_spec_peidian_gui(self):
+        """配电柜无规格也默认1500mm"""
+        from src.text_parser import parser
+        result = parser.parse("照明配电柜 暗装")
+        assert result.get("half_perimeter") == 1500.0
+
+    def test_non_box_no_half_perimeter(self):
+        """非配电箱项目（如灯具）不提取半周长"""
+        from src.text_parser import parser
+        result = parser.parse("吸顶灯安装 LED 15W")
+        assert "half_perimeter" not in result
+
+    def test_floor_standing_quota_no_half_perimeter(self):
+        """落地式定额名无半周长"""
+        from src.text_parser import parser
+        result = parser.parse("成套配电箱安装 落地式")
+        # 落地式定额名含"配电箱"但无规格也无"半周长"字样
+        # 默认给1500（因为含"配电箱"关键词），但实际不影响匹配
+        # 因为落地式定额和悬挂式定额都会参与候选排序
+        assert "half_perimeter" in result

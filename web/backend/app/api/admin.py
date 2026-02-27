@@ -9,8 +9,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import select, func, desc
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func, desc, cast, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -44,6 +44,8 @@ class UserListResponse(BaseModel):
     """用户列表响应"""
     items: list[UserItem]
     total: int
+    admin_count: int = 0    # 全局管理员数量
+    active_count: int = 0   # 全局活跃用户数量
 
 
 class UserUpdateRequest(BaseModel):
@@ -70,9 +72,16 @@ async def list_users(
     if size < 1 or size > 100:
         size = 20
 
-    # 总数
-    count_query = select(func.count()).select_from(User)
-    total = (await db.execute(count_query)).scalar()
+    # 总数 + 全局统计（管理员数、活跃数）
+    count_query = select(
+        func.count(),
+        func.sum(func.cast(User.is_admin, Integer)),
+        func.sum(func.cast(User.is_active, Integer)),
+    ).select_from(User)
+    row = (await db.execute(count_query)).one()
+    total = row[0]
+    admin_count = int(row[1] or 0)
+    active_count = int(row[2] or 0)
 
     # 分页查询用户 + 任务计数（子查询避免 N+1）
     task_count_sub = (
@@ -104,7 +113,10 @@ async def list_users(
             task_count=task_count or 0,
         ))
 
-    return UserListResponse(items=items, total=total)
+    return UserListResponse(
+        items=items, total=total,
+        admin_count=admin_count, active_count=active_count,
+    )
 
 
 @router.put("/users/{user_id}")
@@ -133,3 +145,34 @@ async def update_user(
 
     await db.flush()
     return {"message": "修改成功"}
+
+
+# ============================================================
+# 邀请码管理
+# ============================================================
+
+@router.get("/invite-code")
+async def get_invite_code(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """获取当前邀请码"""
+    from app.services.invite_service import get_invite_code as _get
+    code = await _get(db)
+    return {"invite_code": code}
+
+
+class UpdateInviteCodeRequest(BaseModel):
+    invite_code: str = Field(min_length=4, max_length=50, description="新邀请码（至少4位）")
+
+
+@router.put("/invite-code")
+async def update_invite_code(
+    body: UpdateInviteCodeRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """修改邀请码（立即生效）"""
+    from app.services.invite_service import set_invite_code
+    new_code = await set_invite_code(db, body.invite_code)
+    return {"message": "邀请码已更新", "invite_code": new_code}

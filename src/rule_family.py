@@ -270,7 +270,7 @@ def _match_text_family(self, bill_text: str, bill_keywords: list,
 
         # ---- 综合评分 ----
         reverse_hits = self._count_reverse_hits(family_kws, bill_keywords)
-        coverage = forward_hits / len(family_kws)
+        coverage = forward_hits / len(family_kws) if family_kws else 0
         bill_coverage = (reverse_hits / len(bill_keywords)
                          if bill_keywords else 0)
         medium_bonus = self._compute_medium_bonus(
@@ -538,7 +538,7 @@ def _match_by_keyword_driven(self, bill_text: str, bill_keywords: list,
         if not has_specific_keyword:
             continue
 
-        coverage = forward_hits / len(family_kws)
+        coverage = forward_hits / len(family_kws) if family_kws else 0
         bill_coverage = reverse_hits / len(bill_keywords) if bill_keywords else 0
         # 介质上下文加减分（区分"给水"vs"排水"等同参数家族）
         family = entry.get("family")

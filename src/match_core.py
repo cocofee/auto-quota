@@ -297,7 +297,7 @@ def try_experience_match(query: str, item: dict, experience_db,
     if best is None:
         logger.debug(f"经验库命中但版本均过期，不直通: {query[:50]}")
         return None
-    similarity = best.get("similarity", 0)
+    similarity = _safe_float_value(best.get("similarity"), 0.0)
     exp_materials = _safe_json_materials(best.get("materials"))
 
     # 精确匹配（完全相同的清单文本）→ 构建结果
@@ -484,18 +484,19 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     # 场景：搜"镀锌钢管沟槽连接"时，C10的"镀锌钢管螺纹连接"得分高会挤掉C9的"钢管沟槽连接"
     # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
     #
-    # 行业定额兼容：石油/电力等行业定额不使用C1-C12编号体系，
-    # 用数据驱动的册号分类（基于定额名称的词频统计）替代C-book硬规则
-    if searcher.uses_standard_books:
-        search_books = [primary] + fallbacks
-    else:
-        # 行业定额：用词频统计判断清单属于哪个册
-        search_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
-        if not search_books:
-            # 词频无法判断时，尝试C-book编号翻译作为兜底
-            search_books = _translate_books_for_industry(
-                [primary] + fallbacks, searcher.bm25_engine.quota_books
-            )
+    # 统一逻辑：classify()已通过BookClassifier（数据驱动）给出了primary+fallbacks，
+    # 不再区分标准/行业定额。行业定额仅需做册号翻译（C10→"10"等）
+    search_books = [primary] + fallbacks
+    if not searcher.uses_standard_books and search_books:
+        # 行业定额：C-book编号翻译为实际book值（如C10→"10"）
+        translated = _translate_books_for_industry(
+            search_books, searcher.bm25_engine.quota_books
+        )
+        if translated:
+            search_books = translated
+        else:
+            # 翻译失败：降级用词频统计判断册号
+            search_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
     candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
 
     # 结果足够就返回（加质量门槛检查）

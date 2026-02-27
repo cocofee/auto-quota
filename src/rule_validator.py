@@ -305,7 +305,7 @@ class RuleValidator:
             # 第4步：综合评分
             # 参数匹配本身就是很强的信号（回路数对上了回路家族），给高基础分
             # 关键词匹配作为辅助，权重较低
-            kw_coverage = forward_hits / len(family_kws)
+            kw_coverage = forward_hits / len(family_kws) if family_kws else 0
             bill_kw_coverage = reverse_hits / len(bill_keywords) if bill_keywords else 0
 
             # 参数匹配基础分 0.5，关键词额外加分

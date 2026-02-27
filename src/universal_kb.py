@@ -146,6 +146,7 @@ class UniversalKB:
     def collection(self):
         """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
         from src.model_cache import ModelCache
+        import config
         client = ModelCache.get_chroma_client(str(self.chroma_dir))
         # 客户端变了（被重建过），需要刷新collection
         if client is not self._chroma_client:
@@ -154,6 +155,23 @@ class UniversalKB:
                 name="universal_kb",
                 metadata={"hnsw:space": "cosine"}
             )
+            # 校验向量模型版本一致性（模型变更后旧索引不可信）
+            try:
+                current_model = getattr(config, "VECTOR_MODEL_NAME", "unknown")
+                meta = self._collection.metadata or {}
+                stored_model = meta.get("vector_model")
+                if stored_model and stored_model != current_model:
+                    logger.warning(
+                        f"[universal_kb] 向量模型版本不一致！"
+                        f"索引使用: {stored_model}, 当前配置: {current_model}。"
+                        f"搜索质量可能下降，建议重建索引。"
+                    )
+                elif not stored_model and self._collection.count() > 0:
+                    logger.info(
+                        f"[universal_kb] 索引未记录模型版本，当前使用: {current_model}"
+                    )
+            except Exception:
+                pass  # metadata 读取失败不影响正常使用
         return self._collection
 
     # ================================================================

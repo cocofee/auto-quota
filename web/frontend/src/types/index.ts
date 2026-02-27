@@ -19,6 +19,7 @@ export interface RegisterRequest {
   email: string;
   password: string;
   nickname?: string;
+  invite_code: string;  // 邀请码（后端必填）
 }
 
 /** 登录成功返回的 Token */
@@ -35,6 +36,7 @@ export interface UserInfo {
   nickname: string;
   is_active: boolean;
   is_admin: boolean;
+  quota_balance: number;  // 额度余额（条）
   created_at: string;
 }
 
@@ -168,4 +170,72 @@ export interface ProgressData {
 /** API 错误响应 */
 export interface ApiError {
   detail: string;
+}
+
+// ============================================================
+// 额度管理相关
+// ============================================================
+
+/** 额度余额信息 */
+export interface QuotaBalance {
+  balance: number;          // 剩余额度（条）
+  total_used: number;       // 已使用总量
+  total_purchased: number;  // 已购买总量
+}
+
+/** 额度包 */
+export interface QuotaPackage {
+  id: string;      // 如 pkg_500
+  name: string;    // 如 "500条额度包"
+  quota: number;   // 额度条数
+  price: number;   // 价格（元）
+}
+
+/** 额度变动记录 */
+export interface QuotaLogItem {
+  id: number;
+  change_type: string;     // register_gift/task_deduct/purchase/admin_adjust
+  amount: number;          // 正=增加，负=扣减
+  balance_after: number;   // 变动后余额
+  ref_id: string | null;
+  note: string;
+  created_at: string;
+}
+
+/** 额度变动记录列表响应 */
+export interface QuotaLogListResponse {
+  items: QuotaLogItem[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+/** 创建订单响应 */
+export interface CreateOrderResponse {
+  order_id: string;
+  out_trade_no: string;
+  pay_url: string;
+}
+
+/** 订单信息 */
+export interface OrderInfo {
+  id: string;
+  out_trade_no: string;
+  package_name: string;
+  package_quota: number;
+  amount: number;
+  pay_type: string;
+  status: string;        // pending/paid/expired
+  trade_no: string | null;
+  created_at: string;
+  paid_at: string | null;
+}
+
+/** 订单列表响应 */
+export interface OrderListResponse {
+  items: OrderInfo[];
+  total: number;
+  page: number;
+  size: number;
+  total_amount: number;
 }

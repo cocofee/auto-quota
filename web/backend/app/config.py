@@ -67,6 +67,13 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24小时
 JWT_REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7天
 
 # ============================================================
+# 注册邀请码（防止乱注册白嫖额度）
+# ============================================================
+
+# 默认邀请码，管理员可在"系统设置"页面修改（修改后存数据库，优先级高于此默认值）
+INVITE_CODE = os.getenv("INVITE_CODE", "autoquota2026")
+
+# ============================================================
 # Redis 配置
 # ============================================================
 
@@ -124,6 +131,26 @@ if MATCH_MODE not in ("search", "agent"):
 MATCH_LLM = os.getenv("MATCH_LLM", "claude")
 if MATCH_LLM not in ("claude", "deepseek", "kimi", "qwen", "openai"):
     raise ValueError(f"MATCH_LLM 值不合法: {MATCH_LLM}，可选: claude/deepseek/kimi/qwen/openai")
+
+
+# ============================================================
+# 好易支付配置（额度购买）
+# ============================================================
+
+# 商户ID（注册好易支付后获取）
+EPAY_PID = os.getenv("EPAY_PID", "")
+
+# 商户密钥（签名用，不能泄露，只放在服务端）
+EPAY_KEY = os.getenv("EPAY_KEY", "")
+
+# 支付网关地址（好易支付部署地址）
+EPAY_URL = os.getenv("EPAY_URL", "")
+
+# 后端公网地址（好易支付服务器回调用，必须是公网可访问的）
+EPAY_NOTIFY_BASE_URL = os.getenv("EPAY_NOTIFY_BASE_URL", "")
+
+# 前端地址（用户支付完跳回来用）
+EPAY_RETURN_BASE_URL = os.getenv("EPAY_RETURN_BASE_URL", "")
 
 
 # ============================================================

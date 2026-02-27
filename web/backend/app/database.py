@@ -127,6 +127,10 @@ async def init_db():
             # 2026-02-25: match_results 表新增 sheet_name 和 section 列（分部分项展示用）
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS sheet_name VARCHAR(100) DEFAULT ''",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS section VARCHAR(200) DEFAULT ''",
+            # 2026-02-27: users 表新增 quota_balance 列（额度余额，新用户默认1000条）
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_balance INTEGER DEFAULT 1000",
+            # 2026-02-27: system settings table
+            "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(100) PRIMARY KEY, value TEXT NOT NULL)",
         ]
         from sqlalchemy import text
         for sql in migrations:

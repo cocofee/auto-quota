@@ -243,65 +243,72 @@ def main():
         return
 
     print("[Step 2] Generate rule JSON files...")
-    from tools.extract_quota_rules import process_all_chapters, generate_summary
     import json, os, tempfile
+    try:
+        from tools.extract_quota_rules import process_all_chapters, generate_summary
+    except (ImportError, ModuleNotFoundError):
+        print("  [跳过] extract_quota_rules 模块不存在，跳过规则生成")
+        process_all_chapters = None
 
-    rules_dir = PROJECT_ROOT / "data" / "quota_rules" / province
-    rules_dir.mkdir(parents=True, exist_ok=True)
+    if process_all_chapters is None:
+        pass  # 模块不存在，跳过规则生成，直接进入 Step 3
+    else:
+        rules_dir = PROJECT_ROOT / "data" / "quota_rules" / province
+        rules_dir.mkdir(parents=True, exist_ok=True)
 
-    for specialty in imported.keys():
-        print(f"  Build rules for {specialty}...")
-        rules = process_all_chapters(db, specialty=specialty)
+        for specialty in imported.keys():
+            print(f"  Build rules for {specialty}...")
+            rules = process_all_chapters(db, specialty=specialty)
 
-        json_path = rules_dir / f"{specialty}定额规则.json"
-        json_tmp = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".json",
-                prefix=f"{json_path.stem}_tmp_",
-                dir=str(json_path.parent),
-                encoding="utf-8",
-                delete=False,
-            ) as f:
-                json_tmp = f.name
-                json.dump(rules, f, ensure_ascii=False, indent=2)
-            os.replace(json_tmp, json_path)
-        finally:
-            if json_tmp and Path(json_tmp).exists():
-                try:
-                    os.remove(json_tmp)
-                except OSError:
-                    pass
+            json_path = rules_dir / f"{specialty}定额规则.json"
+            json_tmp = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".json",
+                    prefix=f"{json_path.stem}_tmp_",
+                    dir=str(json_path.parent),
+                    encoding="utf-8",
+                    delete=False,
+                ) as f:
+                    json_tmp = f.name
+                    json.dump(rules, f, ensure_ascii=False, indent=2)
+                os.replace(json_tmp, json_path)
+            finally:
+                if json_tmp and Path(json_tmp).exists():
+                    try:
+                        os.remove(json_tmp)
+                    except OSError:
+                        pass
 
-        summary_path = rules_dir / f"{specialty}定额规则_摘要.txt"
-        summary = generate_summary(rules)
-        summary_tmp = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".txt",
-                prefix=f"{summary_path.stem}_tmp_",
-                dir=str(summary_path.parent),
-                encoding="utf-8",
-                delete=False,
-            ) as f:
-                summary_tmp = f.name
-                f.write(summary)
-            os.replace(summary_tmp, summary_path)
-        finally:
-            if summary_tmp and Path(summary_tmp).exists():
-                try:
-                    os.remove(summary_tmp)
-                except OSError:
-                    pass
+            summary_path = rules_dir / f"{specialty}定额规则_摘要.txt"
+            summary = generate_summary(rules)
+            summary_tmp = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".txt",
+                    prefix=f"{summary_path.stem}_tmp_",
+                    dir=str(summary_path.parent),
+                    encoding="utf-8",
+                    delete=False,
+                ) as f:
+                    summary_tmp = f.name
+                    f.write(summary)
+                os.replace(summary_tmp, summary_path)
+            finally:
+                if summary_tmp and Path(summary_tmp).exists():
+                    try:
+                        os.remove(summary_tmp)
+                    except OSError:
+                        pass
 
-        meta = rules["meta"]
-        print(
-            f"    quotas={meta['total_quotas']}, families={meta['total_families']}, "
-            f"standalone={meta['total_standalone']}"
-        )
-        print(f"    Saved: {json_path.name}")
+            meta = rules["meta"]
+            print(
+                f"    quotas={meta['total_quotas']}, families={meta['total_families']}, "
+                f"standalone={meta['total_standalone']}"
+            )
+            print(f"    Saved: {json_path.name}")
     print()
 
     if args.skip_index:

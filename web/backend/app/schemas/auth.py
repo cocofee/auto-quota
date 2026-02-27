@@ -19,6 +19,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr = Field(description="邮箱地址")
     password: str = Field(min_length=8, max_length=100, description="密码（至少8位）")
     nickname: str = Field(default="", max_length=100, description="昵称（可选）")
+    invite_code: str = Field(max_length=50, description="邀请码（向管理员获取）")
 
 
 class LoginRequest(BaseModel):
@@ -55,6 +56,7 @@ class UserResponse(BaseModel):
     nickname: str
     is_active: bool
     is_admin: bool
+    quota_balance: int = 0  # 额度余额（条）
     created_at: datetime
 
     model_config = {"from_attributes": True}  # 允许从SQLAlchemy模型直接转换

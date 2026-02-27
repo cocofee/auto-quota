@@ -4,12 +4,13 @@
  * 包裹管理员专属页面，非管理员用户访问时显示 403 提示。
  */
 
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { Result, Button, Spin } from 'antd';
 import { useAuthStore } from '../../stores/auth';
 
 export default function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
+  const location = useLocation();
 
   // 还在加载用户信息，显示加载状态（和 RequireAuth 一致）
   if (loading) {
@@ -22,8 +23,8 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
     );
   }
 
-  // 未登录直接跳转登录页
-  if (!user) return <Navigate to="/login" replace />;
+  // 未登录直接跳转登录页（保存来源路径，登录后可跳回）
+  if (!user) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
 
   // 非管理员显示 403
   if (!user.is_admin) {

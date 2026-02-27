@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import {
   Card, Space, App, Tag, Descriptions, Row, Col, Statistic, Table, Badge,
+  Input, Button,
 } from 'antd';
 import {
   CheckCircleOutlined, CloseCircleOutlined,
@@ -23,6 +24,9 @@ export default function SettingsPage() {
   const [provinces, setProvinces] = useState<string[]>([]);
   const [healthOk, setHealthOk] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteCodeInput, setInviteCodeInput] = useState('');
+  const [inviteSaving, setInviteSaving] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -32,9 +36,10 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       // 并行加载省份和健康状态
-      const [provRes, healthRes] = await Promise.allSettled([
+      const [provRes, healthRes, inviteRes] = await Promise.allSettled([
         api.get<{ provinces: string[] }>('/provinces'),
         api.get('/health'),
+        api.get<{ invite_code: string }>('/admin/invite-code'),
       ]);
 
       if (provRes.status === 'fulfilled') {
@@ -43,10 +48,32 @@ export default function SettingsPage() {
       if (healthRes.status === 'fulfilled') {
         setHealthOk(true);
       }
+      if (inviteRes.status === 'fulfilled') {
+        setInviteCode(inviteRes.value.data.invite_code);
+        setInviteCodeInput(inviteRes.value.data.invite_code);
+      }
     } catch {
       message.error('加载配置失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 修改邀请码
+  const saveInviteCode = async () => {
+    if (!inviteCodeInput.trim() || inviteCodeInput.length < 4) {
+      message.warning('邀请码至少4位');
+      return;
+    }
+    setInviteSaving(true);
+    try {
+      await api.put('/admin/invite-code', { invite_code: inviteCodeInput.trim() });
+      setInviteCode(inviteCodeInput.trim());
+      message.success('邀请码已更新');
+    } catch {
+      message.error('修改失败');
+    } finally {
+      setInviteSaving(false);
     }
   };
 
@@ -104,6 +131,36 @@ export default function SettingsPage() {
             </Card>
           </Col>
         </Row>
+      </Card>
+
+      {/* 注册邀请码 */}
+      <Card title="注册邀请码" loading={loading}>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div style={{ color: '#666', fontSize: 13 }}>
+            新用户注册时必须填写正确的邀请码，防止未授权人员注册白嫖额度。修改后立即生效。
+          </div>
+          <Space>
+            <Input
+              value={inviteCodeInput}
+              onChange={(e) => setInviteCodeInput(e.target.value)}
+              style={{ width: 280 }}
+              placeholder="输入新邀请码"
+              maxLength={50}
+            />
+            <Button
+              type="primary"
+              loading={inviteSaving}
+              disabled={inviteCodeInput === inviteCode}
+              onClick={saveInviteCode}
+            >
+              保存
+            </Button>
+          </Space>
+          <div style={{ fontSize: 13 }}>
+            当前邀请码：<Tag color="blue">{inviteCode}</Tag>
+            <span style={{ color: '#999', marginLeft: 8 }}>（告诉需要注册的人）</span>
+          </div>
+        </Space>
       </Card>
 
       {/* 大模型配置 */}

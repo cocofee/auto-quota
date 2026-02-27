@@ -7,12 +7,15 @@
     GET  /api/admin/analytics/by-province         — 按省份统计
     GET  /api/admin/analytics/by-specialty        — 按专业统计
     GET  /api/admin/analytics/benchmark-history   — Benchmark跑分历史
+    POST /api/admin/analytics/run-benchmark       — 触发跑分（Celery异步）
+    GET  /api/admin/analytics/benchmark-status/{task_id} — 查询跑分进度
 """
 
 import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select, func, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +28,8 @@ from app.config import PROJECT_ROOT
 
 router = APIRouter()
 
-# benchmark_history.json 的路径（项目根目录/tests/）
-_BENCHMARK_HISTORY_PATH = PROJECT_ROOT / "tests" / "benchmark_history.json"
+# benchmark_history.json 的路径（放在 data/ 目录，因为 data/ 在 Docker 和懒猫部署中都有挂载）
+_BENCHMARK_HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"
 
 
 @router.get("/overview")
@@ -195,7 +198,7 @@ async def benchmark_history(
 ):
     """Benchmark 跑分历史
 
-    读取 tests/benchmark_history.json 返回全部跑分记录，
+    读取 data/benchmark_history.json 返回全部跑分记录，
     用于前端展示算法改动的好坏趋势。
     """
     if not _BENCHMARK_HISTORY_PATH.exists():
@@ -211,3 +214,67 @@ async def benchmark_history(
         return {"items": []}
 
     return {"items": data}
+
+
+# ============================================================
+# Benchmark 跑分触发与状态查询
+# ============================================================
+
+class BenchmarkRunRequest(BaseModel):
+    """触发跑分的请求参数"""
+    mode: str = "search"  # search（免费快速）或 agent（需API Key）
+    note: str = ""        # 备注（说明本次改了什么）
+
+
+@router.post("/run-benchmark")
+async def run_benchmark(
+    req: BenchmarkRunRequest,
+    admin: User = Depends(require_admin),
+):
+    """触发 Benchmark 跑分（Celery异步执行）
+
+    返回 Celery 任务ID，前端用它轮询进度。
+    """
+    if req.mode not in ("search", "agent"):
+        return {"error": "mode 必须是 search 或 agent"}
+
+    from app.tasks.benchmark_task import execute_benchmark
+    task = execute_benchmark.delay(mode=req.mode, note=req.note)
+
+    return {"task_id": task.id, "message": "跑分已启动"}
+
+
+@router.get("/benchmark-status/{task_id}")
+async def benchmark_status(
+    task_id: str,
+    admin: User = Depends(require_admin),
+):
+    """查询跑分任务的执行状态
+
+    返回:
+        state: PENDING / PROGRESS / SUCCESS / FAILURE
+        progress: 当前进度信息（仅 PROGRESS 状态时有值）
+        result: 最终结果（仅 SUCCESS 状态时有值）
+    """
+    from app.celery_app import celery_app
+    result = celery_app.AsyncResult(task_id)
+
+    if result.state == "PROGRESS":
+        # 正在跑分中，返回进度详情
+        return {
+            "state": "PROGRESS",
+            "progress": result.info,  # {current, total, dataset}
+        }
+    elif result.state == "SUCCESS":
+        return {
+            "state": "SUCCESS",
+            "result": result.result,  # {success, message, datasets_run, ...}
+        }
+    elif result.state == "FAILURE":
+        return {
+            "state": "FAILURE",
+            "error": str(result.result),
+        }
+    else:
+        # PENDING 或其他状态
+        return {"state": result.state}

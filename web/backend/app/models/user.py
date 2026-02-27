@@ -7,7 +7,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, DateTime, func
+from sqlalchemy import String, Integer, Boolean, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +39,9 @@ class User(Base):
 
     # 是否管理员
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # 额度余额（单位：条，新注册用户默认1000条免费额度）
+    quota_balance: Mapped[int] = mapped_column(Integer, default=1000)
 
     # 上次登录时间（安全审计用）
     last_login_at: Mapped[datetime | None] = mapped_column(

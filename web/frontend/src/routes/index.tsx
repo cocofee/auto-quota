@@ -14,6 +14,10 @@ import DashboardPage from '../pages/Dashboard';
 import TaskCreatePage from '../pages/Task/CreatePage';
 import TaskListPage from '../pages/Task/ListPage';
 import ResultsPage from '../pages/Results';
+// 额度管理页面
+import LogsPage from '../pages/Quota/LogsPage';
+import PurchasePage from '../pages/Quota/PurchasePage';
+import PayResultPage from '../pages/Quota/PayResultPage';
 // 管理员页面
 import TaskListAll from '../pages/Admin/TaskListAll';
 import ExperienceManage from '../pages/Admin/ExperienceManage';
@@ -24,6 +28,7 @@ import SettingsPage from '../pages/Admin/SettingsPage';
 import QuotaManage from '../pages/Admin/QuotaManage';
 import LogViewer from '../pages/Admin/LogViewer';
 import KnowledgeManage from '../pages/Admin/KnowledgeManage';
+import BillingAdmin from '../pages/Admin/BillingAdmin';
 
 const router = createBrowserRouter([
   // 登录页（不需要布局和登录状态）
@@ -50,6 +55,11 @@ const router = createBrowserRouter([
       { path: 'tasks', element: <TaskListPage /> },
       { path: 'tasks/:taskId/results', element: <ResultsPage /> },
 
+      // === 额度相关 ===
+      { path: 'quota/logs', element: <LogsPage /> },
+      { path: 'quota/purchase', element: <RequireAdmin><PurchasePage /></RequireAdmin> },
+      { path: 'quota/pay-result', element: <RequireAdmin><PayResultPage /></RequireAdmin> },
+
       // === 管理员专属页面（RequireAdmin 包裹） ===
       { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
       { path: 'admin/experience', element: <RequireAdmin><ExperienceManage /></RequireAdmin> },
@@ -60,6 +70,7 @@ const router = createBrowserRouter([
       { path: 'admin/users', element: <RequireAdmin><UserManage /></RequireAdmin> },
       { path: 'admin/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
       { path: 'admin/logs', element: <RequireAdmin><LogViewer /></RequireAdmin> },
+      { path: 'admin/billing', element: <RequireAdmin><BillingAdmin /></RequireAdmin> },
     ],
   },
 ]);

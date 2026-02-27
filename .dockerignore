@@ -42,12 +42,16 @@ docs/
 *.md
 !README.md
 
-# 测试（生产镜像不需要）
-tests/
+# 测试（生产镜像不需要测试代码，但保留benchmark配置）
+tests/test_*.py
+tests/__pycache__
+tests/pytest-cache-files-*
 
 # 开发脚本
 scripts/
 
 # 大文件/数据（通过 volume 挂载，不打包进镜像）
+data/
+db/
 output/
 logs/

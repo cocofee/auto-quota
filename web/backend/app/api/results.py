@@ -113,7 +113,7 @@ async def correct_result(
     用户手动选择正确的定额，替换系统匹配的结果。
     纠正后 review_status 变为 "corrected"。
     """
-    await get_user_task(task_id, user, db)
+    task = await get_user_task(task_id, user, db)
 
     result = await db.execute(
         select(MatchResult).where(
@@ -132,7 +132,6 @@ async def correct_result(
     await db.flush()
 
     # 纠正数据回流经验库（候选层，待管理员审核后晋升权威层）
-    task = await get_user_task(task_id, user, db)
     await store_experience(
         name=match_result.bill_name,
         desc=match_result.bill_description or "",
@@ -204,7 +203,7 @@ async def confirm_results(
             confirmed=True,  # 确认 → 权威层
         )
 
-    return {"confirmed": updated, "skipped_corrected": skipped, "total": len(req.result_ids)}
+    return {"confirmed": updated, "skipped_corrected": skipped, "total": len(results)}
 
 
 @router.get("/tasks/{task_id}/export")

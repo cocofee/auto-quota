@@ -12,13 +12,13 @@ import {
   FileTextOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
-  ExperimentOutlined,
   PlusOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
-import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
+import type { TaskInfo, TaskListResponse, TaskStatus, QuotaBalance } from '../../types';
 import { STATUS_MAP } from '../../constants/task';
 
 export default function DashboardPage() {
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [total, setTotal] = useState(0);
+  const [quotaBalance, setQuotaBalance] = useState<number | null>(null);
 
   const loadRecentTasks = useCallback(async () => {
     setLoading(true);
@@ -47,23 +48,18 @@ export default function DashboardPage() {
   }, [message]);
 
   useEffect(() => {
+    let cancelled = false;
     loadRecentTasks();
+    // 加载额度余额（组件卸载后不再更新状态，避免内存泄漏）
+    api.get<QuotaBalance>('/quota/balance')
+      .then(({ data }) => { if (!cancelled) setQuotaBalance(data.balance); })
+      .catch(() => { if (!cancelled) setQuotaBalance(null); });
+    return () => { cancelled = true; };
   }, [loadRecentTasks]);
 
+  // 统计当前页数据（注意：这只是当前页的统计，不是全量数据）
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const runningTasks = tasks.filter((t) => t.status === 'running' || t.status === 'pending');
-
-  // 平均置信度（仅管理员关心）
-  const tasksWithStats = completedTasks.filter((t) => t.stats?.total);
-  const avgConfidence = tasksWithStats.length > 0
-    ? Math.round(
-        tasksWithStats.reduce((sum, t) => {
-          const stats = t.stats!;
-          const total = stats.total || 1;
-          return sum + ((stats.high_conf * 95 + stats.mid_conf * 77 + stats.low_conf * 50) / total);
-        }, 0) / tasksWithStats.length,
-      )
-    : 0;
 
   // 客户表格列（简化）
   const baseColumns = [
@@ -135,12 +131,19 @@ export default function DashboardPage() {
   ];
 
   const columns = isAdmin ? adminColumns : baseColumns;
+  const handleQuotaCardClick = () => {
+    if (isAdmin) {
+      navigate('/quota/purchase');
+      return;
+    }
+    navigate('/quota/logs');
+  };
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       {/* 统计卡片 */}
       <Row gutter={[16, 16]}>
-        <Col xs={12} sm={isAdmin ? 6 : 12}>
+        <Col xs={12} sm={isAdmin ? 6 : 8}>
           <Card hoverable onClick={() => navigate('/tasks')}>
             <Statistic
               title="总任务数"
@@ -149,13 +152,27 @@ export default function DashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={isAdmin ? 6 : 12}>
-          <Card>
+        <Col xs={12} sm={isAdmin ? 6 : 8}>
+          <Card hoverable onClick={() => navigate('/tasks?status=completed')}>
             <Statistic
-              title="已完成"
+              title="最近完成"
               value={completedTasks.length}
+              suffix={total > 10 ? `/${total}` : undefined}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} sm={isAdmin ? 6 : 8}>
+          <Card hoverable onClick={handleQuotaCardClick}>
+            <Statistic
+              title="剩余额度"
+              value={quotaBalance ?? '-'}
+              suffix={quotaBalance !== null ? '条' : ''}
+              prefix={<ThunderboltOutlined />}
+              valueStyle={{
+                color: quotaBalance !== null && quotaBalance < 100 ? '#ff4d4f' : '#1677ff',
+              }}
             />
           </Card>
         </Col>
@@ -169,17 +186,6 @@ export default function DashboardPage() {
                   value={runningTasks.length}
                   prefix={<ClockCircleOutlined />}
                   valueStyle={{ color: '#1677ff' }}
-                />
-              </Card>
-            </Col>
-            <Col xs={12} sm={6}>
-              <Card>
-                <Statistic
-                  title="平均置信度"
-                  value={avgConfidence}
-                  suffix="%"
-                  prefix={<ExperimentOutlined />}
-                  valueStyle={{ color: avgConfidence >= 85 ? '#52c41a' : avgConfidence >= 70 ? '#faad14' : '#ff4d4f' }}
                 />
               </Card>
             </Col>

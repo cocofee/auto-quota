@@ -238,7 +238,7 @@ class RuleKnowledge:
         if dir_path:
             root = Path(dir_path)
         else:
-            root = config.KNOWLEDGE_DIR / "规则库"
+            root = config.KNOWLEDGE_DIR / "rules"
 
         if not root.exists():
             root.mkdir(parents=True, exist_ok=True)

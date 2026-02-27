@@ -36,7 +36,7 @@ import type {
 // ============================================================
 
 const GREEN_THRESHOLD = 85;
-const YELLOW_THRESHOLD = 60;
+const YELLOW_THRESHOLD = 70;  // 与后端 results.py 的 _YELLOW_THRESHOLD 保持一致
 
 /** 推荐度单元格背景色（只给推荐度列用，不是整行） */
 function getConfidenceBgColor(confidence: number, hasQuotas: boolean): string {
@@ -932,7 +932,7 @@ export default function ResultsPage() {
               showSizeChanger
               showTotal={(total) => `共 ${total} 条清单`}
               pageSizeOptions={['20', '50', '100']}
-              onChange={(p, ps) => { setPage(p); setPageSize(ps); }}
+              onChange={(p, ps) => { setPage(p); setPageSize(ps); setSelectedRowKeys([]); }}
             />
           </div>
         )}

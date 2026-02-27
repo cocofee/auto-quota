@@ -254,6 +254,15 @@ def detect_db_type(province_name: str) -> str:
 # 永远使用指定册的定额。比如"配管"永远用C4电气的配管定额。
 # 优先级高于分部标题，是最高优先级的分类规则。
 ITEM_BOOK_OVERRIDES = [
+    # ---- 核心动作词覆盖（优先级最高，必须在A册"砌体/钢筋/混凝土"前面）----
+    # 这些清单的核心动作属于C4电气，但名称中的施工位置词（砌块墙、底板钢筋等）
+    # 会误导关键词分类器把它们归到A册土建。放在列表最前面确保优先匹配。
+    ("凿槽", "C4"),    # 砌块墙电气管凿槽 → C4-13 凿槽子目
+    ("剔槽", "C4"),    # 混凝土墙剔槽 → C4-13 凿槽子目
+    ("接地极", "C4"),  # 利用底板钢筋作接地极 → C4-9 接地极子目
+    ("引下线", "C4"),  # 利用柱内钢筋作引下线 → C4-9 防雷引下线
+    ("避雷带", "C4"),  # 利用结构钢筋作避雷带 → C4-9 避雷带
+    ("等电位", "C4"),  # 等电位联结 → C4-9 等电位
     # 电气配管配线（C4-11章） —— 所有系统的管线基础设施
     ("配管", "C4"),
     ("线管", "C4"),
@@ -332,19 +341,22 @@ SECTION_KEYWORDS = {
 # ================================================================
 
 def classify(bill_name: str, bill_desc: str = "",
-             section_title: str = None) -> dict:
+             section_title: str = None, province: str = None) -> dict:
     """
     判断一条清单项属于哪个专业（册）
 
     优先级：
+    0. 项目级覆盖（硬规则，如"配管"永远归C4电气）
     1. 分部标题（最可靠，直接从Excel结构来的）
-    2. 关键词匹配（从清单名称+特征描述中提取）
-    3. 默认返回None（无法判断，全库搜索）
+    2. 数据驱动分类（从定额库学习的TF-IDF模型，像老造价师的经验）
+    3. 关键词匹配（手写规则，兜底）
+    4. 默认返回None（无法判断，全库搜索）
 
     参数:
         bill_name: 清单项目名称（如"室内给水管道安装"）
         bill_desc: 清单特征描述（如"材质：镀锌钢管\\nDN25\\n丝接"）
         section_title: 清单所在的分部标题（如"给排水工程"），最可靠的来源
+        province: 省份名称（数据驱动分类需要知道读哪个定额库），为None时用默认省份
 
     返回:
         {
@@ -381,9 +393,25 @@ def classify(bill_name: str, bill_desc: str = "",
                 "reason": f"分部标题匹配: {section_title}",
             }
 
-    # 第2优先：关键词匹配
-    # 合并名称和描述，在里面找关键词
+    # 第2优先：数据驱动分类（从定额库学习的TF-IDF模型）
+    # 像老造价师一样——看过几万条定额后自然知道"过滤器"属于给排水册
     text = f"{bill_name} {bill_desc}".strip()
+    if text:
+        try:
+            from src.book_classifier import BookClassifier
+            classifier = BookClassifier.get_instance(province)
+            data_result = classifier.classify(text)
+            if data_result and data_result.get("primary"):
+                # 低置信度时不用数据驱动，让关键词匹配兜底
+                # 例："管道"两个字各册得分接近，数据驱动分不清，关键词更靠谱
+                if data_result.get("confidence") != "low":
+                    return data_result
+        except Exception as e:
+            # 数据驱动不可用（定额库未导入等），降级到关键词匹配
+            logger.debug(f"数据驱动分类跳过: {e}")
+
+    # 第3优先：关键词匹配（手写规则兜底）
+    # 合并名称和描述，在里面找关键词
     if text:
         book, score, matched_keyword = _keyword_match(text)
         if book:

@@ -35,6 +35,7 @@ COPY config.py /app/config.py
 COPY main.py /app/main.py
 COPY src/ /app/src/
 COPY tools/ /app/tools/
+COPY tests/ /app/tests/
 COPY knowledge/ /app/knowledge/
 
 # Web后端代码
