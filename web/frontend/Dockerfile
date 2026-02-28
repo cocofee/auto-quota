@@ -10,7 +10,7 @@
 # ============================================================
 # 阶段1：构建 React 应用
 # ============================================================
-FROM docker.1ms.run/node:22-alpine AS builder
+FROM dockerpull.org/node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN npm run build
 # ============================================================
 # 阶段2：Nginx 托管
 # ============================================================
-FROM docker.1ms.run/nginx:alpine
+FROM dockerpull.org/nginx:alpine
 
 # 复制构建产物到 Nginx 默认目录
 COPY --from=builder /app/dist /usr/share/nginx/html

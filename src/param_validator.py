@@ -30,7 +30,8 @@ class ParamValidator:
     ]
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
-                            supplement_query: str = None) -> list[dict]:
+                            supplement_query: str = None,
+                            bill_params: dict = None) -> list[dict]:
         """
         对候选定额进行参数验证和重排序
 
@@ -39,6 +40,8 @@ class ParamValidator:
             candidates: 混合搜索返回的候选定额列表
             supplement_query: 补充查询文本（如 search_query），从中提取参数填补 query_text 的空缺
                              典型场景：原文"BV4"提取不到截面，但 search_query"管内穿铜芯线 导线截面 4"可以
+            bill_params: 清单已清洗的参数字典（来自bill_cleaner）。
+                         如果提供，优先使用；否则从文本重新提取。
 
         返回:
             验证后的候选列表，每条增加 param_score 和 param_detail 字段
@@ -46,8 +49,12 @@ class ParamValidator:
         if not candidates:
             return []
 
-        # 从清单文本中提取参数
-        bill_params = text_parser.parse(query_text)
+        # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
+        if bill_params is not None:
+            bill_params = dict(bill_params)  # 复制一份，避免修改原dict
+        else:
+            # 从清单文本中提取参数（兼容未经bill_cleaner的调用）
+            bill_params = text_parser.parse(query_text)
 
         # 如果有补充query，从中提取参数填补空缺
         # （search_query 经过 build_quota_query 规范化，参数提取更可靠）
@@ -281,6 +288,13 @@ class ParamValidator:
         "导线": ["电缆"],
         "桥架": ["穿线管"],
         "穿线管": ["桥架"],
+        # 暖通品类：风机盘管和散热器是完全不同的末端设备
+        "风机盘管": ["散热器", "地暖"],
+        "散热器": ["风机盘管", "风口"],
+        # 电气品类：电缆头（终端半成品）不应配电缆敷设定额
+        "电缆头": ["电缆敷设", "导线"],
+        # 消防品类：防火阀和普通风阀是不同专业
+        "防火阀": ["调节阀", "蝶阀", "球阀"],
     }
 
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:

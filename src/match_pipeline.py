@@ -99,7 +99,8 @@ def _build_item_context(item: dict) -> dict:
     section = item.get("section", "") or ""
     original_name = item.get("original_name", name)
     search_query = text_parser.build_quota_query(name, desc,
-                                                  specialty=item.get("specialty", ""))
+                                                  specialty=item.get("specialty", ""),
+                                                  bill_params=item.get("params"))
     # 线缆类型标签：追加到搜索词，帮助BM25区分电线/电缆/光缆定额
     cable_type = item.get("cable_type", "")
     if cable_type:

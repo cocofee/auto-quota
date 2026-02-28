@@ -486,8 +486,9 @@ class TextParser:
 
     def _extract_spec_wh(self, text: str) -> Optional[tuple[float, float]]:
         """Extract W/H from '规格:W*H(*L)' and filter out cable-style small prefixes."""
+        # "规格型号:" 和 "规格:" 都要匹配（清单描述两种写法都常见）
         spec_match = re.search(
-            r'规格[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
+            r'规格(?:型号)?[：:]\s*(\d+)\s*[*×xX]\s*(\d+)(?:\s*[*×xX]\s*\d+)?',
             text)
         if not spec_match:
             return None
@@ -913,10 +914,12 @@ class TextParser:
         return text
 
     def build_quota_query(self, name: str, description: str = "",
-                          specialty: str = "") -> str:
+                          specialty: str = "",
+                          bill_params: dict = None) -> str:
         """构建定额搜索query（实际实现在 query_builder.py）"""
         from src.query_builder import build_quota_query as _build
-        return _build(self, name, description, specialty=specialty)
+        return _build(self, name, description, specialty=specialty,
+                      bill_params=bill_params)
 
     def params_match(self, bill_params: dict, quota_params: dict) -> tuple[bool, float]:
         """

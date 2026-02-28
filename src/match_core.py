@@ -345,8 +345,11 @@ def try_experience_match(query: str, item: dict, experience_db,
             return None  # 参数不匹配，拒绝经验库结果
         return validated
 
-    # 向量相似匹配 → 相似度≥0.75即可采纳（项目导入的正规数据可信度高）
-    if similarity >= 0.75:
+    # 向量相似匹配 → 相似度≥0.80才采纳
+    # 原阈值0.75偏低：0.75-0.80区间可能混入用途不同但名称相似的定额
+    # （如"给水管道DN100"和"排水管道DN100"相似度可能>0.78）
+    # 提高到0.80后，这类不确定匹配会走搜索兜底，更安全
+    if similarity >= 0.80:
         quota_ids = best.get("quota_ids", [])
         quota_names = best.get("quota_names", [])
         if not quota_ids:
@@ -538,7 +541,8 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
 
 def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
                         search_query: str, full_query: str,
-                        classification: dict) -> list[dict]:
+                        classification: dict,
+                        bill_params: dict = None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     candidates = cascade_search(searcher, search_query, classification)
 
@@ -567,7 +571,8 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         candidates = reranker.rerank(search_query, candidates)
     if candidates:
         candidates = validator.validate_candidates(
-            full_query, candidates, supplement_query=search_query)
+            full_query, candidates, supplement_query=search_query,
+            bill_params=bill_params)
     return candidates
 
 
@@ -588,8 +593,11 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         hint_text = " ".join(str(h) for h in cross_hints[:3] if h)
         search_query = f"{search_query} {hint_text}"
 
+    # 从清单项获取已清洗的参数，传给参数验证（避免重新提取）
+    item_params = item.get("params") if isinstance(item, dict) else None
     candidates = _prepare_candidates(
-        searcher, reranker, validator, search_query, full_query, classification)
+        searcher, reranker, validator, search_query, full_query, classification,
+        bill_params=item_params)
     return (
         ctx,
         full_query,

@@ -6,7 +6,7 @@
 # 构建命令（由 docker-compose 自动调用）:
 #   docker build -f web/backend/Dockerfile -t autoquota-backend .
 
-FROM docker.1ms.run/python:3.12-slim
+FROM dockerpull.org/python:3.12-slim
 
 # 设置工作目录
 WORKDIR /app
