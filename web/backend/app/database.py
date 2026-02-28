@@ -7,6 +7,7 @@
 
 import threading
 
+from fastapi import HTTPException
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -52,6 +53,10 @@ async def get_db():
         except SQLAlchemyError as e:
             await session.rollback()
             logger.error(f"数据库事务失败: {e}")
+            raise
+        except HTTPException:
+            # 401/403等正常的HTTP响应，不需要记录错误日志
+            await session.rollback()
             raise
         except Exception as e:
             await session.rollback()

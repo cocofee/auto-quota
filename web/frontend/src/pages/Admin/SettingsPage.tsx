@@ -3,21 +3,39 @@
  *
  * 显示系统配置信息和运行状态：
  * 1. 已导入的省份定额库
- * 2. 大模型配置状态
+ * 2. 大模型配置（可在线修改）
  * 3. 系统参数
  * 4. 服务健康状态
  */
 
 import { useEffect, useState } from 'react';
 import {
-  Card, Space, App, Tag, Descriptions, Row, Col, Statistic, Table, Badge,
-  Input, Button,
+  Card, Space, App, Tag, Descriptions, Row, Col, Statistic, Badge,
+  Input, Button, Select, Form, Alert,
 } from 'antd';
 import {
   CheckCircleOutlined, CloseCircleOutlined,
-  DatabaseOutlined, CloudOutlined,
+  DatabaseOutlined, CloudOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/error';
+
+// 支持的模型列表
+const MODEL_OPTIONS = [
+  { value: 'qwen', label: '通义千问（推荐）', defaultModel: 'qwen-plus', defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { value: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', defaultUrl: 'https://api.deepseek.com' },
+  { value: 'kimi', label: 'Kimi', defaultModel: 'kimi-k2.5', defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { value: 'claude', label: 'Claude', defaultModel: 'claude-sonnet-4-20250514', defaultUrl: '' },
+  { value: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o', defaultUrl: 'https://api.openai.com/v1' },
+];
+
+interface LlmConfig {
+  llm_type: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  base_url: string;
+  model: string;
+}
 
 export default function SettingsPage() {
   const { message } = App.useApp();
@@ -28,6 +46,11 @@ export default function SettingsPage() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteSaving, setInviteSaving] = useState(false);
 
+  // 大模型配置
+  const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const [llmForm] = Form.useForm();
+  const [llmSaving, setLlmSaving] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -35,11 +58,11 @@ export default function SettingsPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // 并行加载省份和健康状态
-      const [provRes, healthRes, inviteRes] = await Promise.allSettled([
+      const [provRes, healthRes, inviteRes, llmRes] = await Promise.allSettled([
         api.get<{ provinces: string[] }>('/provinces'),
         api.get('/health'),
         api.get<{ invite_code: string }>('/admin/invite-code'),
+        api.get<LlmConfig>('/admin/llm-config'),
       ]);
 
       if (provRes.status === 'fulfilled') {
@@ -51,6 +74,16 @@ export default function SettingsPage() {
       if (inviteRes.status === 'fulfilled') {
         setInviteCode(inviteRes.value.data.invite_code);
         setInviteCodeInput(inviteRes.value.data.invite_code);
+      }
+      if (llmRes.status === 'fulfilled') {
+        const cfg = llmRes.value.data;
+        setLlmConfig(cfg);
+        llmForm.setFieldsValue({
+          llm_type: cfg.llm_type,
+          base_url: cfg.base_url,
+          model: cfg.model,
+          api_key: '', // API Key不回显，只显示脱敏版
+        });
       }
     } catch {
       message.error('加载配置失败');
@@ -77,14 +110,39 @@ export default function SettingsPage() {
     }
   };
 
-  // 大模型配置（从环境变量读取，前端只显示状态，不暴露Key）
-  const modelConfigs = [
-    { name: 'DeepSeek', envKey: 'DEEPSEEK_API_KEY', description: '推荐用于search模式' },
-    { name: 'Claude', envKey: 'CLAUDE_API_KEY', description: '推荐用于agent模式（通过中转）' },
-    { name: 'Kimi', envKey: 'KIMI_API_KEY', description: '阿里云DashScope代理' },
-    { name: '通义千问', envKey: 'QWEN_API_KEY', description: '阿里云DashScope' },
-    { name: 'OpenAI', envKey: 'OPENAI_API_KEY', description: 'GPT系列' },
-  ];
+  // 切换模型类型时自动填入默认值
+  const onLlmTypeChange = (type: string) => {
+    const opt = MODEL_OPTIONS.find((o) => o.value === type);
+    if (opt) {
+      llmForm.setFieldsValue({
+        model: opt.defaultModel,
+        base_url: opt.defaultUrl,
+      });
+    }
+  };
+
+  // 保存大模型配置
+  const saveLlmConfig = async () => {
+    setLlmSaving(true);
+    try {
+      const values = llmForm.getFieldsValue();
+      await api.put('/admin/llm-config', {
+        llm_type: values.llm_type,
+        api_key: values.api_key || '', // 留空表示保持不变
+        base_url: values.base_url || '',
+        model: values.model || '',
+      });
+      message.success('大模型配置已保存，下次任务生效');
+      // 重新加载显示最新状态
+      const { data } = await api.get<LlmConfig>('/admin/llm-config');
+      setLlmConfig(data);
+      llmForm.setFieldValue('api_key', ''); // 清空输入框
+    } catch (err) {
+      message.error(getErrorMessage(err, '保存失败'));
+    } finally {
+      setLlmSaving(false);
+    }
+  };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -164,28 +222,80 @@ export default function SettingsPage() {
       </Card>
 
       {/* 大模型配置 */}
-      <Card title="大模型配置">
-        <Table
-          rowKey="name"
-          dataSource={modelConfigs}
-          pagination={false}
-          size="small"
-          columns={[
-            { title: '模型', dataIndex: 'name', key: 'name', width: 120 },
-            { title: '说明', dataIndex: 'description', key: 'description' },
-            {
-              title: '配置方式',
-              key: 'config',
-              width: 200,
-              render: () => (
-                <Tag>通过 .env 文件配置</Tag>
-              ),
-            },
-          ]}
+      <Card title="大模型配置" loading={loading}>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="修改后无需重启，下次新建任务自动使用新配置。"
         />
-        <div style={{ marginTop: 16, color: '#666', fontSize: 13 }}>
-          大模型 API Key 通过服务器 .env 文件配置，修改后需重启后端服务生效。
-        </div>
+
+        {/* 当前状态 */}
+        {llmConfig && (
+          <div style={{ marginBottom: 16, padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
+            当前模型：<Tag color="blue">{llmConfig.llm_type}</Tag>
+            <Tag color="green">{llmConfig.model}</Tag>
+            {llmConfig.has_api_key
+              ? <Tag color="success">API Key 已配置（{llmConfig.api_key_masked}）</Tag>
+              : <Tag color="error">API Key 未配置</Tag>
+            }
+          </div>
+        )}
+
+        <Form
+          form={llmForm}
+          layout="vertical"
+          style={{ maxWidth: 500 }}
+        >
+          <Form.Item
+            name="llm_type"
+            label="选择模型"
+            rules={[{ required: true, message: '请选择模型' }]}
+          >
+            <Select
+              options={MODEL_OPTIONS}
+              onChange={onLlmTypeChange}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="api_key"
+            label="API Key"
+            help={llmConfig?.has_api_key ? '已配置，留空则保持不变；填入新值则覆盖' : '请填入API Key'}
+          >
+            <Input.Password
+              placeholder={llmConfig?.has_api_key ? '留空保持不变' : '填入API Key'}
+              autoComplete="off"
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="base_url"
+            label="API 地址"
+            help="一般不需要改，用默认值即可"
+          >
+            <Input placeholder="留空用默认地址" />
+          </Form.Item>
+
+          <Form.Item
+            name="model"
+            label="模型名称"
+            help="一般不需要改，用默认值即可"
+          >
+            <Input placeholder="留空用默认模型" />
+          </Form.Item>
+
+          <Form.Item>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={llmSaving}
+              onClick={saveLlmConfig}
+            >
+              保存配置
+            </Button>
+          </Form.Item>
+        </Form>
       </Card>
 
       {/* 系统参数 */}
@@ -204,15 +314,12 @@ export default function SettingsPage() {
             <Badge status="processing" text="权威层精确匹配" />
           </Descriptions.Item>
           <Descriptions.Item label="默认匹配模式">
-            <Tag color="blue">搜索模式（search）</Tag>
+            <Tag color="blue">Agent模式（agent）</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="默认经验库">
             <Tag color="green">启用</Tag>
           </Descriptions.Item>
         </Descriptions>
-        <div style={{ marginTop: 16, color: '#666', fontSize: 13 }}>
-          匹配参数在 config.py 中配置，修改后需重启后端服务生效。后续版本将支持在线调整。
-        </div>
       </Card>
     </Space>
   );

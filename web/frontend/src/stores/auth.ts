@@ -49,8 +49,18 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { data } = await api.get<UserInfo>('/auth/me');
       set({ user: data, loading: false });
     } catch {
-      clearTokens();
-      set({ user: null, loading: false });
+      // access_token可能过期了，尝试用refresh_token续期
+      // （/auth/me在AUTH_PATHS中不会自动触发刷新，所以这里手动刷新）
+      try {
+        await api.post('/auth/refresh');
+        // 刷新成功，重新获取用户信息
+        const { data } = await api.get<UserInfo>('/auth/me');
+        set({ user: data, loading: false });
+      } catch {
+        // refresh_token也失效了，真的没登录
+        clearTokens();
+        set({ user: null, loading: false });
+      }
     }
   },
 }));

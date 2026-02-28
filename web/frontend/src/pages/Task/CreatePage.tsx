@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
+  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress, Alert,
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
@@ -172,6 +172,19 @@ export default function TaskCreatePage() {
 
   return (
     <Card title="新建匹配任务" style={{ maxWidth: 720, margin: '0 auto' }}>
+      <Alert
+        type="info"
+        showIcon
+        closable
+        style={{ marginBottom: 20 }}
+        message="适用范围说明"
+        description={
+          <>
+            目前支持<strong>传统安装工程</strong>（电气、给排水、消防、通风空调、智能化等）。
+            其他工程类型（如海绵工程、市政工程、园林绿化、土建等）定额库覆盖不全，匹配准确率可能较低，结果仅供参考。
+          </>
+        }
+      />
       <Steps
         current={currentStep}
         size="small"
