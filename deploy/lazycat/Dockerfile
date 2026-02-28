@@ -8,7 +8,7 @@
 # ============================================================
 # 阶段1：构建前端 React 应用
 # ============================================================
-FROM node:22-alpine AS frontend-builder
+FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/node:22-alpine AS frontend-builder
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ RUN npm run build
 # ============================================================
 # 阶段2：最终镜像（Python + Nginx）
 # ============================================================
-FROM python:3.12-slim
+FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
 
 # 设置UTF-8编码（避免中文乱码）
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
