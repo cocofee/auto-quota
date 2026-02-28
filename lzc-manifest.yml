@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.23
+version: 0.1.26
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -13,12 +13,13 @@ application:
 
 services:
   frontend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:latest
+    image: cloud.lazycat.app.autoquota
+    command: nginx -g 'daemon off;'
     depends_on:
       - backend
 
   backend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
+    image: cloud.lazycat.app.autoquota
     command: sh -c "cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
@@ -26,14 +27,22 @@ services:
       ENVIRONMENT: production
       JWT_SECRET_KEY: "8OseAirAJYwPDPdryD4y_mWDItFZVp-5tywgeRdf5io"
       CORS_ORIGINS: http://frontend.cloud.lazycat.app.autoquota.lzcapp
-      AGENT_LLM: claude
-      CLAUDE_API_KEY: sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585
-      CLAUDE_BASE_URL: http://47.243.74.21:8080
-      CLAUDE_MODEL: claude-opus-4-6
+      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+      PYTHONIOENCODING: "utf-8"
+      # 大模型配置：通义千问（Web端用MATCH_LLM，命令行用AGENT_LLM）
+      AGENT_LLM: qwen
+      MATCH_LLM: qwen
+      QWEN_API_KEY: "改成你的通义千问API Key"
+      QWEN_MODEL: qwen-plus
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
-      # 好易支付配置（注册后填入�?
+      # Cookie安全配置（懒猫微服通过HTTPS提供服务）
+      COOKIE_SECURE: "true"
+      COOKIE_SAMESITE: "lax"
+      # 好易支付配置（注册后填入）
       EPAY_PID: ""
       EPAY_KEY: ""
       EPAY_URL: ""
@@ -50,15 +59,20 @@ services:
       - redis
 
   celery-worker:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
+    image: cloud.lazycat.app.autoquota
     command: sh -c "cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
-      AGENT_LLM: claude
-      CLAUDE_API_KEY: sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585
-      CLAUDE_BASE_URL: http://47.243.74.21:8080
-      CLAUDE_MODEL: claude-opus-4-6
+      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+      PYTHONIOENCODING: "utf-8"
+      # 大模型配置：通义千问
+      AGENT_LLM: qwen
+      MATCH_LLM: qwen
+      QWEN_API_KEY: "改成你的通义千问API Key"
+      QWEN_MODEL: qwen-plus
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
