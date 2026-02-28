@@ -9,7 +9,7 @@
 
 import { useState, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Dropdown, Tag } from 'antd';
+import { Layout, Menu, Button, Dropdown, Tag, Modal, Timeline } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
@@ -31,11 +31,13 @@ import {
   WalletOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
 
 const { Header, Sider, Content } = Layout;
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
@@ -164,34 +166,58 @@ export default function MainLayout() {
         style={{
           background: '#ffffff',
           borderRight: '1px solid #e2e8f0',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        {/* 品牌Logo区域 */}
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderBottom: '1px solid #f1f5f9',
-          }}
-        >
-          <span style={{
-            fontSize: collapsed ? 18 : 20,
-            fontWeight: 700,
-            color: '#2563eb',
-            letterSpacing: collapsed ? 0 : 2,
-          }}>
-            {collapsed ? 'J' : 'J.A.R.V.I.S'}
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          {/* 品牌Logo区域 */}
+          <div
+            style={{
+              height: 64,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderBottom: '1px solid #f1f5f9',
+            }}
+          >
+            <span style={{
+              fontSize: collapsed ? 18 : 20,
+              fontWeight: 700,
+              color: '#2563eb',
+              letterSpacing: collapsed ? 0 : 2,
+            }}>
+              {collapsed ? 'J' : 'J.A.R.V.I.S'}
+            </span>
+          </div>
+          {/* 菜单区域（占满剩余空间） */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <Menu
+              mode="inline"
+              selectedKeys={[location.pathname]}
+              items={menuItems}
+              onClick={onMenuClick}
+              style={{ borderRight: 0, padding: '8px 0' }}
+            />
+          </div>
+          {/* 底部版本号 */}
+          <div
+            onClick={() => setChangelogOpen(true)}
+            style={{
+              padding: collapsed ? '12px 0' : '12px 16px',
+              borderTop: '1px solid #f1f5f9',
+              textAlign: 'center',
+              cursor: 'pointer',
+              color: '#94a3b8',
+              fontSize: 12,
+              transition: 'color 0.2s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = '#2563eb')}
+            onMouseLeave={e => (e.currentTarget.style.color = '#94a3b8')}
+          >
+            {collapsed ? `v${APP_VERSION.split('.').pop()}` : `v${APP_VERSION}`}
+          </div>
         </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={onMenuClick}
-          style={{ borderRight: 0, padding: '8px 0' }}
-        />
       </Sider>
 
       <Layout>
@@ -226,6 +252,37 @@ export default function MainLayout() {
           <Outlet />
         </Content>
       </Layout>
+
+      {/* 更新日志弹窗 */}
+      <Modal
+        title="更新日志"
+        open={changelogOpen}
+        onCancel={() => setChangelogOpen(false)}
+        footer={null}
+        width={480}
+      >
+        <Timeline
+          style={{ marginTop: 20 }}
+          items={CHANGELOG.map((entry, i) => ({
+            color: i === 0 ? 'blue' : 'gray',
+            children: (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  v{entry.version}
+                  <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>
+                    {entry.date}
+                  </span>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, color: '#475569' }}>
+                  {entry.changes.map((c, j) => (
+                    <li key={j} style={{ marginBottom: 2 }}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+          }))}
+        />
+      </Modal>
     </Layout>
   );
 }

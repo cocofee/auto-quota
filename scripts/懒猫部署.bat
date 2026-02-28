@@ -11,6 +11,7 @@ set "BACKEND_IMAGE=%ACR_REGISTRY%/%ACR_NAMESPACE%/auto-quota-app:latest"
 set "SSH_CMD=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q -p 22222 box@fc03:1136:3825:2790:9282:59f7:ba36:403"
 set "CONTAINER=cloudlazycatappautoquota-backend-1"
 set "GIT_BASH=C:\Program Files\Git\bin\bash.exe"
+set "LZC_CLI=node "%APPDATA%\npm\node_modules\@lazycatcloud\lzc-cli\scripts\cli.js""
 
 cd /d "%PROJECT_DIR%"
 
@@ -120,7 +121,12 @@ if "%buildchoice%"=="3" goto DO_BACKEND_ONLY
 echo Invalid option
 goto END
 
+rem ============================================================
+rem  Full Build: 先递增版本号，再构建镜像，这样镜像里的代码版本是新的
+rem ============================================================
+
 :DO_ALL
+call :BUMP_VERSION
 echo.
 echo [1/4] Build frontend...
 docker build -t %FRONTEND_IMAGE% web/frontend/
@@ -137,18 +143,19 @@ if !errorlevel! neq 0 (
 echo [3/4] Push frontend...
 docker push %FRONTEND_IMAGE%
 if !errorlevel! neq 0 (
-    echo [FAIL] Push failed, try option 5 to login
-    goto END
+    echo [WARN] Frontend push failed, try option 5 to login
+    echo [WARN] Continue to pack anyway...
 )
 echo [4/4] Push backend...
 docker push %BACKEND_IMAGE%
 if !errorlevel! neq 0 (
-    echo [FAIL] Push failed, try option 5 to login
-    goto END
+    echo [WARN] Backend push failed, try option 5 to login
+    echo [WARN] Continue to pack anyway...
 )
 goto DO_PACK
 
 :DO_FRONTEND_ONLY
+call :BUMP_VERSION
 echo.
 echo [1/2] Build frontend...
 docker build -t %FRONTEND_IMAGE% web/frontend/
@@ -159,12 +166,13 @@ if !errorlevel! neq 0 (
 echo [2/2] Push frontend...
 docker push %FRONTEND_IMAGE%
 if !errorlevel! neq 0 (
-    echo [FAIL] Push failed, try option 5 to login
-    goto END
+    echo [WARN] Push failed, try option 5 to login
+    echo [WARN] Continue to pack anyway...
 )
 goto DO_PACK
 
 :DO_BACKEND_ONLY
+call :BUMP_VERSION
 echo.
 echo [1/2] Build backend...
 docker build -f web/backend/Dockerfile -t %BACKEND_IMAGE% .
@@ -175,29 +183,46 @@ if !errorlevel! neq 0 (
 echo [2/2] Push backend...
 docker push %BACKEND_IMAGE%
 if !errorlevel! neq 0 (
-    echo [FAIL] Push failed, try option 5 to login
-    goto END
+    echo [WARN] Push failed, try option 5 to login
+    echo [WARN] Continue to pack anyway...
 )
 goto DO_PACK
 
-:DO_PACK
+rem ============================================================
+rem  BUMP_VERSION: 递增版本号 + 更新 changelog（子程序）
+rem  Quick deploy 在 DO_PACK 里调用，Full build 在构建前调用
+rem ============================================================
+
+:BUMP_VERSION
 echo.
-echo [PACK] Reading current version...
+echo [VER] Reading current version...
 for /f "tokens=2 delims=: " %%a in ('findstr /r "^version:" lzc-manifest.yml') do set "VER=%%a"
 set "VER=%VER:"=%"
-echo        Current: %VER%
+echo       Current: %VER%
 
 for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
     set /a "P=%%c+1"
     set "NEW=%%a.%%b.!P!"
 )
-echo        New:     !NEW!
+echo       New:     !NEW!
 
-echo [PACK] Updating manifest version...
+echo [VER] Updating manifest...
 powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
 
+echo [VER] Updating changelog...
+python tools\bump_changelog.py !NEW!
+exit /b 0
+
+rem ============================================================
+rem  DO_PACK: 打包 LPK + 安装到懒猫 + git commit
+rem ============================================================
+
+:DO_PACK
+rem Quick deploy 走这里时还没改版本，先改
+if not defined NEW call :BUMP_VERSION
+echo.
 echo [PACK] Building LPK...
-lzc-cli project build .
+%LZC_CLI% project build .
 
 set "LPK_FILE=cloud.lazycat.app.autoquota-v!NEW!.lpk"
 if not exist "!LPK_FILE!" (
@@ -206,13 +231,11 @@ if not exist "!LPK_FILE!" (
 )
 echo [OK] LPK ready: !LPK_FILE!
 
+echo.
 echo [INSTALL] Deploying to LazyCat...
-lzc-cli app install "!LPK_FILE!"
-if !errorlevel! neq 0 (
-    echo [FAIL] Install failed
-    echo [TIP] Manual: lzc-cli app install !LPK_FILE!
-    goto END
-)
+>"%TEMP%\lzc_install.sh" echo lzc-cli app install '!LPK_FILE!' --ssh-key "$HOME/.ssh/id_ed25519"
+"%GIT_BASH%" --login "%TEMP%\lzc_install.sh"
+echo [INSTALL] exit code: !errorlevel!
 
 echo.
 echo  ========================================

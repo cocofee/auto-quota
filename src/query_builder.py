@@ -312,7 +312,8 @@ def _normalize_bill_name(name: str) -> str:
 
 
 def build_quota_query(parser, name: str, description: str = "",
-                      specialty: str = "") -> str:
+                      specialty: str = "",
+                      bill_params: dict = None) -> str:
     """
     构建定额搜索query（模仿定额命名风格）
 
@@ -327,12 +328,15 @@ def build_quota_query(parser, name: str, description: str = "",
         name: 清单项目名称（如"复合管"、"成套配电箱"）
         description: 清单项目特征描述
         specialty: 清单所属专业册号（如"C10"），用于同义词范围限定
+        bill_params: 清单已清洗的参数字典（来自bill_cleaner）。
+                     如果提供，优先使用；否则从文本重新提取。
 
     返回:
         构建好的搜索query
     """
     full_text = f"{name} {description}".strip()
-    params = parser.parse(full_text)
+    # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
+    params = bill_params if bill_params is not None else parser.parse(full_text)
 
     # 提取安装部位（室内/室外）
     location = ""
@@ -359,7 +363,9 @@ def build_quota_query(parser, name: str, description: str = "",
     # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
     is_electrical = any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
     is_lamp = "灯" in name  # 灯具类走专用的_normalize_bill_name处理
-    if (material or dn) and not is_electrical and not is_lamp:
+    # 风口/喷口/散流器的φ值是开口直径，不是管道DN，不走管道路由
+    is_wind_outlet = any(kw in name for kw in ("风口", "喷口", "散流器"))
+    if (material or dn) and not is_electrical and not is_lamp and not is_wind_outlet:
         if material and "管" in material:
             core = f"{location}{usage}{material}"
         elif material:
@@ -400,6 +406,18 @@ def build_quota_query(parser, name: str, description: str = "",
         # 让param_validator通过向上取档选择正确的站数档位
         speed_class = "运行速度2m/s以上" if elevator_speed > 2.0 else "运行速度2m/s以下"
         return f"{elevator_type}({speed_class}) 层数、站数"
+
+    # ===== 周长类：风口/散流器/消声器等按周长取档的设备 =====
+    # 这类设备没有材质/DN参数，但有周长参数（从规格如1200*100计算得来）
+    # 在搜索词中加入"安装"和"周长"关键词，引导BM25匹配定额名中含
+    # "XX安装 XX周长(mm) ≤XXXX"的子目，避免被无关的制作/材料定额干扰
+    # 具体周长值的取档由param_validator完成
+    perimeter = params.get("perimeter")
+    # 只有风口类设备（风口/喷口/散流器）才走周长路由
+    # 静压箱等箱体的W*H是箱体尺寸，不是开口周长，不应走此路由
+    if perimeter and is_wind_outlet:
+        normalized_name = _normalize_bill_name(name)
+        return _apply_synonyms(f"{normalized_name} 安装 周长", specialty)
 
     # ===== 非管道类：从描述中提取关键信息构建query =====
     # 电气设备、灯具、电缆、配管、配线等

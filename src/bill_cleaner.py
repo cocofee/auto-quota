@@ -85,6 +85,12 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
             full_text = f"{item['name']} {desc}".strip()
             item["params"] = text_parser.parse(full_text)
 
+        # 第3.5步：参数语境审查 —— 剔除不属于主体产品的参数
+        # 目的：清单描述里的参数不一定属于主体产品本身，
+        #       比如卫生器具的DN15是供水管接口口径，不是洁具的尺寸参数。
+        #       在源头剔除，下游（搜索query构建、参数验证）统一用清洗好的参数。
+        _filter_irrelevant_params(item)
+
         # 第4步：线缆类型标签（电线/电缆/光缆/双绞线）
         cable_type = _classify_cable_type(item["name"], desc)
         if cable_type:
@@ -236,6 +242,37 @@ def _classify_cable_type(name: str, desc: str) -> str | None:
             return '电线'
 
     return None
+
+
+# ============================================================
+# 参数语境审查（第3.5步）
+# ============================================================
+
+# 这些品类的DN是供水/排水管接口口径，不是产品自身的尺寸参数
+# 例如：洗脸盆 DN15 → DN15是给水管口径，洗脸盆定额不按DN分档
+_NON_DN_PRODUCTS = (
+    "洗脸盆", "洗涤盆", "洗手盆", "坐便器", "蹲便器",
+    "小便器", "大便器", "拖布池", "浴缸", "淋浴器",
+)
+
+
+def _filter_irrelevant_params(item: dict):
+    """剔除不属于主体产品的参数
+
+    清单描述中的参数不一定属于主体产品本身。比如：
+    - 卫生器具的DN15是供水管接口口径 → 删掉DN
+    - 地漏的DN50是排水口径 → 保留（地漏定额按DN分档）
+
+    原则：只清理确定不属于产品的参数，有疑问的保留。
+    """
+    params = item.get("params")
+    if not params or "dn" not in params:
+        return
+
+    name = item.get("name", "")
+    if any(kw in name for kw in _NON_DN_PRODUCTS):
+        removed_dn = params.pop("dn")
+        logger.debug(f"参数审查: '{name}' 剔除DN{removed_dn}（供水管口径，非产品参数）")
 
 
 # ============================================================

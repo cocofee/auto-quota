@@ -32,22 +32,21 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
 
 WORKDIR /app
 
-# 使用阿里云Debian镜像源（国内网络加速）
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
-    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; true
+# 使用清华Debian镜像源（支持trixie）
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list 2>/dev/null; true
 
-# 安装系统依赖（nginx用于前端托管，gcc/libpq-dev用于Python包编译）
+# 安装系统依赖（nginx用于前端托管，gcc用于Python包编译）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gcc \
-    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装Python依赖（核心匹配引擎 + Web后端）
 COPY requirements.txt /app/requirements.txt
 COPY web/backend/requirements.txt /app/web/backend/requirements.txt
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r /app/requirements.txt \
-    && pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r /app/web/backend/requirements.txt
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn -r /app/requirements.txt \
+    && pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn -r /app/web/backend/requirements.txt
 
 # 复制前端构建产物 + nginx配置
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html

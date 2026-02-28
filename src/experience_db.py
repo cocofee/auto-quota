@@ -272,10 +272,18 @@ class ExperienceDB:
                     metadata={"hnsw:space": "cosine"}
                 )
                 # 健康探测：检测旧索引是否与当前ChromaDB版本兼容
+                # ChromaDB版本更新可能改变异常消息措辞，所以匹配多种已知关键词
                 try:
                     coll.count()
                 except (AttributeError, Exception) as probe_err:
-                    if "dimensionality" in str(probe_err) or "has no attribute" in str(probe_err):
+                    err_msg = str(probe_err).lower()
+                    # 已知的不兼容异常关键词（覆盖不同ChromaDB版本的报错措辞）
+                    rebuild_keywords = [
+                        "dimensionality", "dimension", "mismatch",
+                        "incompatible", "has no attribute", "corrupt",
+                        "invalid", "segment", "index",
+                    ]
+                    if any(kw in err_msg for kw in rebuild_keywords):
                         logger.warning(f"经验库向量索引格式不兼容（{probe_err}），自动重建...")
                         coll = self._auto_rebuild_collection(client)
                     else:
