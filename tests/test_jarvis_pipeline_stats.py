@@ -1,4 +1,8 @@
-from tools.jarvis_pipeline import _build_pipeline_stats, _count_manual_review_rows
+from tools.jarvis_pipeline import (
+    _build_manual_neutralizations,
+    _build_pipeline_stats,
+    _count_manual_review_rows,
+)
 
 
 def test_count_manual_review_rows_excludes_cross_item_reminders():
@@ -36,3 +40,37 @@ def test_build_pipeline_stats_counts_agent_error_as_fallback():
     stats = _build_pipeline_stats(results, [], [], [])
 
     assert stats["fallback"] == 2
+
+
+def test_build_manual_neutralizations_only_for_category_mismatch():
+    manual_items = [
+        {
+            "seq": 5,
+            "name": "70℃防火阀 FD",
+            "error_type": "category_mismatch",
+            "error_reason": "类别不匹配: 清单是「防火阀」，定额是「罐壁接合管」",
+            "sheet_name": "安装工程",
+            "sheet_bill_seq": 12,
+        },
+        {
+            "seq": 6,
+            "name": "普通问题",
+            "error_type": "parameter_deviation",
+            "error_reason": "参数偏差",
+        },
+        {
+            "seq": 0,
+            "name": "【跨项提醒】",
+            "error_type": "category_mismatch",
+            "error_reason": "类别不匹配",
+        },
+    ]
+
+    actions = _build_manual_neutralizations(manual_items)
+
+    assert len(actions) == 1
+    action = actions[0]
+    assert action["seq"] == 5
+    assert action["clear_quota"] is True
+    assert action["sheet_name"] == "安装工程"
+    assert action["sheet_bill_seq"] == 12

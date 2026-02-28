@@ -81,6 +81,54 @@ def _build_pipeline_stats(results, auto_corrections, manual_items, measure_items
     }
 
 
+def _build_manual_neutralizations(manual_items) -> list[dict]:
+    """Build quota-clearing corrections for category mismatch rows pending manual review."""
+    neutralizations: list[dict] = []
+    seen: set[tuple[str, int | None, int]] = set()
+
+    for item in manual_items or []:
+        if not isinstance(item, dict):
+            continue
+
+        error_type = str(item.get("error_type", "") or "").strip()
+        reason = str(item.get("error_reason", item.get("reason", "")) or "").strip()
+        if error_type != "category_mismatch" and "类别不匹配" not in reason:
+            continue
+
+        seq_raw = item.get("seq")
+        try:
+            seq = int(seq_raw)
+        except (TypeError, ValueError):
+            continue
+        if seq <= 0:
+            continue
+
+        sheet_name = str(item.get("sheet_name", "") or "").strip()
+        sheet_bill_seq_raw = item.get("sheet_bill_seq")
+        try:
+            sheet_bill_seq = int(sheet_bill_seq_raw)
+        except (TypeError, ValueError):
+            sheet_bill_seq = None
+
+        key = (sheet_name, sheet_bill_seq, seq)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        neutralizations.append({
+            "seq": seq,
+            "sheet_name": sheet_name,
+            "sheet_bill_seq": sheet_bill_seq,
+            "quota_id": "",
+            "quota_name": "",
+            "clear_quota": True,
+            "review_mark": "待人工",
+            "note": f"Jarvis待人工: {reason[:80]}",
+        })
+
+    return neutralizations
+
+
 def pipeline(excel_path, province=None, aux_provinces=None,
              use_experience=True, store=True, quiet=False):
     """Jarvis 批处理流水线（匹配 → 审核 → 纠正 → 存经验库）
@@ -226,12 +274,14 @@ def pipeline(excel_path, province=None, aux_provinces=None,
             logger.error(f"审核统计记录失败: {e}")
 
         # ---- 第3步：纠正Excel ----
+        manual_neutralizations = _build_manual_neutralizations(manual_items)
+        excel_corrections = auto_corrections + manual_neutralizations
         corrected_excel = output_excel  # 默认用匹配结果（无纠正时不生成新文件）
 
-        if auto_corrections:
+        if excel_corrections:
             print()
             print("=" * 60)
-            print(f"第3步：纠正Excel（{len(auto_corrections)}处）")
+            print(f"第3步：纠正Excel（{len(excel_corrections)}处）")
             print("=" * 60)
 
             try:
@@ -239,8 +289,10 @@ def pipeline(excel_path, province=None, aux_provinces=None,
             except ImportError:
                 from jarvis_correct import correct_excel
 
-            corrected_excel = correct_excel(output_excel, auto_corrections)
+            corrected_excel = correct_excel(output_excel, excel_corrections)
             print(f"  已审核Excel: {corrected_excel}")
+            if manual_neutralizations:
+                print(f"  已标记待人工: {len(manual_neutralizations)}条（已清空疑似错配定额）")
         else:
             print("\n第3步：无需纠正，跳过")
 
