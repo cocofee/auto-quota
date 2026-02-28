@@ -215,3 +215,43 @@ def test_correct_excel_legacy_mode_accepts_text_serial_float():
         assert out_ws.cell(row=3, column=3).value == "NEW-NAME"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_correct_excel_can_clear_mismatched_quota_for_manual_review():
+    tmp_dir = _new_tmp_dir()
+    try:
+        input_path = tmp_dir / "clear_quota_input.xlsx"
+        output_path = tmp_dir / "clear_quota_output.xlsx"
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.cell(row=2, column=1, value=1)
+        ws.cell(row=3, column=2, value="C3-3-86")
+        ws.cell(row=3, column=3, value="罐壁接合管 DN400")
+        ws.cell(row=3, column=5, value="个")
+        ws.cell(row=3, column=6, value=7)
+        ws.cell(row=2, column=10, value="OLD-MARK")
+        ws.cell(row=2, column=11, value="OLD-REASON")
+        wb.save(input_path)
+
+        correct_excel(
+            str(input_path),
+            [{
+                "seq": 1,
+                "clear_quota": True,
+                "review_mark": "待人工",
+                "note": "Jarvis待人工: 类别不匹配",
+            }],
+            str(output_path),
+        )
+
+        out_wb = openpyxl.load_workbook(output_path)
+        out_ws = out_wb.active
+        assert out_ws.cell(row=3, column=2).value in ("", None)
+        assert out_ws.cell(row=3, column=3).value in ("", None)
+        assert out_ws.cell(row=3, column=5).value in ("", None)
+        assert out_ws.cell(row=3, column=6).value in ("", None)
+        assert out_ws.cell(row=2, column=10).value == "待人工"
+        assert "类别不匹配" in str(out_ws.cell(row=2, column=11).value)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

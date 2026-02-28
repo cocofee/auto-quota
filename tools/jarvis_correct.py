@@ -119,8 +119,11 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
 
     for corr in corrections:
         seq = corr.get("seq")
-        quota_id = corr.get("quota_id", "")
-        quota_name = corr.get("quota_name", "")
+        clear_quota = bool(corr.get("clear_quota", False))
+        quota_id = "" if clear_quota else corr.get("quota_id", "")
+        quota_name = "" if clear_quota else corr.get("quota_name", "")
+        review_mark = corr.get("review_mark")
+        review_note = corr.get("note")
 
         if seq is None:
             skipped.append(f"缺少seq字段: {corr}")
@@ -177,6 +180,7 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
             item_row = quota_row - 1
 
         old_id = target_ws.cell(row=quota_row, column=2).value or ""
+        old_name = target_ws.cell(row=quota_row, column=3).value or ""
 
         # 原子化写入：先写核心列（定额编号B列），成功了再写辅助列（名称C列、审核标记J/K列）
         # 如果B列写入失败（如合并单元格），不写J/K列，避免数据不一致
@@ -187,12 +191,31 @@ def correct_excel(excel_path: str, corrections: list, output_path: str | None = 
             _safe_write_cell(
                 target_ws, quota_row, 3, quota_name, skipped, seq_int, "定额名称"
             )
+            if clear_quota:
+                _safe_write_cell(
+                    target_ws, quota_row, 5, None, skipped, seq_int, "单位"
+                )
+                _safe_write_cell(
+                    target_ws, quota_row, 6, None, skipped, seq_int, "工程量"
+                )
+
+            mark = str(review_mark).strip() if review_mark is not None else ""
+            if not mark:
+                mark = "待人工" if clear_quota else "★★★已审核"
+
+            note = str(review_note).strip() if review_note is not None else ""
+            if not note:
+                if clear_quota:
+                    note = f"Jarvis待人工: 清空疑似错配定额 {old_id} {old_name}".strip()
+                else:
+                    note = f"Jarvis纠正: {old_id} → {quota_id}"
+
             _safe_write_cell(
-                target_ws, item_row, 10, "★★★已审核", skipped, seq_int, "审核标记"
+                target_ws, item_row, 10, mark, skipped, seq_int, "审核标记"
             )
             _safe_write_cell(
                 target_ws, item_row, 11,
-                f"Jarvis纠正: {old_id} → {quota_id}",
+                note,
                 skipped, seq_int, "纠正说明",
             )
             applied += 1
