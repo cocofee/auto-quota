@@ -238,16 +238,28 @@ async def delete_experience(
     try:
         def _delete():
             db = _get_experience_db()
-            # ExperienceDB 没有直接 delete 方法，通过内部 _connect() 获取连接后直接删
+            # 1. 从 SQLite 删除记录
             conn = db._connect()
             try:
                 cursor = conn.execute(
                     "DELETE FROM experiences WHERE id = ?", (record_id,)
                 )
                 conn.commit()
-                return cursor.rowcount > 0
+                deleted = cursor.rowcount > 0
             finally:
                 conn.close()
+
+            # 2. 同步清理 ChromaDB 向量索引（防止"幽灵"向量残留）
+            if deleted:
+                try:
+                    coll = db.collection
+                    if coll is not None:
+                        coll.delete(ids=[str(record_id)])
+                except Exception as e:
+                    # 向量清理失败不影响主流程（下次重建索引会自动修复）
+                    logger.warning(f"清理向量索引失败（id={record_id}）: {e}")
+
+            return deleted
 
         deleted = await asyncio.to_thread(_delete)
         if not deleted:

@@ -256,6 +256,9 @@ class ExperienceDB:
 
         修复：先创建collection再保存client引用，防止get_or_create_collection失败后
         self._chroma_client已赋值导致后续调用跳过初始化、返回None的问题。
+
+        自动修复：ChromaDB升级后旧索引格式不兼容时（如dimensionality错误），
+        自动删除旧索引并从SQLite重建，用户无感。
         """
         try:
             from src.model_cache import ModelCache
@@ -268,12 +271,55 @@ class ExperienceDB:
                     name="experiences",
                     metadata={"hnsw:space": "cosine"}
                 )
+                # 健康探测：检测旧索引是否与当前ChromaDB版本兼容
+                try:
+                    coll.count()
+                except (AttributeError, Exception) as probe_err:
+                    if "dimensionality" in str(probe_err) or "has no attribute" in str(probe_err):
+                        logger.warning(f"经验库向量索引格式不兼容（{probe_err}），自动重建...")
+                        coll = self._auto_rebuild_collection(client)
+                    else:
+                        raise
                 self._collection = coll
                 self._chroma_client = client
         except Exception as e:
             logger.warning(f"ChromaDB collection初始化失败: {e}")
             # 返回None，调用方需要处理
         return self._collection
+
+    def _auto_rebuild_collection(self, client):
+        """ChromaDB索引格式不兼容时，自动删旧索引并从SQLite重建"""
+        import shutil
+        # 删除旧索引目录
+        chroma_path = Path(str(self.chroma_dir))
+        if chroma_path.exists():
+            shutil.rmtree(chroma_path, ignore_errors=True)
+            logger.info(f"已删除旧索引目录: {chroma_path}")
+
+        # 重新创建客户端和collection
+        from src.model_cache import ModelCache
+        # 清除ModelCache中缓存的旧客户端（目录已删，旧客户端失效）
+        path_str = str(self.chroma_dir)
+        if path_str in ModelCache._chroma_clients:
+            del ModelCache._chroma_clients[path_str]
+        client = ModelCache.get_chroma_client(path_str)
+        coll = client.get_or_create_collection(
+            name="experiences",
+            metadata={"hnsw:space": "cosine"}
+        )
+        self._collection = coll
+        self._chroma_client = client
+
+        # 从SQLite重建向量索引（后台执行，不阻塞当前请求）
+        import threading
+        def _rebuild_in_background():
+            try:
+                self.rebuild_vector_index()
+                logger.info("经验库向量索引自动重建完成")
+            except Exception as e:
+                logger.error(f"经验库向量索引自动重建失败: {e}")
+        threading.Thread(target=_rebuild_in_background, daemon=True).start()
+        return coll
 
     # ================================================================
     # 定额校验（导入时自动审查）

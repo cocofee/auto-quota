@@ -144,7 +144,11 @@ class UniversalKB:
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
+        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）
+
+        自动修复：ChromaDB升级后旧索引格式不兼容时（如dimensionality错误），
+        自动删除旧索引并从SQLite重建，用户无感。
+        """
         from src.model_cache import ModelCache
         import config
         client = ModelCache.get_chroma_client(str(self.chroma_dir))
@@ -155,6 +159,15 @@ class UniversalKB:
                 name="universal_kb",
                 metadata={"hnsw:space": "cosine"}
             )
+            # 健康探测：检测旧索引是否与当前ChromaDB版本兼容
+            try:
+                self._collection.count()
+            except (AttributeError, Exception) as probe_err:
+                if "dimensionality" in str(probe_err) or "has no attribute" in str(probe_err):
+                    logger.warning(f"通用知识库向量索引格式不兼容（{probe_err}），自动重建...")
+                    self._collection = self._auto_rebuild_collection(client)
+                else:
+                    raise
             # 校验向量模型版本一致性（模型变更后旧索引不可信）
             try:
                 current_model = getattr(config, "VECTOR_MODEL_NAME", "unknown")
@@ -173,6 +186,39 @@ class UniversalKB:
             except Exception:
                 pass  # metadata 读取失败不影响正常使用
         return self._collection
+
+    def _auto_rebuild_collection(self, client):
+        """ChromaDB索引格式不兼容时，自动删旧索引并从SQLite重建"""
+        import shutil
+        # 删除旧索引目录
+        chroma_path = Path(str(self.chroma_dir))
+        if chroma_path.exists():
+            shutil.rmtree(chroma_path, ignore_errors=True)
+            logger.info(f"已删除旧索引目录: {chroma_path}")
+
+        # 重新创建客户端和collection
+        from src.model_cache import ModelCache
+        path_str = str(self.chroma_dir)
+        if path_str in ModelCache._chroma_clients:
+            del ModelCache._chroma_clients[path_str]
+        client = ModelCache.get_chroma_client(path_str)
+        coll = client.get_or_create_collection(
+            name="universal_kb",
+            metadata={"hnsw:space": "cosine"}
+        )
+        self._chroma_client = client
+        self._collection = coll
+
+        # 从SQLite重建向量索引（后台执行，不阻塞当前请求）
+        import threading
+        def _rebuild_in_background():
+            try:
+                self.rebuild_vector_index()
+                logger.info("通用知识库向量索引自动重建完成")
+            except Exception as e:
+                logger.error(f"通用知识库向量索引自动重建失败: {e}")
+        threading.Thread(target=_rebuild_in_background, daemon=True).start()
+        return coll
 
     # ================================================================
     # 写入知识
