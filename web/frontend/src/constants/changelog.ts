@@ -5,7 +5,7 @@
  * APP_VERSION 保持和 lzc-manifest.yml 中的 version 一致。
  */
 
-export const APP_VERSION = '0.1.42';
+export const APP_VERSION = '0.1.44';
 
 export interface ChangelogEntry {
   version: string;
@@ -14,6 +14,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.44',
+    date: '2026-03-01',
+    changes: [
+      'v0.1.44 更新',
+    ],
+  },
+  {
+    version: '0.1.43',
+    date: '2026-03-01',
+    changes: [
+      'v0.1.43 更新',
+    ],
+  },
   {
     version: '0.1.42',
     date: '2026-03-01',
