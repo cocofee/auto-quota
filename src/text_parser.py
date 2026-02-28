@@ -11,6 +11,7 @@
 两者合并后按长度降序排列，确保长词优先匹配（避免"钢塑复合管"被"钢管"截断）
 """
 
+import math
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -690,10 +691,23 @@ class TextParser:
 
         来源：
         1. 定额名称："周长(mm以内) 3200" → 3200
-        2. 清单规格："规格：800*320" → 周长 = (800+320)*2 = 2240
+        2. 清单规格（矩形）："规格：800*320" → 周长 = (800+320)*2 = 2240
         3. 三维规格："规格：400*120*1000" → 周长 = (400+120)*2 = 1040（忽略长度）
+        4. 清单规格（圆形）："φ400" → 周长 = π×400 = 1257（圆形直径转周长）
         """
-        return self._extract_named_mm_or_spec(text, "周长", use_perimeter=True)
+        # 先走矩形逻辑（定额名称直接给周长 / W×H算周长）
+        result = self._extract_named_mm_or_spec(text, "周长", use_perimeter=True)
+        if result is not None:
+            return result
+
+        # 矩形没提到，检查有没有圆形直径（φ/Φ），有就算周长 = π × 直径
+        diameter_match = re.search(r'[ΦφΦ]\s*(\d+)', text)
+        if diameter_match:
+            diameter = float(diameter_match.group(1))
+            if diameter > 10:  # 过滤掉太小的值（可能是其他参数）
+                return round(math.pi * diameter, 1)
+
+        return None
 
     def _extract_half_perimeter(self, text: str) -> Optional[float]:
         """
