@@ -133,6 +133,32 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
         import main as auto_quota_main  # 延迟导入，避免循环依赖
         import config as quota_config
 
+        # 从数据库读取大模型配置，注入到 config 模块
+        # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
+        try:
+            from app.services.llm_config_service import get_llm_config_sync
+            llm_cfg = get_llm_config_sync(session)
+            llm_type = llm_cfg["llm_type"]
+            api_key = llm_cfg["api_key"]
+            base_url = llm_cfg["base_url"]
+            model_name = llm_cfg["model"]
+
+            # 注入对应模型的配置到 config 模块（覆盖环境变量默认值）
+            if api_key:
+                key_attr = f"{llm_type.upper()}_API_KEY"
+                url_attr = f"{llm_type.upper()}_BASE_URL"
+                model_attr = f"{llm_type.upper()}_MODEL"
+                setattr(quota_config, key_attr, api_key)
+                if base_url:
+                    setattr(quota_config, url_attr, base_url)
+                if model_name:
+                    setattr(quota_config, model_attr, model_name)
+                # 同时更新 AGENT_LLM 让 match_engine 知道用哪个模型
+                quota_config.AGENT_LLM = llm_type
+                logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → {llm_type} / {model_name}")
+        except Exception as e:
+            logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
+
         # 自动挂载同批辅助定额库（同省份+同年份的兄弟库）
         province = params.get("province", "")
         aux_provinces = quota_config.get_sibling_provinces(province)

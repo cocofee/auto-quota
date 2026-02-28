@@ -176,3 +176,63 @@ async def update_invite_code(
     from app.services.invite_service import set_invite_code
     new_code = await set_invite_code(db, body.invite_code)
     return {"message": "邀请码已更新", "invite_code": new_code}
+
+
+# ============================================================
+# 大模型配置管理
+# ============================================================
+
+@router.get("/llm-config")
+async def get_llm_config_api(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """获取当前大模型配置（API Key只返回脱敏版本）"""
+    from app.services.llm_config_service import get_llm_config
+    cfg = await get_llm_config(db)
+    # API Key脱敏：只显示前4位和后4位
+    raw_key = cfg.get("api_key", "")
+    if len(raw_key) > 8:
+        masked_key = raw_key[:4] + "****" + raw_key[-4:]
+    elif raw_key:
+        masked_key = "****"
+    else:
+        masked_key = ""
+    return {
+        "llm_type": cfg["llm_type"],
+        "api_key_masked": masked_key,
+        "has_api_key": bool(raw_key),
+        "base_url": cfg["base_url"],
+        "model": cfg["model"],
+    }
+
+
+class UpdateLlmConfigRequest(BaseModel):
+    llm_type: str = Field(description="模型类型: qwen/claude/deepseek/kimi/openai")
+    api_key: str = Field(default="", description="API密钥（留空则保持不变）")
+    base_url: str = Field(default="", description="API地址（留空用默认值）")
+    model: str = Field(default="", description="模型名称（留空用默认值）")
+
+
+@router.put("/llm-config")
+async def update_llm_config_api(
+    body: UpdateLlmConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """修改大模型配置（下次任务立即生效，无需重启）"""
+    from app.services.llm_config_service import set_llm_config, get_llm_config, VALID_LLM_TYPES
+    if body.llm_type not in VALID_LLM_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的模型类型: {body.llm_type}，可选: {', '.join(VALID_LLM_TYPES)}",
+        )
+
+    # 如果API Key为空，保持数据库中已有的Key不变
+    api_key = body.api_key
+    if not api_key:
+        existing = await get_llm_config(db)
+        api_key = existing.get("api_key", "")
+
+    await set_llm_config(db, body.llm_type, api_key, body.base_url, body.model)
+    return {"message": f"已切换为 {body.llm_type}，下次任务生效"}

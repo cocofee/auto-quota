@@ -92,10 +92,16 @@ async def create_task(
                    + (f"，本次任务至少需要{limit_count}条" if limit_count else ""),
         )
 
-    # 匹配模式和大模型从后端配置读取（用户不需要选择）
-    from app.config import MATCH_MODE, MATCH_LLM
+    # 匹配模式和大模型：优先从数据库读（管理员可在设置页面修改），没有则用环境变量
+    from app.config import MATCH_MODE
     mode = MATCH_MODE
-    agent_llm = MATCH_LLM
+    try:
+        from app.services.llm_config_service import get_llm_config
+        llm_cfg = await get_llm_config(db)
+        agent_llm = llm_cfg["llm_type"]
+    except Exception:
+        from app.config import MATCH_LLM
+        agent_llm = MATCH_LLM
 
     # 2. 生成任务ID并保存上传文件
     #    save_upload_file 是同步磁盘I/O，用 to_thread 避免阻塞事件循环
