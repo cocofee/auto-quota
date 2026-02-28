@@ -113,6 +113,18 @@ function MethodCardsTab() {
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadCards(page); }, [page, loadCards]);
 
+  // 切回浏览器标签页时自动刷新（解决后端CLI改了数据前端看不到的问题）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadStats();
+        loadCards(page);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadStats, loadCards, page]);
+
   // 搜索
   const onSearch = async () => {
     if (!searchQuery.trim()) {
@@ -377,6 +389,18 @@ function UniversalKBTab() {
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadRecords(page, layerFilter); }, [page, layerFilter, loadRecords]);
 
+  // 切回浏览器标签页时自动刷新（解决后端CLI改了数据前端看不到的问题）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadStats();
+        loadRecords(page, layerFilter);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadStats, loadRecords, page, layerFilter]);
+
   // 搜索
   const onSearch = async () => {
     if (!searchQuery.trim()) {
@@ -627,6 +651,18 @@ function RulesTab() {
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => { loadRecords(page); }, [page, loadRecords]);
+
+  // 切回浏览器标签页时自动刷新（解决后端CLI改了数据前端看不到的问题）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadStats();
+        loadRecords(page);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadStats, loadRecords, page]);
 
   // 搜索
   const onSearch = async () => {
