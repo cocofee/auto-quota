@@ -80,7 +80,11 @@ class BillReader:
         "name": ["项目名称", "名称", "清单名称"],
         "description": ["项目特征", "特征描述", "项目特征描述", "特征"],
         "unit": ["计量单位", "单位", "计量\n单位"],
-        "quantity": ["工程量"],
+        # 常见变体：
+        # - 工程量
+        # - 工程数量（暂定）
+        # - 工程数量(暂定)
+        "quantity": ["工程量", "工程数量"],
     }
 
     def read_excel(self, file_path: str, sheet_name: str = None) -> list[dict]:

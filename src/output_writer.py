@@ -163,14 +163,15 @@ def convert_quantity(bill_qty, bill_unit: str, quota_unit: str):
     大多数情况单位相同，直接返回原值。
     """
     if bill_qty is None:
-        return 0
+        # 清单工程量缺失时保持空值，避免在结果里误写 0
+        return None
 
     # 归一化工程量为数值，避免字符串数量在换算时触发类型错误
     qty = bill_qty
     if isinstance(qty, str):
         q = qty.strip().replace(",", "")
         if q == "":
-            return 0
+            return None
         try:
             qty = float(q)
         except ValueError:
@@ -503,6 +504,9 @@ class OutputWriter:
         """
         # 找表头行
         header_row = self._find_header_row_in_ws(ws)
+        layout = self._detect_bill_layout(ws, header_row)
+        unit_col = layout["unit_col"]
+        qty_col = layout["qty_col"]
 
         # 第1步：删除已有定额行（如果原文件中有旧的定额行）
         self._remove_existing_quota_rows(ws, header_row)
@@ -612,7 +616,8 @@ class OutputWriter:
                 for q_idx, quota in enumerate(quotas):
                     q_row = row_idx + 1 + q_idx
                     self._write_single_quota_row(
-                        ws, q_row, quota, bill_unit, bill_qty)
+                        ws, q_row, quota, bill_unit, bill_qty,
+                        unit_col=unit_col, qty_col=qty_col)
             else:
                 # 未匹配提示行
                 q_row = row_idx + 1
@@ -631,25 +636,88 @@ class OutputWriter:
         self._add_extra_headers(ws, header_row)
 
         # 第6步：统一格式化所有行（固定列宽 + 字体 + 边框 + 换行）
-        self._apply_post_format(ws, header_row)
+        self._apply_post_format(ws, header_row, quantity_col=qty_col)
 
         logger.info(f"Sheet [{ws.title}]: 处理 {len(row_result_pairs)} 条清单项")
 
     def _find_header_row_in_ws(self, ws) -> int:
-        """在worksheet中找到表头行（包含'项目编码''项目名称'等关键词的行）"""
-        bill_keywords = ["项目编码", "项目名称", "计量单位", "工程量"]
+        """识别真实表头行，避免把“工程量清单”等标题行误判为表头。"""
+        scan_max_row = min(ws.max_row, 30)
+        scan_max_col = min(ws.max_column, 20)
 
-        for row_idx in range(1, min(ws.max_row + 1, 21)):
-            row_text = ""
-            for col_idx in range(1, min(ws.max_column + 1, 20)):
+        unit_keywords = ("计量单位", "单位")
+        qty_keywords = ("工程量", "工程数量", "数量")
+        name_keywords = ("项目名称", "清单项目名称", "名称")
+        code_keywords = ("项目编码", "编码")
+
+        for row_idx in range(1, scan_max_row + 1):
+            texts = []
+            for col_idx in range(1, scan_max_col + 1):
                 val = ws.cell(row=row_idx, column=col_idx).value
-                if val is not None:
-                    row_text += str(val).strip().replace("\n", "") + " "
-            matched = sum(1 for kw in bill_keywords if kw in row_text)
-            if matched >= 2:
+                if val is None:
+                    continue
+                text = self._normalize_header_text(val)
+                if text:
+                    texts.append(text)
+
+            if not texts:
+                continue
+
+            row_text = " ".join(texts)
+            has_unit = any(k in row_text for k in unit_keywords)
+            has_qty = any(k in row_text for k in qty_keywords)
+            has_name_or_code = any(k in row_text for k in name_keywords + code_keywords)
+
+            if has_unit and has_qty and has_name_or_code:
                 return row_idx
 
-        return 1  # 默认第1行
+        return 1
+
+    @staticmethod
+    def _normalize_header_text(value) -> str:
+        """Normalize header text for robust keyword matching."""
+        if value is None:
+            return ""
+        return str(value).strip().replace("\n", "").replace(" ", "")
+
+    def _find_header_col(self, ws, header_row: int, include_keywords: tuple[str, ...],
+                         exclude_keywords: tuple[str, ...] = ()) -> int | None:
+        """Find a header column by keywords on the detected header row."""
+        scan_max_col = min(ws.max_column, 30)
+        for col_idx in range(1, scan_max_col + 1):
+            text = self._normalize_header_text(ws.cell(row=header_row, column=col_idx).value)
+            if not text:
+                continue
+            if any(kw in text for kw in include_keywords) and not any(
+                kw in text for kw in exclude_keywords
+            ):
+                return col_idx
+        return None
+
+    def _detect_bill_layout(self, ws, header_row: int) -> dict:
+        """Detect unit/quantity columns from the source sheet header."""
+        unit_col = self._find_header_col(
+            ws,
+            header_row,
+            include_keywords=("计量单位", "单位"),
+            exclude_keywords=("单价", "合价", "费用", "组成"),
+        )
+        qty_col = self._find_header_col(
+            ws,
+            header_row,
+            include_keywords=("工程量", "工程数量", "数量"),
+            exclude_keywords=("单价", "合价", "税", "费用", "组成"),
+        )
+
+        if unit_col is None:
+            unit_col = 5
+        if qty_col is None:
+            qty_col = 6
+
+        logger.debug(
+            f"Sheet [{ws.title}] layout detected: unit_col={unit_col}, qty_col={qty_col}, header_row={header_row}"
+        )
+        return {"unit_col": unit_col, "qty_col": qty_col}
 
     def _remove_existing_quota_rows(self, ws, header_row: int):
         """删除已有的定额行（从下往上删，避免行号偏移）"""
@@ -758,7 +826,8 @@ class OutputWriter:
         return current_row
 
     def _write_single_quota_row(self, ws, q_row: int, quota: dict,
-                                bill_unit: str, bill_qty):
+                                bill_unit: str, bill_qty,
+                                unit_col: int = 5, qty_col: int = 6):
         """写入一行定额数据（广联达标准格式：宋体9号、thin边框、无背景、不合并）"""
         # A列留空（广联达靠这个区分清单行和子目行）
 
@@ -780,14 +849,14 @@ class OutputWriter:
 
         # E列：单位（居中）
         quota_unit = quota.get("unit", "") or bill_unit
-        cell_e = ws.cell(row=q_row, column=5, value=quota_unit)
+        cell_e = ws.cell(row=q_row, column=unit_col, value=quota_unit)
         cell_e.font = GLD_FONT
         cell_e.alignment = Alignment(horizontal="center", vertical="center",
                                      wrap_text=True)
 
         # F列：工程量（右对齐，自动单位换算）
         converted_qty = convert_quantity(bill_qty, bill_unit, quota_unit)
-        cell_f = ws.cell(row=q_row, column=6, value=converted_qty)
+        cell_f = ws.cell(row=q_row, column=qty_col, value=converted_qty)
         cell_f.font = GLD_FONT
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
@@ -822,7 +891,7 @@ class OutputWriter:
         ws.column_dimensions["N"].width = 30
         ws.column_dimensions["O"].width = 36
 
-    def _apply_post_format(self, ws, header_row: int):
+    def _apply_post_format(self, ws, header_row: int, quantity_col: int = 6):
         """
         格式化清单行和定额行（不动分部/合计等原始行，保留其原始格式）
 
@@ -866,7 +935,7 @@ class OutputWriter:
                 h_align = "center"
                 if col_idx in (3, 4, 11, 12, 13, 14, 15):  # C/D/K/L/M/N/O：左对齐
                     h_align = "left"
-                elif col_idx in (6, 7, 8):  # F/G/H列（数量/单价/合价）：右对齐
+                elif col_idx in (quantity_col, 7, 8):  # 数量/单价/合价：右对齐
                     h_align = "right"
                 cell.alignment = Alignment(
                     horizontal=h_align, vertical="center", wrap_text=True
