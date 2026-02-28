@@ -147,6 +147,20 @@ export default function ExperienceManage() {
     }
   }, [activeTab, page, loadRecords]);
 
+  // 切回浏览器标签页时自动刷新（解决后端CLI改了数据前端看不到的问题）
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadStats();
+        if (activeTab !== 'search') {
+          loadRecords(activeTab, page);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadStats, loadRecords, activeTab, page]);
+
   // 切换地区时：自动选中该地区第一个省份，重置分页
   const onRegionChange = (value: string | undefined) => {
     setSelectedRegion(value);
