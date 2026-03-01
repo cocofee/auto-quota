@@ -58,7 +58,11 @@ def get_recent_commits() -> list[str]:
 
 
 def update_changelog(new_version: str, changes: list[str]):
-    """更新 changelog.ts 文件"""
+    """更新 changelog.ts 文件
+
+    自动生成的条目默认 type='admin'（仅管理员可见）。
+    部署后可手动编辑 changelog.ts，把用户关心的改动改为 type='user'。
+    """
     if not CHANGELOG_FILE.exists():
         print(f"  [错误] 文件不存在: {CHANGELOG_FILE}")
         sys.exit(1)
@@ -72,10 +76,12 @@ def update_changelog(new_version: str, changes: list[str]):
         content
     )
 
-    # 2. 在 CHANGELOG 数组最前面插入新条目
+    # 2. 在 CHANGELOG 数组最前面插入新条目（新格式：带 type 字段）
     today = date.today().isoformat()
-    # 生成 changes 数组的字符串
-    changes_lines = ",\n".join(f"      '{c}'" for c in changes)
+    # 默认都标为 admin，部署后手动把用户关心的改成 user
+    changes_lines = ",\n".join(
+        f"      {{ type: 'admin', text: '{c}' }}" for c in changes
+    )
     new_entry = (
         f"  {{\n"
         f"    version: '{new_version}',\n"
@@ -86,8 +92,7 @@ def update_changelog(new_version: str, changes: list[str]):
         f"  }},\n"
     )
 
-    # 在第一个 { 之后插入（CHANGELOG 数组的开头）
-    # 匹配 "CHANGELOG: ChangelogEntry[] = [\n" 后面的位置
+    # 在 CHANGELOG 数组开头插入
     content = re.sub(
         r'(export const CHANGELOG: ChangelogEntry\[\] = \[\n)',
         r'\g<1>' + new_entry,
@@ -97,7 +102,7 @@ def update_changelog(new_version: str, changes: list[str]):
     CHANGELOG_FILE.write_text(content, encoding="utf-8")
     print(f"  [OK] changelog.ts 已更新: v{new_version}")
     print(f"       日期: {today}")
-    print(f"       更新项: {len(changes)}条")
+    print(f"       更新项: {len(changes)}条（默认admin，需手动改user）")
     for c in changes:
         print(f"         - {c}")
 

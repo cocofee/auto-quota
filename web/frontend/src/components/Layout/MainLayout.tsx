@@ -32,6 +32,7 @@ import {
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
+import type { ChangelogEntry } from '../../constants/changelog';
 
 const { Header, Sider, Content } = Layout;
 
@@ -255,32 +256,63 @@ export default function MainLayout() {
 
       {/* 更新日志弹窗 */}
       <Modal
-        title="更新日志"
+        title={isAdmin ? '更新日志（完整）' : '更新日志'}
         open={changelogOpen}
         onCancel={() => setChangelogOpen(false)}
         footer={null}
-        width={480}
+        width={520}
       >
         <Timeline
           style={{ marginTop: 20 }}
-          items={CHANGELOG.map((entry, i) => ({
-            color: i === 0 ? 'blue' : 'gray',
-            children: (
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  v{entry.version}
-                  <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>
-                    {entry.date}
-                  </span>
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18, color: '#475569' }}>
-                  {entry.changes.map((c, j) => (
-                    <li key={j} style={{ marginBottom: 2 }}>{c}</li>
-                  ))}
-                </ul>
-              </div>
-            ),
-          }))}
+          items={
+            // 按角色过滤：普通用户只看 user 类型，管理员看全部
+            CHANGELOG
+              .map((entry): ChangelogEntry => {
+                if (isAdmin) return entry;
+                // 普通用户：只保留 type='user' 的条目
+                return { ...entry, changes: entry.changes.filter(c => c.type === 'user') };
+              })
+              .filter(entry => entry.changes.length > 0) // 整版无可见条目则跳过
+              .map((entry, i) => ({
+                color: i === 0 ? 'blue' : 'gray',
+                children: (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      v{entry.version}
+                      <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>
+                        {entry.date}
+                      </span>
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 18, color: '#475569' }}>
+                      {entry.changes.map((c, j) => (
+                        <li key={j} style={{ marginBottom: 2 }}>
+                          {/* 管理员模式下，admin 条目加 [系统] 标签 + 灰色 */}
+                          {isAdmin && c.type === 'admin' ? (
+                            <span style={{ color: '#94a3b8' }}>
+                              <Tag
+                                style={{
+                                  fontSize: 10,
+                                  lineHeight: '16px',
+                                  padding: '0 4px',
+                                  marginRight: 4,
+                                  borderColor: '#e2e8f0',
+                                  color: '#94a3b8',
+                                }}
+                              >
+                                系统
+                              </Tag>
+                              {c.text}
+                            </span>
+                          ) : (
+                            c.text
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ),
+              }))
+          }
         />
       </Modal>
     </Layout>

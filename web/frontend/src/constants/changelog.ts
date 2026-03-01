@@ -3,266 +3,78 @@
  *
  * 每次发版往数组最前面加一条即可。
  * APP_VERSION 保持和 lzc-manifest.yml 中的 version 一致。
+ *
+ * 分类规则：
+ * - type: 'user'  → 所有用户可见（定额匹配、经验库、准确率等用户关心的改动）
+ * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.54';
+export const APP_VERSION = '0.1.55';
+
+/** 更新类型：user=用户可见, admin=仅管理员可见 */
+export type ChangeType = 'user' | 'admin';
+
+/** 单条更新 */
+export interface ChangeItem {
+  type: ChangeType;
+  text: string;
+}
 
 export interface ChangelogEntry {
   version: string;
   date: string;       // YYYY-MM-DD
-  changes: string[];  // 每条一句话
+  changes: ChangeItem[];
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.1.55',
+    date: '2026-03-01',
+    changes: [
+      { type: 'admin', text: 'v0.1.55 更新' },
+    ],
+  },
+  {
     version: '0.1.54',
     date: '2026-03-01',
     changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.53',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.52',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.51',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.50',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.49',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.48',
-    date: '2026-03-01',
-    changes: [
-      '清理旧版lpk安装包（已加入.gitignore）',
-      '自进化 — 从13222张经验卡片挖掘90+同义词',
-      '经验库验证增强 + 参数验证relaxed模式',
-    ],
-  },
-  {
-    version: '0.1.47',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.47 更新',
-    ],
-  },
-  {
-    version: '0.1.46',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.46 更新',
-    ],
-  },
-  {
-    version: '0.1.45',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.45 更新',
-    ],
-  },
-  {
-    version: '0.1.44',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.44 更新',
-    ],
-  },
-  {
-    version: '0.1.43',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.43 更新',
-    ],
-  },
-  {
-    version: '0.1.42',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.42 更新',
-    ],
-  },
-  {
-    version: '0.1.41',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.41 更新',
-    ],
-  },
-  {
-    version: '0.1.40',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.40 更新',
-    ],
-  },
-  {
-    version: '0.1.39',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.39 更新',
-    ],
-  },
-  {
-    version: '0.1.38',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.38 更新',
-    ],
-  },
-  {
-    version: '0.1.37',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.37 更新',
-    ],
-  },
-  {
-    version: '0.1.36',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.36 更新',
-    ],
-  },
-  {
-    version: '0.1.35',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.35 更新',
-    ],
-  },
-  {
-    version: '0.1.34',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.34 更新',
-    ],
-  },
-  {
-    version: '0.1.33',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.33 更新',
-    ],
-  },
-  {
-    version: '0.1.32',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.32 更新',
-    ],
-  },
-  {
-    version: '0.1.31',
-    date: '2026-03-01',
-    changes: [
-      'v0.1.31 更新',
-    ],
-  },
-  {
-    version: '0.1.30',
-    date: '2026-02-28',
-    changes: [
-      'v0.1.30 更新',
-    ],
-  },
-  {
-    version: '0.1.31',
-    date: '2026-02-28',
-    changes: [
-      'v0.1.31 更新',
-    ],
-  },
-  {
-    version: '0.1.30',
-    date: '2026-02-28',
-    changes: [
-      'v0.1.30 更新',
-    ],
-  },
-  {
-    version: '0.1.30',
-    date: '2026-02-28',
-    changes: [
-      'v0.1.30 更新',
-    ],
-  },
-  {
-    version: '0.1.30',
-    date: '2026-02-28',
-    changes: [
-      'v0.1.30 更新',
+      { type: 'user', text: '经验库验证增强，参数验证relaxed模式（容错更好）' },
+      { type: 'admin', text: '自进化 — 从13222张经验卡片挖掘90+同义词' },
+      { type: 'admin', text: '清理旧版lpk安装包（已加入.gitignore）' },
     ],
   },
   {
     version: '0.1.29',
     date: '2026-02-28',
     changes: [
-      '圆形风管/阀门周长参数修复（φ直径自动转周长）',
-      '管理页面切回浏览器自动刷新数据',
-      'ChromaDB索引格式不兼容时自动重建',
-      '经验库删除同步清理向量索引',
+      { type: 'user', text: '圆形风管/阀门周长参数修复（φ直径自动转周长）' },
+      { type: 'admin', text: '管理页面切回浏览器自动刷新数据' },
+      { type: 'admin', text: 'ChromaDB索引格式不兼容时自动重建' },
+      { type: 'admin', text: '经验库删除同步清理向量索引' },
     ],
   },
   {
     version: '0.1.26',
     date: '2026-02-27',
     changes: [
-      'CI/CD自动部署配置',
-      'manifest改回使用ACR镜像',
+      { type: 'admin', text: 'CI/CD自动部署配置' },
+      { type: 'admin', text: 'manifest改回使用ACR镜像' },
     ],
   },
   {
     version: '0.1.25',
     date: '2026-02-26',
     changes: [
-      'Web端大模型在线配置管理',
-      'Token自动刷新机制',
+      { type: 'admin', text: 'Web端大模型在线配置管理' },
+      { type: 'admin', text: 'Token自动刷新机制' },
     ],
   },
   {
     version: '0.1.24',
     date: '2026-02-25',
     changes: [
-      'Jarvis类别不匹配自动清空错配定额',
-      'output_writer列自适应',
+      { type: 'user', text: 'Jarvis类别不匹配时自动清空错配定额（减少误匹配）' },
+      { type: 'admin', text: 'output_writer列自适应' },
     ],
   },
 ];

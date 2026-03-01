@@ -232,6 +232,36 @@ def preview_import(pairs: list[dict], provinces: list[str]):
     }
 
 
+def do_import_names_only(pairs: list[dict], project_name: str):
+    """只导入通用知识库（清单名→定额名的映射关系）
+
+    不需要指定省份、不校验编号，只提取名称级别的配对关系。
+    适用于：跨版本数据（如造价HOME老项目）、编号不通的外部数据。
+    """
+    from tools.import_reference import convert_to_kb_records
+    from src.universal_kb import UniversalKB
+
+    logger.info(f"导入通用知识库（仅名称模式）... {len(pairs)}条")
+    kb_records = convert_to_kb_records(pairs)
+    kb = UniversalKB()
+    kb_stats = kb.batch_import(
+        kb_records,
+        source_province="",  # 不绑定省份
+        source_project=project_name,
+    )
+    logger.info(f"  通用知识库: 新增{kb_stats['added']}条, 合并{kb_stats['merged']}条")
+
+    # 汇总
+    print(f"\n{'='*50}")
+    print(f"导入完成（仅名称模式，不写经验库）")
+    print(f"  项目: {project_name}")
+    print(f"  清单: {len(pairs)}条")
+    print(f"  通用知识库: +{kb_stats['added']}条, 合并{kb_stats['merged']}条")
+    print(f"{'='*50}")
+
+    return kb_stats
+
+
 def do_import(pairs: list[dict], project_name: str, provinces: list[str],
               only_matched: bool = True, source: str = "batch_import"):
     """正式导入：写入经验库和通用知识库
@@ -310,14 +340,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("input_file", help="XML文件路径（造价HOME A.xml等）")
-    parser.add_argument("--province", required=True,
-                        help="主定额库（如 '重庆安装' 或完整名称）")
+    parser.add_argument("--province", default=None,
+                        help="主定额库（如 '重庆安装' 或完整名称）。--names-only模式下不需要")
     parser.add_argument("--aux-provinces", default=None,
                         help="辅助定额库（逗号分隔，如 '重庆房建,重庆市政'）")
     parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
     parser.add_argument("--preview", action="store_true", help="预览模式（只分析不导入）")
     parser.add_argument("--trust", action="store_true",
                         help="信任模式：数据进权威层（默认进候选层，需人工确认后晋升）")
+    parser.add_argument("--names-only", action="store_true",
+                        help="仅名称模式：只导入通用知识库（清单名→定额名），不需要省份定额库，不写经验库")
     parser.add_argument("--limit", type=int, default=0, help="只处理前N条（调试用）")
 
     args = parser.parse_args()
@@ -328,14 +360,20 @@ def main():
         logger.error(f"文件不存在: {input_path}")
         sys.exit(1)
 
-    # 解析省份
-    provinces = []
-    try:
-        main_province = config.resolve_province(args.province)
-        provinces.append(main_province)
-    except ValueError as e:
-        logger.error(f"省份解析失败: {e}")
+    # names-only模式不需要省份
+    if not args.names_only and not args.province:
+        logger.error("请指定 --province 或使用 --names-only 模式")
         sys.exit(1)
+
+    # 解析省份（非names-only模式才需要）
+    provinces = []
+    if args.province:
+        try:
+            main_province = config.resolve_province(args.province)
+            provinces.append(main_province)
+        except ValueError as e:
+            logger.error(f"省份解析失败: {e}")
+            sys.exit(1)
 
     if args.aux_provinces:
         for ap in args.aux_provinces.split(","):
@@ -361,8 +399,11 @@ def main():
         pairs = pairs[:args.limit]
         logger.info(f"限制处理前{args.limit}条")
 
-    # 第2步：预览或导入
-    if args.preview:
+    # 第2步：根据模式处理
+    if args.names_only:
+        # 仅名称模式：只写通用知识库，不需要省份定额库
+        do_import_names_only(pairs, project_name)
+    elif args.preview:
         preview_import(pairs, provinces)
     else:
         # 先预览再导入
