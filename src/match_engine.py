@@ -937,6 +937,22 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         if idx in results_by_idx:
             _finalize_trace(results_by_idx[idx])
             results.append(results_by_idx[idx])
+        else:
+            # 兜底：idx缺失时生成空结果，防止清单被静默丢弃
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] 缺失匹配结果，生成兜底空结果")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "匹配过程异常，未能产生结果",
+                "match_source": "missing_fallback",
+                "no_match_reason": "处理过程中结果丢失",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
 
     logger.info(f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
                f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条")
