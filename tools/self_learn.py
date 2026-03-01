@@ -264,10 +264,10 @@ def main():
     db = ExperienceDB()
     conn = sqlite3.connect(db.db_path)
     conn.row_factory = sqlite3.Row
+    # 加载全部卡片（权威层+候选层），权威层数据更可靠但候选层量大
     rows = conn.execute('''
         SELECT id, bill_text, bill_name, quota_ids, quota_names, province, layer, source
         FROM experiences
-        WHERE layer = 'authority' OR source IN ('user_confirmed', 'user_correction')
         ORDER BY province
     ''').fetchall()
     conn.close()
