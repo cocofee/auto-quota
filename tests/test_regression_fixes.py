@@ -91,7 +91,9 @@ def test_validate_experience_params_exact_still_checks_when_family_missing(monke
     assert len(parse_calls) >= 2
 
 
-def test_validate_experience_params_exact_skips_method2_when_family_available(monkeypatch):
+def test_validate_experience_params_exact_relaxed_when_family_available(monkeypatch):
+    """方法1(family)验证通过后，方法2仍然执行但用宽松模式：
+    只拦截硬参数超档(score=0.0)，放行软参数差异(score>0.0)。"""
     exp_result = {
         "quotas": [
             {"quota_id": "Q-1", "name": "配电箱安装 规格(回路以内) 8"},
@@ -115,11 +117,7 @@ def test_validate_experience_params_exact_skips_method2_when_family_available(mo
         def _find_quota_by_tier(family: dict, tier: int):
             return "Q-1"
 
-    def fail_parse(_text: str):
-        raise AssertionError("method2 should be skipped for exact match when family is available")
-
-    monkeypatch.setattr(match_core.text_parser, "parse", fail_parse)
-
+    # 方法2现在会执行（不再跳过），但宽松模式下软差异不拦截
     validated = match_core._validate_experience_params(
         exp_result,
         item,

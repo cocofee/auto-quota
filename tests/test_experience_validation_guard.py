@@ -251,3 +251,119 @@ def test_review_check_handles_empty_quotas():
 
     error = _review_check_match_result(result, item)
     assert error is None  # 空定额不需要审核
+
+
+# ===== 测试场景8：精确匹配 + 方法1确认 + DN硬超档 → 仍拒绝 =====
+
+def test_exact_rule_validated_but_dn_hard_mismatch(monkeypatch):
+    """
+    F2修复验证：精确匹配+方法1确认回路正确，但DN超档 → 方法2仍应拦截
+
+    场景：经验库回路数对了（方法1通过），但定额名称中的DN和清单不匹配。
+    params_match 对DN超档返回 (False, 0.0)，属于硬参数超档，必须拒绝。
+    """
+    exp_result = {
+        "quotas": [{"quota_id": "Q-RIGHT", "name": "管道安装 DN100"}]
+    }
+    item = {"name": "给水管道 DN150", "description": "回路:4"}
+
+    # 方法1：模拟规则校验通过（回路数正确）
+    validator = MockRuleValidator(
+        extract_value=4,
+        correct_tier=4,
+        correct_quota_id="Q-RIGHT"  # 方法1确认档位正确
+    )
+
+    # 方法2：DN硬超档，score=0.0
+    def fake_parse(text):
+        if "DN150" in text:
+            return {"dn": 150}
+        return {"dn": 100}
+
+    def fake_params_match(bill_p, quota_p):
+        # DN不匹配 → 硬拒绝
+        return False, 0.0
+
+    monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(match_core.text_parser, "params_match", fake_params_match)
+
+    result = match_core._validate_experience_params(
+        exp_result, item, rule_validator=validator, is_exact=True
+    )
+    assert result is None, "精确匹配+方法1确认，但DN硬超档(score=0.0)仍应拒绝"
+
+
+# ===== 测试场景9：精确匹配 + 方法1确认 + 材质软差异 → 放行 =====
+
+def test_exact_rule_validated_material_soft_mismatch_passes(monkeypatch):
+    """
+    F2修复验证：精确匹配+方法1确认，材质名称差异（非硬超档）→ 放行不误杀
+
+    场景：用户确认的映射中，清单写"射频同轴电缆"，定额写"同轴电缆"，
+    params_match 返回 (False, 0.3)，属于材质软差异，不应误杀。
+    """
+    exp_result = {
+        "quotas": [{"quota_id": "Q-RIGHT", "name": "同轴电缆布线"}]
+    }
+    item = {"name": "射频同轴电缆布线", "description": ""}
+
+    validator = MockRuleValidator(
+        extract_value=None,  # 无回路参数（电缆类）
+    )
+    # 方法1：无家族数据，rule_validated=False
+    # 所以这个case其实不会走宽松模式（需要rule_validated=True）
+    # 改为有家族+确认的场景：
+    validator2 = MockRuleValidator(
+        extract_value=4,
+        correct_tier=4,
+        correct_quota_id="Q-RIGHT"  # 方法1确认
+    )
+
+    def fake_parse(text):
+        if "射频" in text:
+            return {"material": "射频同轴电缆"}
+        return {"material": "同轴电缆"}
+
+    def fake_params_match(bill_p, quota_p):
+        # 材质不同但不是硬超档，score>0
+        return False, 0.3
+
+    monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(match_core.text_parser, "params_match", fake_params_match)
+
+    result = match_core._validate_experience_params(
+        exp_result, item, rule_validator=validator2, is_exact=True
+    )
+    assert result is not None, "精确匹配+方法1确认+材质软差异(score=0.3)应放行不误杀"
+
+
+# ===== 测试场景10：非精确匹配 + 材质软差异 → 仍拒绝（行为不变） =====
+
+def test_non_exact_material_soft_mismatch_still_rejects(monkeypatch):
+    """非精确匹配时，即使是材质软差异也应拒绝（保持原行为）"""
+    exp_result = {
+        "quotas": [{"quota_id": "Q-RIGHT", "name": "同轴电缆布线"}]
+    }
+    item = {"name": "射频同轴电缆布线", "description": ""}
+
+    validator = MockRuleValidator(
+        extract_value=4,
+        correct_tier=4,
+        correct_quota_id="Q-RIGHT"
+    )
+
+    def fake_parse(text):
+        if "射频" in text:
+            return {"material": "射频同轴电缆"}
+        return {"material": "同轴电缆"}
+
+    def fake_params_match(bill_p, quota_p):
+        return False, 0.3
+
+    monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(match_core.text_parser, "params_match", fake_params_match)
+
+    result = match_core._validate_experience_params(
+        exp_result, item, rule_validator=validator, is_exact=False  # 非精确
+    )
+    assert result is None, "非精确匹配+材质软差异仍应拒绝（保持原行为）"

@@ -168,8 +168,9 @@ def _validate_experience_params(exp_result: dict, item: dict,
     验证方式：
     1. 规则校验器：检查定额所在家族的档位是否匹配（处理回路/容量/截面等）
     2. 参数提取器：对比清单和定额名称中的数值参数（DN/截面/kVA等）
-       注意：精确匹配(is_exact=True)时跳过方法2，因为用户已确认该文本→定额的映射，
-       简单参数对比可能因材质名称差异（如"射频同轴电缆"≠"同轴电缆"）误杀正确结果。
+       精确匹配(is_exact=True)且方法1已验证时用宽松模式：
+       只拦截硬参数超档（DN/截面/kVA，score=0.0），
+       不因材质名称差异（如"射频同轴电缆"≠"同轴电缆"）误杀正确结果。
 
     如果发现参数不匹配，返回 None（拒绝经验库结果，让后续流程重新匹配）
     """
@@ -216,19 +217,30 @@ def _validate_experience_params(exp_result: dict, item: dict,
     # ===== 方法2：用参数提取器对比基本参数（DN/截面/材质等） =====
     # 这能发现"DN150"不应该套"DN100以内"这类错误
     # 方法1只验证"家族参数"（如回路数），方法2验证DN/截面/材质等基础参数。
-    # 即使方法1已通过，非精确匹配时方法2仍应执行兜底（防止回路对但DN不对的情况）。
-    # 精确匹配(is_exact=True)且方法1已验证时跳过方法2（用户确认的映射不应被误杀）。
-    if main_quota_name and not (rule_validated and is_exact):
+    # 即使方法1已通过，方法2仍应执行（防止回路对但DN不对的情况）。
+    # 精确匹配(is_exact=True)且方法1已验证时，用宽松模式：
+    #   只拦截硬参数超档（DN/截面/kVA，score=0.0），不因材质名称差异误杀。
+    #   原因：用户确认的文本→定额映射中，材质名称可能不同（如"射频同轴电缆"≠"同轴电缆"），
+    #   这类差异不应导致拒绝，但DN/截面/kVA超档是真正的错误。
+    if main_quota_name:
         bill_params = text_parser.parse(bill_text)
         quota_params = text_parser.parse(main_quota_name)
         if bill_params and quota_params:
             is_match, score = text_parser.params_match(bill_params, quota_params)
             if not is_match:
-                logger.info(
-                    f"经验库参数校验失败(方法2): '{bill_text[:40]}' "
-                    f"清单参数{bill_params} vs 定额'{main_quota_name[:30]}'参数{quota_params}, "
-                    f"拒绝经验库结果")
-                return None
+                if rule_validated and is_exact and score > 0.0:
+                    # 宽松模式：精确匹配+方法1确认+非硬参数超档 → 放行
+                    # score>0.0 说明不是DN/截面/kVA硬超档（硬超档直接返回0.0），
+                    # 而是材质等软参数差异，用户确认的映射不应被误杀
+                    logger.debug(
+                        f"经验库精确匹配参数软差异(放行): '{bill_text[:40]}' "
+                        f"score={score:.2f}, 方法1已确认档位正确")
+                else:
+                    logger.info(
+                        f"经验库参数校验失败(方法2): '{bill_text[:40]}' "
+                        f"清单参数{bill_params} vs 定额'{main_quota_name[:30]}'参数{quota_params}, "
+                        f"拒绝经验库结果")
+                    return None
 
     return exp_result  # 参数验证通过，接受经验库结果
 

@@ -24,6 +24,7 @@
 import json
 import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -52,6 +53,8 @@ class ExperienceDB:
         self._model = None
         self._collection = None
         self._chroma_client = None
+        # 锁：防止多线程并发初始化/重建 collection 时的竞态条件
+        self._collection_lock = threading.Lock()
 
         # 确保数据库表存在
         self._init_db()
@@ -259,41 +262,55 @@ class ExperienceDB:
 
         自动修复：ChromaDB升级后旧索引格式不兼容时（如dimensionality错误），
         自动删除旧索引并从SQLite重建，用户无感。
+
+        线程安全：用 _collection_lock 保护，防止多线程并发初始化/重建时竞态。
         """
-        try:
-            from src.model_cache import ModelCache
-            client = ModelCache.get_chroma_client(str(self.chroma_dir))
-            # 客户端变了（被重建过），需要刷新collection
-            if client is not self._chroma_client:
-                # 先创建collection，成功后再保存client引用
-                # （如果get_or_create_collection失败，下次还会重试）
-                coll = client.get_or_create_collection(
-                    name="experiences",
-                    metadata={"hnsw:space": "cosine"}
-                )
-                # 健康探测：检测旧索引是否与当前ChromaDB版本兼容
-                # ChromaDB版本更新可能改变异常消息措辞，所以匹配多种已知关键词
-                try:
-                    coll.count()
-                except (AttributeError, Exception) as probe_err:
-                    err_msg = str(probe_err).lower()
-                    # 已知的不兼容异常关键词（覆盖不同ChromaDB版本的报错措辞）
-                    rebuild_keywords = [
-                        "dimensionality", "dimension", "mismatch",
-                        "incompatible", "has no attribute", "corrupt",
-                        "invalid", "segment", "index",
-                    ]
-                    if any(kw in err_msg for kw in rebuild_keywords):
-                        logger.warning(f"经验库向量索引格式不兼容（{probe_err}），自动重建...")
-                        coll = self._auto_rebuild_collection(client)
-                    else:
-                        raise
-                self._collection = coll
-                self._chroma_client = client
-        except Exception as e:
-            logger.warning(f"ChromaDB collection初始化失败: {e}")
-            # 返回None，调用方需要处理
-        return self._collection
+        # 快速路径：已初始化且客户端未变，无需加锁
+        if self._collection is not None and self._chroma_client is not None:
+            try:
+                from src.model_cache import ModelCache
+                current_client = ModelCache.get_chroma_client(str(self.chroma_dir))
+                if current_client is self._chroma_client:
+                    return self._collection
+            except Exception:
+                pass
+
+        # 慢路径：需要初始化或刷新，加锁保护
+        with self._collection_lock:
+            try:
+                from src.model_cache import ModelCache
+                client = ModelCache.get_chroma_client(str(self.chroma_dir))
+                # 客户端变了（被重建过），需要刷新collection
+                if client is not self._chroma_client:
+                    # 先创建collection，成功后再保存client引用
+                    # （如果get_or_create_collection失败，下次还会重试）
+                    coll = client.get_or_create_collection(
+                        name="experiences",
+                        metadata={"hnsw:space": "cosine"}
+                    )
+                    # 健康探测：检测旧索引是否与当前ChromaDB版本兼容
+                    # ChromaDB版本更新可能改变异常消息措辞，所以匹配多种已知关键词
+                    try:
+                        coll.count()
+                    except (AttributeError, Exception) as probe_err:
+                        err_msg = str(probe_err).lower()
+                        # 已知的不兼容异常关键词（覆盖不同ChromaDB版本的报错措辞）
+                        rebuild_keywords = [
+                            "dimensionality", "dimension", "mismatch",
+                            "incompatible", "has no attribute", "corrupt",
+                            "invalid", "segment", "index",
+                        ]
+                        if any(kw in err_msg for kw in rebuild_keywords):
+                            logger.warning(f"经验库向量索引格式不兼容（{probe_err}），自动重建...")
+                            coll = self._auto_rebuild_collection(client)
+                        else:
+                            raise
+                    self._collection = coll
+                    self._chroma_client = client
+            except Exception as e:
+                logger.warning(f"ChromaDB collection初始化失败: {e}")
+                # 返回None，调用方需要处理
+            return self._collection
 
     def _auto_rebuild_collection(self, client):
         """ChromaDB索引格式不兼容时，自动删旧索引并从SQLite重建"""
@@ -319,7 +336,6 @@ class ExperienceDB:
         self._chroma_client = client
 
         # 从SQLite重建向量索引（后台执行，不阻塞当前请求）
-        import threading
         def _rebuild_in_background():
             try:
                 self.rebuild_vector_index()
