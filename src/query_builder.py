@@ -77,6 +77,56 @@ def _load_synonym_file(path: Path) -> dict:
         return {}
 
 
+_SPECIALTY_SCOPE_CACHE = None  # 专业适用范围缓存
+
+
+def _load_specialty_scope() -> dict:
+    """加载同义词的专业适用范围（带缓存，只读一次文件）
+
+    从 engineering_synonyms.json 的 _specialty_scope 字段读取。
+    格式: {"镀锌钢管": ["C10", "C8"], "砖基础": ["A"]}
+    没有记录的同义词 = 全专业通用（向后兼容）。
+    """
+    global _SPECIALTY_SCOPE_CACHE
+    if _SPECIALTY_SCOPE_CACHE is not None:
+        return _SPECIALTY_SCOPE_CACHE
+
+    base_path = Path(__file__).parent.parent / "data"
+    try:
+        with open(base_path / "engineering_synonyms.json", "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        scope = raw.get("_specialty_scope", {})
+        # 兼容旧格式（_specialty_scope 是字符串 "install" 而不是字典）
+        if not isinstance(scope, dict):
+            _SPECIALTY_SCOPE_CACHE = {}
+        else:
+            _SPECIALTY_SCOPE_CACHE = scope
+    except Exception:
+        _SPECIALTY_SCOPE_CACHE = {}
+    return _SPECIALTY_SCOPE_CACHE
+
+
+def _is_synonym_applicable(key: str, specialty: str, scope: dict) -> bool:
+    """判断某条同义词是否适用于当前专业
+
+    规则：
+    - scope 中没有该 key → 全专业通用，返回 True
+    - scope 中有该 key → 只在指定专业列表中生效
+    - specialty 为空（无分类信息）→ 全部适用（兼容旧调用）
+    """
+    if not specialty:
+        return True  # 无专业信息时全部适用
+    if key not in scope:
+        return True  # 没打标签 = 全专业通用
+    # 有标签，检查当前专业是否在列表中（精确匹配，避免C1和C10混淆）
+    allowed = scope[key]
+    spec_upper = specialty.upper()
+    for allowed_spec in allowed:
+        if spec_upper == allowed_spec.upper():
+            return True
+    return False
+
+
 def _apply_synonyms(query: str, specialty: str = "") -> str:
     """应用工程同义词替换：把清单常用名替换为定额常用名
 
@@ -87,22 +137,20 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
     参数:
         query: 搜索query字符串
         specialty: 清单所属专业册号（如"C10"、"A"等）
-            当前同义词表仅覆盖安装专业（C1~C12），
-            非安装专业时跳过同义词替换，避免误替换。
+            按 _specialty_scope 过滤：有标签的只对指定专业生效，
+            没标签的全专业通用。
     """
-    # 当前同义词表仅适用于安装专业（C开头的册号）
-    # 没有 specialty 时也应用（兼容旧调用、无分类信息的场景）
-    if specialty and not specialty.upper().startswith("C"):
-        return query
-
     synonyms = _load_synonyms()
     if not synonyms:
         return query
 
+    scope = _load_specialty_scope()
+
     for key, replacement in synonyms.items():
         if key in query:
-            query = query.replace(key, replacement, 1)  # 只替换第一次出现
-            break  # 只做一次替换，避免连锁替换引发副作用
+            if _is_synonym_applicable(key, specialty, scope):
+                query = query.replace(key, replacement, 1)  # 只替换第一次出现
+                break  # 只做一次替换，避免连锁替换引发副作用
 
     return query
 _SPECIAL_LAMP_PATTERN = r"紫外|杀菌|消毒|舞台|投光|泛光|景观|水下|地埋|航空障碍|手术|无影|植物|补光|洗墙|轨道"

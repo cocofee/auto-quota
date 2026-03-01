@@ -10,7 +10,7 @@
 # ============================================================
 # 阶段1：构建 React 应用
 # ============================================================
-FROM dockerpull.org/node:22-alpine AS builder
+FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN npm run build
 # ============================================================
 # 阶段2：Nginx 托管
 # ============================================================
-FROM dockerpull.org/nginx:alpine
+FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/nginx:alpine
 
 # 复制构建产物到 Nginx 默认目录
 COPY --from=builder /app/dist /usr/share/nginx/html

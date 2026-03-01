@@ -565,7 +565,8 @@ class ExperienceDB:
                        province: str = None,
                        project_name: str = None,
                        notes: str = None,
-                       specialty: str = None) -> int:
+                       specialty: str = None,
+                       skip_vector: bool = False) -> int:
         """
         添加一条经验记录
 
@@ -662,6 +663,7 @@ class ExperienceDB:
                     quota_db_version=quota_db_ver,
                     materials_json=materials_json,
                     specialty=specialty,
+                    project_name=project_name,
                     conn=conn, cursor=cursor, commit=False
                 )
             else:
@@ -694,8 +696,10 @@ class ExperienceDB:
             conn.close()
 
         # 新建记录才追加向量索引；更新走原id即可
+        # skip_vector=True 时跳过逐条写入（批量导入场景，导入完后统一调用 rebuild_vector_index）
         if inserted_new:
-            self._add_to_vector_index(record_id, bill_text, province=province)
+            if not skip_vector:
+                self._add_to_vector_index(record_id, bill_text, province=province)
             logger.debug(f"经验库新增: [{source}] '{bill_text[:50]}' → {quota_ids}")
         else:
             logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={source}")
@@ -706,6 +710,7 @@ class ExperienceDB:
                            confidence: int, quota_db_version: str = None,
                            materials_json: str = None,
                            specialty: str = None,
+                           project_name: str = None,
                            conn=None, cursor=None,
                            commit: bool = True) -> int:
         """更新已有的经验记录
@@ -812,6 +817,38 @@ class ExperienceDB:
                 confidence_floor, materials_json or '[]', materials_json or '[]',
                 quota_db_version, specialty or '', now, record_id,
             ))
+        elif source == "batch_import":
+            # 批量导入（造价HOME XML等外部数据）→ 进候选层，但允许多项目确认后自动晋升
+            # 关键逻辑：同一项目重复导入不涨确认次数，不同项目独立确认才涨
+            # 不覆盖用户手动修正/确认过的记录，也不降级已有的 project_import 权威层记录
+            cursor.execute("""
+                UPDATE experiences SET
+                    quota_ids = ?,
+                    quota_names = ?,
+                    materials = CASE
+                        WHEN ? != '[]' THEN ?
+                        ELSE materials
+                    END,
+                    source = 'batch_import',
+                    layer = CASE WHEN layer = 'authority' THEN 'authority' ELSE 'candidate' END,
+                    confirm_count = CASE
+                        WHEN quota_ids = ?
+                         AND ? IS NOT NULL
+                         AND (project_name IS NULL OR project_name != ?)
+                        THEN confirm_count + 1
+                        ELSE confirm_count
+                    END,
+                    quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
+                    updated_at = ?
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'project_import')
+            """, (
+                self._json_dump(quota_ids),
+                self._json_dump(quota_names or []),
+                materials_json or '[]', materials_json or '[]',
+                self._json_dump(quota_ids), project_name, project_name,
+                quota_db_version, specialty or '', now, record_id,
+            ))
         else:
             # auto_match / auto_review 或其他未知来源
             # 如果定额编号一致（多次匹配结果相同），递增确认次数；否则只记录时间
@@ -831,7 +868,8 @@ class ExperienceDB:
         # ========== 自动晋升：候选层达到门槛自动晋升为权威层 ==========
         # 多次独立匹配结果一致 = 数据可信，无需人工逐条审核
         # 门槛按置信度分级：高置信度要求少、低置信度要求多
-        # 注意：project_import_suspect 是审核不通过被强制降级的，不参与自动晋升
+        # 注意：project_import_suspect 不参与自动晋升（审核不通过被强制降级的）
+        # batch_import 允许自动晋升（但只有不同项目确认才涨 confirm_count，防止同项目刷分）
         if source != "project_import_suspect":
             cursor.execute("""
                 UPDATE experiences SET layer = 'authority'

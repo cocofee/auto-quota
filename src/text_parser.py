@@ -1062,7 +1062,7 @@ def normalize_bill_text(name: str, description: str = "") -> str:
 
             # --- 跳过与定额匹配无关的字段 ---
             # 这些字段描述的是施工要求、安装位置、管内介质等，不影响套哪个定额
-            if re.match(r'^(压力试验|安装部位|安装位置|介质|'
+            if re.match(r'^(压力试验|安装部位|安装位置|'
                         r'施工要求|验收标准|质量要求|安全要求|环保要求)[,、：:]', line):
                 continue
 

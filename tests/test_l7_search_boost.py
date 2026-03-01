@@ -261,11 +261,15 @@ class TestSynonymLoading:
         result = _apply_synonyms("镀锌钢管 DN25", "C10")
         assert "焊接钢管" in result
 
-    def test_apply_synonyms_non_install_skipped(self):
-        """非安装专业不做同义词替换"""
+    def test_apply_synonyms_specialty_scope(self):
+        """同义词按专业范围过滤：没打标签的全专业通用"""
         from src.query_builder import _apply_synonyms
+        # 没打标签的同义词（如"镀锌钢管"）全专业通用，非安装专业也生效
         result = _apply_synonyms("镀锌钢管 DN25", "A1")
-        assert result == "镀锌钢管 DN25"
+        assert "焊接钢管" in result
+        # 无专业信息时也应用（兼容旧调用）
+        result2 = _apply_synonyms("镀锌钢管 DN25", "")
+        assert "焊接钢管" in result2
 
     def test_auto_synonyms_file_exists(self):
         """自动同义词文件应已生成"""

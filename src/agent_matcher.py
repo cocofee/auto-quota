@@ -886,22 +886,15 @@ class AgentMatcher:
                 if not quota_id:
                     continue
                 valid_candidates.append(c)
+            from src.match_core import calculate_confidence
             matched = [c for c in valid_candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
-                try:
-                    score = float(best.get("param_score", 0.5))
-                except (TypeError, ValueError):
-                    score = 0.5
-                confidence = int(score * 95)  # 乘95：param_score≥0.90绿色，典型向上取档(0.95+)得90+
+                confidence = calculate_confidence(best.get("param_score", 0.5), param_match=True)
             else:
                 best = valid_candidates[0] if valid_candidates else None
                 if best:
-                    try:
-                        score = float(best.get("param_score", 0.0))
-                    except (TypeError, ValueError):
-                        score = 0.0
-                    confidence = max(int(score * 45), 15)
+                    confidence = calculate_confidence(best.get("param_score", 0.0), param_match=False)
 
         best_quota_id = str((best or {}).get("quota_id", "")).strip()
         best_name = str((best or {}).get("name", "")).strip() or "未命名候选"
