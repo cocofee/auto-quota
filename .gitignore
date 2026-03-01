@@ -56,3 +56,8 @@ None/
 .pytest-tmp/
 jarvis-correct-*/
 *.tar
+*.lpk
+
+# 备份和下载（非项目文件）
+backups/
+downloads/
