@@ -1,0 +1,66 @@
+{
+  "created": "2026-03-01 23:41",
+  "provinces": {
+    "北京市建设工程施工消耗量标准(2024)": {
+      "total": 50,
+      "rate": 30.0,
+      "diagnosis": {
+        "wrong_tier": 21,
+        "synonym_gap": 13,
+        "wrong_book": 1
+      }
+    },
+    "宁夏安装工程计价定额(2019)": {
+      "total": 50,
+      "rate": 12.0,
+      "diagnosis": {
+        "synonym_gap": 18,
+        "wrong_book": 9,
+        "wrong_tier": 17
+      }
+    },
+    "广东省通用安装工程综合定额(2018)": {
+      "total": 50,
+      "rate": 18.0,
+      "diagnosis": {
+        "synonym_gap": 18,
+        "wrong_tier": 23
+      }
+    },
+    "江苏省市政工程计价定额(2014)": {
+      "total": 50,
+      "rate": 16.0,
+      "diagnosis": {
+        "wrong_tier": 5,
+        "synonym_gap": 36,
+        "wrong_book": 1
+      }
+    },
+    "江西省通用安装工程消耗量定额及统一基价表(2017)": {
+      "total": 50,
+      "rate": 10.0,
+      "diagnosis": {
+        "wrong_tier": 20,
+        "synonym_gap": 23,
+        "wrong_book": 2
+      }
+    },
+    "河南省通用安装工程预算定额(2016)": {
+      "total": 50,
+      "rate": 10.0,
+      "diagnosis": {
+        "synonym_gap": 33,
+        "wrong_tier": 12
+      }
+    },
+    "重庆市通用安装工程计价定额(2018)": {
+      "total": 50,
+      "rate": 20.0,
+      "diagnosis": {
+        "wrong_tier": 20,
+        "wrong_book": 16,
+        "synonym_gap": 4
+      }
+    }
+  }
+}

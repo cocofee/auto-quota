@@ -233,7 +233,8 @@ echo [OK] LPK ready: !LPK_FILE!
 
 echo.
 echo [INSTALL] Deploying to LazyCat...
->"%TEMP%\lzc_install.sh" echo lzc-cli app install '!LPK_FILE!' --ssh-key "$HOME/.ssh/id_ed25519"
+echo unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy> "%TEMP%\lzc_install.sh"
+echo lzc-cli app install '!LPK_FILE!' --ssh-key "$HOME/.ssh/id_ed25519">> "%TEMP%\lzc_install.sh"
 "%GIT_BASH%" --login "%TEMP%\lzc_install.sh"
 echo [INSTALL] exit code: !errorlevel!
 
