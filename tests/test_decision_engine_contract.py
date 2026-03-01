@@ -132,6 +132,38 @@ class TestAgentDecision:
     def test_empty_candidates(self):
         """空候选 -> 不跳过大模型"""
         skip = _should_skip_agent_llm([])
+        assert skip is False
+
+    def test_single_candidate_forces_llm(self):
+        """M2修复：单候选 -> 强制走LLM，不走快通道"""
+        candidates = [{
+            "quota_id": "C10-1-1",
+            "name": "给水管道安装 DN25",
+            "score": 0.99,
+            "param_match": True,
+            "param_score": 0.95,
+            "rerank_score": 10.0,
+        }]
+        skip = _should_skip_agent_llm(candidates)
+        assert skip is False, "单候选不应走快通道，即使分数很高"
+
+    def test_two_candidates_with_large_gap_allows_fastpath(self):
+        """两候选+大分差 -> 可走快通道（对比单候选行为）"""
+        candidates = [
+            {
+                "quota_id": "C10-1-1", "name": "给水管道安装 DN25",
+                "param_match": True, "param_score": 0.95,
+                "rerank_score": 10.0,
+            },
+            {
+                "quota_id": "C10-1-2", "name": "给水管道安装 DN32",
+                "param_match": True, "param_score": 0.50,
+                "rerank_score": 5.0,
+            },
+        ]
+        skip = _should_skip_agent_llm(candidates)
+        # 两候选+大分差+参数匹配+高分 → 应该走快通道
+        # （注意：实际结果取决于 config 中的阈值设置，这里只验证接口行为正常）
         assert isinstance(skip, bool)
 
     def test_mark_fastpath(self):

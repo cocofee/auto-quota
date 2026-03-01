@@ -5,7 +5,7 @@
  * APP_VERSION 保持和 lzc-manifest.yml 中的 version 一致。
  */
 
-export const APP_VERSION = '0.1.47';
+export const APP_VERSION = '0.1.54';
 
 export interface ChangelogEntry {
   version: string;
@@ -14,6 +14,69 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.54',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.53',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.52',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.51',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.50',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.49',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
+  {
+    version: '0.1.48',
+    date: '2026-03-01',
+    changes: [
+      '清理旧版lpk安装包（已加入.gitignore）',
+      '自进化 — 从13222张经验卡片挖掘90+同义词',
+      '经验库验证增强 + 参数验证relaxed模式',
+    ],
+  },
   {
     version: '0.1.47',
     date: '2026-03-01',

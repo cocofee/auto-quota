@@ -36,6 +36,41 @@ MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
 
 
 # ============================================================
+# 统一打分函数
+# ============================================================
+
+def calculate_confidence(param_score: float, param_match: bool = True) -> int:
+    """
+    统一的 param_score → confidence 转换函数
+
+    全系统唯一的打分入口，消除各模块独立计算导致的不一致。
+
+    规则：
+    - 参数匹配通过(param_match=True)：confidence = param_score × 95
+      → param_score=1.0 → 95分（绿灯）
+      → param_score=0.90 → 85分（绿灯门槛）
+      → param_score=0.55 → 52分（红灯）
+    - 参数不匹配(param_match=False)：confidence = param_score × 45，最低15分
+      → 确保不匹配的候选始终低于绿灯门槛(85)
+
+    参数:
+        param_score: 参数匹配分数（0.0~1.0）
+        param_match: 参数是否匹配通过
+
+    返回:
+        置信度（0~95的整数）
+    """
+    try:
+        score = float(param_score)
+    except (TypeError, ValueError):
+        score = 0.5 if param_match else 0.0
+    if param_match:
+        return int(score * 95)
+    else:
+        return max(int(score * 45), 15)
+
+
+# ============================================================
 # 工具函数
 # ============================================================
 
@@ -674,7 +709,8 @@ def _should_skip_agent_llm(candidates: list[dict],
     4. Reranker打分成功
     5. 无经验库/规则冲突
     6. param_score达标（≥0.60）
-    7. top1和top2的reranker分差足够大（≥SCORE_GAP）
+    7. 候选数≥2（单候选搜索质量不可靠，强制走LLM）
+    8. top1和top2的reranker分差足够大（≥SCORE_GAP）
     """
     if not config.AGENT_FASTPATH_ENABLED:
         return False
@@ -704,11 +740,17 @@ def _should_skip_agent_llm(candidates: list[dict],
         if ("定额无" in top_detail or "未指定" in top_detail) and top_score < 0.7:
             return False
 
+    # ===== 单候选拦截 =====
+    # 只搜到1条结果时，搜索质量不可靠（没有对比对象），强制走LLM仲裁
+    if len(candidates) < 2:
+        logger.debug("FastPath拦截: 单候选，强制走LLM")
+        return False
+
     # ===== 搜索排名分差检查 =====
     # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁
     # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
     score_gap_threshold = _safe_float_value(config.AGENT_FASTPATH_SCORE_GAP, 1.0)
-    if score_gap_threshold > 0 and len(candidates) >= 2:
+    if score_gap_threshold > 0:
         top1_rs = _safe_float_value(
             candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0)), 0.0)
         top2_rs = _safe_float_value(

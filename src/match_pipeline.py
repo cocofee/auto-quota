@@ -19,6 +19,7 @@ from src.specialty_classifier import classify as classify_specialty
 from src.rule_validator import RuleValidator
 from src.match_core import (
     RULE_DIRECT_CONFIDENCE,
+    calculate_confidence,
     _append_trace_step,
     _normalize_classification,
     _is_measure_item,
@@ -188,7 +189,7 @@ def _build_alternatives(candidates: list[dict], selected_ids: set = None,
             logger.warning(f"跳过异常候选（缺少quota_id/name）: {alt}")
             continue
         alt_ps = alt.get("param_score", 0.5)
-        alt_conf = int(alt_ps * 95) if alt.get("param_match", True) else max(int(alt_ps * 45), 15)
+        alt_conf = calculate_confidence(alt_ps, alt.get("param_match", True))
         alternatives.append({
             "quota_id": quota_id,
             "name": quota_name,
@@ -409,12 +410,12 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         if matched_candidates:
             best = matched_candidates[0]
             param_score = best.get("param_score", 0.5)
-            confidence = int(param_score * 95)
+            confidence = calculate_confidence(param_score, param_match=True)
             explanation = best.get("param_detail", "")
         else:
             best = valid_candidates[0]
             param_score = best.get("param_score", 0.0)
-            confidence = max(int(param_score * 45), 15)
+            confidence = calculate_confidence(param_score, param_match=False)
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
 
     result = {

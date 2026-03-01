@@ -330,7 +330,9 @@ def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
 
 
 def import_to_experience(pairs: list[dict], project_name: str,
-                         province: str = None, all_provinces: list[str] = None):
+                         province: str = None, all_provinces: list[str] = None,
+                         source: str = "project_import",
+                         skip_vector: bool = False):
     """
     将清单→定额对导入经验库（带定额编号，同省份可直接匹配）
 
@@ -413,10 +415,14 @@ def import_to_experience(pairs: list[dict], project_name: str,
                     quota_ids=quota_ids,
                     quota_names=quota_names,
                     materials=materials,
+                    bill_name=pair.get("bill_name"),     # 补传：清单名称
+                    bill_code=pair.get("bill_code"),     # 补传：清单编码
+                    bill_unit=pair.get("bill_unit"),     # 补传：计量单位
                     confidence=90,
-                    source="project_import",
+                    source=source,
                     project_name=project_name,
                     province=try_province,
+                    skip_vector=skip_vector,
                 )
                 if record_id > 0:
                     break  # 导入成功，不再尝试下一个定额库
@@ -523,6 +529,8 @@ def main():
                              "定额编号在主定额库校验不过会自动尝试辅助定额库。")
     parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
     parser.add_argument("--dry-run", action="store_true", help="只解析不导入（调试用）")
+    parser.add_argument("--trust", action="store_true",
+                        help="信任模式：数据进权威层（默认进候选层，需人工确认后晋升）")
     parser.add_argument("--no-analyze", action="store_true",
                         help="导入后不自动分析生成方法卡片（默认会自动分析）")
 
@@ -640,10 +648,15 @@ def main():
         return
 
     # 第2步：导入经验库（带定额编号，自动路由到对应的定额库）
-    logger.info("导入经验库...")
+    # 已做好的预算是造价人员审过的，默认进权威层；加 --trust 不改变行为（本身就是可信数据）
+    # 注意：校验不通过的记录会被 add_experience 自动标记为 project_import_suspect → 候选层
+    source = "project_import"
+    layer_hint = "authority（权威层，可直通匹配）"
+    logger.info(f"导入经验库... 数据将进入 {layer_hint}")
     if len(all_provinces) > 1:
         logger.info(f"  多定额库模式: {', '.join(p[:20] for p in all_provinces)}")
-    exp_stats = import_to_experience(pairs, project_name, all_provinces=all_provinces)
+    exp_stats = import_to_experience(pairs, project_name, all_provinces=all_provinces,
+                                     source=source)
     logger.info(f"  经验库: 新增{exp_stats['added']}条, 跳过{exp_stats['skipped']}条")
 
     # 第3步：导入通用知识库（定额名称模式，跨省份通用）
@@ -669,7 +682,7 @@ def main():
     logger.info(f"  主材项: {total_materials}条（{bills_with_materials}条清单含主材）")
     logger.info(f"  经验库: +{exp_stats['added']}条（带定额编号，同省直接用）")
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
-    logger.info(f"  数据层级: 权威层（project_import → authority，可直通匹配）")
+    logger.info(f"  数据层级: {layer_hint}")
     logger.info("=" * 50)
 
     # 第4步（可选）：自动分析生成方法卡片（每个定额库都跑一遍）
