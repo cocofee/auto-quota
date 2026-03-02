@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-造价HOME XML文件导入工具
+外部XML文件导入工具
 
-从造价HOME的A.xml或OSS下载的XML文件中提取清单-定额对，
+从外部造价软件的XML文件中提取清单-定额对，
 导入到经验库和通用知识库。
 
 支持两种编号匹配模式：
@@ -236,7 +236,7 @@ def do_import_names_only(pairs: list[dict], project_name: str):
     """只导入通用知识库（清单名→定额名的映射关系）
 
     不需要指定省份、不校验编号，只提取名称级别的配对关系。
-    适用于：跨版本数据（如造价HOME老项目）、编号不通的外部数据。
+    适用于：跨版本数据（外部老项目）、编号不通的外部数据。
     """
     from tools.import_reference import convert_to_kb_records
     from src.universal_kb import UniversalKB
@@ -336,10 +336,10 @@ def do_import(pairs: list[dict], project_name: str, provinces: list[str],
 
 def main():
     parser = argparse.ArgumentParser(
-        description="造价HOME XML文件导入工具",
+        description="外部XML文件导入工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("input_file", help="XML文件路径（造价HOME A.xml等）")
+    parser.add_argument("input_file", help="XML文件路径")
     parser.add_argument("--province", default=None,
                         help="主定额库（如 '重庆安装' 或完整名称）。--names-only模式下不需要")
     parser.add_argument("--aux-provinces", default=None,

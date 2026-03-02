@@ -16,7 +16,7 @@ Benchmark 运行与基线采集脚本。
   python tools/run_benchmark.py --mode agent --save
 
   # 只跑指定数据集
-  python tools/run_benchmark.py --dataset B2_华佑电气 --save
+  python tools/run_benchmark.py --dataset B2_电气 --save
 
   # 与基线对比（不保存）
   python tools/run_benchmark.py --mode search --compare
@@ -359,7 +359,7 @@ def main():
   python tools/run_benchmark.py --mode search --compare
 
   # 只跑指定数据集
-  python tools/run_benchmark.py --dataset B2_华佑电气 --save
+  python tools/run_benchmark.py --dataset B2_电气 --save
 
   # 查看当前基线
   python tools/run_benchmark.py --show-baseline
