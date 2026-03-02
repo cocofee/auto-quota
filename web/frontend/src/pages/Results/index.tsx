@@ -28,7 +28,7 @@ import {
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import {
-  COLORS,
+  COLORS, GREEN_THRESHOLD,
   getBillRowBgColor as _getBillRowBgColor,
   getConfidenceCellBgColor,
   getConfidenceTextColor,
