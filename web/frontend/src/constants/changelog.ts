@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.57';
+export const APP_VERSION = '0.1.59';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,25 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.59',
+    date: '2026-03-02',
+    changes: [
+      { type: 'admin', text: 'Results页补漏GREEN_THRESHOLD导入' },
+      { type: 'admin', text: '跨省基线数据+query_builder微调' },
+      { type: 'admin', text: '经验库广联达风格改版+全站颜色统一' },
+      { type: 'admin', text: '清理第三方品牌信息（小栗AI/造价HOME/华佑等）' },
+    ],
+  },
+  {
+    version: '0.1.58',
+    date: '2026-03-02',
+    changes: [
+      { type: 'admin', text: '跨省基线数据+query_builder微调' },
+      { type: 'admin', text: '经验库广联达风格改版+全站颜色统一' },
+      { type: 'admin', text: '清理第三方品牌信息（小栗AI/造价HOME/华佑等）' },
+    ],
+  },
   {
     version: '0.1.57',
     date: '2026-03-02',
