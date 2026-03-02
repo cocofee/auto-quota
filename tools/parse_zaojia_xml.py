@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-造价HOME/新点/浙江等造价软件XML文件解析器
+外部造价软件XML文件解析器
 
 支持三种格式：
-1. .13jk (JingJiBiao) — 江苏新点软件导出格式
+1. .13jk (JingJiBiao) — 江苏新点格式
 2. .XML (浙江省数据标准) — 浙江省建设工程计价成果文件
 3. .XML (GCZJWJ) — 福建等省工程造价文件
 
@@ -215,7 +215,7 @@ def parse_gczjwj(tree):
 
 
 def parse_zaojia_home_xml(tree):
-    """解析造价HOME A.xml格式
+    """解析外部造价软件XML格式（mergedRoot结构）
 
     结构：root > mergedRoot > fileContents > 单位工程 > 分部分项清单 > 清单分部 > 清单项目
          > 组价内容 > 定额子目

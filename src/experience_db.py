@@ -818,7 +818,7 @@ class ExperienceDB:
                 quota_db_version, specialty or '', now, record_id,
             ))
         elif source == "batch_import":
-            # 批量导入（造价HOME XML等外部数据）→ 进候选层，但允许多项目确认后自动晋升
+            # 批量导入（外部XML等数据）→ 进候选层，但允许多项目确认后自动晋升
             # 关键逻辑：同一项目重复导入不涨确认次数，不同项目独立确认才涨
             # 不覆盖用户手动修正/确认过的记录，也不降级已有的 project_import 权威层记录
             cursor.execute("""
