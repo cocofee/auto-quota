@@ -6,20 +6,73 @@
  */
 
 // ============================================================
-// 置信度阈值常量
+// 置信度阈值常量（全局统一，所有页面共用）
 // ============================================================
 
 export const GREEN_THRESHOLD = 85;   // 绿灯：系统有把握
-export const YELLOW_THRESHOLD = 60;  // 黄灯：参考（经验库用60而非结果页的70）
+export const YELLOW_THRESHOLD = 70;  // 黄灯：需要人工看一眼
+
+// ============================================================
+// 统一颜色常量（全系统唯一来源，禁止在页面中硬编码）
+// ============================================================
+
+export const COLORS = {
+  // 绿灯（高置信度）
+  greenBg:    '#E8F5E9',  // 行背景
+  greenCell:  '#C8E6C9',  // 单元格背景（比行背景深）
+  greenText:  '#2e7d32',  // 文字
+  greenSolid: '#52c41a',  // 实色（进度条、数字）
+  // 黄灯（中置信度）
+  yellowBg:    '#FFF8E1',
+  yellowCell:  '#FFE082',
+  yellowText:  '#e65100',
+  yellowSolid: '#faad14',
+  // 红灯（低置信度）
+  redBg:    '#FFEBEE',
+  redCell:  '#EF9A9A',
+  redText:  '#c62828',
+  redSolid: '#ff4d4f',
+};
 
 // ============================================================
 // 行背景色（按置信度着淡色，用于整行）
 // ============================================================
 
 export function getBillRowBgColor(confidence: number): string {
-  if (confidence >= GREEN_THRESHOLD) return '#E8F5E9';  // 浅绿
-  if (confidence >= YELLOW_THRESHOLD) return '#FFF8E1';  // 浅黄
-  return '#FFEBEE';                                       // 浅红
+  if (confidence >= GREEN_THRESHOLD) return COLORS.greenBg;
+  if (confidence >= YELLOW_THRESHOLD) return COLORS.yellowBg;
+  return COLORS.redBg;
+}
+
+// ============================================================
+// 单元格背景色（比行背景深一档，用于推荐度列等需要强调的单元格）
+// ============================================================
+
+export function getConfidenceCellBgColor(confidence: number, hasQuotas = true): string {
+  if (!hasQuotas) return 'transparent';
+  if (confidence >= GREEN_THRESHOLD) return COLORS.greenCell;
+  if (confidence >= YELLOW_THRESHOLD) return COLORS.yellowCell;
+  return COLORS.redCell;
+}
+
+// ============================================================
+// 文字颜色（深色，用于置信度数字/标签的文字）
+// ============================================================
+
+export function getConfidenceTextColor(confidence: number): string {
+  if (confidence >= GREEN_THRESHOLD) return COLORS.greenText;
+  if (confidence >= YELLOW_THRESHOLD) return COLORS.yellowText;
+  return COLORS.redText;
+}
+
+// ============================================================
+// 实色值（用于进度条、比例条、彩色数字等）
+// ============================================================
+
+export function getConfidenceSolidColor(confidence: number): string {
+  if (confidence >= GREEN_THRESHOLD) return COLORS.greenSolid;
+  if (confidence >= YELLOW_THRESHOLD) return COLORS.yellowSolid;
+  return COLORS.redSolid;
 }
 
 // ============================================================
@@ -27,9 +80,9 @@ export function getBillRowBgColor(confidence: number): string {
 // ============================================================
 
 export function confidenceToTagColor(confidence: number): string {
-  if (confidence >= GREEN_THRESHOLD) return 'success';    // 绿
-  if (confidence >= YELLOW_THRESHOLD) return 'warning';   // 黄
-  return 'error';                                          // 红
+  if (confidence >= GREEN_THRESHOLD) return 'success';
+  if (confidence >= YELLOW_THRESHOLD) return 'warning';
+  return 'error';
 }
 
 // ============================================================
@@ -40,6 +93,40 @@ export function confidenceToLabel(confidence: number): string {
   if (confidence >= GREEN_THRESHOLD) return `高(${confidence}%)`;
   if (confidence >= YELLOW_THRESHOLD) return `中(${confidence}%)`;
   return `低(${confidence}%)`;
+}
+
+// ============================================================
+// 置信度星标（用于匹配结果页）
+// ============================================================
+
+export function confidenceToStars(confidence: number, hasQuotas = true): string {
+  if (!hasQuotas) return '—';
+  if (confidence >= GREEN_THRESHOLD) return `★★★推荐(${confidence}%)`;
+  if (confidence >= YELLOW_THRESHOLD) return `★★参考(${confidence}%)`;
+  return `★待审(${confidence}%)`;
+}
+
+// ============================================================
+// 专业册号 → 中文名（和后端 bill_cleaner.py 保持一致）
+// ============================================================
+
+const SPECIALTY_NAMES: Record<string, string> = {
+  // 安装（C册）
+  C1: '机械设备安装', C2: '热力设备安装', C3: '静置设备安装',
+  C4: '电气设备安装', C5: '智能化系统', C6: '自动化仪表',
+  C7: '通风空调', C8: '工业管道', C9: '消防工程',
+  C10: '给排水', C11: '通信设备', C12: '刷油防腐保温',
+  C13: '其他及附属工程',
+  // 土建、装饰、市政、园林
+  A: '土建工程', B: '装饰装修工程', D: '市政工程', E: '园林绿化工程',
+  // 其他可能出现的大类前缀
+  G: '轨道交通',
+};
+
+/** 专业册号转中文名，如 "C4" → "电气" */
+export function specialtyLabel(code: string | undefined | null): string {
+  if (!code) return '未分类';
+  return SPECIALTY_NAMES[code] || code;
 }
 
 // ============================================================

@@ -27,44 +27,21 @@ import {
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
+import {
+  COLORS,
+  getBillRowBgColor as _getBillRowBgColor,
+  getConfidenceCellBgColor,
+  getConfidenceTextColor,
+  confidenceToStars,
+} from '../../utils/experience';
 import type {
   MatchResult, ResultListResponse, TaskInfo, ReviewStatus, QuotaItem,
 } from '../../types';
 
-// ============================================================
-// 置信度工具函数
-// ============================================================
-
-const GREEN_THRESHOLD = 85;
-const YELLOW_THRESHOLD = 70;  // 与后端 results.py 的 _YELLOW_THRESHOLD 保持一致
-
-/** 推荐度单元格背景色（只给推荐度列用，不是整行） */
-function getConfidenceBgColor(confidence: number, hasQuotas: boolean): string {
-  if (!hasQuotas) return 'transparent';
-  if (confidence >= GREEN_THRESHOLD) return '#C8E6C9';  // 绿色（比行背景深一些）
-  if (confidence >= YELLOW_THRESHOLD) return '#FFE082';
-  return '#EF9A9A';
-}
-
-/** 清单行背景色（按置信度，整行着淡色） */
+// 包一层兼容 hasQuotas 参数
 function getBillRowBgColor(confidence: number, hasQuotas: boolean): string {
   if (!hasQuotas) return '#F5F5F5';
-  if (confidence >= GREEN_THRESHOLD) return '#E8F5E9';
-  if (confidence >= YELLOW_THRESHOLD) return '#FFF8E1';
-  return '#FFEBEE';
-}
-
-function getConfidenceTextColor(confidence: number): string {
-  if (confidence >= GREEN_THRESHOLD) return '#2e7d32';
-  if (confidence >= YELLOW_THRESHOLD) return '#e65100';
-  return '#c62828';
-}
-
-function confidenceToStars(confidence: number, hasQuotas: boolean): string {
-  if (!hasQuotas) return '—';
-  if (confidence >= GREEN_THRESHOLD) return `★★★推荐(${confidence}%)`;
-  if (confidence >= YELLOW_THRESHOLD) return `★★参考(${confidence}%)`;
-  return `★待审(${confidence}%)`;
+  return _getBillRowBgColor(confidence);
 }
 
 const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
@@ -617,7 +594,7 @@ export default function ResultsPage() {
         const hasQuotas = quotas.length > 0;
         const stars = confidenceToStars(r.confidence, hasQuotas);
         const textColor = hasQuotas ? getConfidenceTextColor(r.confidence) : '#999';
-        const bgColor = getConfidenceBgColor(r.confidence, hasQuotas);
+        const bgColor = getConfidenceCellBgColor(r.confidence, hasQuotas);
         return (
           <span style={{
             color: textColor,
@@ -739,9 +716,9 @@ export default function ResultsPage() {
     return (
       <Space size="small" wrap>
         <span style={pill('#f0f0f0', '#333')}>共 <b>{total}</b> 条</span>
-        <span style={pill('#E8F5E9', '#2e7d32')}>★★★ <b>{high_confidence}</b></span>
-        <span style={pill('#FFF8E1', '#e65100')}>★★ <b>{mid_confidence}</b></span>
-        <span style={pill('#FFEBEE', '#c62828')}>★ <b>{low_confidence}</b></span>
+        <span style={pill(COLORS.greenBg, COLORS.greenText)}>★★★ <b>{high_confidence}</b></span>
+        <span style={pill(COLORS.yellowBg, COLORS.yellowText)}>★★ <b>{mid_confidence}</b></span>
+        <span style={pill(COLORS.redBg, COLORS.redText)}>★ <b>{low_confidence}</b></span>
         {no_match > 0 && <span style={pill('#f5f5f5', '#999')}>未匹配 <b>{no_match}</b></span>}
         {total > 0 && (
           <span style={pill('#E3F2FD', '#1565C0')}>
