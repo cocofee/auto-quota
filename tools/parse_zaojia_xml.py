@@ -114,24 +114,22 @@ def parse_zhejiang(tree):
 
             # 遍历清单表
             for qd_table in spec_elem.findall('分部分项工程量清单表'):
-                section_name = ''
+                # 清单记录是标题的子元素（标题→记录→定额）
+                for title_elem in qd_table.findall('分部分项工程量清单表标题'):
+                    section_name = title_elem.get('名称', '')
 
-                for child in qd_table:
-                    if child.tag == '分部分项工程量清单表标题':
-                        section_name = child.get('名称', '')
-
-                    elif child.tag == '分部分项工程量清单表记录':
+                    for record in title_elem.findall('分部分项工程量清单表记录'):
                         bill = {
-                            'code': child.get('项目编码', ''),
-                            'name': child.get('项目名称', ''),
-                            'feature': child.get('项目特征', ''),
-                            'unit': child.get('计量单位', ''),
-                            'quantity': child.get('工程量', ''),
+                            'code': record.get('项目编码', ''),
+                            'name': record.get('项目名称', ''),
+                            'feature': record.get('项目特征', ''),
+                            'unit': record.get('计量单位', ''),
+                            'quantity': record.get('工程量', ''),
                         }
 
-                        # 提取定额
+                        # 提取定额（综合单价分析表）
                         quotas = []
-                        for de in child.findall('分部分项综合单价分析表'):
+                        for de in record.findall('分部分项综合单价分析表'):
                             q_name = de.get('名称', '')
                             # 去掉 \x7f换为【...】 这种替换标记，保留原始名称
                             if '\x7f' in q_name:
