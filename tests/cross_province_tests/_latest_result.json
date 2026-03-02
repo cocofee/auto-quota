@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-02 22:41",
+  "run_time": "2026-03-02 23:09",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -8,11 +8,11 @@
       "wrong": 33,
       "rate": 34.0,
       "diagnosis": {
-        "synonym_gap": 12,
-        "wrong_tier": 19,
+        "synonym_gap": 13,
+        "wrong_tier": 18,
         "wrong_book": 2
       },
-      "elapsed": 9.3,
+      "elapsed": 9.4,
       "details": [
         {
           "bill_name": "双联单控开关",
@@ -212,8 +212,8 @@
         {
           "bill_name": "凿(压、切割)槽",
           "is_match": false,
-          "algo_id": "C4-13-10",
-          "algo_name": "凿槽 砌筑结构 管径(mm以内) 50",
+          "algo_id": "C4-8-499",
+          "algo_name": "电缆沟挖填土",
           "stored_ids": [
             "C4-13-6"
           ],
@@ -674,15 +674,15 @@
     {
       "province": "宁夏安装工程计价定额(2019)",
       "total": 50,
-      "correct": 11,
-      "wrong": 39,
-      "rate": 22.0,
+      "correct": 12,
+      "wrong": 38,
+      "rate": 24.0,
       "diagnosis": {
         "synonym_gap": 14,
-        "wrong_tier": 15,
+        "wrong_tier": 14,
         "wrong_book": 10
       },
-      "elapsed": 17.2,
+      "elapsed": 17.3,
       "details": [
         {
           "bill_name": "接地母线",
@@ -947,16 +947,16 @@
         },
         {
           "bill_name": "配电箱",
-          "is_match": false,
-          "algo_id": "2-11-7-29",
-          "algo_name": "安装接线箱",
+          "is_match": true,
+          "algo_id": "2-4-2-78",
+          "algo_name": "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m",
           "stored_ids": [
             "2-4-2-78"
           ],
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m"
           ],
-          "confidence": 79
+          "confidence": 90
         },
         {
           "bill_name": "照明开关",
@@ -1157,15 +1157,15 @@
         {
           "bill_name": "避雷引下线",
           "is_match": false,
-          "algo_id": "2-4-10-40",
-          "algo_name": "避雷引下线敷设 利用金属构件引下",
+          "algo_id": "2-4-3-92",
+          "algo_name": "管形母线引下线安装 铝管 直径(mm) ≤80",
           "stored_ids": [
             "2-4-10-42"
           ],
           "stored_names": [
             "避雷引下线敷设 利用建筑结构钢筋引下"
           ],
-          "confidence": 52
+          "confidence": 72
         },
         {
           "bill_name": "无线吸顶AP",
@@ -1350,7 +1350,7 @@
         "synonym_gap": 15,
         "wrong_tier": 7
       },
-      "elapsed": 5.2,
+      "elapsed": 5.3,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -1746,7 +1746,7 @@
         "synonym_gap": 35,
         "wrong_tier": 11
       },
-      "elapsed": 7.6,
+      "elapsed": 7.9,
       "details": [
         {
           "bill_name": "砖砌体拆除",
@@ -2435,21 +2435,21 @@
     {
       "province": "广东省通用安装工程综合定额(2018)",
       "total": 50,
-      "correct": 10,
-      "wrong": 40,
-      "rate": 20.0,
+      "correct": 12,
+      "wrong": 38,
+      "rate": 24.0,
       "diagnosis": {
-        "wrong_tier": 26,
-        "synonym_gap": 12,
+        "wrong_tier": 25,
+        "synonym_gap": 11,
         "wrong_book": 2
       },
-      "elapsed": 8.1,
+      "elapsed": 8.0,
       "details": [
         {
           "bill_name": "配电箱",
-          "is_match": false,
-          "algo_id": "C4-4-33",
-          "algo_name": "成套配电箱安装 悬挂式(半周长m以内) 2.5",
+          "is_match": true,
+          "algo_id": "C4-4-32",
+          "algo_name": "成套配电箱安装 悬挂式(半周长m以内) 1.5",
           "stored_ids": [
             "C4-4-32"
           ],
@@ -2616,16 +2616,16 @@
         },
         {
           "bill_name": "配电箱",
-          "is_match": false,
-          "algo_id": "C4-4-33",
-          "algo_name": "成套配电箱安装 悬挂式(半周长m以内) 2.5",
+          "is_match": true,
+          "algo_id": "C4-4-31",
+          "algo_name": "成套配电箱安装 悬挂式(半周长m以内) 1",
           "stored_ids": [
             "C4-4-31"
           ],
           "stored_names": [
             "成套配电箱安装 悬挂式(半周长m以内) 1"
           ],
-          "confidence": 89
+          "confidence": 95
         },
         {
           "bill_name": "电力电缆头",
@@ -2929,8 +2929,8 @@
         {
           "bill_name": "离心式通风机",
           "is_match": false,
-          "algo_id": "C7-3-165",
-          "algo_name": "吹、吸式槽边通风罩制作安装",
+          "algo_id": "C7-1-64",
+          "algo_name": "离心式通风机安装 风量(m3/h) 123000以上",
           "stored_ids": [
             "C7-1-60",
             "C7-4-5"
@@ -2938,7 +2938,7 @@
           "stored_names": [
             "离心式通风机安装 风量(m3/h) 7000以下"
           ],
-          "confidence": 98
+          "confidence": 95
         },
         {
           "bill_name": "碳钢风口、散流器、百叶窗 名称：电动多页送风口",
@@ -3114,7 +3114,7 @@
         "wrong_tier": 7,
         "wrong_book": 3
       },
-      "elapsed": 5.9,
+      "elapsed": 6.0,
       "details": [
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*16",
@@ -3492,8 +3492,8 @@
         {
           "bill_name": "塑料管 PP-R管 材质、规格:PP-R，DN20（压力综合",
           "is_match": false,
-          "algo_id": "46113",
-          "algo_name": "草屋面(mm) 麦草厚200",
+          "algo_id": "46112",
+          "algo_name": "塑松树根 直径(mm) ≤150",
           "stored_ids": [
             "10-1-324",
             "10-11-137"
@@ -3501,7 +3501,7 @@
           "stored_names": [
             "室内塑料给水管(热熔连接) 公称外径(mm以内) 25 "
           ],
-          "confidence": 61
+          "confidence": 69
         },
         {
           "bill_name": "闸阀 DN100 类型:闸阀",
@@ -3625,8 +3625,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "46138",
-          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径＞10mm",
+          "algo_id": "46144",
+          "algo_name": "喷泉喷头(螺纹连接) DN25",
           "stored_ids": [
             "5-132"
           ],
@@ -3638,8 +3638,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "46138",
-          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径＞10mm",
+          "algo_id": "46137",
+          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径≤10mm",
           "stored_ids": [
             "5-126"
           ],
@@ -3788,14 +3788,14 @@
     {
       "province": "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)",
       "total": 27,
-      "correct": 11,
-      "wrong": 16,
-      "rate": 40.7,
+      "correct": 14,
+      "wrong": 13,
+      "rate": 51.9,
       "diagnosis": {
-        "wrong_tier": 9,
+        "wrong_tier": 6,
         "synonym_gap": 7
       },
-      "elapsed": 3.1,
+      "elapsed": 3.2,
       "details": [
         {
           "bill_name": "灌注桩入岩 灌注桩入岩增加费 地质情况：综合考虑",
@@ -3813,8 +3813,8 @@
         {
           "bill_name": "钢筋笼 混凝土灌注桩钢筋笼  钢筋 HPB300φ10以内 ",
           "is_match": false,
-          "algo_id": "5-137",
-          "algo_name": "圆钢HPB300 ≤φ10 点焊",
+          "algo_id": "5-122",
+          "algo_name": "现浇构件圆钢筋HPB300 直径(mm) ≤10",
           "stored_ids": [
             "5-155"
           ],
@@ -3867,8 +3867,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "algo_id": "5-126",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤10",
           "stored_ids": [
             "5-122"
           ],
@@ -3880,8 +3880,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "algo_id": "5-127",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤18",
           "stored_ids": [
             "5-123"
           ],
@@ -3892,9 +3892,9 @@
         },
         {
           "bill_name": "现浇构件钢筋",
-          "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "is_match": true,
+          "algo_id": "5-126",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤10",
           "stored_ids": [
             "5-126"
           ],
@@ -3905,9 +3905,9 @@
         },
         {
           "bill_name": "现浇构件钢筋",
-          "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "is_match": true,
+          "algo_id": "5-127",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤18",
           "stored_ids": [
             "5-127"
           ],
@@ -3918,9 +3918,9 @@
         },
         {
           "bill_name": "现浇构件钢筋",
-          "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "is_match": true,
+          "algo_id": "5-128",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤25",
           "stored_ids": [
             "5-128"
           ],
@@ -3932,8 +3932,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "algo_id": "5-127",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤18",
           "stored_ids": [
             "5-131"
           ],
@@ -3945,8 +3945,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "5-133",
-          "algo_name": "现浇构件带肋钢筋HRB400以上 直径(mm) ≤40",
+          "algo_id": "5-128",
+          "algo_name": "现浇构件带肋钢筋HRB400以内 直径(mm) ≤25",
           "stored_ids": [
             "5-132"
           ],
@@ -4157,15 +4157,15 @@
     {
       "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
       "total": 50,
-      "correct": 3,
-      "wrong": 47,
-      "rate": 6.0,
+      "correct": 4,
+      "wrong": 46,
+      "rate": 8.0,
       "diagnosis": {
-        "synonym_gap": 29,
+        "synonym_gap": 28,
         "wrong_tier": 14,
         "wrong_book": 4
       },
-      "elapsed": 12.0,
+      "elapsed": 8.5,
       "details": [
         {
           "bill_name": "电气配管 JDG40",
@@ -4545,16 +4545,16 @@
         },
         {
           "bill_name": "双连杆手动、电动密闭阀门 DN300 名称：双连杆手动、电动",
-          "is_match": false,
-          "algo_id": "7-3-233",
-          "algo_name": "密闭穿墙管填塞 公称直径(mm) ≤349",
+          "is_match": true,
+          "algo_id": "7-3-206",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤300",
           "stored_ids": [
             "7-3-206"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤300"
           ],
-          "confidence": 92
+          "confidence": 95
         },
         {
           "bill_name": "碳钢通风管道",
@@ -4580,7 +4580,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤400"
           ],
-          "confidence": 76
+          "confidence": 57
         },
         {
           "bill_name": "清洁送风机SWF-I-No5.0A L=5435m3/h P",
@@ -4620,7 +4620,7 @@
           "stored_names": [
             "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤666"
           ],
-          "confidence": 95
+          "confidence": 57
         },
         {
           "bill_name": "防爆超压排气活门 FCH-D250 名称：防爆超压排气活门",
@@ -4664,15 +4664,15 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "5-2-34",
-          "algo_name": "砖砌人孔(现场浇筑上覆) 中号60°斜通型",
+          "algo_id": "5-2-33",
+          "algo_name": "砖砌人孔(现场浇筑上覆) 中号45°斜通型",
           "stored_ids": [
             "5-129"
           ],
           "stored_names": [
             "现浇构件带肋钢筋HRB400以内 直径(mm) ≤40  "
           ],
-          "confidence": 95
+          "confidence": 52
         },
         {
           "bill_name": "阳台板",
@@ -4846,7 +4846,7 @@
         "synonym_gap": 27,
         "wrong_tier": 17
       },
-      "elapsed": 15.0,
+      "elapsed": 8.3,
       "details": [
         {
           "bill_name": "砌块墙",
@@ -5509,14 +5509,14 @@
     {
       "province": "浙江省通用安装工程预算定额(2018)",
       "total": 50,
-      "correct": 35,
-      "wrong": 15,
-      "rate": 70.0,
+      "correct": 39,
+      "wrong": 11,
+      "rate": 78.0,
       "diagnosis": {
-        "wrong_tier": 9,
-        "synonym_gap": 6
+        "synonym_gap": 6,
+        "wrong_tier": 5
       },
-      "elapsed": 12.2,
+      "elapsed": 6.7,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -5559,16 +5559,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": false,
-          "algo_id": "9-1-32",
-          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)150",
+          "is_match": true,
+          "algo_id": "9-1-20",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150",
           "stored_ids": [
             "9-1-20"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150"
           ],
-          "confidence": 76
+          "confidence": 85
         },
         {
           "bill_name": "消火栓钢管",
@@ -5585,16 +5585,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": false,
-          "algo_id": "9-1-30",
-          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)100",
+          "is_match": true,
+          "algo_id": "9-1-18",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 76
+          "confidence": 85
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5767,16 +5767,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": false,
-          "algo_id": "9-1-7",
-          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)100",
+          "is_match": true,
+          "algo_id": "9-1-18",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 30
+          "confidence": 85
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5871,16 +5871,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": false,
-          "algo_id": "9-1-6",
-          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)80",
+          "is_match": true,
+          "algo_id": "9-1-17",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80",
           "stored_ids": [
             "9-1-17"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80"
           ],
-          "confidence": 30
+          "confidence": 85
         },
         {
           "bill_name": "水喷淋钢管",
@@ -6183,7 +6183,7 @@
         "wrong_tier": 12,
         "synonym_gap": 4
       },
-      "elapsed": 7.4,
+      "elapsed": 4.2,
       "details": [
         {
           "bill_name": "螺纹阀门 类型：蝶阀",
