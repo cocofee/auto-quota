@@ -207,28 +207,42 @@ def rebuild_vector_index(self):
         logger.error(f"经验库向量集合创建失败: {e}")
         return
 
-    # 批量向量化（带省份metadata）
-    batch_size = 256
+    # 第一阶段：GPU批量编码（大batch，充分利用GPU）
+    import time as _time
     total = len(rows)
-    for start in range(0, total, batch_size):
-        end = min(start + batch_size, total)
+    all_texts = [row["bill_text"] for row in rows]
+    encode_batch = 512  # RTX 4070 12GB显存，512刚好不爆
+
+    logger.info(f"第1阶段: GPU编码 {total} 条文本 (batch={encode_batch})...")
+    t0 = _time.time()
+    all_embeddings = self.model.encode(
+        all_texts,
+        batch_size=encode_batch,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+    )
+    t1 = _time.time()
+    logger.info(f"GPU编码完成: {total}条, {t1-t0:.1f}秒 ({total/(t1-t0):.0f}条/秒)")
+
+    # 第二阶段：批量写入ChromaDB（CPU操作，batch可以大一些）
+    write_batch = 5000  # ChromaDB写入用大batch减少事务开销
+    logger.info(f"第2阶段: 写入ChromaDB (batch={write_batch})...")
+    for start in range(0, total, write_batch):
+        end = min(start + write_batch, total)
         batch = rows[start:end]
 
         ids = [str(row["id"]) for row in batch]
         texts = [row["bill_text"] for row in batch]
         metadatas = [{"province": row["province"] or ""} for row in batch]
 
-        embeddings = self.model.encode(
-            texts,
-            batch_size=batch_size,
-            normalize_embeddings=True
-        )
-
-        self.collection.add(
+        self._collection.add(
             ids=ids,
             documents=texts,
-            embeddings=embeddings.tolist(),
+            embeddings=all_embeddings[start:end].tolist(),
             metadatas=metadatas,
         )
+        logger.info(f"  写入进度: {end}/{total} ({end*100//total}%)")
 
-    logger.info(f"经验库向量索引重建完成: {total}条记录（含省份metadata）")
+    t2 = _time.time()
+    logger.info(f"经验库向量索引重建完成: {total}条记录, "
+                f"编码{t1-t0:.0f}s + 写入{t2-t1:.0f}s = 总计{t2-t0:.0f}s")
