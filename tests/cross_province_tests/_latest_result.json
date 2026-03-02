@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-02 21:44",
+  "run_time": "2026-03-02 22:41",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -12,7 +12,7 @@
         "wrong_tier": 19,
         "wrong_book": 2
       },
-      "elapsed": 16.3,
+      "elapsed": 9.3,
       "details": [
         {
           "bill_name": "双联单控开关",
@@ -674,15 +674,15 @@
     {
       "province": "宁夏安装工程计价定额(2019)",
       "total": 50,
-      "correct": 6,
-      "wrong": 44,
-      "rate": 12.0,
+      "correct": 11,
+      "wrong": 39,
+      "rate": 22.0,
       "diagnosis": {
-        "synonym_gap": 13,
-        "wrong_tier": 21,
+        "synonym_gap": 14,
+        "wrong_tier": 15,
         "wrong_book": 10
       },
-      "elapsed": 33.6,
+      "elapsed": 17.2,
       "details": [
         {
           "bill_name": "接地母线",
@@ -726,28 +726,28 @@
         {
           "bill_name": "塑料管",
           "is_match": false,
-          "algo_id": "2-4-17-227",
-          "algo_name": "给水管(热熔连接) 室内管道室内给水塑料管[热熔点熔连接] ",
+          "algo_id": "2-10-3-45",
+          "algo_name": "空调冷热水塑料管(热熔连接) 公称外径(mm内) 25",
           "stored_ids": [
             "2-10-1-325"
           ],
           "stored_names": [
             "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 32"
           ],
-          "confidence": 75
+          "confidence": 95
         },
         {
           "bill_name": "配管",
-          "is_match": false,
-          "algo_id": "2-4-12-43",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
+          "is_match": true,
+          "algo_id": "2-4-12-8",
+          "algo_name": "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径",
           "stored_ids": [
             "2-4-12-8"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 20"
           ],
-          "confidence": 47
+          "confidence": 95
         },
         {
           "bill_name": "钢管",
@@ -842,16 +842,16 @@
         },
         {
           "bill_name": "配管",
-          "is_match": false,
-          "algo_id": "2-4-12-43",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
+          "is_match": true,
+          "algo_id": "2-4-12-35",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20",
           "stored_ids": [
             "2-4-12-35"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "热媒集配装置",
@@ -870,15 +870,15 @@
         {
           "bill_name": "塑料管",
           "is_match": false,
-          "algo_id": "2-4-17-227",
-          "algo_name": "给水管(热熔连接) 室内管道室内给水塑料管[热熔点熔连接] ",
+          "algo_id": "2-10-2-47",
+          "algo_name": "采暖管道 室内塑料管(热熔连接) 公称外径(mm以内) 20",
           "stored_ids": [
             "2-10-1-323"
           ],
           "stored_names": [
             "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 20"
           ],
-          "confidence": 80
+          "confidence": 100
         },
         {
           "bill_name": "洗脸盆",
@@ -974,8 +974,8 @@
         {
           "bill_name": "套管 名称：钢套管 部位:穿墙钢套管",
           "is_match": false,
-          "algo_id": "2-10-1-91",
-          "algo_name": "给排水管道 室内薄壁不锈钢管(卡套连接) 公称直径(mm以内",
+          "algo_id": "2-4-12-40",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤65",
           "stored_ids": [
             "2-10-11-29"
           ],
@@ -986,16 +986,16 @@
         },
         {
           "bill_name": "配管",
-          "is_match": false,
-          "algo_id": "2-4-12-43",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
+          "is_match": true,
+          "algo_id": "2-4-12-42",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤100",
           "stored_ids": [
             "2-4-12-42"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤100"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "灭火器",
@@ -1027,15 +1027,15 @@
         {
           "bill_name": "塑料管",
           "is_match": false,
-          "algo_id": "2-4-17-227",
-          "algo_name": "给水管(热熔连接) 室内管道室内给水塑料管[热熔点熔连接] ",
+          "algo_id": "2-10-2-47",
+          "algo_name": "采暖管道 室内塑料管(热熔连接) 公称外径(mm以内) 20",
           "stored_ids": [
             "2-10-1-323"
           ],
           "stored_names": [
             "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 20"
           ],
-          "confidence": 80
+          "confidence": 100
         },
         {
           "bill_name": "灭火器 形式:手提式二氧化碳灭火器 规格、型号:MT5灭火器",
@@ -1053,15 +1053,15 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "2-4-9-135",
-          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "2-4-9-133",
+          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤50",
           "stored_ids": [
             "2-4-9-162"
           ],
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10"
           ],
-          "confidence": 59
+          "confidence": 60
         },
         {
           "bill_name": "低压交流异步电动机",
@@ -1079,28 +1079,28 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-43",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-89",
+          "algo_name": "防爆钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32",
           "stored_ids": [
             "2-4-12-37"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32"
           ],
-          "confidence": 30
+          "confidence": 24
         },
         {
           "bill_name": "配线",
-          "is_match": false,
-          "algo_id": "2-4-13-5",
-          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "2-4-13-29",
+          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤25",
           "stored_ids": [
             "2-4-13-29"
           ],
           "stored_names": [
             "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤25"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "摄像头 类型:海康威视POE400W半球 规格、型号:400",
@@ -1130,16 +1130,16 @@
         },
         {
           "bill_name": "配管",
-          "is_match": false,
-          "algo_id": "2-4-12-43",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
+          "is_match": true,
+          "algo_id": "2-4-12-36",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25",
           "stored_ids": [
             "2-4-12-36"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "螺纹法兰阀门 类型:电热熔法兰套件",
@@ -1350,7 +1350,7 @@
         "synonym_gap": 15,
         "wrong_tier": 7
       },
-      "elapsed": 8.4,
+      "elapsed": 5.2,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -1746,7 +1746,7 @@
         "synonym_gap": 35,
         "wrong_tier": 11
       },
-      "elapsed": 13.6,
+      "elapsed": 7.6,
       "details": [
         {
           "bill_name": "砖砌体拆除",
@@ -2439,11 +2439,11 @@
       "wrong": 40,
       "rate": 20.0,
       "diagnosis": {
-        "wrong_tier": 27,
-        "synonym_gap": 11,
+        "wrong_tier": 26,
+        "synonym_gap": 12,
         "wrong_book": 2
       },
-      "elapsed": 13.0,
+      "elapsed": 8.1,
       "details": [
         {
           "bill_name": "配电箱",
@@ -2703,7 +2703,7 @@
           "stored_names": [
             "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 20"
           ],
-          "confidence": 79
+          "confidence": 93
         },
         {
           "bill_name": "除污器（过滤器） 名称、类型:水锤消除器 规格类型：DN15",
@@ -2929,8 +2929,8 @@
         {
           "bill_name": "离心式通风机",
           "is_match": false,
-          "algo_id": "C7-1-64",
-          "algo_name": "离心式通风机安装 风量(m3/h) 123000以上",
+          "algo_id": "C7-3-165",
+          "algo_name": "吹、吸式槽边通风罩制作安装",
           "stored_ids": [
             "C7-1-60",
             "C7-4-5"
@@ -2938,7 +2938,7 @@
           "stored_names": [
             "离心式通风机安装 风量(m3/h) 7000以下"
           ],
-          "confidence": 95
+          "confidence": 98
         },
         {
           "bill_name": "碳钢风口、散流器、百叶窗 名称：电动多页送风口",
@@ -3110,11 +3110,11 @@
       "wrong": 50,
       "rate": 0.0,
       "diagnosis": {
-        "synonym_gap": 41,
-        "wrong_tier": 6,
+        "synonym_gap": 40,
+        "wrong_tier": 7,
         "wrong_book": 3
       },
-      "elapsed": 5.8,
+      "elapsed": 5.9,
       "details": [
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*16",
@@ -3586,15 +3586,15 @@
         {
           "bill_name": "钢筋笼 混凝土灌注桩钢筋笼  钢筋 HPB300φ10以内 ",
           "is_match": false,
-          "algo_id": "5-37",
-          "algo_name": "给水管固筑 混凝土 管径(mm以内) DN75",
+          "algo_id": "46137",
+          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径≤10mm",
           "stored_ids": [
             "5-155"
           ],
           "stored_names": [
             "混凝土灌注桩钢筋笼 钢筋 HPB300φ10以内"
           ],
-          "confidence": 67
+          "confidence": 95
         },
         {
           "bill_name": "直形墙",
@@ -3625,8 +3625,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "46137",
-          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径≤10mm",
+          "algo_id": "46138",
+          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径＞10mm",
           "stored_ids": [
             "5-132"
           ],
@@ -3638,8 +3638,8 @@
         {
           "bill_name": "现浇构件钢筋",
           "is_match": false,
-          "algo_id": "46137",
-          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径≤10mm",
+          "algo_id": "46138",
+          "algo_name": "现浇混凝土亭廊屋面 钢筋 HPB300 直径＞10mm",
           "stored_ids": [
             "5-126"
           ],
@@ -3795,7 +3795,7 @@
         "wrong_tier": 9,
         "synonym_gap": 7
       },
-      "elapsed": 3.0,
+      "elapsed": 3.1,
       "details": [
         {
           "bill_name": "灌注桩入岩 灌注桩入岩增加费 地质情况：综合考虑",
@@ -4161,24 +4161,24 @@
       "wrong": 47,
       "rate": 6.0,
       "diagnosis": {
-        "wrong_tier": 15,
-        "synonym_gap": 28,
+        "synonym_gap": 29,
+        "wrong_tier": 14,
         "wrong_book": 4
       },
-      "elapsed": 8.7,
+      "elapsed": 12.0,
       "details": [
         {
           "bill_name": "电气配管 JDG40",
           "is_match": false,
-          "algo_id": "4-12-32",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤125",
+          "algo_id": "4-12-38",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40",
           "stored_ids": [
             "4-12-4"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构明配 外径(mm) 32 "
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4×16",
@@ -4278,15 +4278,15 @@
         {
           "bill_name": "电气配管 JDG16",
           "is_match": false,
-          "algo_id": "4-12-44",
-          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤150",
+          "algo_id": "4-12-35",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20",
           "stored_ids": [
             "4-12-7"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 16"
           ],
-          "confidence": 52
+          "confidence": 91
         },
         {
           "bill_name": "照明开关",
@@ -4546,15 +4546,15 @@
         {
           "bill_name": "双连杆手动、电动密闭阀门 DN300 名称：双连杆手动、电动",
           "is_match": false,
-          "algo_id": "7-3-230",
-          "algo_name": "密闭穿墙管制作安装 Ⅲ型 直径(mm) ≤349",
+          "algo_id": "7-3-233",
+          "algo_name": "密闭穿墙管填塞 公称直径(mm) ≤349",
           "stored_ids": [
             "7-3-206"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤300"
           ],
-          "confidence": 52
+          "confidence": 92
         },
         {
           "bill_name": "碳钢通风管道",
@@ -4839,14 +4839,14 @@
     {
       "province": "河南省通用安装工程预算定额(2016)",
       "total": 50,
-      "correct": 5,
-      "wrong": 45,
-      "rate": 10.0,
+      "correct": 6,
+      "wrong": 44,
+      "rate": 12.0,
       "diagnosis": {
-        "synonym_gap": 26,
-        "wrong_tier": 19
+        "synonym_gap": 27,
+        "wrong_tier": 17
       },
-      "elapsed": 8.4,
+      "elapsed": 15.0,
       "details": [
         {
           "bill_name": "砌块墙",
@@ -4950,7 +4950,7 @@
           "stored_names": [
             "穿照明线 铜芯 导线截面≤2.5mm2"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "等电位端子箱、测试板",
@@ -4981,15 +4981,15 @@
         {
           "bill_name": "配线",
           "is_match": false,
-          "algo_id": "4-13-56",
-          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤2.5mm2",
+          "algo_id": "4-13-54",
+          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤1mm2",
           "stored_ids": [
             "4-13-39"
           ],
           "stored_names": [
             "穿多芯软导线 二芯 单芯导线截面≤1mm2"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "装饰灯",
@@ -5020,28 +5020,28 @@
         {
           "bill_name": "配线",
           "is_match": false,
-          "algo_id": "4-13-56",
-          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤2.5mm2",
+          "algo_id": "4-13-54",
+          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤1mm2",
           "stored_ids": [
             "4-13-39"
           ],
           "stored_names": [
             "穿多芯软导线 二芯 单芯导线截面≤1mm2"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "配线 配线形式:管内穿线",
-          "is_match": false,
-          "algo_id": "4-13-5",
-          "algo_name": "穿照明线 铜芯 导线截面≤2.5mm2",
+          "is_match": true,
+          "algo_id": "4-13-6",
+          "algo_name": "穿照明线 铜芯 导线截面≤4mm2",
           "stored_ids": [
             "4-13-6"
           ],
           "stored_names": [
             "穿照明线 铜芯 导线截面≤4mm2"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "线槽",
@@ -5093,7 +5093,7 @@
           "stored_names": [
             "一般塑料套管制作安装 介质管道外径110mm以内"
           ],
-          "confidence": 95
+          "confidence": 92
         },
         {
           "bill_name": "套管 名称、类型:刚性防水套管",
@@ -5205,8 +5205,8 @@
         {
           "bill_name": "塑料管 材质、规格:UPVC管DE50",
           "is_match": false,
-          "algo_id": "10-5-105",
-          "algo_name": "塑料阀门安装(粘接) 公称直径40mm以内",
+          "algo_id": "10-1-351",
+          "algo_name": "室内塑料给水管(粘接) 公称外径40mm以内",
           "stored_ids": [
             "10-1-377"
           ],
@@ -5227,13 +5227,13 @@
           "stored_names": [
             "室外塑料排水管(粘接) 公称外径75mm以内"
           ],
-          "confidence": 73
+          "confidence": 91
         },
         {
           "bill_name": "给、排水附(配)件",
           "is_match": false,
-          "algo_id": "10-1-89",
-          "algo_name": "给排水管道 室内薄壁不锈钢管(卡套连接) 公称直径50mm以",
+          "algo_id": "10-1-442",
+          "algo_name": "给排水管道 室内铝塑复合管(卡套连接) 公称外径50mm以内",
           "stored_ids": [
             "10-6-90"
           ],
@@ -5516,7 +5516,7 @@
         "wrong_tier": 9,
         "synonym_gap": 6
       },
-      "elapsed": 7.2,
+      "elapsed": 12.2,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -6176,14 +6176,14 @@
     {
       "province": "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
       "total": 28,
-      "correct": 13,
-      "wrong": 15,
-      "rate": 46.4,
+      "correct": 12,
+      "wrong": 16,
+      "rate": 42.9,
       "diagnosis": {
-        "wrong_tier": 11,
+        "wrong_tier": 12,
         "synonym_gap": 4
       },
-      "elapsed": 4.2,
+      "elapsed": 7.4,
       "details": [
         {
           "bill_name": "螺纹阀门 类型：蝶阀",
@@ -6287,7 +6287,7 @@
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "塑料管 材质、规格:UPVC排水DN75",
@@ -6383,15 +6383,15 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "C4-9-126",
-          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "C4-9-122",
+          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤10",
           "stored_ids": [
             "C4-9-130"
           ],
           "stored_names": [
             "排管内电力电缆敷设 电缆截面(mm2) ≤10 其中一根芯线的截面(mm2)＞1/2其他芯线截面(mm2)，五芯 人工*1.3,材料*1.3,机械*1.3"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "等电位端子箱、测试板",
@@ -6417,33 +6417,33 @@
           "stored_names": [
             "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-2",
-          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-3",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤4",
           "stored_ids": [
             "C4-13-8"
           ],
           "stored_names": [
             "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤4"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-2",
-          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-29",
+          "algo_name": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤2.",
           "stored_ids": [
             "C4-13-24"
           ],
           "stored_names": [
             "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤2.5"
           ],
-          "confidence": 57
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：桥架配线",
@@ -6456,7 +6456,7 @@
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：管内穿线",
@@ -6469,7 +6469,7 @@
           "stored_names": [
             "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 73
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：桥架配线",
@@ -6482,33 +6482,33 @@
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-2",
-          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-28",
+          "algo_name": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤1.",
           "stored_ids": [
             "C4-13-23"
           ],
           "stored_names": [
             "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤1.5"
           ],
-          "confidence": 57
+          "confidence": 95
         },
         {
           "bill_name": "配线 名称：桥架配线",
-          "is_match": true,
-          "algo_id": "C4-13-78",
-          "algo_name": "线槽配线 导线截面(mm2) ≤2.5",
+          "is_match": false,
+          "algo_id": "C4-13-28",
+          "algo_name": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤1.",
           "stored_ids": [
             "C4-13-78"
           ],
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 52
+          "confidence": 95
         },
         {
           "bill_name": "装饰灯 名称：A型中型安全出口标志灯",

@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.59';
+export const APP_VERSION = '0.1.60';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.60',
+    date: '2026-03-02',
+    changes: [
+      { type: 'admin', text: '清理残留品牌信息（benchmark数据集名+changelog）' },
+    ],
+  },
   {
     version: '0.1.59',
     date: '2026-03-02',
