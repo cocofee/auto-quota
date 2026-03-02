@@ -480,31 +480,44 @@ def build_quota_query(parser, name: str, description: str = "",
         fields = extract_description_fields(description)
 
         # --- 配管类：材质代号→中文名称，配置形式→敷设方式 ---
+        # 配管材质代号 → 定额库中的实际名称（必须与定额名完全一致）
+        conduit_map = {
+            "PC":  "PVC阻燃塑料管",    # C4-11-168~181
+            "PVC": "PVC阻燃塑料管",    # 同PC
+            "SC":  "焊接钢管",          # C4-11-23~70
+            "G":   "镀锌钢管",          # C4-11-71~118
+            "DG":  "镀锌钢管",          # 同G（电镀锌钢管）
+            "RC":  "镀锌电线管",        # C4-11-1~22（水煤气管）
+            "MT":  "镀锌电线管",        # 金属电线管
+            "JDG": "紧定式薄壁钢管",    # C4-11-119~140
+            "KBG": "紧定式薄壁钢管",    # 同JDG（扣压式）
+            "FPC": "半硬质阻燃管",      # 半硬质PVC管
+            "CT":  "桥架",              # 桥架归类另算
+        }
         conduit_mat = fields.get("材质", "")
         if conduit_mat:
-            # 配管材质代号 → 定额库中的实际名称（必须与定额名完全一致）
-            conduit_map = {
-                "PC":  "PVC阻燃塑料管",    # C4-11-168~181
-                "PVC": "PVC阻燃塑料管",    # 同PC
-                "SC":  "焊接钢管",          # C4-11-23~70
-                "G":   "镀锌钢管",          # C4-11-71~118
-                "DG":  "镀锌钢管",          # 同G（电镀锌钢管）
-                "RC":  "镀锌电线管",        # C4-11-1~22（水煤气管）
-                "MT":  "镀锌电线管",        # 金属电线管
-                "JDG": "紧定式薄壁钢管",    # C4-11-119~140
-                "KBG": "紧定式薄壁钢管",    # 同JDG（扣压式）
-                "FPC": "半硬质阻燃管",      # 半硬质PVC管
-                "CT":  "桥架",              # 桥架归类另算
-            }
             # 按代码长度降序匹配（避免"G"先于"JDG"匹配）
             for code in sorted(conduit_map, key=len, reverse=True):
                 if code in conduit_mat.upper():
                     query_parts.append(conduit_map[code])
                     break
 
+        # 名称含材质代号但描述里没材质时，从名称提取
+        # 如 "SC管预埋"→SC, "JDG管暗配"→JDG
+        if not conduit_mat:
+            name_upper = name.upper()
+            for code in sorted(conduit_map, key=len, reverse=True):
+                if code in name_upper:
+                    query_parts.append(conduit_map[code])
+                    conduit_mat = code
+                    break
+
         # 配管规格（公称直径）—— 仅配管类，不含穿线/电缆
         conduit_spec = fields.get("规格", "") or fields.get("规格型号", "")
-        is_conduit = "配管" in name and "穿线" not in name and "电缆" not in name
+        # 识别配管：清单名含"配管"、或含材质型号（SC管/JDG管等）
+        conduit_keywords = ("配管", "SC管", "JDG管", "KBG管", "PVC管", "导管")
+        is_conduit = (any(kw in name for kw in conduit_keywords)
+                      and "穿线" not in name and "电缆" not in name)
         if conduit_spec and is_conduit:
             spec_match = re.search(r'(\d+)', conduit_spec)
             if spec_match:
@@ -556,10 +569,17 @@ def build_quota_query(parser, name: str, description: str = "",
                     if code in wire_spec.upper() or code in full_text.upper():
                         query_parts[0] = wname
                         break
-            # 导线截面（从基础型号中提取数字，如 BYJ4 → 4）
-            wire_sec = re.search(r'[A-Za-z]+\s*(\d+(?:\.\d+)?)', wire_base or wire_spec)
+            # 导线截面提取
+            # 优先匹配多芯格式：4×2.5 → 取单芯截面2.5
+            wire_text = wire_base or wire_spec
+            wire_sec = re.search(r'(\d+)\s*[×xX*]\s*(\d+(?:\.\d+)?)', wire_text)
             if wire_sec:
-                query_parts.append(f"导线截面 {wire_sec.group(1)}")
+                query_parts.append(f"导线截面 {wire_sec.group(2)}")
+            else:
+                # 降级：从型号尾部提取（如 BYJ4 → 4）
+                wire_sec = re.search(r'[A-Za-z]+\s*(\d+(?:\.\d+)?)', wire_text)
+                if wire_sec:
+                    query_parts.append(f"导线截面 {wire_sec.group(1)}")
 
         # --- 电缆类：根据敷设方式构建query ---
         # 北京2024定额按敷设方式命名：电缆埋地/沿墙面/沿桥架/穿导管敷设
@@ -567,6 +587,12 @@ def build_quota_query(parser, name: str, description: str = "",
         if "电缆" in name and not "终端头" in name and not "电缆头" in name:
             # 敷设方式决定定额名称
             laying_raw = fields.get("敷设方式", "") or fields.get("敷设方式、部位", "")
+            # 描述里没敷设方式时，从电缆型号推断（行业惯例）
+            # YJV22/VV22 = 钢带铠装 → 埋地敷设；无铠装型号不强行推断
+            if not laying_raw and cable_model:
+                model_upper = cable_model.upper()
+                if "22" in model_upper or "23" in model_upper:
+                    laying_raw = "埋地"
             if "桥架" in laying_raw or "线槽" in laying_raw:
                 query_parts[0] = "电缆沿桥架、线槽敷设"
             elif "管" in laying_raw:
@@ -606,6 +632,20 @@ def build_quota_query(parser, name: str, description: str = "",
 
         # --- 安装方式（配电箱、灯具、插座等通用） ---
         install = fields.get("安装方式", "")
+        # 描述中没安装方式时，从清单名称提取（如"明装配电箱"、"暗装风机盘管"）
+        if not install:
+            if "明装" in name or "明配" in name:
+                install = "明装"
+            elif "暗装" in name or "暗配" in name:
+                install = "暗装"
+            elif "落地式" in name or "落地" in name:
+                install = "落地"
+            elif "嵌入式" in name or "嵌入" in name:
+                install = "嵌入"
+            elif "吸顶式" in name or "吸顶" in name:
+                install = "吸顶"
+            elif "挂墙" in name or "壁挂" in name:
+                install = "挂墙"
         if install:
             if "底距地" in install or "墙上" in install:
                 query_parts.append("明装")
