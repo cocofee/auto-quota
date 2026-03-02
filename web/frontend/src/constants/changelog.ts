@@ -34,7 +34,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       { type: 'admin', text: 'Results页补漏GREEN_THRESHOLD导入' },
       { type: 'admin', text: '跨省基线数据+query_builder微调' },
       { type: 'admin', text: '经验库广联达风格改版+全站颜色统一' },
-      { type: 'admin', text: '清理第三方品牌信息（小栗AI/造价HOME/华佑等）' },
+      { type: 'admin', text: '清理第三方品牌信息' },
     ],
   },
   {
@@ -43,7 +43,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     changes: [
       { type: 'admin', text: '跨省基线数据+query_builder微调' },
       { type: 'admin', text: '经验库广联达风格改版+全站颜色统一' },
-      { type: 'admin', text: '清理第三方品牌信息（小栗AI/造价HOME/华佑等）' },
+      { type: 'admin', text: '清理第三方品牌信息' },
     ],
   },
   {

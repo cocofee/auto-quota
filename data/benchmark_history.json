@@ -15,7 +15,7 @@
         "fallback_rate": 0.0,
         "avg_time_sec": 1.33
       },
-      "B2_华佑电气": {
+      "B2_电气系统": {
         "total": 283,
         "skip_measure": 27,
         "green_rate": 0.9688,
@@ -1808,6 +1808,23 @@
   {
     "version": "L2-a_baseline",
     "date": "2026-03-02 21:38:45",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-02 22:32:42",
     "mode": "search",
     "datasets": {
       "B_ok": {
