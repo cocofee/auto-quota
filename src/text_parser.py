@@ -303,7 +303,7 @@ class TextParser:
             r'[ΦφΦ]\s*(\d+)',                                     # Φ150, φ150（直径符号）
             r'公称直径\s*(?:\([^)]*\))?\s*[≤≥<>]?\s*(\d+)',       # 公称直径(DN) ≤20 / 公称直径(mm以内) 50
             r'外径\s*(?:\([^)]*\))?\s*[≤≥<>]?\s*(\d+)',           # 外径(mm) 20（JDG导管定额格式）
-            r'(?:管径|直径)\s*[≤≥<>]?\s*(\d+)',                   # 管径≤50、直径150
+            r'(?:管径|直径)\s*(?:\([^)]*\))?\s*[≤≥<>]?\s*(\d+)',  # 管径(mm以内) 50、直径(mm) ≤40
         ]
         for pattern in dn_patterns:
             match = re.search(pattern, text)
@@ -734,6 +734,15 @@ class TextParser:
             text, [r'半周长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)'])
         if named is not None:
             return named
+
+        # 再次："(半周长m以内) 2.5" 格式（广东等省定额名称，半周长在括号内，值在括号外）
+        # 注意：必须在mm格式之后检查（mm格式已在上面处理，不会重复匹配）
+        m_paren = re.search(r'半周长[^)]*\)\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)', text)
+        if m_paren:
+            val = float(m_paren.group(1))
+            if val < 10:  # 小于10视为米（配电箱半周长一般0.5~5m）
+                return val * 1000  # m → mm
+            return val  # 大于10视为毫米
 
         # 从清单规格 W*H 计算 (W+H)
         spec_wh = self._extract_spec_wh(text)
