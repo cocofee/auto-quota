@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-02 21:27",
+  "run_time": "2026-03-02 21:44",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -12,7 +12,7 @@
         "wrong_tier": 19,
         "wrong_book": 2
       },
-      "elapsed": 9.7,
+      "elapsed": 16.3,
       "details": [
         {
           "bill_name": "双联单控开关",
@@ -678,11 +678,11 @@
       "wrong": 44,
       "rate": 12.0,
       "diagnosis": {
-        "synonym_gap": 14,
-        "wrong_tier": 20,
+        "synonym_gap": 13,
+        "wrong_tier": 21,
         "wrong_book": 10
       },
-      "elapsed": 16.4,
+      "elapsed": 33.6,
       "details": [
         {
           "bill_name": "接地母线",
@@ -739,15 +739,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-75",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-43",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
           "stored_ids": [
             "2-4-12-8"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 20"
           ],
-          "confidence": 73
+          "confidence": 47
         },
         {
           "bill_name": "钢管",
@@ -843,15 +843,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-75",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-43",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
           "stored_ids": [
             "2-4-12-35"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "热媒集配装置",
@@ -987,15 +987,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-75",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-43",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
           "stored_ids": [
             "2-4-12-42"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤100"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "灭火器",
@@ -1048,7 +1048,7 @@
           "stored_names": [
             "灭火器 手提式"
           ],
-          "confidence": 62
+          "confidence": 55
         },
         {
           "bill_name": "电力电缆",
@@ -1079,15 +1079,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-75",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-43",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
           "stored_ids": [
             "2-4-12-37"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32"
           ],
-          "confidence": 15
+          "confidence": 30
         },
         {
           "bill_name": "配线",
@@ -1131,15 +1131,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "2-4-12-75",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤125",
+          "algo_id": "2-4-12-43",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤125",
           "stored_ids": [
             "2-4-12-36"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "螺纹法兰阀门 类型:电热熔法兰套件",
@@ -1350,7 +1350,7 @@
         "synonym_gap": 15,
         "wrong_tier": 7
       },
-      "elapsed": 5.6,
+      "elapsed": 8.4,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -1743,10 +1743,10 @@
       "wrong": 46,
       "rate": 8.0,
       "diagnosis": {
-        "synonym_gap": 36,
-        "wrong_tier": 10
+        "synonym_gap": 35,
+        "wrong_tier": 11
       },
-      "elapsed": 7.9,
+      "elapsed": 13.6,
       "details": [
         {
           "bill_name": "砖砌体拆除",
@@ -2381,8 +2381,8 @@
         {
           "bill_name": "墙面装饰板（CT-05）",
           "is_match": false,
-          "algo_id": "A1-7-155",
-          "algo_name": "附墙钢支架 安装",
+          "algo_id": "A1-13-256",
+          "algo_name": "饰面层 埃特墙板",
           "stored_ids": [
             "A1-13-169"
           ],
@@ -2420,8 +2420,8 @@
         {
           "bill_name": "瓷砖墙面（CT-03)",
           "is_match": false,
-          "algo_id": "A1-7-155",
-          "algo_name": "附墙钢支架 安装",
+          "algo_id": "A1-13-177",
+          "algo_name": "挂贴陶瓷面砖 墙面",
           "stored_ids": [
             "A1-13-162"
           ],
@@ -2443,7 +2443,7 @@
         "synonym_gap": 11,
         "wrong_book": 2
       },
-      "elapsed": 8.0,
+      "elapsed": 13.0,
       "details": [
         {
           "bill_name": "配电箱",
@@ -3114,7 +3114,7 @@
         "wrong_tier": 6,
         "wrong_book": 3
       },
-      "elapsed": 5.9,
+      "elapsed": 5.8,
       "details": [
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*16",
@@ -3280,15 +3280,15 @@
         {
           "bill_name": "电气配管 SC25",
           "is_match": false,
-          "algo_id": "46168",
-          "algo_name": "千秋架 φ25",
+          "algo_id": "46071",
+          "algo_name": "混凝土垫层",
           "stored_ids": [
             "4-12-36"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25"
           ],
-          "confidence": 83
+          "confidence": 62
         },
         {
           "bill_name": "电力电缆 WDZC-YJY-5*10",
@@ -3401,28 +3401,28 @@
         {
           "bill_name": "电气配管 JDG32",
           "is_match": false,
-          "algo_id": "46169",
-          "algo_name": "千秋架 φ32",
+          "algo_id": "4-40",
+          "algo_name": "屋顶花园基底处理 软式透水管安装 φ80",
           "stored_ids": [
             "4-12-10"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 32"
           ],
-          "confidence": 83
+          "confidence": 85
         },
         {
           "bill_name": "电气配管 SC40",
           "is_match": false,
-          "algo_id": "46146",
-          "algo_name": "喷泉喷头(螺纹连接) DN40",
+          "algo_id": "46071",
+          "algo_name": "混凝土垫层",
           "stored_ids": [
             "4-12-27"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤40"
           ],
-          "confidence": 80
+          "confidence": 62
         },
         {
           "bill_name": "双面标志灯",
@@ -3440,15 +3440,15 @@
         {
           "bill_name": "电气配管 SC40",
           "is_match": false,
-          "algo_id": "46146",
-          "algo_name": "喷泉喷头(螺纹连接) DN40",
+          "algo_id": "46071",
+          "algo_name": "混凝土垫层",
           "stored_ids": [
             "4-12-38"
           ],
           "stored_names": [
             "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40"
           ],
-          "confidence": 80
+          "confidence": 62
         },
         {
           "bill_name": "一般钢套管DN50",
@@ -3795,7 +3795,7 @@
         "wrong_tier": 9,
         "synonym_gap": 7
       },
-      "elapsed": 3.1,
+      "elapsed": 3.0,
       "details": [
         {
           "bill_name": "灌注桩入岩 灌注桩入岩增加费 地质情况：综合考虑",
@@ -4161,24 +4161,24 @@
       "wrong": 47,
       "rate": 6.0,
       "diagnosis": {
-        "synonym_gap": 30,
-        "wrong_tier": 13,
+        "wrong_tier": 15,
+        "synonym_gap": 28,
         "wrong_book": 4
       },
-      "elapsed": 8.6,
+      "elapsed": 8.7,
       "details": [
         {
           "bill_name": "电气配管 JDG40",
           "is_match": false,
-          "algo_id": "4-12-55",
-          "algo_name": "镀锌钢管敷设 钢结构支架配管 公称直径(DN) ≤40",
+          "algo_id": "4-12-32",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤125",
           "stored_ids": [
             "4-12-4"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构明配 外径(mm) 32 "
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4×16",
@@ -4278,15 +4278,15 @@
         {
           "bill_name": "电气配管 JDG16",
           "is_match": false,
-          "algo_id": "4-12-76",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径(DN) ≤150",
+          "algo_id": "4-12-44",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤150",
           "stored_ids": [
             "4-12-7"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 16"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "照明开关",
@@ -4843,10 +4843,10 @@
       "wrong": 45,
       "rate": 10.0,
       "diagnosis": {
-        "synonym_gap": 27,
-        "wrong_tier": 18
+        "synonym_gap": 26,
+        "wrong_tier": 19
       },
-      "elapsed": 8.8,
+      "elapsed": 8.4,
       "details": [
         {
           "bill_name": "砌块墙",
@@ -4890,15 +4890,15 @@
         {
           "bill_name": "配管",
           "is_match": false,
-          "algo_id": "4-12-70",
-          "algo_name": "镀锌钢管敷设 埋地敷设 公称直径DN≤40",
+          "algo_id": "4-12-44",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径DN≤150",
           "stored_ids": [
             "4-12-9"
           ],
           "stored_names": [
             "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径25mm"
           ],
-          "confidence": 95
+          "confidence": 52
         },
         {
           "bill_name": "配电箱 1AL1~7、2AL7",
@@ -5516,7 +5516,7 @@
         "wrong_tier": 9,
         "synonym_gap": 6
       },
-      "elapsed": 7.3,
+      "elapsed": 7.2,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -6183,7 +6183,7 @@
         "wrong_tier": 11,
         "synonym_gap": 4
       },
-      "elapsed": 4.3,
+      "elapsed": 4.2,
       "details": [
         {
           "bill_name": "螺纹阀门 类型：蝶阀",

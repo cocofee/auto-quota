@@ -513,22 +513,25 @@ def build_quota_query(parser, name: str, description: str = "",
 
             # JDG/KBG是紧定式钢导管，和普通镀锌钢管是不同定额子目
             # 替换query_parts[0]让BM25能匹配"套接紧定式镀锌钢导管(JDG)"
+            # 加"套接"关键词提升JDG条目的BM25分数（区别于普通镀锌钢管）
             if conduit_code in ("JDG", "KBG"):
-                query_parts[0] = "紧定式钢导管 JDG敷设"
+                query_parts[0] = "套接紧定式钢导管JDG 敷设"
             elif conduit_code in ("PC", "PVC", "FPC"):
                 query_parts[0] = "PVC阻燃塑料管敷设"
-            # SC/G/DG → 镀锌钢管，synonym "配管"→"镀锌钢管敷设" 已覆盖
+            else:
+                # SC/G/DG → 直接写"钢管敷设"，避免同义词"镀锌钢管"→"焊接钢管 镀锌"破坏
+                query_parts[0] = "钢管敷设"
 
-            # 2. 配置形式：暗配/明配（关键！决定定额子目）
+            # 2. 配置形式：暗配/明配（加"砖混凝土结构"限定，避免匹配到"钢模板暗配"）
             config_match = re.search(
                 r'配置形式[：:]\s*(.*?)(?:\s|含|工作|其他|$)',
                 full_text)
             if config_match:
                 config_raw = config_match.group(1)
                 if "暗" in config_raw:
-                    query_parts.append("暗配")
+                    query_parts.append("砖混凝土结构暗配")
                 elif "明" in config_raw:
-                    query_parts.append("明配")
+                    query_parts.append("砖混凝土结构明配")
 
             # 3. 管径：从"SC25"、"JDG32"、"Φ20"或"规格:25"提取
             query_str = " ".join(query_parts)
