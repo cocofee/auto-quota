@@ -61,3 +61,10 @@ jarvis-correct-*/
 # 备份和下载（非项目文件）
 backups/
 downloads/
+
+# OSS下载工具（含硬编码凭证，不上传）
+tools/download_oss_remaining.py
+
+# OSS下载的样本数据（体积大）
+data/oss_samples/
+data/experience.db

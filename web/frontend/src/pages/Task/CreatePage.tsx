@@ -13,7 +13,7 @@ import {
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
-import { read } from 'xlsx';
+import { read, utils as xlsxUtils } from 'xlsx';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useProvinceStore } from '../../stores/province';
@@ -224,12 +224,52 @@ export default function TaskCreatePage() {
                   }
                   setFileList([{ ...file, originFileObj: file } as UploadFile]);
 
-                  // 读取Excel中的工作表（Sheet）名列表
+                  // 读取Excel中的工作表（Sheet）名列表 + 校验必备列
                   const reader = new FileReader();
                   reader.onload = (e) => {
                     try {
-                      const wb = read(e.target?.result, { type: 'array', bookSheets: true });
+                      // sheetRows:5 只读前5行（性能优化，不加载全部数据）
+                      const wb = read(e.target?.result, { type: 'array', sheetRows: 5 });
                       setSheetNames(wb.SheetNames || []);
+
+                      // 校验必备列：从所有Sheet的前几行中查找列名
+                      const requiredCols: { name: string; aliases: string[] }[] = [
+                        { name: '项目编码', aliases: ['项目编码', '清单编码', '编码', '编号'] },
+                        { name: '项目名称', aliases: ['项目名称', '清单名称', '名称'] },
+                        { name: '项目特征', aliases: ['项目特征', '项目特征描述', '特征描述', '特征', '工程内容'] },
+                        { name: '单位', aliases: ['计量单位', '单位'] },
+                      ];
+
+                      // 从所有Sheet中收集表头（通常在前3行内）
+                      // 用 xlsx 的 utils.sheet_to_json 读取前5行，自动处理任意列数（包括AA/AB等超过Z的列）
+                      const allHeaders = new Set<string>();
+                      for (const sheetName of wb.SheetNames) {
+                        const ws = wb.Sheets[sheetName];
+                        if (!ws) continue;
+                        // header:1 返回二维数组（每行一个数组），不做表头映射
+                        const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1 });
+                        for (const row of rows) {
+                          if (!Array.isArray(row)) continue;
+                          for (const cell of row) {
+                            if (cell != null && String(cell).trim()) {
+                              allHeaders.add(String(cell).trim());
+                            }
+                          }
+                        }
+                      }
+
+                      // 检查每个必备列是否在表头中找到
+                      const missing = requiredCols.filter(
+                        col => !col.aliases.some(alias => allHeaders.has(alias))
+                      );
+
+                      if (missing.length > 0) {
+                        const names = missing.map(c => `「${c.name}」`).join('、');
+                        message.warning({
+                          content: `提醒：未在前几行中找到 ${names} 列。如果这些列在更下方，可忽略此提醒。`,
+                          duration: 6,
+                        });
+                      }
                     } catch {
                       setSheetNames([]);
                     }

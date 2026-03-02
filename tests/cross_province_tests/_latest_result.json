@@ -1,18 +1,18 @@
 {
-  "run_time": "2026-03-02 17:40",
+  "run_time": "2026-03-02 21:27",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
       "total": 50,
-      "correct": 15,
-      "wrong": 35,
-      "rate": 30.0,
+      "correct": 17,
+      "wrong": 33,
+      "rate": 34.0,
       "diagnosis": {
         "synonym_gap": 12,
-        "wrong_tier": 21,
+        "wrong_tier": 19,
         "wrong_book": 2
       },
-      "elapsed": 9.3,
+      "elapsed": 9.7,
       "details": [
         {
           "bill_name": "双联单控开关",
@@ -160,8 +160,8 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "C4-8-43",
-          "algo_name": "电缆穿导管敷设 电缆截面(mm2以内) 16",
+          "algo_id": "C4-8-23",
+          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16",
           "stored_ids": [
             "C4-8-22"
           ],
@@ -198,9 +198,9 @@
         },
         {
           "bill_name": "电力电缆",
-          "is_match": false,
-          "algo_id": "C4-8-43",
-          "algo_name": "电缆穿导管敷设 电缆截面(mm2以内) 16",
+          "is_match": true,
+          "algo_id": "C4-8-23",
+          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16",
           "stored_ids": [
             "C4-8-23"
           ],
@@ -316,15 +316,15 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "C4-8-43",
-          "algo_name": "电缆穿导管敷设 电缆截面(mm2以内) 16",
+          "algo_id": "C4-8-23",
+          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16",
           "stored_ids": [
             "C4-8-62"
           ],
           "stored_names": [
             "多芯刚性矿物绝缘电缆敷设 2~4芯电缆 电缆截面(mm2以内) 6"
           ],
-          "confidence": 74
+          "confidence": 30
         },
         {
           "bill_name": "桥架",
@@ -380,9 +380,9 @@
         },
         {
           "bill_name": "电力电缆",
-          "is_match": false,
-          "algo_id": "C4-8-43",
-          "algo_name": "电缆穿导管敷设 电缆截面(mm2以内) 16",
+          "is_match": true,
+          "algo_id": "C4-8-23",
+          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16",
           "stored_ids": [
             "C4-8-23"
           ],
@@ -674,15 +674,15 @@
     {
       "province": "宁夏安装工程计价定额(2019)",
       "total": 50,
-      "correct": 7,
-      "wrong": 43,
-      "rate": 14.0,
+      "correct": 6,
+      "wrong": 44,
+      "rate": 12.0,
       "diagnosis": {
         "synonym_gap": 14,
-        "wrong_tier": 19,
+        "wrong_tier": 20,
         "wrong_book": 10
       },
-      "elapsed": 16.2,
+      "elapsed": 16.4,
       "details": [
         {
           "bill_name": "接地母线",
@@ -1053,8 +1053,8 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "2-4-9-136",
-          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤240",
+          "algo_id": "2-4-9-135",
+          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤120",
           "stored_ids": [
             "2-4-9-162"
           ],
@@ -1091,9 +1091,9 @@
         },
         {
           "bill_name": "配线",
-          "is_match": true,
-          "algo_id": "2-4-13-29",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤25",
+          "is_match": false,
+          "algo_id": "2-4-13-5",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "2-4-13-29"
           ],
@@ -1350,7 +1350,7 @@
         "synonym_gap": 15,
         "wrong_tier": 7
       },
-      "elapsed": 5.2,
+      "elapsed": 5.6,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -1746,7 +1746,7 @@
         "synonym_gap": 36,
         "wrong_tier": 10
       },
-      "elapsed": 7.7,
+      "elapsed": 7.9,
       "details": [
         {
           "bill_name": "砖砌体拆除",
@@ -2439,11 +2439,11 @@
       "wrong": 40,
       "rate": 20.0,
       "diagnosis": {
-        "wrong_tier": 22,
-        "synonym_gap": 16,
+        "wrong_tier": 27,
+        "synonym_gap": 11,
         "wrong_book": 2
       },
-      "elapsed": 9.7,
+      "elapsed": 8.0,
       "details": [
         {
           "bill_name": "配电箱",
@@ -2461,15 +2461,15 @@
         {
           "bill_name": "控制电缆",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "硬矿物绝缘电力电缆敷设 3~4芯(截面mm2以下) 185",
+          "algo_id": "C4-8-32",
+          "algo_name": "塑料控制电缆敷设 电缆(芯以下) 24",
           "stored_ids": [
             "C4-8-30"
           ],
           "stored_names": [
             "塑料控制电缆敷设 电缆(芯以下) 6"
           ],
-          "confidence": 59
+          "confidence": 73
         },
         {
           "bill_name": "送配电装置系统",
@@ -2500,15 +2500,15 @@
         {
           "bill_name": "控制电缆",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "硬矿物绝缘电力电缆敷设 3~4芯(截面mm2以下) 185",
+          "algo_id": "C4-8-32",
+          "algo_name": "塑料控制电缆敷设 电缆(芯以下) 24",
           "stored_ids": [
             "C4-8-31"
           ],
           "stored_names": [
             "塑料控制电缆敷设 电缆(芯以下) 14"
           ],
-          "confidence": 59
+          "confidence": 73
         },
         {
           "bill_name": "等电位端子箱、测试板",
@@ -2552,28 +2552,28 @@
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-11-220",
-          "algo_name": "硬绝缘导线管内穿线 导线截面(mm2以内) 120",
+          "algo_id": "C4-11-241",
+          "algo_name": "线槽配线 导线截面(mm2以内) 6",
           "stored_ids": [
             "C4-11-216"
           ],
           "stored_names": [
             "硬绝缘导线管内穿线 导线截面(mm2以内) 6"
           ],
-          "confidence": 66
+          "confidence": 77
         },
         {
           "bill_name": "控制电缆",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "硬矿物绝缘电力电缆敷设 3~4芯(截面mm2以下) 185",
+          "algo_id": "C4-8-32",
+          "algo_name": "塑料控制电缆敷设 电缆(芯以下) 24",
           "stored_ids": [
             "C4-8-30"
           ],
           "stored_names": [
             "塑料控制电缆敷设 电缆(芯以下) 6"
           ],
-          "confidence": 59
+          "confidence": 73
         },
         {
           "bill_name": "装饰灯 名称：集中控制型消防应急照明灯-E10",
@@ -2604,15 +2604,15 @@
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-11-220",
-          "algo_name": "硬绝缘导线管内穿线 导线截面(mm2以内) 120",
+          "algo_id": "C4-11-241",
+          "algo_name": "线槽配线 导线截面(mm2以内) 6",
           "stored_ids": [
             "C4-11-216"
           ],
           "stored_names": [
             "硬绝缘导线管内穿线 导线截面(mm2以内) 6"
           ],
-          "confidence": 66
+          "confidence": 77
         },
         {
           "bill_name": "配电箱",
@@ -2656,15 +2656,15 @@
         {
           "bill_name": "控制电缆",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "硬矿物绝缘电力电缆敷设 3~4芯(截面mm2以下) 185",
+          "algo_id": "C4-8-32",
+          "algo_name": "塑料控制电缆敷设 电缆(芯以下) 24",
           "stored_ids": [
             "C4-8-31"
           ],
           "stored_names": [
             "塑料控制电缆敷设 电缆(芯以下) 14"
           ],
-          "confidence": 59
+          "confidence": 73
         },
         {
           "bill_name": "智能插座面板2连体：五孔插座+五孔带USB插座",
@@ -2929,8 +2929,8 @@
         {
           "bill_name": "离心式通风机",
           "is_match": false,
-          "algo_id": "C7-3-165",
-          "algo_name": "吹、吸式槽边通风罩制作安装",
+          "algo_id": "C7-1-64",
+          "algo_name": "离心式通风机安装 风量(m3/h) 123000以上",
           "stored_ids": [
             "C7-1-60",
             "C7-4-5"
@@ -2938,7 +2938,7 @@
           "stored_names": [
             "离心式通风机安装 风量(m3/h) 7000以下"
           ],
-          "confidence": 98
+          "confidence": 95
         },
         {
           "bill_name": "碳钢风口、散流器、百叶窗 名称：电动多页送风口",
@@ -3114,7 +3114,7 @@
         "wrong_tier": 6,
         "wrong_book": 3
       },
-      "elapsed": 17.3,
+      "elapsed": 5.9,
       "details": [
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*16",
@@ -3200,8 +3200,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-5×4",
           "is_match": false,
-          "algo_id": "46121",
-          "algo_name": "仿真茅草瓦铺设",
+          "algo_id": "46122",
+          "algo_name": "小青瓦 椽子上铺设",
           "stored_ids": [
             "4-9-159",
             "4-4-18"
@@ -3795,7 +3795,7 @@
         "wrong_tier": 9,
         "synonym_gap": 7
       },
-      "elapsed": 8.3,
+      "elapsed": 3.1,
       "details": [
         {
           "bill_name": "灌注桩入岩 灌注桩入岩增加费 地质情况：综合考虑",
@@ -4161,11 +4161,11 @@
       "wrong": 47,
       "rate": 6.0,
       "diagnosis": {
-        "synonym_gap": 24,
-        "wrong_tier": 19,
+        "synonym_gap": 30,
+        "wrong_tier": 13,
         "wrong_book": 4
       },
-      "elapsed": 18.9,
+      "elapsed": 8.6,
       "details": [
         {
           "bill_name": "电气配管 JDG40",
@@ -4183,8 +4183,8 @@
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4×16",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-160",
             "4-9-245"
@@ -4192,13 +4192,13 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16  "
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "电力电缆 WDZC-YJY-4*50+1*25",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-162",
             "4-9-247"
@@ -4206,7 +4206,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "壁装单管灯18W",
@@ -4250,8 +4250,8 @@
         {
           "bill_name": "电力电缆 ZB-YJV-0.6/1.0KV-4x150+1X",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-165",
             "4-9-250"
@@ -4259,13 +4259,13 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4X50+1X25",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-162",
             "4-9-247"
@@ -4273,7 +4273,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "电气配管 JDG16",
@@ -4304,8 +4304,8 @@
         {
           "bill_name": "电力电缆 WDZN-YJY-4*150+1*70",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-165",
             "4-9-250"
@@ -4313,13 +4313,13 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "控制电缆 KVV-6*1.5",
           "is_match": false,
-          "algo_id": "4-9-136",
-          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤240",
+          "algo_id": "4-11-261",
+          "algo_name": "1kV以下低压电力电缆架设 二芯 单芯截面(mm2) ≤25",
           "stored_ids": [
             "4-9-311",
             "4-4-18"
@@ -4327,7 +4327,7 @@
           "stored_names": [
             "室内铜芯控制电缆敷设 电缆芯数(芯) ≤14"
           ],
-          "confidence": 15
+          "confidence": 20
         },
         {
           "bill_name": "防爆灯",
@@ -4345,8 +4345,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-4×120+1×70",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-164",
             "4-9-249"
@@ -4354,13 +4354,13 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "电力电缆 WDZC-YJY-4*95+1*50",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-164",
             "4-9-249"
@@ -4368,13 +4368,13 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "电力电缆 WDZBN-YJY-4*35+1*16",
           "is_match": false,
-          "algo_id": "4-9-129",
-          "algo_name": "直埋式电力电缆敷设 电缆截面(mm2) ≤120",
+          "algo_id": "4-12-193",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
           "stored_ids": [
             "4-9-161",
             "4-9-246"
@@ -4382,7 +4382,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 18
+          "confidence": 66
         },
         {
           "bill_name": "桥架",
@@ -4839,14 +4839,14 @@
     {
       "province": "河南省通用安装工程预算定额(2016)",
       "total": 50,
-      "correct": 4,
-      "wrong": 46,
-      "rate": 8.0,
+      "correct": 5,
+      "wrong": 45,
+      "rate": 10.0,
       "diagnosis": {
-        "synonym_gap": 29,
-        "wrong_tier": 17
+        "synonym_gap": 27,
+        "wrong_tier": 18
       },
-      "elapsed": 21.4,
+      "elapsed": 8.8,
       "details": [
         {
           "bill_name": "砌块墙",
@@ -4941,9 +4941,9 @@
         },
         {
           "bill_name": "配线 配线形式:管内穿线",
-          "is_match": false,
-          "algo_id": "4-13-22",
-          "algo_name": "穿动力线 铜芯 导线截面≤0.8mm2",
+          "is_match": true,
+          "algo_id": "4-13-5",
+          "algo_name": "穿照明线 铜芯 导线截面≤2.5mm2",
           "stored_ids": [
             "4-13-5"
           ],
@@ -4981,15 +4981,15 @@
         {
           "bill_name": "配线",
           "is_match": false,
-          "algo_id": "4-13-35",
-          "algo_name": "穿动力线 铜芯 导线截面≤150mm2",
+          "algo_id": "4-13-56",
+          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤2.5mm2",
           "stored_ids": [
             "4-13-39"
           ],
           "stored_names": [
             "穿多芯软导线 二芯 单芯导线截面≤1mm2"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "装饰灯",
@@ -5020,21 +5020,21 @@
         {
           "bill_name": "配线",
           "is_match": false,
-          "algo_id": "4-13-35",
-          "algo_name": "穿动力线 铜芯 导线截面≤150mm2",
+          "algo_id": "4-13-56",
+          "algo_name": "穿多芯软导线 十六芯 单芯导线截面≤2.5mm2",
           "stored_ids": [
             "4-13-39"
           ],
           "stored_names": [
             "穿多芯软导线 二芯 单芯导线截面≤1mm2"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "配线 配线形式:管内穿线",
           "is_match": false,
-          "algo_id": "4-13-25",
-          "algo_name": "穿动力线 铜芯 导线截面≤4mm2",
+          "algo_id": "4-13-5",
+          "algo_name": "穿照明线 铜芯 导线截面≤2.5mm2",
           "stored_ids": [
             "4-13-6"
           ],
@@ -5509,14 +5509,14 @@
     {
       "province": "浙江省通用安装工程预算定额(2018)",
       "total": 50,
-      "correct": 39,
-      "wrong": 11,
-      "rate": 78.0,
+      "correct": 35,
+      "wrong": 15,
+      "rate": 70.0,
       "diagnosis": {
-        "synonym_gap": 6,
-        "wrong_tier": 5
+        "wrong_tier": 9,
+        "synonym_gap": 6
       },
-      "elapsed": 23.5,
+      "elapsed": 7.3,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -5559,16 +5559,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": true,
-          "algo_id": "9-1-20",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150",
+          "is_match": false,
+          "algo_id": "9-1-32",
+          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)150",
           "stored_ids": [
             "9-1-20"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150"
           ],
-          "confidence": 85
+          "confidence": 76
         },
         {
           "bill_name": "消火栓钢管",
@@ -5585,16 +5585,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": true,
-          "algo_id": "9-1-18",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
+          "is_match": false,
+          "algo_id": "9-1-30",
+          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 85
+          "confidence": 76
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5767,16 +5767,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": true,
-          "algo_id": "9-1-18",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
+          "is_match": false,
+          "algo_id": "9-1-7",
+          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 85
+          "confidence": 30
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5871,16 +5871,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": true,
-          "algo_id": "9-1-17",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80",
+          "is_match": false,
+          "algo_id": "9-1-6",
+          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)80",
           "stored_ids": [
             "9-1-17"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80"
           ],
-          "confidence": 85
+          "confidence": 30
         },
         {
           "bill_name": "水喷淋钢管",
@@ -6176,14 +6176,14 @@
     {
       "province": "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
       "total": 28,
-      "correct": 7,
-      "wrong": 21,
-      "rate": 25.0,
+      "correct": 13,
+      "wrong": 15,
+      "rate": 46.4,
       "diagnosis": {
-        "wrong_tier": 17,
+        "wrong_tier": 11,
         "synonym_gap": 4
       },
-      "elapsed": 13.2,
+      "elapsed": 4.3,
       "details": [
         {
           "bill_name": "螺纹阀门 类型：蝶阀",
@@ -6278,16 +6278,16 @@
         },
         {
           "bill_name": "配线 名称：桥架配线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-78",
+          "algo_name": "线槽配线 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-78"
           ],
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "塑料管 材质、规格:UPVC排水DN75",
@@ -6383,8 +6383,8 @@
         {
           "bill_name": "电力电缆",
           "is_match": false,
-          "algo_id": "C4-9-127",
-          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤240",
+          "algo_id": "C4-9-126",
+          "algo_name": "电缆沟(隧)道内电力电缆敷设 电缆截面(mm2) ≤120",
           "stored_ids": [
             "C4-9-130"
           ],
@@ -6408,9 +6408,9 @@
         },
         {
           "bill_name": "配线 名称：管内穿线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-2",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-2"
           ],
@@ -6422,21 +6422,21 @@
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-2",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-8"
           ],
           "stored_names": [
             "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤4"
           ],
-          "confidence": 68
+          "confidence": 73
         },
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-2",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-24"
           ],
@@ -6447,22 +6447,22 @@
         },
         {
           "bill_name": "配线 名称：桥架配线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-78",
+          "algo_name": "线槽配线 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-78"
           ],
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 57
+          "confidence": 52
         },
         {
           "bill_name": "配线 名称：管内穿线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-2",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-2"
           ],
@@ -6473,22 +6473,22 @@
         },
         {
           "bill_name": "配线 名称：桥架配线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-78",
+          "algo_name": "线槽配线 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-78"
           ],
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 73
+          "confidence": 52
         },
         {
           "bill_name": "配线 名称：管内穿线",
           "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "algo_id": "C4-13-2",
+          "algo_name": "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-23"
           ],
@@ -6499,16 +6499,16 @@
         },
         {
           "bill_name": "配线 名称：桥架配线",
-          "is_match": false,
-          "algo_id": "C4-13-7",
-          "algo_name": "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤2.5",
+          "is_match": true,
+          "algo_id": "C4-13-78",
+          "algo_name": "线槽配线 导线截面(mm2) ≤2.5",
           "stored_ids": [
             "C4-13-78"
           ],
           "stored_names": [
             "线槽配线 导线截面(mm2) ≤2.5"
           ],
-          "confidence": 57
+          "confidence": 52
         },
         {
           "bill_name": "装饰灯 名称：A型中型安全出口标志灯",

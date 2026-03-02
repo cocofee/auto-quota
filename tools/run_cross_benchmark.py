@@ -60,7 +60,7 @@ def load_test_sets(province_filter=None):
     return test_sets
 
 
-def run_province_test(province, items):
+def run_province_test(province, items, use_experience=False):
     """对一个省份运行测试，返回结果"""
     from src.match_engine import init_search_components, match_search_only
     from src.text_parser import TextParser
@@ -68,6 +68,12 @@ def run_province_test(province, items):
     # 初始化搜索引擎
     searcher, validator = init_search_components(resolved_province=province)
     parser = TextParser()
+
+    # 初始化经验库（如果启用）
+    exp_db = None
+    if use_experience:
+        from src.experience_db import ExperienceDB
+        exp_db = ExperienceDB(province)
 
     # 构建bill_items（和audit_experience.py一致）
     bill_items = []
@@ -96,11 +102,11 @@ def run_province_test(province, items):
         })
         card_map[i + 1] = item
 
-    # 运行纯搜索匹配（不用经验库，测试算法本身能力）
+    # 运行搜索匹配
     start = time.time()
     results = match_search_only(
         bill_items, searcher, validator,
-        experience_db=None, province=province)
+        experience_db=exp_db, province=province)
     elapsed = time.time() - start
 
     # 逐条对比
@@ -229,10 +235,11 @@ def save_baseline(results):
     print(f"\n基线已保存到 {BASELINE_FILE}")
 
 
-def print_summary(results, baseline=None):
+def print_summary(results, baseline=None, use_experience=False):
     """打印汇总表"""
     print(f"\n{'='*80}")
-    print(f"跨省算法Benchmark（纯搜索模式，不含经验库）")
+    mode_label = "含经验库" if use_experience else "纯搜索模式，不含经验库"
+    print(f"跨省算法Benchmark（{mode_label}）")
     print(f"{'='*80}")
 
     # 表头
@@ -284,6 +291,7 @@ def main():
     ap.add_argument('--province', help='只跑指定省份（模糊匹配）')
     ap.add_argument('--save', action='store_true', help='保存当前结果为基线')
     ap.add_argument('--detail', action='store_true', help='打印每题详情（调试用）')
+    ap.add_argument('--with-experience', action='store_true', help='启用经验库（测试经验库对准确率的提升）')
     args = ap.parse_args()
 
     # 加载试卷
@@ -306,7 +314,7 @@ def main():
         prov_short = province.split('(')[0][:14]
         print(f"\n  测试 {prov_short}（{len(items)}题）...")
 
-        result = run_province_test(province, items)
+        result = run_province_test(province, items, use_experience=args.with_experience)
         all_results.append(result)
 
         print(f"  → 命中 {result['correct']}/{result['total']} = {result['rate']:.1f}% ({result['elapsed']:.0f}s)")
@@ -321,7 +329,7 @@ def main():
                 print(f"    {mark} {name} → {algo} (正确:{stored})")
 
     # 汇总
-    print_summary(all_results, baseline)
+    print_summary(all_results, baseline, use_experience=args.with_experience)
 
     # 保存基线
     if args.save:

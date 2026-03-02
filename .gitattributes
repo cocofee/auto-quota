@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# bat文件CRLF换行，UTF-8编码
+*.bat text eol=crlf working-tree-encoding=utf-8
