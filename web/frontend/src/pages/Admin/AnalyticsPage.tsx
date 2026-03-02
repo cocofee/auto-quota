@@ -22,6 +22,7 @@ import {
   PlayCircleOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD } from '../../utils/experience';
 
 interface OverviewData {
   total_tasks: number;
@@ -91,8 +92,8 @@ function TrendArrow({ current, previous, higherIsBetter }: {
   return (
     <Tooltip title={diffPp}>
       {isGood
-        ? <ArrowUpOutlined style={{ color: '#52c41a', fontSize: 10, marginLeft: 4 }} />
-        : <ArrowDownOutlined style={{ color: '#ff4d4f', fontSize: 10, marginLeft: 4 }} />
+        ? <ArrowUpOutlined style={{ color: COLORS.greenSolid, fontSize: 10, marginLeft: 4 }} />
+        : <ArrowDownOutlined style={{ color: COLORS.redSolid, fontSize: 10, marginLeft: 4 }} />
       }
     </Tooltip>
   );
@@ -114,7 +115,7 @@ export default function AnalyticsPage() {
 
   // 跑分相关状态
   const [bmRunning, setBmRunning] = useState(false);           // 是否正在跑分
-  const [bmProgress, setBmProgress] = useState('');            // 进度文字（如"正在跑 B2_华佑电气 (2/4)"）
+  const [bmProgress, setBmProgress] = useState('');            // 进度文字（如"正在跑 B2_电气 (2/4)"）
   const [bmModalOpen, setBmModalOpen] = useState(false);       // 确认弹窗是否打开
   const [bmNote, setBmNote] = useState('');                    // 用户输入的备注
   const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);  // 轮询定时器
@@ -266,7 +267,7 @@ export default function AnalyticsPage() {
           {
             title: '绿率',
             key: `${dsName}_green`,
-            width: 90,
+            width: 65,
             align: 'center',
             render: (_: unknown, record: BenchmarkRecord, index: number) => {
               const metrics = record.datasets[dsName];
@@ -283,7 +284,7 @@ export default function AnalyticsPage() {
           {
             title: '红率',
             key: `${dsName}_red`,
-            width: 90,
+            width: 65,
             align: 'center',
             render: (_: unknown, record: BenchmarkRecord, index: number) => {
               const metrics = record.datasets[dsName];
@@ -318,7 +319,7 @@ export default function AnalyticsPage() {
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={loading}>
-            <Statistic title="已完成" value={overview?.completed_tasks || 0} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="已完成" value={overview?.completed_tasks || 0} prefix={<CheckCircleOutlined />} valueStyle={{ color: COLORS.greenSolid }} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
@@ -334,8 +335,8 @@ export default function AnalyticsPage() {
               suffix="%"
               prefix={<ExperimentOutlined />}
               valueStyle={{
-                color: (overview?.avg_confidence || 0) >= 85 ? '#52c41a'
-                  : (overview?.avg_confidence || 0) >= 70 ? '#faad14' : '#ff4d4f',
+                color: (overview?.avg_confidence || 0) >= GREEN_THRESHOLD ? COLORS.greenSolid
+                  : (overview?.avg_confidence || 0) >= YELLOW_THRESHOLD ? COLORS.yellowSolid : COLORS.redSolid,
               }}
             />
           </Card>
@@ -358,15 +359,15 @@ export default function AnalyticsPage() {
             <Space direction="vertical" style={{ width: '100%' }}>
               <div>
                 <span style={{ display: 'inline-block', width: 80 }}>高置信度</span>
-                <Progress percent={highPct} strokeColor="#52c41a" format={() => `${overview?.high_confidence || 0}条`} />
+                <Progress percent={highPct} strokeColor={COLORS.greenSolid} format={() => `${overview?.high_confidence || 0}条`} />
               </div>
               <div>
                 <span style={{ display: 'inline-block', width: 80 }}>中置信度</span>
-                <Progress percent={midPct} strokeColor="#faad14" format={() => `${overview?.mid_confidence || 0}条`} />
+                <Progress percent={midPct} strokeColor={COLORS.yellowSolid} format={() => `${overview?.mid_confidence || 0}条`} />
               </div>
               <div>
                 <span style={{ display: 'inline-block', width: 80 }}>低置信度</span>
-                <Progress percent={lowPct} strokeColor="#ff4d4f" format={() => `${overview?.low_confidence || 0}条`} />
+                <Progress percent={lowPct} strokeColor={COLORS.redSolid} format={() => `${overview?.low_confidence || 0}条`} />
               </div>
             </Space>
           </Card>
@@ -406,7 +407,7 @@ export default function AnalyticsPage() {
                   key: 'avg_confidence',
                   width: 110,
                   render: (v: number) => (
-                    <Tag color={v >= 85 ? 'green' : v >= 70 ? 'orange' : 'red'}>
+                    <Tag color={v >= GREEN_THRESHOLD ? 'green' : v >= YELLOW_THRESHOLD ? 'orange' : 'red'}>
                       {v}%
                     </Tag>
                   ),

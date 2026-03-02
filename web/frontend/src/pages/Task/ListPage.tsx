@@ -23,6 +23,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import { COLORS } from '../../utils/experience';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
 import { STATUS_MAP, STATUS_OPTIONS } from '../../constants/task';
 import { getErrorMessage } from '../../utils/error';
@@ -372,17 +373,32 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
     {
       title: '统计',
       key: 'stats',
-      width: 200,
+      width: 160,
       render: (_: unknown, record: TaskInfo) => {
         if (!record.stats || !record.stats.total) return '-';
         const { total: t, high_conf, mid_conf, low_conf } = record.stats;
+        // 横向比例条 + 数字，比4个Tag紧凑
+        const gPct = t > 0 ? (high_conf / t) * 100 : 0;
+        const yPct = t > 0 ? (mid_conf / t) * 100 : 0;
+        const rPct = t > 0 ? (low_conf / t) * 100 : 0;
         return (
-          <Space size={4}>
-            <Tag color="green">{high_conf}高</Tag>
-            <Tag color="orange">{mid_conf}中</Tag>
-            <Tag color="red">{low_conf}低</Tag>
-            <span style={{ color: '#999', fontSize: 12 }}>/ {t}条</span>
-          </Space>
+          <div style={{ minWidth: 100 }}>
+            {/* 比例条 */}
+            <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
+              {gPct > 0 && <div style={{ width: `${gPct}%`, background: COLORS.greenSolid }} />}
+              {yPct > 0 && <div style={{ width: `${yPct}%`, background: COLORS.yellowSolid }} />}
+              {rPct > 0 && <div style={{ width: `${rPct}%`, background: COLORS.redSolid }} />}
+            </div>
+            {/* 数字摘要 */}
+            <span style={{ fontSize: 12, color: '#666' }}>
+              <span style={{ color: COLORS.greenSolid }}>{high_conf}</span>
+              /
+              <span style={{ color: COLORS.yellowSolid }}>{mid_conf}</span>
+              /
+              <span style={{ color: COLORS.redSolid }}>{low_conf}</span>
+              <span style={{ color: '#999', marginLeft: 4 }}>共{t}</span>
+            </span>
+          </div>
         );
       },
     },
