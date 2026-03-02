@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.55';
+export const APP_VERSION = '0.1.56';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.56',
+    date: '2026-03-02',
+    changes: [
+      { type: 'admin', text: '跨省试卷扩充到11省+基线更新（22.1%）' },
+      { type: 'admin', text: '造价HOME浙江XML解析修复（清单记录嵌套在标题内）' },
+      { type: 'admin', text: '经验库向量索引重建改为GPU批量编码+大批写入' },
+      { type: 'admin', text: '配管材质代号映射优化（SC/JDG/KBG等→定额名称）' },
+      { type: 'admin', text: '分类器添加C13其他及附属工程（BOOKS/借用/路由全套）' },
+      { type: 'admin', text: '分类器添加通用跨册路由（烘手器→C4、医疗气体→C8）' },
+      { type: 'admin', text: '同义词表+15条（山东2025交底13册缺口修补）' },
+    ],
+  },
   {
     version: '0.1.55',
     date: '2026-03-01',

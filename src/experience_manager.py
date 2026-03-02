@@ -196,7 +196,8 @@ def get_authority_records(self, province: str = None,
     try:
         sql = """
             SELECT id, bill_text, bill_name, quota_ids, quota_names,
-                   source, confidence, province, specialty
+                   source, confidence, province, specialty,
+                   bill_code, bill_unit, created_at
             FROM experiences
             WHERE layer = 'authority'
         """
@@ -234,6 +235,9 @@ def get_authority_records(self, province: str = None,
             "confidence": row[6],
             "province": row[7],
             "specialty": row[8],
+            "bill_code": row[9] or "",
+            "bill_unit": row[10] or "",
+            "created_at": row[11] or "",
         })
     return records
 
@@ -254,7 +258,8 @@ def get_candidate_records(self, province: str = None,
     try:
         sql = """
             SELECT id, bill_text, bill_name, quota_ids, quota_names,
-                   source, confidence, province, specialty, notes
+                   source, confidence, province, specialty, notes,
+                   bill_code, bill_unit, created_at
             FROM experiences
             WHERE layer = 'candidate'
         """
@@ -293,5 +298,8 @@ def get_candidate_records(self, province: str = None,
             "province": row[7],
             "specialty": row[8],
             "notes": row[9] or "",
+            "bill_code": row[10] or "",
+            "bill_unit": row[11] or "",
+            "created_at": row[12] or "",
         })
     return records

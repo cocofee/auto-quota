@@ -1,40 +1,52 @@
 /**
- * 管理员 — 经验库管理
+ * 管理员 — 经验库管理（广联达风格）
  *
  * 功能：
- * 1. 省份选择器（按省份分类查看经验记录）
- * 2. 统计卡片（权威层/候选层数量，跟随省份筛选变化）
+ * 1. 省份选择器（两级联动：地区 → 省份定额库）
+ * 2. 统计卡片（权威层/候选层数量，跟随省份变化）
  * 3. Tab 切换：全部 / 权威层 / 候选层 / 搜索
- * 4. 表格展示记录 + 晋升/降级/删除操作
+ * 4. 表格：清单行可展开，上方显示项目特征描述，下方显示定额子行
+ * 5. 筛选：按置信度、来源前端过滤
+ * 6. 预览Modal：点"详情"弹窗查看完整信息
+ * 7. 操作：晋升/降级/删除/智能批量晋升
  */
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Tabs, Statistic, Row, Col,
-  Input, Popconfirm, Select, Modal, Tooltip,
+  Input, Popconfirm, Select, Modal, Tooltip, Descriptions,
 } from 'antd';
 import {
   ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
   SearchOutlined, ReloadOutlined, DatabaseOutlined,
-  EnvironmentOutlined, ThunderboltOutlined,
+  EnvironmentOutlined, ThunderboltOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { extractRegion } from '../../utils/region';
 import { getErrorMessage } from '../../utils/error';
+import {
+  GREEN_THRESHOLD, YELLOW_THRESHOLD,
+  getBillRowBgColor, confidenceToTagColor, confidenceToLabel,
+  sourceToLabel, parseBillFeatures,
+} from '../../utils/experience';
+
+// ============================================================
+// 类型定义
+// ============================================================
 
 interface ExperienceRecord {
   id: number;
   bill_text: string;
   bill_name?: string;
-  quota_ids: string;
-  quota_names?: string;
+  bill_code?: string;
+  bill_unit?: string;
+  quota_ids: string | string[];
+  quota_names?: string | string[];
   province?: string;
   source?: string;
   layer_type?: string;
   confidence?: number;
-  confirm_count?: number;
   created_at?: string;
-  updated_at?: string;
 }
 
 interface ExperienceStats {
@@ -50,6 +62,24 @@ interface ProvinceItem {
   province: string;
   count: number;
 }
+
+// ============================================================
+// 工具函数
+// ============================================================
+
+/** 把 quota_ids/quota_names 统一解析成 string[] */
+function parseJsonArray(v: string | string[] | undefined | null): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string') {
+    try { return JSON.parse(v); } catch { return v ? [v] : []; }
+  }
+  return [];
+}
+
+// ============================================================
+// 组件
+// ============================================================
 
 export default function ExperienceManage() {
   const { message } = App.useApp();
@@ -70,6 +100,13 @@ export default function ExperienceManage() {
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
   const [selectedProvince, setSelectedProvince] = useState<string | undefined>(undefined);
+
+  // 前端筛选
+  const [filterConfidence, setFilterConfidence] = useState<string | undefined>(undefined);
+  const [filterSource, setFilterSource] = useState<string | undefined>(undefined);
+
+  // 预览Modal
+  const [previewRecord, setPreviewRecord] = useState<ExperienceRecord | null>(null);
 
   // 按地区分组省份列表
   const regionMap = useMemo(() => {
@@ -100,19 +137,18 @@ export default function ExperienceManage() {
     }));
   }, [selectedRegion, regionMap]);
 
-  // 加载统计（同时从 by_province 提取省份列表，避免重复请求）
+  // 加载统计（同时从 by_province 提取省份列表）
   const loadStats = useCallback(async () => {
     try {
       const { data } = await api.get<ExperienceStats>('/admin/experience/stats');
       setStats(data);
-      // 从统计数据中提取省份列表（替代原来单独的 /provinces 接口）
       const byProvince = data.by_province || {};
       const provinceList: ProvinceItem[] = Object.entries(byProvince)
         .map(([name, count]) => ({ province: name, count: count as number }))
         .sort((a, b) => b.count - a.count);
       setProvinces(provinceList);
     } catch {
-      // 静默失败（经验库可能还没初始化）
+      // 静默失败
     }
   }, []);
 
@@ -147,7 +183,7 @@ export default function ExperienceManage() {
     }
   }, [activeTab, page, loadRecords]);
 
-  // 切回浏览器标签页时自动刷新（解决后端CLI改了数据前端看不到的问题）
+  // 切回浏览器标签页时自动刷新
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
@@ -161,14 +197,13 @@ export default function ExperienceManage() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loadStats, loadRecords, activeTab, page]);
 
-  // 切换地区时：自动选中该地区第一个省份，重置分页
+  // 切换地区时自动选中第一个省份，重置分页
   const onRegionChange = (value: string | undefined) => {
     setSelectedRegion(value);
     if (value) {
       const items = regionMap.get(value) || [];
       setSelectedProvince(items.length > 0 ? items[0].province : undefined);
     } else {
-      // 清空地区 → 清空省份（显示全部）
       setSelectedProvince(undefined);
     }
     setPage(1);
@@ -180,7 +215,7 @@ export default function ExperienceManage() {
     setPage(1);
   };
 
-  // 搜索（带省份过滤）
+  // 搜索
   const onSearch = async () => {
     if (!searchQuery.trim()) {
       message.warning('请输入搜索关键词');
@@ -244,7 +279,6 @@ export default function ExperienceManage() {
   const handleBatchPromote = async () => {
     setBatchLoading(true);
     try {
-      // 先预览（dry_run=true）
       const { data: preview } = await api.post<{
         total: number; promoted: number; skipped: number;
         errors: string[]; dry_run: boolean;
@@ -260,7 +294,6 @@ export default function ExperienceManage() {
         return;
       }
 
-      // 弹窗确认
       const scopeText = selectedProvince ? `「${selectedProvince}」` : '全部省份';
       Modal.confirm({
         title: '智能批量晋升预览',
@@ -291,7 +324,6 @@ export default function ExperienceManage() {
         okText: `确认晋升 ${preview.promoted} 条`,
         cancelText: '取消',
         onOk: async () => {
-          // 实际执行（dry_run=false）
           const { data: result } = await api.post<{
             total: number; promoted: number; skipped: number;
           }>('/admin/experience/batch-promote', {
@@ -310,71 +342,260 @@ export default function ExperienceManage() {
     }
   };
 
-  // 计算当前省份的统计（如果选了省份，从 by_province 里取）
+  // ============================================================
+  // 前端筛选：在已加载的数据上做过滤
+  // ============================================================
+
+  const applyFilters = useCallback((data: ExperienceRecord[]) => {
+    let filtered = data;
+
+    // 置信度筛选
+    if (filterConfidence === 'high') {
+      filtered = filtered.filter(r => (r.confidence ?? 0) >= GREEN_THRESHOLD);
+    } else if (filterConfidence === 'mid') {
+      filtered = filtered.filter(r => {
+        const c = r.confidence ?? 0;
+        return c >= YELLOW_THRESHOLD && c < GREEN_THRESHOLD;
+      });
+    } else if (filterConfidence === 'low') {
+      filtered = filtered.filter(r => (r.confidence ?? 0) < YELLOW_THRESHOLD);
+    }
+
+    // 来源筛选
+    if (filterSource) {
+      filtered = filtered.filter(r => r.source === filterSource);
+    }
+
+    return filtered;
+  }, [filterConfidence, filterSource]);
+
+  // 过滤后的数据（给当前Tab用）
+  const filteredRecords = useMemo(() => applyFilters(records), [records, applyFilters]);
+  const filteredSearchResults = useMemo(() => applyFilters(searchResults), [searchResults, applyFilters]);
+
+  // 当前省份统计
   const currentTotal = selectedProvince
     ? (stats?.by_province?.[selectedProvince] || 0)
     : (stats?.total || 0);
 
-  // 表格列
+  // ============================================================
+  // 展开行渲染（上：项目特征描述，下：定额子行）
+  // ============================================================
+
+  const renderExpandedRow = (record: ExperienceRecord) => {
+    const features = parseBillFeatures(record.bill_text);
+    const quotaIds = parseJsonArray(record.quota_ids);
+    const quotaNames = parseJsonArray(record.quota_names);
+
+    return (
+      <div style={{ padding: '8px 16px', background: '#FAFAFA' }}>
+        {/* 项目特征描述 */}
+        {features.length > 0 && (
+          <div style={{ marginBottom: quotaIds.length > 0 ? 12 : 0 }}>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>项目特征描述</div>
+            <div style={{ fontSize: 12, lineHeight: 1.8, paddingLeft: 8 }}>
+              {features.map((line, idx) => (
+                <div key={idx} style={{ color: '#333' }}>{line}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 定额子行 */}
+        {quotaIds.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>定额子目</div>
+            {quotaIds.map((qid, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '4px 8px',
+                  borderLeft: '3px solid #91caff',
+                  marginBottom: 2,
+                  background: '#F0F5FF',
+                  borderRadius: '0 4px 4px 0',
+                }}
+              >
+                <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>{qid}</Tag>
+                <span style={{ fontSize: 12, color: '#555' }}>
+                  {quotaNames[idx] || ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {features.length === 0 && quotaIds.length === 0 && (
+          <span style={{ color: '#ccc', fontSize: 12 }}>无详细信息</span>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================================
+  // 预览Modal
+  // ============================================================
+
+  const renderPreviewModal = () => {
+    if (!previewRecord) return null;
+    const r = previewRecord;
+    const quotaIds = parseJsonArray(r.quota_ids);
+    const quotaNames = parseJsonArray(r.quota_names);
+    const features = parseBillFeatures(r.bill_text);
+
+    return (
+      <Modal
+        title="经验记录详情"
+        open={!!previewRecord}
+        onCancel={() => setPreviewRecord(null)}
+        footer={null}
+        width={700}
+      >
+        <Descriptions column={2} bordered size="small">
+          <Descriptions.Item label="ID">{r.id}</Descriptions.Item>
+          <Descriptions.Item label="层级">
+            <Tag color={r.layer_type === 'authority' ? 'green' : 'orange'}>
+              {r.layer_type === 'authority' ? '权威层' : '候选层'}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="清单编码">{r.bill_code || '-'}</Descriptions.Item>
+          <Descriptions.Item label="清单名称">{r.bill_name || '-'}</Descriptions.Item>
+          <Descriptions.Item label="单位">{r.bill_unit || '-'}</Descriptions.Item>
+          <Descriptions.Item label="置信度">
+            <Tag color={confidenceToTagColor(r.confidence ?? 0)}>
+              {confidenceToLabel(r.confidence ?? 0)}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="省份">{r.province || '-'}</Descriptions.Item>
+          <Descriptions.Item label="来源">{sourceToLabel(r.source || '')}</Descriptions.Item>
+          <Descriptions.Item label="创建时间" span={2}>{r.created_at || '-'}</Descriptions.Item>
+        </Descriptions>
+
+        {/* 项目特征描述 */}
+        {features.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>项目特征描述</div>
+            <div style={{
+              background: '#FAFAFA', padding: '8px 12px', borderRadius: 6,
+              fontSize: 13, lineHeight: 1.8,
+            }}>
+              {features.map((line, idx) => (
+                <div key={idx}>{line}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 定额列表 */}
+        {quotaIds.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>定额子目（{quotaIds.length} 条）</div>
+            {quotaIds.map((qid, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 12px',
+                  borderLeft: '3px solid #91caff',
+                  marginBottom: 4,
+                  background: '#F0F5FF',
+                  borderRadius: '0 4px 4px 0',
+                }}
+              >
+                <Tag color="blue" style={{ margin: 0 }}>{qid}</Tag>
+                <span style={{ color: '#555' }}>{quotaNames[idx] || ''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 原始清单文本（折叠显示） */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 500, marginBottom: 8 }}>原始清单文本</div>
+          <div style={{
+            background: '#F5F5F5', padding: '8px 12px', borderRadius: 6,
+            fontSize: 12, lineHeight: 1.8, whiteSpace: 'pre-wrap',
+            maxHeight: 200, overflow: 'auto', color: '#666',
+          }}>
+            {r.bill_text || '-'}
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
+  // ============================================================
+  // 表格列定义
+  // ============================================================
+
   const columns = [
     {
       title: '#',
       dataIndex: 'id',
       key: 'id',
-      width: 50,
-      render: (v: number) => <span style={{ color: '#999' }}>{v}</span>,
+      width: 55,
+      render: (v: number) => <span style={{ color: '#999', fontSize: 12 }}>{v}</span>,
     },
     {
-      title: '清单文本',
-      dataIndex: 'bill_text',
-      key: 'bill_text',
-      width: 300,
-      render: (v: string) => {
-        if (!v) return '-';
-        // 在"名称:" "型号:" "规格:" 等关键词前换行，让内容结构清晰
-        const formatted = v.replace(/ +(名称|型号|规格|单位|数量|安装方式|材质|材料|功率|电压|容量|尺寸|含|做法|特征)[:：]/g, '\n$1:');
-        return (
-          <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.6 }}>
-            {formatted}
-          </div>
-        );
-      },
+      title: '清单编码',
+      dataIndex: 'bill_code',
+      key: 'bill_code',
+      width: 110,
+      render: (v: string) => (
+        <span style={{ fontSize: 12, fontFamily: 'monospace' }}>{v || '-'}</span>
+      ),
     },
     {
-      title: '定额编号',
-      dataIndex: 'quota_ids',
-      key: 'quota_ids',
-      width: 120,
-      render: (v: string | string[]) => {
-        const ids = Array.isArray(v) ? v : (typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return [v]; } })() : []);
-        return ids.length > 0 ? (
-          <Space size={2} wrap>{ids.map((id: string, i: number) => <Tag key={i} color="blue" style={{ fontSize: 11 }}>{id}</Tag>)}</Space>
-        ) : '-';
-      },
-    },
-    {
-      title: '定额名称',
-      dataIndex: 'quota_names',
-      key: 'quota_names',
-      width: 200,
+      title: '清单名称',
+      dataIndex: 'bill_name',
+      key: 'bill_name',
+      width: 180,
       ellipsis: { showTitle: false },
-      render: (v: string | string[]) => {
-        const names = Array.isArray(v) ? v : (typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return v ? [v] : []; } })() : []);
-        if (names.length === 0) return '-';
-        const text = names.join('；');
+      render: (v: string, record: ExperienceRecord) => {
+        const name = v || record.bill_text?.split(/[\r\n]/)[0]?.slice(0, 40) || '-';
         return (
-          <Tooltip title={text} placement="topLeft">
-            <span style={{ fontSize: 12 }}>{text}</span>
+          <Tooltip title={name} placement="topLeft">
+            <span style={{ fontSize: 12, fontWeight: 500 }}>{name}</span>
           </Tooltip>
         );
       },
     },
-    // 选了省份就不显示省份列（节省空间）
+    {
+      title: '单位',
+      dataIndex: 'bill_unit',
+      key: 'bill_unit',
+      width: 50,
+      align: 'center' as const,
+      render: (v: string) => <span style={{ fontSize: 12 }}>{v || '-'}</span>,
+    },
+    {
+      title: '定额',
+      key: 'quotas',
+      width: 100,
+      render: (_: unknown, record: ExperienceRecord) => {
+        const ids = parseJsonArray(record.quota_ids);
+        if (ids.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+        return (
+          <Space size={2} wrap>
+            {ids.slice(0, 2).map((id, i) => (
+              <Tag key={i} color="blue" style={{ fontSize: 11 }}>{id}</Tag>
+            ))}
+            {ids.length > 2 && (
+              <Tag style={{ fontSize: 11 }}>+{ids.length - 2}</Tag>
+            )}
+          </Space>
+        );
+      },
+    },
+    // 选了省份就隐藏省份列
     ...(!selectedProvince ? [{
       title: '省份',
       dataIndex: 'province',
       key: 'province',
-      width: 100,
+      width: 90,
       ellipsis: { showTitle: false } as const,
       render: (v: string) => (
         <Tooltip title={v}>
@@ -386,40 +607,58 @@ export default function ExperienceManage() {
       title: '层级',
       dataIndex: 'layer_type',
       key: 'layer_type',
-      width: 70,
+      width: 60,
       render: (v: string) => (
-        <Tag color={v === 'authority' ? 'green' : 'orange'}>
+        <Tag color={v === 'authority' ? 'green' : 'orange'} style={{ fontSize: 11 }}>
           {v === 'authority' ? '权威' : '候选'}
         </Tag>
       ),
     },
     {
+      title: '置信度',
+      dataIndex: 'confidence',
+      key: 'confidence',
+      width: 80,
+      render: (v: number) => {
+        if (v == null) return '-';
+        return (
+          <Tag color={confidenceToTagColor(v)} style={{ fontSize: 11 }}>
+            {confidenceToLabel(v)}
+          </Tag>
+        );
+      },
+    },
+    {
       title: '来源',
       dataIndex: 'source',
       key: 'source',
-      width: 80,
-      render: (v: string) => <Tag>{v || '-'}</Tag>,
-    },
-    {
-      title: '置信',
-      dataIndex: 'confidence',
-      key: 'confidence',
-      width: 60,
-      render: (v: number) => v != null ? `${v}` : '-',
+      width: 85,
+      render: (v: string) => (
+        <span style={{ fontSize: 11, color: '#666' }}>{sourceToLabel(v || '')}</span>
+      ),
     },
     {
       title: '操作',
       key: 'actions',
-      width: 150,
+      width: 160,
       render: (_: unknown, record: ExperienceRecord) => (
         <Space size="small">
+          <Tooltip title="查看详情">
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => setPreviewRecord(record)}
+            />
+          </Tooltip>
           {record.layer_type === 'candidate' && (
-            <Button size="small" type="primary" icon={<ArrowUpOutlined />} onClick={() => promote(record.id)}>
+            <Button size="small" type="primary" icon={<ArrowUpOutlined />}
+              onClick={() => promote(record.id)}>
               晋升
             </Button>
           )}
           {record.layer_type === 'authority' && (
-            <Button size="small" icon={<ArrowDownOutlined />} onClick={() => demote(record.id)}>
+            <Button size="small" icon={<ArrowDownOutlined />}
+              onClick={() => demote(record.id)}>
               降级
             </Button>
           )}
@@ -431,21 +670,80 @@ export default function ExperienceManage() {
     },
   ];
 
-  // 表格组件（复用，避免重复代码）
-  const renderTable = () => (
-    <Table
-      rowKey="id"
-      dataSource={records}
-      columns={columns}
-      loading={loading}
-      size="small"
-      pagination={{
-        current: page,
-        total,
-        showTotal: (t) => `共 ${t} 条`,
-        onChange: (p) => setPage(p),
-      }}
-    />
+  // ============================================================
+  // 筛选栏
+  // ============================================================
+
+  const renderFilters = () => (
+    <div style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+      <span style={{ fontSize: 13, color: '#666' }}>筛选：</span>
+      <Select
+        allowClear
+        placeholder="置信度"
+        value={filterConfidence}
+        onChange={setFilterConfidence}
+        style={{ width: 130 }}
+        options={[
+          { label: '高 (≥85%)', value: 'high' },
+          { label: '中 (60-84%)', value: 'mid' },
+          { label: '低 (<60%)', value: 'low' },
+        ]}
+      />
+      <Select
+        allowClear
+        placeholder="来源"
+        value={filterSource}
+        onChange={setFilterSource}
+        style={{ width: 140 }}
+        options={[
+          { label: '自动匹配', value: 'auto_match' },
+          { label: 'Jarvis纠正', value: 'jarvis_correction' },
+          { label: '项目导入', value: 'project_import' },
+          { label: '项目导入(待审)', value: 'project_import_suspect' },
+          { label: '用户确认', value: 'user_confirmed' },
+          { label: '用户修正', value: 'user_correction' },
+        ]}
+      />
+      {(filterConfidence || filterSource) && (
+        <Button size="small" onClick={() => { setFilterConfidence(undefined); setFilterSource(undefined); }}>
+          清除筛选
+        </Button>
+      )}
+    </div>
+  );
+
+  // ============================================================
+  // 表格组件（复用，带展开行和行着色）
+  // ============================================================
+
+  const renderTable = (dataSource: ExperienceRecord[], tableLoading: boolean, showPagination = true) => (
+    <>
+      {renderFilters()}
+      <Table
+        rowKey="id"
+        dataSource={dataSource}
+        columns={columns}
+        loading={tableLoading}
+        size="small"
+        expandable={{
+          expandedRowRender: renderExpandedRow,
+          rowExpandable: () => true,
+        }}
+        onRow={(record) => ({
+          style: {
+            background: record.confidence != null
+              ? getBillRowBgColor(record.confidence)
+              : undefined,
+          },
+        })}
+        pagination={showPagination ? {
+          current: page,
+          total,
+          showTotal: (t) => `共 ${t} 条${dataSource.length < t ? `（显示 ${dataSource.length} 条）` : ''}`,
+          onChange: (p) => setPage(p),
+        } : false}
+      />
+    </>
   );
 
   return (
@@ -543,9 +841,9 @@ export default function ExperienceManage() {
             )
           }
           items={[
-            { key: 'all', label: '全部', children: renderTable() },
-            { key: 'authority', label: '权威层', children: renderTable() },
-            { key: 'candidate', label: '候选层', children: renderTable() },
+            { key: 'all', label: '全部', children: renderTable(filteredRecords, loading) },
+            { key: 'authority', label: '权威层', children: renderTable(filteredRecords, loading) },
+            { key: 'candidate', label: '候选层', children: renderTable(filteredRecords, loading) },
             {
               key: 'search',
               label: '搜索',
@@ -560,21 +858,16 @@ export default function ExperienceManage() {
                     loading={searchLoading}
                     size="large"
                   />
-                  <Table
-                    rowKey="id"
-                    dataSource={searchResults}
-                    columns={columns}
-                    loading={searchLoading}
-                    size="small"
-                    pagination={false}
-                    locale={{ emptyText: '输入关键词搜索经验记录' }}
-                  />
+                  {renderTable(filteredSearchResults, searchLoading, false)}
                 </Space>
               ),
             },
           ]}
         />
       </Card>
+
+      {/* 预览Modal */}
+      {renderPreviewModal()}
     </Space>
   );
 }
