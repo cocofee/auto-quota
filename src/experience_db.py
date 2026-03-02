@@ -1410,6 +1410,14 @@ class ExperienceDB:
             """)
             by_province = {row[0]: row[1] for row in cursor.fetchall()}
 
+            # 按专业统计
+            cursor.execute("""
+                SELECT specialty, COUNT(*) as cnt
+                FROM experiences
+                GROUP BY specialty
+            """)
+            by_specialty = {(row[0] or ''): row[1] for row in cursor.fetchall()}
+
             # 平均置信度
             cursor.execute("SELECT AVG(confidence) FROM experiences")
             avg_confidence = cursor.fetchone()[0] or 0
@@ -1429,6 +1437,7 @@ class ExperienceDB:
             "candidate": candidate_count,
             "by_source": by_source,
             "by_province": by_province,
+            "by_specialty": by_specialty,
             "avg_confidence": round(avg_confidence, 1),
             "vector_count": vector_count,
         }
