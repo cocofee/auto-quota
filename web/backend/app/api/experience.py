@@ -8,6 +8,7 @@
     POST   /api/admin/experience/{id}/promote — 晋升到权威层
     POST   /api/admin/experience/{id}/demote  — 降级到候选层
     DELETE /api/admin/experience/{id}         — 删除记录
+    DELETE /api/admin/experience/by-province  — 按省份批量删除
     POST   /api/admin/experience/batch-promote — 智能批量晋升候选层
 
 注意：原 /provinces 端点已合并到 /stats（通过 by_province 字段返回省份数据）。
@@ -269,6 +270,57 @@ async def delete_experience(
         raise
     except Exception as e:
         logger.error(f"删除经验记录失败: {e}")
+        raise HTTPException(status_code=500, detail="删除失败")
+
+
+@router.delete("/by-province")
+async def delete_by_province(
+    province: str = Query(..., description="要删除的省份名称"),
+    admin: User = Depends(require_admin),
+):
+    """按省份批量删除经验记录（用于清理错误省份数据）"""
+    if not province or not province.strip():
+        raise HTTPException(status_code=400, detail="省份名称不能为空")
+
+    try:
+        def _delete():
+            db = _get_experience_db()
+            conn = db._connect()
+            try:
+                # 先查出要删除的记录ID（用于清理向量索引）
+                cursor = conn.execute(
+                    "SELECT id FROM experiences WHERE province = ?", (province,)
+                )
+                ids_to_delete = [str(row[0]) for row in cursor.fetchall()]
+
+                if not ids_to_delete:
+                    return 0
+
+                # 删除SQLite记录
+                conn.execute(
+                    "DELETE FROM experiences WHERE province = ?", (province,)
+                )
+                conn.commit()
+
+                # 清理向量索引
+                try:
+                    coll = db.collection
+                    if coll is not None and ids_to_delete:
+                        coll.delete(ids=ids_to_delete)
+                except Exception as e:
+                    logger.warning(f"批量清理向量索引失败（省份={province}）: {e}")
+
+                return len(ids_to_delete)
+            finally:
+                conn.close()
+
+        count = await asyncio.to_thread(_delete)
+        logger.info(f"管理员 {admin.email} 按省份删除经验记录：{province}，共 {count} 条")
+        return {"message": f"已删除 {count} 条记录", "deleted": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"按省份删除经验记录失败: {e}")
         raise HTTPException(status_code=500, detail="删除失败")
 
 

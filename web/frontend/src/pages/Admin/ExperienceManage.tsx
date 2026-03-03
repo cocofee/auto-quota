@@ -13,7 +13,7 @@ import {
 import {
   ReloadOutlined, DatabaseOutlined,
   EnvironmentOutlined, ThunderboltOutlined,
-  SafetyOutlined, InboxOutlined,
+  SafetyOutlined, InboxOutlined, DeleteOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { extractRegion } from '../../utils/region';
@@ -159,6 +159,25 @@ export default function ExperienceManage() {
     } catch { message.error('批量晋升失败'); setBatchLoading(false); }
   };
 
+  // 按省份删除
+  const handleDeleteProvince = (province: string, count: number) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除「${province}」的全部 ${count} 条经验记录吗？此操作不可恢复。`,
+      okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
+      onOk: async () => {
+        try {
+          const { data } = await api.delete<{ deleted: number }>(
+            '/admin/experience/by-province',
+            { params: { province } },
+          );
+          message.success(`已删除「${province}」${data.deleted} 条记录`);
+          loadStats();
+        } catch { message.error('删除失败'); }
+      },
+    });
+  };
+
   // ============================================================
   // 分布数据处理
   // ============================================================
@@ -228,6 +247,13 @@ export default function ExperienceManage() {
                   title: '条数', dataIndex: 'count', key: 'count', width: 80, align: 'right',
                   sorter: (a, b) => a.count - b.count, defaultSortOrder: 'descend',
                   render: (v: number) => <strong>{v.toLocaleString()}</strong>,
+                },
+                {
+                  title: '', key: 'action', width: 40, align: 'center',
+                  render: (_: unknown, row: { province: string; count: number }) => (
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                      onClick={() => handleDeleteProvince(row.province, row.count)} />
+                  ),
                 },
               ]}
             />

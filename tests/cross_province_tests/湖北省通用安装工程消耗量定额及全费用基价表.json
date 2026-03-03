@@ -5,7 +5,7 @@
   "sample_size": 28,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 8884,
@@ -17,7 +17,8 @@
       "quota_names": [
         "管道附件 法兰阀门安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8885,
@@ -29,7 +30,8 @@
       "quota_names": [
         "管道附件 法兰阀门安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8886,
@@ -41,7 +43,8 @@
       "quota_names": [
         "管道附件 法兰阀门安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8898,
@@ -53,7 +56,8 @@
       "quota_names": [
         "管道附件 自动排气阀安装 公称直径(mm以内) 25"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8904,
@@ -65,7 +69,8 @@
       "quota_names": [
         "给排水管道 室内塑料排水管(粘接) 公称外径 (mm以内) 110"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8905,
@@ -77,7 +82,8 @@
       "quota_names": [
         "给排水管道 室内塑料排水管(粘接) 公称外径 (mm以内) 50"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8906,
@@ -89,7 +95,8 @@
       "quota_names": [
         "给排水管道 室内塑料雨水管(粘接) 公称外径 (mm以内) 110"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8946,
@@ -101,7 +108,8 @@
       "quota_names": [
         "线槽配线 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8962,
@@ -113,7 +121,8 @@
       "quota_names": [
         "给排水管道 室内塑料排水管(粘接) 公称外径 (mm以内) 75"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 8981,
@@ -125,7 +134,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 单控 ≤3 联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8982,
@@ -137,7 +147,8 @@
       "quota_names": [
         "声控延时开关、柜门触动开关、智能控制面板安装 声控延时开关"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8983,
@@ -149,7 +160,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 单控 ≤3 联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8984,
@@ -161,7 +173,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 单控 ≤3 联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8987,
@@ -173,7 +186,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流(A) ≤15"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 8988,
@@ -185,7 +199,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流(A) ≤15"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9021,
@@ -197,7 +212,8 @@
       "quota_names": [
         "排管内电力电缆敷设 电缆截面(mm2) ≤10 其中一根芯线的截面(mm2)＞1/2其他芯线截面(mm2)，五芯 人工*1.3,材料*1.3,机械*1.3"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9034,
@@ -209,7 +225,8 @@
       "quota_names": [
         "等电位装置和测试板安装 总等电位箱"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9038,
@@ -221,7 +238,8 @@
       "quota_names": [
         "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9039,
@@ -233,7 +251,8 @@
       "quota_names": [
         "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤4"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9041,
@@ -245,7 +264,8 @@
       "quota_names": [
         "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9044,
@@ -257,7 +277,8 @@
       "quota_names": [
         "线槽配线 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9142,
@@ -269,7 +290,8 @@
       "quota_names": [
         "管内穿线 穿照明线 铜芯 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9143,
@@ -281,7 +303,8 @@
       "quota_names": [
         "线槽配线 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9144,
@@ -293,7 +316,8 @@
       "quota_names": [
         "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤1.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9145,
@@ -305,7 +329,8 @@
       "quota_names": [
         "线槽配线 导线截面(mm2) ≤2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9180,
@@ -317,7 +342,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9182,
@@ -329,7 +355,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9184,
@@ -341,7 +368,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     }
   ]
 }
