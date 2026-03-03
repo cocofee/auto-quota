@@ -13,6 +13,8 @@ interface ProvinceStore {
   provinces: string[];
   /** 分组映射：定额库名 → 分组名（来自后端文件夹结构） */
   groups: Record<string, string>;
+  /** 子分组映射：定额库名 → 地区名（新疆等有子分组的省份） */
+  subgroups: Record<string, string>;
   /** 是否正在加载 */
   loading: boolean;
   /** 是否已加载过（避免重复请求） */
@@ -21,11 +23,14 @@ interface ProvinceStore {
   fetchProvinces: (force?: boolean) => Promise<string[]>;
   /** 获取定额库的分组名（优先用后端返回的文件夹分组） */
   getGroup: (name: string) => string;
+  /** 获取定额库的子分组名（地区名），无则返回空字符串 */
+  getSubgroup: (name: string) => string;
 }
 
 export const useProvinceStore = create<ProvinceStore>((set, get) => ({
   provinces: [],
   groups: {},
+  subgroups: {},
   loading: false,
   loaded: false,
 
@@ -50,10 +55,15 @@ export const useProvinceStore = create<ProvinceStore>((set, get) => ({
 
     set({ loading: true });
     try {
-      const { data } = await api.get<{ provinces: string[]; groups?: Record<string, string> }>('/provinces');
+      const { data } = await api.get<{
+        provinces: string[];
+        groups?: Record<string, string>;
+        subgroups?: Record<string, string>;
+      }>('/provinces');
       const list = data.provinces || [];
       const groups = data.groups || {};
-      set({ provinces: list, groups, loaded: true, loading: false });
+      const subgroups = data.subgroups || {};
+      set({ provinces: list, groups, subgroups, loaded: true, loading: false });
       return list;
     } catch {
       set({ loading: false });
@@ -65,5 +75,10 @@ export const useProvinceStore = create<ProvinceStore>((set, get) => ({
     const { groups } = get();
     // 优先用后端返回的分组，兜底取前2字
     return groups[name] || name.slice(0, 2);
+  },
+
+  getSubgroup: (name: string) => {
+    const { subgroups } = get();
+    return subgroups[name] || '';
   },
 }));

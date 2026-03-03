@@ -16,7 +16,6 @@ import {
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useProvinceStore } from '../../stores/province';
-import { extractRegion } from '../../utils/region';
 import { getErrorMessage } from '../../utils/error';
 
 const { Title, Text } = Typography;
@@ -53,21 +52,22 @@ interface SubmissionRecord {
 export default function ConsultPage() {
   const { message } = App.useApp();
 
-  // 省份（两级联动：地区 → 定额库）
-  const { provinces: allProvinces, fetchProvinces } = useProvinceStore(); // 全局缓存的定额库列表
+  // 省份（两级联动：地区 → [子地区] → 定额库）
+  const { provinces: allProvinces, fetchProvinces, getGroup, getSubgroup } = useProvinceStore();
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
+  const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined);
   const [selectedProvince, setSelectedProvince] = useState<string>('');
 
-  // 按地区分组
+  // 按分组（来自后端文件夹结构）
   const regionMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const name of allProvinces) {
-      const region = extractRegion(name);
+      const region = getGroup(name);
       if (!map.has(region)) map.set(region, []);
       map.get(region)!.push(name);
     }
     return map;
-  }, [allProvinces]);
+  }, [allProvinces, getGroup]);
 
   // 地区下拉选项
   const regionOptions = useMemo(() => {
@@ -77,18 +77,48 @@ export default function ConsultPage() {
     }));
   }, [regionMap]);
 
-  // 当前地区下的定额库选项
+  // 新疆子地区列表
+  const subRegionOptions = useMemo(() => {
+    if (selectedRegion !== '新疆') return [];
+    const items = regionMap.get('新疆') || [];
+    const regions = new Set<string>();
+    for (const name of items) {
+      const sub = getSubgroup(name);
+      if (sub) regions.add(sub);
+    }
+    return Array.from(regions).map((r) => ({ label: r, value: r }));
+  }, [selectedRegion, regionMap, getSubgroup]);
+
+  // 当前地区下的定额库选项（新疆按子地区过滤）
   const dbOptions = useMemo(() => {
     if (!selectedRegion) return [];
     const items = regionMap.get(selectedRegion) || [];
+    if (selectedRegion === '新疆' && selectedSubRegion) {
+      return items
+        .filter((name) => getSubgroup(name) === selectedSubRegion)
+        .map((name) => ({ label: name, value: name }));
+    }
     return items.map((name) => ({ label: name, value: name }));
-  }, [selectedRegion, regionMap]);
+  }, [selectedRegion, selectedSubRegion, regionMap, getSubgroup]);
 
-  // 切换地区时自动选第一个定额库
+  // 切换地区时
   const onRegionChange = (region: string) => {
     setSelectedRegion(region);
-    const items = regionMap.get(region) || [];
-    setSelectedProvince(items.length > 0 ? items[0] : '');
+    setSelectedSubRegion(undefined);
+    if (region === '新疆') {
+      setSelectedProvince('');
+    } else {
+      const items = regionMap.get(region) || [];
+      setSelectedProvince(items.length > 0 ? items[0] : '');
+    }
+  };
+
+  // 切换新疆子地区时
+  const onSubRegionChange = (subRegion: string) => {
+    setSelectedSubRegion(subRegion);
+    const items = regionMap.get('新疆') || [];
+    const filtered = items.filter((name) => getSubgroup(name) === subRegion);
+    setSelectedProvince(filtered.length > 0 ? filtered[0] : '');
   };
 
   // 对话
@@ -117,9 +147,9 @@ export default function ConsultPage() {
   useEffect(() => {
     fetchProvinces().then((list) => {
       if (list.length > 0 && !selectedProvince) {
-        const firstRegion = extractRegion(list[0]);
+        const firstRegion = getGroup(list[0]);
         setSelectedRegion(firstRegion);
-        const firstDb = list.find((p) => extractRegion(p) === firstRegion);
+        const firstDb = list.find((p) => getGroup(p) === firstRegion);
         setSelectedProvince(firstDb || list[0]);
       }
     });
@@ -393,13 +423,36 @@ export default function ConsultPage() {
               (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }
           />
+          {/* 新疆子地区选择 */}
+          {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
+            <>
+              <Text>地区：</Text>
+              <Select
+                value={selectedSubRegion}
+                onChange={onSubRegionChange}
+                style={{ width: 160 }}
+                placeholder="选择地区"
+                options={subRegionOptions}
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              />
+            </>
+          )}
           <Text>定额库：</Text>
           <Select
             value={selectedProvince || undefined}
             onChange={setSelectedProvince}
             style={{ width: 360 }}
-            placeholder={selectedRegion ? '选择该省份的定额库' : '请先选择省份'}
-            disabled={!selectedRegion}
+            placeholder={
+              selectedRegion === '新疆' && !selectedSubRegion
+                ? '请先选择地区'
+                : selectedRegion
+                  ? '选择该省份的定额库'
+                  : '请先选择省份'
+            }
+            disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
             options={dbOptions}
             showSearch
             filterOption={(input, option) =>

@@ -38,7 +38,7 @@ def main():
     # 省份和目录
     province = args.province
     xml_dir = Path(args.dir) if args.dir else (
-        PROJECT_ROOT / "data" / "oss_samples" / "by_province" / args.province_code)
+        Path("D:/广联达临时文件/oss_samples/by_province") / args.province_code)
 
     if not xml_dir.exists():
         logger.error(f"目录不存在: {xml_dir}")

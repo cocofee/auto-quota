@@ -156,7 +156,8 @@ async def list_provinces():
         import config as quota_config
         provinces = quota_config.list_db_provinces()
         groups = quota_config.get_province_groups()
-        return {"provinces": provinces, "groups": groups}
+        subgroups = quota_config.get_province_subgroups()
+        return {"provinces": provinces, "groups": groups, "subgroups": subgroups}
     except Exception as e:
         logger.error(f"获取省份列表失败: {e}")
         raise HTTPException(
