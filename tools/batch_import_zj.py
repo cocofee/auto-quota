@@ -29,7 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description="浙江OSS数据批量导入")
     parser.add_argument("--preview", action="store_true", help="预览模式")
     parser.add_argument("--limit", type=int, default=0, help="只处理前N个文件")
-    parser.add_argument("--dir", default="data/oss_samples/zj_batch", help="XML文件目录")
+    parser.add_argument("--dir", default="D:/广联达临时文件/oss_samples/zj_batch", help="XML文件目录")
     args = parser.parse_args()
 
     # 省份

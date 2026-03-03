@@ -35,8 +35,9 @@ export default function TaskCreatePage() {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [sheetNames, setSheetNames] = useState<string[]>([]); // 从上传的Excel中读取的工作表名列表
   const [currentStep, setCurrentStep] = useState(0);
-  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup } = useProvinceStore(); // 全局缓存的定额库列表
+  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup, getSubgroup } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
+  const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined); // 新疆地区选择
   const selectedProvince = Form.useWatch('province', form); // 监听选中的定额库
 
   // 计算同批兄弟库（同省份+同年份，自动挂载为辅助库）
@@ -69,12 +70,30 @@ export default function TaskCreatePage() {
     }));
   }, [regionMap]);
 
-  // 当前省份下的定额库下拉选项
+  // 新疆子地区列表（仅当选了"新疆"时有值）
+  const subRegionOptions = useMemo(() => {
+    if (selectedRegion !== '新疆') return [];
+    const items = regionMap.get('新疆') || [];
+    const regions = new Set<string>();
+    for (const name of items) {
+      const sub = getSubgroup(name);
+      if (sub) regions.add(sub);
+    }
+    return Array.from(regions).map((r) => ({ label: r, value: r }));
+  }, [selectedRegion, regionMap, getSubgroup]);
+
+  // 当前省份下的定额库下拉选项（新疆按子地区过滤）
   const dbOptions = useMemo(() => {
     if (!selectedRegion) return [];
     const items = regionMap.get(selectedRegion) || [];
+    // 新疆：按选中的子地区过滤
+    if (selectedRegion === '新疆' && selectedSubRegion) {
+      return items
+        .filter((name) => getSubgroup(name) === selectedSubRegion)
+        .map((name) => ({ label: name, value: name }));
+    }
     return items.map((name) => ({ label: name, value: name }));
-  }, [selectedRegion, regionMap]);
+  }, [selectedRegion, selectedSubRegion, regionMap, getSubgroup]);
 
   // 从全局 store 加载定额库列表（有缓存则跳过请求）
   useEffect(() => {
@@ -93,9 +112,25 @@ export default function TaskCreatePage() {
   // 切换省份时：自动选中该省份下的第一个定额库
   const onRegionChange = (region: string) => {
     setSelectedRegion(region);
+    setSelectedSubRegion(undefined); // 重置子地区
     const items = regionMap.get(region) || [];
-    if (items.length > 0) {
+    if (region === '新疆') {
+      // 新疆：不自动选定额库，等用户选子地区
+      form.setFieldValue('province', undefined);
+    } else if (items.length > 0) {
       form.setFieldValue('province', items[0]);
+    } else {
+      form.setFieldValue('province', undefined);
+    }
+  };
+
+  // 切换新疆子地区时：自动选中该地区的第一个定额库
+  const onSubRegionChange = (subRegion: string) => {
+    setSelectedSubRegion(subRegion);
+    const items = regionMap.get('新疆') || [];
+    const filtered = items.filter((name) => getSubgroup(name) === subRegion);
+    if (filtered.length > 0) {
+      form.setFieldValue('province', filtered[0]);
     } else {
       form.setFieldValue('province', undefined);
     }
@@ -305,6 +340,22 @@ export default function TaskCreatePage() {
               />
             </Form.Item>
 
+            {/* 新疆子地区选择（仅新疆显示） */}
+            {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
+              <Form.Item label="选择地区" required>
+                <Select
+                  options={subRegionOptions}
+                  placeholder="选择新疆地区"
+                  value={selectedSubRegion}
+                  onChange={onSubRegionChange}
+                  showSearch
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                />
+              </Form.Item>
+            )}
+
             <Form.Item
               name="province"
               label="选择定额库"
@@ -313,8 +364,14 @@ export default function TaskCreatePage() {
               <Select
                 options={dbOptions}
                 loading={provincesLoading}
-                placeholder={selectedRegion ? '选择该省份的定额库' : '请先选择省份'}
-                disabled={!selectedRegion}
+                placeholder={
+                  selectedRegion === '新疆' && !selectedSubRegion
+                    ? '请先选择地区'
+                    : selectedRegion
+                      ? '选择该省份的定额库'
+                      : '请先选择省份'
+                }
+                disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
                 showSearch
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase())

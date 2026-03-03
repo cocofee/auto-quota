@@ -398,6 +398,7 @@ def get_province_groups() -> dict[str, str]:
 
     返回 {定额库名: 分组名} 的映射，如 {"石化安装预算2019": "石油", "石油预算2022": "石油"}
     嵌套结构下父文件夹名即分组名；扁平结构（无父文件夹）用定额库名前2字作为分组。
+    特殊处理：新疆-* 文件夹统一归入"新疆"分组（地区信息通过 get_province_subgroups 获取）。
     同时扫描 db/provinces/ 下已有但不在 data/ 中的定额库，用前2字兜底。
     """
     groups = {}
@@ -412,9 +413,11 @@ def get_province_groups() -> dict[str, str]:
                 groups[item.name] = item.name[:2]
             else:
                 # 嵌套结构：父文件夹名即分组
+                # 新疆-乌鲁木齐 → 分组为"新疆"（不是"新疆-乌鲁木齐"）
+                group_name = "新疆" if item.name.startswith("新疆-") else item.name
                 for sub in sorted(item.iterdir()):
                     if sub.is_dir():
-                        groups[sub.name] = item.name
+                        groups[sub.name] = group_name
 
     # 补充 db/provinces/ 下已构建但不在 data/ 中的定额库
     for name in list_db_provinces():
@@ -422,6 +425,26 @@ def get_province_groups() -> dict[str, str]:
             groups[name] = name[:2]
 
     return groups
+
+
+def get_province_subgroups() -> dict[str, str]:
+    """获取新疆等省份的子分组（地区名）
+
+    返回 {定额库名: 地区名} 的映射，仅包含有子分组的定额库。
+    例如 {"全统安装工程消耗量定额乌鲁木齐估价汇总表(2020)": "乌鲁木齐"}
+    """
+    subgroups = {}
+    if QUOTA_DATA_DIR.exists():
+        for item in sorted(QUOTA_DATA_DIR.iterdir()):
+            if not item.is_dir():
+                continue
+            # 只处理 新疆-{地区名} 格式的文件夹
+            if item.name.startswith("新疆-"):
+                region = item.name[3:]  # "新疆-乌鲁木齐" → "乌鲁木齐"
+                for sub in sorted(item.iterdir()):
+                    if sub.is_dir():
+                        subgroups[sub.name] = region
+    return subgroups
 
 # 兼容旧代码：保留QUOTA_EXCEL_FILES但标记为废弃
 QUOTA_EXCEL_FILES = {

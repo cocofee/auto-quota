@@ -31,7 +31,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '0.1.63',
     date: '2026-03-03',
     changes: [
-      { type: 'admin', text: 'v0.1.63 更新' },
+      { type: 'user', text: '新疆地区分组选择（先选新疆，再选地区）' },
+      { type: 'admin', text: '新疆18地区定额库合并为二级选择' },
+      { type: 'admin', text: '全国202个定额库向量索引构建完成' },
     ],
   },
   {

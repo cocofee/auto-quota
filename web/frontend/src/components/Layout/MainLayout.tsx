@@ -44,6 +44,17 @@ export default function MainLayout() {
   const { user, logout } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
 
+  // 取最新一条用户可见的更新摘要（侧边栏底部展示用）
+  const latestUserChange = useMemo(() => {
+    for (const entry of CHANGELOG) {
+      const userChange = entry.changes.find(c => c.type === 'user');
+      if (userChange) {
+        return { version: entry.version, date: entry.date, text: userChange.text };
+      }
+    }
+    return null;
+  }, []);
+
   // 根据角色动态生成菜单
   const menuItems: MenuProps['items'] = useMemo(() => {
     // 所有用户都能看到的基础菜单
@@ -201,11 +212,11 @@ export default function MainLayout() {
               style={{ borderRight: 0, padding: '8px 0' }}
             />
           </div>
-          {/* 底部版本号 */}
+          {/* 底部版本号 + 最新更新摘要 */}
           <div
             onClick={() => setChangelogOpen(true)}
             style={{
-              padding: collapsed ? '12px 0' : '12px 16px',
+              padding: collapsed ? '8px 0' : '10px 16px',
               borderTop: '1px solid #f1f5f9',
               textAlign: 'center',
               cursor: 'pointer',
@@ -216,7 +227,20 @@ export default function MainLayout() {
             onMouseEnter={e => (e.currentTarget.style.color = '#2563eb')}
             onMouseLeave={e => (e.currentTarget.style.color = '#94a3b8')}
           >
-            {collapsed ? `v${APP_VERSION.split('.').pop()}` : `v${APP_VERSION}`}
+            <div>{collapsed ? `v${APP_VERSION.split('.').pop()}` : `v${APP_VERSION}`}</div>
+            {/* 展开状态下显示最新更新摘要 */}
+            {!collapsed && latestUserChange && (
+              <div style={{
+                marginTop: 4,
+                fontSize: 11,
+                lineHeight: 1.4,
+              }}>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {latestUserChange.text}
+                </div>
+                <div style={{ marginTop: 2 }}>{latestUserChange.date}</div>
+              </div>
+            )}
           </div>
         </div>
       </Sider>
