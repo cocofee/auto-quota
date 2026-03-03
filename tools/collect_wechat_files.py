@@ -2,9 +2,11 @@
 微信造价文件收集工具
 
 功能：扫描微信和企业微信目录，自动筛选计价相关文件，按专业分类收集。
+支持增量模式：记住已处理过的文件，下次只看新增/修改的文件。
 
 用法：
-    python tools/collect_wechat_files.py                    # 扫描收集
+    python tools/collect_wechat_files.py                    # 增量收集（只看新文件）
+    python tools/collect_wechat_files.py --full             # 全量重扫（忽略历史）
     python tools/collect_wechat_files.py --preview          # 只统计不复制
     python tools/collect_wechat_files.py --source wechat    # 只扫微信
     python tools/collect_wechat_files.py --source wxwork    # 只扫企业微信
@@ -19,6 +21,7 @@
 import os
 import sys
 import re
+import json
 import shutil
 import hashlib
 import argparse
@@ -27,6 +30,29 @@ import zipfile
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+
+# 增量记录文件路径（记住已处理过的文件，避免重复扫描）
+_HISTORY_FILE = os.path.join(os.path.dirname(__file__), ".collect_history.json")
+
+
+def _load_history():
+    """加载增量历史记录，格式: {文件路径: 修改时间戳}"""
+    if os.path.exists(_HISTORY_FILE):
+        try:
+            with open(_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_history(history):
+    """保存增量历史记录"""
+    try:
+        with open(_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"  [警告] 保存增量记录失败: {e}")
 
 # ============================================================
 # 配置
@@ -452,12 +478,28 @@ def safe_copy(src, dst_dir, source_tag, seen_md5s):
 # 主流程
 # ============================================================
 
-def collect_files(output_dir, sources_to_scan, preview=False):
-    """主收集流程"""
+def collect_files(output_dir, sources_to_scan, preview=False, full=False):
+    """主收集流程
+
+    参数:
+        output_dir: 输出目录（F:\\jarvis）
+        sources_to_scan: 要扫描的来源列表
+        preview: 预览模式（只统计不复制）
+        full: 全量模式（忽略增量历史，从头扫）
+    """
 
     print("=" * 60)
     print("  微信造价文件收集工具（按专业分类）")
     print("=" * 60)
+
+    # 加载增量历史（记录已处理过的文件路径+修改时间）
+    if full:
+        history = {}
+        print("  [全量模式] 忽略历史记录，从头扫描\n")
+    else:
+        history = _load_history()
+        print(f"  [增量模式] 已有 {len(history)} 条历史记录，只扫新文件\n")
+
     if preview:
         print("  [预览模式] 只统计，不复制文件\n")
 
@@ -468,8 +510,9 @@ def collect_files(output_dir, sources_to_scan, preview=False):
     # 收集结果: [(filepath, specialty, source_tag), ...]
     collected = []
     excluded_count = 0
+    skipped_count = 0  # 增量跳过的文件数
 
-    # ==== 第1步：扫描所有来源目录 ====
+    # ==== 第1步：扫描所有来源目录（增量：跳过已处理的文件） ====
     all_excel = []      # (filepath, tag)
     all_software = []   # (filepath, tag)
     all_archives = []   # (filepath, tag)
@@ -485,18 +528,33 @@ def collect_files(output_dir, sources_to_scan, preview=False):
         print(f"\n[扫描] {tag}: {source_dir}")
 
         file_count = 0
+        new_count = 0
         for root, dirs, files in os.walk(source_dir):
             for fname in files:
                 filepath = os.path.join(root, fname)
                 ext = Path(fname).suffix.lower()
                 file_count += 1
 
-                if file_count % 2000 == 0:
-                    print(f"  已扫描 {file_count} 个文件...")
+                if file_count % 5000 == 0:
+                    print(f"  已扫描 {file_count} 个文件（新增 {new_count}）...")
+
+                # 增量判断：文件路径+修改时间都没变 → 跳过
+                try:
+                    mtime = os.path.getmtime(filepath)
+                except OSError:
+                    continue
+                old_mtime = history.get(filepath)
+                if old_mtime is not None and abs(mtime - old_mtime) < 1:
+                    skipped_count += 1
+                    continue
+
+                # 记录这个文件（不管是不是造价文件都记，下次直接跳过）
+                history[filepath] = mtime
 
                 if is_excluded_by_name(fname):
                     continue
 
+                new_count += 1
                 if ext in SOFTWARE_EXTENSIONS:
                     all_software.append((filepath, tag))
                 elif ext in EXCEL_EXTENSIONS:
@@ -504,8 +562,8 @@ def collect_files(output_dir, sources_to_scan, preview=False):
                 elif ext in ARCHIVE_EXTENSIONS:
                     all_archives.append((filepath, tag))
 
-        print(f"  扫描完成: {file_count} 个文件")
-        print(f"    Excel: {len([x for x in all_excel if x[1]==tag])} | "
+        print(f"  扫描完成: 总{file_count} 个文件，新增 {new_count}，跳过 {file_count - new_count}")
+        print(f"    新增 Excel: {len([x for x in all_excel if x[1]==tag])} | "
               f"软件: {len([x for x in all_software if x[1]==tag])} | "
               f"压缩包: {len([x for x in all_archives if x[1]==tag])}")
 
@@ -578,9 +636,11 @@ def collect_files(output_dir, sources_to_scan, preview=False):
     print("-" * 42)
     print(f"{'合计':<12} {total_excel:>8} {total_software:>10} {total_excel+total_software:>8}")
     print(f"\n排除: {excluded_count} 个非造价文件")
+    print(f"增量跳过: {skipped_count} 个已处理文件")
 
     if preview:
         print("\n[预览模式] 去掉 --preview 正式收集。")
+        _save_history(history)
         return stats
 
     # ==== 第6步：复制文件 ====
@@ -607,6 +667,10 @@ def collect_files(output_dir, sources_to_scan, preview=False):
         print(f"  报告: {os.path.join(output_dir, '_收集报告.xlsx')}")
     except Exception as e:
         print(f"  [警告] 生成报告失败: {e}")
+
+    # ==== 第8步：保存增量记录 ====
+    _save_history(history)
+    print(f"  增量记录已更新（共 {len(history)} 条）")
 
     return stats
 
@@ -663,6 +727,8 @@ def main():
     parser.add_argument("--source", choices=["wechat", "wxwork", "all"], default="all",
                         help="扫描来源")
     parser.add_argument("--preview", action="store_true", help="预览模式")
+    parser.add_argument("--full", action="store_true",
+                        help="全量模式（忽略增量历史，从头扫描所有文件）")
 
     args = parser.parse_args()
     sources = list(SOURCES.keys()) if args.source == "all" else [args.source]
@@ -671,6 +737,7 @@ def main():
         output_dir=args.output,
         sources_to_scan=sources,
         preview=args.preview,
+        full=args.full,
     )
 
 
