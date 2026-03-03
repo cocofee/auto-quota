@@ -11,6 +11,7 @@
 
 import asyncio
 import re
+import sys
 import sqlite3
 from pathlib import Path
 
@@ -21,6 +22,10 @@ from app.models.user import User
 from app.auth.permissions import require_admin
 from app.config import PROJECT_ROOT
 
+# 把项目根目录加入搜索路径，以便导入 db.sqlite
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 router = APIRouter()
 
 # 路径
@@ -29,13 +34,11 @@ _PROVINCES_DIR = PROJECT_ROOT / "db" / "provinces"
 
 
 def _get_batch_db() -> sqlite3.Connection:
-    """获取 batch.db 连接"""
+    """获取 batch.db 连接（复用统一连接工厂）"""
     if not _BATCH_DB_PATH.exists():
         raise FileNotFoundError("batch.db 不存在")
-    conn = sqlite3.connect(str(_BATCH_DB_PATH), timeout=10)
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    return conn
+    from db.sqlite import connect
+    return connect(_BATCH_DB_PATH, row_factory=True)
 
 
 # ============================================================
@@ -137,15 +140,19 @@ async def coverage_matrix(
     def _query():
         # 获取有定额库的省份
         has_db = set()
-        if _PROVINCES_DIR.exists():
-            for d in _PROVINCES_DIR.iterdir():
-                if d.is_dir():
-                    # 去掉年份后缀（如"北京2024" → "北京"）
-                    name = re.sub(r'\d+$', '', d.name)
-                    has_db.add(name)
+        try:
+            if _PROVINCES_DIR.exists():
+                for d in _PROVINCES_DIR.iterdir():
+                    if d.is_dir():
+                        # 去掉年份后缀（如"北京2024" → "北京"）
+                        name = re.sub(r'\d+$', '', d.name)
+                        has_db.add(name)
+        except OSError as e:
+            logger.warning(f"遍历定额库目录失败: {e}")
 
         # 获取有文件的省份
         has_files = set()
+        conn = None
         try:
             conn = _get_batch_db()
             rows = conn.execute(
@@ -153,9 +160,11 @@ async def coverage_matrix(
                 "WHERE province IS NOT NULL AND province != ''"
             ).fetchall()
             has_files = {r["province"] for r in rows}
-            conn.close()
         except FileNotFoundError:
             pass
+        finally:
+            if conn:
+                conn.close()
 
         return {
             "has_db_and_files": sorted(has_db & has_files),
