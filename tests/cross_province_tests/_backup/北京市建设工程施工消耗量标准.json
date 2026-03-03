@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 1091,
@@ -17,7 +17,8 @@
       "quota_names": [
         "跷板式暗开关(单控) 双联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 292,
@@ -29,7 +30,8 @@
       "quota_names": [
         "低压交流异步电动机检查接线及调试(功率kW以下) 22"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 240,
@@ -41,7 +43,8 @@
       "quota_names": [
         "钢制槽式桥架(宽+高)(mm以下) 400"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1374,
@@ -53,7 +56,8 @@
       "quota_names": [
         "标志、诱导灯安装 壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 617,
@@ -65,7 +69,8 @@
       "quota_names": [
         "钢制槽式桥架(宽+高)(mm以下) 600"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 505,
@@ -77,7 +82,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 4"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 494,
@@ -89,7 +95,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 8"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 308,
@@ -101,7 +108,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 4"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1372,
@@ -113,7 +121,8 @@
       "quota_names": [
         "标志、诱导灯安装 壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 287,
@@ -125,7 +134,8 @@
       "quota_names": [
         "接地断接卡子制作安装"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1177,
@@ -137,7 +147,8 @@
       "quota_names": [
         "配电箱箱体安装 半周长(m以内) 明装 2.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 979,
@@ -149,7 +160,8 @@
       "quota_names": [
         "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 279,
@@ -161,7 +173,8 @@
       "quota_names": [
         "跷板式暗开关(单控) 双联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1065,
@@ -173,7 +186,8 @@
       "quota_names": [
         "刚性矿物绝缘电缆终端头制作安装 2~4芯(mm2以下) 4"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 874,
@@ -185,7 +199,8 @@
       "quota_names": [
         "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16 五芯 单价*1.15"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 250,
@@ -197,7 +212,8 @@
       "quota_names": [
         "凿槽 混凝土结构 管径(mm以内) 20"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 245,
@@ -209,7 +225,8 @@
       "quota_names": [
         "防火堵洞 穿墙洞"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 282,
@@ -221,7 +238,8 @@
       "quota_names": [
         "插座暗装 单相 双联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 491,
@@ -233,7 +251,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 4"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 499,
@@ -245,7 +264,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 922,
@@ -257,7 +277,8 @@
       "quota_names": [
         "户内干包式非铠装电力电缆终端头制作安装 1kV以下(mm2以内) 5×16"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1071,
@@ -269,7 +290,8 @@
       "quota_names": [
         "壁灯安装 小型壁灯(7kg以内)"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 241,
@@ -281,7 +303,8 @@
       "quota_names": [
         "钢制槽式桥架(宽+高)(mm以下) 400"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1049,
@@ -293,7 +316,8 @@
       "quota_names": [
         "多芯刚性矿物绝缘电缆敷设 2~4芯电缆 电缆截面(mm2以内) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 341,
@@ -305,7 +329,8 @@
       "quota_names": [
         "钢制槽式桥架(宽+高)(mm以下) 400"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1351,
@@ -317,7 +342,8 @@
       "quota_names": [
         "户内干包式非铠装电力电缆终端头制作安装 1kV以下(mm2以内) 5×6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1147,
@@ -329,7 +355,8 @@
       "quota_names": [
         "插座暗装 单相 单联"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1344,
@@ -341,7 +368,8 @@
       "quota_names": [
         "户内干包式非铠装电力电缆终端头制作安装 1kV以下(mm2以内) 5×120"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 872,
@@ -353,7 +381,8 @@
       "quota_names": [
         "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 16 五芯 单价*1.15"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 492,
@@ -365,7 +394,8 @@
       "quota_names": [
         "配电箱墙上(柱上)明装 规格(回路以内) 8"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 1233,
@@ -377,7 +407,8 @@
       "quota_names": [
         "焊接法兰阀门 公称直径(mm以内) 50"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12500,
@@ -389,7 +420,8 @@
       "quota_names": [
         "螺纹阀门 公称直径(mm以内) 25"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 440,
@@ -401,7 +433,8 @@
       "quota_names": [
         "室内镀锌钢管(螺纹连接) 公称直径(mm以内) 80  "
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12604,
@@ -413,7 +446,8 @@
       "quota_names": [
         "清扫口安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 243,
@@ -427,7 +461,8 @@
         "制作 一般管架",
         "安装 一般管架"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12577,
@@ -439,7 +474,8 @@
       "quota_names": [
         "一般填料套管制作安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 379,
@@ -451,7 +487,8 @@
       "quota_names": [
         "热量表(法兰连接) 公称直径(mm以内) 150"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12531,
@@ -463,7 +500,8 @@
       "quota_names": [
         "给水塑料管(热熔连接) 公称直径(mm以内) 20 设计要求管道进行消毒冲洗 人工*1.05,材料[340000110000] 含量+0.1,机械[994600040000] 含量+0.15"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 704,
@@ -475,7 +513,8 @@
       "quota_names": [
         "百叶风口安装 周长(mm以内) 8000"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 691,
@@ -489,7 +528,8 @@
         "薄钢板通风管道制作 钢板圆形风管制作(δ=1.2mm以内、咬口) 直径(mm以内) 630",
         "薄钢板通风管道安装 钢板圆形风管安装(δ=1.2mm以内、咬口) 直径(mm以内) 630"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 560,
@@ -501,7 +541,8 @@
       "quota_names": [
         "管式消声器安装 周长(mm以内) 2400"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 481,
@@ -513,7 +554,8 @@
       "quota_names": [
         "风机盘管安装 吊顶式"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 527,
@@ -525,7 +567,8 @@
       "quota_names": [
         "屋顶自然通风器安装 直径(mm以内) 300"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 12695,
@@ -539,7 +582,8 @@
         "薄钢板通风管道制作 钢板矩形风管制作(δ=1.2mm以内、咬口) 大边长(mm以内) 1000",
         "薄钢板通风管道安装 钢板矩形风管安装(δ=1.2mm以内、咬口) 大边长(mm以内) 1000"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 524,
@@ -553,7 +597,8 @@
         "轴流通风机 设备重量(t以内) 0.2",
         "低压交流异步电动机检查接线及调试(功率kW以下) 3"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 523,
@@ -569,7 +614,8 @@
         "低压交流异步电动机检查接线及调试(功率kW以下) 3",
         "混(斜)流风机吊架制作安装 风机型号(以内) 5#"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 1110,
@@ -581,7 +627,8 @@
       "quota_names": [
         "组装水箱安装 水箱总容量(m3以内) 40"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 721,
@@ -593,7 +640,8 @@
       "quota_names": [
         "室外给水球墨铸铁管埋设(胶圈接口) 公称直径(mm以内) 80"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 12503,
@@ -605,7 +653,8 @@
       "quota_names": [
         "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
       ],
-      "specialty": "C12"
+      "specialty": "C12",
+      "status": "auto"
     },
     {
       "id": 799,
@@ -617,7 +666,8 @@
       "quota_names": [
         "双绞线缆 管内穿放 ≤4对"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     }
   ]
 }

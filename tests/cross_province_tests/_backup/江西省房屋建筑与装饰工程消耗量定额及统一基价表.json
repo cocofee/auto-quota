@@ -5,7 +5,7 @@
   "sample_size": 27,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 2181,
@@ -17,7 +17,8 @@
       "quota_names": [
         "回旋钻机钻桩孔(桩径) ≤800mm 入岩增加 "
       ],
-      "specialty": "C3"
+      "specialty": "C3",
+      "status": "auto"
     },
     {
       "id": 2182,
@@ -29,7 +30,8 @@
       "quota_names": [
         "混凝土灌注桩钢筋笼 钢筋 HPB300φ10以内"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2183,
@@ -43,7 +45,8 @@
         "混凝土灌注桩钢筋笼 带肋钢筋HRB400以内 φ12～18 ",
         "混凝土灌注桩钢筋笼 带肋钢筋HRB400以内 φ20～25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2191,
@@ -57,7 +60,8 @@
         "夯填土 人工 槽坑 ",
         "自卸汽车运土 均按场内土考虑，包括但不限于土源费、取土费、装卸车、运输、二次转运、场地平整等费用，运距由投标人综合考虑并包干使用"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 2194,
@@ -69,7 +73,8 @@
       "quota_names": [
         "1、砖品种、规格、强度等级:MU10煤矸石烧结普通砖\n2.砂浆类型、强度等级：综合各类砂浆类型及强度等级\n3.满足设计及规范要求，包含完成该项工程的一切物料及措施 "
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 2208,
@@ -81,7 +86,8 @@
       "quota_names": [
         "现浇构件圆钢筋HPB300 直径(mm) ≤10 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2209,
@@ -93,7 +99,8 @@
       "quota_names": [
         "现浇构件圆钢筋HPB300 直径(mm) ≤18 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2210,
@@ -105,7 +112,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以内 直径(mm) ≤10 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2211,
@@ -117,7 +125,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以内 直径(mm) ≤18 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2212,
@@ -129,7 +138,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以内 直径(mm) ≤25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2214,
@@ -141,7 +151,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以上 直径(mm) ≤18 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2215,
@@ -153,7 +164,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以上 直径(mm) ≤25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2221,
@@ -165,7 +177,8 @@
       "quota_names": [
         "砌体内加固钢筋 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2222,
@@ -177,7 +190,8 @@
       "quota_names": [
         "铁件安装 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2223,
@@ -199,7 +213,8 @@
         "金属面 红丹防锈漆一遍",
         "金属面 调和漆二遍"
       ],
-      "specialty": "C6"
+      "specialty": "C6",
+      "status": "auto"
     },
     {
       "id": 2246,
@@ -211,7 +226,8 @@
       "quota_names": [
         "楼梯间栏杆） H=950 换为【楼梯栏杆 H=950镀锌钢管横杆、竖杆】"
       ],
-      "specialty": "15"
+      "specialty": "15",
+      "status": "auto"
     },
     {
       "id": 2247,
@@ -223,7 +239,8 @@
       "quota_names": [
         "扶手 换为【楼梯靠墙扶手 镀锌钢管横杆】"
       ],
-      "specialty": "15"
+      "specialty": "15",
+      "status": "auto"
     },
     {
       "id": 2253,
@@ -235,7 +252,8 @@
       "quota_names": [
         "构造柱 复合模板 钢支撑 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2255,
@@ -247,7 +265,8 @@
       "quota_names": [
         "矩形梁 复合模板 钢支撑 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2257,
@@ -259,7 +278,8 @@
       "quota_names": [
         "圈梁 直形 复合模板 钢支撑"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2258,
@@ -271,7 +291,8 @@
       "quota_names": [
         "过梁 复合模板 钢支撑 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2259,
@@ -285,7 +306,8 @@
         "直形墙（外墙） 复合模板 钢支撑(止水螺栓不能回收) ",
         "直形墙 复合模板 钢支撑 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2261,
@@ -297,7 +319,8 @@
       "quota_names": [
         "有梁板 复合模板 钢支撑 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2271,
@@ -309,7 +332,8 @@
       "quota_names": [
         "1.部位：内外墙\n2.砌块品种、强度等级：蒸压加气混凝土砌块，综合砌块各类规格、强度等级\n3.墙体类型：不区分墙、柱类型及厚度\n4.综合考虑砌筑过程中所需实砌各类砖、预制块、防腐木塞及拉筋铁丝（包含了如上下三匹水泥实心砖、红砖等各类砖及其他材料砌体）不另行计取\n5.砂浆类型、强度等级：综合各类砂浆类型及强度等级\n6.满足设计及规范要求，包含完成该项工程的一切物料及措施 "
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 2275,
@@ -321,7 +345,8 @@
       "quota_names": [
         "泵送商品砼现浇混凝土 楼梯 直形 C30 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2289,
@@ -333,7 +358,8 @@
       "quota_names": [
         "现浇混凝土 扶手、压顶 C25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 2321,
@@ -345,7 +371,8 @@
       "quota_names": [
         "采用≥2厚铝合金面板，表面阳极化处理，外墙变形缝盖板的颜色与周边材料协调（须进行样板验收）"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     }
   ]
 }

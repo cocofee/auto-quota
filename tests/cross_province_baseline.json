@@ -1,5 +1,9 @@
 {
-  "created": "2026-03-03 08:32",
+  "version": "national_v1",
+  "created": "2026-03-03 11:30",
+  "total_provinces": 11,
+  "total_questions": 484,
+  "overall_rate": 20.9,
   "provinces": {
     "北京市建设工程施工消耗量标准(2024)": {
       "total": 50,
@@ -39,8 +43,8 @@
       "total": 50,
       "rate": 24.0,
       "diagnosis": {
-        "wrong_tier": 24,
-        "synonym_gap": 12,
+        "wrong_tier": 25,
+        "synonym_gap": 11,
         "wrong_book": 2
       }
     },
@@ -80,10 +84,10 @@
     },
     "浙江省通用安装工程预算定额(2018)": {
       "total": 50,
-      "rate": 70.0,
+      "rate": 22.0,
       "diagnosis": {
-        "wrong_tier": 9,
-        "synonym_gap": 6
+        "wrong_tier": 22,
+        "synonym_gap": 17
       }
     },
     "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {

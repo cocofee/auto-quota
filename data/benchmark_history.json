@@ -2042,5 +2042,40 @@
       }
     },
     "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-03 10:53:11",
+    "mode": "search",
+    "datasets": {
+      "B4_脏数据": {
+        "total": 19,
+        "skip_measure": 0,
+        "green_rate": 0.9474,
+        "yellow_rate": 0.0,
+        "red_rate": 0.0526,
+        "exp_hit_rate": 0.0,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 1.08
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-03 11:19:28",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
   }
 ]

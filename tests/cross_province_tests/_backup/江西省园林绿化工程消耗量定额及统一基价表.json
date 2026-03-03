@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 5847,
@@ -19,7 +19,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5",
         "电力电缆终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2) ≤16 实际电缆头芯数(芯):5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5804,
@@ -31,7 +32,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m "
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6082,
@@ -43,7 +45,8 @@
       "quota_names": [
         "其他普通灯具安装 普通壁灯"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5866,
@@ -57,7 +60,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5",
         "焊铜接线端子 导线截面(mm2) ≤16"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5850,
@@ -71,7 +75,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5",
         "电力电缆终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2) ≤50 实际电缆头芯数(芯):5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6663,
@@ -83,7 +88,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5825,
@@ -97,7 +103,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5",
         "焊铜接线端子 导线截面(mm2) ≤16"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6623,
@@ -109,7 +116,8 @@
       "quota_names": [
         "暗装接线盒"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5818,
@@ -123,7 +131,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5",
         "电力电缆终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2) ≤35 实际电缆头芯数(芯):5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6039,
@@ -135,7 +144,8 @@
       "quota_names": [
         "荧光灯具安装 吊管式 双管"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6585,
@@ -147,7 +157,8 @@
       "quota_names": [
         "避雷网安装 沿混凝土块敷设"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6176,
@@ -159,7 +170,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5934,
@@ -171,7 +183,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5815,
@@ -185,7 +198,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5",
         "焊铜接线端子 导线截面(mm2) ≤16"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5940,
@@ -197,7 +211,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤25"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5895,
@@ -211,7 +226,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5",
         "电力电缆终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2) ≤70 实际电缆头芯数(芯):5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5805,
@@ -223,7 +239,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6624,
@@ -235,7 +252,8 @@
       "quota_names": [
         "暗装开关(插座)盒"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6178,
@@ -247,7 +265,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 吸顶式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5846,
@@ -261,7 +280,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5",
         "焊铜接线端子 导线截面(mm2) ≤16"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5848,
@@ -275,7 +295,8 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5",
         "电力电缆终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2) ≤35 实际电缆头芯数(芯):5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5926,
@@ -287,7 +308,8 @@
       "quota_names": [
         "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 32"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5942,
@@ -299,7 +321,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤40"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6171,
@@ -311,7 +334,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5936,
@@ -323,7 +347,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 6151,
@@ -335,7 +360,8 @@
       "quota_names": [
         "一般钢套管制作安装 介质管道公称直径(mm以内) 50"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6517,
@@ -347,7 +373,8 @@
       "quota_names": [
         "螺纹阀门安装 公称直径(mm以内) 20"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6265,
@@ -359,7 +386,8 @@
       "quota_names": [
         "法兰阀门安装 公称直径(mm以内) 80"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6502,
@@ -373,7 +401,8 @@
         "室内塑料给水管(热熔连接) 公称外径(mm以内) 25 ",
         "管道消毒、冲洗 公称直径(mm以内) 20 "
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6254,
@@ -385,7 +414,8 @@
       "quota_names": [
         "法兰阀门安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6216,
@@ -397,7 +427,8 @@
       "quota_names": [
         "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 20"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6154,
@@ -411,7 +442,8 @@
         "刚性防水套管制作 介质管道公称直径(mm以内) 80",
         "刚性防水套管安装 介质管道公称直径(mm以内) 80"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6218,
@@ -423,7 +455,8 @@
       "quota_names": [
         "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 32"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6257,
@@ -435,7 +468,8 @@
       "quota_names": [
         "法兰阀门安装 公称直径(mm以内) 80"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 6181,
@@ -449,7 +483,8 @@
         "室内塑料给水管(热熔连接) 公称外径(mm以内) 32",
         "管道消毒、冲洗 公称直径(mm以内) 25"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5486,
@@ -461,7 +496,8 @@
       "quota_names": [
         "混凝土灌注桩钢筋笼 钢筋 HPB300φ10以内"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5526,
@@ -473,7 +509,8 @@
       "quota_names": [
         "泵送商品砼现浇混凝土 直形墙 混凝土 C40 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5693,
@@ -485,7 +522,8 @@
       "quota_names": [
         "现浇混凝土 平板 换为【泵送商品混凝土 C25】 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5554,
@@ -497,7 +535,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以上 直径(mm) ≤25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5549,
@@ -509,7 +548,8 @@
       "quota_names": [
         "现浇构件带肋钢筋HRB400以内 直径(mm) ≤10 "
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5519,
@@ -521,7 +561,8 @@
       "quota_names": [
         "非泵送商品砼现浇混凝土 过梁 C25"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5515,
@@ -533,7 +574,8 @@
       "quota_names": [
         "泵送商品砼现浇混凝土 矩形梁 C35"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 6235,
@@ -549,7 +591,8 @@
         "设备支架制作 单件重量(kg以内) 50",
         "浮球液位控制器/液位开关"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5479,
@@ -563,7 +606,8 @@
         "夯填土 机械 地坪 场区(含地下室顶板以上)回填 ",
         "外购土方费(含土源费、取土费、装卸车、运输、二次转运、场地平整等费用，运距包干) "
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5475,
@@ -575,7 +619,8 @@
       "quota_names": [
         "挖掘机挖、转一般土方 三类土 (土壤类别、挖土深度、场内临时周转、回填夯实综合包干)--场内回填，单地块场内平衡"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5481,
@@ -601,7 +646,8 @@
         "装载机装车 石渣 ",
         "自卸汽车运石渣（由投标单位根据现场结合实际情况综合考虑，外运运距暂按15km计取（已计取石渣堆放费及处置费））"
       ],
-      "specialty": "C3"
+      "specialty": "C3",
+      "status": "auto"
     },
     {
       "id": 5609,
@@ -615,7 +661,8 @@
         "穿孔硅酸钙板（600*600*8），穿孔率60%，75*50*0.7轻钢龙骨内填50厚岩棉，外罩镀锌钢丝网片",
         "【仅砼墙为地下室外墙时】墙体背水面涂刷水泥基渗透结晶型防水涂料，用量\n1.5kg/㎡，厚度不小于1.0mm "
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5593,
@@ -627,7 +674,8 @@
       "quota_names": [
         "甲级钢质防火门（含油漆、五金配件、门锁、闭门器、顺位器等）周边塞口与抹灰综合考虑报价"
       ],
-      "specialty": "C8"
+      "specialty": "C8",
+      "status": "auto"
     },
     {
       "id": 5622,
@@ -643,7 +691,8 @@
         "5厚耐水腻子分2遍刮平 ",
         "素水泥浆一道甩毛（内掺建筑胶） 混凝土天棚刷素水泥浆或界面剂"
       ],
-      "specialty": "14"
+      "specialty": "14",
+      "status": "auto"
     },
     {
       "id": 5626,
@@ -655,7 +704,8 @@
       "quota_names": [
         "扶手 换为【楼梯靠墙扶手 镀锌钢管横杆】"
       ],
-      "specialty": "15"
+      "specialty": "15",
+      "status": "auto"
     }
   ]
 }
