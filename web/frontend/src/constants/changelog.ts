@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.67';
+export const APP_VERSION = '0.1.69';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,26 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.69',
+    date: '2026-03-03',
+    changes: [
+      { type: 'admin', text: '三Agent架构后端优化 + Codex审核修复' },
+      { type: 'admin', text: '双模型支持 + 验证并发优化 + 懒猫部署自动同步本地Docker' },
+      { type: 'admin', text: '移除oss_samples + 更新跨省基线数据' },
+      { type: 'admin', text: '新疆地区分组选择 + 侧边栏显示最新更新' },
+    ],
+  },
+  {
+    version: '0.1.68',
+    date: '2026-03-03',
+    changes: [
+      { type: 'admin', text: '三Agent架构后端优化 + Codex审核修复' },
+      { type: 'admin', text: '双模型支持 + 验证并发优化 + 懒猫部署自动同步本地Docker' },
+      { type: 'admin', text: '移除oss_samples + 更新跨省基线数据' },
+      { type: 'admin', text: '新疆地区分组选择 + 侧边栏显示最新更新' },
+    ],
+  },
   {
     version: '0.1.67',
     date: '2026-03-03',
