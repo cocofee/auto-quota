@@ -259,28 +259,35 @@ def run_batch(format_filter: str = None, province_filter: str = None,
 
     print(f"待处理文件: {len(files)} 个")
 
-    # 第2步：按省份分组
-    by_province = {}
+    # 第2步：按省份+定额库类型分组
+    # 同一省份不同专业可能需要不同定额库（如广东电气→安装库，广东土建→建筑库）
+    by_library = {}  # key: (省份, 定额库类型关键词)
     for f in files:
         prov = f["province"] or "未知省份"
-        if prov not in by_province:
-            by_province[prov] = []
-        by_province[prov].append(f)
+        specialty = f["specialty"] or ""
+        lib_type = _SPECIALTY_TO_LIBRARY_TYPE.get(specialty, "通用安装")
+        group_key = (prov, lib_type)
+        if group_key not in by_library:
+            by_library[group_key] = []
+        by_library[group_key].append(f)
 
-    print(f"涉及省份: {list(by_province.keys())}")
+    provinces = sorted(set(k[0] for k in by_library.keys()))
+    print(f"涉及省份: {provinces}")
+    print(f"分组数: {len(by_library)} (按省份+定额库类型)")
 
-    # 第3步：逐省份处理
+    # 第3步：逐组处理
     total_success = 0
     total_errors = 0
     total_items = 0
 
-    for prov, prov_files in by_province.items():
+    for (prov, lib_type), prov_files in by_library.items():
         print(f"\n{'='*50}")
-        print(f"处理省份: {prov} ({len(prov_files)} 个文件)")
+        print(f"处理: {prov} [{lib_type}] ({len(prov_files)} 个文件)")
         print(f"{'='*50}")
 
-        # 初始化该省的搜索引擎
-        resolved_province = _resolve_province(prov)
+        # 初始化该组的搜索引擎（按省份+专业选择正确的定额库）
+        specialty_hint = (prov_files[0]["specialty"] or "") if prov_files else ""
+        resolved_province = _resolve_province(prov, specialty=specialty_hint)
         if not resolved_province:
             print(f"  ⚠ 省份「{prov}」没有对应的定额库，跳过")
             # 标记为error
@@ -361,19 +368,70 @@ def run_batch(format_filter: str = None, province_filter: str = None,
 
 
 # ============================================================
-# 省份解析（省份名 → 定额库代码）
+# 省份解析（省份名+专业 → 定额库代码）
 # ============================================================
 
-def _resolve_province(province_name: str) -> str:
-    """把省份名转成定额库目录名（如 "广东" → "广东2018"）。
+# 专业 → 定额库类型关键词映射
+# 用于把文件的专业分类（如"电气"）转成定额库搜索关键词
+# 关键词要足够精确，避免匹配到"城市轨道交通(安装分册)"之类的冷门库
+_SPECIALTY_TO_LIBRARY_TYPE = {
+    "电气": "通用安装",
+    "消防": "通用安装",
+    "给排水": "通用安装",
+    "通风空调": "通用安装",
+    "智能化": "通用安装",
+    "电力": "通用安装",
+    "综合": "通用安装",        # 综合类大多是安装工程
+    "钢结构幕墙": "通用安装",
+    "土建装饰": "房屋建筑",    # 匹配"房屋建筑与装饰"
+    "市政": "市政",
+    "园林景观": "园林",
+}
 
-    查找 db/provinces/ 下是否有对应目录。
+
+def _resolve_province(province_name: str, specialty: str = None) -> str:
+    """把省份名+专业转成定额库目录名。
+
+    例如：
+        ("广东", "电气") → "广东省通用安装工程综合定额(2018)"
+        ("广东", "市政") → "广东省市政工程综合定额(2018)"
+        ("北京", "电气") → "北京2024"  （北京只有一个综合库）
+
+    优先使用 config.resolve_province() 的多关键词匹配能力。
     """
+    # 根据专业决定定额库类型关键词
+    lib_type = _SPECIALTY_TO_LIBRARY_TYPE.get(specialty, "安装") if specialty else None
+
+    # 尝试用 config.resolve_province() 解析（更智能的匹配逻辑）
+    try:
+        import config as cfg
+        # 先尝试"省份+类型"精确匹配（如"广东安装"）
+        if lib_type:
+            try:
+                return cfg.resolve_province(f"{province_name}{lib_type}", interactive=False)
+            except ValueError:
+                pass  # 匹配失败，继续尝试
+
+        # 再尝试纯省份名匹配（如"北京"→"北京2024"这种只有一个库的情况）
+        try:
+            return cfg.resolve_province(province_name, interactive=False)
+        except ValueError:
+            pass  # 多个匹配或无匹配
+
+    except Exception:
+        pass  # config模块异常，回退到简单匹配
+
+    # 回退：简单的目录扫描
     provinces_dir = Path(__file__).resolve().parent.parent / "db" / "provinces"
     if not provinces_dir.exists():
         return None
 
-    # 精确匹配
+    # 优先匹配"省份+安装"类目录（安装类最常用）
+    for d in provinces_dir.iterdir():
+        if d.is_dir() and province_name in d.name and "安装" in d.name:
+            return d.name
+
+    # 再匹配任意包含省份名的目录
     for d in provinces_dir.iterdir():
         if d.is_dir() and d.name.startswith(province_name):
             return d.name
@@ -396,13 +454,36 @@ def _save_results(file_info, results: list, elapsed: float):
     result_path = prov_dir / f"{base_name}.json"
 
     # 简化结果（只保留关键字段，减少文件大小）
+    # 注意：match_engine 返回的结构是嵌套的：
+    #   清单信息在 bill_item 对象内，定额信息在 quotas 数组内
     simplified = []
     for r in results:
+        # 提取清单信息（嵌套在 bill_item 里）
+        bill_item = r.get("bill_item") or {}
+        if hasattr(bill_item, "name"):
+            # bill_item 可能是对象（有 .name 属性）
+            bill_name = getattr(bill_item, "name", "")
+            bill_desc = getattr(bill_item, "description", "")
+        else:
+            # bill_item 可能是字典
+            bill_name = bill_item.get("name", "")
+            bill_desc = bill_item.get("description", "")
+
+        # 提取主定额信息（嵌套在 quotas 数组第一个元素里）
+        quotas = r.get("quotas") or []
+        if quotas:
+            main_quota = quotas[0] if isinstance(quotas[0], dict) else {}
+            quota_id = main_quota.get("quota_id", "")
+            quota_name = main_quota.get("name", "")
+        else:
+            quota_id = ""
+            quota_name = ""
+
         simplified.append({
-            "name": r.get("name", ""),
-            "description": r.get("description", ""),
-            "matched_quota_id": r.get("matched_quota_id", ""),
-            "matched_quota_name": r.get("matched_quota_name", ""),
+            "name": bill_name,
+            "description": bill_desc,
+            "matched_quota_id": quota_id,
+            "matched_quota_name": quota_name,
             "confidence": r.get("confidence", 0),
             "match_source": r.get("match_source", ""),
         })
