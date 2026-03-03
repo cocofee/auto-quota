@@ -11,13 +11,13 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import {
-  Card, Row, Col, Statistic, Table, Tag, Space, App,
-  Button, Select, Descriptions, Empty, Progress,
+  Card, Row, Col, Statistic, Table, Tag, Space,
+  Button, Select, Descriptions, Empty,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  WarningOutlined, CheckCircleOutlined, ExperimentOutlined,
-  ReloadOutlined, BarChartOutlined,
+  WarningOutlined, CheckCircleOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -73,7 +73,6 @@ interface SpecialtyStats {
 }
 
 export default function ErrorAnalysis() {
-  const { message } = App.useApp();
   const [hasData, setHasData] = useState(false);
   const [reportDate, setReportDate] = useState('');
   const [algoVersion, setAlgoVersion] = useState('');

@@ -10,6 +10,7 @@
 读取 batch_report.py 生成的 error_report.json。
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Optional
@@ -51,7 +52,7 @@ async def error_report(
     - low_confidence_patterns: 低置信度模式
     - province_coverage: 省份覆盖矩阵
     """
-    report = _load_report()
+    report = await asyncio.to_thread(_load_report)
     if not report:
         return {
             "has_data": False,
@@ -79,7 +80,7 @@ async def error_patterns(
 
     返回按出现次数排序的错误模式列表。
     """
-    report = _load_report()
+    report = await asyncio.to_thread(_load_report)
     patterns = report.get("low_confidence_patterns", [])
 
     # 筛选
@@ -108,7 +109,7 @@ async def analysis_by_province(
     admin: User = Depends(require_admin),
 ):
     """按省份的错误分析统计"""
-    report = _load_report()
+    report = await asyncio.to_thread(_load_report)
     by_province = report.get("by_province", {})
 
     # 转成列表格式，方便前端Table渲染
@@ -127,7 +128,7 @@ async def analysis_by_specialty(
     admin: User = Depends(require_admin),
 ):
     """按专业的错误分析统计"""
-    report = _load_report()
+    report = await asyncio.to_thread(_load_report)
     by_specialty = report.get("by_specialty", {})
 
     items = []

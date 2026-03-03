@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import sys
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,10 @@ from app.models.user import User
 from app.auth.permissions import require_admin
 from app.config import PROJECT_ROOT
 
+# 把项目根目录加入搜索路径，以便导入 db.sqlite
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 router = APIRouter()
 
 # batch.db 路径
@@ -33,13 +38,11 @@ _BATCH_DB_PATH = PROJECT_ROOT / "output" / "batch" / "batch.db"
 
 
 def _get_batch_db() -> sqlite3.Connection:
-    """获取 batch.db 连接（只读模式，用于API查询）"""
+    """获取 batch.db 连接（复用统一连接工厂）"""
     if not _BATCH_DB_PATH.exists():
         raise FileNotFoundError("batch.db 不存在，请先运行 batch_scanner.py 扫描文件")
-    conn = sqlite3.connect(str(_BATCH_DB_PATH), timeout=10)
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    return conn
+    from db.sqlite import connect
+    return connect(_BATCH_DB_PATH, row_factory=True)
 
 
 # ============================================================
@@ -128,13 +131,22 @@ async def batch_files(
     admin: User = Depends(require_admin),
 ):
     """文件列表（带分页和筛选）"""
+    # 白名单验证（防止非法值注入）
+    _VALID_STATUS = {'pending', 'scanned', 'matched', 'skipped', 'error'}
+    _VALID_FORMAT = {'standard_bill', 'work_list', 'equipment_list', 'summary_only', 'unknown', 'non_excel'}
+
+    if status and status not in _VALID_STATUS:
+        raise HTTPException(status_code=400, detail=f"无效状态: {status}")
+    if format and format not in _VALID_FORMAT:
+        raise HTTPException(status_code=400, detail=f"无效格式: {format}")
+
     def _query():
         try:
             conn = _get_batch_db()
         except FileNotFoundError:
             return {"items": [], "total": 0, "page": page, "page_size": page_size}
         try:
-            # 构建WHERE条件
+            # 构建WHERE条件（所有值通过参数绑定，列名硬编码）
             conditions = []
             params = []
 

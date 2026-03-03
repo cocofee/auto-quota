@@ -11,13 +11,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Card, Row, Col, Statistic, Table, Tag, Space, App, Button,
-  Select, Input, Modal, Progress, Descriptions,
+  Select, Input, Progress,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ScanOutlined, PlayCircleOutlined, ReloadOutlined,
   FileExcelOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  ClockCircleOutlined, LoadingOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 

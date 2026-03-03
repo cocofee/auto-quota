@@ -54,7 +54,7 @@ def execute_scan(self, directory: str = "F:/jarvis",
         }
 
     except Exception as e:
-        logger.error(f"扫描执行异常: {e}")
+        logger.error(f"扫描执行异常: {e}", exc_info=True)
         raise
 
 
@@ -104,5 +104,5 @@ def execute_batch_run(self, format_filter: str = None, province: str = None,
         }
 
     except Exception as e:
-        logger.error(f"批量匹配执行异常: {e}")
+        logger.error(f"批量匹配执行异常: {e}", exc_info=True)
         raise
