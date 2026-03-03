@@ -29,6 +29,9 @@ import {
   FileTextOutlined,
   BulbOutlined,
   WalletOutlined,
+  CloudServerOutlined,
+  AlertOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
@@ -141,6 +144,21 @@ export default function MainLayout() {
             key: '/admin/billing',
             icon: <WalletOutlined />,
             label: '额度管理',
+          },
+          {
+            key: '/admin/batch',
+            icon: <CloudServerOutlined />,
+            label: '批量处理',
+          },
+          {
+            key: '/admin/error-analysis',
+            icon: <AlertOutlined />,
+            label: '错误分析',
+          },
+          {
+            key: '/admin/data',
+            icon: <FolderOpenOutlined />,
+            label: '数据管理',
           },
         ],
       },

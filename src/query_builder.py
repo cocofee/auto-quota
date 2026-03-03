@@ -156,6 +156,88 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
 _SPECIAL_LAMP_PATTERN = r"紫外|杀菌|消毒|舞台|投光|泛光|景观|水下|地埋|航空障碍|手术|无影|植物|补光|洗墙|轨道"
 
 
+def _get_desc_field(fields: dict, target: str) -> str:
+    """从描述字段字典中模糊查找目标字段值
+
+    extract_description_fields 的 key 经常含有清单名碎片前缀，
+    如 "钢阀门 名称" 而非 "名称"。这里用后缀/子串匹配来容错。
+    """
+    # 精确匹配
+    if target in fields:
+        return fields[target]
+    # 后缀/子串匹配（key 可能含前缀噪声）
+    for k, v in fields.items():
+        if k.endswith(target) or target in k:
+            return v
+    return ""
+
+
+def _extract_desc_equipment_type(fields: dict, bill_name: str) -> str:
+    """从描述字段提取设备具体类型，追加到搜索query帮助BM25精准命中
+
+    清单名称经常是泛称（碳钢阀门、消声器、管道绝热、桥架），
+    而描述的"名称"/"类型"等字段包含具体设备名（风管防火阀、片式消声器）。
+    提取这些关键词追加到query，让BM25能搜到正确定额。
+
+    例：
+      名称="成品风管防火阀" → "风管防火阀"
+      名称="XZP100片式消声器" → "片式消声器"
+      类型="槽式" → "槽式"
+      绝热材料品种="B1级闭孔橡塑管壳" → "橡塑管壳"
+      安装形式="沿砖混结构明敷（屋面）" → "沿砖混结构明敷"
+    """
+    # 按优先级遍历候选字段
+    for field_key in ("名称", "类型", "绝热材料品种", "安装形式"):
+        value = _get_desc_field(fields, field_key)
+        if not value or len(value) < 2:
+            continue
+
+        # 截断后续字段：单行格式时value经常包含"名称:XX 规格:YY 阀体代号:ZZ"
+        # 只取第一段（在分号或"标签:"处截断）
+        cleaned = re.split(r'[;；,，]|\s+\S{2,6}[：:]', value)[0].strip()
+
+        # 去掉前缀修饰词（成品/成套等）、型号代号、括号内容
+        cleaned = re.sub(r'^(成品|成套|配套)\s*', '', cleaned)
+        cleaned = re.sub(r'[A-Z][A-Z0-9]{2,}[-]?\d*\s*', '', cleaned).strip()
+        cleaned = re.sub(r'[（(][^)）]*[)）]', '', cleaned).strip()
+        # 去掉等级前缀（如"B1级"）和修饰词（如"闭孔"）
+        cleaned = re.sub(r'[A-Z]\d+级', '', cleaned).strip()
+        cleaned = re.sub(r'闭孔|开孔', '', cleaned).strip()
+
+        if len(cleaned) < 2:
+            continue
+
+        # 避免重复/噪声：精细判断desc_type和bill_name的关系
+        if cleaned == bill_name:
+            continue
+        # bill_name是cleaned的子串 → 提取差异部分作为修饰词
+        # 例：bill_name="消声器", cleaned="片式消声器" → 提取"片式"
+        if bill_name in cleaned:
+            diff = cleaned.replace(bill_name, "").strip()
+            if len(diff) >= 2:
+                cleaned = diff
+            else:
+                continue
+        # cleaned是bill_name的子串 → 完全包含则跳过
+        elif cleaned in bill_name:
+            continue
+        else:
+            # 两者无子串关系 → 用Jaccard字符相似度判断是否同一设备的不同叫法
+            # 相似度高（如"报警联动一体机"≈"火灾自动报警系统控制主机"）→ 跳过
+            # 相似度低（如"碳钢阀门"≠"风管防火阀"）→ 有用，保留
+            bill_chars = {c for c in bill_name if '\u4e00' <= c <= '\u9fff'}
+            desc_chars = {c for c in cleaned if '\u4e00' <= c <= '\u9fff'}
+            if bill_chars and desc_chars:
+                jaccard = len(bill_chars & desc_chars) / len(bill_chars | desc_chars)
+                if jaccard >= 0.25:
+                    continue
+
+        # 截断过长的值（避免噪声污染query）
+        return cleaned[:15]
+
+    return ""
+
+
 def _format_number_for_query(value: float) -> str:
     """数值格式化：整数去小数点，小数保留原样。"""
     return str(int(value)) if value == int(value) else str(value)
@@ -316,6 +398,12 @@ def _normalize_bill_name(name: str) -> str:
 
         # 应急灯/应急照明灯
         if "应急" in cleaned:
+            # 消防应急照明灯 → 标志/诱导灯安装（不是荧光灯！）
+            # 消防应急照明灯是消防系统的一部分，套标志灯定额
+            if "消防" in cleaned:
+                if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
+                    return "标志、诱导灯安装 壁式"
+                return "标志、诱导灯安装"
             # 应急+指示灯 → 标志灯方向（不是荧光灯）
             # 例如"应急疏散指示灯"是标志灯，不是照明灯
             if "指示" in cleaned:
@@ -324,7 +412,9 @@ def _normalize_bill_name(name: str) -> str:
                 return "标志、诱导灯安装 壁式"
             if "吸顶" in cleaned:
                 return "普通灯具安装 吸顶灯"
-            if "疏散" in cleaned or "照明" in cleaned:
+            if "疏散" in cleaned:
+                return "标志、诱导灯安装"
+            if "照明" in cleaned:
                 return "荧光灯具安装"
             return "荧光灯具安装"
 
@@ -386,6 +476,9 @@ def build_quota_query(parser, name: str, description: str = "",
     # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
     params = bill_params if bill_params is not None else parser.parse(full_text)
 
+    # 提前提取描述字段（管道路由和通用路由都需要用）
+    fields = extract_description_fields(description) if description else {}
+
     # 提取安装部位（室内/室外）
     location = ""
     loc_match = re.search(r'安装部位[：:]\s*(室内|室外|户内|户外)', full_text)
@@ -440,6 +533,11 @@ def build_quota_query(parser, name: str, description: str = "",
         if material and "管" in material and name and name != material:
             query_parts.append(name)
 
+        # 从描述字段补充设备具体类型（清单名泛称时帮助BM25精准命中）
+        desc_type = _extract_desc_equipment_type(fields, name)
+        if desc_type:
+            query_parts.append(desc_type)
+
         return _apply_synonyms(" ".join(query_parts), specialty)
     # ===== 电梯类：有电梯参数时构建专用搜索query =====
     # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
@@ -465,6 +563,10 @@ def build_quota_query(parser, name: str, description: str = "",
     # 静压箱等箱体的W*H是箱体尺寸，不是开口周长，不应走此路由
     if perimeter and is_wind_outlet:
         normalized_name = _normalize_bill_name(name)
+        # 从描述补充风口具体类型（如"旋流风口"→帮BM25区分散流器/旋转吹风口）
+        desc_type = _extract_desc_equipment_type(fields, name)
+        if desc_type:
+            return _apply_synonyms(f"{normalized_name} {desc_type} 安装 周长", specialty)
         return _apply_synonyms(f"{normalized_name} 安装 周长", specialty)
 
     # ===== 非管道类：从描述中提取关键信息构建query =====
@@ -476,8 +578,7 @@ def build_quota_query(parser, name: str, description: str = "",
     query_parts = [normalized_name]
 
     if description:
-        # 从 "1.标签:值\n2.标签:值" 格式的描述中提取关键字段
-        fields = extract_description_fields(description)
+        # fields 已在函数开头提取，这里直接使用
 
         # --- 配管类：材质代号→中文名称，配置形式→敷设方式 ---
         # 配管材质代号 → 定额库中的实际名称（必须与定额名完全一致）
@@ -754,5 +855,10 @@ def build_quota_query(parser, name: str, description: str = "",
         circuits = fields.get("回路数", "")
         if circuits:
             query_parts.append(circuits)
+
+    # 从描述字段补充设备具体类型（清单名泛称时帮助BM25精准命中）
+    desc_type = _extract_desc_equipment_type(fields, name)
+    if desc_type:
+        query_parts.append(desc_type)
 
     return _apply_synonyms(" ".join(query_parts), specialty)

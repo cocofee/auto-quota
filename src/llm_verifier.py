@@ -3,23 +3,26 @@
 LLM后验证模块 — 匹配结果的质量关卡
 
 功能：
-在搜索引擎返回匹配结果后，用大模型逐条验证：
+在搜索引擎返回匹配结果后，用大模型验证：
 1. 清单描述和匹配的定额是否属于同一类东西？
 2. 如果不对，正确方向是什么？
 3. 错误的结果用新方向重新搜索并替换
 
-设计原则：
-- 宁慢勿错：每条都过审，速度可以慢
-- 错误纠正：发现错误后自动重搜，不只是标记
-- 知识积累：纠正的结果自动补充到通用知识库
+v2 改进（双模型+并发+定向验证）：
+- 支持独立VERIFY_LLM/VERIFY_MODEL配置（验证可用不同于匹配的模型）
+- verify_batch 改为并发执行（ThreadPoolExecutor）
+- 定向验证：只验低置信度+高风险项，绿灯抽检5%
+- max_tokens/timeout 独立配置，验证任务更精简
 
 调用位置：
-- match_engine.py 的 match_agent() 第3阶段调用
+- main.py 的 run() 函数中，Agent匹配完成后调用
 """
 
 import json
+import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 from loguru import logger
@@ -33,22 +36,30 @@ class LLMVerifier:
     def __init__(self, llm_type: str = None):
         """
         参数:
-            llm_type: 大模型类型（claude/kimi/deepseek等），默认读config
+            llm_type: 大模型类型（claude/kimi/deepseek等），默认读config.VERIFY_LLM
         """
-        self.llm_type = llm_type or config.AGENT_LLM
+        self.llm_type = llm_type or config.VERIFY_LLM or config.AGENT_LLM
+        # 模型型号：优先用VERIFY_MODEL，没配则用对应厂商的默认型号
+        self._verify_model = config.VERIFY_MODEL or ""
         self._client = None
         self._client_lock = threading.Lock()
-
-        # 统计
+        # 统计计数器（并发安全）
+        self._stats_lock = threading.Lock()
         self.stats = {
             "verified": 0,       # 已验证条数
             "correct": 0,        # 判定正确
             "wrong": 0,          # 判定错误
             "corrected": 0,      # 成功纠正
             "correct_failed": 0, # 纠正失败（重搜也没找到）
-            "skipped": 0,        # 跳过（经验库直通等高置信度）
+            "skipped": 0,        # 跳过（高置信度/经验库直通等）
             "llm_error": 0,      # LLM调用失败
+            "spot_checked": 0,   # 绿灯抽检条数
         }
+
+    def _inc_stat(self, key: str, delta: int = 1):
+        """线程安全地增加统计计数"""
+        with self._stats_lock:
+            self.stats[key] += delta
 
     @property
     def client(self):
@@ -60,11 +71,11 @@ class LLMVerifier:
         return self._client
 
     def _create_client(self):
-        """创建LLM客户端（复用agent_matcher的逻辑）"""
+        """创建LLM客户端"""
         if self.llm_type == "claude":
             if config.CLAUDE_BASE_URL:
                 # 中转模式用httpx
-                return httpx.Client(timeout=config.LLM_TIMEOUT)
+                return httpx.Client(timeout=config.VERIFY_TIMEOUT)
             else:
                 import anthropic
                 return anthropic.Anthropic(api_key=config.CLAUDE_API_KEY)
@@ -89,6 +100,21 @@ class LLMVerifier:
                 raise ValueError(f"未配置{self.llm_type}的API Key")
             return OpenAI(api_key=api_key, base_url=base_url)
 
+    def _get_model_name(self) -> str:
+        """获取实际使用的模型型号"""
+        # 优先用 VERIFY_MODEL 指定的型号
+        if self._verify_model:
+            return self._verify_model
+        # 否则用对应厂商的默认型号
+        model_map = {
+            "deepseek": config.DEEPSEEK_MODEL,
+            "kimi": config.KIMI_MODEL,
+            "qwen": config.QWEN_MODEL,
+            "openai": config.OPENAI_MODEL,
+            "claude": config.CLAUDE_MODEL,
+        }
+        return model_map.get(self.llm_type, config.DEEPSEEK_MODEL)
+
     def _call_llm(self, prompt: str) -> str:
         """调用大模型"""
         if self.llm_type == "claude":
@@ -98,6 +124,7 @@ class LLMVerifier:
 
     def _call_claude(self, prompt: str) -> str:
         """调用Claude API"""
+        model = self._get_model_name()
         if config.CLAUDE_BASE_URL:
             url = f"{config.CLAUDE_BASE_URL.rstrip('/')}/v1/messages"
             headers = {
@@ -106,8 +133,8 @@ class LLMVerifier:
                 "anthropic-version": "2023-06-01",
             }
             data = {
-                "model": config.CLAUDE_MODEL,
-                "max_tokens": 800,
+                "model": model,
+                "max_tokens": config.VERIFY_MAX_TOKENS,
                 "temperature": 0.0,
                 "messages": [{"role": "user", "content": prompt}],
             }
@@ -117,8 +144,8 @@ class LLMVerifier:
             return result["content"][0]["text"]
         else:
             response = self.client.messages.create(
-                model=config.CLAUDE_MODEL,
-                max_tokens=800,
+                model=model,
+                max_tokens=config.VERIFY_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
             )
@@ -126,25 +153,56 @@ class LLMVerifier:
 
     def _call_openai_compatible(self, prompt: str) -> str:
         """调用OpenAI兼容API"""
-        model_map = {
-            "deepseek": config.DEEPSEEK_MODEL,
-            "kimi": config.KIMI_MODEL,
-            "qwen": config.QWEN_MODEL,
-            "openai": config.OPENAI_MODEL,
-        }
-        model = model_map.get(self.llm_type, config.DEEPSEEK_MODEL)
+        model = self._get_model_name()
         response = self.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=800,
-            timeout=config.LLM_TIMEOUT,
+            max_tokens=config.VERIFY_MAX_TOKENS,
+            timeout=config.VERIFY_TIMEOUT,
         )
         return response.choices[0].message.content
 
     # ============================================================
     # 核心验证逻辑
     # ============================================================
+
+    def _should_verify(self, result: dict) -> str:
+        """
+        判断一条结果是否需要验证
+
+        返回:
+            "skip" — 跳过验证
+            "verify" — 需要验证
+            "spot_check" — 绿灯抽检
+        """
+        confidence = result.get("confidence", 0) or 0
+        match_source = result.get("match_source", "")
+
+        # 无匹配结果的跳过（没东西可验证）
+        quotas = result.get("quotas", [])
+        if not quotas:
+            return "skip"
+
+        # 经验库直通的跳过（人工验证过的数据，质量有保障）
+        if match_source == "experience":
+            return "skip"
+
+        # 快通道的跳过（参数验证高分直通的）
+        if match_source == "agent_fastpath":
+            return "skip"
+
+        # 高置信度跳过验证
+        skip_threshold = getattr(config, "VERIFY_SKIP_THRESHOLD", 88)
+        if confidence >= skip_threshold:
+            # 绿灯随机抽检（保底质量监控）
+            spot_rate = getattr(config, "VERIFY_SPOT_CHECK_RATE", 0.05)
+            if spot_rate > 0 and random.random() < spot_rate:
+                return "spot_check"
+            return "skip"
+
+        # 其他情况都需要验证
+        return "verify"
 
     def verify_result(self, result: dict, searcher=None) -> dict:
         """
@@ -159,21 +217,10 @@ class LLMVerifier:
         """
         confidence = result.get("confidence", 0) or 0
 
-        # 高置信度跳过验证（经验库直通/规则命中等）
-        skip_threshold = getattr(config, "VERIFY_SKIP_THRESHOLD", 95)
-        if confidence >= skip_threshold:
-            self.stats["skipped"] += 1
-            return result
-
-        # 无匹配结果的也跳过（没东西可验证）
-        quotas = result.get("quotas", [])
-        if not quotas:
-            self.stats["skipped"] += 1
-            return result
-
         bill_item = result.get("bill_item", {})
         bill_name = bill_item.get("name", "")
         bill_desc = bill_item.get("description", "")
+        quotas = result.get("quotas", [])
         main_quota = quotas[0]
         quota_name = main_quota.get("name", "")
 
@@ -185,14 +232,14 @@ class LLMVerifier:
             verdict = self._parse_verdict(llm_response)
         except Exception as e:
             logger.warning(f"LLM验证调用失败: {e}")
-            self.stats["llm_error"] += 1
+            self._inc_stat("llm_error")
             return result
 
-        self.stats["verified"] += 1
+        self._inc_stat("verified")
 
         if verdict["correct"]:
             # 验证通过
-            self.stats["correct"] += 1
+            self._inc_stat("correct")
             # 可以适当提升置信度
             if confidence < 85:
                 result["confidence"] = min(confidence + 10, 90)
@@ -201,7 +248,7 @@ class LLMVerifier:
             return result
 
         # 验证失败 — 尝试纠正
-        self.stats["wrong"] += 1
+        self._inc_stat("wrong")
         correct_direction = verdict.get("direction", "")
         reason = verdict.get("reason", "")
         logger.info(f"LLM验证: [{bill_name}] 匹配错误 "
@@ -211,7 +258,7 @@ class LLMVerifier:
             corrected = self._try_correct(
                 result, correct_direction, searcher)
             if corrected:
-                self.stats["corrected"] += 1
+                self._inc_stat("corrected")
                 result["verify_status"] = "corrected"
                 result["verify_original"] = quota_name
                 result["verify_direction"] = correct_direction
@@ -230,7 +277,7 @@ class LLMVerifier:
                 return result
 
         # 纠正失败（重搜也没找到正确的）
-        self.stats["correct_failed"] += 1
+        self._inc_stat("correct_failed")
         result["verify_status"] = "wrong_unfixed"
         result["verify_direction"] = correct_direction
         # 降低置信度，标记需要人工处理
@@ -314,9 +361,6 @@ class LLMVerifier:
         返回:
             True=纠正成功, False=纠正失败
         """
-        bill_item = result.get("bill_item", {})
-        bill_desc = bill_item.get("description", "")
-
         # 用LLM给的方向作为搜索词
         try:
             new_candidates = searcher.search(direction, top_k=5)
@@ -376,13 +420,18 @@ class LLMVerifier:
             return f"★待审({confidence}%)"
 
     # ============================================================
-    # 批量验证
+    # 批量验证（并发执行）
     # ============================================================
 
     def verify_batch(self, results: list[dict], searcher=None,
                       progress_callback=None) -> list[dict]:
         """
-        批量验证匹配结果
+        批量验证匹配结果（并发执行，定向验证）
+
+        改进：
+        - 并发执行：ThreadPoolExecutor 多路并行验证
+        - 定向验证：只验低置信度+高风险项，跳过经验库直通和快通道
+        - 绿灯抽检：高置信度结果随机5%抽检，保底质量监控
 
         参数:
             results: 匹配结果列表
@@ -393,20 +442,63 @@ class LLMVerifier:
             验证后的结果列表（原地修改）
         """
         total = len(results)
-        logger.info(f"LLM验证开始: 共{total}条待验证")
+        model_name = self._get_model_name()
+        logger.info(f"LLM验证开始: 共{total}条，模型:{self.llm_type}({model_name})")
 
-        for idx, result in enumerate(results, start=1):
+        # 第1步：筛选需要验证的项
+        verify_tasks = []  # [(idx, result, task_type)]
+        for idx, result in enumerate(results):
+            decision = self._should_verify(result)
+            if decision == "skip":
+                self._inc_stat("skipped")
+            elif decision == "spot_check":
+                verify_tasks.append((idx, result, "spot_check"))
+                self._inc_stat("spot_checked")
+            else:
+                verify_tasks.append((idx, result, "verify"))
+
+        skip_count = self.stats["skipped"]
+        spot_count = self.stats["spot_checked"]
+        logger.info(f"  筛选结果: 需验证{len(verify_tasks)}条"
+                    f"（含抽检{spot_count}条），跳过{skip_count}条")
+
+        if not verify_tasks:
+            logger.info("LLM验证完成: 全部跳过，无需验证")
+            return results
+
+        # 第2步：并发执行验证
+        concurrent = max(1, getattr(config, "VERIFY_CONCURRENT", 8))
+        completed = 0
+
+        def _verify_one(task):
+            """单条验证任务（线程安全）"""
+            idx, result, task_type = task
             self.verify_result(result, searcher=searcher)
+            return idx
 
-            # 进度回调
-            if progress_callback and idx % 5 == 0:
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_verify_one, task): task
+                       for task in verify_tasks}
+
+            for future in as_completed(futures):
+                completed += 1
                 try:
-                    pct = int(90 + 9 * idx / max(total, 1))
-                    progress_callback(pct, idx,
-                                      f"验证中 {idx}/{total} "
-                                      f"(纠正{self.stats['corrected']}条)")
-                except Exception:
-                    pass
+                    future.result()
+                except Exception as e:
+                    task = futures[future]
+                    logger.warning(f"验证任务异常(idx={task[0]}): {e}")
+
+                # 进度回调
+                if progress_callback and (completed % 5 == 0
+                                          or completed == len(verify_tasks)):
+                    try:
+                        pct = int(90 + 9 * completed / max(len(verify_tasks), 1))
+                        progress_callback(
+                            pct, completed,
+                            f"验证中 {completed}/{len(verify_tasks)} "
+                            f"(纠正{self.stats['corrected']}条)")
+                    except Exception:
+                        pass
 
         # 打印汇总
         s = self.stats
@@ -418,6 +510,7 @@ class LLMVerifier:
             f"纠正{s['corrected']}, "
             f"未纠正{s['correct_failed']}), "
             f"跳过{s['skipped']}, "
+            f"抽检{s['spot_checked']}, "
             f"LLM失败{s['llm_error']}"
         )
 

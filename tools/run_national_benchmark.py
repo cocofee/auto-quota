@@ -57,8 +57,9 @@ def run_beijing_regression(mode="search"):
     results = {}
     for name, ds_config in datasets.items():
         metrics = run_single_dataset(name, ds_config, mode)
-        if metrics is None or metrics.get("_failed"):
-            results[name] = {"status": "skip", "error": str(metrics.get("error", "文件不存在"))}
+        if metrics is None or (isinstance(metrics, dict) and metrics.get("_failed")):
+            error_msg = metrics.get("error", "文件不存在") if isinstance(metrics, dict) else "文件不存在"
+            results[name] = {"status": "skip", "error": str(error_msg)}
             continue
 
         # 与基线对比

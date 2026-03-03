@@ -80,7 +80,11 @@ services:
     working_dir: /app/web/backend
     # ports:
     #   - "8000:8000"  # Hyper-V保留了8000端口，且后端通过Nginx反代访问，无需暴露
+    env_file:
+      # 先加载 .env（API Key等共享密钥）
+      - .env
     environment:
+      # environment 优先级高于 env_file，生产模型配置写这里，不用改 .env
       # 数据库连接（Docker内部网络，用服务名postgres作为主机名）
       DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
       # Redis连接
@@ -89,9 +93,10 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       # CORS（允许前端Nginx容器访问）
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173
-    env_file:
-      # 加载 .env 中的大模型API Key等配置
-      - .env
+      # 生产模型配置（覆盖.env中的开发配置，部署时自动用国产模型）
+      AGENT_LLM: qwen
+      VERIFY_LLM: kimi
+      VERIFY_MODEL: kimi-k2.5
     volumes:
       # 挂载数据目录（定额库数据、上传文件、输出结果）
       - ./data:/app/data
@@ -121,11 +126,15 @@ services:
       --concurrency=2
       --pool=prefork
     working_dir: /app/web/backend
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
-    env_file:
-      - .env
+      # 生产模型配置（和backend保持一致）
+      AGENT_LLM: qwen
+      VERIFY_LLM: kimi
+      VERIFY_MODEL: kimi-k2.5
     volumes:
       - ./data:/app/data
       - ./db:/app/db

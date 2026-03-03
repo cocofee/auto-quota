@@ -29,6 +29,9 @@ import QuotaManage from '../pages/Admin/QuotaManage';
 import LogViewer from '../pages/Admin/LogViewer';
 import KnowledgeManage from '../pages/Admin/KnowledgeManage';
 import BillingAdmin from '../pages/Admin/BillingAdmin';
+import BatchDashboard from '../pages/Admin/BatchDashboard';
+import ErrorAnalysis from '../pages/Admin/ErrorAnalysis';
+import DataManage from '../pages/Admin/DataManage';
 
 const router = createBrowserRouter([
   // 登录页（不需要布局和登录状态）
@@ -71,6 +74,9 @@ const router = createBrowserRouter([
       { path: 'admin/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
       { path: 'admin/logs', element: <RequireAdmin><LogViewer /></RequireAdmin> },
       { path: 'admin/billing', element: <RequireAdmin><BillingAdmin /></RequireAdmin> },
+      { path: 'admin/batch', element: <RequireAdmin><BatchDashboard /></RequireAdmin> },
+      { path: 'admin/error-analysis', element: <RequireAdmin><ErrorAnalysis /></RequireAdmin> },
+      { path: 'admin/data', element: <RequireAdmin><DataManage /></RequireAdmin> },
     ],
   },
 ]);

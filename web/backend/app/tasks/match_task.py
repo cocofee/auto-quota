@@ -155,7 +155,11 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
                     setattr(quota_config, model_attr, model_name)
                 # 同时更新 AGENT_LLM 让 match_engine 知道用哪个模型
                 quota_config.AGENT_LLM = llm_type
-                logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → {llm_type} / {model_name}")
+                # VERIFY_LLM 为空时自动跟 AGENT_LLM 走（开发模式匹配验证用同一个模型）
+                if not quota_config.VERIFY_LLM:
+                    quota_config.VERIFY_LLM = ""  # 保持空，verify_result 里会回退到 AGENT_LLM
+                logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}"
+                            f"，验证:{quota_config.VERIFY_LLM or '同匹配'}")
         except Exception as e:
             logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
 
