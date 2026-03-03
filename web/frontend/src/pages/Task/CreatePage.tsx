@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress, Alert,
+  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
 } from 'antd';
 import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
@@ -207,19 +207,7 @@ export default function TaskCreatePage() {
 
   return (
     <Card title="新建匹配任务" style={{ maxWidth: 720, margin: '0 auto' }}>
-      <Alert
-        type="info"
-        showIcon
-        closable
-        style={{ marginBottom: 20 }}
-        message="适用范围说明"
-        description={
-          <>
-            目前支持<strong>传统安装工程</strong>（电气、给排水、消防、通风空调、智能化等）。
-            其他工程类型（如海绵工程、市政工程、园林绿化、土建等）定额库覆盖不全，匹配准确率可能较低，结果仅供参考。
-          </>
-        }
-      />
+      {/* 提示信息移到上传区域的hint中 */}
       <Steps
         current={currentStep}
         size="small"
@@ -319,7 +307,7 @@ export default function TaskCreatePage() {
                   <InboxOutlined />
                 </p>
                 <p className="ant-upload-text">拖拽文件到此处，或点击选择</p>
-                <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB</p>
+                <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB，安装工程匹配效果最佳</p>
               </Dragger>
             </Form.Item>
 
