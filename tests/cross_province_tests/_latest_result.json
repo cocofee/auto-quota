@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-02 23:09",
+  "run_time": "2026-03-03 09:02",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -8,11 +8,11 @@
       "wrong": 33,
       "rate": 34.0,
       "diagnosis": {
-        "synonym_gap": 13,
-        "wrong_tier": 18,
+        "synonym_gap": 8,
+        "wrong_tier": 23,
         "wrong_book": 2
       },
-      "elapsed": 9.4,
+      "elapsed": 9.3,
       "details": [
         {
           "bill_name": "双联单控开关",
@@ -43,15 +43,15 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 2.5",
+          "algo_id": "C4-11-268",
+          "algo_name": "铝合金桥架(宽+高)(mm以下) 350",
           "stored_ids": [
             "C4-11-249"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 400"
           ],
-          "confidence": 57
+          "confidence": 76
         },
         {
           "bill_name": "消防应急照明灯",
@@ -69,15 +69,15 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 2.5",
+          "algo_id": "C4-11-268",
+          "algo_name": "铝合金桥架(宽+高)(mm以下) 350",
           "stored_ids": [
             "C4-11-250"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 600"
           ],
-          "confidence": 57
+          "confidence": 76
         },
         {
           "bill_name": "配电箱兀1~2",
@@ -173,8 +173,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "C4-4-101",
-          "algo_name": "拉线开关安装 单联暗装",
+          "algo_id": "C4-4-103",
+          "algo_name": "跷板式暗开关(单控) 单联",
           "stored_ids": [
             "C4-4-104"
           ],
@@ -303,15 +303,15 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 2.5",
+          "algo_id": "C4-11-268",
+          "algo_name": "铝合金桥架(宽+高)(mm以下) 350",
           "stored_ids": [
             "C4-11-249"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 400"
           ],
-          "confidence": 57
+          "confidence": 76
         },
         {
           "bill_name": "电力电缆",
@@ -329,15 +329,15 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "C4-8-21",
-          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 2.5",
+          "algo_id": "C4-11-268",
+          "algo_name": "铝合金桥架(宽+高)(mm以下) 350",
           "stored_ids": [
             "C4-11-249"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 400"
           ],
-          "confidence": 57
+          "confidence": 76
         },
         {
           "bill_name": "电力电缆头",
@@ -420,8 +420,8 @@
         {
           "bill_name": "减压阀 名称：可调式减压稳压阀（本体带除污器和压力显示）",
           "is_match": false,
-          "algo_id": "C10-5-193",
-          "algo_name": "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 25",
+          "algo_id": "C10-1-3",
+          "algo_name": "室外镀锌钢管(螺纹连接) 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-3"
           ],
@@ -441,7 +441,7 @@
           "stored_names": [
             "室内镀锌钢管(螺纹连接) 公称直径(mm以内) 80  "
           ],
-          "confidence": 100
+          "confidence": 88
         },
         {
           "bill_name": "给、排水附件",
@@ -674,15 +674,15 @@
     {
       "province": "宁夏安装工程计价定额(2019)",
       "total": 50,
-      "correct": 12,
-      "wrong": 38,
-      "rate": 24.0,
+      "correct": 14,
+      "wrong": 36,
+      "rate": 28.0,
       "diagnosis": {
-        "synonym_gap": 14,
+        "synonym_gap": 12,
         "wrong_tier": 14,
         "wrong_book": 10
       },
-      "elapsed": 17.3,
+      "elapsed": 18.7,
       "details": [
         {
           "bill_name": "接地母线",
@@ -934,9 +934,9 @@
         },
         {
           "bill_name": "照明开关",
-          "is_match": false,
-          "algo_id": "2-4-2-21",
-          "algo_name": "隔离开关、负荷开关安装 户内隔离、负荷开关带一接地开关安装",
+          "is_match": true,
+          "algo_id": "2-4-14-379",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控≤3联",
           "stored_ids": [
             "2-4-14-379"
           ],
@@ -960,9 +960,9 @@
         },
         {
           "bill_name": "照明开关",
-          "is_match": false,
-          "algo_id": "2-4-2-21",
-          "algo_name": "隔离开关、负荷开关安装 户内隔离、负荷开关带一接地开关安装",
+          "is_match": true,
+          "algo_id": "2-4-14-379",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控≤3联",
           "stored_ids": [
             "2-4-14-379"
           ],
@@ -1350,7 +1350,7 @@
         "synonym_gap": 15,
         "wrong_tier": 7
       },
-      "elapsed": 5.3,
+      "elapsed": 5.5,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -1746,7 +1746,7 @@
         "synonym_gap": 35,
         "wrong_tier": 11
       },
-      "elapsed": 7.9,
+      "elapsed": 8.1,
       "details": [
         {
           "bill_name": "砖砌体拆除",
@@ -2439,11 +2439,11 @@
       "wrong": 38,
       "rate": 24.0,
       "diagnosis": {
-        "wrong_tier": 25,
-        "synonym_gap": 11,
+        "wrong_tier": 24,
+        "synonym_gap": 12,
         "wrong_book": 2
       },
-      "elapsed": 8.0,
+      "elapsed": 8.4,
       "details": [
         {
           "bill_name": "配电箱",
@@ -2929,8 +2929,8 @@
         {
           "bill_name": "离心式通风机",
           "is_match": false,
-          "algo_id": "C7-1-64",
-          "algo_name": "离心式通风机安装 风量(m3/h) 123000以上",
+          "algo_id": "C7-3-165",
+          "algo_name": "吹、吸式槽边通风罩制作安装",
           "stored_ids": [
             "C7-1-60",
             "C7-4-5"
@@ -2938,7 +2938,7 @@
           "stored_names": [
             "离心式通风机安装 风量(m3/h) 7000以下"
           ],
-          "confidence": 95
+          "confidence": 98
         },
         {
           "bill_name": "碳钢风口、散流器、百叶窗 名称：电动多页送风口",
@@ -3110,11 +3110,11 @@
       "wrong": 50,
       "rate": 0.0,
       "diagnosis": {
-        "synonym_gap": 40,
-        "wrong_tier": 7,
-        "wrong_book": 3
+        "synonym_gap": 43,
+        "wrong_book": 3,
+        "wrong_tier": 4
       },
-      "elapsed": 6.0,
+      "elapsed": 6.4,
       "details": [
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*16",
@@ -3159,8 +3159,8 @@
         {
           "bill_name": "电力电缆 WDZBN-YJY-5*10",
           "is_match": false,
-          "algo_id": "46109",
-          "algo_name": "布置景石(t) ≤10",
+          "algo_id": "46121",
+          "algo_name": "仿真茅草瓦铺设",
           "stored_ids": [
             "4-9-159",
             "4-4-18"
@@ -3168,7 +3168,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5"
           ],
-          "confidence": 59
+          "confidence": 62
         },
         {
           "bill_name": "电力电缆 WDZCN-YJY-4*50+1*25",
@@ -3293,8 +3293,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-5*10",
           "is_match": false,
-          "algo_id": "46109",
-          "algo_name": "布置景石(t) ≤10",
+          "algo_id": "46121",
+          "algo_name": "仿真茅草瓦铺设",
           "stored_ids": [
             "4-9-159",
             "4-4-18"
@@ -3302,7 +3302,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5"
           ],
-          "confidence": 59
+          "confidence": 62
         },
         {
           "bill_name": "电气配管 SC25",
@@ -3373,8 +3373,8 @@
         {
           "bill_name": "电力电缆 WDZCN-YJY-5*10",
           "is_match": false,
-          "algo_id": "46109",
-          "algo_name": "布置景石(t) ≤10",
+          "algo_id": "46121",
+          "algo_name": "仿真茅草瓦铺设",
           "stored_ids": [
             "4-9-159",
             "4-4-18"
@@ -3382,7 +3382,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 实际电缆芯数(芯):5"
           ],
-          "confidence": 59
+          "confidence": 62
         },
         {
           "bill_name": "电力电缆 WDZCN-YJY-4*25+1*16",
@@ -3677,8 +3677,8 @@
         {
           "bill_name": "潜污泵XWQ-36-15-4.0",
           "is_match": false,
-          "algo_id": "46163",
-          "algo_name": "固定式喷灌立管 高(m) 8",
+          "algo_id": "46164",
+          "algo_name": "固定式喷灌立管 高(m) 12",
           "stored_ids": [
             "1-8-39",
             "10-11-19"
@@ -4161,11 +4161,11 @@
       "wrong": 46,
       "rate": 8.0,
       "diagnosis": {
-        "synonym_gap": 28,
-        "wrong_tier": 14,
+        "synonym_gap": 24,
+        "wrong_tier": 18,
         "wrong_book": 4
       },
-      "elapsed": 8.5,
+      "elapsed": 8.9,
       "details": [
         {
           "bill_name": "电气配管 JDG40",
@@ -4183,8 +4183,8 @@
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4×16",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-160",
             "4-9-245"
@@ -4197,8 +4197,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-4*50+1*25",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-162",
             "4-9-247"
@@ -4224,34 +4224,34 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "4-9-120",
-          "algo_name": "复合支架安装",
+          "algo_id": "4-9-115",
+          "algo_name": "铝合金托盘式桥架(宽+高mm) ≤600",
           "stored_ids": [
             "4-9-66"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤600"
           ],
-          "confidence": 69
+          "confidence": 66
         },
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "4-9-120",
-          "algo_name": "复合支架安装",
+          "algo_id": "4-9-115",
+          "algo_name": "铝合金托盘式桥架(宽+高mm) ≤600",
           "stored_ids": [
             "4-9-66"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤600"
           ],
-          "confidence": 69
+          "confidence": 66
         },
         {
           "bill_name": "电力电缆 ZB-YJV-0.6/1.0KV-4x150+1X",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-165",
             "4-9-250"
@@ -4264,8 +4264,8 @@
         {
           "bill_name": "电力电缆 ZBN-YJV-0.6/1kV-4X50+1X25",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-162",
             "4-9-247"
@@ -4291,8 +4291,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "4-15-15",
-          "algo_name": "组合控制开关安装 普通型",
+          "algo_id": "4-14-381",
+          "algo_name": "跷板暗开关 双控≤3联",
           "stored_ids": [
             "4-14-379"
           ],
@@ -4304,8 +4304,8 @@
         {
           "bill_name": "电力电缆 WDZN-YJY-4*150+1*70",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-165",
             "4-9-250"
@@ -4345,8 +4345,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-4×120+1×70",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-164",
             "4-9-249"
@@ -4359,8 +4359,8 @@
         {
           "bill_name": "电力电缆 WDZC-YJY-4*95+1*50",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-164",
             "4-9-249"
@@ -4373,8 +4373,8 @@
         {
           "bill_name": "电力电缆 WDZBN-YJY-4*35+1*16",
           "is_match": false,
-          "algo_id": "4-12-193",
-          "algo_name": "金属线槽敷设 宽+高(mm) ≤120",
+          "algo_id": "4-12-191",
+          "algo_name": "金属线槽敷设 宽+高(mm) ≤50",
           "stored_ids": [
             "4-9-161",
             "4-9-246"
@@ -4387,15 +4387,15 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "4-9-120",
-          "algo_name": "复合支架安装",
+          "algo_id": "4-9-115",
+          "algo_name": "铝合金托盘式桥架(宽+高mm) ≤600",
           "stored_ids": [
             "4-9-67"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤800"
           ],
-          "confidence": 69
+          "confidence": 66
         },
         {
           "bill_name": "橡胶软接头 类型:橡胶软接头",
@@ -4843,10 +4843,10 @@
       "wrong": 44,
       "rate": 12.0,
       "diagnosis": {
-        "synonym_gap": 27,
-        "wrong_tier": 17
+        "synonym_gap": 26,
+        "wrong_tier": 18
       },
-      "elapsed": 8.3,
+      "elapsed": 8.5,
       "details": [
         {
           "bill_name": "砌块墙",
@@ -5165,8 +5165,8 @@
         {
           "bill_name": "镀锌钢管 规格、压力等级:镀锌钢管 DN50",
           "is_match": false,
-          "algo_id": "10-2-114",
-          "algo_name": "钢管碰头(电弧焊)带介质 支管公称直径50mm以内",
+          "algo_id": "10-11-141",
+          "algo_name": "管道消毒、冲洗 公称直径50mm以内",
           "stored_ids": [
             "10-1-25",
             "12-3-337"
@@ -5297,8 +5297,8 @@
         {
           "bill_name": "金属扶手、栏杆、栏板预埋铁件",
           "is_match": false,
-          "algo_id": "5-6-163",
-          "algo_name": "停车场管理设备安装、调试 栏杆装置 手动栏杆",
+          "algo_id": "5-5-58",
+          "algo_name": "周边设备安装 音频跳线制作",
           "stored_ids": [
             "5-169"
           ],
@@ -5509,12 +5509,12 @@
     {
       "province": "浙江省通用安装工程预算定额(2018)",
       "total": 50,
-      "correct": 39,
-      "wrong": 11,
-      "rate": 78.0,
+      "correct": 35,
+      "wrong": 15,
+      "rate": 70.0,
       "diagnosis": {
-        "synonym_gap": 6,
-        "wrong_tier": 5
+        "wrong_tier": 9,
+        "synonym_gap": 6
       },
       "elapsed": 6.7,
       "details": [
@@ -5559,16 +5559,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": true,
-          "algo_id": "9-1-20",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150",
+          "is_match": false,
+          "algo_id": "9-1-32",
+          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)150",
           "stored_ids": [
             "9-1-20"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150"
           ],
-          "confidence": 85
+          "confidence": 76
         },
         {
           "bill_name": "消火栓钢管",
@@ -5585,16 +5585,16 @@
         },
         {
           "bill_name": "消火栓钢管",
-          "is_match": true,
-          "algo_id": "9-1-18",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
+          "is_match": false,
+          "algo_id": "9-1-30",
+          "algo_name": "消火栓钢管 钢管(焊接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 85
+          "confidence": 76
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5767,16 +5767,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": true,
-          "algo_id": "9-1-18",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100",
+          "is_match": false,
+          "algo_id": "9-1-7",
+          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)100",
           "stored_ids": [
             "9-1-18"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)100"
           ],
-          "confidence": 85
+          "confidence": 30
         },
         {
           "bill_name": "水喷淋钢管",
@@ -5871,16 +5871,16 @@
         },
         {
           "bill_name": "水喷淋钢管",
-          "is_match": true,
-          "algo_id": "9-1-17",
-          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80",
+          "is_match": false,
+          "algo_id": "9-1-6",
+          "algo_name": "水喷淋钢管 镀锌钢管(螺纹连接) 公称直径(mm以内)80",
           "stored_ids": [
             "9-1-17"
           ],
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80"
           ],
-          "confidence": 85
+          "confidence": 30
         },
         {
           "bill_name": "水喷淋钢管",
@@ -6180,10 +6180,10 @@
       "wrong": 16,
       "rate": 42.9,
       "diagnosis": {
-        "wrong_tier": 12,
-        "synonym_gap": 4
+        "wrong_tier": 15,
+        "synonym_gap": 1
       },
-      "elapsed": 4.2,
+      "elapsed": 4.8,
       "details": [
         {
           "bill_name": "螺纹阀门 类型：蝶阀",
@@ -6305,8 +6305,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "C4-15-15",
-          "algo_name": "组合控制开关安装 普通型",
+          "algo_id": "C4-14-348",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控 ≤6 联",
           "stored_ids": [
             "C4-14-347"
           ],
@@ -6318,8 +6318,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "C4-15-15",
-          "algo_name": "组合控制开关安装 普通型",
+          "algo_id": "C4-14-348",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控 ≤6 联",
           "stored_ids": [
             "C4-14-356"
           ],
@@ -6331,8 +6331,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "C4-15-15",
-          "algo_name": "组合控制开关安装 普通型",
+          "algo_id": "C4-14-348",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控 ≤6 联",
           "stored_ids": [
             "C4-14-347"
           ],
@@ -6344,8 +6344,8 @@
         {
           "bill_name": "照明开关",
           "is_match": false,
-          "algo_id": "C4-15-15",
-          "algo_name": "组合控制开关安装 普通型",
+          "algo_id": "C4-14-348",
+          "algo_name": "普通开关、按钮安装 跷板暗开关 单控 ≤6 联",
           "stored_ids": [
             "C4-14-347"
           ],

@@ -123,10 +123,17 @@ const SPECIALTY_NAMES: Record<string, string> = {
   G: '轨道交通',
 };
 
-/** 专业册号转中文名，如 "C4" → "电气" */
+/** 专业册号转中文名，如 "C4" → "电气设备安装" */
 export function specialtyLabel(code: string | undefined | null): string {
   if (!code) return '未分类';
-  return SPECIALTY_NAMES[code] || code;
+  // 直接命中
+  if (SPECIALTY_NAMES[code]) return SPECIALTY_NAMES[code];
+  // 纯数字（如 "10"、"13"）→ 自动加 C 前缀重试（后端部分省份编号不带C前缀）
+  if (/^\d+$/.test(code)) {
+    const withC = `C${code}`;
+    if (SPECIALTY_NAMES[withC]) return SPECIALTY_NAMES[withC];
+  }
+  return '未分类';
 }
 
 // ============================================================

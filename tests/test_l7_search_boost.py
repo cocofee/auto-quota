@@ -249,27 +249,26 @@ class TestSynonymLoading:
         qb._SYNONYMS_CACHE = None  # 重置缓存
         synonyms = qb._load_synonyms()
 
-        # "镀锌钢管"在手工表中有定义，自动表即使也有也应被覆盖
-        if "镀锌钢管" in synonyms:
-            # 手工表的值是"焊接钢管 镀锌"
-            assert "焊接钢管" in synonyms["镀锌钢管"]
+        # "网线"在手工表中有定义，目标是"双绞线缆"
+        if "网线" in synonyms:
+            assert "双绞线缆" in synonyms["网线"]
 
     def test_apply_synonyms_basic(self):
         """同义词替换基础测试"""
         from src.query_builder import _apply_synonyms
-        # 镀锌钢管 → 焊接钢管 镀锌
-        result = _apply_synonyms("镀锌钢管 DN25", "C10")
-        assert "焊接钢管" in result
+        # 网线 → 双绞线缆
+        result = _apply_synonyms("网线 6类", "C5")
+        assert "双绞线缆" in result
 
     def test_apply_synonyms_specialty_scope(self):
         """同义词按专业范围过滤：没打标签的全专业通用"""
         from src.query_builder import _apply_synonyms
-        # 没打标签的同义词（如"镀锌钢管"）全专业通用，非安装专业也生效
-        result = _apply_synonyms("镀锌钢管 DN25", "A1")
-        assert "焊接钢管" in result
+        # 没打标签的同义词（如"网线"）全专业通用，非安装专业也生效
+        result = _apply_synonyms("网线 6类", "A1")
+        assert "双绞线缆" in result
         # 无专业信息时也应用（兼容旧调用）
-        result2 = _apply_synonyms("镀锌钢管 DN25", "")
-        assert "焊接钢管" in result2
+        result2 = _apply_synonyms("网线 6类", "")
+        assert "双绞线缆" in result2
 
     def test_auto_synonyms_file_exists(self):
         """自动同义词文件应已生成"""

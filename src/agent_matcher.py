@@ -415,15 +415,20 @@ class AgentMatcher:
                         "name": str(corr.get("name", "")),
                     }]
                     explanation = f"批量审核纠正(选第{corrected_idx}): {reason}"
+                elif corrected_idx == 0:
+                    # 模型明确判定"所有候选都不对" → 标记待人工，不强塞top1
+                    quotas = []
+                    confidence = min(confidence, 30)
+                    explanation = f"批量审核: 所有候选均不匹配，待人工处理 {reason}"
                 elif candidates:
-                    # 所有候选都不对但有候选 → 降级用top1
+                    # corrected_index无效但有候选 → 降级用top1
                     top = candidates[0]
                     quotas = [{
                         "quota_id": str(top.get("quota_id", "")),
                         "name": str(top.get("name", "")),
                     }]
-                    confidence = min(confidence, 50)  # 降低置信度
-                    explanation = f"批量审核否决所有候选，降级使用top1: {reason}"
+                    confidence = min(confidence, 50)
+                    explanation = f"批量审核纠正索引无效，降级使用top1: {reason}"
                 else:
                     quotas = []
                     explanation = f"批量审核: 无匹配 {reason}"
@@ -948,11 +953,19 @@ class AgentMatcher:
         last_brace = text.rfind("}")
         last_bracket = text.rfind("]")
 
-        # 优先匹配 {} 对象
-        if first_brace >= 0 and last_brace > first_brace:
+        # 谁先出现就以谁为外层容器（避免 "[{...},{...}]" 被截成非法片段）
+        has_brace = first_brace >= 0 and last_brace > first_brace
+        has_bracket = first_bracket >= 0 and last_bracket > first_bracket
+
+        if has_brace and has_bracket:
+            # [ 在 { 前面 → 外层是数组，取 [...]
+            if first_bracket < first_brace:
+                return text[first_bracket:last_bracket + 1]
+            else:
+                return text[first_brace:last_brace + 1]
+        elif has_brace:
             return text[first_brace:last_brace + 1]
-        # 其次匹配 [] 数组
-        if first_bracket >= 0 and last_bracket > first_bracket:
+        elif has_bracket:
             return text[first_bracket:last_bracket + 1]
 
         return None

@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 11977,
@@ -19,7 +19,8 @@
         "立面块料拆除 陶瓷面砖 水泥砂浆或沥青结合层",
         "拆除废料外运 人工装自卸汽车运 3km内 实际运距(km):15"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11686,
@@ -37,7 +38,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm 实际厚度(mm):25",
         "零星装饰 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 10767,
@@ -53,7 +55,8 @@
         "钢质防火门 双扇(甲级)",
         "特殊五金安装 闭门器安装 明装"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11751,
@@ -65,7 +68,8 @@
       "quota_names": [
         "石材地面精磨"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11734,
@@ -77,7 +81,8 @@
       "quota_names": [
         "不锈钢面板饰面层 其他"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11727,
@@ -93,7 +98,8 @@
         "木基层板 单层 防腐油一遍",
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以内"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11698,
@@ -107,7 +113,8 @@
         "胶合板基层 9mm",
         "不锈钢面板饰面层 墙面"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11683,
@@ -123,7 +130,8 @@
         "胶合板基层 9mm",
         "石膏板基层"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12084,
@@ -137,7 +145,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm 实际厚度(mm):30",
         "楼地面陶瓷地砖(每块周长mm) 3200以内 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11912,
@@ -149,7 +158,8 @@
       "quota_names": [
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以外"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11677,
@@ -161,7 +171,8 @@
       "quota_names": [
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以外"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11944,
@@ -177,7 +188,8 @@
         "大理石表面刷保护液",
         "零星装饰 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11811,
@@ -193,7 +205,8 @@
         "饰面层 胶合板面",
         "木龙骨 断面7.5cm2 木龙骨平均中距(mm以内) 300"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 10770,
@@ -205,7 +218,8 @@
       "quota_names": [
         "蒸压加气混凝土砌块内墙 墙体厚度 10cm"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 10768,
@@ -221,7 +235,8 @@
         "钢质防火门 双扇(乙级)",
         "特殊五金安装 闭门器安装 明装"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11679,
@@ -235,7 +250,8 @@
         "成品腻子粉(耐水型)N型 天棚面 满刮一遍 实际腻子遍数(遍):2",
         "乳胶漆底油二遍面油二遍 抹灰面 天棚面 实际底漆遍数(遍):1"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11725,
@@ -249,7 +265,8 @@
         "水泥自流平地面50厚",
         "铺基层板 胶合板"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11730,
@@ -261,7 +278,8 @@
       "quota_names": [
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以外"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11893,
@@ -273,7 +291,8 @@
       "quota_names": [
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以外"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11948,
@@ -285,7 +304,8 @@
       "quota_names": [
         "预埋铁件"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12160,
@@ -297,7 +317,8 @@
       "quota_names": [
         "成品橱柜 下柜"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11921,
@@ -311,7 +332,8 @@
         "成品腻子粉(一般型)Y型 天棚面 满刮一遍 实际腻子遍数(遍):2",
         "乳胶漆底油二遍面油二遍 抹灰面 天棚面 实际底漆遍数(遍):1"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11718,
@@ -327,7 +349,8 @@
         "特殊五金安装 门磁吸安装",
         "特殊五金安装 门锁安装 单向"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12086,
@@ -341,7 +364,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm 实际厚度(mm):30",
         "水泥砂浆整体面层 楼地面 20mm"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11810,
@@ -357,7 +381,8 @@
         "特殊五金安装 门磁吸安装",
         "特殊五金安装 门锁安装 单向"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11726,
@@ -373,7 +398,8 @@
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以内",
         "木基层板 单层 防腐油一遍"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11820,
@@ -389,7 +415,8 @@
         "特殊五金安装 门磁吸安装",
         "特殊五金安装 门锁安装 单向"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11935,
@@ -403,7 +430,8 @@
         "胶合板基层 9mm",
         "饰面层 胶合板面"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11752,
@@ -417,7 +445,8 @@
         "成品腻子粉(耐水型)N型 墙面 满刮一遍 实际腻子遍数(遍):2",
         "外墙面乳胶漆底油一遍面油二遍 油性 清水砼内墙面 独立柱抹灰面喷刷油漆、涂料 人工*1.2"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 10752,
@@ -437,7 +466,8 @@
         "楼地面水泥砂浆找平层 填充层上 20mm",
         "楼地面陶瓷地砖(每块周长mm) 2400以内 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11703,
@@ -451,7 +481,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm 实际厚度(mm):30",
         "水泥砂浆整体面层 楼地面 20mm"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12068,
@@ -465,7 +496,8 @@
         "成品腻子粉(一般型)Y型 天棚面 满刮一遍 实际腻子遍数(遍):2",
         "乳胶漆底油二遍面油二遍 抹灰面 天棚面 实际底漆遍数(遍):1"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11779,
@@ -479,7 +511,8 @@
         "石膏板",
         "胶合板"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12178,
@@ -493,7 +526,8 @@
         "胶合板基层 9mm",
         "不锈钢面板饰面层 墙面"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11702,
@@ -511,7 +545,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm 实际厚度(mm):25",
         "楼地面(每块周长mm) 3200以内 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11992,
@@ -523,7 +558,8 @@
       "quota_names": [
         "细石混凝土找平层 30mm 实际厚度(mm):50"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11778,
@@ -537,7 +573,8 @@
         "石膏板",
         "胶合板"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12091,
@@ -553,7 +590,8 @@
         "石膏板基层",
         "装配式U型轻钢天棚龙骨(不上人型) 面层规格(mm) 300×300 平面"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 12004,
@@ -565,7 +603,8 @@
       "quota_names": [
         "铝合金栏杆 制安"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11796,
@@ -583,7 +622,8 @@
         "楼地面水泥砂浆找平层 混凝土或硬基层上 20mm  ",
         "楼地面(每块周长mm) 3200以内 水泥砂浆"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11680,
@@ -597,7 +637,8 @@
         "石膏板",
         "胶合板"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11787,
@@ -611,7 +652,8 @@
         "门窗套、筒子板 贴不锈钢板饰面板 带木龙骨",
         "胶合板基层 9mm"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11780,
@@ -623,7 +665,8 @@
       "quota_names": [
         "石膏装饰线(直线) 乳液粘贴 宽度50mm以内"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11747,
@@ -635,7 +678,8 @@
       "quota_names": [
         "蒸压加气混凝土砌块内墙 墙体厚度 20cm"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11015,
@@ -647,7 +691,8 @@
       "quota_names": [
         "聚碳酸酯PC(阳光板)屋面 安装在铝结构上"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11825,
@@ -663,7 +708,8 @@
         "胶合板基层 9mm",
         "石膏板基层"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11691,
@@ -675,7 +721,8 @@
       "quota_names": [
         "镶贴瓷板 墙面 建筑胶粘剂粘贴"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11795,
@@ -687,7 +734,8 @@
       "quota_names": [
         "门窗套、筒子板 贴不锈钢板饰面板 带木龙骨"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11675,
@@ -699,7 +747,8 @@
       "quota_names": [
         "金属饰线(直线) 玻璃胶粘贴 宽度50mm以外"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 11758,
@@ -711,7 +760,8 @@
       "quota_names": [
         "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     }
   ]
 }

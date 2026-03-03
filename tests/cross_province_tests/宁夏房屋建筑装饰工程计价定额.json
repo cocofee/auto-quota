@@ -5,7 +5,7 @@
   "sample_size": 29,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 7174,
@@ -17,7 +17,8 @@
       "quota_names": [
         "块料面层 陶瓷地面砖 0.64m2以内"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7177,
@@ -29,7 +30,8 @@
       "quota_names": [
         "乳胶漆 室内 墙面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7178,
@@ -41,7 +43,8 @@
       "quota_names": [
         "墙面块料面层 面砖 每块面积 预拌砂浆(干混) ≤0.64m2"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7181,
@@ -53,7 +56,8 @@
       "quota_names": [
         "乳胶漆 室内 天棚面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7182,
@@ -67,7 +71,8 @@
         "吊顶天棚 平面、跌级天棚 天棚龙骨(轻钢龙骨) 装配式U形轻钢天棚龙骨(不上人型) 规格(mm) 300×300 平面",
         "吊顶天棚 平面、跌级天棚 天棚龙骨(铝合金龙骨) 铝合金方板天棚龙骨(上人型) 嵌入式 规格(mm) 600×600"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7183,
@@ -79,7 +84,8 @@
       "quota_names": [
         "金属踢脚线"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7187,
@@ -91,7 +97,8 @@
       "quota_names": [
         "不锈钢装饰线 槽线 宽度 ≤50mm"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7189,
@@ -109,7 +116,8 @@
         "吊顶天棚 平面、跌级天棚 石膏板天棚基层",
         "吊顶天棚 平面、跌级天棚 天棚面层 塑料板天棚面板"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7192,
@@ -121,7 +129,8 @@
       "quota_names": [
         "铝合金 回风口"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7193,
@@ -135,7 +144,8 @@
         "吊顶天棚 平面、跌级天棚 天棚龙骨(轻钢龙骨) 装配式U形轻钢天棚龙骨(不上人型) 规格(mm) 300×300 平面",
         "吊顶天棚 平面、跌级天棚 石膏板天棚面层 安在U形"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7194,
@@ -147,7 +157,8 @@
       "quota_names": [
         "其他材料面层 铝合金防静电活动地板安装"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7196,
@@ -161,7 +172,8 @@
         "吊顶天棚 平面、跌级天棚 天棚龙骨(轻钢龙骨) 装配式U形轻钢天棚龙骨(不上人型) 规格(mm) 300×300 平面",
         "吊顶天棚 平面、跌级天棚 天棚面层 吸音板天棚 铝合金穿孔面板"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7205,
@@ -173,7 +185,8 @@
       "quota_names": [
         "电子感应自动门传感装置"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7208,
@@ -187,7 +200,8 @@
         "木骨架玻璃隔断 全玻",
         "全玻璃隔断 钢化玻璃"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7209,
@@ -199,7 +213,8 @@
       "quota_names": [
         "成品橱柜 上柜"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7210,
@@ -211,7 +226,8 @@
       "quota_names": [
         "成品橱柜 下柜"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7213,
@@ -223,7 +239,8 @@
       "quota_names": [
         "悬挑式灯槽 直形 胶合板面"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7215,
@@ -235,7 +252,8 @@
       "quota_names": [
         "乳胶漆 室内 天棚面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7219,
@@ -247,7 +265,8 @@
       "quota_names": [
         "乳胶漆 室内 天棚面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7223,
@@ -259,7 +278,8 @@
       "quota_names": [
         "盥洗室台镜 不带框 >1.0m2"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7224,
@@ -271,7 +291,8 @@
       "quota_names": [
         "门特殊五金 电子锁(磁下锁)"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7225,
@@ -283,7 +304,8 @@
       "quota_names": [
         "门特殊五金 执手锁"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7226,
@@ -295,7 +317,8 @@
       "quota_names": [
         "墙面挂网 贴玻纤网格布"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7232,
@@ -307,7 +330,8 @@
       "quota_names": [
         "墙面挂网 挂钢丝网"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7233,
@@ -319,7 +343,8 @@
       "quota_names": [
         "不锈钢管栏杆(带扶手) 直形"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7247,
@@ -331,7 +356,8 @@
       "quota_names": [
         "砖砌体 零星砌体 普通砖"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7250,
@@ -343,7 +369,8 @@
       "quota_names": [
         "块料面层 陶瓷地面砖 0.36m2以内"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7252,
@@ -355,7 +382,8 @@
       "quota_names": [
         "墙面块料面层 面砖 每块面积 粉状型建筑胶贴剂 ≤0.20m2"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 7254,
@@ -367,7 +395,8 @@
       "quota_names": [
         "大理石洗漱台 >1m2"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     }
   ]
 }

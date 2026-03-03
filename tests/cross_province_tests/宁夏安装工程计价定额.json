@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 7702,
@@ -17,7 +17,8 @@
       "quota_names": [
         "户内接地母线敷设"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5359,
@@ -29,7 +30,8 @@
       "quota_names": [
         "坐式大便器安装 连体水箱"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8306,
@@ -41,7 +43,8 @@
       "quota_names": [
         "一般钢套管制作安装 介质管道公称直径(mm以内) 50"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8297,
@@ -53,7 +56,8 @@
       "quota_names": [
         "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 32"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8185,
@@ -65,7 +69,8 @@
       "quota_names": [
         "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径(mm) 20"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 7885,
@@ -77,7 +82,8 @@
       "quota_names": [
         "低压管道 碳钢管(电弧焊) 公称直径(mm以内) 300"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 7507,
@@ -89,7 +95,8 @@
       "quota_names": [
         "采暖管道 室内镀锌钢管(螺纹连接) 公称直径(mm) 50"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5391,
@@ -101,7 +108,8 @@
       "quota_names": [
         "安装机柜、机架 落地式"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8368,
@@ -113,7 +121,8 @@
       "quota_names": [
         "户内接地母线敷设"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5361,
@@ -125,7 +134,8 @@
       "quota_names": [
         "其他成品卫生器具 成品拖布池安装"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5360,
@@ -137,7 +147,8 @@
       "quota_names": [
         "落地式小便器安装 埋入式感应开关"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5448,
@@ -149,7 +160,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 双控≤3联"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8182,
@@ -161,7 +173,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 7852,
@@ -175,7 +188,8 @@
         "不带箱热媒集配装置安装 分支管(环路以内) 4",
         "散热器温控阀安装 公称直径(mm以内) 20"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8299,
@@ -187,7 +201,8 @@
       "quota_names": [
         "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 20"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8319,
@@ -199,7 +214,8 @@
       "quota_names": [
         "洗脸盆 挂墙式 成套安装 冷水 感应开关"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5327,
@@ -211,7 +227,8 @@
       "quota_names": [
         "洗脸盆 立柱式 冷热水"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8307,
@@ -223,7 +240,8 @@
       "quota_names": [
         "一般钢套管制作安装 介质管道公称直径(mm以内) 32"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5451,
@@ -235,7 +253,8 @@
       "quota_names": [
         "交换机设备安装、调试 交换机 固定配置 ≤24口"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8347,
@@ -247,7 +266,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 单控≤3联"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8329,
@@ -259,7 +279,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8345,
@@ -271,7 +292,8 @@
       "quota_names": [
         "普通开关、按钮安装 跷板暗开关 单控≤3联"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8305,
@@ -283,7 +305,8 @@
       "quota_names": [
         "一般钢套管制作安装 介质管道公称直径(mm以内) 80"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8177,
@@ -295,7 +318,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤100"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8876,
@@ -307,7 +331,8 @@
       "quota_names": [
         "灭火器 手提式"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8794,
@@ -327,7 +352,8 @@
         "管道刷油 银粉漆 第一遍",
         "管道刷油 银粉漆 增一遍"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8312,
@@ -339,7 +365,8 @@
       "quota_names": [
         "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 20"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8746,
@@ -351,7 +378,8 @@
       "quota_names": [
         "灭火器 手提式"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8360,
@@ -363,7 +391,8 @@
       "quota_names": [
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 4844,
@@ -375,7 +404,8 @@
       "quota_names": [
         "交流异步电动机检查接线 功率(kw) ≤30"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8354,
@@ -387,7 +417,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8371,
@@ -399,7 +430,8 @@
       "quota_names": [
         "管内穿线 穿动力线 铜芯 导线截面(mm2) ≤25"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5388,
@@ -411,7 +443,8 @@
       "quota_names": [
         "监控摄像设备 半球形摄像机"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8541,
@@ -423,7 +456,8 @@
       "quota_names": [
         "双绞线缆 管内穿放 ≤4对"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8181,
@@ -435,7 +469,8 @@
       "quota_names": [
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 7915,
@@ -447,7 +482,8 @@
       "quota_names": [
         "塑料法兰(带短管)安装(热熔连接) 公称直径(mm内) 100"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8372,
@@ -459,7 +495,8 @@
       "quota_names": [
         "避雷引下线敷设 利用建筑结构钢筋引下"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5387,
@@ -471,7 +508,8 @@
       "quota_names": [
         "网络设备安装试验 无线路由器"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 7701,
@@ -483,7 +521,8 @@
       "quota_names": [
         "户内接地母线敷设"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 8369,
@@ -495,7 +534,8 @@
       "quota_names": [
         "等电位装置安装 等电位端子盒安装"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 5337,
@@ -507,7 +547,8 @@
       "quota_names": [
         "乳胶漆 室内 天棚面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5299,
@@ -519,7 +560,8 @@
       "quota_names": [
         "钢质防火门安装"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5296,
@@ -531,7 +573,8 @@
       "quota_names": [
         "金属踢脚线"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5309,
@@ -543,7 +586,8 @@
       "quota_names": [
         "其他材料面层 铝合金防静电活动地板安装"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5294,
@@ -555,7 +599,8 @@
       "quota_names": [
         "乳胶漆 室内 天棚面 二遍"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5308,
@@ -569,7 +614,8 @@
         "吊顶天棚 平面、跌级天棚 天棚龙骨(轻钢龙骨) 装配式U形轻钢天棚龙骨(不上人型) 规格(mm) 300×300 平面",
         "吊顶天棚 平面、跌级天棚 石膏板天棚面层 安在U形"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5354,
@@ -581,7 +627,8 @@
       "quota_names": [
         "一般抹灰 墙面、墙裙抹干混砂浆 砖墙 14+6mm"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5355,
@@ -593,7 +640,8 @@
       "quota_names": [
         "不锈钢管栏杆(带扶手) 直形"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5330,
@@ -605,7 +653,8 @@
       "quota_names": [
         "悬挑式灯槽 直形 胶合板面"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 5303,
@@ -623,7 +672,8 @@
         "吊顶天棚 平面、跌级天棚 石膏板天棚基层",
         "吊顶天棚 平面、跌级天棚 天棚面层 塑料板天棚面板"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     }
   ]
 }
