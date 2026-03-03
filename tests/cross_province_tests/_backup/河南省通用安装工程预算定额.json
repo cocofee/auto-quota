@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 9923,
@@ -17,7 +17,8 @@
       "quota_names": [
         "蒸压加气混凝土砌块墙 墙厚 ≤200mm 砂浆 墙体砌筑层高超过3.6m时，其超过部分工程量定额 人工*1.3 换为【预拌砌筑砂浆(干拌) DM M5】"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5032,
@@ -29,7 +30,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流≤15A"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4991,
@@ -41,7 +43,8 @@
       "quota_names": [
         "室内铜芯控制电缆敷设 电缆芯数≤6芯"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 10521,
@@ -53,7 +56,8 @@
       "quota_names": [
         "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构暗配 外径25mm"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5079,
@@ -65,7 +69,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂、嵌入式半周长1.5m"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5071,
@@ -77,7 +82,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流≤15A"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5066,
@@ -89,7 +95,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5042,
@@ -101,7 +108,8 @@
       "quota_names": [
         "穿照明线 铜芯 导线截面≤2.5mm2"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 10515,
@@ -113,7 +121,8 @@
       "quota_names": [
         "等电位端子盒安装"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5030,
@@ -125,7 +134,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流≤15A"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 10031,
@@ -137,7 +147,8 @@
       "quota_names": [
         "穿多芯软导线 二芯 单芯导线截面≤1mm2"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9554,
@@ -149,7 +160,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5026,
@@ -161,7 +173,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流≤15A"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 9603,
@@ -173,7 +186,8 @@
       "quota_names": [
         "穿多芯软导线 二芯 单芯导线截面≤1mm2"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5253,
@@ -185,7 +199,8 @@
       "quota_names": [
         "穿照明线 铜芯 导线截面≤4mm2"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4993,
@@ -197,7 +212,8 @@
       "quota_names": [
         "金属线槽敷设 宽+高≤300mm"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4992,
@@ -209,7 +225,8 @@
       "quota_names": [
         "控制电缆终端头制作安装 电缆芯数≤6芯"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5027,
@@ -221,7 +238,8 @@
       "quota_names": [
         "普通插座安装 单相带接地 暗插座电流≤15A"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 5189,
@@ -233,7 +251,8 @@
       "quota_names": [
         "一般塑料套管制作安装 介质管道外径110mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5191,
@@ -245,7 +264,8 @@
       "quota_names": [
         "刚性防水套管安装 介质管道公称直径80mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5230,
@@ -259,7 +279,8 @@
         "法兰阀门安装 公称直径65mm以内",
         "碳钢平焊法兰安装 公称直径65mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5280,
@@ -271,7 +292,8 @@
       "quota_names": [
         "一般钢套管制作安装 介质管道公称直径80mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5127,
@@ -285,7 +307,8 @@
         "法兰阀门安装 公称直径65mm以内",
         "碳钢平焊法兰安装 公称直径65mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5237,
@@ -297,7 +320,8 @@
       "quota_names": [
         "普通雨水斗安装 公称直径100mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5187,
@@ -319,7 +343,8 @@
         "环氧煤沥青防腐漆 环氧煤沥青防腐 (增) 一布",
         "环氧煤沥青防腐漆 环氧煤沥青防腐 (增) 一油"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 9437,
@@ -331,7 +356,8 @@
       "quota_names": [
         "洗脸盆 台下式 冷热水"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 9396,
@@ -343,7 +369,8 @@
       "quota_names": [
         "成品管卡安装 公称直径32mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 9434,
@@ -355,7 +382,8 @@
       "quota_names": [
         "室内塑料雨水管(粘接) 公称外径75mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5235,
@@ -369,7 +397,8 @@
         "室外塑料排水管(粘接) 公称外径75mm以内",
         "成品管卡安装 公称直径80mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 5215,
@@ -381,7 +410,8 @@
       "quota_names": [
         "地漏安装 公称直径50mm以内"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 9896,
@@ -393,7 +423,8 @@
       "quota_names": [
         "泵送混凝土 泵车"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 10083,
@@ -405,7 +436,8 @@
       "quota_names": [
         "现浇构件带肋钢筋 带肋钢筋HRB400以内 直径 ≤18mm"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 9920,
@@ -417,7 +449,8 @@
       "quota_names": [
         "泵送混凝土 泵车"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 4989,
@@ -429,7 +462,8 @@
       "quota_names": [
         "传感器 静压压差变送器"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 9984,
@@ -441,7 +475,8 @@
       "quota_names": [
         "铁件制作、安装"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 10077,
@@ -453,7 +488,8 @@
       "quota_names": [
         "箍筋 圆钢HPB300 直径 ≤10mm"
       ],
-      "specialty": "C5"
+      "specialty": "C5",
+      "status": "auto"
     },
     {
       "id": 5011,
@@ -465,7 +501,8 @@
       "quota_names": [
         "消防专用模块(模块箱)安装 模块 单输入单输出"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 9628,
@@ -477,7 +514,8 @@
       "quota_names": [
         "扬声器安装 吸顶式 (3W-5W)"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 5124,
@@ -489,7 +527,8 @@
       "quota_names": [
         "消火栓灭火系统"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 5120,
@@ -501,7 +540,8 @@
       "quota_names": [
         "室内消火栓(暗装) 普通 公称直径 65mm以内 单栓"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 5144,
@@ -513,7 +553,8 @@
       "quota_names": [
         "碳钢调节阀安装 风管防火阀周长≤3600mm"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 5148,
@@ -525,7 +566,8 @@
       "quota_names": [
         "碳钢调节阀安装 对开多叶调节阀周长≤6500mm"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 5157,
@@ -537,7 +579,8 @@
       "quota_names": [
         "碳钢风口安装 百叶风口周长≤2500mm"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 5141,
@@ -549,7 +592,8 @@
       "quota_names": [
         "碳钢调节阀安装 风管防火阀周长≤2200mm"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 9313,
@@ -561,7 +605,8 @@
       "quota_names": [
         "机械场地平整"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 9907,
@@ -573,7 +618,8 @@
       "quota_names": [
         "夯填土 机械 槽坑  "
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 9668,
@@ -585,7 +631,8 @@
       "quota_names": [
         "压力表 就地"
       ],
-      "specialty": "C6"
+      "specialty": "C6",
+      "status": "auto"
     },
     {
       "id": 10042,
@@ -597,7 +644,8 @@
       "quota_names": [
         "动力工具除锈 一般钢结构 轻锈"
       ],
-      "specialty": "C12"
+      "specialty": "C12",
+      "status": "auto"
     },
     {
       "id": 10187,
@@ -611,7 +659,8 @@
         "水泥稳定碎(砾)石摊铺 水泥含量5% 厚度20cm",
         "水泥混凝土养生 塑料膜养护"
       ],
-      "specialty": "C2"
+      "specialty": "C2",
+      "status": "auto"
     },
     {
       "id": 9978,
@@ -633,7 +682,8 @@
         "垫层 灰土",
         "原土夯实二遍 机械"
       ],
-      "specialty": "C11"
+      "specialty": "C11",
+      "status": "auto"
     }
   ]
 }

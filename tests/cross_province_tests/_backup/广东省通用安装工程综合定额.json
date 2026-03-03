@@ -5,7 +5,7 @@
   "sample_size": 50,
   "sample_method": "quality_filtered_uniform",
   "quality_criteria": "bill_name非空, bill_text>=30字, quota_ids非空, auto_specialty",
-  "created": "2026-03-02",
+  "created": "2026-03-03",
   "items": [
     {
       "id": 3455,
@@ -17,7 +17,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂式(半周长m以内) 1.5"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3224,
@@ -29,7 +30,8 @@
       "quota_names": [
         "塑料控制电缆敷设 电缆(芯以下) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4071,
@@ -41,7 +43,8 @@
       "quota_names": [
         "送配电装置系统调试 (综合) 1kV以下交流供电"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4034,
@@ -53,7 +56,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 嵌入式 示意图号:171、172、173、174"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4019,
@@ -65,7 +69,8 @@
       "quota_names": [
         "塑料控制电缆敷设 电缆(芯以下) 14"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3609,
@@ -77,7 +82,8 @@
       "quota_names": [
         "等电位端子箱安装 端子箱明装(半周长mm以内) 700"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3433,
@@ -89,7 +95,8 @@
       "quota_names": [
         "半圆球吸顶灯安装 灯罩直径(mm以内) 350"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 12393,
@@ -101,7 +108,8 @@
       "quota_names": [
         "其他电器安装 多联组合开关插座 暗装"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3362,
@@ -113,7 +121,8 @@
       "quota_names": [
         "硬绝缘导线管内穿线 导线截面(mm2以内) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4554,
@@ -125,7 +134,8 @@
       "quota_names": [
         "塑料控制电缆敷设 电缆(芯以下) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3258,
@@ -137,7 +147,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 墙壁式 示意图号:171、172、173、174"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3257,
@@ -149,7 +160,8 @@
       "quota_names": [
         "标志、诱导装饰灯具安装 吊杆式 示意图号:171、172、173、174"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3365,
@@ -161,7 +173,8 @@
       "quota_names": [
         "硬绝缘导线管内穿线 导线截面(mm2以内) 6"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4016,
@@ -173,7 +186,8 @@
       "quota_names": [
         "成套配电箱安装 悬挂式(半周长m以内) 1"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 4027,
@@ -185,7 +199,8 @@
       "quota_names": [
         "1kV以下户内干包式铜芯电力电缆终端头制作、安装 铜芯干包终端头(截面mm2以下) 16  "
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 12300,
@@ -197,7 +212,8 @@
       "quota_names": [
         "其他普通灯具安装 一般壁灯"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3225,
@@ -209,7 +225,8 @@
       "quota_names": [
         "塑料控制电缆敷设 电缆(芯以下) 14"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 12409,
@@ -221,7 +238,8 @@
       "quota_names": [
         "其他电器安装 多联组合开关插座 暗装"
       ],
-      "specialty": "C4"
+      "specialty": "C4",
+      "status": "auto"
     },
     {
       "id": 3702,
@@ -233,7 +251,8 @@
       "quota_names": [
         "螺纹浮球阀安装 公称直径(mm以内) 15"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 13441,
@@ -245,7 +264,8 @@
       "quota_names": [
         "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 20"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3745,
@@ -257,7 +277,8 @@
       "quota_names": [
         "焊接法兰阀安装 公称直径(mm以内) 150"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 13456,
@@ -269,7 +290,8 @@
       "quota_names": [
         "给排水管道 室内塑料雨水管(粘接) 公称外径(mm以内) 75"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3897,
@@ -281,7 +303,8 @@
       "quota_names": [
         "螺纹阀安装 公称直径(mm以内) 50"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3089,
@@ -293,7 +316,8 @@
       "quota_names": [
         "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 32"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3554,
@@ -305,7 +329,8 @@
       "quota_names": [
         "焊接法兰阀安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 13443,
@@ -317,7 +342,8 @@
       "quota_names": [
         "给排水管道 室内钢骨架塑料复合管(电熔连接) 公称外径(mm以内) 75"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12232,
@@ -329,7 +355,8 @@
       "quota_names": [
         "洗涤盆安装 单嘴"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3539,
@@ -341,7 +368,8 @@
       "quota_names": [
         "焊接法兰阀安装 公称直径(mm以内) 80"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3741,
@@ -353,7 +381,8 @@
       "quota_names": [
         "焊接法兰阀安装 公称直径(mm以内) 200"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12230,
@@ -365,7 +394,8 @@
       "quota_names": [
         "给排水管道 室内塑料排水管(粘接) 公称外径(mm以内) 75"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3398,
@@ -377,7 +407,8 @@
       "quota_names": [
         "焊接法兰阀安装 公称直径(mm以内) 100"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3390,
@@ -389,7 +420,8 @@
       "quota_names": [
         "自动排气阀安装 公称直径(mm以内) 20"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 12326,
@@ -401,7 +433,8 @@
       "quota_names": [
         "地漏安装 公称直径(mm以内) 50"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3392,
@@ -413,7 +446,8 @@
       "quota_names": [
         "给排水管道 室内塑料雨水管(粘接) 公称外径(mm以内) 75"
       ],
-      "specialty": "C10"
+      "specialty": "C10",
+      "status": "auto"
     },
     {
       "id": 3482,
@@ -425,7 +459,8 @@
       "quota_names": [
         "风口安装 百叶风口 周长(mm以内) 1800"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 12360,
@@ -437,7 +472,8 @@
       "quota_names": [
         "风机盘管安装 风量(m3/h) 1100以下"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 3481,
@@ -449,7 +485,8 @@
       "quota_names": [
         "风口安装 百叶风口 周长(mm以内) 1280"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 3661,
@@ -471,7 +508,8 @@
         "一般钢结构 红丹防锈漆 第一遍 实际遍数(遍):2",
         "一般钢结构 调和漆 第一遍 实际遍数(遍):2"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 3380,
@@ -483,7 +521,8 @@
       "quota_names": [
         "风口安装 百叶风口 周长(mm以内) 1280"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 12283,
@@ -495,7 +534,8 @@
       "quota_names": [
         "风口安装 百叶风口 周长(mm以内) 1800"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 3046,
@@ -507,7 +547,8 @@
       "quota_names": [
         "碳钢 调节阀安装 风管防火阀 周长(mm以内) 2200"
       ],
-      "specialty": "C7"
+      "specialty": "C7",
+      "status": "auto"
     },
     {
       "id": 12401,
@@ -519,7 +560,8 @@
       "quota_names": [
         "多输入、多输出模块安装"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 12446,
@@ -531,7 +573,8 @@
       "quota_names": [
         "水喷淋钢管安装 镀锌钢管(螺纹连接) 公称直径(mm以内) 100"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 3168,
@@ -545,7 +588,8 @@
         "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 65",
         "水喷淋钢管安装 管件安装(沟槽管件连接) 公称直径(mm以内) 65"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 3764,
@@ -559,7 +603,8 @@
         "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 150",
         "水喷淋钢管安装 管件安装(沟槽管件连接) 公称直径(mm以内) 150"
       ],
-      "specialty": "C9"
+      "specialty": "C9",
+      "status": "auto"
     },
     {
       "id": 4122,
@@ -573,7 +618,8 @@
         "电动单元组合仪表 变送单元 智能差压变送器",
         "仪表立柱制作安装"
       ],
-      "specialty": "C6"
+      "specialty": "C6",
+      "status": "auto"
     },
     {
       "id": 3632,
@@ -589,7 +635,8 @@
         "一般钢结构 红丹防锈漆 第一遍 实际遍数(遍):2",
         "一般钢结构 调和漆 第一遍 实际遍数(遍):2"
       ],
-      "specialty": "C12"
+      "specialty": "C12",
+      "status": "auto"
     },
     {
       "id": 3992,
@@ -601,7 +648,8 @@
       "quota_names": [
         "砖砌盖板式 适用管径 800-1000 井径1500 井深2.4m"
       ],
-      "specialty": ""
+      "specialty": "",
+      "status": "auto"
     },
     {
       "id": 3868,
@@ -613,7 +661,8 @@
       "quota_names": [
         "氯吸收装置安装 吸收能力(kg/h以内) 3000"
       ],
-      "specialty": "C1"
+      "specialty": "C1",
+      "status": "auto"
     },
     {
       "id": 4221,
@@ -633,7 +682,8 @@
         "低压 碳钢平焊法兰(电弧焊) 公称直径(mm以内) 80",
         "调节阀临时短管制作装拆 公称直径(mm以内) 100"
       ],
-      "specialty": "C8"
+      "specialty": "C8",
+      "status": "auto"
     }
   ]
 }
