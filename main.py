@@ -202,8 +202,8 @@ def _log_run_banner(input_path: Path, mode: str, province: str,
 def run(input_file, mode="agent", output=None,
         limit=None, province=None, aux_provinces=None,
         no_experience=False, sheet=None,
-        json_output=None, agent_llm=None, interactive=None,
-        progress_callback=None):
+        json_output=None, agent_llm=None, verify_llm=None,
+        interactive=None, progress_callback=None):
     """执行匹配的核心逻辑（供命令行和其他模块直接调用）
 
     参数:
@@ -299,18 +299,23 @@ def run(input_file, mode="agent", output=None,
     _notify(90, len(bill_items), "匹配完成，验证中...")
 
     # 3.5 LLM后验证：逐条审核匹配结果，错误的自动纠正重搜
+    # 支持双模型：匹配用AGENT_LLM，验证用VERIFY_LLM（不同模型各司其职）
     if mode == "agent" and config.LLM_VERIFY_ENABLED:
         try:
             from src.llm_verifier import LLMVerifier
-            logger.info("第3.5步：LLM后验证（逐条审核+纠正）...")
-            verifier = LLMVerifier(llm_type=agent_llm)
+            # 验证模型优先级：命令行参数 > config.VERIFY_LLM > 匹配模型
+            verify_llm = verify_llm or config.VERIFY_LLM or agent_llm
+            logger.info(f"第3.5步：LLM后验证（模型:{verify_llm}，"
+                        f"并发:{config.VERIFY_CONCURRENT}路）...")
+            verifier = LLMVerifier(llm_type=verify_llm)
             results = verifier.verify_batch(
                 results, searcher=searcher,
                 progress_callback=progress_callback)
             vs = verifier.stats
             logger.info(f"  验证汇总: 纠正{vs['corrected']}条, "
                         f"确认{vs['correct']}条, "
-                        f"未纠正{vs['correct_failed']}条")
+                        f"未纠正{vs['correct_failed']}条, "
+                        f"跳过{vs['skipped']}条")
         except Exception as e:
             logger.warning(f"LLM后验证跳过（不影响输出）: {e}")
 
@@ -392,6 +397,7 @@ def main():
     parser.add_argument("--sheet", help="指定只读取的Sheet名称（默认读取所有Sheet）")
     parser.add_argument("--json-output", help="将匹配结果输出为JSON文件（供Web界面读取）")
     parser.add_argument("--agent-llm", help="Agent模式使用的大模型（覆盖config中的AGENT_LLM）")
+    parser.add_argument("--verify-llm", help="验证使用的大模型（覆盖config中的VERIFY_LLM，留空则跟agent-llm一致）")
 
     args = parser.parse_args()
 
@@ -412,6 +418,7 @@ def main():
             sheet=args.sheet,
             json_output=args.json_output,
             agent_llm=args.agent_llm,
+            verify_llm=args.verify_llm,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         logger.error(str(e))

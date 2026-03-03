@@ -1,0 +1,680 @@
+{
+  "run_time": "2026-03-03 14:09",
+  "results": [
+    {
+      "province": "浙江省通用安装工程预算定额(2018)",
+      "total": 50,
+      "correct": 15,
+      "wrong": 35,
+      "rate": 30.0,
+      "diagnosis": {
+        "wrong_tier": 21,
+        "synonym_gap": 14
+      },
+      "elapsed": 17.6,
+      "details": [
+        {
+          "bill_name": "配线5",
+          "is_match": false,
+          "algo_id": "4-12-96",
+          "algo_name": "线槽配线 导线截面(mm2以内)2.5",
+          "stored_ids": [
+            "4-12-5"
+          ],
+          "stored_names": [
+            "穿照明线 铜芯导线截面(mm2以内)2.5"
+          ],
+          "confidence": 80
+        },
+        {
+          "bill_name": "接地母线",
+          "is_match": false,
+          "algo_id": "4-11-5",
+          "algo_name": "套接紧定式镀锌钢导管(JDG)敷设 砖、混凝土结构明配 公称",
+          "stored_ids": [
+            "4-9-56"
+          ],
+          "stored_names": [
+            "接地母线敷设 沿砖混结构明敷"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "不间断电源",
+          "is_match": true,
+          "algo_id": "4-14-38",
+          "algo_name": "中央信号装置、事故照明切换装置、不间断电源调试 不间断电源(",
+          "stored_ids": [
+            "4-14-38"
+          ],
+          "stored_names": [
+            "中央信号装置、事故照明切换装置、不间断电源调试 不间断电源(容量kV·A以下)100"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "电力电缆",
+          "is_match": false,
+          "algo_id": "4-9-58",
+          "algo_name": "接地母线敷设 沿桥架支架(电缆沟支架)敷设",
+          "stored_ids": [
+            "4-8-180"
+          ],
+          "stored_names": [
+            "控制电缆敷设 电缆(芯以下)24"
+          ],
+          "confidence": 59
+        },
+        {
+          "bill_name": "桩承台接地",
+          "is_match": false,
+          "algo_id": "4-9-65",
+          "algo_name": "桩承台接地 ≤10根桩连接",
+          "stored_ids": [
+            "4-9-63"
+          ],
+          "stored_names": [
+            "桩承台接地 ≤3根桩连接"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "桥架",
+          "is_match": false,
+          "algo_id": "4-8-77",
+          "algo_name": "铝合金托盘式桥架(宽+高mm)≤400",
+          "stored_ids": [
+            "4-8-27"
+          ],
+          "stored_names": [
+            "钢制槽式桥架(宽+高mm)≤200"
+          ],
+          "confidence": 66
+        },
+        {
+          "bill_name": "控制电缆",
+          "is_match": false,
+          "algo_id": "4-8-180",
+          "algo_name": "控制电缆敷设 电缆(芯以下)24",
+          "stored_ids": [
+            "4-8-181"
+          ],
+          "stored_names": [
+            "控制电缆敷设 WDZN-KYJY-30*1.5"
+          ],
+          "confidence": 73
+        },
+        {
+          "bill_name": "接地极",
+          "is_match": false,
+          "algo_id": "4-9-50",
+          "algo_name": "接地极(板)制作与安装 角钢接地极坚土",
+          "stored_ids": [
+            "4-9-47"
+          ],
+          "stored_names": [
+            "接地极(板)制作与安装 钢管接地极普通土"
+          ],
+          "confidence": 66
+        },
+        {
+          "bill_name": "配管",
+          "is_match": true,
+          "algo_id": "4-11-38",
+          "algo_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN)≤40",
+          "stored_ids": [
+            "4-11-38",
+            "4-11-38"
+          ],
+          "stored_names": [
+            "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN)≤40"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "工厂灯",
+          "is_match": false,
+          "algo_id": "4-13-213",
+          "algo_name": "工厂罩灯安装 吸顶式",
+          "stored_ids": [
+            "4-13-221"
+          ],
+          "stored_names": [
+            "工厂其他灯具安装 防潮灯"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "配管",
+          "is_match": true,
+          "algo_id": "4-11-87",
+          "algo_name": "焊接钢管敷设 砖、混凝土结构暗配 公称直径(DN)≤150",
+          "stored_ids": [
+            "4-11-87"
+          ],
+          "stored_names": [
+            "焊接钢管敷设 砖、混凝土结构暗配 公称直径(DN)≤150"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "焊接法兰阀门",
+          "is_match": false,
+          "algo_id": "10-4-48",
+          "algo_name": "水处理器安装(法兰连接) 进口管径(mm以内)125",
+          "stored_ids": [
+            "10-2-40",
+            "4-4-142"
+          ],
+          "stored_names": [
+            "焊接法兰阀门安装 公称直径(mm以内)125"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "不锈钢管",
+          "is_match": true,
+          "algo_id": "10-1-206",
+          "algo_name": "室内薄壁不锈钢管(卡压连接) 公称直径(mm以内)40",
+          "stored_ids": [
+            "10-1-206",
+            "10-1-206"
+          ],
+          "stored_names": [
+            "室内薄壁不锈钢管(卡压连接) 公称直径(mm以内)40"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "不锈钢管",
+          "is_match": true,
+          "algo_id": "10-1-204",
+          "algo_name": "室内薄壁不锈钢管(卡压连接) 公称直径(mm以内)25",
+          "stored_ids": [
+            "10-1-204"
+          ],
+          "stored_names": [
+            "室内薄壁不锈钢管（卡压连接） 公称直径(mm以内)25"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "减压器",
+          "is_match": false,
+          "algo_id": "10-2-193",
+          "algo_name": "减压器组成安装(螺纹连接) 公称直径(mm以内)40",
+          "stored_ids": [
+            "10-2-5"
+          ],
+          "stored_names": [
+            "螺纹阀门安装 公称直径(mm以内)40"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "塑料管",
+          "is_match": false,
+          "algo_id": "10-1-282",
+          "algo_name": "室内塑料排水管(热熔连接) 公称直径(mm以内)75",
+          "stored_ids": [
+            "10-1-71",
+            "10-8-32"
+          ],
+          "stored_names": [
+            "室外塑料给水管（电熔连接） 公称直径（mm以内）80"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "塑料管",
+          "is_match": false,
+          "algo_id": "10-1-64",
+          "algo_name": "室外塑料给水管(热熔连接) 公称直径(mm以内)150",
+          "stored_ids": [
+            "10-1-99"
+          ],
+          "stored_names": [
+            "室外塑料排水管(热熔连接) 公称直径(mm以内)150"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "螺纹阀门",
+          "is_match": false,
+          "algo_id": "10-4-40",
+          "algo_name": "水处理器安装(螺纹连接) 进口管径(mm以内)25",
+          "stored_ids": [
+            "10-2-341",
+            "10-2-342"
+          ],
+          "stored_names": [
+            "快速取水阀安装"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "铸铁管",
+          "is_match": true,
+          "algo_id": "10-1-49",
+          "algo_name": "室外铸铁给水管(胶圈接口) 公称直径(mm以内)200",
+          "stored_ids": [
+            "10-1-49"
+          ],
+          "stored_names": [
+            "室外铸铁给水管(胶圈接口) 公称直径(mm以内)200"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "不锈钢管",
+          "is_match": true,
+          "algo_id": "10-1-203",
+          "algo_name": "室内薄壁不锈钢管(卡压连接) 公称直径(mm以内)20",
+          "stored_ids": [
+            "10-1-203"
+          ],
+          "stored_names": [
+            "室内薄壁不锈钢管（卡压连接） 公称直径(mm以内)20"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "钢管",
+          "is_match": false,
+          "algo_id": "10-1-156",
+          "algo_name": "室内镀锌钢管(螺纹连接) 公称直径(mm以内)100",
+          "stored_ids": [
+            "10-1-169"
+          ],
+          "stored_names": [
+            "室内钢管(焊接) 公称直径(mm以内)300"
+          ],
+          "confidence": 59
+        },
+        {
+          "bill_name": "塑料管",
+          "is_match": false,
+          "algo_id": "10-1-69",
+          "algo_name": "室外塑料给水管(电熔连接) 公称直径(mm以内)50",
+          "stored_ids": [
+            "10-1-59",
+            "10-8-31"
+          ],
+          "stored_names": [
+            "室外塑料给水管(热熔连接) 公称直径(mm以内)50"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "视频控制设备",
+          "is_match": true,
+          "algo_id": "5-6-119",
+          "algo_name": "视频综合管理平台包含软硬件",
+          "stored_ids": [
+            "5-6-119"
+          ],
+          "stored_names": [
+            "视频综合管理平台包含软硬件"
+          ],
+          "confidence": 52
+        },
+        {
+          "bill_name": "网络服务器",
+          "is_match": false,
+          "algo_id": "5-1-49",
+          "algo_name": "服务器刀片式(套)≤7",
+          "stored_ids": [
+            "5-1-51"
+          ],
+          "stored_names": [
+            "服务器小型机"
+          ],
+          "confidence": 52
+        },
+        {
+          "bill_name": "背景音乐系统设备",
+          "is_match": false,
+          "algo_id": "5-5-131",
+          "algo_name": "公共广播、背景音乐系统设备 音控器",
+          "stored_ids": [
+            "5-5-82"
+          ],
+          "stored_names": [
+            "园林草地扬声器"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "机柜、机架",
+          "is_match": true,
+          "algo_id": "5-2-3",
+          "algo_name": "标准落地式机柜19\"",
+          "stored_ids": [
+            "5-2-3",
+            "4-4-68"
+          ],
+          "stored_names": [
+            "标准落地式机柜19″"
+          ],
+          "confidence": 66
+        },
+        {
+          "bill_name": "投影灯",
+          "is_match": false,
+          "algo_id": "5-5-196",
+          "algo_name": "投影仪8000lm以上",
+          "stored_ids": [
+            "5-5-195",
+            "6-10-28"
+          ],
+          "stored_names": [
+            "投影仪普通"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "双绞线缆",
+          "is_match": false,
+          "algo_id": "5-2-15",
+          "algo_name": "双绞线缆 线槽(桥架)内布放≤4对",
+          "stored_ids": [
+            "5-2-13"
+          ],
+          "stored_names": [
+            "双绞线缆 管内穿放≤4对"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "插箱、机柜",
+          "is_match": true,
+          "algo_id": "5-2-3",
+          "algo_name": "标准落地式机柜19\"",
+          "stored_ids": [
+            "5-2-3"
+          ],
+          "stored_names": [
+            "标准落地式机柜19\""
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "碳钢阀门",
+          "is_match": false,
+          "algo_id": "7-3-33",
+          "algo_name": "风管防火阀周长(mm)≤3600",
+          "stored_ids": [
+            "7-3-34",
+            "13-1-39"
+          ],
+          "stored_names": [
+            "风管防火阀周长(mm)≤5400"
+          ],
+          "confidence": 66
+        },
+        {
+          "bill_name": "消声器",
+          "is_match": false,
+          "algo_id": "7-3-194",
+          "algo_name": "片式消声器安装周长(mm)≤2400",
+          "stored_ids": [
+            "7-3-197",
+            "12-1-5"
+          ],
+          "stored_names": [
+            "片式消声器安装周长(mm)≤5800"
+          ],
+          "confidence": 76
+        },
+        {
+          "bill_name": "不锈钢板通风管道",
+          "is_match": false,
+          "algo_id": "7-2-49",
+          "algo_name": "不锈钢圆形风管(氩弧焊)直径×壁厚(mm)>700×3",
+          "stored_ids": [
+            "7-2-44"
+          ],
+          "stored_names": [
+            "不锈钢板圆形风管(电弧焊)直径×壁厚(mm)>700×3"
+          ],
+          "confidence": 80
+        },
+        {
+          "bill_name": "静压箱",
+          "is_match": false,
+          "algo_id": "7-3-209",
+          "algo_name": "静压箱制作",
+          "stored_ids": [
+            "7-3-207",
+            "13-1-39"
+          ],
+          "stored_names": [
+            "静压箱安装展开面积(m2)≤10"
+          ],
+          "confidence": 76
+        },
+        {
+          "bill_name": "柔性软风管",
+          "is_match": true,
+          "algo_id": "7-2-163",
+          "algo_name": "软管接口",
+          "stored_ids": [
+            "7-2-163"
+          ],
+          "stored_names": [
+            "软管接口"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "铝及铝合金风口、散流器",
+          "is_match": false,
+          "algo_id": "7-3-68",
+          "algo_name": "铝合金圆形、流线形散流器直径(mm)≤360",
+          "stored_ids": [
+            "7-3-61"
+          ],
+          "stored_names": [
+            "铝合金旋转吹风口直径(mm)≤320"
+          ],
+          "confidence": 92
+        },
+        {
+          "bill_name": "低压法兰阀门",
+          "is_match": false,
+          "algo_id": "8-3-115",
+          "algo_name": "低压阀门 安全阀门 (法兰连接) 公称直径(mm以内)400",
+          "stored_ids": [
+            "8-3-31"
+          ],
+          "stored_names": [
+            "低压阀门 法兰阀门 公称直径(mm以内)400"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "低压法兰阀门",
+          "is_match": false,
+          "algo_id": "8-3-108",
+          "algo_name": "低压阀门 安全阀门 (法兰连接) 公称直径(mm以内)100",
+          "stored_ids": [
+            "8-3-24"
+          ],
+          "stored_names": [
+            "低压阀门 法兰阀门 公称直径(mm以内)100"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "低压法兰阀门",
+          "is_match": false,
+          "algo_id": "8-3-104",
+          "algo_name": "低压阀门 安全阀门 (法兰连接) 公称直径(mm以内)40",
+          "stored_ids": [
+            "8-3-20"
+          ],
+          "stored_names": [
+            "低压阀门 法兰阀门 公称直径(mm以内)40"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "低压不锈钢管件",
+          "is_match": false,
+          "algo_id": "8-2-101",
+          "algo_name": "低压管件 不锈钢管件 (氩电联焊) 公称直径(mm以内)10",
+          "stored_ids": [
+            "8-2-119"
+          ],
+          "stored_names": [
+            "低压管件 不锈钢管件 (氩弧焊) 公称直径(mm以内)100"
+          ],
+          "confidence": 80
+        },
+        {
+          "bill_name": "水喷淋钢管",
+          "is_match": true,
+          "algo_id": "9-1-21",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)200",
+          "stored_ids": [
+            "9-1-21"
+          ],
+          "stored_names": [
+            "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)200"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "消防水炮",
+          "is_match": false,
+          "algo_id": "9-1-47",
+          "algo_name": "水流指示器 沟槽法兰连接 公称直径(mm以内)80",
+          "stored_ids": [
+            "9-1-95"
+          ],
+          "stored_names": [
+            "消防水炮 进口口径(mm以内)80"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "报警联动一体机",
+          "is_match": true,
+          "algo_id": "9-4-32",
+          "algo_name": "报警联动一体机安装 2048点以内",
+          "stored_ids": [
+            "9-4-32"
+          ],
+          "stored_names": [
+            "报警联动一体机安装 2048点以内"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "水喷淋钢管",
+          "is_match": true,
+          "algo_id": "9-1-20",
+          "algo_name": "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150",
+          "stored_ids": [
+            "9-1-20"
+          ],
+          "stored_names": [
+            "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)150"
+          ],
+          "confidence": 85
+        },
+        {
+          "bill_name": "套管",
+          "is_match": false,
+          "algo_id": "13-1-108",
+          "algo_name": "一般穿墙钢套管制作安装 公称直径(mm以内)50",
+          "stored_ids": [
+            "13-1-127"
+          ],
+          "stored_names": [
+            "电气人防穿墙管制作安装 公称直径（mm以内）50"
+          ],
+          "confidence": 79
+        },
+        {
+          "bill_name": "开孔（打洞）",
+          "is_match": false,
+          "algo_id": "13-1-139",
+          "algo_name": "混凝土墙体钻孔 钻孔直径(mm以内)108",
+          "stored_ids": [
+            "13-1-134"
+          ],
+          "stored_names": [
+            "混凝土楼板钻孔 钻孔直径（mm以内）108~砖墙及砌体墙钻孔"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "套管",
+          "is_match": false,
+          "algo_id": "13-1-109",
+          "algo_name": "一般穿墙钢套管制作安装 公称直径(mm以内)100",
+          "stored_ids": [
+            "13-1-128"
+          ],
+          "stored_names": [
+            "电气人防穿墙管制作安装 公称直径(mm以内)70"
+          ],
+          "confidence": 77
+        },
+        {
+          "bill_name": "管道绝热",
+          "is_match": true,
+          "algo_id": "12-4-357",
+          "algo_name": "橡塑管壳安装(管道) 管道DN125mm以下",
+          "stored_ids": [
+            "12-4-357"
+          ],
+          "stored_names": [
+            "橡塑管壳安装(管道) 管道DN125mm以下"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "管道绝热",
+          "is_match": false,
+          "algo_id": "12-4-409",
+          "algo_name": "复合保温膏安装 管道(管径mm)DN125mm以内 厚度40",
+          "stored_ids": [
+            "12-4-356"
+          ],
+          "stored_names": [
+            "橡塑管壳安装(管道) 管道DN80mm以下"
+          ],
+          "confidence": 88
+        },
+        {
+          "bill_name": "离心式泵",
+          "is_match": false,
+          "algo_id": "1-11-26",
+          "algo_name": "离心式冷水机组 制冷量(kW以内)1800",
+          "stored_ids": [
+            "1-8-15"
+          ],
+          "stored_names": [
+            "泵类设备安装 多级离心泵 设备重量(t以内)1.0"
+          ],
+          "confidence": 95
+        },
+        {
+          "bill_name": "沟槽式法兰阀门",
+          "is_match": false,
+          "algo_id": "6-10-12",
+          "algo_name": "卡套式阀门",
+          "stored_ids": [
+            "6-1-97"
+          ],
+          "stored_names": [
+            "流量开关"
+          ],
+          "confidence": 59
+        }
+      ]
+    }
+  ]
+}

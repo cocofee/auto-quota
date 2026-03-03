@@ -647,9 +647,30 @@ LLM_VERIFY_ENABLED = os.getenv("LLM_VERIFY_ENABLED", "1").strip().lower() not in
     "0", "false", "no", "off", ""
 )
 
+# 验证使用的大模型（空=沿用AGENT_LLM，支持匹配和验证用不同模型）
+# 例如：匹配用千问(AGENT_LLM=qwen)，验证用Kimi(VERIFY_LLM=kimi)
+VERIFY_LLM = os.getenv("VERIFY_LLM", "")
+
+# 验证模型的具体型号（空=使用该厂商的默认型号）
+# 例如：VERIFY_LLM=kimi + VERIFY_MODEL=kimi-k2.5
+# 不填则自动读取对应厂商的默认型号（如KIMI_MODEL）
+VERIFY_MODEL = os.getenv("VERIFY_MODEL", "")
+
 # 跳过验证的置信度阈值（高于此值不验证，节省API费用）
-# 设为100表示全部验证（前期保质量）；后期稳定后可调低到90节省API费用
-VERIFY_SKIP_THRESHOLD = int(os.getenv("VERIFY_SKIP_THRESHOLD", "100"))
+# 88=只验证中低置信度项（推荐），100=全部验证
+VERIFY_SKIP_THRESHOLD = int(os.getenv("VERIFY_SKIP_THRESHOLD", "88"))
+
+# 验证并发数（并行验证多条，加速验证阶段）
+VERIFY_CONCURRENT = int(os.getenv("VERIFY_CONCURRENT", "8"))
+
+# 验证任务的max_tokens（验证输出很短，不需要1500）
+VERIFY_MAX_TOKENS = int(os.getenv("VERIFY_MAX_TOKENS", "200"))
+
+# 验证任务的超时时间（秒，验证比匹配简单，不需要90秒）
+VERIFY_TIMEOUT = int(os.getenv("VERIFY_TIMEOUT", "30"))
+
+# 绿灯抽检率（置信度>=阈值的也随机抽检一部分，保底质量监控）
+VERIFY_SPOT_CHECK_RATE = float(os.getenv("VERIFY_SPOT_CHECK_RATE", "0.05"))
 
 # 批量审核模式（中置信度项打包一次LLM调用，减少API调用次数）
 AGENT_BATCH_ENABLED = True              # 是否启用批量审核

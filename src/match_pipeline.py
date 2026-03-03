@@ -89,6 +89,29 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
     return error
 
 
+def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
+    """在候选列表中优先选类别匹配的（规则审核前置）
+
+    遍历候选，跳过类别明显不匹配的（如清单是阀门但定额是管道）。
+    如果所有候选都不通过类别检查，回退到第一个（保持原有行为）。
+    只检查前5个候选，避免性能问题。
+    """
+    if len(candidates) <= 1:
+        return candidates[0]
+
+    desc = item.get("description", "") or ""
+    desc_lines = extract_description_lines(desc)
+
+    for cand in candidates[:5]:
+        quota_name = cand.get("name", "")
+        error = check_category_mismatch(item, quota_name, desc_lines)
+        if not error:
+            return cand
+
+    # 全部不通过，回退到第一个
+    return candidates[0]
+
+
 # ============================================================
 # 前置构建
 # ============================================================
@@ -408,12 +431,13 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     if valid_candidates:
         matched_candidates = [c for c in valid_candidates if c.get("param_match", True)]
         if matched_candidates:
-            best = matched_candidates[0]
+            # 规则审核前置：跳过类别明显不匹配的候选
+            best = _pick_category_safe_candidate(item, matched_candidates)
             param_score = best.get("param_score", 0.5)
             confidence = calculate_confidence(param_score, param_match=True)
             explanation = best.get("param_detail", "")
         else:
-            best = valid_candidates[0]
+            best = _pick_category_safe_candidate(item, valid_candidates)
             param_score = best.get("param_score", 0.0)
             confidence = calculate_confidence(param_score, param_match=False)
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
