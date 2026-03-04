@@ -1,25 +1,7 @@
 {
-  "_说明": "Jarvis固定benchmark数据集定义。路径不存在的数据集会跳过（不阻塞其他集的测试）。",
-  "_更新日期": "2026-02-23",
+  "_说明": "Benchmark数据集配置。JSON试卷在 tests/benchmark_papers/ 下自动加载，这里只配置Excel数据集。",
+  "_更新日期": "2026-03-04",
   "datasets": {
-    "B1_公厕给排水": {
-      "path": "D:/测试数据/2025/公厕-给排水.xlsx",
-      "expected_items_range": [20, 50],
-      "focus": "经验库命中+参数匹配（给排水管道为主，DN/材质参数丰富）",
-      "province": "北京市建设工程施工消耗量标准(2024)"
-    },
-    "B2_电气系统": {
-      "path": "D:/测试数据/2025/厂房-电气系统.xlsx",
-      "expected_items_range": [200, 300],
-      "focus": "跨省匹配+多Sheet+电气专业（配电箱/配管/配线/电缆/灯具）",
-      "province": "北京市建设工程施工消耗量标准(2024)"
-    },
-    "B3_配套楼混合": {
-      "path": "output/temp/7#配套楼-自动编清单.xlsx",
-      "expected_items_range": [30, 150],
-      "focus": "多专业混合+合并单元格（给排水+电气+消防+通风）",
-      "province": "北京市建设工程施工消耗量标准(2024)"
-    },
     "B4_脏数据": {
       "path": "tests/fixtures/dirty_data_sample.xlsx",
       "expected_items_range": [15, 25],
@@ -27,18 +9,10 @@
       "province": "北京市建设工程施工消耗量标准(2024)"
     }
   },
-  "metrics": [
-    "total",
-    "green_rate",
-    "yellow_rate",
-    "red_rate",
-    "exp_hit_rate",
-    "fallback_rate",
-    "avg_time_sec"
-  ],
   "regression_tolerance": {
     "_说明": "回归测试允许的浮动范围（绝对值），超出视为退化",
     "green_rate": 0.02,
-    "red_rate": 0.03
+    "red_rate": 0.03,
+    "hit_rate": 2.0
   }
 }

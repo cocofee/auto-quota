@@ -1,0 +1,5450 @@
+{
+  "province": "北京市建设工程施工消耗量标准(2024)",
+  "total_items": 414,
+  "authority_count": 282,
+  "candidate_count": 132,
+  "content_hash": "a58765ec",
+  "created": "2026-03-04",
+  "items": [
+    {
+      "id": 12477,
+      "bill_text": "塑料管 名称:PP-R管(附带阻氧层) 型号、规格:De32*3.6（S4系列） 连接形式:热熔连接 压力试验及吹、洗设计要求:水压试验、冲洗、管道标识、末端丝堵等 管件供应及安装 未尽事宜:满足规范及设计要求",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "C10-2-92"
+      ],
+      "quota_names": [
+        "给水塑料管埋地敷设(热熔连接) 公称直径(mm以内) 32  "
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 8,
+      "bill_text": "软接头(软管） 材质:金属软管 规格:DN15，大于 4m/根",
+      "bill_name": "软接头(软管）",
+      "quota_ids": [
+        "C10-5-128"
+      ],
+      "quota_names": [
+        "软接头(螺纹连接) 公称直径(mm以内) 15"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 9,
+      "bill_text": "螺纹阀门 类型:可调式减压阀 规格、压力等级 :DN65 1.6Mpa",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "C8-8-86"
+      ],
+      "quota_names": [
+        "中压调节阀门 公称直径(mm以内) 65"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 14,
+      "bill_text": "消防模块 名称：超低温模块式涡旋式空气源热泵",
+      "bill_name": "消防模块",
+      "quota_ids": [
+        "C10-10-24"
+      ],
+      "quota_names": [
+        "空气源热泵安装 制热量(kW以内) 50"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 352,
+      "bill_text": "无缝钢管 名称:无缝钢管 规格:DN100 连接形式:焊接 压力试验及吹、洗设计要求:水压试验、冲洗、管道标识等 其他:包含管件供应安装，综合单价中含穿非混凝土构件的套管制作及安装，不再另计 未尽事宜:满足规范及设计要求",
+      "bill_name": "无缝钢管",
+      "quota_ids": [
+        "C10-3-87"
+      ],
+      "quota_names": [
+        "室内无缝钢管(焊接) 管外径(mm以内) 108"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 28,
+      "bill_text": "法兰 名称：冷热量计量装置 规格、压力等级：DN100",
+      "bill_name": "法兰",
+      "quota_ids": [
+        "C10-5-182"
+      ],
+      "quota_names": [
+        "热量表(法兰连接) 公称直径(mm以内) 100"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 692,
+      "bill_text": "碳钢阀门 名称:280℃防火阀 规格:1000*1000 类型:风管上 支吊架制作安装 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "碳钢阀门",
+      "quota_ids": [
+        "C7-6-4"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 5000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 251,
+      "bill_text": "套管 名称:入户套管 材质:钢管 规格:DN80 满足现行质量验收规范要求",
+      "bill_name": "套管",
+      "quota_ids": [
+        "C10-4-20",
+        "C10-4-44"
+      ],
+      "quota_names": [
+        "刚性防水套管制作 公称直径(mm以内) 80",
+        "刚性防水套管安装 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 45,
+      "bill_text": "柔性软风管 材质：帆布 规格：630＜直径mm≤1000",
+      "bill_name": "柔性软风管",
+      "quota_ids": [
+        "C7-4-2"
+      ],
+      "quota_names": [
+        "复合型圆形风管安装(无法兰连接) 直径(mm以内) 630"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 414,
+      "bill_text": "风机 设备编号：PY-6#-B1-1 设备名称：轴流风机 规格及技术参数：L=31500m 3 /h P=1073Pa N=15kW r=1450r/min 92dB(A)230kg",
+      "bill_name": "风机",
+      "quota_ids": [
+        "C4-6-3",
+        "C1-5-16",
+        "C7-1-175"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 15",
+        "轴流通风机 设备重量(t以内) 0.5",
+        "混(斜)流风机吊架制作安装 风机型号(以内) 5#"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 76,
+      "bill_text": "除污器(过滤器) 名称：Y型过滤器 规格、压力等级：DN20",
+      "bill_name": "除污器(过滤器)",
+      "quota_ids": [
+        "C2-4-14"
+      ],
+      "quota_names": [
+        "油过滤器安装 出力(t/h) ≤10"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 128,
+      "bill_text": "照明开关、按钮 名称：事故风机手动开关 规格：事故风机手动开关",
+      "bill_name": "照明开关、按钮",
+      "quota_ids": [
+        "C4-4-115"
+      ],
+      "quota_names": [
+        "钥匙(取电)开关"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 370,
+      "bill_text": "软接头(软管) 材质:橡胶软接头 规格:DN100 连接形式:焊接",
+      "bill_name": "软接头(软管)",
+      "quota_ids": [
+        "C10-5-138"
+      ],
+      "quota_names": [
+        "软接头(法兰连接) 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 151,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：方形散流器 规格：400*120",
+      "bill_name": "碳钢风口、散流器、百叶窗",
+      "quota_ids": [
+        "C7-7-2"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 1200"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 686,
+      "bill_text": "碳钢通风管道 材质:镀锌钢板 形状:矩形 规格:大边长≤1000mm 板材厚度:1.0mm 接口形式:法兰连接 管件、法兰等附件及吊架制作安装 通风管道场外运输 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "碳钢通风管道",
+      "quota_ids": [
+        "C7-2-10",
+        "C7-2-47"
+      ],
+      "quota_names": [
+        "薄钢板通风管道制作 钢板矩形风管制作(δ=1.2mm以内、咬口) 大边长(mm以内) 1000",
+        "薄钢板通风管道安装 钢板矩形风管安装(δ=1.2mm以内、咬口) 大边长(mm以内) 1000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 183,
+      "bill_text": "清单规范：《建设工程工程量清单计价标准》（GB/T 50500-2024）",
+      "bill_name": "清单规范：《建设工程工程量清单计价标准》（GB/T 50500-2024）",
+      "quota_ids": [
+        "C5-1-70"
+      ],
+      "quota_names": [
+        "操作台 单工位≤1.2m"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 184,
+      "bill_text": "生成时间：2026-02-07 22:36:13",
+      "bill_name": "生成时间：2026-02-07 22:36:13",
+      "quota_ids": [
+        "C6-7-55"
+      ],
+      "quota_names": [
+        "铜管伴热管(管径mm以内) 22"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 189,
+      "bill_text": "清单匹配错误：因原始数据信息模糊、不全，导致 AI 未精准匹配最优清单；",
+      "bill_name": "清单匹配错误：因原始数据信息模糊、不全，导致 AI 未精准匹配最优清单；",
+      "quota_ids": [
+        "C5-1-62"
+      ],
+      "quota_names": [
+        "视频分析服务器 ≤50路视频"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 192,
+      "bill_text": "清单检查与完善：建议在EXCLE格式中调整（按下述方法操作，比计价软件中调整快），按一下步骤如下：",
+      "bill_name": "清单检查与完善：建议在EXCLE格式中调整（按下述方法操作，比计价软件中调整快），按一下步骤如下：",
+      "quota_ids": [
+        "C5-6-212"
+      ],
+      "quota_names": [
+        "费用显示及报价器"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 193,
+      "bill_text": "特征完善：\n结合项目图纸及项目要求，使用WPS中的插件酷造价-【小栗AI】的【项目特征】-【批量修改】功能，快速批量修改规范补充项目特征描述，确保信息完整；",
+      "bill_name": "特征完善：\n结合项目图纸及项目要求，使用WPS中的插件酷造价-【小栗AI】的【项目特征】-【批量修改】功能，快速批量修改规范补充项目特征描述，确保信息完整；",
+      "quota_ids": [
+        "C1-4-81"
+      ],
+      "quota_names": [
+        "辅助项目 金属门套安装"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 195,
+      "bill_text": "以上提及的功能在插件中均为免费功能，安装WPS插件酷造价，即刻使用",
+      "bill_name": "以上提及的功能在插件中均为免费功能，安装WPS插件酷造价，即刻使用",
+      "quota_ids": [
+        "C3-5-77"
+      ],
+      "quota_names": [
+        "烟囱制作安装(直径) 安装 1200以上"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 196,
+      "bill_text": "点击此处下载酷造价   链接:https://www.kuzaojia.com/",
+      "bill_name": "点击此处下载酷造价   链接:https://www.kuzaojia.com/",
+      "quota_ids": [
+        "C4-13-18"
+      ],
+      "quota_names": [
+        "砌筑结构打洞(孔) 孔洞直径(mm以内) 100"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 197,
+      "bill_text": "小栗AI-【项目特征处理】功能讲解视频，点击此处查看：https://3kgc.com/vod_lessons/39/play?vid=163",
+      "bill_name": "小栗AI-【项目特征处理】功能讲解视频，点击此处查看：https://3kgc.com/vod_lessons/39/play?vid=163",
+      "quota_ids": [
+        "C5-6-60"
+      ],
+      "quota_names": [
+        "人体生物特征识别 采集器"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 198,
+      "bill_text": "温馨提示：清单编制需符合对应清单规范及项目实际施工要求，确保计价基础精准合规～",
+      "bill_name": "温馨提示：清单编制需符合对应清单规范及项目实际施工要求，确保计价基础精准合规～",
+      "quota_ids": [
+        "C5-1-70"
+      ],
+      "quota_names": [
+        "操作台 单工位≤1.2m"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 228,
+      "bill_text": "配电箱1-AL 名称:配电箱1-AL 型号:非标定制 规格:7回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱1-AL",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 229,
+      "bill_text": "配电箱B1-AL 名称:配电箱B1-AL 型号:非标定制 规格:7回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AL",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 230,
+      "bill_text": "配电箱B1-ALE 名称:配电箱B1-ALE 型号:非标定制 规格:7回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-ALE",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 231,
+      "bill_text": "配电箱B1-AP-CJ 名称:配电箱B1-AP-CJ 型号:600*800*250 规格:4回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AP-CJ",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 232,
+      "bill_text": "配电箱B1-AT-PFPY 名称:配电箱B1-AT-PFPY 型号:600*700*250 规格:4回路 安装方式:底边距地1.3m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-PFPY",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 233,
+      "bill_text": "配电箱B1-AT-SFBU 名称:配电箱B1-AT-SFBU 型号:600*700*250 规格:4回路 安装方式:底边距地1.3m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-SFBU",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 234,
+      "bill_text": "配电箱B1-AT-XF 名称:配电箱B1-AT-XF 型号:450*600*250 规格:4回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-XF",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 235,
+      "bill_text": "控制箱AC-B1-WS1~4 名称:控制箱AC-B1-WS1~4 型号:设备自带控制箱 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求 仅考虑安装费",
+      "bill_name": "控制箱AC-B1-WS1~4",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 236,
+      "bill_text": "控制箱JLM 名称:控制箱JLM 型号:设备自带控制箱 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求 仅考虑安装费",
+      "bill_name": "控制箱JLM",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 237,
+      "bill_text": "配电箱LJZ-AA1 名称:LJZ-AA1 型号:600*1400*400 规格:4回路 安装方式:配电间 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱LJZ-AA1",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 238,
+      "bill_text": "配电箱LJZ-AA2 名称:LJZ-AA2 型号:600*1400*400 规格:4回路 安装方式:配电间 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱LJZ-AA2",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 239,
+      "bill_text": "桥架 名称:普通强电桥架 规格:100*100 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "桥架",
+      "quota_ids": [
+        "C4-11-249"
+      ],
+      "quota_names": [
+        "钢制槽式桥架(宽+高)(mm以下) 400"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 243,
+      "bill_text": "支/吊架、基础型钢 材质:金属支架 详见图纸、图集、规范等（包括为满足设计、验收规范规定施工所需的一切工序）",
+      "bill_name": "支/吊架、基础型钢",
+      "quota_ids": [
+        "C10-4-1",
+        "C10-4-2"
+      ],
+      "quota_names": [
+        "制作 一般管架",
+        "安装 一般管架"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 362,
+      "bill_text": "金属结构刷油 油漆品种:防锈漆、调和漆 结构类型:一般钢结构 涂刷遍数、漆膜厚度:各两遍 未尽事宜:满足规范及设计要求",
+      "bill_name": "金属结构刷油",
+      "quota_ids": [
+        "C12-2-61",
+        "C12-2-62",
+        "C12-2-71",
+        "C12-2-72"
+      ],
+      "quota_names": [
+        "金属结构刷油 防锈漆 一遍",
+        "金属结构刷油 防锈漆 增一遍",
+        "金属结构刷油 调合漆 一遍",
+        "金属结构刷油 调合漆 增一遍"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 245,
+      "bill_text": "防火堵洞(隔板)、孔洞封堵 名称:防火堵洞 部位:穿墙 详见设计说明 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "防火堵洞(隔板)、孔洞封堵",
+      "quota_ids": [
+        "C4-8-494"
+      ],
+      "quota_names": [
+        "防火堵洞 穿墙洞"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 246,
+      "bill_text": "配管SC15 名称:焊接钢管 规格:DN15mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC15",
+      "quota_ids": [
+        "C4-11-34"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 15"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 247,
+      "bill_text": "配管SC20 名称:焊接钢管 规格:DN20mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC20",
+      "quota_ids": [
+        "C4-11-35"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 248,
+      "bill_text": "配管SC25 名称:焊接钢管 规格:DN25mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC25",
+      "quota_ids": [
+        "C4-11-36"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 25"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 249,
+      "bill_text": "配管SC40 名称:焊接钢管 规格:DN40mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC40",
+      "quota_ids": [
+        "C4-11-38"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 40"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 250,
+      "bill_text": "凿(压、切割)槽 名称:剔槽 规格:20以内 类型:后砌墙 满足现行质量验收规范要求",
+      "bill_name": "凿(压、切割)槽",
+      "quota_ids": [
+        "C4-13-6"
+      ],
+      "quota_names": [
+        "凿槽 混凝土结构 管径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 252,
+      "bill_text": "电力电缆 名称:电力电缆 型号:NH-YJV-4*4 材质:铜芯 敷设方式、部位:沿桥架或穿管敷设 电压等级(kV):1KV以下 满足现行质量验收规范要求",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "C4-8-22"
+      ],
+      "quota_names": [
+        "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 6"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 260,
+      "bill_text": "电力电缆头 名称:电力电缆头 规格:5×10mm2 电压等级（kV):1KV以下 满足现行质量验收规范要求",
+      "bill_name": "电力电缆头",
+      "quota_ids": [
+        "C4-8-236"
+      ],
+      "quota_names": [
+        "户内干包式非铠装电力电缆终端头制作安装 1kV以下(mm2以内) 5×16"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 266,
+      "bill_text": "配线 名称:配线 型号:WDZN-BYJ-1.5 敷设方式、部位:穿管敷设 满足现行质量验收规范要求",
+      "bill_name": "配线",
+      "quota_ids": [
+        "C4-11-282"
+      ],
+      "quota_names": [
+        "管内穿铜芯线照明线路 导线截面(mm2以内) 1.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 270,
+      "bill_text": "普通灯具 名称:壁装LED 规格:1x18W  LED 安装形式:管吊,距地2.6m 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "C4-12-207"
+      ],
+      "quota_names": [
+        "吊杆式荧光灯安装 无吊顶处 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 277,
+      "bill_text": "铁质接线盒 名称:接线盒 材质:钢制 安装形式:暗装 未尽事项详见施工图纸及相关技术规范标准综合报价",
+      "bill_name": "铁质接线盒",
+      "quota_ids": [
+        "C4-11-382"
+      ],
+      "quota_names": [
+        "钢制接线盒 暗装 混凝土结构"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 278,
+      "bill_text": "照明开关 名称:单控单联开关 规格:250V 10A 安装方式:暗装距地1.3m 满足现行质量验收规范要求",
+      "bill_name": "照明开关",
+      "quota_ids": [
+        "C4-4-103"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 281,
+      "bill_text": "插座 名称:单相两孔加三孔插座 规格:250V 10A 安装方式:距地 0.3m 满足现行质量验收规范要求",
+      "bill_name": "插座",
+      "quota_ids": [
+        "C4-4-123"
+      ],
+      "quota_names": [
+        "插座暗装 单相 双联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 283,
+      "bill_text": "避雷网 名称:屋面明装接闪带 材质:热镀锌圆钢 规格:φ10 安装形式:突出屋面的金属管道、支架等都应与接闪带可靠连接。 满足现行质量验收规范要求",
+      "bill_name": "避雷网",
+      "quota_ids": [
+        "C4-9-79"
+      ],
+      "quota_names": [
+        "接闪网 沿女儿墙敷设 避雷网直径(mm以内) 10"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 284,
+      "bill_text": "引下线（与暗柱内主筋焊接） 名称:避雷引下线 材质:利用结构主筋 下料、平直、钻孔、测位、煨弯、埋卡子、固定、焊接、刷漆等 本体及附件的制作、安装 包括为满足设计、验收规范规定施工所需的一切工序",
+      "bill_name": "引下线（与暗柱内主筋焊接）",
+      "quota_ids": [
+        "C4-9-68"
+      ],
+      "quota_names": [
+        "防雷引下线 利用结构主筋"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 285,
+      "bill_text": "总电位端子箱 名称:总等电位联结端子箱 2满足现行质量验收规范要求",
+      "bill_name": "总电位端子箱",
+      "quota_ids": [
+        "C4-9-99"
+      ],
+      "quota_names": [
+        "等电位端子箱安装 总等电位箱"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 286,
+      "bill_text": "局部等电位端子箱 名称:局部等电位端子箱 2满足现行质量验收规范要求",
+      "bill_name": "局部等电位端子箱",
+      "quota_ids": [
+        "C4-9-100"
+      ],
+      "quota_names": [
+        "等电位端子箱安装 等电位箱"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 287,
+      "bill_text": "接地断接卡子制作安装 名称:接地断接卡子制作安装 2满足现行质量验收规范要求",
+      "bill_name": "接地断接卡子制作安装",
+      "quota_ids": [
+        "C4-9-70"
+      ],
+      "quota_names": [
+        "接地断接卡子制作安装"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 288,
+      "bill_text": "热镀锌扁钢40*4 名称:接地母线 材质:热镀锌扁钢 规格:-40×4mm .满足现行质量验收规范要求",
+      "bill_name": "热镀锌扁钢40*4",
+      "quota_ids": [
+        "C4-9-19"
+      ],
+      "quota_names": [
+        "型钢接地母线敷设 暗敷设 镀锌扁钢 40×4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 289,
+      "bill_text": "热镀锌扁钢50*5 名称:接地母线 材质:热镀锌扁钢 规格:-50×5mm .满足现行质量验收规范要求",
+      "bill_name": "热镀锌扁钢50*5",
+      "quota_ids": [
+        "C4-9-20"
+      ],
+      "quota_names": [
+        "型钢接地母线敷设 暗敷设 镀锌扁钢 50×5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 290,
+      "bill_text": "基础接地网 名称:基础接地网 材质:利用结构钢筋 包括为满足设计、验收规范规定施工所需的一切工序",
+      "bill_name": "基础接地网",
+      "quota_ids": [
+        "C4-9-74"
+      ],
+      "quota_names": [
+        "均压环焊接"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 291,
+      "bill_text": "电动机检查接线 名称:电动机检查接线及调试 容量(kW):15KW以下",
+      "bill_name": "电动机检查接线",
+      "quota_ids": [
+        "C4-6-3"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 295,
+      "bill_text": "弱电箱 名称:弱电箱 安装形式:暗装 未尽事项详见施工图纸及相关技术规范标准综合报价",
+      "bill_name": "弱电箱",
+      "quota_ids": [
+        "C5-2-10"
+      ],
+      "quota_names": [
+        "弱电箱体挂墙安装 半周长1m以内"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 296,
+      "bill_text": "配电箱6-1-ALE 名称:配电箱6-1-ALE 型号:500*700*200 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-1-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 297,
+      "bill_text": "配电箱6-2-ALE 名称:配电箱6-2-ALE 型号:500*700*200 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-2-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 298,
+      "bill_text": "配电箱6-AL-1 名称:配电箱6-AL-1 型号:非标定制 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AL-1",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 299,
+      "bill_text": "配电箱6-AL-1-SY1、2 名称:配电箱6-AL-1-SY1、2 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AL-1-SY1、2",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 300,
+      "bill_text": "配电箱6-AL-2-SY 名称:配电箱6-AL-2-SY 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AL-2-SY",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 301,
+      "bill_text": "配电箱6-AL-3-SY 名称:配电箱6-AL-3-SY 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AL-3-SY",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 302,
+      "bill_text": "配电箱6-AT-1-ALE 名称:配电箱6-AT-1-ALE 型号:非标定制 规格:2回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AT-1-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 303,
+      "bill_text": "配电箱6-AT-2-ALE 名称:配电箱6-AT-2-ALE 型号:非标定制 规格:2回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AT-2-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 304,
+      "bill_text": "配电箱6-AT-3-DT 名称:配电箱6-AT-3-DT 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AT-3-DT",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 305,
+      "bill_text": "配电箱6-AT-BDS 名称:配电箱6-AT-BDS 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱6-AT-BDS",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 306,
+      "bill_text": "配电箱B1-AT-KBF 名称:配电箱B1-AT-KBF 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-KBF",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 307,
+      "bill_text": "配电箱B1-AT-PY 名称:配电箱B1-AT-PY 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-PY",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 308,
+      "bill_text": "配电箱B1-AL-KF 名称:配电箱B1-AL-KF 型号:非标定制 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AL-KF",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 309,
+      "bill_text": "电梯控制箱 名称:电梯控制箱 型号:设备自带控制箱 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求 仅考虑安装费",
+      "bill_name": "电梯控制箱",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 310,
+      "bill_text": "空气源热泵机组控制箱LR-WD-1~6 名称:空气源热泵机组控制箱LR-WD-1~6 型号:设备自带控制箱 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求 仅考虑安装费",
+      "bill_name": "空气源热泵机组控制箱LR-WD-1~6",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 311,
+      "bill_text": "水泵变频控制柜 名称:水泵变频控制柜 型号:设备自带控制箱 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求 仅考虑安装费",
+      "bill_name": "水泵变频控制柜",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 314,
+      "bill_text": "配管PC20 名称:塑料管 规格:DN20mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管PC20",
+      "quota_ids": [
+        "C4-11-176"
+      ],
+      "quota_names": [
+        "PVC阻燃塑料管暗敷设 公称直径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 315,
+      "bill_text": "配管SC32 名称:焊接钢管 规格:DN32mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC32",
+      "quota_ids": [
+        "C4-11-37"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 32"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 342,
+      "bill_text": "地源(水源、气源)热泵机组 设备编号及名称：超低温模块式涡旋式空气源热泵 LR-WD-01~05 型号及规格：Q 冷 =525kW Q 热 =374kW (室外设计工况:- 9.9 ℃) N 冷 =156kW N 热 =141kW COP 热 =2.65 空调水侧换热器 水阻 =90kPa Q 水 =90.3m 3 /h COP 冷 =3.36 运行重量: 3535kg dB ( A )≤ 77 冷水供回水温度: 7/12%%dC ;热水供回温度: 45/40%%dC R410A IPLV ( C )> 3.7 承压:≥ 1.0MPa",
+      "bill_name": "地源(水源、气源)热泵机组",
+      "quota_ids": [
+        "C10-10-5"
+      ],
+      "quota_names": [
+        "地源热泵机组安装 制冷量(kW以内) 950"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 343,
+      "bill_text": "空调冷冻水循环泵 设备编号及名称： 空调冷冻水循环泵 BPL-1 型号及规格：L=100m 3 /h N=15kW ( 380V ) H=35m 105kg η =85% 承压:≥ 1.0MPa 转速 2900r/min 变频控制 , 设备自带控制箱 二级能效 备注：一用一备",
+      "bill_name": "空调冷冻水循环泵",
+      "quota_ids": [
+        "C4-6-3",
+        "C1-6-1"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 15",
+        "单级离心式泵 设备重量(t以内) 0.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 345,
+      "bill_text": "定压补水机组 设备编号及名称：定压补水机组 BS-B1-01 型号及规格：补水泵两台: 2m 3 /h, 扬程 30mH O , N=1.5KW(380V) 2 立式气压罐总容积 0.5m 3 , 调节容积 0.03m 3 备注：事故两用",
+      "bill_name": "定压补水机组",
+      "quota_ids": [
+        "C4-6-1",
+        "C10-8-1"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 3",
+        "变频泵组安装 二台泵组 泵组出口公称直径(mm以内) 40"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 346,
+      "bill_text": "水质净化器 设备编号及名称：全自动软水器 RS-B1-01 型号及规格：产水量 2m 3 /h 树脂量 200L N=40W(220V) 水耗< 2% 盐耗< 100g/ 克当量 出水硬率≤ 0.03mmol/L 运行重量 0.36T",
+      "bill_name": "水质净化器",
+      "quota_ids": [
+        "C2-7-71"
+      ],
+      "quota_names": [
+        "全自动软化水处理器 出水量(t以内) 3"
+      ],
+      "specialty": "C2",
+      "layer": "authority"
+    },
+    {
+      "id": 347,
+      "bill_text": "真空脱气机 设备编号及名称：真空脱气机 TQ-B1-01 型号及规格：处理水量 Q=1.4t/h N=0.37kw/220v 3其他：详见图纸及设计验收规范",
+      "bill_name": "真空脱气机",
+      "quota_ids": [
+        "C1-6-86"
+      ],
+      "quota_names": [
+        "真空泵 设备重量(t以内) 0.5"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 348,
+      "bill_text": "水箱 设备编号及名称：软化水箱 SX-B1-01 型号及规格：LxWxH=1400x1400x1200 不锈钢 公称容积 2.0m 3 有效容积 2.0m 3、带浮球阀 DN25 30mm 橡塑保温",
+      "bill_name": "水箱",
+      "quota_ids": [
+        "C10-8-88"
+      ],
+      "quota_names": [
+        "整体水箱安装 水箱总容量(m3以内) 2"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 349,
+      "bill_text": "水处理器 设备编号及名称：综合水处理仪 CL-B1-01 型号及规格：处理水量 460m 3 /h N=230W ( 220V )允许水温 0~95 ℃ 额定工作压力: 1.0MPa 控制形式:全自动电动蝶阀型",
+      "bill_name": "水处理器",
+      "quota_ids": [
+        "C2-7-68"
+      ],
+      "quota_names": [
+        "组合式水处理设备安装 软化水 出力(t) ≤2"
+      ],
+      "specialty": "C2",
+      "layer": "authority"
+    },
+    {
+      "id": 350,
+      "bill_text": "热媒集配装置 设备编号及名称：分水器 型号及规格：直径ø600 L=3520mm 材质: Q235B 210kg",
+      "bill_name": "热媒集配装置 设备编号及名称：分水器 型号及规格：直径ø600 L=3520mm",
+      "quota_ids": [
+        "C8-14-11"
+      ],
+      "quota_names": [
+        "分、集水器(蒸汽分汽缸)安装 重量(kg以内) 300"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 351,
+      "bill_text": "热媒集配装置 设备编号及名称：集水器 型号及规格：直径 ø600 L=3840mm 材质: Q235B 210kg",
+      "bill_name": "热媒集配装置 设备编号及名称：集水器 型号及规格：直径 ø600 L=3840mm",
+      "quota_ids": [
+        "C8-14-11"
+      ],
+      "quota_names": [
+        "分、集水器(蒸汽分汽缸)安装 重量(kg以内) 300"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 361,
+      "bill_text": "管道支架 材质:型钢 管架形式:一般管架 未尽事宜:满足规范及设计要求",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "C10-4-1",
+        "C10-4-2"
+      ],
+      "quota_names": [
+        "制作 一般管架",
+        "安装 一般管架"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 365,
+      "bill_text": "金属阀门 名称：蝶阀 规格、压力等级：DN100 连接形式:焊接",
+      "bill_name": "金属阀门",
+      "quota_ids": [
+        "C10-5-38"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 366,
+      "bill_text": "热量表 名称：冷热量计量装置 规格、压力等级：DN100 连接形式:焊接",
+      "bill_name": "热量表",
+      "quota_ids": [
+        "C10-5-182"
+      ],
+      "quota_names": [
+        "热量表(法兰连接) 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 367,
+      "bill_text": "低压碳钢管件 名称：盲板 规格、压力等级：DN100 连接形式:焊接",
+      "bill_name": "低压碳钢管件",
+      "quota_ids": [
+        "C5-2-17"
+      ],
+      "quota_names": [
+        "盲板"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 368,
+      "bill_text": "静态平衡阀 名称:静态平衡阀 规格:DN100 连接形式:焊接",
+      "bill_name": "静态平衡阀",
+      "quota_ids": [
+        "C10-5-38"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 369,
+      "bill_text": "温度仪表 名称：温度计 其它要求详见设计说明及图纸",
+      "bill_name": "温度仪表",
+      "quota_ids": [
+        "C6-1-1"
+      ],
+      "quota_names": [
+        "膨胀式温度计 工业液体温度计"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 372,
+      "bill_text": "闸阀 名称：闸阀 规格、压力等级：DN100 连接形式:焊接",
+      "bill_name": "闸阀",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 392,
+      "bill_text": "金属阀门 名称：倒流防止器 规格：DN50",
+      "bill_name": "金属阀门 名称：倒流防止器",
+      "quota_ids": [
+        "C10-5-196"
+      ],
+      "quota_names": [
+        "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 394,
+      "bill_text": "安全阀 名称：安全阀 规格：DN32 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "安全阀 名称：安全阀",
+      "quota_ids": [
+        "C10-5-4"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 32"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 395,
+      "bill_text": "电动阀 名称：电动阀 规格：DN32 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "电动阀 名称：电动阀",
+      "quota_ids": [
+        "C10-5-4"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 32"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 396,
+      "bill_text": "截止阀 名称：铜芯截止阀 规格：DN50 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "截止阀 名称：铜芯截止阀",
+      "quota_ids": [
+        "C10-5-6"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 397,
+      "bill_text": "套管 名称：一般填料套管 规格：DN250",
+      "bill_name": "套管 名称：一般填料套管",
+      "quota_ids": [
+        "C10-4-69"
+      ],
+      "quota_names": [
+        "一般填料套管制作安装 公称直径(mm以内) 250"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 398,
+      "bill_text": "管道绝热 绝热材料品种：闭孔橡塑保温-40",
+      "bill_name": "管道绝热 绝热材料品种：闭孔橡塑保温-40",
+      "quota_ids": [
+        "C12-4-119"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 125"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 399,
+      "bill_text": "碳钢通风管道 名称：碳钢通风管道 材质：薄钢板 形状：矩形风管 规格：630＜大边长mm≤1000 板材厚度：1",
+      "bill_name": "碳钢通风管道 名称：碳钢通风管道",
+      "quota_ids": [
+        "C7-2-10",
+        "C7-2-47"
+      ],
+      "quota_names": [
+        "薄钢板通风管道制作 钢板矩形风管制作(δ=1.2mm以内、咬口) 大边长(mm以内) 1000",
+        "薄钢板通风管道安装 钢板矩形风管安装(δ=1.2mm以内、咬口) 大边长(mm以内) 1000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 401,
+      "bill_text": "柔性接口 名称:软管接头制作安装 材质:硅钛合金防火软管 支架制作安装",
+      "bill_name": "柔性接口",
+      "quota_ids": [
+        "C7-5-13"
+      ],
+      "quota_names": [
+        "硅玻钛软管接头制作安装"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 404,
+      "bill_text": "弯头导流叶片 名称：弯头导流叶片 规格：1250*500",
+      "bill_name": "弯头导流叶片 名称：弯头导流叶片",
+      "quota_ids": [
+        "C7-2-118"
+      ],
+      "quota_names": [
+        "弯头导流叶片制作组装 大边长(mm以内) 1250"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 406,
+      "bill_text": "碳钢阀门 名称：280℃防火阀 规格：800*320",
+      "bill_name": "碳钢阀门 名称：280℃防火阀",
+      "quota_ids": [
+        "C7-6-2"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 2400"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 407,
+      "bill_text": "碳钢阀门 名称：排烟阀 规格：800*320",
+      "bill_name": "碳钢阀门 名称：排烟阀",
+      "quota_ids": [
+        "C7-6-25"
+      ],
+      "quota_names": [
+        "其他调节阀安装 方、矩形周长(mm以内) 2400"
+      ],
+      "specialty": "C7",
+      "layer": "candidate"
+    },
+    {
+      "id": 409,
+      "bill_text": "碳钢阀门 名称：280℃排烟防火阀 规格：1250*500",
+      "bill_name": "碳钢阀门 名称：280℃排烟防火阀",
+      "quota_ids": [
+        "C7-6-3"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 3600"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 411,
+      "bill_text": "碳钢阀门 名称：70℃电动防火阀 规格：1600*400",
+      "bill_name": "碳钢阀门 名称：70℃电动防火阀",
+      "quota_ids": [
+        "C7-6-4"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 5000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 412,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：单层百叶风口 规格：500*400",
+      "bill_name": "碳钢风口、散流器、百叶窗 名称：单层百叶风口",
+      "quota_ids": [
+        "C7-7-3"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 1800"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 413,
+      "bill_text": "通风管道绝热 名称:新型板状防火棉 规格：厚40mm 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "通风管道绝热",
+      "quota_ids": [
+        "C12-4-131"
+      ],
+      "quota_names": [
+        "通风管道绝热 带铝箔玻璃棉制品安装 厚度(mm) 40"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 420,
+      "bill_text": "碳钢阀门 名称：70℃防火阀 规格：100",
+      "bill_name": "碳钢阀门 名称：70℃防火阀",
+      "quota_ids": [
+        "C7-6-7"
+      ],
+      "quota_names": [
+        "防火调节阀安装 圆形直径(mm以内) 150"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 425,
+      "bill_text": "碳钢阀门 名称：电动对开多叶调节阀 规格：1000*320",
+      "bill_name": "碳钢阀门 名称：电动对开多叶调节阀",
+      "quota_ids": [
+        "C7-6-18"
+      ],
+      "quota_names": [
+        "多叶调节阀安装 周长(mm以内) 3600"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 429,
+      "bill_text": "贯流式风幕 设备编号：RM-1518 设备名称：贯流式风幕 规格及技术参数：L=3600m 3 /h 出口风速 8m/sP=74Pa N=370W(220V) 电加热 20~24W 65dB(A)61kg",
+      "bill_name": "贯流式风幕",
+      "quota_ids": [
+        "C10-7-37"
+      ],
+      "quota_names": [
+        "暖风机安装 暖风机重量(kg以内) 150"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 432,
+      "bill_text": "消声器 名称：消声器 材质：薄钢板 规格：1000*320*1000",
+      "bill_name": "消声器 名称：消声器",
+      "quota_ids": [
+        "C7-10-9"
+      ],
+      "quota_names": [
+        "阻抗复合式消声器安装 周长(mm以内) 5800"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 433,
+      "bill_text": "镀锌钢管 材质:热镀锌钢管 规格:DN20 连接形式:螺纹连接 含管道水冲洗及液压试验（含施工过程、交接、交付所需水压试验） 管道、管件及场内搬运、检查及清扫管材, 坡口、调直、煨弯、对口、管道及管件焊接等所需配件的供应与安装 管道刷色环漆及管道标识，综合单价中含穿非混凝土构件的套管制作及安装，不再另计",
+      "bill_name": "镀锌钢管",
+      "quota_ids": [
+        "C10-2-2"
+      ],
+      "quota_names": [
+        "室内镀锌钢管(螺纹连接) 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 454,
+      "bill_text": "管道绝热 绝热材料品种：闭孔橡塑保温-36",
+      "bill_name": "管道绝热 绝热材料品种：闭孔橡塑保温-36",
+      "quota_ids": [
+        "C12-4-118"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 455,
+      "bill_text": "自动排气阀 名称:自动排气阀（含配套截止阀） 规格:DN20 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "自动排气阀",
+      "quota_ids": [
+        "C10-5-15"
+      ],
+      "quota_names": [
+        "自动排气阀 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 456,
+      "bill_text": "Y型过滤器 类型：Y型过滤器 规格：DN20",
+      "bill_name": "Y型过滤器 类型：Y型过滤器",
+      "quota_ids": [
+        "C10-5-2"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 458,
+      "bill_text": "电动两通阀 类型：电动两通阀 规格：DN20",
+      "bill_name": "电动两通阀 类型：电动两通阀",
+      "quota_ids": [
+        "C10-5-2"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 459,
+      "bill_text": "软接头(软管) 名称：不锈钢金属软管 规格：DN20",
+      "bill_name": "软接头(软管) 名称：不锈钢金属软管",
+      "quota_ids": [
+        "C10-5-129"
+      ],
+      "quota_names": [
+        "软接头(螺纹连接) 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 460,
+      "bill_text": "软接头(软管) 名称：塑料软接头 规格：DN20",
+      "bill_name": "软接头(软管) 名称：塑料软接头",
+      "quota_ids": [
+        "C10-5-129"
+      ],
+      "quota_names": [
+        "软接头(螺纹连接) 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 475,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：方形散流器 规格：200*200",
+      "bill_name": "碳钢风口、散流器、百叶窗 名称：方形散流器",
+      "quota_ids": [
+        "C7-7-22"
+      ],
+      "quota_names": [
+        "散流器安装 方、矩形周长(mm以内) 800"
+      ],
+      "specialty": "C7",
+      "layer": "candidate"
+    },
+    {
+      "id": 477,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：电动百叶风口 规格：400*（2000+250）",
+      "bill_name": "碳钢风口、散流器、百叶窗 名称：电动百叶风口",
+      "quota_ids": [
+        "C7-7-7"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 6000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 480,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：双层百叶风口 规格：1000*600",
+      "bill_name": "碳钢风口、散流器、百叶窗 名称：双层百叶风口",
+      "quota_ids": [
+        "C7-7-5"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 3200"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 481,
+      "bill_text": "风机盘管 设备编号：FP-010 设备名称：风机盘管 规格及技术参数：中档 L=606m 3 /h Q 冷 =5.06kw Q 热 =6.98Kw P=30Pa N=71W 噪声值≤ 37dB(A) 额定工作压力 1MPa 备注：自带回风静压箱",
+      "bill_name": "风机盘管",
+      "quota_ids": [
+        "C7-1-52"
+      ],
+      "quota_names": [
+        "风机盘管安装 吊顶式"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 484,
+      "bill_text": "天花板管道式换气扇 型号：天花板管道式换气扇 PQS-300 风量：300 风压：200 功率：35W 噪声：45 电源：220V 面板尺寸：320*320 壳体尺寸：275*275 接管直径：100",
+      "bill_name": "天花板管道式换气扇",
+      "quota_ids": [
+        "C7-1-122"
+      ],
+      "quota_names": [
+        "屋顶自然通风器安装 直径(mm以内) 300"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 486,
+      "bill_text": "静压箱 名称：静压箱 材质：薄钢板 规格：1000*800*600",
+      "bill_name": "静压箱 名称：静压箱",
+      "quota_ids": [
+        "C7-2-131"
+      ],
+      "quota_names": [
+        "静压箱制作 大边长(mm以内) 4000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 487,
+      "bill_text": "配电箱7-1-ALE 名称:配电箱7-1-ALE 型号:500*700*200 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-1-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 488,
+      "bill_text": "配电箱7-2-ALE 名称:配电箱7-2-ALE 型号:500*700*200 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-2-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 490,
+      "bill_text": "配电箱7-AT-B1-ALE 名称:配电箱7-AT-B1-ALE 型号:500*700*220 规格:3回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-B1-ALE",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 491,
+      "bill_text": "配电箱7-AL-1 名称:配电箱7-AL-1 型号:非标定制 规格:4回路 安装方式:底边距地0.8m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AL-1",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 492,
+      "bill_text": "配电箱7-AL-1-SY1、2 名称:配电箱7-AL-1-SY1、2 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AL-1-SY1、2",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 493,
+      "bill_text": "配电箱7-AL-2-SY 名称:配电箱7-AL-2-SY 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AL-2-SY",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 494,
+      "bill_text": "配电箱7-AL-3-SY 名称:配电箱7-AL-3-SY 型号:500*1100*180 规格:6回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AL-3-SY",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 495,
+      "bill_text": "配电箱7-AT-1-ALE 名称:配电箱7-AT-1-ALE 型号:非标定制 规格:2回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-1-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 496,
+      "bill_text": "配电箱7-AT-2-ALE 名称:配电箱7-AT-2-ALE 型号:非标定制 规格:2回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-2-ALE",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 497,
+      "bill_text": "配电箱7-AT-3-DT 名称:配电箱7-AT-3-DT 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-3-DT",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 498,
+      "bill_text": "配电箱7-AT-BDS1 名称:配电箱7-AT-BDS1 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-BDS1",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 499,
+      "bill_text": "配电箱7-AT-BDS2 名称:配电箱7-AT-BDS2 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-BDS2",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 500,
+      "bill_text": "配电箱7-AT-FJS 名称:配电箱7-AT-FJS 型号:600*800*250 规格:5回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱7-AT-FJS",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 501,
+      "bill_text": "配电箱B1-AT-BU 名称:配电箱B1-AT-BU 型号:600*1000*250 规格:5回路 安装方式:底边距地1.0m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱B1-AT-BU",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 502,
+      "bill_text": "配电箱AL-B1 名称:配电箱AL-B1 型号:500*600*120 规格:3回路 安装方式:底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱AL-B1",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8 双电源配电箱安装 人工*1.2,机械*1.2"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 503,
+      "bill_text": "配电箱PT-AA1 名称:PT-AA1 型号:600*2200*400 规格:8回路 安装方式:配电间 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱PT-AA1",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 504,
+      "bill_text": "配电箱PT-AA2 名称:PT-AA2 型号:600*2200*400 规格:8回路 安装方式:配电间 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱PT-AA2",
+      "quota_ids": [
+        "C4-4-31"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 8"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 505,
+      "bill_text": "配电箱兀1~2 名称:兀1~2 型号:1000*1800*500 规格:1回路 安装方式:配电间 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱兀1~2",
+      "quota_ids": [
+        "C4-4-30"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 531,
+      "bill_text": "闸阀 名称：闸阀 规格：DN40 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "闸阀 名称：闸阀",
+      "quota_ids": [
+        "C10-5-28"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 40"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 551,
+      "bill_text": "碳钢风口、散流器、百叶窗 名称：单层防雨风口 规格：600*400",
+      "bill_name": "碳钢风口、散流器、百叶窗 名称：单层防雨风口",
+      "quota_ids": [
+        "C7-7-4"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 2400"
+      ],
+      "specialty": "C7",
+      "layer": "candidate"
+    },
+    {
+      "id": 563,
+      "bill_text": "配电箱8#-B1-AL 名称:配电箱8#-B1-AL 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AL",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 564,
+      "bill_text": "配电箱8#-B1-AL-CF 名称:配电箱8#-B1-AL-CF 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AL-CF",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 565,
+      "bill_text": "配电箱8#-B1-ALE 名称:配电箱8#-B1-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 566,
+      "bill_text": "配电箱8#-B1-AL-G-Z 名称:配电箱8#-B1-AL-G-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AL-G-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 567,
+      "bill_text": "配电箱8#-B1-AL-Z 名称:配电箱8#-B1-AL-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AL-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 568,
+      "bill_text": "配电箱8#-B1-AP-CF 名称:配电箱8#-B1-AP-CF 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AP-CF",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 569,
+      "bill_text": "配电箱8#-B1-APE-XFFJ1 名称:配电箱8#-B1-APE-XFFJ1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-APE-XFFJ1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 570,
+      "bill_text": "配电箱8#-B1-AP-FJ1 名称:配电箱8#-B1-AP-FJ1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AP-FJ1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 571,
+      "bill_text": "配电箱8#-B1-AP-XYF 名称:配电箱8#-B1-AP-XYF 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AP-XYF",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 572,
+      "bill_text": "配电箱8#-B1-AT-AF 名称:配电箱8#-B1-AT-AF 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AT-AF",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 573,
+      "bill_text": "配电箱8#-B1-AT-RD 名称:配电箱8#-B1-AT-RD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AT-RD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 574,
+      "bill_text": "配电箱8#-B1-AT-XF 名称:配电箱8#-B1-AT-XF 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-AT-XF",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 575,
+      "bill_text": "配电箱8#-B1-PD 名称:配电箱8#-B1-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-B1-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 576,
+      "bill_text": "配电箱8#-F1-ALE 名称:配电箱8#-F1-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F1-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 577,
+      "bill_text": "配电箱8#-F1-AL-G 名称:配电箱8#-F1-AL-G 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F1-AL-G",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 578,
+      "bill_text": "配电箱8#-F1-AL-Z 名称:配电箱8#-F1-AL-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F1-AL-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 579,
+      "bill_text": "配电箱8#-F1-PD 名称:配电箱8#-F1-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F1-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 580,
+      "bill_text": "配电箱8#-F1-RD 名称:配电箱8#-F1-RD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F1-RD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 581,
+      "bill_text": "配电箱8#-F2-ALE 名称:配电箱8#-F2-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F2-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 582,
+      "bill_text": "配电箱8#-F2-AL-G 名称:配电箱8#-F2-AL-G 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F2-AL-G",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 583,
+      "bill_text": "配电箱8#-F2-AL-Z 名称:配电箱8#-F2-AL-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F2-AL-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 584,
+      "bill_text": "配电箱8#-F2-PD 名称:配电箱8#-F2-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F2-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 585,
+      "bill_text": "配电箱8#-F2-RD 名称:配电箱8#-F2-RD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F2-RD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 586,
+      "bill_text": "配电箱8#-F3~6-ALE 名称:配电箱8#-F3~6-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F3~6-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 587,
+      "bill_text": "配电箱8#-F3~6-AL-G 名称:配电箱8#-F3~6-AL-G 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F3~6-AL-G",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 588,
+      "bill_text": "配电箱8#-F3~6-AL-Z 名称:配电箱8#-F3~6-AL-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F3~6-AL-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 589,
+      "bill_text": "配电箱8#-F3~6-PD 名称:配电箱8#-F3~6-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F3~6-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 590,
+      "bill_text": "配电箱8#-F3~6-RD 名称:配电箱8#-F3~6-RD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F3~6-RD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 591,
+      "bill_text": "配电箱8#-F7-ALE 名称:配电箱8#-F7-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 592,
+      "bill_text": "配电箱8#-F7-AL-G 名称:配电箱8#-F7-AL-G 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-AL-G",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 593,
+      "bill_text": "配电箱8#-F7-AL-Z 名称:配电箱8#-F7-AL-Z 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-AL-Z",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 594,
+      "bill_text": "配电箱8#-F7-AP-RS 名称:配电箱8#-F7-AP-RS 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-AP-RS",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 595,
+      "bill_text": "配电箱8#-F7-AT-DT 名称:配电箱8#-F7-AT-DT 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-AT-DT",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 596,
+      "bill_text": "配电箱8#-F7-PD 名称:配电箱8#-F7-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 597,
+      "bill_text": "配电箱8#-F7-RD 名称:配电箱8#-F7-RD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-F7-RD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 598,
+      "bill_text": "配电箱8#-JC-ALE 名称:配电箱8#-JC-ALE 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-JC-ALE",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 599,
+      "bill_text": "配电箱8#-JC-PD 名称:配电箱8#-JC-PD 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-JC-PD",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 600,
+      "bill_text": "配电箱8#-RF-APE-XFFJ1 名称:配电箱8#-RF-APE-XFFJ1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-RF-APE-XFFJ1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 601,
+      "bill_text": "配电箱8#-RF-APE-XT 名称:配电箱8#-RF-APE-XT 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-RF-APE-XT",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 602,
+      "bill_text": "配电箱8#-RF-AP-JG 名称:配电箱8#-RF-AP-JG 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-RF-AP-JG",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 603,
+      "bill_text": "配电箱8#-RF-AP-KQY 名称:配电箱8#-RF-AP-KQY 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8#-RF-AP-KQY",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 604,
+      "bill_text": "配电箱8-AL-1-DGN 名称:配电箱8-AL-1-DGN 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8-AL-1-DGN",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 605,
+      "bill_text": "配电箱8-AL-YL 名称:配电箱8-AL-YL 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱8-AL-YL",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 606,
+      "bill_text": "配电箱AA1 名称:配电箱AA1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱AA1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 607,
+      "bill_text": "配电箱AA2 名称:配电箱AA2 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱AA2",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 608,
+      "bill_text": "配电箱QWB1 名称:配电箱QWB1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱QWB1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 609,
+      "bill_text": "配电箱RF-AL-JG 名称:配电箱RF-AL-JG 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱RF-AL-JG",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 610,
+      "bill_text": "配电箱WDAP-PYY1 名称:配电箱WDAP-PYY1 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "配电箱WDAP-PYY1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "",
+      "layer": "candidate"
+    },
+    {
+      "id": 611,
+      "bill_text": "T接箱 名称:T接箱 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "T接箱",
+      "quota_ids": [
+        "C4-4-24"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 619,
+      "bill_text": "配管SC50 名称:焊接钢管 规格:DN50mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC50",
+      "quota_ids": [
+        "C4-11-39"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 50"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 620,
+      "bill_text": "配管SC80 名称:焊接钢管 规格:DN80mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管SC80",
+      "quota_ids": [
+        "C4-11-41"
+      ],
+      "quota_names": [
+        "焊接钢管砖、混凝土结构暗配 公称直径(mm以内) 80"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 646,
+      "bill_text": "LED壁灯(小)1x7W 名称:LED壁灯(小)1x7W 安装形式:壁装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "LED壁灯(小)1x7W",
+      "quota_ids": [
+        "C4-12-9"
+      ],
+      "quota_names": [
+        "壁灯安装 小型壁灯(7kg以内)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 647,
+      "bill_text": "LED管灯，1x18W 名称:LED管灯，1x18W 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "LED管灯，1x18W",
+      "quota_ids": [
+        "C4-12-195"
+      ],
+      "quota_names": [
+        "吸顶式荧光灯安装 无吊顶处 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 648,
+      "bill_text": "壁装LED，1x18W 名称:壁装LED，1x18W 安装形式:壁装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "壁装LED，1x18W",
+      "quota_ids": [
+        "C4-12-9"
+      ],
+      "quota_names": [
+        "壁灯安装 小型壁灯(7kg以内)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 649,
+      "bill_text": "单管防爆LED1x18W 名称:单管防爆LED1x18W 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "单管防爆LED1x18W",
+      "quota_ids": [
+        "C4-12-195"
+      ],
+      "quota_names": [
+        "吸顶式荧光灯安装 无吊顶处 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 650,
+      "bill_text": "防水防尘吸顶LED,12W 名称:防水防尘吸顶LED,12W 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "防水防尘吸顶LED,12W",
+      "quota_ids": [
+        "C4-12-11"
+      ],
+      "quota_names": [
+        "吸顶灯安装 吊顶上安装 单罩"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 651,
+      "bill_text": "换气扇 名称:换气扇 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "换气扇",
+      "quota_ids": [
+        "C4-4-98"
+      ],
+      "quota_names": [
+        "单相排风扇"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 652,
+      "bill_text": "平板灯 名称:平板灯 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "平板灯",
+      "quota_ids": [
+        "C4-12-11"
+      ],
+      "quota_names": [
+        "吸顶灯安装 吊顶上安装 单罩"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 653,
+      "bill_text": "声控吸顶灯 名称:声控吸顶灯 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "声控吸顶灯",
+      "quota_ids": [
+        "C4-12-11"
+      ],
+      "quota_names": [
+        "吸顶灯安装 吊顶上安装 单罩"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 654,
+      "bill_text": "双管LED，2x18W 名称:双管LED，2x18W 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "双管LED，2x18W",
+      "quota_ids": [
+        "C4-12-196"
+      ],
+      "quota_names": [
+        "吸顶式荧光灯安装 无吊顶处 双管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 655,
+      "bill_text": "吸顶灯 名称:吸顶灯 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "吸顶灯",
+      "quota_ids": [
+        "C4-12-11"
+      ],
+      "quota_names": [
+        "吸顶灯安装 吊顶上安装 单罩"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 656,
+      "bill_text": "VRV室内机温度控制器 名称:VRV室内机温度控制器 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "VRV室内机温度控制器",
+      "quota_ids": [
+        "C5-3-20"
+      ],
+      "quota_names": [
+        "联网型风机盘管温控器"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 657,
+      "bill_text": "X插座 名称:X插座 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "X插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 658,
+      "bill_text": "厨宝插座 名称:厨宝插座 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "厨宝插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 659,
+      "bill_text": "单联单控开关 名称:单联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "单联单控开关",
+      "quota_ids": [
+        "C4-4-103"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 660,
+      "bill_text": "单相二、三极插座 名称:单相二、三极插座 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "单相二、三极插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 661,
+      "bill_text": "地插 名称:地插 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "地插",
+      "quota_ids": [
+        "C4-4-129"
+      ],
+      "quota_names": [
+        "地面插座"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 662,
+      "bill_text": "防爆双联单控开关 名称:防爆双联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "防爆双联单控开关",
+      "quota_ids": [
+        "C4-4-104"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 双联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 663,
+      "bill_text": "防水防尘插座 名称:防水防尘插座 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "防水防尘插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 664,
+      "bill_text": "防水双联单控开关 名称:防水双联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "防水双联单控开关",
+      "quota_ids": [
+        "C4-4-104"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 双联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 665,
+      "bill_text": "三联单控开关 名称:三联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "三联单控开关",
+      "quota_ids": [
+        "C4-4-105"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 三联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 666,
+      "bill_text": "双联单控开关 名称:双联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "双联单控开关",
+      "quota_ids": [
+        "C4-4-104"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 双联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 667,
+      "bill_text": "四联单控开关 名称:四联单控开关 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "四联单控开关",
+      "quota_ids": [
+        "C4-4-106"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 四联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 668,
+      "bill_text": "卫生间插座 名称:卫生间插座 规格:250V 10A 安装方式:暗装 满足现行质量验收规范要求",
+      "bill_name": "卫生间插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 669,
+      "bill_text": "等电位连接线 名称:等电位连接线 详见图纸、图集、规范等（包括为满足设计、验收规范规定施工所需的一切工序）",
+      "bill_name": "等电位连接线",
+      "quota_ids": [
+        "C4-9-102"
+      ],
+      "quota_names": [
+        "等电位联结 卫生间"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 670,
+      "bill_text": "配管JDG20 名称:JDG管 规格:DN20mm 配置形式:暗配 满足现行质量验收规范要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管JDG20",
+      "quota_ids": [
+        "C4-11-126"
+      ],
+      "quota_names": [
+        "紧定(扣压)式薄壁钢管砖、混凝土结构暗配 公称直径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 689,
+      "bill_text": "弯头导流叶片 名称:弯头导流叶片 材质:镀锌钢板 形状:长边长1250以下 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "弯头导流叶片",
+      "quota_ids": [
+        "C7-2-118"
+      ],
+      "quota_names": [
+        "弯头导流叶片制作组装 大边长(mm以内) 1250"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 703,
+      "bill_text": "铝及铝合金风口、散流器 名称:单层百叶风口 规格:800*600 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "铝及铝合金风口、散流器",
+      "quota_ids": [
+        "C7-7-5"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 3200"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 705,
+      "bill_text": "静压箱 名称:消音静压箱 规格:1500*1350*1350 支架制作安装 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "静压箱",
+      "quota_ids": [
+        "C7-2-131",
+        "C7-2-138",
+        "C7-1-172"
+      ],
+      "quota_names": [
+        "静压箱制作 大边长(mm以内) 4000",
+        "静压箱安装 大边长(mm以内) 4000",
+        "设备支架制作安装 每个支架重量(kg以内) 20"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 953,
+      "bill_text": "消声器 材质：薄钢板 规格：1000*320*1000",
+      "bill_name": "消声器",
+      "quota_ids": [
+        "C7-10-9"
+      ],
+      "quota_names": [
+        "阻抗复合式消声器安装 周长(mm以内) 5800"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 715,
+      "bill_text": "合用消火栓泵 名称：合用消火栓泵，详见图纸及设计验收规范",
+      "bill_name": "合用消火栓泵",
+      "quota_ids": [
+        "C1-6-2"
+      ],
+      "quota_names": [
+        "单级离心式泵 设备重量(t以内) 0.5"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 716,
+      "bill_text": "喷淋泵 名称：喷淋泵，详见图纸及设计验收规范",
+      "bill_name": "喷淋泵",
+      "quota_ids": [
+        "C1-6-2"
+      ],
+      "quota_names": [
+        "单级离心式泵 设备重量(t以内) 0.5"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 718,
+      "bill_text": "水喷淋钢管 材质：内外涂覆EP碳钢管65 连接形式：卡压连接",
+      "bill_name": "水喷淋钢管",
+      "quota_ids": [
+        "C10-3-98"
+      ],
+      "quota_names": [
+        "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 80"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 736,
+      "bill_text": "其他管道绝热 绝热材料品种：橡塑绝热材料-9",
+      "bill_name": "其他管道绝热 绝热材料品种：橡塑绝热材料-9",
+      "quota_ids": [
+        "C12-4-118"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 741,
+      "bill_text": "配电箱 名称:配电箱 规格型号:600*500*300",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 742,
+      "bill_text": "配电箱SGAT 名称:配电箱SGAT 规格型号:600*500*300",
+      "bill_name": "配电箱SGAT",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 743,
+      "bill_text": "配电箱WNAL 名称:配电箱WNAL 规格型号:600*500*300",
+      "bill_name": "配电箱WNAL",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 744,
+      "bill_text": "配电箱1ZAP 名称:配电箱1ZAP 规格型号:600*500*300",
+      "bill_name": "配电箱1ZAP",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 745,
+      "bill_text": "配电箱2JCAL 名称:配电箱2JCAL 规格型号:600*500*300",
+      "bill_name": "配电箱2JCAL",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 746,
+      "bill_text": "配电箱2XXAL 名称:配电箱2XXAL 规格型号:600*500*300",
+      "bill_name": "配电箱2XXAL",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 754,
+      "bill_text": "管内穿线 名称：管内穿线 规格：UTP 敷设方式:管道内敷设",
+      "bill_name": "管内穿线 名称：管内穿线",
+      "quota_ids": [
+        "C5-2-21"
+      ],
+      "quota_names": [
+        "双绞线缆 管内穿放 ≤4对"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 766,
+      "bill_text": "屋顶消防水箱 名称：屋顶消防水箱 型号、规格：L*B*H=3500*3000*2500",
+      "bill_name": "屋顶消防水箱",
+      "quota_ids": [
+        "C10-8-101"
+      ],
+      "quota_names": [
+        "组装水箱安装 水箱总容量(m3以内) 40"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 767,
+      "bill_text": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管65 连接形式：卡压连接 压力试验及冲洗设计要求：水冲洗及水压试验",
+      "bill_name": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管65",
+      "quota_ids": [
+        "C10-3-98"
+      ],
+      "quota_names": [
+        "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 80"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 768,
+      "bill_text": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管50 连接形式：卡压连接 压力试验及冲洗设计要求：水冲洗及水压试验",
+      "bill_name": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管50",
+      "quota_ids": [
+        "C10-3-97"
+      ],
+      "quota_names": [
+        "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 50"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 769,
+      "bill_text": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管32 连接形式：卡压连接 压力试验及冲洗设计要求：水冲洗及水压试验",
+      "bill_name": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管32",
+      "quota_ids": [
+        "C10-3-96"
+      ],
+      "quota_names": [
+        "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 40"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 770,
+      "bill_text": "水喷淋钢管 材质,规格：球墨铸铁给水管DN600 连接形式：沟槽连接 压力试验及冲洗设计要求：水冲洗及水压试验",
+      "bill_name": "水喷淋钢管 材质,规格：球墨铸铁给水管DN600",
+      "quota_ids": [
+        "C10-1-35"
+      ],
+      "quota_names": [
+        "室外给水球墨铸铁管埋设(胶圈接口) 公称直径(mm以内) 80"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 772,
+      "bill_text": "螺纹阀门 类型：减压孔板 连接形式：丝扣连接",
+      "bill_name": "螺纹阀门 类型：减压孔板",
+      "quota_ids": [
+        "C9-1-68"
+      ],
+      "quota_names": [
+        "减压孔板 公称直径(mm以内) 50"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 775,
+      "bill_text": "套管 名称、类型:普通钢制套管 规格类型：DN25",
+      "bill_name": "套管 名称、类型:普通钢制套管 规格类型：DN25",
+      "quota_ids": [
+        "C10-4-61"
+      ],
+      "quota_names": [
+        "一般填料套管制作安装 公称直径(mm以内) 25"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 776,
+      "bill_text": "一般填料套管 名称：一般填料套管 规格：1700*500",
+      "bill_name": "一般填料套管 名称：一般填料套管",
+      "quota_ids": [
+        "C10-4-74"
+      ],
+      "quota_names": [
+        "一般填料套管制作安装 公称直径(mm以内) 500"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 780,
+      "bill_text": "磷酸铵盐干粉灭火器 名称:磷酸铵盐干粉灭火器 规格、类型：MF/ABC5",
+      "bill_name": "磷酸铵盐干粉灭火器",
+      "quota_ids": [
+        "C9-1-92"
+      ],
+      "quota_names": [
+        "灭火器 手提式"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 783,
+      "bill_text": "其他管道绝热 绝热材料品种：闭孔橡塑保温-40",
+      "bill_name": "其他管道绝热 绝热材料品种：闭孔橡塑保温-40",
+      "quota_ids": [
+        "C12-4-118"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 784,
+      "bill_text": "其他管道绝热 绝热材料品种：闭孔橡塑保温-36",
+      "bill_name": "其他管道绝热 绝热材料品种：闭孔橡塑保温-36",
+      "quota_ids": [
+        "C12-4-118"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 785,
+      "bill_text": "碳钢通风管道 名称：碳钢通风管道 形状：矩形风管 规格：大边长mm≤320",
+      "bill_name": "碳钢通风管道 名称：碳钢通风管道 形状：矩形风管",
+      "quota_ids": [
+        "C7-2-7"
+      ],
+      "quota_names": [
+        "薄钢板通风管道制作 钢板矩形风管制作(δ=1.2mm以内、咬口) 大边长(mm以内) 320"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 788,
+      "bill_text": "配电箱ALE 名称:配电箱ALE 规格型号:600*500*300",
+      "bill_name": "配电箱ALE",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 795,
+      "bill_text": "壁挂式空调-1.5P 名称:壁挂式空调-1.5P",
+      "bill_name": "壁挂式空调-1.5P",
+      "quota_ids": [
+        "C7-1-14"
+      ],
+      "quota_names": [
+        "分体式空调器安装 制冷量(kW以内) 5"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 796,
+      "bill_text": "消防电话机柜 名称：消防电话机柜 规格：600*500*300",
+      "bill_name": "消防电话机柜 名称：消防电话机柜",
+      "quota_ids": [
+        "C9-4-50"
+      ],
+      "quota_names": [
+        "消防广播及对讲电话主机(柜)安装 消防电话主机 10路"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 797,
+      "bill_text": "轴流风机 名称：轴流风机 规格：SF-6#-B1-1",
+      "bill_name": "轴流风机 名称：轴流风机",
+      "quota_ids": [
+        "C7-1-65"
+      ],
+      "quota_names": [
+        "轴流式通风机安装 吊装(型号以内) 6.3#"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 798,
+      "bill_text": "射频同轴电缆 名称:SYV-75-5 敷设方式:管道内敷设",
+      "bill_name": "射频同轴电缆",
+      "quota_ids": [
+        "C5-2-36"
+      ],
+      "quota_names": [
+        "同轴电缆 管/暗槽内穿放 phi 9以下"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 800,
+      "bill_text": "光缆 规格：2芯单模光纤 敷设方式：沿桥架敷设",
+      "bill_name": "光缆",
+      "quota_ids": [
+        "C5-2-48"
+      ],
+      "quota_names": [
+        "室内穿放、布放光缆 开放式桥架内布放 ≤12芯"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 801,
+      "bill_text": "双绞线缆 规格：UTP6 敷设方式：暗敷",
+      "bill_name": "双绞线缆",
+      "quota_ids": [
+        "C5-2-21"
+      ],
+      "quota_names": [
+        "双绞线缆 管内穿放 ≤4对"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 802,
+      "bill_text": "8芯室外光缆 名称:8芯室外光缆 敷设方式:沿管内敷设",
+      "bill_name": "8芯室外光缆",
+      "quota_ids": [
+        "C5-2-40"
+      ],
+      "quota_names": [
+        "室内穿放、布放光缆 管内穿放 ≤12芯"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 803,
+      "bill_text": "导线 名称：1RD1 规格：600*500*300 跨越类型、宽度：综合布线配线架",
+      "bill_name": "导线 名称：1RD1",
+      "quota_ids": [
+        "C5-2-9"
+      ],
+      "quota_names": [
+        "弱电箱体 落地安装"
+      ],
+      "specialty": "C5",
+      "layer": "candidate"
+    },
+    {
+      "id": 804,
+      "bill_text": "导线 名称：3RD1 规格：600*500*300 跨越类型、宽度：综合布线配线架",
+      "bill_name": "导线 名称：3RD1",
+      "quota_ids": [
+        "C5-2-9"
+      ],
+      "quota_names": [
+        "弱电箱体 落地安装"
+      ],
+      "specialty": "C5",
+      "layer": "candidate"
+    },
+    {
+      "id": 805,
+      "bill_text": "配电箱路由器 名称:配电箱路由器 规格型号:600*500*300",
+      "bill_name": "配电箱路由器",
+      "quota_ids": [
+        "C5-1-88"
+      ],
+      "quota_names": [
+        "路由器 固定配置 ≤4口"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 806,
+      "bill_text": "钢制散热器 类型:钢制双柱散热器 型号、规格:TZ4-6-8",
+      "bill_name": "钢制散热器 类型:钢制双柱散热器 型号、规格:TZ4-6-8",
+      "quota_ids": [
+        "C10-7-6"
+      ],
+      "quota_names": [
+        "柱式散热器安装 散热器高度(mm以内) 600 散热器组数(片以内) 10"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 826,
+      "bill_text": "磷酸铵盐干粉灭火器 规格、类型：MF/ABC3",
+      "bill_name": "磷酸铵盐干粉灭火器 规格、类型：MF/ABC3",
+      "quota_ids": [
+        "C9-1-92"
+      ],
+      "quota_names": [
+        "灭火器 手提式"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 831,
+      "bill_text": "配电箱ALE 规格型号:600*500*300",
+      "bill_name": "配电箱ALE 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 835,
+      "bill_text": "配电箱SGAT 规格型号:600*500*300",
+      "bill_name": "配电箱SGAT 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 836,
+      "bill_text": "配电箱WNAL 规格型号:600*500*300",
+      "bill_name": "配电箱WNAL 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 837,
+      "bill_text": "配电箱1ZAP 规格型号:600*500*300",
+      "bill_name": "配电箱1ZAP 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 838,
+      "bill_text": "配电箱2JCAL 规格型号:600*500*300",
+      "bill_name": "配电箱2JCAL 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 839,
+      "bill_text": "配电箱2XXAL 规格型号:600*500*300",
+      "bill_name": "配电箱2XXAL 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 885,
+      "bill_text": "局部等电位端子箱 2满足现行质量验收规范要求",
+      "bill_name": "局部等电位端子箱 2满足现行质量验收规范要求",
+      "quota_ids": [
+        "C4-9-100"
+      ],
+      "quota_names": [
+        "等电位端子箱安装 等电位箱"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 886,
+      "bill_text": "接地断接卡子制作安装 2满足现行质量验收规范要求",
+      "bill_name": "接地断接卡子制作安装 2满足现行质量验收规范要求",
+      "quota_ids": [
+        "C4-9-70"
+      ],
+      "quota_names": [
+        "接地断接卡子制作安装"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 888,
+      "bill_text": "电动机检查接线 及调试 容量(kW):15KW以下",
+      "bill_name": "电动机检查接线 及调试 容量(kW):15KW以下",
+      "quota_ids": [
+        "C4-6-3"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 889,
+      "bill_text": "电动机检查接线 及调试 容量(kW):18.5KW以下",
+      "bill_name": "电动机检查接线 及调试 容量(kW):18.5KW以下",
+      "quota_ids": [
+        "C4-6-4"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 22"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 928,
+      "bill_text": "无缝钢管 -超高 规格:DN100 连接形式:焊接 压力试验及吹、洗设计要求:水压试验、冲洗、管道标识等 其他:包含管件供应安装，综合单价中含穿非混凝土构件的套管制作及安装，不再另计 未尽事宜:满足规范及设计要求",
+      "bill_name": "无缝钢管 -超高",
+      "quota_ids": [
+        "C10-3-87"
+      ],
+      "quota_names": [
+        "室内无缝钢管(焊接) 管外径(mm以内) 108"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 937,
+      "bill_text": "闸阀 规格、压力等级：DN100 连接形式:焊接",
+      "bill_name": "闸阀 规格、压力等级：DN100",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 940,
+      "bill_text": "安全阀 规格：DN32 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "安全阀",
+      "quota_ids": [
+        "C10-5-4"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 32"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 941,
+      "bill_text": "电动阀 规格：DN32 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "电动阀",
+      "quota_ids": [
+        "C10-5-4"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 32"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 955,
+      "bill_text": "自动排气阀 含配套截止阀） 规格:DN20 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "自动排气阀 含配套截止阀）",
+      "quota_ids": [
+        "C10-5-15"
+      ],
+      "quota_names": [
+        "自动排气阀 公称直径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 1106,
+      "bill_text": "配电箱 规格型号:600*500*300",
+      "bill_name": "配电箱 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1107,
+      "bill_text": "管内穿线 规格：UTP 敷设方式:管道内敷设",
+      "bill_name": "管内穿线",
+      "quota_ids": [
+        "C5-2-21"
+      ],
+      "quota_names": [
+        "双绞线缆 管内穿放 ≤4对"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 1116,
+      "bill_text": "磷酸铵盐干粉灭火器 规格、类型：MF/ABC5",
+      "bill_name": "磷酸铵盐干粉灭火器 规格、类型：MF/ABC5",
+      "quota_ids": [
+        "C9-1-92"
+      ],
+      "quota_names": [
+        "灭火器 手提式"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 1119,
+      "bill_text": "碳钢通风管道 形状：矩形风管 规格：大边长mm≤320",
+      "bill_name": "碳钢通风管道 形状：矩形风管",
+      "quota_ids": [
+        "C7-2-7"
+      ],
+      "quota_names": [
+        "薄钢板通风管道制作 钢板矩形风管制作(δ=1.2mm以内、咬口) 大边长(mm以内) 320"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1123,
+      "bill_text": "配电箱 1AL1 规格型号:600*800*200",
+      "bill_name": "配电箱 1AL1 规格型号:600*800*200",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1124,
+      "bill_text": "配电箱 3AL1 规格型号:600*800*200",
+      "bill_name": "配电箱 3AL1 规格型号:600*800*200",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1125,
+      "bill_text": "配电箱 SGAT 规格型号:600*500*300",
+      "bill_name": "配电箱 SGAT 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1126,
+      "bill_text": "配电箱 WNAL 规格型号:600*500*300",
+      "bill_name": "配电箱 WNAL 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1127,
+      "bill_text": "配电箱 1ZAP 规格型号:600*500*300",
+      "bill_name": "配电箱 1ZAP 规格型号:600*500*300",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1130,
+      "bill_text": "消防电话机柜 规格：600*500*300",
+      "bill_name": "消防电话机柜",
+      "quota_ids": [
+        "C9-4-50"
+      ],
+      "quota_names": [
+        "消防广播及对讲电话主机(柜)安装 消防电话主机 10路"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 1134,
+      "bill_text": "配电箱路由器 规格型号:600*500*300",
+      "bill_name": "配电箱路由器 规格型号:600*500*300",
+      "quota_ids": [
+        "C5-1-88"
+      ],
+      "quota_names": [
+        "路由器 固定配置 ≤4口"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 1143,
+      "bill_text": "给、排水附件 名称: 87型雨水斗 规格类型：DN75",
+      "bill_name": "87型雨水斗",
+      "quota_ids": [
+        "C10-6-81"
+      ],
+      "quota_names": [
+        "铸铁雨水斗 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 1146,
+      "bill_text": "插座 名称:安全型防溅型二三极二用插座(IP54) 规格型号:A86,250V,10A",
+      "bill_name": "安全型防溅型二三极二用插座(IP54)",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1147,
+      "bill_text": "插座 名称:单相二三孔安全型暗装插座 规格型号:A86,250V,10A",
+      "bill_name": "单相二三孔安全型暗装插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1148,
+      "bill_text": "插座 名称:单相三孔安全型挂机空调暗装插座 规格型号:A86,250V,16A",
+      "bill_name": "单相三孔安全型挂机空调暗装插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1149,
+      "bill_text": "插座 名称:单相三孔安全型洗衣机暗装插座 规格型号:A86,250V,10A",
+      "bill_name": "单相三孔安全型洗衣机暗装插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1150,
+      "bill_text": "插座 名称:三相四孔安全型柜机空调插座 规格型号:A86,250V,16A",
+      "bill_name": "三相四孔安全型柜机空调插座",
+      "quota_ids": [
+        "C4-4-126"
+      ],
+      "quota_names": [
+        "插座暗装 三相 15A"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1151,
+      "bill_text": "照明开关 名称:单相光控、人体红外感应延时开关 规格型号:250V,10A",
+      "bill_name": "单相光控、人体红外感应延时开关",
+      "quota_ids": [
+        "C4-4-113"
+      ],
+      "quota_names": [
+        "延时节能暗开关"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1152,
+      "bill_text": "照明开关 名称:单联双控跷板开关 规格型号:250V,10A",
+      "bill_name": "单联双控跷板开关",
+      "quota_ids": [
+        "C4-4-109"
+      ],
+      "quota_names": [
+        "跷板式暗开关(双控) 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1153,
+      "bill_text": "照明开关 名称:单联单控跷板开关 规格型号:250V,10A",
+      "bill_name": "单联单控跷板开关",
+      "quota_ids": [
+        "C4-4-103"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1154,
+      "bill_text": "照明开关 名称:双联单控跷板开关 规格型号:250V,10A",
+      "bill_name": "双联单控跷板开关",
+      "quota_ids": [
+        "C4-4-104"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 双联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1155,
+      "bill_text": "照明开关 名称:三联单控跷板开关 规格型号:250V,10A",
+      "bill_name": "三联单控跷板开关",
+      "quota_ids": [
+        "C4-4-105"
+      ],
+      "quota_names": [
+        "跷板式暗开关(单控) 三联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1156,
+      "bill_text": "插座 名称:带保护极的单相密闭插座 规格型号:250V,10A",
+      "bill_name": "带保护极的单相密闭插座",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1160,
+      "bill_text": "桥架 -超高 材质：钢制桥架 规格：200*100",
+      "bill_name": "桥架-超高",
+      "quota_ids": [
+        "C4-11-249"
+      ],
+      "quota_names": [
+        "钢制槽式桥架(宽+高)(mm以下) 400"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1183,
+      "bill_text": "名称:配管 材质：PC 规格：16 配置形式:暗敷设",
+      "bill_name": "配管",
+      "quota_ids": [
+        "C4-11-176"
+      ],
+      "quota_names": [
+        "PVC阻燃塑料管暗敷设 公称直径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1184,
+      "bill_text": "照明开关 名称:单相光控、人体红外感应延时开关-超高 规格型号:250V,10A",
+      "bill_name": "单相光控、人体红外感应延时开关-超高",
+      "quota_ids": [
+        "C4-4-113"
+      ],
+      "quota_names": [
+        "延时节能暗开关"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1187,
+      "bill_text": "配管 -超高 材质：PC 规格：16 配置形式:暗敷设",
+      "bill_name": "配管-超高",
+      "quota_ids": [
+        "C4-11-176"
+      ],
+      "quota_names": [
+        "PVC阻燃塑料管暗敷设 公称直径(mm以内) 20"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1190,
+      "bill_text": "类型：靶式流量开关 规格、压力等级：DN100 连接形式：法兰连接",
+      "bill_name": "靶式流量开关",
+      "quota_ids": [
+        "C6-1-99"
+      ],
+      "quota_names": [
+        "流量开关"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 1196,
+      "bill_text": "光缆 名称:4芯光纤 敷设方式:沿桥架敷设",
+      "bill_name": "4芯光纤",
+      "quota_ids": [
+        "C5-2-48"
+      ],
+      "quota_names": [
+        "室内穿放、布放光缆 开放式桥架内布放 ≤12芯"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 1205,
+      "bill_text": "软接头（软管） 名称、类型:橡胶软接头 材质:碳钢 规格类型：DN250 连接形式：沟槽连接",
+      "bill_name": "软接头（软管）",
+      "quota_ids": [
+        "C10-5-142"
+      ],
+      "quota_names": [
+        "软接头(法兰连接) 公称直径(mm以内) 250"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 1217,
+      "bill_text": "桥架配线 规格：BYJ-2.5 敷设方式:沿桥架",
+      "bill_name": "桥架配线",
+      "quota_ids": [
+        "C4-11-331"
+      ],
+      "quota_names": [
+        "线槽内配线 导线截面(mm2以内) 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1258,
+      "bill_text": "280℃常闭电动防烟防火调节阀 规格：630*400",
+      "bill_name": "280℃常闭电动防烟防火调节阀",
+      "quota_ids": [
+        "C7-6-3"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 2400"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1261,
+      "bill_text": "防雨防虫百叶风口 规格：1200*1200",
+      "bill_name": "防雨防虫百叶风口",
+      "quota_ids": [
+        "C7-7-6"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 6000"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1264,
+      "bill_text": "70℃常闭电动防烟防火调节阀 规格：500*320",
+      "bill_name": "70℃常闭电动防烟防火调节阀",
+      "quota_ids": [
+        "C7-6-2"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 1800"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1277,
+      "bill_text": "压力表-超高 规格、压力等级：DN100",
+      "bill_name": "压力表-超高",
+      "quota_ids": [
+        "C6-1-49"
+      ],
+      "quota_names": [
+        "压力表 就地"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 1315,
+      "bill_text": "70℃电动防火阀 规格：1600*400",
+      "bill_name": "70℃电动防火阀",
+      "quota_ids": [
+        "C7-6-5"
+      ],
+      "quota_names": [
+        "防火调节阀安装 方、矩形周长(mm以内) 4800"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1329,
+      "bill_text": "电动对开多叶调节阀 规格：400*250",
+      "bill_name": "电动对开多叶调节阀",
+      "quota_ids": [
+        "C7-6-17"
+      ],
+      "quota_names": [
+        "多叶调节阀安装 周长(mm以内) 2400"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 1366,
+      "bill_text": "嵌装内深防眩光射灯 规格:12W,4000K 安装方式:天花嵌入式安装 其他要求:详见图纸",
+      "bill_name": "嵌装内深防眩光射灯",
+      "quota_ids": [
+        "C4-12-23"
+      ],
+      "quota_names": [
+        "嵌入式灯安装 墙壁嵌入式照明灯具"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1368,
+      "bill_text": "小射灯 规格:6W,4000K 安装方式:天花嵌入式安装 其他要求:详见图纸",
+      "bill_name": "小射灯",
+      "quota_ids": [
+        "C4-12-23"
+      ],
+      "quota_names": [
+        "嵌入式灯安装 墙壁嵌入式照明灯具"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1369,
+      "bill_text": "壁装LED灯 规格:1x15W 壁装 安装方式:电梯井 道AC24V,4000K 其他要求:详见图纸",
+      "bill_name": "壁装LED灯",
+      "quota_ids": [
+        "C4-12-9"
+      ],
+      "quota_names": [
+        "壁灯安装 小型壁灯(7kg以内)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1370,
+      "bill_text": "壁装LED直管灯 规格:1x24W 安装方式:距完成面2.6m壁装 其他要求:详见图纸",
+      "bill_name": "壁装LED直管灯",
+      "quota_ids": [
+        "C4-12-9"
+      ],
+      "quota_names": [
+        "壁灯安装 小型壁灯(7kg以内)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1371,
+      "bill_text": "楼层标志灯 规格:A型消防应急标志灯 DC36V LED-1W 安装方式:楼层标志灯底边距地面2.5米壁装;或灯具底边距地面2.5米吊杆式安装 其他要求:详见图纸",
+      "bill_name": "楼层标志灯",
+      "quota_ids": [
+        "C4-12-67"
+      ],
+      "quota_names": [
+        "标志、诱导灯安装 壁式"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1372,
+      "bill_text": "多信息复合标志灯 规格:A型消防应急标志灯 DC36V LED-3W 安装方式:多信息复合标志灯吸顶安装,灯具标志面与疏散方向垂直,且指示疏散方向的箭头应指向安全出口或疏散出口 其他要求:详见图纸",
+      "bill_name": "多信息复合标志灯",
+      "quota_ids": [
+        "C4-12-67"
+      ],
+      "quota_names": [
+        "标志、诱导灯安装 壁式"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1373,
+      "bill_text": "消防应急照明灯 规格:A型消防应急标志灯 DC36V LED-5W 安装方式:嵌入式或吸顶安装 其他要求:详见图纸",
+      "bill_name": "消防应急照明灯",
+      "quota_ids": [
+        "C4-12-67"
+      ],
+      "quota_names": [
+        "标志、诱导灯安装 壁式"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1378,
+      "bill_text": "单相两孔+三孔安全型插座(防水密闭型) 安装方式:底边距完成面0.3m 其他要求:详见图纸",
+      "bill_name": "单相两孔+三孔安全型插座(防水密闭型)",
+      "quota_ids": [
+        "C4-4-122"
+      ],
+      "quota_names": [
+        "插座暗装 单相 单联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1379,
+      "bill_text": "就地隔离检修盒 按钮安装于室外时应采用防水型 其他要求:详见图纸",
+      "bill_name": "就地隔离检修盒 按钮安装于室外时应采用防水型",
+      "quota_ids": [
+        "C4-11-384"
+      ],
+      "quota_names": [
+        "钢制接线盒 明装"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1383,
+      "bill_text": "电动机检查接线 额定功率(kW):3KW 其他要求:详见图纸",
+      "bill_name": "电动机检查接线 额定功率(kW):3KW",
+      "quota_ids": [
+        "C4-6-1"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 3"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1384,
+      "bill_text": "电动机检查接线 额定功率(kW):7.5KW 其他要求:详见图纸",
+      "bill_name": "电动机检查接线 额定功率(kW):7.5KW",
+      "quota_ids": [
+        "C4-6-2"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 7.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1385,
+      "bill_text": "电动机检查接线 额定功率(kW):22KW 其他要求:详见图纸",
+      "bill_name": "电动机检查接线 额定功率(kW):22KW",
+      "quota_ids": [
+        "C4-6-4"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 22"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1386,
+      "bill_text": "变频机组检查接线 额定功率(kW):22KW 其他要求:详见图纸",
+      "bill_name": "变频机组检查接线 额定功率(kW):22KW",
+      "quota_ids": [
+        "C4-6-4"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 22"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 1388,
+      "bill_text": "1#货梯兼(高区)消防电梯 停靠层数:-2~24层 速度:2.5m/s 提升高度:120.5m 载重量:2000kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "1#货梯兼(高区)消防电梯",
+      "quota_ids": [
+        "C1-4-53"
+      ],
+      "quota_names": [
+        "载货电梯 层数15 站数15"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1389,
+      "bill_text": "3#客梯(低区)无障碍电梯 停靠层数:-2~13层 速度:2.5m/s 提升高度:67.9m 载重量:1600kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "3#客梯(低区)无障碍电梯",
+      "quota_ids": [
+        "C1-4-14"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数15 站数15"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1390,
+      "bill_text": "4#客梯(低区)无障碍电梯 停靠层数:-2~13层 速度:2.5m/s 提升高度:67.9m 载重量:1600kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "4#客梯(低区)无障碍电梯",
+      "quota_ids": [
+        "C1-4-14"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数15 站数15"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1391,
+      "bill_text": "5#客梯(低区) 停靠层数:-2~13层 速度:2.5m/s 提升高度:67.9m 载重量:1600kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "5#客梯(低区)",
+      "quota_ids": [
+        "C1-4-14"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数15 站数15"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1392,
+      "bill_text": "6#客梯(高区) 停靠层数:-2~24层 速度:2.5m/s 提升高度:120.5m 载重量:1600Kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "6#客梯(高区)",
+      "quota_ids": [
+        "C1-4-25"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数26 站数26"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1393,
+      "bill_text": "7#客梯(高区) 停靠层数:-2~24层 速度:2.5m/s 提升高度:120.5m 载重量:1600Kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "7#客梯(高区)",
+      "quota_ids": [
+        "C1-4-25"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数26 站数26"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1394,
+      "bill_text": "8#客梯(高区) 停靠层数:-2~24层 速度:2.5m/s 提升高度:120.5m 载重量:1600Kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "8#客梯(高区)",
+      "quota_ids": [
+        "C1-4-25"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数26 站数26"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1395,
+      "bill_text": "9#客梯 停靠层数:-2~2层 速度:2.5m/s 提升高度:20.3m 载重量:1600Kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "9#客梯",
+      "quota_ids": [
+        "C1-4-3"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数4 站数4"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 1396,
+      "bill_text": "交流电梯 名称:10#客梯 停靠层数:-2~2层 速度:2.5m/s 提升高度:20.3m 载重量:1600Kg 含调试费，控制箱 电梯能量回馈装置",
+      "bill_name": "交流电梯",
+      "quota_ids": [
+        "C1-4-3"
+      ],
+      "quota_names": [
+        "曳引式电梯 层数4 站数4"
+      ],
+      "specialty": "C1",
+      "layer": "authority"
+    },
+    {
+      "id": 12451,
+      "bill_text": "住宅层电表箱AW2 型号:500*800*180 规格:2回路 安装方式:电井内,底边距地1.2m明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "住宅层电表箱AW2",
+      "quota_ids": [
+        "C4-4-30",
+        "C4-11-377"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4",
+        "接线箱安装 明装 接线箱半周长(mm以内) 1500"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12453,
+      "bill_text": "光伏并网柜 型号:非标 规格:详设计 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "光伏并网柜",
+      "quota_ids": [
+        "C4-4-30",
+        "C4-11-377"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 4",
+        "接线箱安装 明装 接线箱半周长(mm以内) 1500"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12464,
+      "bill_text": "装饰灯 名称:感应射灯 规格:9W  LED 安装形式:吸顶或嵌入安装 本体安装接线 满足现行质量验收规范要求",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "C4-12-21"
+      ],
+      "quota_names": [
+        "嵌入式灯安装 顶棚嵌入式筒灯 单筒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12466,
+      "bill_text": "家居配电箱AH-C 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-C",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12467,
+      "bill_text": "家居配电箱AH-C' 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-C'",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12469,
+      "bill_text": "配管PC25 名称:塑料管 材质:PC 规格:DN25mm 配置形式:暗配 牵引铁线 未尽事项详见施工图纸及相关技术规范标准综合报价",
+      "bill_name": "配管PC25",
+      "quota_ids": [
+        "C4-11-177",
+        "C4-11-236"
+      ],
+      "quota_names": [
+        "PVC阻燃塑料管暗敷设 公称直径(mm以内) 25",
+        "穿引线"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12470,
+      "bill_text": "PVC接线盒 名称:接线盒 材质:塑料 安装形式:暗装 未尽事项详见施工图纸及相关技术规范标准综合报价",
+      "bill_name": "PVC接线盒",
+      "quota_ids": [
+        "C4-11-387"
+      ],
+      "quota_names": [
+        "塑料接线盒 暗装 混凝土结构"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12474,
+      "bill_text": "配管JDG25 名称:配管 材质:JDG 规格:25 配置形式:暗配 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求 含过路接线盒供应安装、穿引线、砌体结构、预制板结构内暗配管的剔槽及恢复等工作内容",
+      "bill_name": "配管JDG25",
+      "quota_ids": [
+        "C4-11-127"
+      ],
+      "quota_names": [
+        "紧定(扣压)式薄壁钢管砖、混凝土结构暗配 公称直径(mm以内) 25"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12478,
+      "bill_text": "自动排气阀 含配套截止阀 规格:DN25 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "自动排气阀 含配套截止阀",
+      "quota_ids": [
+        "C10-5-16"
+      ],
+      "quota_names": [
+        "自动排气阀 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12479,
+      "bill_text": "锁闭调节阀 规格:DN25 连接形式:螺纹连接 本体及场内搬运、外观检查、清污除锈、切管、套丝、坡口、法兰垫制作安装、阀门及法兰安装等所需配件的供应与安装",
+      "bill_name": "锁闭调节阀",
+      "quota_ids": [
+        "C10-5-3"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12482,
+      "bill_text": "球阀 名称:带温度传感器铜球阀 材质:铜制 规格、压力等级:DN25 连接形式:螺纹连接 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "球阀",
+      "quota_ids": [
+        "C10-5-3"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12483,
+      "bill_text": "管道保温 绝热材料品种:橡塑泡棉（难燃B1级） 管道直径:DN50以内 未尽事宜:满足规范及设计要求",
+      "bill_name": "管道保温",
+      "quota_ids": [
+        "C12-4-118"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑制品安装 公称直径(mm以内) 50"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 12489,
+      "bill_text": "分集水器 供货安装（含回路标识牌） 回路：3回路 含分集水器上的阀门及管件（包含但不限于温控阀、控制阀、内置关断阀、放气与泄水装置等） 完成该项工作的其他未尽事宜，包含通过供热部门验收",
+      "bill_name": "分集水器",
+      "quota_ids": [
+        "C10-7-44"
+      ],
+      "quota_names": [
+        "不带箱热媒集配器安装 3分支以内"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12490,
+      "bill_text": "塑料管 名称：耐热聚乙烯PE-RT管(S4系列) 规格：De25*2.8 工作内容：管道、管件及弯管制作、安装 连接方式：丝扣或卡箍连接； 管道除锈、刷油； 管道消毒冲洗、水压及泄漏试验",
+      "bill_name": "塑料管 名称：耐热聚乙烯PE-RT管(S4系列)",
+      "quota_ids": [
+        "C10-7-43"
+      ],
+      "quota_names": [
+        "地板辐射采暖管铺设 管外径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12491,
+      "bill_text": "地板辐射采暖 名称：钢丝网片 规格：ø3@50 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "地板辐射采暖 名称：钢丝网片",
+      "quota_ids": [
+        "C10-7-61"
+      ],
+      "quota_names": [
+        "保温隔热层敷设 钢丝网"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12492,
+      "bill_text": "地板辐射采暖 名称：边界保温带 做法：20厚挤塑板 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "地板辐射采暖",
+      "quota_ids": [
+        "C10-7-60"
+      ],
+      "quota_names": [
+        "保温隔热层敷设 边界保温带"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12495,
+      "bill_text": "复合管 名称:钢塑复合管 规格:DN50 连接形式:螺纹连接 压力试验及吹、洗设计要求:水压试验、冲洗、管道标识等 其他:包含管件供应安装，综合单价中含穿非混凝土构件的套管制作及安装，不再另计 未尽事宜:满足规范及设计要求",
+      "bill_name": "复合管",
+      "quota_ids": [
+        "C10-2-123"
+      ],
+      "quota_names": [
+        "室内给水钢塑复合管(螺纹连接) 公称直径(mm以内) 50 设计要求管道进行消毒冲洗 人工*1.05,材料[340000110000] 含量+0.1,机械[994600040000] 含量+0.15"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12500,
+      "bill_text": "减压阀 名称：可调式减压稳压阀（本体带除污器和压力显示） 规格：DN25 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "减压阀 名称：可调式减压稳压阀（本体带除污器和压力显示）",
+      "quota_ids": [
+        "C10-5-3"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12501,
+      "bill_text": "水表 名称:智能远传冷水表 规格:DN25 连接方式：螺纹连接 未尽事宜:需充分考虑当地相关主管部门对水表的品牌、标准、投标须知附件、验收、检测等要求，并充分考虑各种相关费用 含电气接线及调试 满足规范及设计要求",
+      "bill_name": "水表",
+      "quota_ids": [
+        "C10-5-154"
+      ],
+      "quota_names": [
+        "远传水表(螺纹连接) 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12502,
+      "bill_text": "钢塑转换接头 规格、压力等级:DN15 未尽事宜:满足规范及设计要求",
+      "bill_name": "钢塑转换接头",
+      "quota_ids": [
+        "C10-5-1"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 15"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12505,
+      "bill_text": "防潮层、保护层 材料:压延膜 层数:一道（镀锌铁丝绑扎） 未尽事宜:满足规范及设计要求",
+      "bill_name": "防潮层、保护层",
+      "quota_ids": [
+        "C12-4-193"
+      ],
+      "quota_names": [
+        "管道防潮层、保护层 玻璃丝布"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 12506,
+      "bill_text": "管道刷油 油漆品种：调和漆 涂刷遍数、漆膜厚度:两遍 未尽事宜:满足规范及设计要求",
+      "bill_name": "管道刷油",
+      "quota_ids": [
+        "C12-2-13",
+        "C12-2-14"
+      ],
+      "quota_names": [
+        "管道刷油 调合漆 一遍",
+        "管道刷油 调合漆 增一遍"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 12513,
+      "bill_text": "给、排水附件 名称:水井地漏 材质、规格:DN100 未尽事宜:满足规范及设计要求",
+      "bill_name": "给、排水附件",
+      "quota_ids": [
+        "C10-6-68"
+      ],
+      "quota_names": [
+        "地漏安装 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12516,
+      "bill_text": "阻火圈 规格:DN100 未尽事宜:满足规范及设计要求",
+      "bill_name": "阻火圈",
+      "quota_ids": [
+        "C10-4-84"
+      ],
+      "quota_names": [
+        "阻火圈安装 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12525,
+      "bill_text": "止回阀 规格：DN25 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "止回阀",
+      "quota_ids": [
+        "C10-5-3"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12526,
+      "bill_text": "截止阀 名称：安全阀 规格：DN25 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "截止阀 名称：安全阀",
+      "quota_ids": [
+        "C10-5-3"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12538,
+      "bill_text": "室内消火栓 名称：减压稳压薄型单栓带灭火器组合式消防柜（1800*700*160mm） 安装方式：明装 附件材质、规格：铝合金消防箱体，箱内配DN65减压稳压旋转消火栓一个,DN65mm,L25m衬胶水带一条,DN19mm水枪一支,消防水喉设备一套(DN25mm,L30m胶带一盘,DN6mm小水枪一支),消防按钮和指示灯各一个。 详见消防给水图集 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "室内消火栓 名称：减压稳压薄型单栓带灭火器组合式消防柜（1800*700*160mm）",
+      "quota_ids": [
+        "C9-1-78"
+      ],
+      "quota_names": [
+        "室内消火栓(明装) 自救卷盘 公称直径(mm以内) 单栓 65"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12539,
+      "bill_text": "室内消火栓 名称：薄型单栓带灭火器组合式消防柜（1800*700*160mm） 安装方式：明装 附件材质、规格：铝合金消防箱体，箱内配DN65旋转消火栓一个,DN65mm,L25m衬胶水带一条,DN19mm水枪一支,消防水喉设备一套(DN25mm,L30m胶带一盘,DN6mm小水枪一支),消防按钮和指示灯各一个。 详见消防给水图集 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "室内消火栓 名称：薄型单栓带灭火器组合式消防柜（1800*700*160mm）",
+      "quota_ids": [
+        "C9-1-78"
+      ],
+      "quota_names": [
+        "室内消火栓(明装) 自救卷盘 公称直径(mm以内) 单栓 65"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12540,
+      "bill_text": "室内消火栓 名称:屋顶试验消火栓（含压力表） 安装方式：明装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "室内消火栓",
+      "quota_ids": [
+        "C9-1-76"
+      ],
+      "quota_names": [
+        "室内消火栓(明装) 普通 公称直径(mm以内) 单栓 65"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12541,
+      "bill_text": "灭火器 名称：手提式磷酸铵盐干粉灭火器 规格、型号：MF/ABC3 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "灭火器",
+      "quota_ids": [
+        "C9-1-92"
+      ],
+      "quota_names": [
+        "灭火器 手提式"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 12542,
+      "bill_text": "消火栓钢管 材质:热浸镀锌加厚钢管 规格：DN100 连接形式:沟槽连接 压力试验及吹、洗设计要求：管道水冲洗、水压试验及系统试验 管道及管件制作安装，综合单价中含穿非混凝土构件的套管制作及安装，不再另计 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "消火栓钢管",
+      "quota_ids": [
+        "C9-1-15"
+      ],
+      "quota_names": [
+        "钢管(沟槽连接) 公称直径(mm以内) 100  "
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12544,
+      "bill_text": "蝶阀 带自锁装置 规格、压力等级：DN100  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "蝶阀 带自锁装置 规格、压力等级：DN100  1.6MPa",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12545,
+      "bill_text": "蝶阀 带自锁装置 规格、压力等级：DN65  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "蝶阀 带自锁装置 规格、压力等级：DN65  1.6MPa",
+      "quota_ids": [
+        "C10-5-30"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 70"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12548,
+      "bill_text": "套管 名称、类型:一般钢套管 规格:DN100 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "套管 名称、类型:一般钢套管",
+      "quota_ids": [
+        "C10-4-66"
+      ],
+      "quota_names": [
+        "一般填料套管制作安装 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12552,
+      "bill_text": "充电桩 型号:非标 规格:详设计 安装方式:明装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "充电桩",
+      "quota_ids": [
+        "C4-4-32",
+        "C4-11-377"
+      ],
+      "quota_names": [
+        "配电箱墙上(柱上)明装 规格(回路以内) 16",
+        "接线箱安装 明装 接线箱半周长(mm以内) 1500"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12566,
+      "bill_text": "热镀锌扁钢25*4 名称:接地母线 材质:热镀锌扁钢 规格:-50×5mm .满足现行质量验收规范要求",
+      "bill_name": "热镀锌扁钢25*4",
+      "quota_ids": [
+        "C4-9-20"
+      ],
+      "quota_names": [
+        "型钢接地母线敷设 暗敷设 镀锌扁钢 50×5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12568,
+      "bill_text": "温度传感器 类型：温度传感器 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "温度传感器",
+      "quota_ids": [
+        "C6-1-5"
+      ],
+      "quota_names": [
+        "温度控制器"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 12569,
+      "bill_text": "除污器(过滤器) 类型：水过滤器（60目） 规格：DN100 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "除污器(过滤器) 类型：水过滤器（60目）",
+      "quota_ids": [
+        "C10-5-38"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12570,
+      "bill_text": "关断阀 规格:DN100 连接形式:焊接 本体及场内搬运、外观检查、清污除锈、切管、套丝、坡口、法兰垫制作安装、阀门及法兰安装等所需配件的供应与安装",
+      "bill_name": "关断阀",
+      "quota_ids": [
+        "C10-5-38"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12571,
+      "bill_text": "压力仪表 名称:压力表 未尽事宜:满足规范及设计要求",
+      "bill_name": "压力仪表",
+      "quota_ids": [
+        "C6-1-52"
+      ],
+      "quota_names": [
+        "远传指示压力表"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 12574,
+      "bill_text": "泄水阀 类型：泄水阀 材质：铜 规格：DN20 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "泄水阀 类型：泄水阀",
+      "quota_ids": [
+        "E-2-465"
+      ],
+      "quota_names": [
+        "自动进排气阀、泄水阀安装 直径(mm) 20"
+      ],
+      "specialty": "E",
+      "layer": "authority"
+    },
+    {
+      "id": 12576,
+      "bill_text": "蝶阀 名称:钢制对夹式蝶阀 规格:DN70 连接形式:焊接 本体及场内搬运、外观检查、清污除锈、切管、套丝、坡口、法兰垫制作安装、阀门及法兰安装等所需配件的供应与安装",
+      "bill_name": "蝶阀",
+      "quota_ids": [
+        "C10-5-49"
+      ],
+      "quota_names": [
+        "焊接对夹式法兰阀门 公称直径(mm以内) 70"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12597,
+      "bill_text": "挡烟垂壁 灰色防火无机纤维布 包含控制箱、按钮等 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "挡烟垂壁",
+      "quota_ids": [
+        "A-8-22"
+      ],
+      "quota_names": [
+        "防火布卷帘"
+      ],
+      "specialty": "A",
+      "layer": "candidate"
+    },
+    {
+      "id": 12602,
+      "bill_text": "铸铁管 名称:柔性接口机制排水铸铁管 规格:DN150 连接形式:A型法兰压盖承插式连接 压力试验及吹、洗设计要求:灌水试验、通球试验、管道标识 其他:含管件供应安装，综合单价中含穿非混凝土构件的套管制作及安装，不再另计 未尽事宜:满足规范及设计要求",
+      "bill_name": "铸铁管",
+      "quota_ids": [
+        "C10-2-57"
+      ],
+      "quota_names": [
+        "A型柔性排水铸铁管(法兰接口) 公称直径(mm以内) 150 设计要求管道进行通球试验 人工*1.1,材料[340000110000] 含量+1,机械[994600040000] 含量+0.05"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12611,
+      "bill_text": "水喷淋(雾)喷头 名称：干式下垂型喷头 连接形式：无吊顶 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "水喷淋(雾)喷头",
+      "quota_ids": [
+        "C9-1-45"
+      ],
+      "quota_names": [
+        "洒水喷头安装 无吊顶 公称直径(mm以内) 25"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 12619,
+      "bill_text": "减压孔板 规格：DN100 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "减压孔板",
+      "quota_ids": [
+        "C9-1-71"
+      ],
+      "quota_names": [
+        "减压孔板 公称直径(mm以内) 100"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12620,
+      "bill_text": "水流指示器 规格、型号：DN100 连接形式：法兰连接 水流指示器及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "水流指示器 规格、型号：DN100",
+      "quota_ids": [
+        "C9-1-60"
+      ],
+      "quota_names": [
+        "水流指示器(法兰连接) 公称直径(mm以内) 100"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12621,
+      "bill_text": "电触点信号阀 规格、压力等级：DN100  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "电触点信号阀 规格、压力等级：DN100  1.6MPa",
+      "quota_ids": [
+        "C10-5-38"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12622,
+      "bill_text": "末端试水装置 规格：DN25 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "末端试水装置",
+      "quota_ids": [
+        "C9-1-73"
+      ],
+      "quota_names": [
+        "末端试水装置 公称直径(mm以内) 25"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 12623,
+      "bill_text": "快速排气阀 含配套截止阀 规格:DN25 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "快速排气阀 含配套截止阀",
+      "quota_ids": [
+        "C10-5-16"
+      ],
+      "quota_names": [
+        "自动排气阀 公称直径(mm以内) 25"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12624,
+      "bill_text": "泄水阀 规格:DN50 连接方式：螺纹连接 未尽事宜:满足规范及设计要求",
+      "bill_name": "泄水阀",
+      "quota_ids": [
+        "C10-5-6"
+      ],
+      "quota_names": [
+        "螺纹阀门 公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 12637,
+      "bill_text": "家居配电箱AH-A 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-A",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12638,
+      "bill_text": "家居配电箱AH-A' 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-A'",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12639,
+      "bill_text": "家居配电箱AH-A1 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-A1",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12640,
+      "bill_text": "家居配电箱AH-A1' 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-A1'",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12641,
+      "bill_text": "补偿器 名称：波纹管补偿器 规格：DN100 补偿量△L=20mm 设备承压P=1.0MPa 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "补偿器 名称：波纹管补偿器",
+      "quota_ids": [
+        "C10-5-104"
+      ],
+      "quota_names": [
+        "波纹(套筒)补偿器安装 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12646,
+      "bill_text": "铝及铝合金风口、散流器 名称：常闭电动加压送风口 规格:350*(1300+250) 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "铝及铝合金风口、散流器 名称：常闭电动加压送风口",
+      "quota_ids": [
+        "C7-7-6"
+      ],
+      "quota_names": [
+        "百叶风口安装 周长(mm以内) 4000"
+      ],
+      "specialty": "C7",
+      "layer": "candidate"
+    },
+    {
+      "id": 12656,
+      "bill_text": "水箱 名称：组合式消防水箱（不锈钢） 规格4*2.5*2.5(H)， 有效容积18m³ 其他要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "水箱 名称：组合式消防水箱（不锈钢） 规格4*2.5*2.5(H)， 有效容积18m³",
+      "quota_ids": [
+        "C10-8-100"
+      ],
+      "quota_names": [
+        "组装水箱安装 水箱总容量(m3以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12659,
+      "bill_text": "止回阀 规格、压力等级：DN100  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "止回阀 规格、压力等级：DN100  1.6MPa",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12660,
+      "bill_text": "闸阀 规格、压力等级：DN100  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "闸阀 规格、压力等级：DN100  1.6MPa",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12661,
+      "bill_text": "旋流防止器 规格、压力等级：DN100  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "旋流防止器 规格、压力等级：DN100  1.6MPa",
+      "quota_ids": [
+        "C10-5-32"
+      ],
+      "quota_names": [
+        "螺纹法兰阀门 公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12662,
+      "bill_text": "流量开关 规格、压力等级：DN100 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "流量开关 规格、压力等级：DN100",
+      "quota_ids": [
+        "C5-3-48"
+      ],
+      "quota_names": [
+        "液体流量开关"
+      ],
+      "specialty": "C5",
+      "layer": "candidate"
+    },
+    {
+      "id": 12713,
+      "bill_text": "传感器 名称:压差传感器 其它要求详见设计说明及图纸 包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求。",
+      "bill_name": "传感器",
+      "quota_ids": [
+        "C5-3-13"
+      ],
+      "quota_names": [
+        "压差控制器"
+      ],
+      "specialty": "C5",
+      "layer": "candidate"
+    },
+    {
+      "id": 12727,
+      "bill_text": "泵 名称:潜水泵 规格:Q=25m3/h,H=13m,N=2.2KW 未尽事宜:满足规范及设计要求",
+      "bill_name": "泵",
+      "quota_ids": [
+        "C1-6-1"
+      ],
+      "quota_names": [
+        "单级离心式泵 设备重量(t以内) 0.2"
+      ],
+      "specialty": "C1",
+      "layer": "candidate"
+    },
+    {
+      "id": 12730,
+      "bill_text": "水流指示器 规格、型号：DN150 连接形式：法兰连接 水流指示器及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "水流指示器 规格、型号：DN150",
+      "quota_ids": [
+        "C9-1-61"
+      ],
+      "quota_names": [
+        "水流指示器(法兰连接) 公称直径(mm以内) 150"
+      ],
+      "specialty": "C9",
+      "layer": "candidate"
+    },
+    {
+      "id": 12731,
+      "bill_text": "电触点信号阀 规格、压力等级：DN150  1.6MPa 连接形式：法兰连接 阀门及配件供应安装 其它要求：包括但不限于完成此项工作所需要的全部工作内容，满足设计图纸、招标文件、现行规范、图集、验收等全部要求",
+      "bill_name": "电触点信号阀 规格、压力等级：DN150  1.6MPa",
+      "quota_ids": [
+        "C10-5-40"
+      ],
+      "quota_names": [
+        "焊接法兰阀门 公称直径(mm以内) 150"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12733,
+      "bill_text": "家居配电箱AH-B 型号:450*500*140 规格:9回路 安装方式:底边距地1.6m暗装 含盘柜下防火堵洞，满足现行质量验收规范要求",
+      "bill_name": "家居配电箱AH-B",
+      "quota_ids": [
+        "C4-4-26"
+      ],
+      "quota_names": [
+        "配电箱嵌入式安装 规格(回路以内) 16"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12749,
+      "bill_text": "成品支架 名称:风管单向抗震支吊架 规格型号:0.4㎡ 备注：投标单位需根据图纸及规范要求进行深化设计并包含深化设计费、管理费、利润、规费、安装费、调试费、成套设备费等满足验收及使用所需的全部费用",
+      "bill_name": "成品支架",
+      "quota_ids": [
+        "C10-4-4"
+      ],
+      "quota_names": [
+        "成品抗震支架安装 门型侧向支架"
+      ],
+      "specialty": "C10",
+      "layer": "candidate"
+    },
+    {
+      "id": 12784,
+      "bill_text": "成套配电箱 名称:APE-2 回路数:3回路 规格:600x800x300 安装方式:底距地1.3m安装 其他要求:详见图纸 配电箱调试",
+      "bill_name": "成套配电箱",
+      "quota_ids": [
+        "C4-4-37"
+      ],
+      "quota_names": [
+        "配电箱箱体安装 半周长(m以内) 明装 2.5"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12804,
+      "bill_text": "金属结构刷油 除锈级别:轻锈 油漆品种:防锈漆、磁漆 结构类型:一般钢结构 涂刷遍数、漆膜厚度:2 其他要求:详见图纸",
+      "bill_name": "金属结构刷油 除锈级别:轻锈 油漆品种:防锈漆、磁漆 结构类型:一般钢结构 涂刷遍数、漆膜厚度:2",
+      "quota_ids": [
+        "C12-2-61",
+        "C12-2-62",
+        "C12-2-71",
+        "C12-2-72"
+      ],
+      "quota_names": [
+        "金属结构刷油 防锈漆 一遍",
+        "金属结构刷油 防锈漆 增一遍",
+        "金属结构刷油 调合漆 一遍",
+        "金属结构刷油 调合漆 增一遍"
+      ],
+      "specialty": "C12",
+      "layer": "candidate"
+    },
+    {
+      "id": 12828,
+      "bill_text": "接线盒 名称:电源出线口 其他要求:详见图纸",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "C5-2-12",
+        "C5-2-13",
+        "C5-2-14"
+      ],
+      "quota_names": [
+        "机柜用电源分配插座(PDU)含工业连接器 19英寸",
+        "机柜用电源分配插座(PDU)含工业连接器 竖装",
+        "机柜用电源分配插座(PDU)不含工业连接器 19英寸"
+      ],
+      "specialty": "C5",
+      "layer": "candidate"
+    },
+    {
+      "id": 12829,
+      "bill_text": "控制器 名称:电动窗控制器 其他要求:详见图纸",
+      "bill_name": "控制器",
+      "quota_ids": [
+        "C4-12-289",
+        "C4-4-59",
+        "C4-12-312"
+      ],
+      "quota_names": [
+        "控制设备 控制仪",
+        "控制器安装 主令控制器",
+        "光线调节器控制开关"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12832,
+      "bill_text": "接地母线 名称:热镀锌扁钢（室外） 规格:-40X4 其他要求:详见图纸",
+      "bill_name": "接地母线",
+      "quota_ids": [
+        "C4-9-27",
+        "C4-9-11",
+        "C4-9-19"
+      ],
+      "quota_names": [
+        "型钢接地母线敷设 沿支架敷设 镀锌扁钢 40×4",
+        "型钢接地母线敷设 明敷设 镀锌扁钢 40×4",
+        "型钢接地母线敷设 暗敷设 镀锌扁钢 40×4"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12833,
+      "bill_text": "引下线 名称:避雷引下线 其他要求:详见图纸",
+      "bill_name": "引下线",
+      "quota_ids": [
+        "C4-9-69",
+        "C4-9-68"
+      ],
+      "quota_names": [
+        "防雷引下线 明装镀锌圆钢",
+        "防雷引下线 利用结构主筋"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12834,
+      "bill_text": "接闪带 名称:避雷网 规格:φ10镀锌圆钢 其他要求:详见图纸",
+      "bill_name": "接闪带",
+      "quota_ids": [
+        "C4-9-79"
+      ],
+      "quota_names": [
+        "接闪网 沿女儿墙敷设 避雷网直径(mm以内) 10"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 12835,
+      "bill_text": "小型电动机 名称:风机盘管检查接线 其他要求:详见图纸",
+      "bill_name": "小型电动机",
+      "quota_ids": [
+        "C4-4-157"
+      ],
+      "quota_names": [
+        "风机盘管接线"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    },
+    {
+      "id": 12840,
+      "bill_text": "变频机组 检查接线 额定功率(kW):22KW 其他要求:详见图纸",
+      "bill_name": "变频机组 检查接线 额定功率(kW):22KW",
+      "quota_ids": [
+        "C4-6-4"
+      ],
+      "quota_names": [
+        "低压交流异步电动机检查接线及调试(功率kW以下) 22"
+      ],
+      "specialty": "C4",
+      "layer": "candidate"
+    }
+  ]
+}
