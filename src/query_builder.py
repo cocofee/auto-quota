@@ -148,6 +148,13 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
 
     for key, replacement in synonyms.items():
         if key in query:
+            # 防止重复替换：如果替换目标已经出现在query中，不替换也不继续找
+            # 例如：query="消防水泵接合器"，key="水泵接合器"→"消防水泵接合器"
+            # 替换后会变成"消防消防水泵接合器"，所以跳过
+            # 用break而非continue：该概念已在query中体现，继续搜索可能命中
+            # 更短的key（如"水泵"→"离心泵"），反而破坏正确内容
+            if replacement in query:
+                break
             if _is_synonym_applicable(key, specialty, scope):
                 query = query.replace(key, replacement, 1)  # 只替换第一次出现
                 break  # 只做一次替换，避免连锁替换引发副作用
@@ -507,6 +514,14 @@ def build_quota_query(parser, name: str, description: str = "",
     # 风口/喷口/散流器的φ值是开口直径，不是管道DN，不走管道路由
     is_wind_outlet = any(kw in name for kw in ("风口", "喷口", "散流器"))
     if (material or dn) and not is_electrical and not is_lamp and not is_wind_outlet:
+        # 阀门类清单名称规范化：清单常写"碳钢阀门"/"不锈钢阀门"等材质+阀门泛称，
+        # 但定额名统一叫"法兰阀门安装"/"螺纹阀门安装"。直接在路由中替换，
+        # 避免依赖_apply_synonyms（可能被其他同义词抢先匹配导致失效）
+        _valve_materials = ("碳钢", "不锈钢", "铸铁", "铸钢", "合金钢", "铜")
+        if "阀门" in name and any(m in name for m in _valve_materials):
+            name = "法兰阀门安装"
+            material = ""  # 材质已融入名称，不再单独拼接
+
         if material and "管" in material:
             core = f"{location}{usage}{material}"
         elif material:
@@ -670,6 +685,15 @@ def build_quota_query(parser, name: str, description: str = "",
                         full_text)
                 if size_match:
                     query_parts.append(f"公称直径 {size_match.group(1)}")
+
+            # 配管query已构建完整（含材质+配置+管径），直接返回
+            # 不走末尾的_apply_synonyms，避免"焊接钢管敷设"被同义词再加一次"敷设"
+            # 但先补充名称/描述中的明配/暗配（配置形式字段已在上方处理，这里兜底关键词）
+            if "明配" in full_text and "明配" not in " ".join(query_parts):
+                query_parts.append("砖混凝土结构明配")
+            elif "暗配" in full_text and "暗配" not in " ".join(query_parts):
+                query_parts.append("砖混凝土结构暗配")
+            return " ".join(query_parts)
         else:
             # 非配管类的材质提取（原逻辑保留）
             conduit_mat = fields.get("材质", "")
@@ -785,7 +809,8 @@ def build_quota_query(parser, name: str, description: str = "",
                 cable_model = model_match.group(1)
         is_cable = ("电缆" in name and "终端头" not in name
                     and "电缆头" not in name and "保护管" not in name)
-        is_control_cable = "控制" in name or "控制" in cable_model.upper()
+        is_control_cable = ("控制" in name or "信号" in name
+                            or "控制" in cable_model.upper())
         if is_cable:
             # 敷设方式：先从fields取，再从全文正则提取
             laying_raw = fields.get("敷设方式", "") or fields.get("敷设方式、部位", "")
@@ -902,5 +927,12 @@ def build_quota_query(parser, name: str, description: str = "",
     desc_type = _extract_desc_equipment_type(fields, name)
     if desc_type:
         query_parts.append(desc_type)
+
+    # 插座默认单相（建筑工程中绝大多数插座是单相，三相插座会在清单中明确标注）
+    # 排除信息/电视/网络等弱电插座（不区分相数）
+    if "插座" in name and "三相" not in full_text:
+        _weak_current_outlet = ("信息", "电视", "网络", "电话", "光纤", "智能")
+        if not any(kw in name for kw in _weak_current_outlet):
+            query_parts.append("单相")
 
     return _apply_synonyms(" ".join(query_parts), specialty)

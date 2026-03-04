@@ -397,8 +397,9 @@ class TextParser:
         spec_dim_pattern = r'规格[：:]\s*\d+\s*[*×xX]\s*\d+(?:\s*[*×xX]\s*\d+)?'
         text_clean = re.sub(spec_dim_pattern, ' ', text_clean)
 
-        # 排除槽盒/箱体类设备的物理尺寸（如"防火槽盒100*100"中的100*100是槽盒尺寸，不是电缆截面）
-        _ENCLOSURE_KW = ("槽盒", "防火槽", "接线箱", "端子箱")
+        # 排除槽盒/箱体/凿槽类的物理尺寸（不是电缆截面）
+        # "防火槽盒100*100"的100*100是槽盒尺寸，"凿槽30×50"的30×50是宽×深
+        _ENCLOSURE_KW = ("槽盒", "防火槽", "接线箱", "端子箱", "凿槽", "压槽", "凿(压)槽")
         if any(kw in text for kw in _ENCLOSURE_KW):
             text_clean = re.sub(r'\d{2,4}\s*[*×xX]\s*\d{2,4}', ' ', text_clean)
 
