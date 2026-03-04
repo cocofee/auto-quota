@@ -32,7 +32,23 @@ CASCADE_MIN_CANDIDATES = 3
 # 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
 RULE_DIRECT_CONFIDENCE = 80
 # 措施项关键词（这些是工程管理费用，不套安装定额）
-MEASURE_KEYWORDS = ["施工费", "增加费", "复测费", "措施费"]
+# 包含任一关键词即判定为措施费，不走匹配流程
+MEASURE_KEYWORDS = [
+    "施工费", "增加费", "复测费", "措施费",
+    "临时设施费", "工程保险费", "进出场费",
+    "操作高度增加", "超高增加", "赶工费",
+    "特殊地区施工", "干扰增加", "疫情防控",
+]
+# 强措施费关键词——名称完全是费用类，不管有没有单位/工程量都跳过
+# （区别于普通关键词：普通关键词仍要求无单位无工程量才跳过）
+STRONG_MEASURE_KEYWORDS = [
+    "施工费", "增加费", "复测费", "措施费",
+    "临时设施费", "工程保险费", "进出场费",
+    "赶工费", "疫情防控",
+    # 费用类条目——管理费、利润、税金等不是实体工程量，不应套定额
+    "管理费", "利润", "税金", "规费",
+    "企业管理费", "附加费",
+]
 
 
 # ============================================================
@@ -575,11 +591,30 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
 
 
 def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
-    """判断是否为措施项/章节分隔行，这类行不应套安装定额。"""
-    return (
-        (any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity)
-        or (name.strip() == "其他" and not unit and not quantity and not desc.strip())
-    )
+    """判断是否为措施项/章节分隔行，这类行不应套安装定额。
+
+    两层判断：
+    1. 强关键词（施工费/增加费/措施费等）：只要名称命中就跳过，不管有没有单位/工程量
+       因为措施费清单里经常填"项"作单位、"1"作工程量
+    2. 弱关键词（操作高度/超高等）：需要同时满足无单位无工程量才跳过
+       防止误伤正常清单（比如"超高层钢结构"不应被跳过）
+    """
+    # 强关键词：直接跳过
+    if any(kw in name for kw in STRONG_MEASURE_KEYWORDS):
+        return True
+    # 弱关键词：需要无单位无工程量
+    if any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity:
+        return True
+    # 章节分隔行（如"其他"空行）
+    if name.strip() == "其他" and not unit and not quantity and not desc.strip():
+        return True
+    # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，无实体工程量
+    # 条件：换行清理后短名称 + 以"工程"结尾 + 无单位无工程量
+    clean_name = name.replace("\n", "").replace("\r", "").strip()
+    if (clean_name.endswith("工程") and len(clean_name) <= 8
+            and not unit and not quantity):
+        return True
+    return False
 
 
 # ============================================================

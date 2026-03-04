@@ -536,10 +536,11 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"DN{bill_dn}≠DN{quota_dn} 不匹配(清单>定额)")
             else:
-                # L8：定额无DN参数（通用定额），降权到0.55
-                # 之前给0.9导致通用定额confidence=85（绿灯），和精确匹配几乎无差别
-                # 0.55刚好是向上取档下界，通用定额排在分档定额后面但仍param_match=True
-                score_sum += 0.55
+                # 定额无DN参数（通用定额），降权到0.64
+                # L8用0.55导致confidence=52（红灯），但通用定额不是"匹配错了"而是"无法验证"
+                # 0.64 → confidence=60（黄灯），标记"需人工确认"而非"很可能错"
+                # 注意：向上取档下界仍是0.55（那是真的参数偏差大，应该更低）
+                score_sum += 0.64
                 details.append(f"定额无DN参数(通用定额降权)")
 
         # === 2. 电缆截面（硬性参数） ===
@@ -560,8 +561,8 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"截面{bill_sec}≠{quota_sec} 不匹配(清单>定额)")
             else:
-                # L8：通用定额降权
-                score_sum += 0.55
+                # 通用定额降权：0.64 → confidence=60（黄灯）
+                score_sum += 0.64
                 details.append(f"定额无截面参数(通用定额降权)")
 
         # === 3. 容量kVA（硬性参数） ===
@@ -582,8 +583,8 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"容量{bill_kva}kVA≠{quota_kva}kVA 不匹配")
             else:
-                # L8：通用定额降权
-                score_sum += 0.55
+                # 通用定额降权：0.64 → confidence=60（黄灯）
+                score_sum += 0.64
                 details.append(f"定额无容量参数(通用定额降权)")
 
         # === 4. 回路数（硬性参数） ===
@@ -604,8 +605,8 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"回路{bill_cir}>{quota_cir} 不匹配(清单>定额)")
             else:
-                # L8：通用定额降权
-                score_sum += 0.55
+                # 通用定额降权：0.64 → confidence=60（黄灯）
+                score_sum += 0.64
                 details.append("定额无回路参数(通用定额降权)")
 
         # === 5. 电流A（硬性参数） ===
@@ -626,8 +627,8 @@ class ParamValidator:
                     score_sum += 0.0
                     details.append(f"电流{bill_amp}A>{quota_amp}A 不匹配(清单>定额)")
             else:
-                # L8：通用定额降权
-                score_sum += 0.55
+                # 通用定额降权：0.64 → confidence=60（黄灯）
+                score_sum += 0.64
                 details.append("定额无电流参数(通用定额降权)")
 
         # === 6. 电压等级kV（软性参数） ===
