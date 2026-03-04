@@ -274,7 +274,11 @@ class OutputWriter:
 
     @staticmethod
     def _save_workbook_atomic(wb, output_path: str):
-        """原子写入Excel，避免中断时留下半成品文件。"""
+        """原子写入Excel，避免中断时留下半成品文件。
+
+        Windows下 os.replace() 偶尔被杀毒软件/文件索引锁住，加重试机制。
+        """
+        import time
         out_path = Path(output_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = None
@@ -287,7 +291,25 @@ class OutputWriter:
             ) as tf:
                 tmp_path = tf.name
             wb.save(tmp_path)
-            os.replace(tmp_path, out_path)
+            # Windows下 os.replace 偶尔被杀毒/索引服务短暂锁定，重试3次
+            for attempt in range(3):
+                try:
+                    os.replace(tmp_path, out_path)
+                    tmp_path = None  # 成功，不需要清理
+                    break
+                except PermissionError:
+                    if attempt < 2:
+                        time.sleep(0.5)
+                    else:
+                        # 最后一次：放弃原子写入，先删目标再移动
+                        logger.warning(
+                            f"os.replace 权限错误，尝试先删后移: {tmp_path}")
+                        try:
+                            out_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        shutil.copy2(tmp_path, str(out_path))
+                        tmp_path = None
         finally:
             if tmp_path and Path(tmp_path).exists():
                 try:
@@ -456,15 +478,20 @@ class OutputWriter:
             if sheet:
                 results_by_sheet.setdefault(sheet, []).append(r)
 
-        # 复制原始文件（保留所有格式和结构）
-        # .xls 文件需要先转换为 .xlsx（openpyxl 不支持旧格式）
+        # 加载原始文件到内存（用BytesIO避免Windows文件锁问题）
+        # Windows下 openpyxl.load_workbook(path) 会锁住文件，导致后续 save 到
+        # 同一路径时 PermissionError。所以先读到内存再加载。
+        import io
         if Path(original_file).suffix.lower() == ".xls":
+            # .xls 需要先转换为 .xlsx 格式
             self._convert_xls_for_output(original_file, output_path)
+            with open(output_path, "rb") as f:
+                file_bytes = io.BytesIO(f.read())
         else:
-            shutil.copy2(original_file, output_path)
+            with open(original_file, "rb") as f:
+                file_bytes = io.BytesIO(f.read())
 
-        # 打开副本进行修改
-        wb = openpyxl.load_workbook(output_path)
+        wb = openpyxl.load_workbook(file_bytes)
         try:
             # 逐个处理有匹配结果的Sheet
             processed_sheets = 0
@@ -483,6 +510,7 @@ class OutputWriter:
             ws_stats = wb.create_sheet("统计汇总")
             self._write_stats_sheet(ws_stats, results)
 
+            # 保存到目标路径（wb从内存加载，不锁任何磁盘文件）
             self._save_workbook_atomic(wb, output_path)
         finally:
             wb.close()
@@ -496,6 +524,7 @@ class OutputWriter:
         处理单个Sheet：在清单行下方插入定额行
 
         处理步骤：
+        0. 取消数据区域合并单元格（防止insert_rows导致数据丢失）
         1. 找到表头行
         2. 删除已有的定额行（如果有的话）
         3. 重新扫描找到所有清单行
@@ -507,6 +536,10 @@ class OutputWriter:
         layout = self._detect_bill_layout(ws, header_row)
         unit_col = layout["unit_col"]
         qty_col = layout["qty_col"]
+
+        # 第0步：取消数据区域合并单元格（防止分页格式下insert_rows错位）
+        # 返回原始合并范围，插入完定额行后恢复
+        saved_merges = self._unmerge_data_area(ws, header_row)
 
         # 第1步：删除已有定额行（如果原文件中有旧的定额行）
         self._remove_existing_quota_rows(ws, header_row)
@@ -585,17 +618,26 @@ class OutputWriter:
                 f"Sheet [{ws.title}]: 结果为清单子集，按sheet_bill_seq精准回写 "
                 f"({len(results)}/{len(bill_rows)})")
 
-        # 第3.5步：保存原始清单行高度
-        # insert_rows 不会移动 row_dimensions 的键，所以需要手动保存/恢复
-        # 用 A 列序号作 key，插入后根据序号找到新行号再恢复
-        original_bill_heights = {}
-        for row_idx in bill_rows:
-            h = ws.row_dimensions[row_idx].height
-            a_val = ws.cell(row=row_idx, column=1).value
-            if h and a_val is not None:
-                original_bill_heights[str(a_val).strip()] = h
+        # 第3.5步：保存所有行的原始行高（包括 None = 自动高度）
+        # insert_rows 不会正确移动 row_dimensions 的键，需要手动保存/恢复
+        # None 表示自动高度，也要保存，否则恢复时这些行可能继承错误的大行高
+        original_row_heights = {}  # {原始行号: 行高或None}
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            original_row_heights[row_idx] = ws.row_dimensions[row_idx].height
+
+        # 第3.8步：检测清单行的列合并模式（用于给定额行也加相同合并）
+        # 例如原表清单行有 F:G 合并（工程量）、I:J 合并，定额行也要同样合并
+        bill_row_merges = []  # [(min_col, max_col), ...] 单行内的列合并
+        if bill_rows:
+            sample_row = bill_rows[0]
+            for mr in saved_merges:
+                # 找属于清单行的单行合并（min_row == max_row == 清单行）
+                if mr[0] == sample_row and mr[2] == sample_row:
+                    bill_row_merges.append((mr[1], mr[3]))  # (min_col, max_col)
 
         # 第4步：从下往上插入定额行（避免插行导致行号偏移）
+        # 记录每次插入的位置和行数，用于恢复合并单元格
+        insert_records = []
         for row_idx, result in sorted(row_result_pairs, key=lambda x: x[0], reverse=True):
             quotas = _ensure_list(result.get("quotas", []))
 
@@ -607,6 +649,7 @@ class OutputWriter:
 
             # 插入空行（在清单行的下一行位置）
             ws.insert_rows(row_idx + 1, amount=num_insert)
+            insert_records.append((row_idx + 1, num_insert))
 
             # 写入定额数据
             bill_unit = result.get("bill_item", {}).get("unit", "")
@@ -618,25 +661,49 @@ class OutputWriter:
                     self._write_single_quota_row(
                         ws, q_row, quota, bill_unit, bill_qty,
                         unit_col=unit_col, qty_col=qty_col)
+                    # 给定额行加和清单行相同的列合并（F:G, I:J等）
+                    for min_col, max_col in bill_row_merges:
+                        try:
+                            ws.merge_cells(
+                                start_row=q_row, start_column=min_col,
+                                end_row=q_row, end_column=max_col)
+                        except Exception:
+                            pass
+                    # 定额行行高：根据名称长度自适应
+                    q_name = quota.get("name", "")
+                    ws.row_dimensions[q_row].height = 30 if len(q_name) <= 30 else 45
             else:
                 # 未匹配提示行
                 q_row = row_idx + 1
                 no_reason = result.get("no_match_reason", "未找到匹配定额")
                 self._write_no_match_row(ws, q_row, no_reason, 9)
+                ws.row_dimensions[q_row].height = 30
 
-        # 第4.5步：恢复清单行原始行高（insert_rows 不移动 row_dimensions 键）
-        for row_idx in range(header_row + 1, ws.max_row + 1):
-            a_val = ws.cell(row=row_idx, column=1).value
-            if _is_bill_serial(a_val):
-                saved_h = original_bill_heights.get(str(a_val).strip())
-                if saved_h:
-                    ws.row_dimensions[row_idx].height = saved_h
+        # 第4.5步：恢复所有原始行的行高（按插入偏移量计算新位置）
+        # insert_records 已经在第4步记录了所有插入点
+        sorted_inserts = sorted(insert_records, key=lambda x: x[0])
+        for orig_row, orig_height in original_row_heights.items():
+            # 计算该行因插入操作下移了多少
+            offset = sum(cnt for ins_row, cnt in sorted_inserts if ins_row <= orig_row)
+            new_row = orig_row + offset
+            if orig_height is not None:
+                ws.row_dimensions[new_row].height = orig_height
+            else:
+                # 原本是自动高度，清除可能被 insert_rows 错误设置的高度
+                if new_row in ws.row_dimensions:
+                    ws.row_dimensions[new_row].height = None
+
+        # 第4.8步：恢复之前取消的合并单元格（保持原表格结构不变）
+        # insert_records 是从下往上插的，恢复时需要从上往下排序
+        insert_records.sort(key=lambda x: x[0])
+        self._restore_merges(ws, saved_merges, insert_records)
 
         # 第5步：在表头行添加J-O列标题
         self._add_extra_headers(ws, header_row)
 
-        # 第6步：统一格式化所有行（固定列宽 + 字体 + 边框 + 换行）
-        self._apply_post_format(ws, header_row, quantity_col=qty_col)
+        # 第6步：格式化清单行和定额行（保留原表列宽，不覆盖）
+        self._apply_post_format(ws, header_row, quantity_col=qty_col,
+                                keep_col_widths=True)
 
         logger.info(f"Sheet [{ws.title}]: 处理 {len(row_result_pairs)} 条清单项")
 
@@ -718,6 +785,77 @@ class OutputWriter:
             f"Sheet [{ws.title}] layout detected: unit_col={unit_col}, qty_col={qty_col}, header_row={header_row}"
         )
         return {"unit_col": unit_col, "qty_col": qty_col}
+
+    def _unmerge_data_area(self, ws, header_row: int) -> list[tuple]:
+        """取消数据区域的所有合并单元格，防止insert_rows导致数据丢失。
+
+        分页打印格式的Excel每页都有重复表头（"分部分项工程和单价措施项目
+        清单与计价表"、"序号"、"项目编码"等），这些表头有大量合并单元格
+        （如"本页小计"行的A:H整行合并）。
+
+        当在清单行下方插入定额行时，openpyxl的insert_rows在复杂合并结构下
+        可能无法正确移动合并区域，导致清单行的B/C等列变成MergedCell（值丢失）。
+
+        解决方案：插入行之前先取消合并 → 插入定额行 → 按偏移量重新合并回去。
+
+        返回: 被取消的合并范围列表 [(min_row, min_col, max_row, max_col), ...]
+              用于插入行后重新恢复合并。
+        """
+        # 收集需要取消的合并范围（只处理表头行以下的数据区域）
+        saved_merges = []
+        ranges_to_unmerge = []
+        for merge_range in ws.merged_cells.ranges:
+            if merge_range.min_row > header_row:
+                ranges_to_unmerge.append(str(merge_range))
+                # 保存坐标（后续按行偏移量重新合并）
+                saved_merges.append((
+                    merge_range.min_row, merge_range.min_col,
+                    merge_range.max_row, merge_range.max_col,
+                ))
+
+        # 逐个取消合并
+        for range_str in ranges_to_unmerge:
+            ws.unmerge_cells(range_str)
+
+        if ranges_to_unmerge:
+            logger.debug(
+                f"Sheet [{ws.title}]: 取消 {len(ranges_to_unmerge)} 个"
+                f"数据区域合并单元格（防止insert_rows错位）")
+
+        return saved_merges
+
+    @staticmethod
+    def _restore_merges(ws, saved_merges: list[tuple], insert_points: list[tuple]):
+        """插入定额行后，把之前取消的合并单元格按偏移量恢复回去。
+
+        参数:
+            ws: 工作表
+            saved_merges: _unmerge_data_area 返回的原始合并坐标
+            insert_points: 插入记录列表 [(插入位置行号, 插入行数), ...]
+                           按原始行号从小到大排序
+        """
+        if not saved_merges:
+            return
+
+        # 对每个原始合并范围，计算插入行导致的偏移量
+        # insert_points 格式: [(row, count), ...] 表示在 row 处插入了 count 行
+        # 如果合并范围的起始行 > 插入点，则该范围需要下移 count 行
+        for min_row, min_col, max_row, max_col in saved_merges:
+            offset = 0
+            for ins_row, ins_count in insert_points:
+                # 插入点在合并范围起始行或之前，该范围需要下移
+                # ws.insert_rows(X) 会把 X 及以下的行全部下移
+                if ins_row <= min_row:
+                    offset += ins_count
+            new_min_row = min_row + offset
+            new_max_row = max_row + offset
+            try:
+                ws.merge_cells(
+                    start_row=new_min_row, start_column=min_col,
+                    end_row=new_max_row, end_column=max_col,
+                )
+            except Exception:
+                pass  # 合并失败不影响主流程（可能与新插入的行重叠）
 
     def _remove_existing_quota_rows(self, ws, header_row: int):
         """删除已有的定额行（从下往上删，避免行号偏移）"""
@@ -861,8 +999,8 @@ class OutputWriter:
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
 
-        # 所有列统一 thin 边框 + 宋体9号（和清单行一致）
-        for col in range(1, 10):  # A-I列
+        # 所有列统一 thin 边框 + 宋体9号（和清单行一致，覆盖到K列）
+        for col in range(1, 12):  # A-K列
             cell = ws.cell(row=q_row, column=col)
             cell.border = THIN_BORDER
             if cell.font == Font() or cell.font is None:
@@ -891,7 +1029,8 @@ class OutputWriter:
         ws.column_dimensions["N"].width = 30
         ws.column_dimensions["O"].width = 36
 
-    def _apply_post_format(self, ws, header_row: int, quantity_col: int = 6):
+    def _apply_post_format(self, ws, header_row: int, quantity_col: int = 6,
+                           keep_col_widths: bool = False):
         """
         格式化清单行和定额行（不动分部/合计等原始行，保留其原始格式）
 
@@ -899,11 +1038,12 @@ class OutputWriter:
         - openpyxl 加载后清单行可能丢失字体/边框/对齐
         - insert_rows 新插入的定额行没有格式
         - 统一设 wrap_text=True 让文字自动换行
-        - 设固定列宽让表格宽度一致
+        - 设固定列宽让表格宽度一致（keep_col_widths=True时跳过，保留原表列宽）
         """
-        # 1. 设固定列宽（A-I列）
-        for col, width in STANDARD_COL_WIDTHS.items():
-            ws.column_dimensions[col].width = width
+        # 1. 设固定列宽（保留原表结构时不动，避免破坏分页打印格式）
+        if not keep_col_widths:
+            for col, width in STANDARD_COL_WIDTHS.items():
+                ws.column_dimensions[col].width = width
 
         # 2. 只格式化清单行和定额行，跳过分部/合计等原始行
         for row_idx in range(header_row + 1, ws.max_row + 1):
