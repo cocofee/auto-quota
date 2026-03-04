@@ -661,14 +661,9 @@ class OutputWriter:
                     self._write_single_quota_row(
                         ws, q_row, quota, bill_unit, bill_qty,
                         unit_col=unit_col, qty_col=qty_col)
-                    # 给定额行加和清单行相同的列合并（F:G, I:J等）
-                    for min_col, max_col in bill_row_merges:
-                        try:
-                            ws.merge_cells(
-                                start_row=q_row, start_column=min_col,
-                                end_row=q_row, end_column=max_col)
-                        except Exception:
-                            pass
+                    # 注意：定额行的列合并（F:G, I:J等）不在这里做！
+                    # 因为后续的 insert_rows 会错误移位这些合并，导致合并跑到
+                    # 页面结构行上产生"竖杠"。改为第4.9步统一处理。
                     # 定额行行高：根据名称长度自适应
                     q_name = quota.get("name", "")
                     ws.row_dimensions[q_row].height = 30 if len(q_name) <= 30 else 45
@@ -697,6 +692,25 @@ class OutputWriter:
         # insert_records 是从下往上插的，恢复时需要从上往下排序
         insert_records.sort(key=lambda x: x[0])
         self._restore_merges(ws, saved_merges, insert_records)
+
+        # 第4.9步：给定额行统一加列合并（F:G, I:J等）
+        # 不能在第4步的插入循环中做，因为后续 insert_rows 会把合并错误移位到
+        # 页面结构行上，导致重叠合并产生"竖杠"。在所有插入完成后统一处理。
+        if bill_row_merges:
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                a_val = ws.cell(row=row_idx, column=1).value
+                b_val = ws.cell(row=row_idx, column=2).value
+                # 识别定额行：A列为空，B列是定额编号格式
+                if (a_val is None or str(a_val).strip() == "") and b_val:
+                    b_str = str(b_val).strip()
+                    if _is_quota_code(b_str):
+                        for min_col, max_col in bill_row_merges:
+                            try:
+                                ws.merge_cells(
+                                    start_row=row_idx, start_column=min_col,
+                                    end_row=row_idx, end_column=max_col)
+                            except Exception:
+                                pass  # 合并失败（可能与其他合并重叠）不影响主流程
 
         # 第5步：在表头行添加J-O列标题
         self._add_extra_headers(ws, header_row)

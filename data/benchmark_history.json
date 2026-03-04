@@ -2315,5 +2315,277 @@
       }
     },
     "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 00:46:36",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 07:51:14",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 07:58:55",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 08:17:45",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 08:23:13",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 08:26:12",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 09:58:28",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 10:03:21",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 10:10:27",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 10:30:19",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 10:48:06",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 10:57:00",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 11:04:08",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 11:05:09",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 11:29:02",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 11:39:37",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
   }
 ]

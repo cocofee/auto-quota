@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.69';
+export const APP_VERSION = '0.1.70';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.70',
+    date: '2026-03-04',
+    changes: [
+      { type: 'admin', text: '双模型支持 + Excel原子写入重试 + API Key脱敏' },
+      { type: 'admin', text: '算法改进 — 费用过滤+标题行过滤+通用定额降权调优' },
+      { type: 'admin', text: '批量匹配改进 + 微信文件自动提取工具' },
+      { type: 'admin', text: '环境配置优化 + 前端提示改进 + 文档更新' },
+    ],
+  },
   {
     version: '0.1.69',
     date: '2026-03-03',
