@@ -89,6 +89,10 @@ export default function BatchDashboard() {
   const [filterProvince, setFilterProvince] = useState<string | undefined>();
   const [filterKeyword, setFilterKeyword] = useState('');
 
+  // 扫描目录（用户可自定义，留空用后端默认值）
+  const [scanDir, setScanDir] = useState('');
+  const [defaultDir, setDefaultDir] = useState('');
+
   // 加载状态概览
   const loadStatus = useCallback(async () => {
     try {
@@ -122,11 +126,23 @@ export default function BatchDashboard() {
   useEffect(() => { loadStatus(); }, [loadStatus]);
   useEffect(() => { loadFiles(); }, [loadFiles]);
 
+  // 获取默认扫描目录（页面加载时调一次）
+  useEffect(() => {
+    api.get('/admin/batch/scan-dirs')
+      .then(res => { setDefaultDir(res.data.default || ''); })
+      .catch(() => {});
+  }, []);
+
   // 启动扫描
   const handleScan = async () => {
     setTaskLoading(true);
     try {
-      const res = await api.post('/admin/batch/scan', { directory: 'F:/jarvis' });
+      const payload: Record<string, any> = {};
+      if (scanDir.trim()) {
+        payload.directory = scanDir.trim();
+      }
+      // directory 不传时后端自动检测环境（容器用/app/raw_files，本地用F:/jarvis）
+      const res = await api.post('/admin/batch/scan', payload);
       message.success(`扫描已启动，任务ID: ${res.data.task_id}`);
       // 延迟刷新
       setTimeout(() => { loadStatus(); loadFiles(); }, 3000);
@@ -246,6 +262,13 @@ export default function BatchDashboard() {
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>批量任务看板</h2>
         <Space>
+          <Input
+            placeholder={defaultDir || '扫描目录（默认自动检测）'}
+            style={{ width: 260 }}
+            value={scanDir}
+            onChange={e => setScanDir(e.target.value)}
+            allowClear
+          />
           <Button
             icon={<ScanOutlined />}
             onClick={handleScan}

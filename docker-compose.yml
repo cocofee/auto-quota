@@ -106,6 +106,8 @@ services:
       - ./logs:/app/logs
       # Benchmark历史记录（前端跑分趋势页面读取）
       - ./tests:/app/tests
+      # 原始造价文件（本地开发用，和懒猫的 /lzcapp/var/raw_files 对应）
+      - ./raw_files:/app/raw_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,6 +145,8 @@ services:
       - ./logs:/app/logs
       # 模型缓存持久化（避免每次重建容器都重新下载 ~2GB 的AI模型）
       - model_cache:/root/.cache
+      # 原始造价文件
+      - ./raw_files:/app/raw_files
     depends_on:
       postgres:
         condition: service_healthy

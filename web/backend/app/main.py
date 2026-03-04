@@ -139,6 +139,9 @@ app.include_router(analysis_router, prefix="/api/admin/analysis", tags=["管理�
 from app.api.data_manage import router as data_manage_router
 app.include_router(data_manage_router, prefix="/api/admin/data", tags=["管理员-数据管理"])
 
+from app.api.price_backfill import router as price_backfill_router
+app.include_router(price_backfill_router, prefix="/api/tools", tags=["工具-智能填价"])
+
 
 # ============================================================
 # 基础端点（健康检查）

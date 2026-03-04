@@ -8,6 +8,7 @@
     POST /api/admin/batch/run          — 启动批量匹配（Celery异步）
     POST /api/admin/batch/retry/{file_path} — 重跑单个文件
     GET  /api/admin/batch/task-status/{task_id} — 查询异步任务进度
+    GET  /api/admin/batch/scan-dirs    — 获取可用的扫描目录
 
 通过 asyncio.to_thread() 调用 batch_scanner 的 SQLite 同步操作，
 避免阻塞 FastAPI 的异步事件循环。
@@ -15,6 +16,7 @@
 
 import asyncio
 import sys
+import platform
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -35,6 +37,17 @@ router = APIRouter()
 
 # batch.db 路径
 _BATCH_DB_PATH = PROJECT_ROOT / "output" / "batch" / "batch.db"
+
+
+def _default_scan_dir() -> str:
+    """根据运行环境返回默认扫描目录
+
+    容器内（Linux）: /app/raw_files
+    本地开发（Windows）: F:/jarvis
+    """
+    if platform.system() != "Windows":
+        return "/app/raw_files"
+    return "F:/jarvis"
 
 
 def _get_batch_db() -> sqlite3.Connection:
@@ -208,7 +221,7 @@ async def batch_files(
 
 class ScanRequest(BaseModel):
     """扫描请求参数"""
-    directory: str = "F:/jarvis"  # 默认扫描目录
+    directory: Optional[str] = None  # 为空时自动检测环境（容器用/app/raw_files，本地用F:/jarvis）
     specialty: Optional[str] = None  # 只扫某专业
     rescan: bool = False  # 是否重新分类
 
@@ -219,13 +232,19 @@ async def start_scan(
     admin: User = Depends(require_admin),
 ):
     """启动文件扫描（Celery异步执行）"""
+    directory = req.directory or _default_scan_dir()
+
+    # 安全检查：路径不能包含 ..（防止路径穿越）
+    if ".." in directory:
+        raise HTTPException(status_code=400, detail="扫描路径不能包含 ..")
+
     from app.tasks.batch_task import execute_scan
     task = execute_scan.delay(
-        directory=req.directory,
+        directory=directory,
         specialty=req.specialty,
         rescan=req.rescan,
     )
-    return {"task_id": task.id, "message": "扫描已启动"}
+    return {"task_id": task.id, "message": f"扫描已启动: {directory}"}
 
 
 # ============================================================
@@ -319,3 +338,33 @@ async def batch_task_status(
         return {"state": "FAILURE", "error": str(result.result)}
     else:
         return {"state": result.state}
+
+
+# ============================================================
+# 扫描目录信息
+# ============================================================
+
+@router.get("/scan-dirs")
+async def get_scan_dirs(
+    admin: User = Depends(require_admin),
+):
+    """获取默认扫描目录和一级子目录列表
+
+    前端用来显示默认路径和子目录（方便用户了解目录结构）。
+    """
+    def _check():
+        default_dir = _default_scan_dir()
+        p = Path(default_dir)
+        result = {"default": default_dir, "exists": p.exists()}
+        if result["exists"]:
+            try:
+                subdirs = [d.name for d in p.iterdir()
+                           if d.is_dir() and not d.name.startswith('.')]
+                result["subdirs"] = sorted(subdirs)
+            except Exception:
+                result["subdirs"] = []
+        else:
+            result["subdirs"] = []
+        return result
+
+    return await asyncio.to_thread(_check)

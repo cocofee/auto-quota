@@ -74,11 +74,25 @@ class BillReader:
     """工程量清单读取器"""
 
     # 标准列名匹配规则（用于自动识别列映射）
+    # 包含标准清单格式 + 手填清单常见变体
     COLUMN_PATTERNS = {
         "index": ["序号"],
-        "code": ["项目编码", "编码", "清单编码"],
-        "name": ["项目名称", "名称", "清单名称"],
-        "description": ["项目特征", "特征描述", "项目特征描述", "特征"],
+        "code": [
+            "项目编码", "编码", "清单编码",
+            "子目编码",          # 手填清单变体
+        ],
+        "name": [
+            "项目名称", "名称", "清单名称",
+            "项目内容",          # 手填清单变体（如"分部分项工程项目清单"格式）
+            "子目名称",          # 手填清单变体（广联达造价HOME导出）
+        ],
+        "description": [
+            "项目特征", "特征描述", "项目特征描述", "特征",
+            "子目特征描述",      # 手填清单变体
+            "子目特征",          # 手填清单变体
+            "工作内容及范围",    # 劳务分包采购清单格式
+            "工作内容",          # 简写变体
+        ],
         "unit": ["计量单位", "单位", "计量\n单位"],
         # 常见变体：
         # - 工程量
@@ -536,30 +550,80 @@ class BillReader:
         检测是否是分部工程标题行
 
         特征：
-        - 序号列为空
+        - 序号列为空（标准清单）
+        - 或序号列有值但名称像分节标题（手填清单，如"二、一层照明"）
         - 编码列或名称列有文字
         - 文字不是数据行（不含编码格式的数字）
         """
         if not row:
             return None
 
-        # 序号列应该为空
+        # 获取名称列文本（后面多处用到）
+        name_text = ""
+        if "name" in col_map:
+            name_idx = col_map["name"]
+            if name_idx < len(row) and row[name_idx]:
+                name_text = str(row[name_idx]).strip()
+
+        # 检查序号列
+        has_index = False
         if "index" in col_map:
             idx_val = row[col_map["index"]] if col_map["index"] < len(row) else None
             if idx_val is not None and str(idx_val).strip():
-                return None  # 有序号，不是标题行
+                has_index = True
 
-        # 检查编码列或名称列
-        for field in ["code", "name"]:
-            if field in col_map:
-                idx = col_map[field]
-                if idx < len(row) and row[idx]:
-                    text = str(row[idx]).strip()
-                    # 分部工程标题通常是纯中文（如"给排水工程"、"电气工程"）
-                    if len(text) >= 2 and not re.match(r'^\d', text):
-                        return text
+        if not has_index:
+            # 情况1：序号为空（标准清单的分部标题，原有逻辑）
+            for field in ["code", "name"]:
+                if field in col_map:
+                    idx = col_map[field]
+                    if idx < len(row) and row[idx]:
+                        text = str(row[idx]).strip()
+                        # 分部工程标题通常是纯中文（如"给排水工程"、"电气工程"）
+                        if len(text) >= 2 and not re.match(r'^\d', text):
+                            return text
+        else:
+            # 情况2：有序号但名称像分节标题（手填清单场景）
+            # 条件：名称以中文数字序号开头 + 该行没有单位和工程量
+            if name_text and self._looks_like_section_title(name_text):
+                has_unit = False
+                has_qty = False
+                if "unit" in col_map:
+                    u_idx = col_map["unit"]
+                    if u_idx < len(row) and row[u_idx]:
+                        has_unit = bool(str(row[u_idx]).strip())
+                if "quantity" in col_map:
+                    q_idx = col_map["quantity"]
+                    if q_idx < len(row) and row[q_idx]:
+                        try:
+                            float(str(row[q_idx]).replace(",", "").strip())
+                            has_qty = True
+                        except (ValueError, TypeError):
+                            pass
+                # 三重条件：标题格式 + 无单位 + 无工程量
+                if not has_unit and not has_qty:
+                    return name_text
 
         return None
+
+    @staticmethod
+    def _looks_like_section_title(text: str) -> bool:
+        """判断文本是否像分节标题（而非清单数据行）
+
+        手填清单中，分节标题混在数据行里，格式如：
+        - "一、一层照明、网球羽毛球场地"
+        - "二、一层羽毛球网球夹层照明"
+        - "第三部分 消防系统"
+        """
+        if len(text) < 2:
+            return False
+        # 以中文数字序号开头（如"一、""二、""十二、"）
+        if re.match(r'^[一二三四五六七八九十]+[、.\s]', text):
+            return True
+        # 以"第X部分/章/节"开头
+        if re.match(r'^第[一二三四五六七八九十\d]+[部章节]', text):
+            return True
+        return False
 
 
 # ================================================================

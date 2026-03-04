@@ -243,10 +243,17 @@ def extract_province(file_path: str) -> str:
 
 
 def extract_specialty(file_path: str) -> str:
-    """从文件路径中提取专业（jarvis下的一级目录名）。"""
+    """从文件路径中提取专业（扫描根目录下的一级子目录名）。
+
+    支持的根目录标识：jarvis（本地）、raw_files（容器内）
+    例如：
+      /app/raw_files/电气/xxx.xlsx → "电气"
+      F:/jarvis/消防/xxx.xlsx → "消防"
+    """
+    _SCAN_ROOT_MARKERS = {"jarvis", "raw_files"}
     parts = Path(file_path).parts
     for i, part in enumerate(parts):
-        if part.lower() == "jarvis" and i + 1 < len(parts):
+        if part.lower() in _SCAN_ROOT_MARKERS and i + 1 < len(parts):
             candidate = parts[i + 1]
             if not candidate.endswith(('.xlsx', '.xls', '.xlsm')):
                 return candidate
