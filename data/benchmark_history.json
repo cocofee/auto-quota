@@ -2587,5 +2587,294 @@
       }
     },
     "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 14:49:08",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 14:53:29",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 15:10:21",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 15:32:06",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 18:41:26",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:00:41",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:04:21",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:35:05",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:36:37",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:37:01",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 19:40:20",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:02:36",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:12:54",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:22:18",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:27:14",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:36:00",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
+  },
+  {
+    "version": "L2-a_baseline",
+    "date": "2026-03-04 20:46:43",
+    "mode": "search",
+    "datasets": {
+      "B_ok": {
+        "total": 10,
+        "green_rate": 0.8,
+        "yellow_rate": 0.1,
+        "red_rate": 0.1,
+        "exp_hit_rate": 0.2,
+        "fallback_rate": 0.0,
+        "avg_time_sec": 0.1
+      }
+    },
+    "note": ""
   }
 ]

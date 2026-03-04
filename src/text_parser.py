@@ -397,6 +397,11 @@ class TextParser:
         spec_dim_pattern = r'规格[：:]\s*\d+\s*[*×xX]\s*\d+(?:\s*[*×xX]\s*\d+)?'
         text_clean = re.sub(spec_dim_pattern, ' ', text_clean)
 
+        # 排除槽盒/箱体类设备的物理尺寸（如"防火槽盒100*100"中的100*100是槽盒尺寸，不是电缆截面）
+        _ENCLOSURE_KW = ("槽盒", "防火槽", "接线箱", "端子箱")
+        if any(kw in text for kw in _ENCLOSURE_KW):
+            text_clean = re.sub(r'\d{2,4}\s*[*×xX]\s*\d{2,4}', ' ', text_clean)
+
         # 排除二维面板尺寸（NxN后面跟mm或没有电缆型号前缀）
         # 如 "600x600mm"、"300×300"（面板尺寸）
         # 但保留 "4×185"（电缆截面，前面的数字较小，通常≤5）
@@ -428,6 +433,13 @@ class TextParser:
             # 取所有截面值中最大的作为主截面
             sections = [float(m[1]) for m in matches]
             return max(sections)
+
+        # 格式: (截面mm2以下) 16 / (截面mm²以内) 185
+        # 描述字段中括号包裹"截面"的格式：括号在"截面"前面
+        # 如 "规格:(截面mm2以下) 16"
+        paren_match = re.search(r'[（(]截面[^)）]*[)）]\s*(\d+(?:\.\d+)?)', text)
+        if paren_match:
+            return float(paren_match.group(1))
 
         # 格式: 截面(mm²以内) 数值 / 截面(mm2) ≤2.5（定额名称格式含≤前缀）
         # 支持全角括号（mm2）和半角括号(mm2)，支持"截面积"

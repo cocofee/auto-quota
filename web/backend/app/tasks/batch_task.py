@@ -19,15 +19,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 @celery_app.task(bind=True, name="execute_scan")
-def execute_scan(self, directory: str = "F:/jarvis",
+def execute_scan(self, directory: str = None,
                  specialty: str = None, rescan: bool = False):
     """后台执行文件扫描
 
     参数:
-        directory: 扫描目录
+        directory: 扫描目录（为空时自动检测：容器用/app/raw_files，本地用F:/jarvis）
         specialty: 只扫某专业（可选）
         rescan: 是否重新分类已扫描的文件
     """
+    # 默认目录：容器内（Linux）用 /app/raw_files，本地（Windows）用 F:/jarvis
+    if directory is None:
+        import platform
+        directory = "/app/raw_files" if platform.system() != "Windows" else "F:/jarvis"
     try:
         from tools.batch_scanner import scan_directory, init_db
 

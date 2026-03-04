@@ -32,6 +32,7 @@ import {
   CloudServerOutlined,
   AlertOutlined,
   FolderOpenOutlined,
+  DollarOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
@@ -82,6 +83,19 @@ export default function MainLayout() {
         key: '/quota/logs',
         icon: <WalletOutlined />,
         label: '使用记录',
+      },
+      { type: 'divider' },
+      {
+        key: 'tools-group',
+        type: 'group',
+        label: '工具',
+        children: [
+          {
+            key: '/tools/price-backfill',
+            icon: <DollarOutlined />,
+            label: '智能填价',
+          },
+        ],
       },
     ];
 

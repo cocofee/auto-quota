@@ -10,8 +10,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
+  Checkbox, Tag, Tooltip, Input, Radio,
 } from 'antd';
-import { InboxOutlined, RocketOutlined } from '@ant-design/icons';
+import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, CheckCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { read, utils as xlsxUtils } from 'xlsx';
 import api from '../../services/api';
@@ -22,6 +23,27 @@ import { getSiblingProvinces } from '../../utils/region';
 import { getErrorMessage } from '../../utils/error';
 
 const { Dragger } = Upload;
+
+/** 非清单Sheet的关键词（这些Sheet通常不包含需要匹配的清单数据） */
+const SKIP_KEYWORDS = [
+  '汇总', '造价汇总', '规费', '税金', '措施', '人材机', '人工', '材料',
+  '机械', '主材', '甲供', '暂估', '签证', '索赔', '封面', '目录',
+  '说明', '编制说明', '取费', '费率', '调差', '价差',
+];
+
+/** 判断Sheet名称是否为非清单Sheet（汇总表、措施费等） */
+function isSkipSheet(name: string): boolean {
+  const n = name.replace(/\s+/g, '');
+  return SKIP_KEYWORDS.some(kw => n.includes(kw));
+}
+
+/** 判断Sheet名称是否为推荐的清单Sheet（只推荐"分部分项清单"这类核心Sheet） */
+function isRecommendSheet(name: string): boolean {
+  const n = name.replace(/\s+/g, '');
+  // 只推荐明确包含"分部分项"或"工程量清单"的Sheet
+  const recommendKeywords = ['分部分项', '工程量清单'];
+  return recommendKeywords.some(kw => n.includes(kw));
+}
 
 export default function TaskCreatePage() {
   const navigate = useNavigate();
@@ -34,6 +56,21 @@ export default function TaskCreatePage() {
   const [uploadPercent, setUploadPercent] = useState(0); // 上传进度百分比
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [sheetNames, setSheetNames] = useState<string[]>([]); // 从上传的Excel中读取的工作表名列表
+  const [selectedSheets, setSelectedSheets] = useState<string[]>([]); // 用户勾选的工作表
+  const [sheetFilter, setSheetFilter] = useState<'all' | 'selected' | 'skipped'>('all'); // Sheet筛选模式
+  const [sheetSearch, setSheetSearch] = useState(''); // Sheet搜索关键词
+
+  // 根据筛选条件过滤Sheet列表
+  const filteredSheets = useMemo(() => {
+    return sheetNames.filter((name) => {
+      // 搜索过滤
+      if (sheetSearch && !name.includes(sheetSearch)) return false;
+      // 分类过滤
+      if (sheetFilter === 'selected') return selectedSheets.includes(name);
+      if (sheetFilter === 'skipped') return isSkipSheet(name);
+      return true;
+    });
+  }, [sheetNames, sheetSearch, sheetFilter, selectedSheets]);
   const [currentStep, setCurrentStep] = useState(0);
   const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup, getSubgroup } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
@@ -169,8 +206,9 @@ export default function TaskCreatePage() {
       formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));
 
       if (isAdmin) {
-        if (values.sheet) {
-          formData.append('sheet', values.sheet);
+        // 传选中的sheets（如果不是全选，才传，全选时后端默认处理全部）
+        if (selectedSheets.length > 0 && selectedSheets.length < sheetNames.length) {
+          formData.append('sheets', selectedSheets.join(','));
         }
         if (values.limit_count) {
           formData.append('limit_count', String(values.limit_count));
@@ -206,7 +244,123 @@ export default function TaskCreatePage() {
   const isParamStep = isAdmin && currentStep === 1;
 
   return (
-    <Card title="新建匹配任务" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ display: 'flex', gap: 16, justifyContent: 'center', alignItems: 'flex-start' }}>
+      {/* 左侧：Sheet选择面板（上传文件后显示） */}
+      {sheetNames.length > 0 && (
+        <Card
+          title={
+            <span>
+              工作表
+              <span style={{ color: '#888', fontWeight: 'normal', marginLeft: 8, fontSize: 13 }}>
+                已选 {selectedSheets.length}/{sheetNames.length}
+              </span>
+            </span>
+          }
+          style={{ width: 520, flexShrink: 0 }}
+          styles={{ body: { padding: 0 } }}
+        >
+          {/* 搜索框 */}
+          <div style={{ padding: '12px 16px 8px' }}>
+            <Input
+              placeholder="搜索工作表名称"
+              prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+              allowClear
+              value={sheetSearch}
+              onChange={(e) => setSheetSearch(e.target.value)}
+            />
+          </div>
+
+          {/* 筛选按钮 */}
+          <div style={{ padding: '0 16px 8px' }}>
+            <Radio.Group
+              size="small"
+              value={sheetFilter}
+              onChange={(e) => setSheetFilter(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="all">全部 {sheetNames.length}</Radio.Button>
+              <Radio.Button value="selected">已选 {selectedSheets.length}</Radio.Button>
+              <Radio.Button value="skipped">已跳过 {sheetNames.filter(n => isSkipSheet(n)).length}</Radio.Button>
+            </Radio.Group>
+          </div>
+
+          {/* 全选/取消全选 */}
+          <div style={{
+            padding: '4px 16px 8px',
+            borderTop: '1px solid #f0f0f0',
+            borderBottom: '1px solid #f0f0f0',
+            marginBottom: 4,
+          }}>
+            <Checkbox
+              checked={selectedSheets.length === sheetNames.length}
+              indeterminate={selectedSheets.length > 0 && selectedSheets.length < sheetNames.length}
+              onChange={(e) => {
+                setSelectedSheets(e.target.checked ? [...sheetNames] : []);
+              }}
+            >
+              全选
+            </Checkbox>
+          </div>
+
+          {/* Sheet列表 */}
+          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            {filteredSheets.length > 0 ? filteredSheets.map((name) => {
+              const skip = isSkipSheet(name);
+              const recommend = isRecommendSheet(name);
+              return (
+                <div
+                  key={name}
+                  style={{
+                    padding: '6px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    opacity: skip && !selectedSheets.includes(name) ? 0.5 : 1,
+                    background: selectedSheets.includes(name) ? '#f6ffed' : 'transparent',
+                  }}
+                >
+                  <Checkbox
+                    checked={selectedSheets.includes(name)}
+                    onChange={(e) => {
+                      setSelectedSheets(prev =>
+                        e.target.checked
+                          ? [...prev, name]
+                          : prev.filter(s => s !== name)
+                      );
+                    }}
+                  >
+                    <span style={{ color: skip ? '#999' : undefined, fontSize: 15 }}>
+                      {name}
+                    </span>
+                  </Checkbox>
+                  {recommend && (
+                    <Tooltip title="系统识别为清单Sheet，推荐处理">
+                      <Tag color="green" style={{ marginLeft: 'auto', cursor: 'help', fontSize: 13 }}>
+                        推荐
+                      </Tag>
+                    </Tooltip>
+                  )}
+                  {skip && !selectedSheets.includes(name) && (
+                    <Tooltip title="汇总/措施/规费等非清单Sheet，已自动跳过">
+                      <Tag color="default" style={{ marginLeft: 'auto', cursor: 'help', fontSize: 13 }}>
+                        跳过
+                      </Tag>
+                    </Tooltip>
+                  )}
+                </div>
+              );
+            }) : (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#999' }}>
+                无匹配结果
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* 右侧：原来的步骤卡片 */}
+      <Card title="新建匹配任务" style={{ maxWidth: 720, flex: 1 }}>
       {/* 提示信息移到上传区域的hint中 */}
       <Steps
         current={currentStep}
@@ -230,85 +384,122 @@ export default function TaskCreatePage() {
               required
               help="支持 .xlsx / .xls 格式的工程量清单"
             >
-              <Dragger
-                fileList={fileList}
-                maxCount={1}
-                accept=".xlsx,.xls"
-                beforeUpload={(file) => {
-                  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-                  if (!isExcel) {
-                    message.error('只支持 Excel 文件（.xlsx / .xls）');
-                    return Upload.LIST_IGNORE;
-                  }
-                  const isLt30M = file.size / 1024 / 1024 < 30;
-                  if (!isLt30M) {
-                    message.error('文件不能超过 30MB');
-                    return Upload.LIST_IGNORE;
-                  }
-                  setFileList([{ ...file, originFileObj: file } as UploadFile]);
+              {/* 已选文件：显示文件信息卡片 */}
+              {fileList.length > 0 ? (
+                <div style={{
+                  border: '1px solid #91caff',
+                  borderRadius: 8,
+                  padding: '16px 20px',
+                  background: '#e6f4ff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <FileExcelOutlined style={{ fontSize: 32, color: '#52c41a' }} />
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 15 }}>{fileList[0].name}</div>
+                      <div style={{ color: '#888', fontSize: 13 }}>
+                        {((fileList[0].size || 0) / 1024).toFixed(0)} KB
+                        {sheetNames.length > 0 && `  ·  ${sheetNames.length} 个工作表`}
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); }}
+                  >
+                    移除
+                  </Button>
+                </div>
+              ) : (
+                /* 未选文件：显示拖拽上传区域 */
+                <Dragger
+                  fileList={[]}
+                  maxCount={1}
+                  accept=".xlsx,.xls"
+                  showUploadList={false}
+                  beforeUpload={(file) => {
+                    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+                    if (!isExcel) {
+                      message.error('只支持 Excel 文件（.xlsx / .xls）');
+                      return Upload.LIST_IGNORE;
+                    }
+                    const isLt30M = file.size / 1024 / 1024 < 30;
+                    if (!isLt30M) {
+                      message.error('文件不能超过 30MB');
+                      return Upload.LIST_IGNORE;
+                    }
+                    setFileList([{ uid: file.uid || Date.now().toString(), name: file.name, size: file.size, originFileObj: file } as UploadFile]);
 
-                  // 读取Excel中的工作表（Sheet）名列表 + 校验必备列
-                  const reader = new FileReader();
-                  reader.onload = (e) => {
-                    try {
-                      // sheetRows:5 只读前5行（性能优化，不加载全部数据）
-                      const wb = read(e.target?.result, { type: 'array', sheetRows: 5 });
-                      setSheetNames(wb.SheetNames || []);
+                    // 读取Excel中的工作表（Sheet）名列表 + 校验必备列
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                      try {
+                        // sheetRows:5 只读前5行（性能优化，不加载全部数据）
+                        const wb = read(e.target?.result, { type: 'array', sheetRows: 5 });
+                        setSheetNames(wb.SheetNames || []);
 
-                      // 校验必备列：从所有Sheet的前几行中查找列名
-                      const requiredCols: { name: string; aliases: string[] }[] = [
-                        { name: '项目编码', aliases: ['项目编码', '清单编码', '编码', '编号'] },
-                        { name: '项目名称', aliases: ['项目名称', '清单名称', '名称'] },
-                        { name: '项目特征', aliases: ['项目特征', '项目特征描述', '特征描述', '特征', '工程内容'] },
-                        { name: '单位', aliases: ['计量单位', '单位'] },
-                      ];
+                        // 智能选中：非清单Sheet（汇总、措施费等）默认不勾选
+                        const autoSelected = (wb.SheetNames || []).filter(
+                          (name: string) => !isSkipSheet(name)
+                        );
+                        setSelectedSheets(autoSelected);
 
-                      // 从所有Sheet中收集表头（通常在前3行内）
-                      // 用 xlsx 的 utils.sheet_to_json 读取前5行，自动处理任意列数（包括AA/AB等超过Z的列）
-                      const allHeaders = new Set<string>();
-                      for (const sheetName of wb.SheetNames) {
-                        const ws = wb.Sheets[sheetName];
-                        if (!ws) continue;
-                        // header:1 返回二维数组（每行一个数组），不做表头映射
-                        const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1 });
-                        for (const row of rows) {
-                          if (!Array.isArray(row)) continue;
-                          for (const cell of row) {
-                            if (cell != null && String(cell).trim()) {
-                              allHeaders.add(String(cell).trim());
+                        // 校验必备列：从所有Sheet的前几行中查找列名
+                        const requiredCols: { name: string; aliases: string[] }[] = [
+                          { name: '项目编码', aliases: ['项目编码', '清单编码', '编码', '编号'] },
+                          { name: '项目名称', aliases: ['项目名称', '清单名称', '名称'] },
+                          { name: '项目特征', aliases: ['项目特征', '项目特征描述', '特征描述', '特征', '工程内容'] },
+                          { name: '单位', aliases: ['计量单位', '单位'] },
+                        ];
+
+                        // 从所有Sheet中收集表头（通常在前3行内）
+                        const allHeaders = new Set<string>();
+                        for (const sheetName of wb.SheetNames) {
+                          const ws = wb.Sheets[sheetName];
+                          if (!ws) continue;
+                          const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1 });
+                          for (const row of rows) {
+                            if (!Array.isArray(row)) continue;
+                            for (const cell of row) {
+                              if (cell != null && String(cell).trim()) {
+                                allHeaders.add(String(cell).trim());
+                              }
                             }
                           }
                         }
+
+                        // 检查每个必备列是否在表头中找到
+                        const missing = requiredCols.filter(
+                          col => !col.aliases.some(alias => allHeaders.has(alias))
+                        );
+
+                        if (missing.length > 0) {
+                          const names = missing.map(c => `「${c.name}」`).join('、');
+                          message.warning({
+                            content: `提醒：未在前几行中找到 ${names} 列。如果这些列在更下方，可忽略此提醒。`,
+                            duration: 6,
+                          });
+                        }
+                      } catch {
+                        setSheetNames([]);
                       }
+                    };
+                    reader.readAsArrayBuffer(file);
 
-                      // 检查每个必备列是否在表头中找到
-                      const missing = requiredCols.filter(
-                        col => !col.aliases.some(alias => allHeaders.has(alias))
-                      );
-
-                      if (missing.length > 0) {
-                        const names = missing.map(c => `「${c.name}」`).join('、');
-                        message.warning({
-                          content: `提醒：未在前几行中找到 ${names} 列。如果这些列在更下方，可忽略此提醒。`,
-                          duration: 6,
-                        });
-                      }
-                    } catch {
-                      setSheetNames([]);
-                    }
-                  };
-                  reader.readAsArrayBuffer(file);
-
-                  return false;
-                }}
-                onRemove={() => { setFileList([]); setSheetNames([]); }}
-              >
-                <p className="ant-upload-drag-icon">
-                  <InboxOutlined />
-                </p>
-                <p className="ant-upload-text">拖拽文件到此处，或点击选择</p>
-                <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB，安装工程匹配效果最佳</p>
-              </Dragger>
+                    return false;
+                  }}
+                >
+                  <p className="ant-upload-drag-icon">
+                    <InboxOutlined />
+                  </p>
+                  <p className="ant-upload-text">拖拽文件到此处，或点击选择</p>
+                  <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB，安装工程匹配效果最佳</p>
+                </Dragger>
+              )}
             </Form.Item>
 
             <Form.Item
@@ -392,18 +583,9 @@ export default function TaskCreatePage() {
           </>
         )}
 
-        {/* 步骤2（仅管理员）：高级参数配置 */}
+        {/* 步骤2（仅管理员）：参数配置 */}
         {isParamStep && (
           <>
-            <Form.Item name="sheet" label="指定Sheet（可选）">
-              <Select
-                placeholder="默认处理全部Sheet"
-                allowClear
-                options={sheetNames.map((name) => ({ label: name, value: name }))}
-                notFoundContent={fileList.length === 0 ? '请先上传文件' : '未读取到Sheet'}
-              />
-            </Form.Item>
-
             <Form.Item name="limit_count" label="限制条数（调试用）">
               <InputNumber
                 min={1}
@@ -446,8 +628,13 @@ export default function TaskCreatePage() {
               )}
               {isAdmin && (
                 <>
-                  {form.getFieldValue('sheet') && (
-                    <p><strong>Sheet：</strong>{form.getFieldValue('sheet')}</p>
+                  {sheetNames.length > 0 && (
+                    <p><strong>工作表：</strong>
+                      {selectedSheets.length === sheetNames.length
+                        ? `全部 ${sheetNames.length} 个`
+                        : `已选 ${selectedSheets.length}/${sheetNames.length} 个`
+                      }
+                    </p>
                   )}
                   {form.getFieldValue('limit_count') && (
                     <p><strong>限制条数：</strong>{form.getFieldValue('limit_count')}</p>
@@ -493,5 +680,6 @@ export default function TaskCreatePage() {
         )}
       </Form>
     </Card>
+    </div>
   );
 }

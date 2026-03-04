@@ -1,15 +1,16 @@
 """
-微信造价文件收集工具
+造价文件收集工具
 
-功能：扫描微信和企业微信目录，自动筛选计价相关文件，按专业分类收集。
+功能：扫描微信/企业微信/自定义目录，自动筛选计价相关文件，按专业分类收集。
 支持增量模式：记住已处理过的文件，下次只看新增/修改的文件。
 
 用法：
-    python tools/collect_wechat_files.py                    # 增量收集（只看新文件）
+    python tools/collect_wechat_files.py                    # 增量收集微信（只看新文件）
     python tools/collect_wechat_files.py --full             # 全量重扫（忽略历史）
     python tools/collect_wechat_files.py --preview          # 只统计不复制
     python tools/collect_wechat_files.py --source wechat    # 只扫微信
     python tools/collect_wechat_files.py --source wxwork    # 只扫企业微信
+    python tools/collect_wechat_files.py --dir "D:\\广联达临时文件"  # 扫自定义目录
 
 目录结构：
     F:\\jarvis\\
@@ -478,18 +479,20 @@ def safe_copy(src, dst_dir, source_tag, seen_md5s):
 # 主流程
 # ============================================================
 
-def collect_files(output_dir, sources_to_scan, preview=False, full=False):
+def collect_files(output_dir, sources_to_scan, preview=False, full=False,
+                  extra_dirs=None):
     """主收集流程
 
     参数:
         output_dir: 输出目录（F:\\jarvis）
-        sources_to_scan: 要扫描的来源列表
+        sources_to_scan: 要扫描的来源列表（wechat/wxwork）
         preview: 预览模式（只统计不复制）
         full: 全量模式（忽略增量历史，从头扫）
+        extra_dirs: 额外的自定义目录列表，如 ["D:\\广联达临时文件"]
     """
 
     print("=" * 60)
-    print("  微信造价文件收集工具（按专业分类）")
+    print("  造价文件收集工具（按专业分类）")
     print("=" * 60)
 
     # 加载增量历史（记录已处理过的文件路径+修改时间）
@@ -567,7 +570,57 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False):
               f"软件: {len([x for x in all_software if x[1]==tag])} | "
               f"压缩包: {len([x for x in all_archives if x[1]==tag])}")
 
+    # ==== 第1.5步：扫描自定义目录（和微信逻辑完全相同） ====
+    if extra_dirs:
+        for extra_dir in extra_dirs:
+            if not os.path.exists(extra_dir):
+                print(f"\n[警告] 目录不存在: {extra_dir}")
+                continue
+
+            tag = "local"  # 来源标签：本地目录
+            print(f"\n[扫描] local: {extra_dir}")
+
+            file_count = 0
+            new_count = 0
+            for root, dirs, files in os.walk(extra_dir):
+                for fname in files:
+                    filepath = os.path.join(root, fname)
+                    ext = Path(fname).suffix.lower()
+                    file_count += 1
+
+                    if file_count % 5000 == 0:
+                        print(f"  已扫描 {file_count} 个文件（新增 {new_count}）...")
+
+                    # 增量判断
+                    try:
+                        mtime = os.path.getmtime(filepath)
+                    except OSError:
+                        continue
+                    old_mtime = history.get(filepath)
+                    if old_mtime is not None and abs(mtime - old_mtime) < 1:
+                        skipped_count += 1
+                        continue
+
+                    history[filepath] = mtime
+
+                    if is_excluded_by_name(fname):
+                        continue
+
+                    new_count += 1
+                    if ext in SOFTWARE_EXTENSIONS:
+                        all_software.append((filepath, tag))
+                    elif ext in EXCEL_EXTENSIONS:
+                        all_excel.append((filepath, tag))
+                    elif ext in ARCHIVE_EXTENSIONS:
+                        all_archives.append((filepath, tag))
+
+            print(f"  扫描完成: 总{file_count} 个文件，新增 {new_count}，跳过 {file_count - new_count}")
+            print(f"    新增 Excel: {len([x for x in all_excel if x[1]==tag])} | "
+                  f"软件: {len([x for x in all_software if x[1]==tag])} | "
+                  f"压缩包: {len([x for x in all_archives if x[1]==tag])}")
+
     # ==== 第2步：处理压缩包 ====
+    _temp_dirs = []  # 记录所有临时目录，最后统一清理
     if all_archives:
         total_arc = len(all_archives)
         print(f"\n[解压] 处理 {total_arc} 个压缩包...")
@@ -577,6 +630,7 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False):
                 print(f"  解压 {idx+1}/{total_arc}...")
 
             temp_dir = tempfile.mkdtemp(prefix="jarvis_")
+            _temp_dirs.append(temp_dir)
             try:
                 for fpath in extract_archive(archive_path, temp_dir):
                     ext = Path(fpath).suffix.lower()
@@ -640,7 +694,10 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False):
 
     if preview:
         print("\n[预览模式] 去掉 --preview 正式收集。")
-        _save_history(history)
+        # 预览模式不保存增量记录，否则正式跑时会全部跳过
+        # 清理解压临时目录
+        for td in _temp_dirs:
+            shutil.rmtree(td, ignore_errors=True)
         return stats
 
     # ==== 第6步：复制文件 ====
@@ -671,6 +728,17 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False):
     # ==== 第8步：保存增量记录 ====
     _save_history(history)
     print(f"  增量记录已更新（共 {len(history)} 条）")
+
+    # ==== 第9步：清理解压临时目录（防止C盘被撑满） ====
+    if _temp_dirs:
+        cleaned = 0
+        for td in _temp_dirs:
+            try:
+                shutil.rmtree(td, ignore_errors=True)
+                cleaned += 1
+            except Exception:
+                pass
+        print(f"  已清理 {cleaned} 个临时目录")
 
     return stats
 
@@ -722,22 +790,32 @@ def _generate_report(output_dir, stats, spec_order, total_copied):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="微信造价文件收集工具（按专业分类）")
+    parser = argparse.ArgumentParser(description="造价文件收集工具（按专业分类）")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="输出目录")
-    parser.add_argument("--source", choices=["wechat", "wxwork", "all"], default="all",
-                        help="扫描来源")
+    parser.add_argument("--source", choices=["wechat", "wxwork", "all", "none"], default="all",
+                        help="扫描来源（none=不扫微信，只扫--dir指定的目录）")
+    parser.add_argument("--dir", action="append", dest="extra_dirs",
+                        help="额外扫描的目录（可多次指定，如 --dir D:\\广联达临时文件）")
     parser.add_argument("--preview", action="store_true", help="预览模式")
     parser.add_argument("--full", action="store_true",
                         help="全量模式（忽略增量历史，从头扫描所有文件）")
 
     args = parser.parse_args()
-    sources = list(SOURCES.keys()) if args.source == "all" else [args.source]
+
+    # 确定微信来源
+    if args.source == "none":
+        sources = []
+    elif args.source == "all":
+        sources = list(SOURCES.keys())
+    else:
+        sources = [args.source]
 
     collect_files(
         output_dir=args.output,
         sources_to_scan=sources,
         preview=args.preview,
         full=args.full,
+        extra_dirs=args.extra_dirs,
     )
 
 
