@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.70';
+export const APP_VERSION = '0.1.72';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,25 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.72',
+    date: '2026-03-04',
+    changes: [
+      { type: 'admin', text: '移除未使用的CheckCircleOutlined导入，修复TS编译报错' },
+      { type: 'admin', text: '新建任务页改进 — 上传文件显示+左侧Sheet智能选择面板' },
+      { type: 'admin', text: '电气算法改进 — 周长计算+桥架路由+同义词修复' },
+      { type: 'admin', text: '算法改进 — 批量红灯根因修复×9' },
+    ],
+  },
+  {
+    version: '0.1.71',
+    date: '2026-03-04',
+    changes: [
+      { type: 'admin', text: '新建任务页改进 — 上传文件显示+左侧Sheet智能选择面板' },
+      { type: 'admin', text: '电气算法改进 — 周长计算+桥架路由+同义词修复' },
+      { type: 'admin', text: '算法改进 — 批量红灯根因修复×9' },
+    ],
+  },
   {
     version: '0.1.70',
     date: '2026-03-04',
