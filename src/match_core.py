@@ -48,6 +48,8 @@ STRONG_MEASURE_KEYWORDS = [
     # 费用类条目——管理费、利润、税金等不是实体工程量，不应套定额
     "管理费", "利润", "税金", "规费",
     "企业管理费", "附加费",
+    # 汇总行/分节行——"小计"、"合计"是Excel汇总行，不应套定额
+    "小计", "合计",
 ]
 
 
@@ -609,8 +611,9 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
     if name.strip() == "其他" and not unit and not quantity and not desc.strip():
         return True
     # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，无实体工程量
-    # 条件：换行清理后短名称 + 以"工程"结尾 + 无单位无工程量
-    clean_name = name.replace("\n", "").replace("\r", "").strip()
+    # 条件：换行和空格清理后短名称 + 以"工程"结尾 + 无单位无工程量
+    # 注意：有些Excel里"电气\n工程"或"电气 工程"被拆成两行/带空格
+    clean_name = name.replace("\n", "").replace("\r", "").replace(" ", "").strip()
     if (clean_name.endswith("工程") and len(clean_name) <= 8
             and not unit and not quantity):
         return True

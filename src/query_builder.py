@@ -620,8 +620,14 @@ def build_quota_query(parser, name: str, description: str = "",
             elif conduit_code in ("PC", "PVC", "FPC"):
                 query_parts[0] = "PVC阻燃塑料管敷设"
             else:
-                # SC/G/DG → 直接写"钢管敷设"，避免同义词"镀锌钢管"→"焊接钢管 镀锌"破坏
-                query_parts[0] = "钢管敷设"
+                # SC=焊接钢管, G/DG=镀锌钢管, 分开写让BM25能精准命中
+                if conduit_code == "SC":
+                    query_parts[0] = "焊接钢管敷设"
+                elif conduit_code in ("G", "DG"):
+                    query_parts[0] = "镀锌钢管敷设"
+                else:
+                    # 无材质代号时用通用"钢管敷设"
+                    query_parts[0] = "钢管敷设"
 
             # 2. 配置形式：暗配/明配（加"砖混凝土结构"限定，避免匹配到"钢模板暗配"）
             config_match = re.search(
@@ -637,9 +643,9 @@ def build_quota_query(parser, name: str, description: str = "",
             # 3. 管径：从"SC25"、"JDG32"、"Φ20"或"规格:25"提取
             query_str = " ".join(query_parts)
             if "公称直径" not in query_str and "外径" not in query_str:
-                # 先匹配材质代号后直接跟数字（SC25, JDG32）
+                # 先匹配材质代号后直接跟数字（SC25, JDG32）或DN前缀（DN100）
                 size_match = re.search(
-                    r'(?:SC|JDG|KBG|PC|Φ|φ)\s*(\d+)',
+                    r'(?:SC|JDG|KBG|PC|Φ|φ|DN)\s*(\d+)',
                     full_text, re.IGNORECASE)
                 # 再匹配规格字段中的数字（规格:25, 规格:Φ20, 规格:DN25）
                 if not size_match:
@@ -721,9 +727,13 @@ def build_quota_query(parser, name: str, description: str = "",
             # 优先匹配多芯格式：2×2.5 → 取单芯截面2.5
             wire_sec = re.search(r'(\d+)\s*[×xX*]\s*(\d+(?:\.\d+)?)', wire_text)
             if wire_sec:
+                core_count = int(wire_sec.group(1))
                 section = float(wire_sec.group(2))
-                is_multi_core = True  # N×M格式一定是多芯线
-                wire_type_known = True
+                # 1*6 表示"1芯×6mm²"，是单芯线，不是多芯线
+                # 只有芯数≥2才是真正的多芯线（如 2*2.5、4*1.5）
+                if core_count >= 2:
+                    is_multi_core = True
+                    wire_type_known = True
             else:
                 # 单芯：从型号尾部提取（如 BYJ4 → 4, BV2.5 → 2.5）
                 wire_sec = re.search(r'(\d+(?:\.\d+)?)\s*$', wire_text)
@@ -734,7 +744,7 @@ def build_quota_query(parser, name: str, description: str = "",
 
             # 构建搜索词：桥架配线 / 多芯软导线 / 照明线 / 动力线
             # 只有识别出已知线型(BYJ/BV/RVV等)才特化，否则保持原名（如UTP双绞线等弱电）
-            if "桥架" in name or "线槽" in name or "桥架" in description:
+            if "桥架" in name or "线槽" in name or "桥架" in description or "线槽" in description:
                 query_parts[0] = "线槽配线"
             elif wire_type_known and is_multi_core:
                 query_parts[0] = "穿多芯软导线"
@@ -773,9 +783,24 @@ def build_quota_query(parser, name: str, description: str = "",
                 if "22" in model_upper or "23" in model_upper:
                     laying_raw = "埋地"  # YJV22/VV22=钢带铠装→埋地
 
-            # 控制电缆：搜"控制电缆"（同义词会自动加"敷设"，不要手动加）
+            # 控制电缆：按敷设方式+芯数构建query
+            # 控制电缆按芯数分档（6/14/24/37/48芯），和电力电缆按截面分档不同
             if is_control_cable:
-                query_parts[0] = "控制电缆"
+                if "桥架" in laying_raw or "线槽" in laying_raw:
+                    query_parts[0] = "控制电缆沿桥架敷设"
+                elif "支架" in laying_raw:
+                    query_parts[0] = "控制电缆沿支架敷设"
+                elif "埋地" in laying_raw or "直埋" in laying_raw:
+                    query_parts[0] = "控制电缆埋地敷设"
+                elif "管" in laying_raw:
+                    query_parts[0] = "控制电缆穿管敷设"
+                else:
+                    query_parts[0] = "控制电缆敷设"
+                # 提取芯数：从"5x1.5"、"14*1.5"等格式中取第一个数字（芯数）
+                core_match = re.search(r'(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?', full_text)
+                if core_match:
+                    core_count = int(core_match.group(1))
+                    query_parts.append(f"电缆芯数 {core_count}")
             # 矿物绝缘电缆：BTTRZ/YTTW/BBTRZ
             elif cable_model and any(m in cable_model.upper()
                                      for m in ("BTTRZ", "YTTW", "BBTRZ")):
