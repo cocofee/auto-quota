@@ -81,7 +81,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # 0. 验证邀请码（防止乱注册白嫖额度）
     from app.services.invite_service import get_invite_code
     valid_code = await get_invite_code(db)
-    if req.invite_code != valid_code:
+    if req.invite_code.strip() != valid_code.strip():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="邀请码错误，请向管理员获取正确的邀请码",

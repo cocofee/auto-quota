@@ -136,14 +136,15 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
         # 从数据库读取大模型配置，注入到 config 模块
         # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
         try:
-            from app.services.llm_config_service import get_llm_config_sync
+            from app.services.llm_config_service import get_llm_config_sync, get_verify_config_sync
+
+            # ---- 匹配模型配置 ----
             llm_cfg = get_llm_config_sync(session)
             llm_type = llm_cfg["llm_type"]
             api_key = llm_cfg["api_key"]
             base_url = llm_cfg["base_url"]
             model_name = llm_cfg["model"]
 
-            # 注入对应模型的配置到 config 模块（覆盖环境变量默认值）
             if api_key:
                 key_attr = f"{llm_type.upper()}_API_KEY"
                 url_attr = f"{llm_type.upper()}_BASE_URL"
@@ -153,13 +154,33 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
                     setattr(quota_config, url_attr, base_url)
                 if model_name:
                     setattr(quota_config, model_attr, model_name)
-                # 同时更新 AGENT_LLM 让 match_engine 知道用哪个模型
                 quota_config.AGENT_LLM = llm_type
-                # VERIFY_LLM 为空时自动跟 AGENT_LLM 走（开发模式匹配验证用同一个模型）
-                if not quota_config.VERIFY_LLM:
-                    quota_config.VERIFY_LLM = ""  # 保持空，verify_result 里会回退到 AGENT_LLM
-                logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}"
-                            f"，验证:{quota_config.VERIFY_LLM or '同匹配'}")
+
+            # ---- 验证模型配置 ----
+            v_cfg = get_verify_config_sync(session)
+            v_type = v_cfg["llm_type"]
+            v_key = v_cfg["api_key"]
+            v_url = v_cfg["base_url"]
+            v_model = v_cfg["model"]
+
+            if v_type and v_key:
+                # 验证模型单独配置了
+                v_key_attr = f"{v_type.upper()}_API_KEY"
+                v_url_attr = f"{v_type.upper()}_BASE_URL"
+                v_model_attr = f"{v_type.upper()}_MODEL"
+                setattr(quota_config, v_key_attr, v_key)
+                if v_url:
+                    setattr(quota_config, v_url_attr, v_url)
+                quota_config.VERIFY_LLM = v_type
+                if v_model:
+                    quota_config.VERIFY_MODEL = v_model
+            elif not v_type:
+                # 验证模型未配置，跟匹配模型走
+                quota_config.VERIFY_LLM = ""
+                quota_config.VERIFY_MODEL = ""
+
+            verify_label = f"{quota_config.VERIFY_LLM}/{quota_config.VERIFY_MODEL}" if quota_config.VERIFY_LLM else "同匹配"
+            logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}，验证:{verify_label}")
         except Exception as e:
             logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
 

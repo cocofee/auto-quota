@@ -2,10 +2,11 @@
  * 管理员 — 系统设置
  *
  * 显示系统配置信息和运行状态：
- * 1. 已导入的省份定额库
- * 2. 大模型配置（可在线修改）
- * 3. 系统参数
- * 4. 服务健康状态
+ * 1. 服务健康状态
+ * 2. 注册邀请码
+ * 3. 匹配模型配置
+ * 4. 验证模型配置
+ * 5. 系统参数
  */
 
 import { useEffect, useState } from 'react';
@@ -29,6 +30,12 @@ const MODEL_OPTIONS = [
   { value: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o', defaultUrl: 'https://api.openai.com/v1' },
 ];
 
+// 验证模型额外支持"跟匹配模型走"选项
+const VERIFY_MODEL_OPTIONS = [
+  { value: '', label: '跟匹配模型走（不单独配置）', defaultModel: '', defaultUrl: '' },
+  ...MODEL_OPTIONS,
+];
+
 interface LlmConfig {
   llm_type: string;
   api_key_masked: string;
@@ -46,10 +53,15 @@ export default function SettingsPage() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [inviteSaving, setInviteSaving] = useState(false);
 
-  // 大模型配置
+  // 匹配模型配置
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [llmForm] = Form.useForm();
   const [llmSaving, setLlmSaving] = useState(false);
+
+  // 验证模型配置
+  const [verifyConfig, setVerifyConfig] = useState<LlmConfig | null>(null);
+  const [verifyForm] = Form.useForm();
+  const [verifySaving, setVerifySaving] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -58,11 +70,12 @@ export default function SettingsPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [provRes, healthRes, inviteRes, llmRes] = await Promise.allSettled([
+      const [provRes, healthRes, inviteRes, llmRes, verifyRes] = await Promise.allSettled([
         api.get<{ provinces: string[] }>('/provinces'),
         api.get('/health'),
         api.get<{ invite_code: string }>('/admin/invite-code'),
         api.get<LlmConfig>('/admin/llm-config'),
+        api.get<LlmConfig>('/admin/verify-config'),
       ]);
 
       if (provRes.status === 'fulfilled') {
@@ -82,7 +95,17 @@ export default function SettingsPage() {
           llm_type: cfg.llm_type,
           base_url: cfg.base_url,
           model: cfg.model,
-          api_key: '', // API Key不回显，只显示脱敏版
+          api_key: '',
+        });
+      }
+      if (verifyRes.status === 'fulfilled') {
+        const cfg = verifyRes.value.data;
+        setVerifyConfig(cfg);
+        verifyForm.setFieldsValue({
+          llm_type: cfg.llm_type || '',
+          base_url: cfg.base_url,
+          model: cfg.model,
+          api_key: '',
         });
       }
     } catch {
@@ -110,37 +133,58 @@ export default function SettingsPage() {
     }
   };
 
-  // 切换模型类型时自动填入默认值
-  const onLlmTypeChange = (type: string) => {
-    const opt = MODEL_OPTIONS.find((o) => o.value === type);
+  // 切换模型类型时自动填入默认值（通用函数）
+  const onTypeChange = (type: string, form: ReturnType<typeof Form.useForm>[0], options: typeof MODEL_OPTIONS) => {
+    const opt = options.find((o) => o.value === type);
     if (opt) {
-      llmForm.setFieldsValue({
+      form.setFieldsValue({
         model: opt.defaultModel,
         base_url: opt.defaultUrl,
       });
     }
   };
 
-  // 保存大模型配置
+  // 保存匹配模型配置
   const saveLlmConfig = async () => {
     setLlmSaving(true);
     try {
       const values = llmForm.getFieldsValue();
       await api.put('/admin/llm-config', {
         llm_type: values.llm_type,
-        api_key: values.api_key || '', // 留空表示保持不变
+        api_key: values.api_key || '',
         base_url: values.base_url || '',
         model: values.model || '',
       });
-      message.success('大模型配置已保存，下次任务生效');
-      // 重新加载显示最新状态
+      message.success('匹配模型配置已保存，下次任务生效');
       const { data } = await api.get<LlmConfig>('/admin/llm-config');
       setLlmConfig(data);
-      llmForm.setFieldValue('api_key', ''); // 清空输入框
+      llmForm.setFieldValue('api_key', '');
     } catch (err) {
       message.error(getErrorMessage(err, '保存失败'));
     } finally {
       setLlmSaving(false);
+    }
+  };
+
+  // 保存验证模型配置
+  const saveVerifyConfig = async () => {
+    setVerifySaving(true);
+    try {
+      const values = verifyForm.getFieldsValue();
+      await api.put('/admin/verify-config', {
+        llm_type: values.llm_type || '',
+        api_key: values.api_key || '',
+        base_url: values.base_url || '',
+        model: values.model || '',
+      });
+      message.success('验证模型配置已保存，下次任务生效');
+      const { data } = await api.get<LlmConfig>('/admin/verify-config');
+      setVerifyConfig(data);
+      verifyForm.setFieldValue('api_key', '');
+    } catch (err) {
+      message.error(getErrorMessage(err, '保存失败'));
+    } finally {
+      setVerifySaving(false);
     }
   };
 
@@ -221,16 +265,15 @@ export default function SettingsPage() {
         </Space>
       </Card>
 
-      {/* 大模型配置 */}
-      <Card title="大模型配置" loading={loading}>
+      {/* 匹配模型配置 */}
+      <Card title="匹配模型（Agent）" loading={loading}>
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="修改后无需重启，下次新建任务自动使用新配置。"
+          message="负责清单→定额的智能匹配。修改后无需重启，下次新建任务自动使用新配置。"
         />
 
-        {/* 当前状态 */}
         {llmConfig && (
           <div style={{ marginBottom: 16, padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
             当前模型：<Tag color="blue">{llmConfig.llm_type}</Tag>
@@ -242,56 +285,85 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <Form
-          form={llmForm}
-          layout="vertical"
-          style={{ maxWidth: 500 }}
-        >
-          <Form.Item
-            name="llm_type"
-            label="选择模型"
-            rules={[{ required: true, message: '请选择模型' }]}
-          >
-            <Select
-              options={MODEL_OPTIONS}
-              onChange={onLlmTypeChange}
-            />
+        <Form form={llmForm} layout="vertical" style={{ maxWidth: 500 }}>
+          <Form.Item name="llm_type" label="选择模型" rules={[{ required: true, message: '请选择模型' }]}>
+            <Select options={MODEL_OPTIONS} onChange={(v) => onTypeChange(v, llmForm, MODEL_OPTIONS)} />
           </Form.Item>
-
-          <Form.Item
-            name="api_key"
-            label="API Key"
-            help={llmConfig?.has_api_key ? '已配置，留空则保持不变；填入新值则覆盖' : '请填入API Key'}
-          >
-            <Input.Password
-              placeholder={llmConfig?.has_api_key ? '留空保持不变' : '填入API Key'}
-              autoComplete="off"
-            />
+          <Form.Item name="api_key" label="API Key"
+            help={llmConfig?.has_api_key ? '已配置，留空则保持不变；填入新值则覆盖' : '请填入API Key'}>
+            <Input.Password placeholder={llmConfig?.has_api_key ? '留空保持不变' : '填入API Key'} autoComplete="off" />
           </Form.Item>
-
-          <Form.Item
-            name="base_url"
-            label="API 地址"
-            help="一般不需要改，用默认值即可"
-          >
+          <Form.Item name="base_url" label="API 地址" help="一般不需要改，用默认值即可">
             <Input placeholder="留空用默认地址" />
           </Form.Item>
-
-          <Form.Item
-            name="model"
-            label="模型名称"
-            help="一般不需要改，用默认值即可"
-          >
+          <Form.Item name="model" label="模型名称" help="一般不需要改，用默认值即可">
             <Input placeholder="留空用默认模型" />
           </Form.Item>
-
           <Form.Item>
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={llmSaving}
-              onClick={saveLlmConfig}
-            >
+            <Button type="primary" icon={<SaveOutlined />} loading={llmSaving} onClick={saveLlmConfig}>
+              保存配置
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+
+      {/* 验证模型配置 */}
+      <Card title="验证模型（审核纠偏）" loading={loading}>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="负责检查匹配结果是否正确，发现错误自动纠正。可以和匹配用同一个模型，也可以单独配一个。"
+        />
+
+        {verifyConfig && (
+          <div style={{ marginBottom: 16, padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
+            {verifyConfig.llm_type
+              ? <>
+                  当前模型：<Tag color="orange">{verifyConfig.llm_type}</Tag>
+                  <Tag color="green">{verifyConfig.model}</Tag>
+                  {verifyConfig.has_api_key
+                    ? <Tag color="success">API Key 已配置（{verifyConfig.api_key_masked}）</Tag>
+                    : <Tag color="error">API Key 未配置</Tag>
+                  }
+                </>
+              : <span style={{ color: '#999' }}>跟匹配模型走（未单独配置）</span>
+            }
+          </div>
+        )}
+
+        <Form form={verifyForm} layout="vertical" style={{ maxWidth: 500 }}>
+          <Form.Item name="llm_type" label="选择模型">
+            <Select
+              options={VERIFY_MODEL_OPTIONS}
+              onChange={(v) => onTypeChange(v, verifyForm, VERIFY_MODEL_OPTIONS)}
+            />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.llm_type !== cur.llm_type}
+          >
+            {({ getFieldValue }) => {
+              const vType = getFieldValue('llm_type');
+              if (!vType) return null; // "跟匹配模型走"时不显示后续字段
+              return (
+                <>
+                  <Form.Item name="api_key" label="API Key"
+                    help={verifyConfig?.has_api_key ? '已配置，留空则保持不变' : '请填入API Key'}>
+                    <Input.Password placeholder={verifyConfig?.has_api_key ? '留空保持不变' : '填入API Key'} autoComplete="off" />
+                  </Form.Item>
+                  <Form.Item name="base_url" label="API 地址" help="一般不需要改">
+                    <Input placeholder="留空用默认地址" />
+                  </Form.Item>
+                  <Form.Item name="model" label="模型名称" help="一般不需要改">
+                    <Input placeholder="留空用默认模型" />
+                  </Form.Item>
+                </>
+              );
+            }}
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" icon={<SaveOutlined />} loading={verifySaving} onClick={saveVerifyConfig}>
               保存配置
             </Button>
           </Form.Item>

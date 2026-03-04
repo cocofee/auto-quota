@@ -182,6 +182,15 @@ async def update_invite_code(
 # 大模型配置管理
 # ============================================================
 
+def _mask_key(raw_key: str) -> str:
+    """API Key脱敏：只显示前4位和后4位"""
+    if len(raw_key) > 8:
+        return raw_key[:4] + "****" + raw_key[-4:]
+    elif raw_key:
+        return "****"
+    return ""
+
+
 @router.get("/llm-config")
 async def get_llm_config_api(
     db: AsyncSession = Depends(get_db),
@@ -190,17 +199,10 @@ async def get_llm_config_api(
     """获取当前大模型配置（API Key只返回脱敏版本）"""
     from app.services.llm_config_service import get_llm_config
     cfg = await get_llm_config(db)
-    # API Key脱敏：只显示前4位和后4位
     raw_key = cfg.get("api_key", "")
-    if len(raw_key) > 8:
-        masked_key = raw_key[:4] + "****" + raw_key[-4:]
-    elif raw_key:
-        masked_key = "****"
-    else:
-        masked_key = ""
     return {
         "llm_type": cfg["llm_type"],
-        "api_key_masked": masked_key,
+        "api_key_masked": _mask_key(raw_key),
         "has_api_key": bool(raw_key),
         "base_url": cfg["base_url"],
         "model": cfg["model"],
@@ -234,5 +236,61 @@ async def update_llm_config_api(
         existing = await get_llm_config(db)
         api_key = existing.get("api_key", "")
 
-    await set_llm_config(db, body.llm_type, api_key, body.base_url, body.model)
+    try:
+        await set_llm_config(db, body.llm_type, api_key, body.base_url, body.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"message": f"已切换为 {body.llm_type}，下次任务生效"}
+
+
+# ============================================================
+# 验证模型配置管理
+# ============================================================
+
+@router.get("/verify-config")
+async def get_verify_config_api(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """获取验证模型配置"""
+    from app.services.llm_config_service import get_verify_config
+    cfg = await get_verify_config(db)
+    raw_key = cfg.get("api_key", "")
+    return {
+        "llm_type": cfg["llm_type"],
+        "api_key_masked": _mask_key(raw_key),
+        "has_api_key": bool(raw_key),
+        "base_url": cfg["base_url"],
+        "model": cfg["model"],
+    }
+
+
+@router.put("/verify-config")
+async def update_verify_config_api(
+    body: UpdateLlmConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """修改验证模型配置（下次任务立即生效）
+
+    llm_type 传空字符串表示"跟匹配模型走同一个"。
+    """
+    from app.services.llm_config_service import set_verify_config, get_verify_config, VALID_LLM_TYPES
+    if body.llm_type and body.llm_type not in VALID_LLM_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的模型类型: {body.llm_type}，可选: {', '.join(VALID_LLM_TYPES)}",
+        )
+
+    # API Key为空时保持已有的
+    api_key = body.api_key
+    if not api_key:
+        existing = await get_verify_config(db)
+        api_key = existing.get("api_key", "")
+
+    try:
+        await set_verify_config(db, body.llm_type, api_key, body.base_url, body.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    label = body.llm_type or "跟匹配模型"
+    return {"message": f"验证模型已设为 {label}，下次任务生效"}
