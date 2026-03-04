@@ -12,7 +12,7 @@ import {
   Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
   Checkbox, Tag, Tooltip, Input, Radio,
 } from 'antd';
-import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, CheckCircleOutlined, SearchOutlined } from '@ant-design/icons';
+import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { read, utils as xlsxUtils } from 'xlsx';
 import api from '../../services/api';
