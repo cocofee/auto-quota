@@ -215,14 +215,19 @@ def _read_sheet_with_mapping(ws, sheet_name: str, mapping: dict) -> list[dict]:
 # ============================================================
 
 def run_batch(format_filter: str = None, province_filter: str = None,
-              specialty_filter: str = None, limit: int = None):
+              specialty_filter: str = None, limit: int = None,
+              progress_callback=None):
     """批量匹配主函数。
 
     流程：
     1. 从数据库读取 scanned 状态的文件
-    2. 按省份分组（不同省用不同定额库）
+    2. 按省份+定额库类型分组（不同专业用不同定额库）
     3. 逐文件匹配，结果存到 output/batch/results/{省份}/
     4. 更新数据库状态为 matched
+
+    参数:
+        progress_callback: 进度回调函数，签名 callback(current, total, file_name)
+                          用于Web端实时显示匹配进度
     """
     init_db()
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -311,6 +316,15 @@ def run_batch(format_filter: str = None, province_filter: str = None,
             fmt = f["format"]
             sheet_info_str = f["sheet_info"]
 
+            # 进度回调（给Web端用）
+            global_idx = total_success + total_errors + i + 1
+            if progress_callback:
+                try:
+                    progress_callback(current=global_idx, total=len(files),
+                                      file_name=file_name)
+                except Exception:
+                    pass  # 回调失败不影响匹配
+
             print(f"  [{i+1}/{len(prov_files)}] {file_name}...", end=" ", flush=True)
             start_time = time.time()
 
@@ -337,9 +351,10 @@ def run_batch(format_filter: str = None, province_filter: str = None,
 
                 elapsed = time.time() - start_time
 
-                # 保存结果
+                # 先保存JSON结果，成功后才更新DB状态
+                # （避免JSON保存失败但DB已标记matched导致数据丢失）
                 _save_results(f, results, elapsed)
-                _mark_file_matched(f, results, elapsed)
+                _mark_file_matched(f, results, elapsed)  # JSON成功才标记
 
                 # 统计
                 total_items += len(results)
@@ -366,6 +381,13 @@ def run_batch(format_filter: str = None, province_filter: str = None,
     print(f"  清单总条数: {total_items}")
     print(f"{'='*50}")
 
+    # 返回统计结果（供Web端/调用方使用）
+    return {
+        "success_files": total_success,
+        "error_files": total_errors,
+        "total_items": total_items,
+    }
+
 
 # ============================================================
 # 省份解析（省份名+专业 → 定额库代码）
@@ -389,18 +411,41 @@ _SPECIALTY_TO_LIBRARY_TYPE = {
 }
 
 
+def _get_quota_count(province_dir: Path) -> int:
+    """获取省份定额库的条目数，0表示空库或无效。"""
+    import sqlite3
+    db_path = province_dir / "quota.db"
+    if not db_path.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(db_path))
+        tables = [t[0] for t in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        if "quotas" not in tables:
+            conn.close()
+            return 0
+        cnt = conn.execute("SELECT COUNT(*) FROM quotas").fetchone()[0]
+        conn.close()
+        return cnt
+    except Exception:
+        return 0
+
+
 def _resolve_province(province_name: str, specialty: str = None) -> str:
     """把省份名+专业转成定额库目录名。
 
     例如：
         ("广东", "电气") → "广东省通用安装工程综合定额(2018)"
         ("广东", "市政") → "广东省市政工程综合定额(2018)"
-        ("北京", "电气") → "北京2024"  （北京只有一个综合库）
+        ("北京", "电气") → "北京市建设工程施工消耗量标准(2024)"
 
     优先使用 config.resolve_province() 的多关键词匹配能力。
+    多匹配时用 lib_type 关键词过滤；仍多个时选定额条数最多的库。
     """
     # 根据专业决定定额库类型关键词
     lib_type = _SPECIALTY_TO_LIBRARY_TYPE.get(specialty, "安装") if specialty else None
+
+    provinces_dir = Path(__file__).resolve().parent.parent / "db" / "provinces"
 
     # 尝试用 config.resolve_province() 解析（更智能的匹配逻辑）
     try:
@@ -412,29 +457,69 @@ def _resolve_province(province_name: str, specialty: str = None) -> str:
             except ValueError:
                 pass  # 匹配失败，继续尝试
 
-        # 再尝试纯省份名匹配（如"北京"→"北京2024"这种只有一个库的情况）
+        # 再尝试纯省份名匹配
         try:
             return cfg.resolve_province(province_name, interactive=False)
-        except ValueError:
-            pass  # 多个匹配或无匹配
+        except ValueError as e:
+            # 多匹配时，从错误消息解析候选列表，用 lib_type 过滤
+            err_msg = str(e)
+            if "匹配到多个省份" in err_msg and lib_type and provinces_dir.exists():
+                # 找出所有匹配省份名的有效目录，按 lib_type 过滤
+                candidates = []
+                for d in provinces_dir.iterdir():
+                    if d.is_dir() and province_name in d.name:
+                        cnt = _get_quota_count(d)
+                        if cnt > 0:
+                            candidates.append((d.name, cnt))
+                # 用 lib_type 关键词筛选（"安装"→含"安装"或"施工"的库）
+                type_kws = [lib_type]
+                if lib_type == "通用安装":
+                    type_kws = ["安装", "施工"]  # 北京等综合库不叫"安装"
+                elif lib_type == "房屋建筑":
+                    type_kws = ["建筑", "房屋", "施工"]
+                filtered = [(n, c) for n, c in candidates if any(kw in n for kw in type_kws)]
+                if filtered:
+                    # 多个匹配时选定额条数最多的（主库通常最大）
+                    return max(filtered, key=lambda x: x[1])[0]
+                elif candidates:
+                    # lib_type过滤无结果，选最大的库
+                    return max(candidates, key=lambda x: x[1])[0]
 
     except Exception:
         pass  # config模块异常，回退到简单匹配
 
-    # 回退：简单的目录扫描
-    provinces_dir = Path(__file__).resolve().parent.parent / "db" / "provinces"
-    if not provinces_dir.exists():
+    # 回退：简单的目录扫描（跳过空数据库，选最大的库）
+    if not provinces_dir or not provinces_dir.exists():
         return None
 
-    # 优先匹配"省份+安装"类目录（安装类最常用）
-    for d in provinces_dir.iterdir():
-        if d.is_dir() and province_name in d.name and "安装" in d.name:
-            return d.name
+    # 收集所有匹配的有效目录
+    candidates = []
 
-    # 再匹配任意包含省份名的目录
-    for d in provinces_dir.iterdir():
-        if d.is_dir() and d.name.startswith(province_name):
-            return d.name
+    # 优先匹配含 lib_type 关键词的目录
+    if lib_type:
+        type_kws = [lib_type]
+        if lib_type == "通用安装":
+            type_kws = ["安装", "施工"]
+        elif lib_type == "房屋建筑":
+            type_kws = ["建筑", "房屋", "施工"]
+        for d in provinces_dir.iterdir():
+            if d.is_dir() and province_name in d.name:
+                if any(kw in d.name for kw in type_kws):
+                    cnt = _get_quota_count(d)
+                    if cnt > 0:
+                        candidates.append((d.name, cnt))
+
+    # 没找到则放宽到任意匹配
+    if not candidates:
+        for d in provinces_dir.iterdir():
+            if d.is_dir() and d.name.startswith(province_name):
+                cnt = _get_quota_count(d)
+                if cnt > 0:
+                    candidates.append((d.name, cnt))
+
+    if candidates:
+        # 选定额条数最多的（主库通常最大）
+        return max(candidates, key=lambda x: x[1])[0]
 
     return None
 

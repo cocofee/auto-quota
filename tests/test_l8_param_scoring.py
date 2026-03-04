@@ -18,49 +18,49 @@ class TestGenericQuotaScoring:
         self.validator = ParamValidator()
 
     def test_generic_quota_dn_score_lowered(self):
-        """定额无DN参数时得分应为0.55（不再是0.9）"""
+        """定额无DN参数时得分应为0.64（不再是0.9）"""
         bill_params = {"dn": 150}
         # 定额有其他字段但无DN → 通用定额场景
         quota_params = {"_quota_name": "管道试压"}
         is_match, score, detail = self.validator._check_params(bill_params, quota_params)
-        assert score == pytest.approx(0.55, abs=0.01), f"通用定额应得0.55分，实际: {score}"
-        assert is_match is True, "通用定额仍应param_match=True（0.55 >= 0.5）"
+        assert score == pytest.approx(0.64, abs=0.01), f"通用定额应得0.64分，实际: {score}"
+        assert is_match is True, "通用定额仍应param_match=True（0.64 >= 0.5）"
         assert "通用定额降权" in detail
 
     def test_generic_quota_cable_section_score_lowered(self):
-        """定额无截面参数时得分应为0.55"""
+        """定额无截面参数时得分应为0.64"""
         bill_params = {"cable_section": 25}
         quota_params = {"_quota_name": "电缆敷设"}
         is_match, score, detail = self.validator._check_params(bill_params, quota_params)
-        assert score == pytest.approx(0.55, abs=0.01)
+        assert score == pytest.approx(0.64, abs=0.01)
         assert "通用定额降权" in detail
 
     def test_generic_quota_circuits_score_lowered(self):
-        """定额无回路参数时得分应为0.55"""
+        """定额无回路参数时得分应为0.64"""
         bill_params = {"circuits": 7}
         quota_params = {"_quota_name": "配电箱安装"}
         is_match, score, detail = self.validator._check_params(bill_params, quota_params)
-        assert score == pytest.approx(0.55, abs=0.01)
+        assert score == pytest.approx(0.64, abs=0.01)
         assert "通用定额降权" in detail
 
     def test_generic_quota_kva_score_lowered(self):
-        """定额无容量参数时得分应为0.55"""
+        """定额无容量参数时得分应为0.64"""
         bill_params = {"kva": 45}
         quota_params = {"_quota_name": "变压器安装"}
         is_match, score, detail = self.validator._check_params(bill_params, quota_params)
-        assert score == pytest.approx(0.55, abs=0.01)
+        assert score == pytest.approx(0.64, abs=0.01)
         assert "通用定额降权" in detail
 
     def test_generic_quota_ampere_score_lowered(self):
-        """定额无电流参数时得分应为0.55"""
+        """定额无电流参数时得分应为0.64"""
         bill_params = {"ampere": 63}
         quota_params = {"_quota_name": "断路器安装"}
         is_match, score, detail = self.validator._check_params(bill_params, quota_params)
-        assert score == pytest.approx(0.55, abs=0.01)
+        assert score == pytest.approx(0.64, abs=0.01)
         assert "通用定额降权" in detail
 
     def test_exact_match_beats_generic(self):
-        """精确匹配（1.0）应高于通用定额（0.55）"""
+        """精确匹配（1.0）应高于通用定额（0.64）"""
         bill_params = {"dn": 150}
 
         # 精确匹配候选
@@ -72,7 +72,7 @@ class TestGenericQuotaScoring:
 
         assert exact_score > generic_score, \
             f"精确匹配({exact_score})应高于通用({generic_score})"
-        assert exact_score - generic_score >= 0.4, \
+        assert exact_score - generic_score >= 0.3, \
             f"分差应足够大，实际差: {exact_score - generic_score}"
 
     def test_tier_up_beats_generic(self):
@@ -91,12 +91,12 @@ class TestGenericQuotaScoring:
 
     def test_mixed_params_generic_average(self):
         """多参数时，通用定额得分被平均化"""
-        # 2个参数：DN精确匹配(1.0) + 截面通用(0.55)
+        # 2个参数：DN精确匹配(1.0) + 截面通用(0.64)
         bill_params = {"dn": 150, "cable_section": 25}
         quota_params = {"dn": 150, "_quota_name": "管道安装DN150"}  # 有DN，无截面
 
         is_match, score, _ = self.validator._check_params(bill_params, quota_params)
-        expected = (1.0 + 0.55) / 2  # 0.775
+        expected = (1.0 + 0.64) / 2  # 0.82
         assert score == pytest.approx(expected, abs=0.01), \
             f"混合得分应为{expected}，实际: {score}"
 
@@ -251,11 +251,11 @@ class TestConfidencePassthrough:
     """置信度传导测试"""
 
     def test_generic_quota_confidence_lowered(self):
-        """通用定额的置信度应从85降到约52"""
+        """通用定额的置信度应为60（黄灯，需人工确认）"""
         # 模拟 match_pipeline 的置信度公式
-        generic_param_score = 0.55
+        generic_param_score = 0.64
         confidence = int(generic_param_score * 95)
-        assert confidence == 52, f"通用定额置信度应为52，实际: {confidence}"
+        assert confidence == 60, f"通用定额置信度应为60，实际: {confidence}"
 
     def test_exact_match_confidence_unchanged(self):
         """精确匹配的置信度应仍为95"""
@@ -271,6 +271,6 @@ class TestConfidencePassthrough:
 
     def test_mixed_generic_confidence(self):
         """混合参数（1个精确+1个通用）的置信度应在黄灯区"""
-        mixed_score = (1.0 + 0.55) / 2  # 0.775
+        mixed_score = (1.0 + 0.64) / 2  # 0.82
         confidence = int(mixed_score * 95)
-        assert 60 <= confidence <= 80, f"混合置信度应在60-80（黄灯），实际: {confidence}"
+        assert 60 <= confidence <= 85, f"混合置信度应在60-85（黄灯），实际: {confidence}"

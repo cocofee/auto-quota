@@ -83,6 +83,7 @@ def analyze_patterns(all_results: list[dict], top_n: int = 100) -> dict:
     # 总体统计
     total_files = len(all_results)
     total_items = 0
+    skipped_measures = 0  # 已跳过的措施费（不计入红灯）
     high_count = 0
     low_count = 0
     mid_count = 0
@@ -103,11 +104,18 @@ def analyze_patterns(all_results: list[dict], top_n: int = 100) -> dict:
         by_province[prov]["files"] += 1
 
         for r in results:
-            total_items += 1
-            conf = r.get("confidence", 0)
-            conf_sum += conf
             name = r.get("name", "")
             matched_name = r.get("matched_quota_name", "")
+            conf = r.get("confidence", 0)
+            match_source = r.get("match_source", "")
+
+            # 已跳过的措施费不计入统计（它们被正确识别并跳过了，不是算法错误）
+            if match_source == "skip_measure":
+                skipped_measures += 1
+                continue
+
+            total_items += 1
+            conf_sum += conf
 
             by_province[prov]["items"] += 1
             by_province[prov]["conf_sum"] += conf
@@ -128,7 +136,7 @@ def analyze_patterns(all_results: list[dict], top_n: int = 100) -> dict:
                     "matched_quota_id": r.get("matched_quota_id", ""),
                     "matched_quota_name": matched_name,
                     "confidence": conf,
-                    "match_source": r.get("match_source", ""),
+                    "match_source": match_source,
                     "province": prov,
                     "specialty": spec,
                 })
@@ -171,6 +179,7 @@ def analyze_patterns(all_results: list[dict], top_n: int = 100) -> dict:
         "summary": {
             "total_files": total_files,
             "total_items": total_items,
+            "skipped_measures": skipped_measures,
             "high_confidence": high_count,
             "mid_confidence": mid_count,
             "low_confidence": low_count,
@@ -325,7 +334,7 @@ def generate_report(province_filter: str = None, top_n: int = 100):
     print(f"\n{'='*50}")
     print(f"错误分析报告摘要")
     print(f"{'='*50}")
-    print(f"  总文件: {s['total_files']} | 总清单: {s['total_items']}")
+    print(f"  总文件: {s['total_files']} | 总清单: {s['total_items']} | 措施费已跳过: {s.get('skipped_measures', 0)}")
     print(f"  绿灯(≥85%): {s['high_confidence']} ({s['high_rate']}%)")
     print(f"  红灯(<60%): {s['low_confidence']} ({s['low_rate']}%)")
     print(f"  平均置信度: {s['avg_confidence']}%")
