@@ -28,9 +28,26 @@ import hashlib
 import argparse
 import tempfile
 import zipfile
+import atexit
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+
+# 模块级变量：记录所有解压临时目录，atexit 兜底清理（防止异常退出时残留）
+_all_temp_dirs: list[str] = []
+
+
+def _cleanup_temp_dirs():
+    """进程退出时兜底清理临时目录（防止C盘被撑满、防止火绒误报exe）"""
+    for td in _all_temp_dirs:
+        try:
+            shutil.rmtree(td, ignore_errors=True)
+        except Exception:
+            pass
+    _all_temp_dirs.clear()
+
+
+atexit.register(_cleanup_temp_dirs)
 
 # 增量记录文件路径（记住已处理过的文件，避免重复扫描）
 _HISTORY_FILE = os.path.join(os.path.dirname(__file__), ".collect_history.json")
@@ -631,6 +648,7 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False,
 
             temp_dir = tempfile.mkdtemp(prefix="jarvis_")
             _temp_dirs.append(temp_dir)
+            _all_temp_dirs.append(temp_dir)  # atexit 兜底清理
             try:
                 for fpath in extract_archive(archive_path, temp_dir):
                     ext = Path(fpath).suffix.lower()
