@@ -553,15 +553,19 @@ def build_quota_query(parser, name: str, description: str = "",
         speed_class = "运行速度2m/s以上" if elevator_speed > 2.0 else "运行速度2m/s以下"
         return f"{elevator_type}({speed_class}) 层数、站数"
 
-    # ===== 周长类：风口/散流器/消声器等按周长取档的设备 =====
+    # ===== 周长类：风口/散流器/阀门等按周长取档的设备 =====
     # 这类设备没有材质/DN参数，但有周长参数（从规格如1200*100计算得来）
     # 在搜索词中加入"安装"和"周长"关键词，引导BM25匹配定额名中含
     # "XX安装 XX周长(mm) ≤XXXX"的子目，避免被无关的制作/材料定额干扰
     # 具体周长值的取档由param_validator完成
     perimeter = params.get("perimeter")
-    # 只有风口类设备（风口/喷口/散流器）才走周长路由
-    # 静压箱等箱体的W*H是箱体尺寸，不是开口周长，不应走此路由
-    if perimeter and is_wind_outlet:
+    # 按周长取档的设备：风口类 + 通风空调阀门类（防火阀/止回阀/调节阀等）
+    # 注意：管道阀门（球阀/蝶阀/闸阀）用DN取档，不走此路由
+    # 区分方式：管道阀门有DN参数无perimeter，通风阀门有perimeter（从WxH算来）
+    is_perimeter_device = is_wind_outlet or any(kw in name for kw in (
+        "防火阀", "止回阀", "调节阀", "排烟阀", "排烟口",
+        "消声器", "消声", "出风口"))
+    if perimeter and is_perimeter_device:
         normalized_name = _normalize_bill_name(name)
         # 从描述补充风口具体类型（如"旋流风口"→帮BM25区分散流器/旋转吹风口）
         desc_type = _extract_desc_equipment_type(fields, name)
@@ -576,6 +580,18 @@ def build_quota_query(parser, name: str, description: str = "",
     # 清单用的名称和定额用的名称经常不一样
     normalized_name = _normalize_bill_name(name)
     query_parts = [normalized_name]
+
+    # --- 桥架类：清理尺寸噪声，构建桥架安装搜索词 ---
+    # 清单写"热镀锌桥架100*50"，定额叫"钢制槽式桥架(宽+高)(mm以下) 200"
+    # 100*50 的数字噪声会让 BM25 匹配到含"100×140"的混凝土结构定额
+    if "桥架" in name and "配线" not in name and "穿线" not in name and "电缆" not in name:
+        # 去掉尺寸数字（如"100*50"、"200*100"）和尾部连字符
+        clean = re.sub(r'\d+\s*[*×xX]\s*\d+', '', name).strip()
+        clean = re.sub(r'[-—_]+$', '', clean).strip()
+        if not clean:
+            clean = "桥架"
+        query_parts[0] = clean + " 安装"
+        return _apply_synonyms(" ".join(query_parts), specialty)
 
     if description:
         # fields 已在函数开头提取，这里直接使用
@@ -767,7 +783,8 @@ def build_quota_query(parser, name: str, description: str = "",
                 full_text.upper())
             if model_match:
                 cable_model = model_match.group(1)
-        is_cable = "电缆" in name and "终端头" not in name and "电缆头" not in name
+        is_cable = ("电缆" in name and "终端头" not in name
+                    and "电缆头" not in name and "保护管" not in name)
         is_control_cable = "控制" in name or "控制" in cable_model.upper()
         if is_cable:
             # 敷设方式：先从fields取，再从全文正则提取

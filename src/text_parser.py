@@ -713,6 +713,19 @@ class TextParser:
             if diameter > 10:  # 过滤掉太小的值（可能是其他参数）
                 return round(math.pi * diameter, 1)
 
+        # 兜底：从名称中直接提取 W×H 并计算周长
+        # 适用于"防火阀1600x400"、"止回阀-1250*1250"、"风口500*300"等
+        # 清单名称中直接嵌入尺寸，没有"规格："前缀，上面的_extract_spec_wh()提取不到
+        # 仅在文本含通风空调设备关键词时启用，避免误提取电缆/桥架的WxH
+        _PERIMETER_KW = ("阀", "风口", "喷口", "散流器", "消声器", "消声", "出风口")
+        if any(kw in text for kw in _PERIMETER_KW):
+            wh_match = re.search(r'(\d{2,4})\s*[*×xX]\s*(\d{2,4})', text)
+            if wh_match:
+                w = float(wh_match.group(1))
+                h = float(wh_match.group(2))
+                if w >= 50 and h >= 50:  # 通风空调构件尺寸至少50mm
+                    return (w + h) * 2
+
         return None
 
     def _extract_half_perimeter(self, text: str) -> Optional[float]:
