@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.82
+version: 0.1.83
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -13,7 +13,7 @@ application:
 
 services:
   frontend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:v0.1.80
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:latest
     depends_on:
       - backend
 
