@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.76';
+export const APP_VERSION = '0.1.81';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,54 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.81',
+    date: '2026-03-05',
+    changes: [
+      { type: 'admin', text: '更新benchmark试卷（清洗后11省2174条）和工具' },
+      { type: 'admin', text: '搜索词优化4项，基线30.3%→33.4%（+3.1%）' },
+      { type: 'admin', text: '删除model_cache和document挂载，按懒猫客服要求' },
+      { type: 'admin', text: 'pkgout改为./lpk/，按懒猫客服建议' },
+      { type: 'admin', text: '创建独立content目录，避免杂文件干扰LPK构建' },
+      { type: 'admin', text: 'lzc-build.yml contentdir改回./，修复LPK构建' },
+    ],
+  },
+  {
+    version: '0.1.80',
+    date: '2026-03-05',
+    changes: [
+      { type: 'admin', text: '更新benchmark试卷（清洗后11省2174条）和工具' },
+      { type: 'admin', text: '搜索词优化4项，基线30.3%→33.4%（+3.1%）' },
+      { type: 'admin', text: '删除model_cache和document挂载，按懒猫客服要求' },
+      { type: 'admin', text: 'pkgout改为./lpk/，按懒猫客服建议' },
+      { type: 'admin', text: '创建独立content目录，避免杂文件干扰LPK构建' },
+      { type: 'admin', text: 'lzc-build.yml contentdir改回./，修复LPK构建' },
+    ],
+  },
+  {
+    version: '0.1.79',
+    date: '2026-03-05',
+    changes: [
+      { type: 'admin', text: '更新benchmark试卷（清洗后11省2174条）和工具' },
+      { type: 'admin', text: '搜索词优化4项，基线30.3%→33.4%（+3.1%）' },
+      { type: 'admin', text: '删除model_cache和document挂载，按懒猫客服要求' },
+      { type: 'admin', text: 'pkgout改为./lpk/，按懒猫客服建议' },
+      { type: 'admin', text: '创建独立content目录，避免杂文件干扰LPK构建' },
+      { type: 'admin', text: 'lzc-build.yml contentdir改回./，修复LPK构建' },
+    ],
+  },
+  {
+    version: '0.1.78',
+    date: '2026-03-05',
+    changes: [
+      { type: 'admin', text: '更新benchmark试卷（清洗后11省2174条）和工具' },
+      { type: 'admin', text: '搜索词优化4项，基线30.3%→33.4%（+3.1%）' },
+      { type: 'admin', text: '删除model_cache和document挂载，按懒猫客服要求' },
+      { type: 'admin', text: 'pkgout改为./lpk/，按懒猫客服建议' },
+      { type: 'admin', text: '创建独立content目录，避免杂文件干扰LPK构建' },
+      { type: 'admin', text: 'lzc-build.yml contentdir改回./，修复LPK构建' },
+    ],
+  },
   {
     version: '0.1.76',
     date: '2026-03-04',
