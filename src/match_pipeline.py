@@ -89,6 +89,37 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
     return error
 
 
+# 品类子类型互斥词表：清单含左侧关键词时，定额名也必须含该词
+# 否则说明规则匹配到了错误的子类型（如"刚性防水套管"匹配到"成品防火套管"）
+_SUBTYPE_KEYWORDS = [
+    # 套管类：刚性防水/柔性防水/成品防火/人防/密闭 是不同定额家族
+    "刚性防水", "柔性防水", "成品防火", "人防",
+    # 阀门类：不同安装方式是不同定额
+    "密闭阀门",
+]
+
+
+def _check_rule_subtype_conflict(rule_result: dict, bill_text: str) -> dict:
+    """检查规则匹配结果的品类子类型是否与清单一致。
+
+    如果清单明确写了子类型（如"刚性防水"），但匹配到的定额名
+    不含该子类型，说明规则匹配搞混了不同子类型，丢弃结果。
+    """
+    if not rule_result:
+        return rule_result
+    quotas = rule_result.get("quotas", [])
+    if not quotas:
+        return rule_result
+
+    quota_name = quotas[0].get("name", "")
+    for kw in _SUBTYPE_KEYWORDS:
+        if kw in bill_text and kw not in quota_name:
+            logger.debug(
+                f"规则匹配被品类子类型拦截: 清单含'{kw}'但定额'{quota_name[:30]}'不含")
+            return None
+    return rule_result
+
+
 def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     """在候选列表中优先选类别匹配的（规则审核前置）
 
@@ -173,6 +204,14 @@ def _prepare_rule_match(rule_validator: RuleValidator, full_query: str, item: di
         books=rule_books if rule_books else None)
     if not rule_result:
         return None, None
+
+    # 品类一致性检查：清单明确写了子类型（如"刚性防水套管"），
+    # 但规则匹配到的定额不含该子类型（如匹配到"成品防火套管"），
+    # 则丢弃规则匹配结果，让搜索来处理（搜索能更精准地按名称匹配）
+    rule_result = _check_rule_subtype_conflict(rule_result, full_query)
+    if not rule_result:
+        return None, None
+
     _append_trace_step(
         rule_result,
         "rule_precheck",

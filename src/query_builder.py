@@ -293,6 +293,14 @@ def _normalize_bill_name(name: str) -> str:
     if "电缆头" in name and "终端" not in name:
         return name.replace("电力电缆头", "电缆终端头").replace("电缆头", "电缆终端头")
 
+    # 焊接法兰阀门/螺纹法兰阀门 → 焊接法兰阀安装/螺纹法兰阀安装
+    # 清单写"焊接法兰阀门"，多数省定额叫"焊接法兰阀安装"（去"门"加"安装"）
+    # "焊接"+"法兰"组合容易被BM25误导到"碳钢法兰安装(焊接)"
+    if "焊接法兰阀门" in name:
+        return name.replace("焊接法兰阀门", "焊接法兰阀安装")
+    if "螺纹法兰阀门" in name:
+        return name.replace("螺纹法兰阀门", "螺纹法兰阀安装")
+
     # 灯具类：去掉"LED"前缀和瓦数/电压等噪声（定额不按光源和瓦数分类）
     if "灯" in name and not re.search(_LAMP_RULE_EXCLUDE_PATTERN, name):
         cleaned = re.sub(r'LED\s*', '', name, flags=re.IGNORECASE)
@@ -453,6 +461,13 @@ def _normalize_bill_name(name: str) -> str:
     if name == "接线盒":
         return "接线盒安装"
 
+    # 配电箱：去掉编号噪声（AL、SGAT、7-AT-BDS1等），只保留"配电箱"
+    # 清单常写"配电箱AL"/"配电箱7-AT-BDS1"，编号对BM25无用
+    # 不去噪的话编号文字干扰BM25匹配到正确的配电箱定额
+    # 注意：不加"成套"前缀，因为北京叫"配电箱落地/明装"没有"成套"
+    if "配电箱" in name and "杆上" not in name:
+        return "配电箱安装"
+
     return name
 
 
@@ -521,6 +536,30 @@ def build_quota_query(parser, name: str, description: str = "",
         if "阀门" in name and any(m in name for m in _valve_materials):
             name = "法兰阀门安装"
             material = ""  # 材质已融入名称，不再单独拼接
+
+        # 焊接法兰阀门/螺纹法兰阀门 → 焊接法兰阀安装/螺纹法兰阀安装
+        # 清单写"焊接法兰阀门"，但很多省定额叫"焊接法兰阀安装"（无"门"字）
+        # 不做此替换时，"焊接"+"法兰"会被BM25匹配到"碳钢法兰安装(焊接)"
+        if "焊接法兰阀门" in name:
+            name = name.replace("焊接法兰阀门", "焊接法兰阀安装")
+            material = ""
+        elif "螺纹法兰阀门" in name:
+            name = name.replace("螺纹法兰阀门", "螺纹法兰阀安装")
+            material = ""
+
+        # PPR/PP-R管 → 定额标准名称：
+        # 清单写"PPR冷水管"/"PP-R管"，定额叫"室内塑料给水管(热熔连接)"或"采暖管道 室内塑料管(热熔连接)"
+        # 直接替换为定额名，避免BM25因"PPR"匹配不到"塑料给水管"
+        _mat_upper = material.upper() if material else ""
+        if "PPR" in _mat_upper or "PP-R" in _mat_upper:
+            _full = f"{name} {description}".upper()
+            if "采暖" in _full or "热水" in _full or "暖" in _full:
+                material = "室内塑料管(热熔连接)"
+                if not usage:
+                    usage = "采暖管道"
+            else:
+                # 冷水/给水/未指定用途 → 默认给水（PPR最常见用途）
+                material = "室内塑料给水管(热熔连接)"
 
         if material and "管" in material:
             core = f"{location}{usage}{material}"
@@ -849,8 +888,11 @@ def build_quota_query(parser, name: str, description: str = "",
                 query_parts[0] = "矿物绝缘电缆"
             # 普通电力电缆按敷设方式
             elif "桥架" in laying_raw or "线槽" in laying_raw:
-                # 用无逗号格式避免"桥架"被同义词替换成"电缆桥架安装"
-                query_parts[0] = "电缆沿桥架线槽敷设"
+                # 不用"线槽"避免BM25误匹配"金属线槽敷设"（线槽是另一品类）
+                # "室内敷设电力电缆 沿桥架"兼容两种命名风格：
+                #   北京: "电缆沿桥架、线槽敷设"（BM25匹配"电缆""桥架""敷设"）
+                #   江西: "室内敷设电力电缆"（BM25匹配"室内""敷设""电力电缆"）
+                query_parts[0] = "室内敷设电力电缆 沿桥架"
             elif "排管" in laying_raw:
                 query_parts[0] = "排管内电力电缆敷设"
             elif "管" in laying_raw:
