@@ -1,4 +1,4 @@
 manifest: ./lzc-manifest.yml
-contentdir: ./content
+contentdir: ./
 pkgout: ./
 icon: ./lzc-icon.png
