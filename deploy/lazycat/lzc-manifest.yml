@@ -48,8 +48,6 @@ services:
       - /lzcapp/var/db:/app/db
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
-      - /lzcapp/var/model_cache:/root/.cache
-      - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
       - redis
@@ -75,8 +73,6 @@ services:
       - /lzcapp/var/db:/app/db
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
-      - /lzcapp/var/model_cache:/root/.cache
-      - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
       - redis
