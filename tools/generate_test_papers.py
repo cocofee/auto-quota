@@ -25,6 +25,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, 'db', 'common', 'experience.db')
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'tests', 'benchmark_papers')
@@ -117,6 +119,34 @@ def deduplicate_items(items):
     return list(seen.values())
 
 
+def validate_quota_ids(items, province):
+    """验证答案的定额编号在对应省份数据库中真实存在，剔除无效数据"""
+    prov_dir = config.get_province_db_dir(province)
+    db_path = prov_dir / 'quota.db'
+    if not db_path.exists():
+        return items  # 找不到数据库，跳过验证
+
+    conn = sqlite3.connect(str(db_path))
+    c = conn.cursor()
+    c.execute('SELECT quota_id FROM quotas')
+    valid_ids = set(row[0] for row in c.fetchall())
+    conn.close()
+
+    clean = []
+    removed = 0
+    for item in items:
+        # 检查所有quota_ids是否都存在于定额库
+        all_valid = all(qid in valid_ids for qid in item['quota_ids'])
+        if all_valid:
+            clean.append(item)
+        else:
+            removed += 1
+
+    if removed > 0:
+        print(f"    剔除{removed}条无效编号（答案不在定额库中）")
+    return clean
+
+
 def sample_items(items, max_count, seed=42):
     """从items中抽样，权威层全量保留，候选层按比例抽样"""
     authority = [it for it in items if it['layer'] == 'authority']
@@ -179,8 +209,10 @@ def generate_paper(province, items):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description='从经验库生成benchmark试卷')
-    ap.add_argument('--authority-only', action='store_true',
-                    help='只用权威层数据（最可靠，约8500条）')
+    ap.add_argument('--authority-only', action='store_true', default=True,
+                    help='只用权威层数据（默认开启，答案最可靠）')
+    ap.add_argument('--include-candidate', action='store_true',
+                    help='同时包含候选层数据（答案未经人工确认，分数会偏低）')
     ap.add_argument('--max-per-province', type=int, default=0,
                     help='每省最多出题数（0=不限制）')
     ap.add_argument('--min-text-len', type=int, default=20,
@@ -189,16 +221,19 @@ def main():
                     help='只看统计，不写文件')
     args = ap.parse_args()
 
+    # 默认只用权威层，除非明确指定 --include-candidate
+    use_authority_only = args.authority_only and not args.include_candidate
+
     print(f"从经验库生成benchmark试卷")
     print(f"  数据库: {DB_PATH}")
-    print(f"  模式: {'仅权威层' if args.authority_only else '权威层全量+候选层补充'}")
+    print(f"  模式: {'仅权威层' if use_authority_only else '权威层全量+候选层补充'}")
     if args.max_per_province:
         print(f"  每省上限: {args.max_per_province}")
     print()
 
     # 加载数据
     province_items = load_from_experience_db(
-        authority_only=args.authority_only,
+        authority_only=use_authority_only,
         min_text_len=args.min_text_len,
     )
 
@@ -212,6 +247,9 @@ def main():
 
         # 去重
         items = deduplicate_items(items)
+
+        # 验证答案编号在定额库中存在（剔除脏数据）
+        items = validate_quota_ids(items, prov)
 
         # 过滤太少的省份
         if len(items) < MIN_ITEMS:
