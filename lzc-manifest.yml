@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.76
+version: 0.1.77
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -53,8 +53,6 @@ services:
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
       - /lzcapp/var/model_cache:/root/.cache
-      # 懒猫网盘中的造价文件（直接读网盘，不用额外拷贝）
-      - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
       - redis
@@ -83,8 +81,6 @@ services:
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
       - /lzcapp/var/model_cache:/root/.cache
-      # 懒猫网盘中的造价文件
-      - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
       - redis

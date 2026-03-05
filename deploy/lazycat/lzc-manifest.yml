@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.29
+version: 0.1.77
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -26,11 +26,9 @@ services:
       ENVIRONMENT: production
       JWT_SECRET_KEY: "8OseAirAJYwPDPdryD4y_mWDItFZVp-5tywgeRdf5io"
       CORS_ORIGINS: http://frontend.cloud.lazycat.app.autoquota.lzcapp
-      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 大模型配置：通义千问（Web端用MATCH_LLM，命令行用AGENT_LLM）
       AGENT_LLM: qwen
       MATCH_LLM: qwen
       QWEN_API_KEY: "改成你的通义千问API Key"
@@ -38,10 +36,8 @@ services:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
-      # Cookie安全配置（懒猫微服通过HTTPS提供服务）
       COOKIE_SECURE: "true"
       COOKIE_SAMESITE: "lax"
-      # 好易支付配置（注册后填入）
       EPAY_PID: ""
       EPAY_KEY: ""
       EPAY_URL: ""
@@ -53,7 +49,6 @@ services:
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
       - /lzcapp/var/model_cache:/root/.cache
-      # 懒猫网盘中的造价文件（直接读网盘，不用额外拷贝）
       - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
@@ -65,11 +60,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
-      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 大模型配置：通义千问
       AGENT_LLM: qwen
       MATCH_LLM: qwen
       QWEN_API_KEY: "改成你的通义千问API Key"
@@ -83,7 +76,6 @@ services:
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
       - /lzcapp/var/model_cache:/root/.cache
-      # 懒猫网盘中的造价文件
       - /lzcapp/document/cocofee2012:/app/raw_files:ro
     depends_on:
       - postgres
