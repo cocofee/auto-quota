@@ -619,7 +619,11 @@ class AgentMatcher:
             return self._call_openai_compatible(prompt)
 
     def _call_openai_compatible(self, prompt: str) -> str:
-        """调用OpenAI兼容API（DeepSeek/OpenAI/Kimi/Qwen）"""
+        """调用OpenAI兼容API（DeepSeek/OpenAI/Kimi/Qwen）
+
+        优先用httpx直接发请求（避免OpenAI SDK在某些Docker环境下的ascii编码bug），
+        SDK方式作为降级备选。
+        """
         model_map = {
             "deepseek": config.DEEPSEEK_MODEL,
             "kimi": config.KIMI_MODEL,
@@ -628,14 +632,39 @@ class AgentMatcher:
         }
         model = model_map.get(self.llm_type, config.DEEPSEEK_MODEL)
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=1500,
-            timeout=config.LLM_TIMEOUT,
-        )
-        return response.choices[0].message.content
+        # 获取API配置
+        key_map = {
+            "deepseek": config.DEEPSEEK_API_KEY,
+            "kimi": config.KIMI_API_KEY,
+            "qwen": config.QWEN_API_KEY,
+            "openai": getattr(config, "OPENAI_API_KEY", ""),
+        }
+        url_map = {
+            "deepseek": config.DEEPSEEK_BASE_URL,
+            "kimi": config.KIMI_BASE_URL,
+            "qwen": config.QWEN_BASE_URL,
+            "openai": getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        }
+        api_key = key_map.get(self.llm_type, "")
+        base_url = url_map.get(self.llm_type, "")
+
+        # httpx直接调用（绕过SDK编码问题）
+        import httpx
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 1500,
+        }
+        response = httpx.post(url, headers=headers, json=data, timeout=config.LLM_TIMEOUT)
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
 
     def _call_claude(self, prompt: str) -> str:
         """调用Claude API（支持中转和官方两种模式）"""
