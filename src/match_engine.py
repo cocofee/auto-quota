@@ -820,44 +820,57 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         retry_candidates = validator.validate_candidates(
                             full_query, retry_candidates, supplement_query=retry_query)
                     if retry_candidates:
-                        # 合并原候选和重试候选，按quota_id去重，保留更高分的
+                        # 合并原候选和重试候选，按quota_id去重，重复ID保留param_score更高的
                         seen_ids = {}
                         for c in candidates:
                             qid = c.get("quota_id", "")
                             if qid:
                                 seen_ids[qid] = c
+                        new_added = 0
                         for c in retry_candidates:
                             qid = c.get("quota_id", "")
-                            if qid and qid not in seen_ids:
+                            if not qid:
+                                continue
+                            if qid not in seen_ids:
                                 seen_ids[qid] = c
-                        # 按param_score降序排列，取前20条
-                        merged = sorted(seen_ids.values(),
-                                        key=lambda x: (x.get("param_match", False),
-                                                       x.get("param_score", 0)),
-                                        reverse=True)[:20]
-                        new_count = len(merged) - len(candidates)
-                        logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新{max(0,new_count)}=合并{len(merged)}条")
-                        # 用合并候选重新调用LLM
-                        retry_result, r_exp, r_rule = _resolve_agent_mode_result(
-                            agent=agent, item=item, candidates=merged,
-                            experience_db=experience_db, full_query=full_query,
-                            search_query=retry_query, rule_kb=rule_kb,
-                            name=name, desc=desc, exp_backup=exp_backup,
-                            rule_backup=rule_backup, exp_hits=0, rule_hits=0,
-                            province=province,
-                            reference_cases_cache=reference_cases_cache,
-                            reference_cases_cache_lock=reference_cases_cache_lock,
-                            rules_context_cache=rules_context_cache,
-                            rules_context_cache_lock=rules_context_cache_lock,
-                            method_cards_db=method_cards_db,
-                            overview_context=ctx_summary,
-                        )
-                        retry_conf = retry_result.get("confidence", 0)
-                        if retry_conf > confidence:
-                            logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
-                            result = retry_result
-                            task_exp_hits = r_exp
-                            task_rule_hits = r_rule
+                                new_added += 1
+                            else:
+                                # 重复ID保留param_score更高的
+                                old_score = seen_ids[qid].get("param_score", 0)
+                                new_score = c.get("param_score", 0)
+                                if new_score > old_score:
+                                    seen_ids[qid] = c
+                        if not seen_ids:
+                            # 极端情况：所有候选都没有quota_id，跳过重试
+                            logger.debug(f"#{idx} 候选融合后为空，跳过重试")
+                        else:
+                            # 按param_score降序排列，取前20条
+                            merged = sorted(seen_ids.values(),
+                                            key=lambda x: (x.get("param_match", False),
+                                                           x.get("param_score", 0)),
+                                            reverse=True)[:20]
+                            logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新增{new_added}=合并{len(merged)}条")
+                            # 用合并候选重新调用LLM
+                            retry_result, r_exp, r_rule = _resolve_agent_mode_result(
+                                agent=agent, item=item, candidates=merged,
+                                experience_db=experience_db, full_query=full_query,
+                                search_query=retry_query, rule_kb=rule_kb,
+                                name=name, desc=desc, exp_backup=exp_backup,
+                                rule_backup=rule_backup, exp_hits=0, rule_hits=0,
+                                province=province,
+                                reference_cases_cache=reference_cases_cache,
+                                reference_cases_cache_lock=reference_cases_cache_lock,
+                                rules_context_cache=rules_context_cache,
+                                rules_context_cache_lock=rules_context_cache_lock,
+                                method_cards_db=method_cards_db,
+                                overview_context=ctx_summary,
+                            )
+                            retry_conf = retry_result.get("confidence", 0)
+                            if retry_conf > confidence:
+                                logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
+                                result = retry_result
+                                task_exp_hits = r_exp
+                                task_rule_hits = r_rule
                 except Exception as e:
                     logger.debug(f"#{idx} AI引导重试失败（保留原结果）: {e}")
 
