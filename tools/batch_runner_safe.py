@@ -2,8 +2,8 @@
 智能批量匹配调度器 - 根据系统资源自动调节跑批节奏
 
 规则：
-- 内存使用 > 70%：暂停，等资源释放
-- 内存使用 < 60%：可以启动下一个省
+- 内存使用 > 85%：暂停，等资源释放
+- 内存使用 < 75%：可以启动下一个省
 - 一次只跑一个省，跑完检查资源再决定是否继续
 - 按待匹配文件数从少到多排序
 - 支持 --batch N 参数，每跑N个省自动停（默认5）
@@ -12,6 +12,8 @@
   python tools/batch_runner_safe.py              # 每批跑5个省
   python tools/batch_runner_safe.py --batch 3    # 每批跑3个省
   python tools/batch_runner_safe.py --batch 0    # 不限制，跑完全部
+
+前置依赖：pip install psutil（需要提前安装）
 """
 
 import subprocess
@@ -21,12 +23,7 @@ import sqlite3
 import os
 import argparse
 
-try:
-    import psutil
-except ImportError:
-    print("需要 psutil 库，正在安装...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil", "-q"])
-    import psutil
+import psutil  # 需要提前安装：pip install psutil
 
 # 阈值设置
 MEM_PAUSE_THRESHOLD = 85   # 内存超过85%就暂停（31.8GB的85%≈27GB，留4.8GB防卡死）
@@ -163,7 +160,7 @@ def main():
                 print(f"  {province} 匹配出错，跳过继续")
         except subprocess.TimeoutExpired:
             failed += 1
-            print(f"  {province} 超时(30分钟)，跳过继续")
+            print(f"  {province} 超时(2小时)，跳过继续")
         except KeyboardInterrupt:
             print(f"\n\n用户中断，已完成 {completed} 个省份")
             break

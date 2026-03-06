@@ -62,7 +62,8 @@ def collect_results(province_filter: str = None) -> list[dict]:
                 continue
 
             all_results.append(data)
-        except Exception:
+        except Exception as e:
+            print(f"  警告: 读取结果文件失败 {json_path}: {e}")
             continue
 
     return all_results
