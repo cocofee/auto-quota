@@ -112,14 +112,15 @@ class ParamValidator:
                 c["name_bonus"] = self._bill_keyword_bonus(
                     query_text, c.get("name", ""))
 
+            # 无参数分支：品类词主导排序（清单没有可验证的参数）
             candidates.sort(
                 key=lambda x: (
                     x["param_match"],
-                    x["param_score"] * 0.75 + (
+                    x["param_score"] * 0.20 + (
                         x.get("name_bonus", 0)
-                    ) * 0.10 + (
+                    ) * 0.55 + (
                         x.get("rerank_score", x.get("hybrid_score", 0))
-                    ) * 0.15,
+                    ) * 0.25,
                 ),
                 reverse=True,
             )
@@ -170,16 +171,16 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # M1排序改进：三项融合
-        # param_score * 0.75（参数精确匹配仍主导）
-        # name_bonus * 0.10（清单核心词匹配，解决品类选错问题）
+        # M1排序改进：三项融合（有参数分支）
+        # param_score * 0.55（参数匹配仍重要，但不再独大）
+        # name_bonus * 0.30（品类核心词匹配，大幅提权解决品类选错）
         # rerank_score * 0.15（BM25语义精排）
         validated.sort(
             key=lambda x: (
-                x["param_match"],     # 第一级：匹配vs不匹配
-                x["param_score"] * 0.75 + (  # 第二级：三项融合
+                x["param_match"],     # 第一级：匹配vs不匹配（保留硬分层）
+                x["param_score"] * 0.55 + (  # 第二级：三项融合
                     x.get("name_bonus", 0)
-                ) * 0.10 + (
+                ) * 0.30 + (
                     x.get("rerank_score", x.get("hybrid_score", 0))
                 ) * 0.15,
             ),
