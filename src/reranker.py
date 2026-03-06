@@ -65,6 +65,10 @@ class Reranker:
         if top_k is None:
             top_k = config.RERANKER_TOP_K
 
+        # 向量搜索关闭时跳过重排（模型不可用）
+        if not getattr(config, "VECTOR_ENABLED", True):
+            return candidates[:top_k] if top_k else candidates
+
         # 检查模型是否可用（冷却期内返回None）
         model = self.model
         if model is None:
