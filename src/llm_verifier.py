@@ -152,16 +152,40 @@ class LLMVerifier:
             return response.content[0].text
 
     def _call_openai_compatible(self, prompt: str) -> str:
-        """调用OpenAI兼容API"""
+        """调用OpenAI兼容API（用httpx直接发请求，避免SDK编码问题）"""
         model = self._get_model_name()
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=config.VERIFY_MAX_TOKENS,
-            timeout=config.VERIFY_TIMEOUT,
-        )
-        return response.choices[0].message.content
+
+        # 获取API配置
+        key_map = {
+            "deepseek": config.DEEPSEEK_API_KEY,
+            "kimi": config.KIMI_API_KEY,
+            "qwen": config.QWEN_API_KEY,
+            "openai": getattr(config, "OPENAI_API_KEY", ""),
+        }
+        url_map = {
+            "deepseek": config.DEEPSEEK_BASE_URL,
+            "kimi": config.KIMI_BASE_URL,
+            "qwen": config.QWEN_BASE_URL,
+            "openai": getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        }
+        api_key = key_map.get(self.llm_type, "")
+        base_url = url_map.get(self.llm_type, "")
+
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": config.VERIFY_MAX_TOKENS,
+        }
+        response = httpx.post(url, headers=headers, json=data, timeout=config.VERIFY_TIMEOUT)
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
 
     # ============================================================
     # 核心验证逻辑
