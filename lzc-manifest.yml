@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.99
+version: 0.2.0
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -32,11 +32,11 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：通义千问匹配 + Kimi验证
+      # 大模型配置：千问匹配 + Claude Opus验证
       AGENT_LLM: qwen
       MATCH_LLM: qwen
-      VERIFY_LLM: kimi
-      VERIFY_MODEL: kimi-k2.5
+      VERIFY_LLM: claude
+      VERIFY_MODEL: claude-opus-4-6
       VERIFY_CONCURRENT: "3"
       QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -44,6 +44,9 @@ services:
       KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       KIMI_MODEL: kimi-k2.5
+      CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
+      CLAUDE_BASE_URL: "http://47.243.74.21:8080"
+      CLAUDE_MODEL: claude-opus-4-6
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
@@ -78,11 +81,11 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：通义千问匹配 + Kimi验证
+      # 大模型配置：千问匹配 + Claude Opus验证
       AGENT_LLM: qwen
       MATCH_LLM: qwen
-      VERIFY_LLM: kimi
-      VERIFY_MODEL: kimi-k2.5
+      VERIFY_LLM: claude
+      VERIFY_MODEL: claude-opus-4-6
       VERIFY_CONCURRENT: "3"
       QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -90,6 +93,9 @@ services:
       KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       KIMI_MODEL: kimi-k2.5
+      CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
+      CLAUDE_BASE_URL: "http://47.243.74.21:8080"
+      CLAUDE_MODEL: claude-opus-4-6
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"

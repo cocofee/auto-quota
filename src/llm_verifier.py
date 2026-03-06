@@ -126,9 +126,18 @@ class LLMVerifier:
         """调用Claude API"""
         model = self._get_model_name()
         if config.CLAUDE_BASE_URL:
-            url = f"{config.CLAUDE_BASE_URL.rstrip('/')}/v1/messages"
+            # 防御性清洗
+            def _safe_ascii(val):
+                if not val or not isinstance(val, str):
+                    return val or ""
+                return val.strip().encode("ascii", errors="ignore").decode("ascii")
+            api_key = _safe_ascii(config.CLAUDE_API_KEY)
+            base_url = _safe_ascii(config.CLAUDE_BASE_URL)
+            model = _safe_ascii(model)
+
+            url = f"{base_url.rstrip('/')}/v1/messages"
             headers = {
-                "x-api-key": config.CLAUDE_API_KEY,
+                "x-api-key": api_key,
                 "content-type": "application/json",
                 "anthropic-version": "2023-06-01",
             }

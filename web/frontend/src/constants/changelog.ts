@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.99';
+export const APP_VERSION = '0.2.0';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.0',
+    date: '2026-03-06',
+    changes: [
+      { type: 'user', text: '验证模型升级为Claude Opus 4.6（匹配准确率大幅提升）' },
+      { type: 'admin', text: '懒猫验证模型从Kimi切换为Claude Opus（中转直连，无需代理）' },
+      { type: 'admin', text: 'Agent匹配prompt增加专业分流注意事项和易混淆品类提示' },
+    ],
+  },
   {
     version: '0.1.99',
     date: '2026-03-06',

@@ -207,6 +207,10 @@ class ModelCache:
     @classmethod
     def preload_all(cls):
         """预加载所有模型（在初始化阶段调用，避免第一条清单等待）"""
+        import config
+        if not getattr(config, "VECTOR_ENABLED", True):
+            logger.info("[ModelCache] VECTOR_ENABLED=false，跳过向量模型和Reranker预加载（纯BM25模式）")
+            return
         logger.info("[ModelCache] 开始预加载模型...")
         cls.get_vector_model()
         cls.get_reranker_model()

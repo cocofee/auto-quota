@@ -820,9 +820,26 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         retry_candidates = validator.validate_candidates(
                             full_query, retry_candidates, supplement_query=retry_query)
                     if retry_candidates:
-                        # 用扩展候选重新调用LLM
+                        # 合并原候选和重试候选，按quota_id去重，保留更高分的
+                        seen_ids = {}
+                        for c in candidates:
+                            qid = c.get("quota_id", "")
+                            if qid:
+                                seen_ids[qid] = c
+                        for c in retry_candidates:
+                            qid = c.get("quota_id", "")
+                            if qid and qid not in seen_ids:
+                                seen_ids[qid] = c
+                        # 按param_score降序排列，取前20条
+                        merged = sorted(seen_ids.values(),
+                                        key=lambda x: (x.get("param_match", False),
+                                                       x.get("param_score", 0)),
+                                        reverse=True)[:20]
+                        new_count = len(merged) - len(candidates)
+                        logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新{max(0,new_count)}=合并{len(merged)}条")
+                        # 用合并候选重新调用LLM
                         retry_result, r_exp, r_rule = _resolve_agent_mode_result(
-                            agent=agent, item=item, candidates=retry_candidates,
+                            agent=agent, item=item, candidates=merged,
                             experience_db=experience_db, full_query=full_query,
                             search_query=retry_query, rule_kb=rule_kb,
                             name=name, desc=desc, exp_backup=exp_backup,
