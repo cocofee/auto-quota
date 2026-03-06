@@ -31,13 +31,11 @@ from src.param_validator import ParamValidator
 CASCADE_MIN_CANDIDATES = 3
 # 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
 RULE_DIRECT_CONFIDENCE = 80
-# 措施项关键词（这些是工程管理费用，不套安装定额）
-# 包含任一关键词即判定为措施费，不走匹配流程
+# 措施项弱关键词（需要同时无单位无工程量才跳过，防止误伤正常清单）
+# 强关键词在STRONG_MEASURE_KEYWORDS中，不管有没有单位/工程量都跳过
 MEASURE_KEYWORDS = [
-    "施工费", "增加费", "复测费", "措施费",
-    "临时设施费", "工程保险费", "进出场费",
-    "操作高度增加", "超高增加", "赶工费",
-    "特殊地区施工", "干扰增加", "疫情防控",
+    "操作高度增加", "超高增加",
+    "特殊地区施工", "干扰增加",
 ]
 # 强措施费关键词——名称完全是费用类，不管有没有单位/工程量都跳过
 # （区别于普通关键词：普通关键词仍要求无单位无工程量才跳过）
@@ -315,13 +313,11 @@ def _validate_experience_params(exp_result: dict, item: dict,
     # ===== 方法1：用规则校验器检查档位（处理回路/容量/截面等家族参数） =====
     # 这能发现"7回路"不应该套"4回路以内"这类错误
     rule_validated = False  # 标记规则校验器是否已验证通过
-    rule_family_available = False
     if rule_validator and rule_validator.rules and main_quota_id:
         family = rule_validator.family_index.get(main_quota_id)
         if family:
             tiers = family.get("tiers")
             if tiers:
-                rule_family_available = True
                 # 从清单文本中提取参数值（如"7回路" → 7）
                 bill_value = rule_validator._extract_param_value(bill_text, family)
                 if bill_value is not None:
@@ -478,7 +474,7 @@ def try_experience_match(query: str, item: dict, experience_db,
 
         # 参数验证：即使经验库文本完全匹配，参数也必须对
         # （同名清单不同参数的情况，如"配电箱"7回路 vs 4回路）
-        # 精确匹配时跳过方法2（简单参数对比），只做方法1（规则校验器档位检查）
+        # 精确匹配时方法2用宽松模式（只拦截硬参数超档，不因材质差异误杀）
         validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
         if validated is None:
             return None  # 参数不匹配，拒绝经验库结果
@@ -503,7 +499,7 @@ def try_experience_match(query: str, item: dict, experience_db,
                 "quota_id": qid,
                 "name": quota_names[i] if i < len(quota_names) else "",
                 "unit": "",
-                "reason": f"经验库相似匹配 (相似度{similarity:.2f}, 原文: {best['bill_text'][:50]})",
+                "reason": f"经验库相似匹配 (相似度{similarity:.2f}, 原文: {best.get('bill_text', '')[:50]})",
             })
 
         result = {
@@ -713,8 +709,8 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         for c in candidates:
             qid = c.get("quota_id", "")
             if not qid:
-                # 无quota_id的候选（异常数据）保留
-                seen_ids[id(c)] = c
+                # 无quota_id的候选（异常数据），用唯一递增key保留不去重
+                seen_ids[f"_no_id_{len(seen_ids)}"] = c
                 continue
             # 去重键 = quota_id + 来源库省份（没有来源标记的视为主库）
             dedup_key = (qid, c.get("_source_province", ""))

@@ -293,13 +293,8 @@ def _normalize_bill_name(name: str) -> str:
     if "电缆头" in name and "终端" not in name:
         return name.replace("电力电缆头", "电缆终端头").replace("电缆头", "电缆终端头")
 
-    # 焊接法兰阀门/螺纹法兰阀门 → 焊接法兰阀安装/螺纹法兰阀安装
-    # 清单写"焊接法兰阀门"，多数省定额叫"焊接法兰阀安装"（去"门"加"安装"）
-    # "焊接"+"法兰"组合容易被BM25误导到"碳钢法兰安装(焊接)"
-    if "焊接法兰阀门" in name:
-        return name.replace("焊接法兰阀门", "焊接法兰阀安装")
-    if "螺纹法兰阀门" in name:
-        return name.replace("螺纹法兰阀门", "螺纹法兰阀安装")
+    # 注意：焊接法兰阀门/螺纹法兰阀门的处理已移至 build_quota_query 管道路由中
+    # 那里先执行，所以这里不再重复处理
 
     # 灯具类：去掉"LED"前缀和瓦数/电压等噪声（定额不按光源和瓦数分类）
     if "灯" in name and not re.search(_LAMP_RULE_EXCLUDE_PATTERN, name):
@@ -354,15 +349,11 @@ def _normalize_bill_name(name: str) -> str:
         if "线槽灯" in cleaned:
             return "LED灯带 灯管式"
 
-        # 直管灯/灯管 → 荧光灯具安装（管状灯具不论LED还是荧光，套荧光灯安装定额）
-        if re.search(r'直管|灯管', cleaned):
-            return "荧光灯具安装 单管"
-
         # 井道灯 → 密闭灯安装（井道用密闭灯）
         if "井道灯" in cleaned:
             return "密闭灯安装 防潮灯"
 
-        # 荧光灯具：提取安装方式和管数
+        # 荧光灯具：提取安装方式和管数（必须在"直管|灯管"之前，否则"荧光灯管"会被抢先匹配）
         if "荧光灯" in cleaned:
             # 提取管数
             tube_count = ""
@@ -385,6 +376,10 @@ def _normalize_bill_name(name: str) -> str:
             elif "吸顶" in cleaned:
                 install = "吸顶式"
             return f"荧光灯具安装 {install} {tube_count}"
+
+        # 直管灯/灯管 → 荧光灯具安装（放在荧光灯之后，避免"荧光灯管"被抢先匹配丢失细节）
+        if re.search(r'直管|灯管', cleaned):
+            return "荧光灯具安装 单管"
 
         # 壁装/管吊/吊装的灯 → 根据安装方式推断荧光灯安装
         if re.search(r'壁装.*灯|灯.*壁装', cleaned):
@@ -419,18 +414,21 @@ def _normalize_bill_name(name: str) -> str:
                 if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
                     return "标志、诱导灯安装 壁式"
                 return "标志、诱导灯安装"
-            # 应急+指示灯 → 标志灯方向（不是荧光灯）
+            # 应急+指示灯 → 标志灯（不是荧光灯）
             # 例如"应急疏散指示灯"是标志灯，不是照明灯
             if "指示" in cleaned:
                 if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
                     return "标志、诱导灯安装 壁式"
-                return "标志、诱导灯安装 壁式"
+                if "嵌入" in cleaned or "地面" in cleaned:
+                    return "标志、诱导灯安装 地面嵌入式"
+                if "吸顶" in cleaned:
+                    return "标志、诱导灯安装 吸顶式"
+                return "标志、诱导灯安装"
             if "吸顶" in cleaned:
                 return "普通灯具安装 吸顶灯"
             if "疏散" in cleaned:
                 return "标志、诱导灯安装"
-            if "照明" in cleaned:
-                return "荧光灯具安装"
+            # 应急照明灯/其他应急灯 → 荧光灯具安装
             return "荧光灯具安装"
 
         # 疏散指示灯/标志灯/出口指示灯 → 标志、诱导灯安装
@@ -446,9 +444,7 @@ def _normalize_bill_name(name: str) -> str:
         # 单管灯/双管灯/三管灯（不含"荧光"字样的简称）→ 荧光灯具安装
         tube_match = re.search(r'(单管|双管|三管)灯', cleaned)
         if tube_match:
-            tube_map = {"单管": "单管", "双管": "双管", "三管": "三管"}
-            tube = tube_map.get(tube_match.group(1), "单管")
-            return f"荧光灯具安装 吸顶式 {tube}"
+            return f"荧光灯具安装 吸顶式 {tube_match.group(1)}"
 
         # 坡道灯/过渡照明灯/照明灯 → 普通灯具安装
         if re.search(r'照明灯|过渡灯|坡道.*灯', cleaned):
@@ -690,8 +686,10 @@ def build_quota_query(parser, name: str, description: str = "",
 
             # 1. 材质型号：从全文提取SC/JDG/KBG/PC等代号
             conduit_code = None
+            # 匹配配管材质代号（按长度降序，避免短代号抢先匹配）
+            # G/RC/MT 是单/双字母代号，用\b边界防止从JDG/DG中误提取
             mat_match = re.search(
-                r'(JDG|KBG|FPC|PVC|SC|PC|DG)\s*\d*',
+                r'(JDG|KBG|FPC|PVC|SC|PC|DG|RC|MT|G)\b\s*\d*',
                 full_text.upper())
             if mat_match:
                 conduit_code = mat_match.group(1)
@@ -709,6 +707,8 @@ def build_quota_query(parser, name: str, description: str = "",
                     query_parts[0] = "焊接钢管敷设"
                 elif conduit_code in ("G", "DG"):
                     query_parts[0] = "镀锌钢管敷设"
+                elif conduit_code in ("RC", "MT"):
+                    query_parts[0] = "镀锌电线管敷设"
                 else:
                     # 无材质代号时用通用"钢管敷设"
                     query_parts[0] = "钢管敷设"
@@ -727,9 +727,9 @@ def build_quota_query(parser, name: str, description: str = "",
             # 3. 管径：从"SC25"、"JDG32"、"Φ20"或"规格:25"提取
             query_str = " ".join(query_parts)
             if "公称直径" not in query_str and "外径" not in query_str:
-                # 先匹配材质代号后直接跟数字（SC25, JDG32）或DN前缀（DN100）
+                # 先匹配材质代号后直接跟数字（SC25, JDG32, RC20, MT16, G20）或DN前缀（DN100）
                 size_match = re.search(
-                    r'(?:SC|JDG|KBG|PC|Φ|φ|DN)\s*(\d+)',
+                    r'(?:SC|JDG|KBG|PC|RC|MT|G|Φ|φ|DN)\s*(\d+)',
                     full_text, re.IGNORECASE)
                 # 再匹配规格字段中的数字（规格:25, 规格:Φ20, 规格:DN25）
                 if not size_match:

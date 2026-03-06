@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-06 20:01",
+  "run_time": "2026-03-06 21:40",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -8,13 +8,13 @@
       "wrong": 123,
       "hit_rate": 56.4,
       "diagnosis": {
-        "synonym_gap": 40,
-        "wrong_tier": 73,
+        "synonym_gap": 38,
+        "wrong_tier": 75,
         "wrong_book": 10
       },
-      "oracle_in_candidates": 79,
-      "oracle_not_in_candidates": 44,
-      "elapsed": 56.7,
+      "oracle_in_candidates": 80,
+      "oracle_not_in_candidates": 43,
+      "elapsed": 56.3,
       "details": [
         {
           "bill_name": "配电箱1-AL",
@@ -305,27 +305,27 @@
         {
           "bill_name": "桥架",
           "is_match": false,
-          "algo_id": "C4-11-269",
-          "algo_name": "铝合金桥架(宽+高)(mm以下) 550",
+          "algo_id": "C4-8-26",
+          "algo_name": "电缆沿桥架、线槽敷设 电缆截面(mm2以内) 120",
           "stored_ids": [
             "C4-11-249"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 400"
           ],
-          "confidence": 37,
+          "confidence": 32,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C4-13-2",
             "C4-12-300",
-            "C4-11-269",
-            "C4-11-256",
-            "C4-11-255",
-            "C4-11-268",
-            "C4-12-277",
             "C4-8-26",
             "C4-8-30",
-            "C4-8-21"
+            "C4-8-21",
+            "C4-8-28",
+            "C4-8-29",
+            "C4-8-22",
+            "C4-8-23",
+            "C4-8-25"
           ]
         },
         {
@@ -772,34 +772,34 @@
             "C4-9-14",
             "C4-9-30",
             "C4-9-46",
-            "C4-9-2",
-            "C4-9-33"
+            "C4-9-33",
+            "C4-9-2"
           ]
         },
         {
           "bill_name": "基础接地网",
-          "is_match": false,
-          "algo_id": "C4-9-101",
-          "algo_name": "接地测试板制作安装",
+          "is_match": true,
+          "algo_id": "C4-9-74",
+          "algo_name": "均压环焊接",
           "stored_ids": [
             "C4-9-74"
           ],
           "stored_names": [
             "均压环焊接"
           ],
-          "confidence": 44,
-          "oracle_in_candidates": false,
+          "confidence": 37,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "C4-9-101",
-            "C4-11-389",
-            "C4-9-2",
+            "C4-9-74",
+            "C4-9-75",
+            "C4-9-77",
+            "C4-9-76",
+            "C4-10-115",
             "C4-9-105",
-            "C4-9-4",
-            "C4-9-9",
-            "C4-9-16",
-            "C4-9-3",
-            "C4-9-24",
-            "C4-9-52"
+            "C4-9-57",
+            "C4-11-37",
+            "C4-11-52",
+            "C4-11-57"
           ]
         },
         {
@@ -1603,9 +1603,9 @@
         },
         {
           "bill_name": "金属阀门 名称：倒流防止器",
-          "is_match": true,
-          "algo_id": "C10-5-196",
-          "algo_name": "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 50",
+          "is_match": false,
+          "algo_id": "C10-5-69",
+          "algo_name": "带短管甲乙法兰阀门 水泥接口 公称直径(mm以内) 80",
           "stored_ids": [
             "C10-5-196"
           ],
@@ -1773,17 +1773,17 @@
           "stored_names": [
             "弯头导流叶片制作组装 大边长(mm以内) 1250"
           ],
-          "confidence": 81,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-2-118",
             "C7-2-119",
             "C7-2-120",
             "C7-10-21",
-            "C7-10-22",
             "C7-10-23",
-            "C7-6-19",
+            "C7-10-22",
             "C7-6-20",
+            "C7-6-19",
             "C7-2-115",
             "C7-2-116"
           ]
@@ -1799,7 +1799,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 2400"
           ],
-          "confidence": 50,
+          "confidence": 47,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-2",
@@ -1810,8 +1810,8 @@
             "C7-6-13",
             "C7-6-14",
             "C7-6-7",
-            "C7-6-25",
-            "C7-6-11"
+            "C7-6-11",
+            "C7-6-15"
           ]
         },
         {
@@ -1825,7 +1825,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 3600"
           ],
-          "confidence": 51,
+          "confidence": 47,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-3",
@@ -1851,7 +1851,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 5000"
           ],
-          "confidence": 49,
+          "confidence": 46,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-4",
@@ -1877,18 +1877,18 @@
           "stored_names": [
             "百叶风口安装 周长(mm以内) 1800"
           ],
-          "confidence": 58,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-7-3",
             "C7-7-11",
             "C7-7-4",
             "C7-7-12",
-            "C7-7-24",
             "C7-7-5",
-            "C7-7-25",
+            "C7-7-24",
             "C7-7-13",
             "C7-7-6",
+            "C7-7-25",
             "C7-7-14"
           ]
         },
@@ -1982,7 +1982,7 @@
           "stored_names": [
             "多叶调节阀安装 周长(mm以内) 3600"
           ],
-          "confidence": 62,
+          "confidence": 59,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-18",
@@ -2000,27 +2000,27 @@
         {
           "bill_name": "贯流式风幕",
           "is_match": false,
-          "algo_id": "C10-11-16",
-          "algo_name": "气体汇流排安装 普通 (瓶以内) 20",
+          "algo_id": "C10-7-40",
+          "algo_name": "暖风机安装 暖风机重量(kg以内) 1000",
           "stored_ids": [
             "C10-7-37"
           ],
           "stored_names": [
             "暖风机安装 暖风机重量(kg以内) 150"
           ],
-          "confidence": 22,
-          "oracle_in_candidates": false,
+          "confidence": 29,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "C10-11-16",
-            "C10-11-15",
-            "C10-11-14",
-            "C10-11-19",
-            "C10-11-18",
-            "C10-11-17",
-            "C10-7-54",
-            "C10-7-53",
+            "C10-7-40",
+            "C10-7-37",
+            "C10-7-38",
+            "C10-7-39",
+            "C10-7-36",
+            "C10-7-1",
             "C10-7-52",
-            "C10-5-207"
+            "C10-7-53",
+            "C10-7-54",
+            "C10-10-25"
           ]
         },
         {
@@ -2034,16 +2034,16 @@
           "stored_names": [
             "阻抗复合式消声器安装 周长(mm以内) 5800"
           ],
-          "confidence": 56,
+          "confidence": 53,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-10-12",
             "C7-10-13",
             "C7-10-14",
-            "C7-10-7",
             "C7-10-15",
-            "C7-10-3",
+            "C7-10-7",
             "C7-10-8",
+            "C7-10-3",
             "C7-10-9",
             "C7-10-20",
             "C7-10-22"
@@ -2224,7 +2224,7 @@
           "stored_names": [
             "百叶风口安装 周长(mm以内) 3200"
           ],
-          "confidence": 58,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-7-5",
@@ -2291,18 +2291,18 @@
           "stored_names": [
             "静压箱制作 大边长(mm以内) 4000"
           ],
-          "confidence": 86,
+          "confidence": 58,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-2-128",
             "C7-2-129",
-            "C7-2-17",
-            "C7-2-135",
-            "C7-2-130",
-            "C7-2-136",
             "C7-2-131",
+            "C7-2-130",
+            "C7-2-135",
+            "C7-2-136",
             "C7-2-137",
             "C7-2-138",
+            "C7-2-17",
             "C7-2-126"
           ]
         },
@@ -2777,27 +2777,27 @@
         {
           "bill_name": "T接箱",
           "is_match": false,
-          "algo_id": "C4-4-40",
-          "algo_name": "插座箱",
+          "algo_id": "C4-4-35",
+          "algo_name": "配电箱墙上(柱上)明装 规格(回路以内) 48",
           "stored_ids": [
             "C4-4-24"
           ],
           "stored_names": [
             "配电箱嵌入式安装 规格(回路以内) 4"
           ],
-          "confidence": 36,
+          "confidence": 52,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
-            "C4-4-40",
-            "C4-9-72",
-            "C4-8-420",
-            "C4-8-421",
-            "C4-4-95",
-            "C4-8-418",
-            "C4-8-419",
-            "C4-3-43",
-            "C4-8-422",
-            "C4-3-44"
+            "C4-4-35",
+            "C4-4-34",
+            "C4-4-32",
+            "C4-4-37",
+            "C4-4-36",
+            "C4-4-31",
+            "C4-4-30",
+            "C4-10-114",
+            "C4-4-39",
+            "C4-4-21"
           ]
         },
         {
@@ -3488,7 +3488,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 5000"
           ],
-          "confidence": 44,
+          "confidence": 40,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-4",
@@ -3514,7 +3514,7 @@
           "stored_names": [
             "百叶风口安装 周长(mm以内) 3200"
           ],
-          "confidence": 52,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-7-5",
@@ -3522,8 +3522,8 @@
             "C7-7-6",
             "C7-7-14",
             "C7-7-39",
-            "C7-7-40",
             "C7-7-7",
+            "C7-7-40",
             "C7-7-8",
             "C7-7-4",
             "C7-7-3"
@@ -3541,19 +3541,19 @@
           "stored_names": [
             "静压箱制作 大边长(mm以内) 4000"
           ],
-          "confidence": 30,
+          "confidence": 23,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-10-22",
+            "C7-10-9",
             "C7-2-129",
             "C7-2-136",
-            "C7-10-9",
             "C7-2-130",
             "C7-2-137",
             "C7-2-131",
             "C7-2-138",
-            "C7-10-17",
-            "C7-2-128"
+            "C7-2-128",
+            "C7-2-126"
           ]
         },
         {
@@ -3611,8 +3611,8 @@
         {
           "bill_name": "水喷淋钢管",
           "is_match": false,
-          "algo_id": "C9-1-11",
-          "algo_name": "钢管(法兰连接) 公称直径(mm以内) 200",
+          "algo_id": "C9-1-9",
+          "algo_name": "钢管(法兰连接) 公称直径(mm以内) 125",
           "stored_ids": [
             "C10-3-98"
           ],
@@ -3622,16 +3622,16 @@
           "confidence": 17,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
-            "C9-1-11",
-            "C9-1-10",
+            "C9-1-9",
             "C9-1-8",
             "C9-1-12",
-            "C9-1-9",
-            "C9-1-18",
-            "C9-1-20",
-            "C9-1-17",
+            "C9-1-11",
+            "C9-1-10",
+            "C9-1-16",
             "C9-1-15",
-            "C9-1-19"
+            "C9-1-18",
+            "C9-1-19",
+            "C9-1-13"
           ]
         },
         {
@@ -3671,7 +3671,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3697,7 +3697,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3723,7 +3723,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3749,7 +3749,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3775,7 +3775,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3801,7 +3801,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -3871,53 +3871,53 @@
         {
           "bill_name": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管65",
           "is_match": false,
-          "algo_id": "C9-1-69",
-          "algo_name": "减压孔板 公称直径(mm以内) 65",
+          "algo_id": "C9-1-43",
+          "algo_name": "洒水喷头安装 无吊顶 公称直径(mm以内) 15",
           "stored_ids": [
             "C10-3-98"
           ],
           "stored_names": [
             "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 80"
           ],
-          "confidence": 37,
+          "confidence": 35,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
-            "C9-1-69",
+            "C9-1-43",
+            "C9-1-48",
+            "C9-1-46",
             "C9-1-13",
-            "C9-1-21",
-            "C9-1-16",
-            "C9-1-20",
-            "C9-1-19",
-            "C9-1-17",
-            "C9-1-18",
+            "C9-1-5",
             "C9-1-51",
-            "C9-1-49"
+            "C9-1-50",
+            "C9-1-49",
+            "C9-1-21",
+            "C9-1-20"
           ]
         },
         {
           "bill_name": "水喷淋钢管 材质,规格：内外涂覆EP碳钢管50",
           "is_match": false,
-          "algo_id": "C9-2-35",
-          "algo_name": "气体喷头 公称直径(mm以内) 50",
+          "algo_id": "C9-1-45",
+          "algo_name": "洒水喷头安装 无吊顶 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-3-97"
           ],
           "stored_names": [
             "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 50"
           ],
-          "confidence": 37,
+          "confidence": 35,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
+            "C9-1-45",
+            "C9-1-43",
+            "C9-1-48",
+            "C9-1-46",
             "C9-2-35",
-            "C9-1-16",
+            "C9-1-50",
+            "C9-1-49",
             "C9-1-19",
-            "C9-1-20",
-            "C9-1-22",
-            "C9-1-21",
-            "C9-1-13",
-            "C9-1-17",
-            "C9-1-18",
-            "C9-1-9"
+            "C9-1-51",
+            "C9-1-16"
           ]
         },
         {
@@ -3931,19 +3931,19 @@
           "stored_names": [
             "涂塑碳钢管(卡压、环压连接) 公称直径(mm以内) 40"
           ],
-          "confidence": 37,
+          "confidence": 36,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C9-1-45",
+            "C9-2-33",
             "C9-1-48",
-            "C9-1-74",
-            "C9-1-16",
-            "C9-1-19",
-            "C9-1-22",
-            "C9-1-20",
-            "C9-1-21",
             "C9-1-50",
-            "C9-2-3"
+            "C9-1-49",
+            "C9-1-51",
+            "C9-1-2",
+            "C9-1-19",
+            "C9-1-16",
+            "C9-1-21"
           ]
         },
         {
@@ -4024,7 +4024,7 @@
           "stored_names": [
             "一般填料套管制作安装 公称直径(mm以内) 500"
           ],
-          "confidence": 23,
+          "confidence": 22,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C7-11-70",
@@ -4154,7 +4154,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4206,7 +4206,7 @@
           "stored_names": [
             "消防广播及对讲电话主机(柜)安装 消防电话主机 10路"
           ],
-          "confidence": 60,
+          "confidence": 53,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C9-4-53",
@@ -4362,7 +4362,7 @@
           "stored_names": [
             "路由器 固定配置 ≤4口"
           ],
-          "confidence": 59,
+          "confidence": 58,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C5-2-11",
@@ -4440,7 +4440,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4466,7 +4466,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4492,7 +4492,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4518,7 +4518,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4544,7 +4544,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4570,7 +4570,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4756,7 +4756,7 @@
           "stored_names": [
             "阻抗复合式消声器安装 周长(mm以内) 5800"
           ],
-          "confidence": 60,
+          "confidence": 57,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-10-12",
@@ -4764,8 +4764,8 @@
             "C7-10-14",
             "C7-10-15",
             "C7-10-7",
-            "C7-10-3",
             "C7-10-8",
+            "C7-10-3",
             "C7-10-9",
             "C7-10-4",
             "C7-10-20"
@@ -4797,7 +4797,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4901,7 +4901,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 79,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4927,7 +4927,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 79,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4953,7 +4953,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -4979,7 +4979,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -5005,7 +5005,7 @@
           "stored_names": [
             "配电箱箱体安装 半周长(m以内) 明装 2.5"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-114",
@@ -5031,7 +5031,7 @@
           "stored_names": [
             "消防广播及对讲电话主机(柜)安装 消防电话主机 10路"
           ],
-          "confidence": 60,
+          "confidence": 54,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C9-4-53",
@@ -5057,7 +5057,7 @@
           "stored_names": [
             "路由器 固定配置 ≤4口"
           ],
-          "confidence": 59,
+          "confidence": 58,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C5-2-11",
@@ -5395,7 +5395,7 @@
           "stored_names": [
             "钢制槽式桥架(宽+高)(mm以下) 400"
           ],
-          "confidence": 74,
+          "confidence": 54,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C4-11-259",
@@ -5577,7 +5577,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 2400"
           ],
-          "confidence": 63,
+          "confidence": 60,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-2",
@@ -5587,9 +5587,9 @@
             "C7-6-6",
             "C7-6-26",
             "C7-6-17",
-            "C7-6-18",
             "C7-6-15",
-            "C7-6-11"
+            "C7-6-11",
+            "C7-6-18"
           ]
         },
         {
@@ -5603,7 +5603,7 @@
           "stored_names": [
             "百叶风口安装 周长(mm以内) 6000"
           ],
-          "confidence": 80,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-7-7",
@@ -5629,7 +5629,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 1800"
           ],
-          "confidence": 62,
+          "confidence": 60,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-2",
@@ -5640,8 +5640,8 @@
             "C7-6-17",
             "C7-6-15",
             "C7-6-11",
-            "C7-6-18",
-            "C7-6-12"
+            "C7-6-12",
+            "C7-6-13"
           ]
         },
         {
@@ -5681,7 +5681,7 @@
           "stored_names": [
             "防火调节阀安装 方、矩形周长(mm以内) 4800"
           ],
-          "confidence": 69,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-4",
@@ -5707,19 +5707,19 @@
           "stored_names": [
             "多叶调节阀安装 周长(mm以内) 2400"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-6-17",
             "C7-6-18",
+            "C7-6-19",
+            "C7-6-20",
+            "C7-6-21",
             "C7-6-24",
             "C7-7-11",
             "C7-6-41",
-            "C7-6-19",
             "C7-6-25",
-            "C7-7-12",
-            "C7-6-20",
-            "C7-6-21"
+            "C7-7-12"
           ]
         },
         {
@@ -5822,8 +5822,8 @@
             "C4-12-192",
             "C4-12-201",
             "C4-12-198",
-            "C4-12-208",
-            "C4-12-205"
+            "C4-12-251",
+            "C4-12-208"
           ]
         },
         {
@@ -6857,7 +6857,7 @@
       },
       "oracle_in_candidates": 37,
       "oracle_not_in_candidates": 18,
-      "elapsed": 41.1,
+      "elapsed": 42.6,
       "details": [
         {
           "bill_name": "管道支架",
@@ -6924,7 +6924,7 @@
           "stored_names": [
             "成套配电箱安装 落地式"
           ],
-          "confidence": 93,
+          "confidence": 87,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "2-4-2-79",
@@ -7210,7 +7210,7 @@
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 27,
+          "confidence": 21,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "2-4-14-227",
@@ -7731,7 +7731,7 @@
           "stored_names": [
             "户内接地母线敷设"
           ],
-          "confidence": 60,
+          "confidence": 59,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "2-4-10-57",
@@ -7784,19 +7784,19 @@
           "stored_names": [
             "太阳能电池板安装 太阳能电池组装、安装 500Wp"
           ],
-          "confidence": 80,
+          "confidence": 75,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "2-10-9-25",
-            "2-4-17-194",
             "2-10-9-26",
             "2-9-1-76",
+            "2-4-17-194",
             "2-4-5-60",
+            "2-4-17-196",
             "2-4-5-61",
             "2-4-5-59",
             "2-4-5-54",
-            "2-4-5-62",
-            "2-4-5-53"
+            "2-4-17-195"
           ]
         },
         {
@@ -8621,7 +8621,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m"
           ],
-          "confidence": 68,
+          "confidence": 50,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "2-4-2-78",
@@ -8829,11 +8829,11 @@
           "stored_names": [
             "等电位装置安装 等电位端子盒安装"
           ],
-          "confidence": 78,
+          "confidence": 72,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "2-4-10-56",
             "2-4-10-79",
+            "2-4-10-56",
             "2-4-4-13",
             "2-5-7-66",
             "2-5-7-63",
@@ -8855,14 +8855,14 @@
           "stored_names": [
             "避雷引下线敷设 利用建筑结构钢筋引下"
           ],
-          "confidence": 55,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "2-4-10-42",
             "2-4-10-40",
             "2-4-10-41",
-            "2-4-3-92",
             "2-4-10-43",
+            "2-4-3-92",
             "2-4-3-93",
             "2-4-3-94",
             "2-11-6-25",
@@ -9224,7 +9224,7 @@
       },
       "oracle_in_candidates": 15,
       "oracle_not_in_candidates": 4,
-      "elapsed": 7.9,
+      "elapsed": 8.3,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -9527,7 +9527,7 @@
           "stored_names": [
             "吊顶天棚 平面、跌级天棚 天棚龙骨(轻钢龙骨) 装配式U形轻钢天棚龙骨(不上人型) 规格(mm) 300×300 平面"
           ],
-          "confidence": 45,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "1-13-161",
@@ -9999,7 +9999,7 @@
       },
       "oracle_in_candidates": 47,
       "oracle_not_in_candidates": 46,
-      "elapsed": 24.3,
+      "elapsed": 26.0,
       "details": [
         {
           "bill_name": "抛光砖楼面（A级）",
@@ -10675,7 +10675,7 @@
           "stored_names": [
             "石膏板"
           ],
-          "confidence": 36,
+          "confidence": 30,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-224",
@@ -10728,7 +10728,7 @@
           "stored_names": [
             "窗帘盒 胶合板 单轨"
           ],
-          "confidence": 44,
+          "confidence": 38,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "A1-9-120",
@@ -11073,7 +11073,7 @@
           "stored_names": [
             "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
           ],
-          "confidence": 37,
+          "confidence": 31,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-177",
@@ -11815,7 +11815,7 @@
           "stored_names": [
             "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
           ],
-          "confidence": 50,
+          "confidence": 41,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-242",
@@ -11842,7 +11842,7 @@
           "stored_names": [
             "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
           ],
-          "confidence": 49,
+          "confidence": 39,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-242",
@@ -11869,7 +11869,7 @@
           "stored_names": [
             "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
           ],
-          "confidence": 45,
+          "confidence": 36,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-242",
@@ -12002,7 +12002,7 @@
           "stored_names": [
             "成品推拉门扇安装"
           ],
-          "confidence": 21,
+          "confidence": 19,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "A1-23-36",
@@ -12506,7 +12506,7 @@
           "stored_names": [
             "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴 块料周长1300内"
           ],
-          "confidence": 37,
+          "confidence": 31,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "A1-13-177",
@@ -12533,7 +12533,7 @@
           "stored_names": [
             "窗帘盒 胶合板 单轨"
           ],
-          "confidence": 47,
+          "confidence": 41,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "A1-9-117",
@@ -12819,12 +12819,12 @@
       "hit_rate": 37.5,
       "diagnosis": {
         "wrong_book": 3,
-        "synonym_gap": 80,
-        "wrong_tier": 251
+        "synonym_gap": 78,
+        "wrong_tier": 253
       },
-      "oracle_in_candidates": 179,
-      "oracle_not_in_candidates": 155,
-      "elapsed": 110.8,
+      "oracle_in_candidates": 182,
+      "oracle_not_in_candidates": 152,
+      "elapsed": 137.6,
       "details": [
         {
           "bill_name": "碳钢通风管道",
@@ -12917,7 +12917,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 2200"
           ],
-          "confidence": 73,
+          "confidence": 58,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-29",
@@ -12943,7 +12943,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 2200"
           ],
-          "confidence": 77,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-29",
@@ -12969,7 +12969,7 @@
           "stored_names": [
             "碳钢 调节阀安装 对开多叶调节阀 周长(mm以内) 2800"
           ],
-          "confidence": 78,
+          "confidence": 63,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-22",
@@ -12979,8 +12979,8 @@
             "C7-3-26",
             "C7-3-27",
             "C7-3-28",
-            "C7-3-104",
             "C7-3-105",
+            "C7-3-104",
             "C7-3-106"
           ]
         },
@@ -12995,19 +12995,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1280"
           ],
-          "confidence": 58,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-74",
             "C7-3-52",
-            "C7-3-53",
             "C7-3-76",
+            "C7-3-53",
             "C7-3-77",
             "C7-3-54",
             "C7-3-55",
-            "C7-3-84",
             "C7-3-56",
-            "C7-3-57"
+            "C7-3-57",
+            "C7-3-58"
           ]
         },
         {
@@ -13021,7 +13021,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1280"
           ],
-          "confidence": 58,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-52",
@@ -13031,35 +13031,35 @@
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-84",
             "C7-3-57",
-            "C7-3-58"
+            "C7-3-58",
+            "C7-3-84"
           ]
         },
         {
           "bill_name": "碳钢风口、散流器、百叶窗 名称：单层防雨百叶",
-          "is_match": true,
-          "algo_id": "C7-3-52",
-          "algo_name": "风口安装 百叶风口 周长(mm以内) 1280",
+          "is_match": false,
+          "algo_id": "C7-3-76",
+          "algo_name": "风口安装 方形散流器 周长(mm以内) 2500",
           "stored_ids": [
             "C7-3-52"
           ],
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1280"
           ],
-          "confidence": 52,
+          "confidence": 56,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "C7-3-52",
             "C7-3-76",
+            "C7-3-52",
             "C7-3-77",
             "C7-3-53",
             "C7-3-54",
-            "C7-3-84",
             "C7-3-55",
+            "C7-3-84",
             "C7-3-56",
-            "C7-3-85",
-            "C7-3-57"
+            "C7-3-57",
+            "C7-3-92"
           ]
         },
         {
@@ -13073,19 +13073,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1800"
           ],
-          "confidence": 59,
+          "confidence": 56,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-76",
             "C7-3-77",
             "C7-3-53",
-            "C7-3-84",
             "C7-3-54",
+            "C7-3-84",
             "C7-3-55",
-            "C7-3-85",
             "C7-3-56",
-            "C7-3-86",
-            "C7-3-57"
+            "C7-3-57",
+            "C7-3-85",
+            "C7-3-58"
           ]
         },
         {
@@ -14500,7 +14500,7 @@
           "stored_names": [
             "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 150"
           ],
-          "confidence": 88,
+          "confidence": 78,
           "oracle_in_candidates": false,
           "all_candidate_ids": []
         },
@@ -14516,7 +14516,7 @@
           "stored_names": [
             "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 100"
           ],
-          "confidence": 88,
+          "confidence": 78,
           "oracle_in_candidates": false,
           "all_candidate_ids": []
         },
@@ -14532,7 +14532,7 @@
           "stored_names": [
             "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 80"
           ],
-          "confidence": 88,
+          "confidence": 78,
           "oracle_in_candidates": false,
           "all_candidate_ids": []
         },
@@ -14548,7 +14548,7 @@
           "stored_names": [
             "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 65"
           ],
-          "confidence": 88,
+          "confidence": 78,
           "oracle_in_candidates": false,
           "all_candidate_ids": []
         },
@@ -14850,7 +14850,7 @@
           "stored_names": [
             "金属线槽安装 宽+高(mm以内) 300"
           ],
-          "confidence": 79,
+          "confidence": 60,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C4-11-176",
@@ -14876,7 +14876,7 @@
           "stored_names": [
             "金属线槽安装 宽+高(mm以内) 300"
           ],
-          "confidence": 78,
+          "confidence": 58,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C4-11-168",
@@ -15189,7 +15189,7 @@
           "stored_names": [
             "模块箱安装"
           ],
-          "confidence": 63,
+          "confidence": 57,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C9-4-26",
@@ -15683,12 +15683,12 @@
           "stored_names": [
             "控制箱安装 悬挂式(半周长m以内) 1.5"
           ],
-          "confidence": 71,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-4-27",
-            "C4-12-361",
             "C4-4-28",
+            "C4-12-361",
             "C4-4-25",
             "C4-12-362",
             "C4-12-359",
@@ -15880,19 +15880,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1280"
           ],
-          "confidence": 61,
+          "confidence": 58,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-74",
             "C7-3-75",
             "C7-3-76",
-            "C7-3-52",
             "C7-3-77",
+            "C7-3-52",
             "C7-3-53",
-            "C7-3-84",
             "C7-3-54",
-            "C7-3-82",
-            "C7-3-55"
+            "C7-3-84",
+            "C7-3-55",
+            "C7-3-82"
           ]
         },
         {
@@ -15906,7 +15906,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1280"
           ],
-          "confidence": 59,
+          "confidence": 56,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-74",
@@ -15917,8 +15917,8 @@
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-84",
-            "C7-3-57"
+            "C7-3-57",
+            "C7-3-58"
           ]
         },
         {
@@ -16388,7 +16388,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 5200"
           ],
-          "confidence": 56,
+          "confidence": 53,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-57",
@@ -16507,8 +16507,8 @@
         {
           "bill_name": "倒流防止器 名称、类型:真空破坏器 规格类型：DN20",
           "is_match": false,
-          "algo_id": "C10-3-242",
-          "algo_name": "倒流防止器组成安装(螺纹连接不带水表) 公称直径(mm) 2",
+          "algo_id": "C10-8-22",
+          "algo_name": "医用真空罐安装 罐体直径(mm以内) 800",
           "stored_ids": [
             "C10-3-11"
           ],
@@ -17185,7 +17185,7 @@
           "stored_names": [
             "碳钢 调节阀安装 对开多叶调节阀 周长(mm以内) 2800"
           ],
-          "confidence": 75,
+          "confidence": 63,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-22",
@@ -17211,7 +17211,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 2200"
           ],
-          "confidence": 79,
+          "confidence": 63,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-29",
@@ -17237,7 +17237,7 @@
           "stored_names": [
             "碳钢 调节阀安装 圆、方形风管止回阀 周长(mm以内) 3200"
           ],
-          "confidence": 77,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-15",
@@ -17263,7 +17263,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 3300"
           ],
-          "confidence": 61,
+          "confidence": 58,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-77",
@@ -17316,7 +17316,7 @@
           "stored_names": [
             "碳钢 调节阀安装 对开多叶调节阀 周长(mm以内) 2800"
           ],
-          "confidence": 79,
+          "confidence": 63,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-22",
@@ -17328,7 +17328,7 @@
             "C7-3-28",
             "C7-3-166",
             "C7-3-181",
-            "C7-3-223"
+            "C7-3-29"
           ]
         },
         {
@@ -17342,7 +17342,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 3600"
           ],
-          "confidence": 76,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-30",
@@ -17368,7 +17368,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 5400"
           ],
-          "confidence": 78,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-31",
@@ -17394,13 +17394,13 @@
           "stored_names": [
             "成品消声器安装(长度1000mm以内) 法兰周长(mm以内) 4500"
           ],
-          "confidence": 59,
+          "confidence": 56,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-197",
+            "C7-3-198",
             "C7-3-204",
             "C7-3-190",
-            "C7-3-198",
             "C7-3-205",
             "C7-3-191",
             "C7-3-195",
@@ -17420,7 +17420,7 @@
           "stored_names": [
             "碳钢 调节阀安装 风管防火阀 周长(mm以内) 2200"
           ],
-          "confidence": 78,
+          "confidence": 62,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-29",
@@ -18812,8 +18812,8 @@
         {
           "bill_name": "水喷淋钢管 材质,规格：304不锈钢DN50",
           "is_match": false,
-          "algo_id": "C10-1-107",
-          "algo_name": "给排水管道 室内不锈钢管(螺纹连接) 公称直径(mm以内) ",
+          "algo_id": "C10-1-701",
+          "algo_name": "燃气管道 室内不锈钢钢(承插氩弧焊) 公称直径(mm以内) ",
           "stored_ids": [
             "C10-1-80"
           ],
@@ -18822,18 +18822,7 @@
           ],
           "confidence": 88,
           "oracle_in_candidates": false,
-          "all_candidate_ids": [
-            "C10-1-107",
-            "C10-1-407",
-            "C10-1-61",
-            "C10-1-63",
-            "C10-1-64",
-            "C10-1-66",
-            "C10-1-67",
-            "C10-1-6",
-            "C10-1-17",
-            "C10-1-106"
-          ]
+          "all_candidate_ids": []
         },
         {
           "bill_name": "水喷淋钢管 材质,规格：镀锌钢管DN200",
@@ -18847,7 +18836,7 @@
           "stored_names": [
             "水喷淋钢管安装 钢管(沟槽式卡箍连接) 公称直径(mm以内) 200"
           ],
-          "confidence": 88,
+          "confidence": 78,
           "oracle_in_candidates": false,
           "all_candidate_ids": []
         },
@@ -19364,7 +19353,7 @@
           "stored_names": [
             "接地母线敷设 户内接地母线敷设"
           ],
-          "confidence": 57,
+          "confidence": 56,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-9-19",
@@ -19458,17 +19447,17 @@
           "stored_names": [
             "碳钢 调节阀安装 对开多叶调节阀 周长(mm以内) 2800"
           ],
-          "confidence": 76,
+          "confidence": 60,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C7-3-13",
-            "C7-3-8",
             "C7-3-29",
+            "C7-3-8",
             "C7-3-9",
             "C7-3-30",
             "C7-3-10",
-            "C7-3-15",
             "C7-3-31",
+            "C7-3-15",
             "C7-3-11",
             "C7-3-16"
           ]
@@ -19484,7 +19473,7 @@
           "stored_names": [
             "消声百叶安装 周长(mm以内) 3000"
           ],
-          "confidence": 74,
+          "confidence": 58,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-29",
@@ -19493,10 +19482,10 @@
             "C7-3-32",
             "C7-3-33",
             "C7-3-95",
-            "C7-3-53",
             "C7-3-96",
             "C7-3-97",
-            "C7-3-55"
+            "C7-3-53",
+            "C7-3-98"
           ]
         },
         {
@@ -20268,18 +20257,29 @@
         },
         {
           "bill_name": "焊接法兰阀门 名称、类型:倒流防止器 规格类型：DN150",
-          "is_match": false,
-          "algo_id": "C10-3-257",
-          "algo_name": "倒流防止器组成安装(法兰连接不带水表) 公称直径(mm以内)",
+          "is_match": true,
+          "algo_id": "C10-3-36",
+          "algo_name": "焊接法兰阀安装 公称直径(mm以内) 150",
           "stored_ids": [
             "C10-3-36"
           ],
           "stored_names": [
             "焊接法兰阀安装 公称直径(mm以内) 150"
           ],
-          "confidence": 88,
-          "oracle_in_candidates": false,
-          "all_candidate_ids": []
+          "confidence": 65,
+          "oracle_in_candidates": true,
+          "all_candidate_ids": [
+            "C10-3-36",
+            "C10-3-37",
+            "C10-3-290",
+            "C10-3-283",
+            "C10-3-38",
+            "C10-3-39",
+            "C10-3-40",
+            "C10-3-41",
+            "C10-3-220",
+            "C10-3-222"
+          ]
         },
         {
           "bill_name": "焊接法兰阀门 名称、类型:Y型过滤器 规格类型：DN150",
@@ -20597,7 +20597,7 @@
             "C4-11-279",
             "C4-11-276",
             "C4-11-274",
-            "C4-4-40"
+            "C4-11-273"
           ]
         },
         {
@@ -21436,7 +21436,7 @@
           "stored_names": [
             "钢制槽式桥架安装(宽+高mm以下) 600"
           ],
-          "confidence": 45,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-13-37",
@@ -21463,7 +21463,7 @@
           "stored_names": [
             "金属线槽安装 宽+高(mm以内) 300"
           ],
-          "confidence": 49,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-151",
@@ -21471,11 +21471,11 @@
             "C4-11-149",
             "C4-11-152",
             "C4-11-148",
-            "C4-8-72",
-            "C4-8-71",
             "C4-11-243",
             "C4-11-246",
-            "C4-11-240"
+            "C4-11-240",
+            "C4-11-244",
+            "C4-11-247"
           ]
         },
         {
@@ -21937,53 +21937,53 @@
         {
           "bill_name": "强电桥架-100*50",
           "is_match": false,
-          "algo_id": "C4-13-37",
-          "algo_name": "桥架支撑架安装",
+          "algo_id": "C4-11-162",
+          "algo_name": "钢制槽式桥架安装(宽+高mm以下) 1200",
           "stored_ids": [
             "C4-11-157"
           ],
           "stored_names": [
             "钢制槽式桥架安装(宽+高mm以下) 150"
           ],
-          "confidence": 46,
-          "oracle_in_candidates": false,
+          "confidence": 42,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "C4-13-37",
-            "C4-11-206",
-            "C4-11-176",
-            "C4-11-174",
-            "C4-11-170",
-            "C4-11-196",
-            "C4-11-172",
+            "C4-11-162",
+            "C4-11-158",
+            "C4-11-163",
+            "C4-11-160",
+            "C4-11-157",
+            "C4-11-159",
+            "C4-11-161",
             "C4-11-173",
-            "C4-11-195",
-            "C4-11-194"
+            "C4-11-168",
+            "C4-11-164"
           ]
         },
         {
           "bill_name": "强电桥架-50*50",
           "is_match": false,
-          "algo_id": "C4-13-37",
-          "algo_name": "桥架支撑架安装",
+          "algo_id": "C4-11-162",
+          "algo_name": "钢制槽式桥架安装(宽+高mm以下) 1200",
           "stored_ids": [
             "C4-11-157"
           ],
           "stored_names": [
             "钢制槽式桥架安装(宽+高mm以下) 150"
           ],
-          "confidence": 46,
-          "oracle_in_candidates": false,
+          "confidence": 42,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "C4-13-37",
-            "C4-11-206",
-            "C4-11-176",
-            "C4-11-174",
-            "C4-11-170",
-            "C4-11-196",
-            "C4-11-172",
+            "C4-11-162",
+            "C4-11-158",
+            "C4-11-163",
+            "C4-11-160",
+            "C4-11-157",
+            "C4-11-159",
+            "C4-11-161",
             "C4-11-173",
-            "C4-11-195",
-            "C4-11-194"
+            "C4-11-168",
+            "C4-11-164"
           ]
         },
         {
@@ -22563,15 +22563,15 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 900"
           ],
-          "confidence": 56,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-67",
             "C7-3-51",
             "C7-3-87",
             "C7-3-52",
-            "C7-3-88",
             "C7-3-82",
+            "C7-3-88",
             "C7-3-53",
             "C7-3-83",
             "C7-3-54",
@@ -22589,7 +22589,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 3300"
           ],
-          "confidence": 61,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-55",
@@ -22600,8 +22600,8 @@
             "C7-3-60",
             "C7-3-61",
             "C7-3-62",
-            "C7-3-99",
-            "C7-3-63"
+            "C7-3-63",
+            "C7-3-64"
           ]
         },
         {
@@ -22615,16 +22615,16 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 60,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-95",
             "C7-3-57",
             "C7-3-58",
             "C7-3-59",
+            "C7-3-95",
             "C7-3-60",
             "C7-3-61",
             "C7-3-62"
@@ -22801,7 +22801,7 @@
           "stored_names": [
             "钢制槽式桥架安装(宽+高mm以下) 150"
           ],
-          "confidence": 46,
+          "confidence": 40,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-13-37",
@@ -22987,7 +22987,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 900"
           ],
-          "confidence": 51,
+          "confidence": 44,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-51",
@@ -23013,7 +23013,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 900"
           ],
-          "confidence": 56,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-67",
@@ -23021,8 +23021,8 @@
             "C7-3-52",
             "C7-3-82",
             "C7-3-53",
-            "C7-3-83",
             "C7-3-70",
+            "C7-3-83",
             "C7-3-54",
             "C7-3-55",
             "C7-3-56"
@@ -23039,19 +23039,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1800"
           ],
-          "confidence": 53,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-82",
             "C7-3-83",
+            "C7-3-90",
             "C7-3-53",
             "C7-3-89",
-            "C7-3-90",
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-57",
-            "C7-3-58"
+            "C7-3-58",
+            "C7-3-57"
           ]
         },
         {
@@ -23065,7 +23065,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 54,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-83",
@@ -23091,14 +23091,14 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 55,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-60",
             "C7-3-61",
+            "C7-3-60",
             "C7-3-62",
             "C7-3-63",
             "C7-3-64",
@@ -23117,19 +23117,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 1800"
           ],
-          "confidence": 60,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-53",
             "C7-3-54",
-            "C7-3-88",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-90",
-            "C7-3-95",
+            "C7-3-88",
             "C7-3-57",
             "C7-3-58",
-            "C7-3-59"
+            "C7-3-90",
+            "C7-3-59",
+            "C7-3-95"
           ]
         },
         {
@@ -23567,19 +23567,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 60,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-95",
             "C7-3-57",
             "C7-3-58",
             "C7-3-59",
+            "C7-3-95",
             "C7-3-60",
             "C7-3-61",
-            "C7-3-98"
+            "C7-3-62"
           ]
         },
         {
@@ -23593,7 +23593,7 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 61,
+          "confidence": 53,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-54",
@@ -23619,19 +23619,19 @@
           "stored_names": [
             "风口安装 百叶风口 周长(mm以内) 2500"
           ],
-          "confidence": 57,
+          "confidence": 51,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-54",
             "C7-3-55",
             "C7-3-56",
-            "C7-3-90",
             "C7-3-57",
             "C7-3-58",
+            "C7-3-90",
             "C7-3-59",
             "C7-3-60",
             "C7-3-61",
-            "C7-3-97"
+            "C7-3-62"
           ]
         },
         {
@@ -23859,7 +23859,7 @@
           "stored_names": [
             "成品静压箱安装 每个(m3以内) 1"
           ],
-          "confidence": 52,
+          "confidence": 46,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C7-3-214",
@@ -24030,15 +24030,15 @@
           "stored_names": [
             "成套配电箱安装 悬挂式(半周长m以内) 0.5"
           ],
-          "confidence": 29,
+          "confidence": 23,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "C4-4-27",
+            "C4-4-28",
             "C4-4-48",
             "C4-4-45",
             "C4-4-29",
             "C4-4-32",
-            "C4-4-28",
             "C4-4-25",
             "C4-4-33",
             "C4-4-37",
@@ -25163,7 +25163,7 @@
       },
       "oracle_in_candidates": 0,
       "oracle_not_in_candidates": 19,
-      "elapsed": 2.7,
+      "elapsed": 5.1,
       "details": [
         {
           "bill_name": "挖一般土方",
@@ -25678,7 +25678,7 @@
       },
       "oracle_in_candidates": 10,
       "oracle_not_in_candidates": 1,
-      "elapsed": 3.4,
+      "elapsed": 6.6,
       "details": [
         {
           "bill_name": "钢筋笼 混凝土灌注桩钢筋笼  钢筋 HPB300φ10以内 ",
@@ -25980,7 +25980,7 @@
           "stored_names": [
             "扶手 换为【楼梯靠墙扶手 镀锌钢管横杆】"
           ],
-          "confidence": 40,
+          "confidence": 32,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "46278",
@@ -26261,16 +26261,16 @@
     {
       "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
       "total": 468,
-      "correct": 198,
-      "wrong": 270,
-      "hit_rate": 42.3,
+      "correct": 204,
+      "wrong": 264,
+      "hit_rate": 43.6,
       "diagnosis": {
-        "wrong_tier": 186,
-        "synonym_gap": 84
+        "wrong_tier": 184,
+        "synonym_gap": 80
       },
-      "oracle_in_candidates": 213,
-      "oracle_not_in_candidates": 57,
-      "elapsed": 102.3,
+      "oracle_in_candidates": 211,
+      "oracle_not_in_candidates": 53,
+      "elapsed": 239.1,
       "details": [
         {
           "bill_name": "配电箱（半周长 2.5m以内）",
@@ -26492,7 +26492,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26519,7 +26519,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26546,7 +26546,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26573,7 +26573,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26600,7 +26600,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26627,7 +26627,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26654,7 +26654,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26681,7 +26681,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26708,7 +26708,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26735,7 +26735,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26762,7 +26762,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26789,7 +26789,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26816,7 +26816,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26843,7 +26843,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26870,7 +26870,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26897,7 +26897,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26924,7 +26924,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26951,7 +26951,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -26978,7 +26978,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27005,7 +27005,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27059,7 +27059,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27086,7 +27086,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27113,7 +27113,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27140,7 +27140,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27167,7 +27167,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27194,7 +27194,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27221,7 +27221,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27248,7 +27248,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27275,7 +27275,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27302,7 +27302,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27329,7 +27329,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27356,7 +27356,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27383,7 +27383,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27410,7 +27410,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27437,7 +27437,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27464,7 +27464,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27491,7 +27491,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27518,7 +27518,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27545,7 +27545,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27572,7 +27572,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27599,7 +27599,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27626,7 +27626,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27653,7 +27653,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27680,7 +27680,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27707,7 +27707,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27734,7 +27734,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):7"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27761,7 +27761,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27788,7 +27788,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -27815,7 +27815,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16  "
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28112,7 +28112,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤16 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28139,7 +28139,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28166,7 +28166,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28193,7 +28193,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28220,7 +28220,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28247,7 +28247,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28274,7 +28274,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤70 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28301,7 +28301,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤50 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28355,7 +28355,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 实际电缆芯数(芯):5"
           ],
-          "confidence": 15,
+          "confidence": 17,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-157",
@@ -28382,7 +28382,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28409,7 +28409,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 35,
+          "confidence": 26,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28463,7 +28463,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤240 实际电缆芯数(芯):5"
           ],
-          "confidence": 15,
+          "confidence": 17,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-165",
@@ -28490,7 +28490,7 @@
           "stored_names": [
             "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35"
           ],
-          "confidence": 15,
+          "confidence": 17,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-157",
@@ -28624,7 +28624,6 @@
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-12-88",
-            "4-12-79",
             "4-12-89",
             "4-12-90",
             "4-12-91",
@@ -28632,7 +28631,8 @@
             "4-12-37",
             "4-12-92",
             "4-12-93",
-            "4-12-38"
+            "4-12-38",
+            "4-12-39"
           ]
         },
         {
@@ -28656,8 +28656,8 @@
             "4-12-92",
             "4-12-93",
             "4-12-38",
-            "4-12-94",
             "4-12-39",
+            "4-12-94",
             "4-12-40"
           ]
         },
@@ -28680,8 +28680,8 @@
             "4-12-92",
             "4-12-93",
             "4-12-38",
-            "4-12-94",
             "4-12-39",
+            "4-12-94",
             "4-12-40",
             "4-12-41",
             "4-12-42"
@@ -28704,8 +28704,8 @@
             "4-12-91",
             "4-12-92",
             "4-12-93",
-            "4-12-94",
             "4-12-39",
+            "4-12-94",
             "4-12-40",
             "4-12-41",
             "4-12-42",
@@ -28736,7 +28736,7 @@
             "4-12-43",
             "4-12-44",
             "4-12-89",
-            "4-12-88"
+            "4-12-90"
           ]
         },
         {
@@ -28761,7 +28761,7 @@
             "4-12-44",
             "4-12-92",
             "4-12-89",
-            "4-12-88",
+            "4-12-90",
             "4-12-91"
           ]
         },
@@ -28780,14 +28780,14 @@
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-12-33",
+            "4-12-44",
             "4-12-83",
             "4-12-80",
-            "4-12-79",
-            "4-12-84",
             "4-12-81",
-            "4-12-77",
+            "4-12-84",
             "4-12-82",
             "4-12-85",
+            "4-12-79",
             "4-12-78"
           ]
         },
@@ -28807,14 +28807,14 @@
           "all_candidate_ids": [
             "4-12-42",
             "4-12-43",
-            "4-12-32",
             "4-12-44",
-            "4-12-33",
-            "4-12-38",
+            "4-12-94",
             "4-12-40",
+            "4-12-37",
+            "4-12-38",
             "4-12-39",
             "4-12-41",
-            "4-12-37"
+            "4-12-36"
           ]
         },
         {
@@ -28828,7 +28828,7 @@
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤1200"
           ],
-          "confidence": 41,
+          "confidence": 39,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-9-120",
@@ -28924,27 +28924,27 @@
         {
           "bill_name": "防爆灯12W",
           "is_match": false,
-          "algo_id": "4-14-236",
-          "algo_name": "密封灯具安装 防爆灯 直杆式",
+          "algo_id": "4-14-239",
+          "algo_name": "密封灯具安装 高压水银防爆灯 直杆式",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 46,
-          "oracle_in_candidates": false,
+          "confidence": 45,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-236",
             "4-14-239",
             "4-14-237",
             "4-14-238",
+            "4-14-236",
+            "4-14-154",
+            "4-14-162",
             "4-14-240",
             "4-14-241",
-            "4-14-234",
             "4-14-235",
-            "4-14-159",
-            "4-15-47"
+            "4-14-204"
           ]
         },
         {
@@ -29267,54 +29267,54 @@
         },
         {
           "bill_name": "吸顶灯(自带红外控节能自熄开关)220V",
-          "is_match": false,
-          "algo_id": "4-14-213",
-          "algo_name": "工厂罩灯安装 吸顶式",
+          "is_match": true,
+          "algo_id": "4-14-1",
+          "algo_name": "吸顶灯具安装 灯罩周长(mm) ≤800",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 38,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-213",
-            "4-14-220",
-            "4-14-81",
-            "4-14-107",
-            "4-14-112",
-            "4-14-110",
             "4-14-1",
             "4-14-2",
             "4-14-154",
-            "4-14-162"
+            "4-14-162",
+            "4-14-3",
+            "4-14-204",
+            "4-14-170",
+            "4-14-205",
+            "4-14-206",
+            "4-14-213"
           ]
         },
         {
           "bill_name": "壁灯(自带红外控节能自熄开关)LED220V",
-          "is_match": false,
-          "algo_id": "4-14-245",
-          "algo_name": "吊杆式无影灯",
+          "is_match": true,
+          "algo_id": "4-14-8",
+          "algo_name": "其他普通灯具安装 普通壁灯",
           "stored_ids": [
             "4-14-8"
           ],
           "stored_names": [
             "其他普通灯具安装 普通壁灯"
           ],
-          "confidence": 23,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-245",
-            "4-14-376",
-            "4-14-375",
-            "4-14-151",
             "4-14-156",
             "4-14-8",
             "4-14-174",
             "4-14-162",
             "4-14-166",
-            "4-14-7"
+            "4-14-7",
+            "4-14-170",
+            "4-14-167",
+            "4-14-158",
+            "4-14-4"
           ]
         },
         {
@@ -29397,28 +29397,28 @@
         },
         {
           "bill_name": "环型荧光灯",
-          "is_match": false,
-          "algo_id": "4-14-120",
-          "algo_name": "组合荧光灯带 吸顶式 单管",
+          "is_match": true,
+          "algo_id": "4-14-204",
+          "algo_name": "荧光灯具安装 吸顶式 单管",
           "stored_ids": [
             "4-14-204"
           ],
           "stored_names": [
             "荧光灯具安装 吸顶式 单管"
           ],
-          "confidence": 41,
+          "confidence": 42,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
+            "4-14-204",
             "4-14-120",
+            "4-14-162",
+            "4-14-154",
+            "4-14-170",
+            "4-14-207",
             "4-14-213",
+            "4-14-201",
             "4-14-124",
-            "4-14-116",
-            "4-14-137",
-            "4-14-121",
-            "4-14-132",
-            "4-14-117",
-            "4-14-135",
-            "4-14-122"
+            "4-14-116"
           ]
         },
         {
@@ -29579,54 +29579,54 @@
         },
         {
           "bill_name": "吸顶灯(自带红外控节能自熄开关)7W",
-          "is_match": false,
-          "algo_id": "4-14-213",
-          "algo_name": "工厂罩灯安装 吸顶式",
+          "is_match": true,
+          "algo_id": "4-14-1",
+          "algo_name": "吸顶灯具安装 灯罩周长(mm) ≤800",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 38,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-213",
-            "4-14-220",
-            "4-14-81",
-            "4-14-107",
-            "4-14-112",
-            "4-14-110",
             "4-14-1",
             "4-14-2",
             "4-14-154",
-            "4-14-162"
+            "4-14-162",
+            "4-14-3",
+            "4-14-204",
+            "4-14-170",
+            "4-14-205",
+            "4-14-206",
+            "4-14-213"
           ]
         },
         {
           "bill_name": "壁灯(自带红外控节能自熄开关)7W",
-          "is_match": false,
-          "algo_id": "4-14-245",
-          "algo_name": "吊杆式无影灯",
+          "is_match": true,
+          "algo_id": "4-14-8",
+          "algo_name": "其他普通灯具安装 普通壁灯",
           "stored_ids": [
             "4-14-8"
           ],
           "stored_names": [
             "其他普通灯具安装 普通壁灯"
           ],
-          "confidence": 23,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-245",
-            "4-14-376",
-            "4-14-375",
-            "4-14-151",
             "4-14-156",
             "4-14-8",
             "4-14-174",
             "4-14-162",
             "4-14-166",
-            "4-14-7"
+            "4-14-7",
+            "4-14-170",
+            "4-14-167",
+            "4-14-158",
+            "4-14-4"
           ]
         },
         {
@@ -29789,28 +29789,28 @@
         },
         {
           "bill_name": "环型荧光灯1x18xLED",
-          "is_match": false,
-          "algo_id": "4-14-120",
-          "algo_name": "组合荧光灯带 吸顶式 单管",
+          "is_match": true,
+          "algo_id": "4-14-204",
+          "algo_name": "荧光灯具安装 吸顶式 单管",
           "stored_ids": [
             "4-14-204"
           ],
           "stored_names": [
             "荧光灯具安装 吸顶式 单管"
           ],
-          "confidence": 41,
+          "confidence": 42,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
+            "4-14-204",
             "4-14-120",
+            "4-14-162",
+            "4-14-154",
+            "4-14-170",
+            "4-14-207",
             "4-14-213",
+            "4-14-201",
             "4-14-124",
-            "4-14-116",
-            "4-14-137",
-            "4-14-121",
-            "4-14-132",
-            "4-14-117",
-            "4-14-135",
-            "4-14-122"
+            "4-14-116"
           ]
         },
         {
@@ -29842,27 +29842,27 @@
         {
           "bill_name": "人体感应灯(带红外感应延时开关)10W",
           "is_match": false,
-          "algo_id": "4-14-213",
-          "algo_name": "工厂罩灯安装 吸顶式",
+          "algo_id": "4-14-154",
+          "algo_name": "标志、诱导装饰灯具安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 25,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-213",
-            "4-14-220",
-            "4-14-112",
-            "4-14-110",
-            "4-14-113",
             "4-14-154",
             "4-14-162",
             "4-14-170",
             "4-14-1",
-            "4-14-204"
+            "4-14-204",
+            "4-14-2",
+            "4-14-213",
+            "4-14-3",
+            "4-14-205",
+            "4-14-206"
           ]
         },
         {
@@ -30138,19 +30138,19 @@
           "stored_names": [
             "荧光灯具安装 吸顶式 单管"
           ],
-          "confidence": 49,
-          "oracle_in_candidates": false,
+          "confidence": 48,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-14-240",
-            "4-14-236",
+            "4-14-204",
+            "4-14-205",
+            "4-14-206",
             "4-14-239",
             "4-14-237",
+            "4-14-154",
             "4-14-238",
-            "4-14-241",
-            "4-14-234",
-            "4-14-235",
-            "4-14-159",
-            "4-15-47"
+            "4-14-162",
+            "4-14-236"
           ]
         },
         {
@@ -30346,7 +30346,7 @@
           "stored_names": [
             "角钢接地极 普通土"
           ],
-          "confidence": 56,
+          "confidence": 55,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-10-51",
@@ -30372,7 +30372,7 @@
           "stored_names": [
             "户外接地母线敷设"
           ],
-          "confidence": 60,
+          "confidence": 59,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-10-56",
@@ -30979,27 +30979,27 @@
         {
           "bill_name": "桥架（借用地下室电气）",
           "is_match": false,
-          "algo_id": "4-16-3",
-          "algo_name": "桥式起重机电气安装 起重量(t) ≤50",
+          "algo_id": "4-2-65",
+          "algo_name": "高压成套配电柜安装 单母线柜 其他电气柜",
           "stored_ids": [
             "4-9-64"
           ],
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤200"
           ],
-          "confidence": 32,
+          "confidence": 30,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
+            "4-2-65",
+            "4-2-71",
             "4-16-3",
             "4-16-5",
             "4-16-2",
             "4-16-4",
             "4-16-1",
             "4-16-6",
-            "4-2-65",
-            "4-2-71",
-            "4-15-62",
-            "4-15-63"
+            "4-2-74",
+            "4-15-62"
           ]
         },
         {
@@ -31779,19 +31779,19 @@
           "stored_names": [
             "法兰阀门安装 公称直径(mm以内) 125"
           ],
-          "confidence": 82,
-          "oracle_in_candidates": false,
+          "confidence": 84,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-5-355",
             "10-5-345",
-            "10-5-347",
+            "10-5-356",
+            "10-5-346",
+            "10-5-43",
             "10-5-357",
+            "10-5-347",
+            "10-5-358",
             "10-5-359",
-            "10-5-349",
-            "10-5-352",
-            "10-5-342",
-            "10-5-337",
-            "10-5-331"
+            "10-5-349"
           ]
         },
         {
@@ -32694,27 +32694,27 @@
         {
           "bill_name": "防爆灯",
           "is_match": false,
-          "algo_id": "4-14-236",
-          "algo_name": "密封灯具安装 防爆灯 直杆式",
+          "algo_id": "4-14-239",
+          "algo_name": "密封灯具安装 高压水银防爆灯 直杆式",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 46,
-          "oracle_in_candidates": false,
+          "confidence": 45,
+          "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-236",
             "4-14-239",
             "4-14-237",
             "4-14-238",
+            "4-14-236",
+            "4-14-154",
+            "4-14-162",
             "4-14-240",
             "4-14-241",
-            "4-14-234",
             "4-14-235",
-            "4-14-159",
-            "4-15-47"
+            "4-14-204"
           ]
         },
         {
@@ -33899,7 +33899,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤800"
           ],
-          "confidence": 35,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-230",
@@ -33909,9 +33909,9 @@
             "7-3-231",
             "7-3-226",
             "7-1-39",
-            "7-1-41",
-            "7-1-42",
-            "7-3-211"
+            "7-3-211",
+            "7-3-210",
+            "7-3-206"
           ]
         },
         {
@@ -33951,7 +33951,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤300"
           ],
-          "confidence": 35,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-230",
@@ -33962,8 +33962,8 @@
             "7-3-231",
             "7-3-226",
             "7-1-39",
-            "7-1-41",
-            "7-1-42"
+            "7-3-211",
+            "7-3-210"
           ]
         },
         {
@@ -33977,7 +33977,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤400"
           ],
-          "confidence": 35,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-230",
@@ -33986,10 +33986,10 @@
             "7-3-229",
             "7-3-226",
             "7-1-39",
-            "7-1-41",
-            "7-1-42",
             "7-3-211",
-            "7-3-210"
+            "7-3-210",
+            "7-3-206",
+            "7-3-207"
           ]
         },
         {
@@ -34003,7 +34003,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤400"
           ],
-          "confidence": 35,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-230",
@@ -34013,9 +34013,9 @@
             "7-3-231",
             "7-3-226",
             "7-1-39",
-            "7-1-41",
-            "7-1-42",
-            "7-3-211"
+            "7-3-211",
+            "7-3-210",
+            "7-3-206"
           ]
         },
         {
@@ -34029,7 +34029,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤500"
           ],
-          "confidence": 35,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-230",
@@ -34039,9 +34039,9 @@
             "7-3-231",
             "7-3-226",
             "7-1-39",
-            "7-1-41",
             "7-3-211",
-            "7-3-210"
+            "7-3-210",
+            "7-3-206"
           ]
         },
         {
@@ -34055,19 +34055,19 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤800"
           ],
-          "confidence": 53,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-229",
             "7-3-231",
             "7-3-226",
-            "7-3-70",
             "7-1-39",
             "7-1-40",
             "7-3-234",
             "7-3-233",
-            "7-1-41",
-            "7-1-42"
+            "7-3-70",
+            "7-3-211",
+            "7-3-210"
           ]
         },
         {
@@ -34081,7 +34081,7 @@
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤400"
           ],
-          "confidence": 37,
+          "confidence": 30,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-32",
@@ -34107,7 +34107,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤1800"
           ],
-          "confidence": 43,
+          "confidence": 37,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "7-3-99",
@@ -34133,7 +34133,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤900 铝合金风口安装 人工*0.9"
           ],
-          "confidence": 50,
+          "confidence": 44,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-57",
@@ -34159,7 +34159,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤900"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-113",
@@ -34185,7 +34185,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤2500"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-113",
@@ -34211,7 +34211,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤2500"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-113",
@@ -34237,7 +34237,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤2500"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-113",
@@ -34263,7 +34263,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤3300"
           ],
-          "confidence": 50,
+          "confidence": 44,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-110",
@@ -34289,7 +34289,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤1800"
           ],
-          "confidence": 50,
+          "confidence": 44,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-113",
@@ -34315,7 +34315,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤1800 铝合金风口安装 人工*0.9"
           ],
-          "confidence": 44,
+          "confidence": 38,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-81",
@@ -34341,7 +34341,7 @@
           "stored_names": [
             "碳钢风口安装 百叶风口周长(mm) ≤900 铝合金风口安装 人工*0.9"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-37",
@@ -36556,7 +36556,7 @@
           "stored_names": [
             "接线箱暗装 半周长(mm) ≤700"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-13-170",
@@ -36564,8 +36564,8 @@
             "4-13-171",
             "4-13-175",
             "4-13-172",
-            "4-13-176",
             "4-13-173",
+            "4-13-176",
             "4-13-177",
             "4-11-298",
             "4-13-180"
@@ -36834,27 +36834,27 @@
         {
           "bill_name": "人体感应灯(带红外感应延时开关)1x10W",
           "is_match": false,
-          "algo_id": "4-14-213",
-          "algo_name": "工厂罩灯安装 吸顶式",
+          "algo_id": "4-14-154",
+          "algo_name": "标志、诱导装饰灯具安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
           "stored_names": [
             "吸顶灯具安装 灯罩周长(mm) ≤800"
           ],
-          "confidence": 25,
+          "confidence": 39,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
-            "4-14-213",
-            "4-14-220",
-            "4-14-112",
-            "4-14-110",
-            "4-14-113",
             "4-14-154",
             "4-14-162",
             "4-14-170",
             "4-14-1",
-            "4-14-204"
+            "4-14-204",
+            "4-14-2",
+            "4-14-213",
+            "4-14-3",
+            "4-14-205",
+            "4-14-206"
           ]
         },
         {
@@ -36920,19 +36920,19 @@
           "stored_names": [
             "接线箱明装 半周长(mm) ≤700"
           ],
-          "confidence": 39,
+          "confidence": 31,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-2-72",
             "4-2-73",
-            "4-2-76",
             "4-11-298",
             "4-2-74",
+            "4-2-76",
             "4-2-77",
+            "4-2-78",
+            "4-2-79",
             "4-4-53",
-            "4-10-56",
-            "4-14-422",
-            "4-2-78"
+            "4-10-56"
           ]
         },
         {
@@ -36972,7 +36972,7 @@
           "stored_names": [
             "钢制槽式桥架(宽+高mm) ≤200"
           ],
-          "confidence": 45,
+          "confidence": 44,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-70",
@@ -37277,27 +37277,27 @@
         {
           "bill_name": "套管 名称：K1柜式空调PVC管套（Φ75）",
           "is_match": false,
-          "algo_id": "10-11-94",
-          "algo_name": "成品防火套管安装 公称直径(mm以内) 75",
+          "algo_id": "10-11-31",
+          "algo_name": "一般钢套管制作安装 介质管道公称直径(mm以内) 125",
           "stored_ids": [
             "10-11-39"
           ],
           "stored_names": [
             "一般塑料套管制作安装 介质管道公称直径(mm以内) 50"
           ],
-          "confidence": 53,
+          "confidence": 54,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
-            "10-11-94",
             "10-11-31",
             "10-11-32",
-            "10-3-32",
+            "10-11-94",
             "10-11-33",
             "10-11-34",
+            "10-3-32",
             "10-11-35",
-            "10-3-33",
             "10-11-36",
-            "10-11-37"
+            "10-11-37",
+            "10-3-33"
           ]
         },
         {
@@ -37311,7 +37311,7 @@
           "stored_names": [
             "一般塑料套管制作安装 介质管道公称直径(mm以内) 50"
           ],
-          "confidence": 53,
+          "confidence": 50,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-11-94",
@@ -37319,11 +37319,11 @@
             "10-11-32",
             "10-11-33",
             "10-11-34",
-            "10-11-95",
             "10-11-35",
             "10-11-36",
-            "10-11-96",
-            "10-11-37"
+            "10-11-37",
+            "10-11-95",
+            "10-11-96"
           ]
         },
         {
@@ -37337,13 +37337,13 @@
           "stored_names": [
             "一般塑料套管制作安装 介质管道公称直径(mm以内) 65"
           ],
-          "confidence": 57,
+          "confidence": 54,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-11-31",
             "10-11-32",
-            "10-11-95",
             "10-11-33",
+            "10-11-95",
             "10-11-34",
             "10-11-35",
             "10-11-36",
@@ -37363,7 +37363,7 @@
           "stored_names": [
             "一般塑料套管制作安装 介质管道公称直径(mm以内) 65"
           ],
-          "confidence": 57,
+          "confidence": 54,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-11-31",
@@ -37389,18 +37389,18 @@
           "stored_names": [
             "一般塑料套管制作安装 介质管道公称直径(mm以内) 50"
           ],
-          "confidence": 54,
+          "confidence": 51,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-11-94",
             "10-11-31",
             "10-11-32",
-            "10-11-95",
             "10-11-33",
             "10-11-34",
-            "10-11-96",
+            "10-11-95",
             "10-11-35",
             "10-11-36",
+            "10-11-96",
             "10-11-97"
           ]
         },
@@ -38101,10 +38101,10 @@
             "10-11-34",
             "10-11-35",
             "10-11-36",
-            "10-11-102",
             "10-11-37",
             "10-11-96",
-            "10-11-97"
+            "10-11-98",
+            "10-11-72"
           ]
         },
         {
@@ -38435,15 +38435,15 @@
           "stored_names": [
             "一般钢套管制作安装 介质管道公称直径(mm以内) 150"
           ],
-          "confidence": 64,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-11-32",
             "10-11-33",
             "10-11-96",
-            "10-11-34",
             "10-11-35",
             "10-11-36",
+            "10-11-34",
             "10-11-37",
             "10-11-97",
             "10-11-98",
@@ -38461,7 +38461,7 @@
           "stored_names": [
             "一般钢套管制作安装 介质管道公称直径(mm以内) 250"
           ],
-          "confidence": 64,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-11-34",
@@ -38469,11 +38469,11 @@
             "10-11-36",
             "10-11-98",
             "10-11-37",
-            "10-11-75",
-            "10-11-44",
             "10-11-33",
-            "10-11-51",
-            "10-11-87"
+            "10-11-75",
+            "10-11-32",
+            "10-11-31",
+            "10-11-44"
           ]
         },
         {
@@ -38594,7 +38594,7 @@
       },
       "oracle_in_candidates": 41,
       "oracle_not_in_candidates": 15,
-      "elapsed": 26.4,
+      "elapsed": 55.8,
       "details": [
         {
           "bill_name": "配线",
@@ -38737,7 +38737,7 @@
           "stored_names": [
             "金属线槽敷设 宽+高≤300mm"
           ],
-          "confidence": 49,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-12-194",
@@ -38748,8 +38748,8 @@
             "4-9-328",
             "4-9-326",
             "4-9-325",
-            "4-12-196",
-            "4-12-199"
+            "4-13-97",
+            "4-13-96"
           ]
         },
         {
@@ -38763,18 +38763,18 @@
           "stored_names": [
             "剔堵槽、沟 砖结构 宽mm*深mm 70*70"
           ],
-          "confidence": 55,
+          "confidence": 49,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-11-164",
+            "10-11-165",
             "10-11-166",
             "10-11-163",
             "10-11-159",
-            "10-11-161",
-            "10-11-158",
-            "10-11-165",
             "10-11-162",
             "10-11-160",
+            "10-11-161",
+            "10-11-158",
             "10-11-157"
           ]
         },
@@ -38815,7 +38815,7 @@
           "stored_names": [
             "电缆防火设施安装 防火堵料"
           ],
-          "confidence": 42,
+          "confidence": 35,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-9-332",
@@ -38919,19 +38919,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.0m"
           ],
-          "confidence": 61,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -38971,7 +38971,7 @@
           "stored_names": [
             "钢制槽式桥架安装 宽+高≤400mm"
           ],
-          "confidence": 48,
+          "confidence": 41,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-9-119",
@@ -39049,19 +39049,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.0m"
           ],
-          "confidence": 62,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -39075,19 +39075,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.0m"
           ],
-          "confidence": 62,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -39101,19 +39101,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39127,19 +39127,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39153,19 +39153,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 56,
+          "confidence": 49,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39179,19 +39179,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39205,19 +39205,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39231,19 +39231,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 61,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -39257,19 +39257,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39283,19 +39283,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39309,19 +39309,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.0m"
           ],
-          "confidence": 62,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -39335,7 +39335,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长2.5m"
           ],
-          "confidence": 58,
+          "confidence": 50,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-78",
@@ -39361,19 +39361,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.0m"
           ],
-          "confidence": 61,
+          "confidence": 52,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-76",
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
-            "4-2-66",
-            "4-2-60",
-            "4-2-64"
+            "4-2-66"
           ]
         },
         {
@@ -39387,19 +39387,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 56,
+          "confidence": 49,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39413,7 +39413,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长2.5m"
           ],
-          "confidence": 57,
+          "confidence": 50,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-78",
@@ -39439,19 +39439,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -39465,7 +39465,7 @@
           "stored_names": [
             "户内接地母线敷设"
           ],
-          "confidence": 51,
+          "confidence": 50,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-10-57",
@@ -39555,8 +39555,8 @@
             "4-2-105",
             "4-13-171",
             "4-13-170",
-            "4-13-173",
-            "4-15-48"
+            "4-13-172",
+            "4-13-173"
           ]
         },
         {
@@ -39674,7 +39674,7 @@
           "stored_names": [
             "室内消火栓(暗装) 普通 公称直径 65mm以内 单栓"
           ],
-          "confidence": 55,
+          "confidence": 50,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "9-1-81",
@@ -39686,7 +39686,7 @@
             "9-1-80",
             "9-1-79",
             "9-1-32",
-            "9-1-33"
+            "9-1-34"
           ]
         },
         {
@@ -39833,7 +39833,7 @@
           "stored_names": [
             "减压孔板 公称直径65mm以内"
           ],
-          "confidence": 76,
+          "confidence": 57,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "9-1-70",
@@ -40332,19 +40332,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -40358,19 +40358,19 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式半周长1.5m"
           ],
-          "confidence": 55,
+          "confidence": 48,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-2-77",
             "4-11-305",
             "4-2-74",
+            "4-2-78",
+            "4-2-79",
             "4-2-73",
             "4-2-61",
             "4-2-63",
             "4-2-66",
-            "4-2-60",
-            "4-2-64",
-            "4-2-70"
+            "4-2-60"
           ]
         },
         {
@@ -41386,13 +41386,13 @@
             "4-14-204",
             "4-14-120",
             "4-14-201",
-            "4-14-135",
             "4-14-207",
             "4-14-116",
             "4-14-121",
-            "4-14-137",
             "4-14-198",
-            "4-14-124"
+            "4-14-124",
+            "4-14-205",
+            "4-14-132"
           ]
         },
         {
@@ -41588,13 +41588,13 @@
       "wrong": 335,
       "hit_rate": 29.5,
       "diagnosis": {
-        "wrong_tier": 103,
-        "synonym_gap": 230,
+        "wrong_tier": 104,
+        "synonym_gap": 229,
         "wrong_book": 2
       },
-      "oracle_in_candidates": 231,
-      "oracle_not_in_candidates": 104,
-      "elapsed": 89.2,
+      "oracle_in_candidates": 230,
+      "oracle_not_in_candidates": 105,
+      "elapsed": 146.1,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -41633,19 +41633,19 @@
           "stored_names": [
             "水喷淋钢管 钢管(沟槽连接) 公称直径(mm以内)80"
           ],
-          "confidence": 68,
+          "confidence": 64,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "9-1-17",
             "9-1-18",
-            "9-1-19",
             "9-1-20",
             "9-1-21",
-            "9-1-22",
+            "9-1-19",
             "9-1-23",
+            "9-1-22",
             "9-1-6",
-            "9-1-7",
-            "9-1-26"
+            "9-1-26",
+            "9-1-7"
           ]
         },
         {
@@ -41817,19 +41817,19 @@
           "stored_names": [
             "室内消火栓(暗装)(带自救卷盘)公称直径(mm以内)单栓65"
           ],
-          "confidence": 50,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "9-2-15",
             "9-2-7",
             "9-1-28",
             "9-1-25",
-            "9-1-26",
-            "9-1-29",
-            "9-1-27",
-            "9-1-30",
             "9-1-79",
-            "9-1-32"
+            "9-1-77",
+            "9-1-75",
+            "9-1-80",
+            "9-1-73",
+            "9-1-78"
           ]
         },
         {
@@ -42104,7 +42104,7 @@
           "stored_names": [
             "圆、方形风管止回阀周长(mm)≤1200"
           ],
-          "confidence": 35,
+          "confidence": 34,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-13",
@@ -42130,7 +42130,7 @@
           "stored_names": [
             "阻抗式消声器安装周长(mm)≤5800"
           ],
-          "confidence": 37,
+          "confidence": 36,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-190",
@@ -42156,7 +42156,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤1800"
           ],
-          "confidence": 55,
+          "confidence": 49,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-99",
@@ -42182,7 +42182,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤1800"
           ],
-          "confidence": 93,
+          "confidence": 78,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-99",
@@ -42636,10 +42636,10 @@
             "7-4-4",
             "7-4-9",
             "7-4-10",
+            "7-3-32",
             "7-3-34",
-            "7-4-1",
-            "7-4-2",
-            "7-4-7"
+            "7-3-33",
+            "7-4-1"
           ]
         },
         {
@@ -42653,7 +42653,7 @@
           "stored_names": [
             "LWP型滤尘器安装立式"
           ],
-          "confidence": 53,
+          "confidence": 47,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-4-23",
@@ -42662,10 +42662,10 @@
             "7-4-16",
             "7-4-18",
             "7-4-19",
+            "7-3-211",
             "7-1-54",
             "7-1-56",
-            "7-1-55",
-            "7-1-52"
+            "7-1-55"
           ]
         },
         {
@@ -43485,27 +43485,27 @@
         {
           "bill_name": "倒流防止器",
           "is_match": false,
-          "algo_id": "10-2-260",
-          "algo_name": "倒流防止器组成安装(螺纹连接带水表) 公称直径(mm)50",
+          "algo_id": "10-2-194",
+          "algo_name": "减压器组成安装(螺纹连接) 公称直径(mm以内)50",
           "stored_ids": [
             "10-2-254"
           ],
           "stored_names": [
             "倒流防止器组成安装(螺纹连接不带水表) 公称直径(mm)50"
           ],
-          "confidence": 79,
-          "oracle_in_candidates": true,
+          "confidence": 73,
+          "oracle_in_candidates": false,
           "all_candidate_ids": [
-            "10-2-260",
-            "10-2-254",
-            "10-2-257",
-            "10-2-259",
-            "10-2-258",
-            "10-2-255",
-            "10-2-251",
-            "10-2-253",
-            "10-2-252",
-            "10-2-256"
+            "10-2-194",
+            "10-2-210",
+            "10-2-30",
+            "10-2-111",
+            "10-2-6",
+            "10-2-31",
+            "10-2-36",
+            "10-2-70",
+            "10-2-32",
+            "10-2-33"
           ]
         },
         {
@@ -44433,7 +44433,7 @@
           "stored_names": [
             "刷手池 水嘴(个数)2"
           ],
-          "confidence": 43,
+          "confidence": 38,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-2-137",
@@ -45242,7 +45242,7 @@
           "stored_names": [
             "避雷网安装 沿混凝土块敷设~坡屋面避雷网安装"
           ],
-          "confidence": 44,
+          "confidence": 41,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "4-11-35",
@@ -45399,7 +45399,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤1800"
           ],
-          "confidence": 48,
+          "confidence": 41,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-45",
@@ -46235,7 +46235,7 @@
           "stored_names": [
             "暗装接线盒"
           ],
-          "confidence": 25,
+          "confidence": 24,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-13-154",
@@ -47255,7 +47255,7 @@
           "stored_names": [
             "标准墙装机箱19\""
           ],
-          "confidence": 50,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "5-2-28",
@@ -47933,19 +47933,19 @@
           "stored_names": [
             "金属线槽敷设 宽+高(mm)≤120"
           ],
-          "confidence": 44,
+          "confidence": 37,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-8-83",
             "4-8-77",
             "4-8-76",
             "4-8-70",
+            "13B-1-2",
             "4-8-71",
             "4-8-72",
             "4-8-65",
             "4-8-64",
-            "4-9-61",
-            "4-8-66"
+            "4-9-61"
           ]
         },
         {
@@ -48821,7 +48821,7 @@
           "stored_names": [
             "设备支架制作 单件重量(kg)50以下"
           ],
-          "confidence": 33,
+          "confidence": 27,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "13-1-42",
@@ -48832,8 +48832,8 @@
             "13-1-32",
             "13-2-17",
             "12B-4-1",
-            "13-1-34",
-            "7B-2-2"
+            "13-1-104",
+            "13-1-34"
           ]
         },
         {
@@ -49500,7 +49500,7 @@
           "stored_names": [
             "烟囱制作、安装(直径mm以内)制作600"
           ],
-          "confidence": 45,
+          "confidence": 43,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "3-1-64",
@@ -49508,11 +49508,11 @@
             "3-1-65",
             "3-1-66",
             "3-1-110",
-            "3-2-177",
-            "3-2-176",
             "3-6-61",
             "3-6-62",
-            "3-6-135"
+            "3-6-59",
+            "3-6-58",
+            "3-6-65"
           ]
         },
         {
@@ -49682,7 +49682,7 @@
           "stored_names": [
             "公用灶具安装 进气管公称直径(mm以内)15"
           ],
-          "confidence": 44,
+          "confidence": 36,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "10-2-142",
@@ -50177,7 +50177,7 @@
           "stored_names": [
             "操作台"
           ],
-          "confidence": 44,
+          "confidence": 37,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "6-9-7",
@@ -50308,7 +50308,7 @@
           "stored_names": [
             "风管蝶阀周长(mm)≤3200"
           ],
-          "confidence": 43,
+          "confidence": 41,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-11",
@@ -50334,7 +50334,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤900"
           ],
-          "confidence": 44,
+          "confidence": 43,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "7-3-45",
@@ -51501,8 +51501,8 @@
             "4-13-198",
             "4-13-206",
             "4-13-202",
-            "4-13-199",
-            "4-13-208"
+            "4-13-121",
+            "4-13-199"
           ]
         },
         {
@@ -51522,14 +51522,14 @@
           "all_candidate_ids": [
             "4-4-13",
             "4-10-72",
+            "4-4-16",
+            "4-4-17",
+            "4-4-18",
+            "4-13-345",
+            "4-4-11",
             "4-9-62",
-            "4-8-46",
-            "4-8-43",
-            "4-8-45",
-            "4-8-44",
-            "4-8-42",
-            "4-8-41",
-            "4-8-40"
+            "4-4-12",
+            "4-8-46"
           ]
         },
         {
@@ -52120,19 +52120,19 @@
           "stored_names": [
             "室内消火栓(暗装)公称直径(mm以内)单栓65"
           ],
-          "confidence": 45,
+          "confidence": 42,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "9-1-28",
             "9-1-25",
             "9-2-15",
-            "9-1-30",
-            "9-1-29",
-            "9-1-26",
-            "9-1-27",
             "9-1-77",
             "9-1-78",
-            "9-1-73"
+            "9-1-73",
+            "9-1-79",
+            "9-1-74",
+            "9-1-75",
+            "9-1-80"
           ]
         },
         {
@@ -52868,8 +52868,8 @@
         {
           "bill_name": "避雷网",
           "is_match": false,
-          "algo_id": "4-11-62",
-          "algo_name": "镀锌钢管敷设 钢索配管 公称直径(DN)≤15",
+          "algo_id": "4-9-44",
+          "algo_name": "避雷网安装 均压环敷设利用圈梁钢筋",
           "stored_ids": [
             "4-9-42",
             "4-9-7"
@@ -52877,17 +52877,17 @@
           "stored_names": [
             "避雷网安装 沿混凝土块敷设"
           ],
-          "confidence": 26,
+          "confidence": 35,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
+            "4-9-44",
             "4-11-62",
-            "4-11-150",
-            "4-11-170",
             "4-11-63",
             "4-11-46",
+            "4-11-150",
+            "4-11-170",
             "4-11-64",
             "4-11-151",
-            "4-11-152",
             "4-11-65",
             "4-11-48"
           ]
@@ -52930,7 +52930,7 @@
           "stored_names": [
             "防雨控制箱安装，AC220V/DC12V开关电源"
           ],
-          "confidence": 42,
+          "confidence": 40,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "4-10-72",
@@ -53192,16 +53192,16 @@
           "stored_names": [
             "室内铜管（氧乙炔焊） 管外径 (mm以内)18"
           ],
-          "confidence": 47,
+          "confidence": 42,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-1-312",
             "10-5-58",
             "10-5-59",
-            "10-1-313",
             "10-5-60",
-            "10-1-314",
+            "10-1-313",
             "10-5-61",
+            "10-1-314",
             "10-1-315",
             "10-1-317",
             "10-1-316"
@@ -53218,7 +53218,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤2500"
           ],
-          "confidence": 61,
+          "confidence": 54,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-45",
@@ -53244,7 +53244,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤900"
           ],
-          "confidence": 48,
+          "confidence": 42,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "7-3-77",
@@ -53270,7 +53270,7 @@
           "stored_names": [
             "铝合金百叶风口周长(mm)≤1800"
           ],
-          "confidence": 57,
+          "confidence": 50,
           "oracle_in_candidates": false,
           "all_candidate_ids": [
             "7-3-77",
@@ -53584,7 +53584,7 @@
           "stored_names": [
             "阻火圈安装 管外径(mm以内)160"
           ],
-          "confidence": 83,
+          "confidence": 64,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "10-8-24",
@@ -53846,7 +53846,7 @@
           "stored_names": [
             "设备支架制作 单件重量（kg）50以下"
           ],
-          "confidence": 34,
+          "confidence": 28,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "13-1-42",
@@ -53855,10 +53855,10 @@
             "13-1-39",
             "13-1-37",
             "13-1-38",
+            "13B-1-2",
+            "13B-1-1",
             "13-1-43",
-            "13-1-33",
-            "13-1-44",
-            "13-1-35"
+            "13-1-33"
           ]
         },
         {
@@ -53873,7 +53873,7 @@
           "stored_names": [
             "静压箱安装展开面积(m2)≤20"
           ],
-          "confidence": 51,
+          "confidence": 45,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "7-3-209",
@@ -53884,8 +53884,8 @@
             "7-4-32",
             "7-4-36",
             "7B-2-5",
-            "7-3-158",
-            "7-2-133"
+            "13B-1-1",
+            "13B-1-2"
           ]
         },
         {
@@ -54013,12 +54013,12 @@
             "4-4-13",
             "4-4-16",
             "4-4-17",
-            "4-14-13",
             "4-2-70",
             "4-2-71",
             "4-4-18",
             "4-2-67",
-            "4-2-69"
+            "4-2-69",
+            "4-2-68"
           ]
         }
       ]
@@ -54026,16 +54026,16 @@
     {
       "province": "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
       "total": 35,
-      "correct": 14,
-      "wrong": 21,
-      "hit_rate": 40.0,
+      "correct": 15,
+      "wrong": 20,
+      "hit_rate": 42.9,
       "diagnosis": {
-        "wrong_tier": 12,
+        "wrong_tier": 11,
         "synonym_gap": 9
       },
       "oracle_in_candidates": 17,
-      "oracle_not_in_candidates": 4,
-      "elapsed": 6.9,
+      "oracle_not_in_candidates": 3,
+      "elapsed": 12.5,
       "details": [
         {
           "bill_name": "套管 名称、类型:一般填料套管 规格类型：DN100",
@@ -54151,18 +54151,29 @@
         },
         {
           "bill_name": "螺纹阀门 类型：自动排气阀",
-          "is_match": false,
-          "algo_id": "C10-5-3",
-          "algo_name": "管道附件 螺纹阀门安装 公称直径(mm以内) 25",
+          "is_match": true,
+          "algo_id": "C10-5-30",
+          "algo_name": "管道附件 自动排气阀安装 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-30"
           ],
           "stored_names": [
             "管道附件 自动排气阀安装 公称直径(mm以内) 25"
           ],
-          "confidence": 88,
-          "oracle_in_candidates": false,
-          "all_candidate_ids": []
+          "confidence": 90,
+          "oracle_in_candidates": true,
+          "all_candidate_ids": [
+            "C10-5-30",
+            "C10-5-3",
+            "C10-5-136",
+            "C10-5-4",
+            "C10-5-5",
+            "C10-5-6",
+            "C10-5-36",
+            "C10-5-12",
+            "C10-5-111",
+            "C10-5-21"
+          ]
         },
         {
           "bill_name": "塑料管 材质、规格:UPVC排水DN100",
@@ -54328,7 +54339,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54354,7 +54365,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54380,7 +54391,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54406,7 +54417,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54432,7 +54443,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54458,7 +54469,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.5m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54484,7 +54495,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.0m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54510,7 +54521,7 @@
           "stored_names": [
             "成套配电箱安装 悬挂、嵌入式(半周长) 1.0m"
           ],
-          "confidence": 78,
+          "confidence": 61,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-11-297",
@@ -54588,7 +54599,7 @@
           "stored_names": [
             "等电位装置和测试板安装 总等电位箱"
           ],
-          "confidence": 69,
+          "confidence": 64,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-10-82",
@@ -54666,7 +54677,7 @@
           "stored_names": [
             "钢制桥架安装 钢制槽式桥架(宽+高 mm) ≤400"
           ],
-          "confidence": 79,
+          "confidence": 60,
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-9-61",
@@ -54800,15 +54811,15 @@
           "oracle_in_candidates": true,
           "all_candidate_ids": [
             "C4-14-106",
-            "C4-14-124",
-            "C4-14-107",
             "C4-14-104",
+            "C4-14-107",
             "C4-14-105",
-            "C4-14-123",
-            "C4-14-342",
-            "C4-14-339",
-            "C4-14-8",
-            "C4-14-344"
+            "C4-14-301",
+            "C4-14-86",
+            "C4-14-184",
+            "C4-14-183",
+            "C4-14-185",
+            "C4-14-181"
           ]
         },
         {
