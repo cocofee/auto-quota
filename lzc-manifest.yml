@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.93
+version: 0.1.94
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -37,6 +37,7 @@ services:
       MATCH_LLM: qwen
       VERIFY_LLM: kimi
       VERIFY_MODEL: kimi-k2.5
+      VERIFY_CONCURRENT: "3"
       QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       QWEN_MODEL: qwen-plus
@@ -82,6 +83,7 @@ services:
       MATCH_LLM: qwen
       VERIFY_LLM: kimi
       VERIFY_MODEL: kimi-k2.5
+      VERIFY_CONCURRENT: "3"
       QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
       QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       QWEN_MODEL: qwen-plus
