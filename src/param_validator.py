@@ -13,6 +13,7 @@
 """
 
 import math
+import re
 
 from loguru import logger
 
@@ -106,14 +107,19 @@ class ParamValidator:
                     if neg_penalty >= 0.3:
                         c["param_match"] = False
 
-            # 即使无清单参数，也需融合排序（否则搜索引擎原始顺序主导，
-            # 正确候选可能因reranker分低排在后面，如"断接卡子"ps=1.0排在铜制ps=0.8后面）
+            # 无参数分支也计算核心词加分
+            for c in candidates:
+                c["name_bonus"] = self._bill_keyword_bonus(
+                    query_text, c.get("name", ""))
+
             candidates.sort(
                 key=lambda x: (
                     x["param_match"],
-                    x["param_score"] * 0.8 + (
+                    x["param_score"] * 0.75 + (
+                        x.get("name_bonus", 0)
+                    ) * 0.10 + (
                         x.get("rerank_score", x.get("hybrid_score", 0))
-                    ) * 0.2,
+                    ) * 0.15,
                 ),
                 reverse=True,
             )
@@ -158,20 +164,24 @@ class ParamValidator:
             candidate["param_detail"] = detail
             candidate["param_match"] = is_match
 
+            # 清单核心词匹配加分：清单关键词在候选名称中出现越多，排序越靠前
+            candidate["name_bonus"] = self._bill_keyword_bonus(
+                query_text, candidate.get("name", ""))
+
             validated.append(candidate)
 
-        # L8→L10：排序融合 reranker 分数
-        # 加权融合：param_score * 0.8 + rerank_score * 0.2
-        # 参数分占80%主导排序（精确匹配定额稳排在通用定额前面），
-        # reranker占20%在参数相近时发挥差异化能力。
-        # M1实验：改为纯字典序（参数分优先）反而退化0.4%，
-        # 说明reranker的20%权重不是选错档位的主因，恢复原方案。
+        # M1排序改进：三项融合
+        # param_score * 0.75（参数精确匹配仍主导）
+        # name_bonus * 0.10（清单核心词匹配，解决品类选错问题）
+        # rerank_score * 0.15（BM25语义精排）
         validated.sort(
             key=lambda x: (
                 x["param_match"],     # 第一级：匹配vs不匹配
-                x["param_score"] * 0.8 + (  # 第二级：参数分80% + 语义精排20%
+                x["param_score"] * 0.75 + (  # 第二级：三项融合
+                    x.get("name_bonus", 0)
+                ) * 0.10 + (
                     x.get("rerank_score", x.get("hybrid_score", 0))
-                ) * 0.2,
+                ) * 0.15,
             ),
             reverse=True,
         )
@@ -210,6 +220,52 @@ class ParamValidator:
         if candidate.get("elevator_speed") is not None:
             params["elevator_speed"] = candidate["elevator_speed"]
         return params
+
+    # 清单核心词匹配：停用词表（太常见、无区分度的词）
+    _KEYWORD_STOPWORDS = {
+        '安装', '制作', '设备', '编号', '名称', '型号', '规格', '以内', '以下',
+        '以上', '及其', '工程', '项目', '系统', '配套', '其他', '一般',
+    }
+
+    def _bill_keyword_bonus(self, query_text: str, candidate_name: str) -> float:
+        """
+        清单核心词与候选名称的匹配加分（0~1.0）
+
+        从清单原文提取有意义的中文关键词（≥2字），
+        检查候选定额名称是否包含这些词。
+        匹配越多说明品类越吻合，给予加分。
+
+        为什么需要这个？
+        - param_score只比对数值参数（DN、截面等），不比对品类名称
+        - rerank_score(BM25)用的是搜索词而非清单原文，且有短文本偏好
+        - 清单原文包含品类区分信息（如"防水套管"vs"塑料套管"），需要利用
+        """
+        if not query_text or not candidate_name:
+            return 0.0
+
+        # 从清单文本提取中文关键词：去掉数字、英文、标点
+        clean = re.sub(r'[0-9a-zA-Z×φΦ≤≥<>*.\-~]+', ' ', query_text)
+        clean = re.sub(r'[()（）\[\]【】{}、，。：；""''·/\\,.:;]', ' ', clean)
+
+        # 提取≥2字的中文片段作为关键词
+        keywords = set()
+        for seg in clean.split():
+            seg = seg.strip()
+            if len(seg) >= 2 and seg not in self._KEYWORD_STOPWORDS:
+                keywords.add(seg)
+                # 长词也拆出2字子串（如"刚性防水套管"→"刚性""防水""水套""套管"）
+                if len(seg) > 2:
+                    for i in range(len(seg) - 1):
+                        bigram = seg[i:i+2]
+                        if bigram not in self._KEYWORD_STOPWORDS:
+                            keywords.add(bigram)
+
+        if not keywords:
+            return 0.0
+
+        # 计算匹配比例：候选名称包含多少个清单关键词
+        matches = sum(1 for kw in keywords if kw in candidate_name)
+        return matches / len(keywords)
 
     # 材质族谱：同族内的材质视为"近似匹配"，跨族则为"不匹配"
     MATERIAL_FAMILIES = {

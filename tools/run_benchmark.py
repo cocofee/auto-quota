@@ -136,15 +136,16 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
 
         is_match = algo_id in stored_ids if (algo_id and stored_ids) else False
 
+        # 检查正确答案是否在候选列表中（oracle诊断）
+        all_cand_ids = result.get('all_candidate_ids', [])
+        oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
+
         if is_match:
             correct += 1
         else:
             wrong += 1
             cause = _diagnose_cause(card, algo_id, algo_name, quotas)
             diagnosis[cause] += 1
-            # 检查正确答案是否在候选列表中
-            all_cand_ids = result.get('all_candidate_ids', [])
-            oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
             if oracle_found:
                 oracle_in_candidates += 1
             else:
@@ -158,6 +159,8 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
             'stored_ids': stored_ids[:2],
             'stored_names': card['quota_names'][:1],
             'confidence': confidence,
+            'oracle_in_candidates': oracle_found,
+            'all_candidate_ids': all_cand_ids[:10],
         })
 
     total = correct + wrong
