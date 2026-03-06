@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.1.92
+version: 0.1.93
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -32,11 +32,17 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：通义千问（Web端用MATCH_LLM，命令行用AGENT_LLM）
+      # 大模型配置：通义千问匹配 + Kimi验证
       AGENT_LLM: qwen
       MATCH_LLM: qwen
-      QWEN_API_KEY: "改成你的通义千问API Key"
+      VERIFY_LLM: kimi
+      VERIFY_MODEL: kimi-k2.5
+      QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
+      QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       QWEN_MODEL: qwen-plus
+      KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
+      KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      KIMI_MODEL: kimi-k2.5
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
@@ -71,11 +77,17 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：通义千问
+      # 大模型配置：通义千问匹配 + Kimi验证
       AGENT_LLM: qwen
       MATCH_LLM: qwen
-      QWEN_API_KEY: "改成你的通义千问API Key"
+      VERIFY_LLM: kimi
+      VERIFY_MODEL: kimi-k2.5
+      QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
+      QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       QWEN_MODEL: qwen-plus
+      KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
+      KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      KIMI_MODEL: kimi-k2.5
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
