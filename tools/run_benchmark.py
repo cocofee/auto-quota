@@ -112,6 +112,9 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
     correct = 0
     wrong = 0
     diagnosis = Counter()
+    # oracle统计：错误中，正确答案是否在候选列表里（排序问题 vs 召回问题）
+    oracle_in_candidates = 0  # 正确答案在候选中（排序问题）
+    oracle_not_in_candidates = 0  # 正确答案不在候选中（召回问题）
     details = []
 
     for result in results:
@@ -139,6 +142,13 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
             wrong += 1
             cause = _diagnose_cause(card, algo_id, algo_name, quotas)
             diagnosis[cause] += 1
+            # 检查正确答案是否在候选列表中
+            all_cand_ids = result.get('all_candidate_ids', [])
+            oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
+            if oracle_found:
+                oracle_in_candidates += 1
+            else:
+                oracle_not_in_candidates += 1
 
         details.append({
             'bill_name': card['bill_name'][:30],
@@ -160,6 +170,8 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
         'wrong': wrong,
         'hit_rate': round(hit_rate, 1),
         'diagnosis': dict(diagnosis),
+        'oracle_in_candidates': oracle_in_candidates,
+        'oracle_not_in_candidates': oracle_not_in_candidates,
         'elapsed': round(elapsed, 1),
         'details': details,
     }
