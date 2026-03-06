@@ -396,7 +396,10 @@ class AgentMatcher:
                 continue
 
             approved = self._to_bool(review.get("approve", True))
-            confidence = self._to_int(review.get("confidence")) or 80
+            # 注意：不能用 or 80，因为模型返回 confidence=0 时 0 or 80 = 80（错误抬高）
+            raw_conf = self._to_int(review.get("confidence"))
+            confidence = raw_conf if raw_conf is not None else 80
+            confidence = max(0, min(100, confidence))  # 限幅 0-100
             reason = str(review.get("reason", ""))
 
             if approved and candidates:
@@ -437,6 +440,10 @@ class AgentMatcher:
             else:
                 quotas = []
                 explanation = "批量审核: 无候选"
+
+            # 无定额时置信度强制归0（避免"无匹配但高置信"的矛盾结果）
+            if not quotas:
+                confidence = 0
 
             results.append({
                 "bill_item": bill_item,
@@ -739,12 +746,15 @@ class AgentMatcher:
         for retry in range(3):
             if response.status_code != 429:
                 break
-            import time
             time.sleep(2 * (retry + 1))
             response = httpx.post(url, headers=headers, json=data, timeout=config.LLM_TIMEOUT)
         response.raise_for_status()
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        # 安全取值，避免中转服务返回异常格式时 KeyError
+        try:
+            return result["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise ValueError(f"OpenAI兼容API返回格式异常: {str(result)[:200]}") from e
 
     def _call_claude(self, prompt: str) -> str:
         """调用Claude API（支持中转和官方两种模式）"""
@@ -765,7 +775,11 @@ class AgentMatcher:
             response = self.client.post(url, headers=headers, json=data)
             response.raise_for_status()
             result = response.json()
-            return result["content"][0]["text"]
+            # 安全取值，避免中转服务返回异常格式时 KeyError
+            try:
+                return result["content"][0]["text"]
+            except (KeyError, IndexError, TypeError) as e:
+                raise ValueError(f"Claude中转API返回格式异常: {str(result)[:200]}") from e
         else:
             # 官方API：用Anthropic SDK
             response = self.client.messages.create(
@@ -1051,9 +1065,13 @@ class AgentMatcher:
         """从大模型回复中提取JSON字符串（和 llm_matcher 同逻辑）"""
         text = text.strip()
 
-        # 纯JSON（对象或数组）
+        # 纯JSON（对象或数组）— 先验证是否真的是合法JSON
         if text.startswith("{") or text.startswith("["):
-            return text
+            try:
+                json.loads(text)
+                return text
+            except json.JSONDecodeError:
+                pass  # 不是纯JSON（尾部有非JSON内容），继续后续提取逻辑
 
         if "```json" in text:
             start = text.find("```json") + 7

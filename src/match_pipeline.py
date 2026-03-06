@@ -540,7 +540,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         }] if best else [],
         "confidence": confidence,
         "explanation": explanation,
-        "candidates_count": len(candidates),
+        "candidates_count": len(valid_candidates),
         "all_candidate_ids": all_candidate_ids,
         "match_source": "search",
     }
@@ -548,7 +548,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         result,
         "search_select",
         selected_quota=best.get("quota_id") if best else "",
-        candidates_count=len(candidates),
+        candidates_count=len(valid_candidates),
         candidates=_summarize_candidates_for_trace(candidates),
     )
 
@@ -637,11 +637,25 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     rule_direct, rule_backup = _prepare_rule_match(
         rule_validator, full_query, item, search_query, classification)
     if rule_direct:
-        _append_trace_step(rule_direct, "rule_direct_return")
-        return {
-            "early_result": rule_direct,
-            "early_type": "rule_direct",
-        }
+        # 审核规则检查：规则直通也要过安检（与经验库直通一致）
+        review_error = _review_check_match_result(rule_direct, item)
+        if review_error:
+            bill_name = item.get("name", "")
+            logger.warning(
+                f"规则直通被审核规则拦截: '{bill_name[:40]}' "
+                f"→ {review_error.get('type')}: {review_error.get('reason')}")
+            _append_trace_step(rule_direct, "rule_direct_review_rejected",
+                               error_type=review_error.get("type"),
+                               error_reason=review_error.get("reason"))
+            # 降级为规则备选（不直通，让搜索来决策）
+            rule_backup = rule_direct
+            rule_direct = None
+        else:
+            _append_trace_step(rule_direct, "rule_direct_return")
+            return {
+                "early_result": rule_direct,
+                "early_type": "rule_direct",
+            }
 
     return {
         "early_result": None,

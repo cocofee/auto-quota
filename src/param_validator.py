@@ -784,38 +784,50 @@ class ParamValidator:
                     details.append(f"形状'{bill_params['shape']}'≠'{quota_shape}' 不匹配")
 
         # === 10. 周长（硬性参数：风口/阀门/散流器/消声器按周长取档） ===
-        if "perimeter" in bill_params and "perimeter" in quota_params:
-            check_count += 1
-            bill_p = bill_params["perimeter"]
-            quota_p = quota_params["perimeter"]
-            if bill_p == quota_p:
-                score_sum += 1.0
-                details.append(f"周长{bill_p}={quota_p} 精确匹配")
-            elif bill_p <= quota_p:
-                tier_score = self._tier_up_score(bill_p, quota_p)
-                score_sum += tier_score
-                details.append(f"周长{bill_p}→{quota_p} 向上取档")
+        if "perimeter" in bill_params:
+            if "perimeter" in quota_params:
+                check_count += 1
+                bill_p = bill_params["perimeter"]
+                quota_p = quota_params["perimeter"]
+                if bill_p == quota_p:
+                    score_sum += 1.0
+                    details.append(f"周长{bill_p}={quota_p} 精确匹配")
+                elif bill_p <= quota_p:
+                    tier_score = self._tier_up_score(bill_p, quota_p)
+                    score_sum += tier_score
+                    details.append(f"周长{bill_p}→{quota_p} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"周长{bill_p}>{quota_p} 不匹配(清单>定额)")
             else:
-                has_hard_fail = True
-                score_sum += 0.0
-                details.append(f"周长{bill_p}>{quota_p} 不匹配(清单>定额)")
+                # 清单有周长但定额无 → 通用定额降权
+                check_count += 1
+                score_sum += 0.64
+                details.append("定额无周长参数(通用定额降权)")
 
         # === 10.5 半周长（硬性参数：配电箱悬挂/嵌入式按半周长取档） ===
-        if "half_perimeter" in bill_params and "half_perimeter" in quota_params:
-            check_count += 1
-            bill_hp = bill_params["half_perimeter"]
-            quota_hp = quota_params["half_perimeter"]
-            if bill_hp == quota_hp:
-                score_sum += 1.0
-                details.append(f"半周长{bill_hp}={quota_hp} 精确匹配")
-            elif bill_hp <= quota_hp:
-                tier_score = self._tier_up_score(bill_hp, quota_hp)
-                score_sum += tier_score
-                details.append(f"半周长{bill_hp}→{quota_hp} 向上取档")
+        if "half_perimeter" in bill_params:
+            if "half_perimeter" in quota_params:
+                check_count += 1
+                bill_hp = bill_params["half_perimeter"]
+                quota_hp = quota_params["half_perimeter"]
+                if bill_hp == quota_hp:
+                    score_sum += 1.0
+                    details.append(f"半周长{bill_hp}={quota_hp} 精确匹配")
+                elif bill_hp <= quota_hp:
+                    tier_score = self._tier_up_score(bill_hp, quota_hp)
+                    score_sum += tier_score
+                    details.append(f"半周长{bill_hp}→{quota_hp} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"半周长{bill_hp}>{quota_hp} 不匹配(清单>定额)")
             else:
-                has_hard_fail = True
-                score_sum += 0.0
-                details.append(f"半周长{bill_hp}>{quota_hp} 不匹配(清单>定额)")
+                # 清单有半周长但定额无 → 通用定额降权
+                check_count += 1
+                score_sum += 0.64
+                details.append("定额无半周长参数(通用定额降权)")
 
         # === 11. 大边长（硬性参数：弯头导流叶片等按大边长取档） ===
         if "large_side" in bill_params and "large_side" in quota_params:
@@ -889,21 +901,27 @@ class ParamValidator:
                     details.append(f"电梯速度{bill_speed}m/s匹配")
 
         # === 15. 接地扁钢宽度（硬性参数：按宽度取档，如40×4中的40mm） ===
-        if "ground_bar_width" in bill_params and "ground_bar_width" in quota_params:
-            check_count += 1
-            bill_gbw = bill_params["ground_bar_width"]
-            quota_gbw = quota_params["ground_bar_width"]
-            if bill_gbw == quota_gbw:
-                score_sum += 1.0
-                details.append(f"扁钢宽{bill_gbw}={quota_gbw} 精确匹配")
-            elif bill_gbw < quota_gbw:
-                tier_score = self._tier_up_score(bill_gbw, quota_gbw)
-                score_sum += tier_score
-                details.append(f"扁钢宽{bill_gbw}→{quota_gbw} 向上取档")
+        if "ground_bar_width" in bill_params:
+            if "ground_bar_width" in quota_params:
+                check_count += 1
+                bill_gbw = bill_params["ground_bar_width"]
+                quota_gbw = quota_params["ground_bar_width"]
+                if bill_gbw == quota_gbw:
+                    score_sum += 1.0
+                    details.append(f"扁钢宽{bill_gbw}={quota_gbw} 精确匹配")
+                elif bill_gbw < quota_gbw:
+                    tier_score = self._tier_up_score(bill_gbw, quota_gbw)
+                    score_sum += tier_score
+                    details.append(f"扁钢宽{bill_gbw}→{quota_gbw} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"扁钢宽{bill_gbw}>{quota_gbw} 不匹配(清单>定额)")
             else:
-                has_hard_fail = True
-                score_sum += 0.0
-                details.append(f"扁钢宽{bill_gbw}>{quota_gbw} 不匹配(清单>定额)")
+                # 清单有扁钢宽度但定额无 → 通用定额降权
+                check_count += 1
+                score_sum += 0.64
+                details.append("定额无扁钢宽度参数(通用定额降权)")
 
         # 计算最终分数
         if check_count == 0:
