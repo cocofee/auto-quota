@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.2.0
+version: 0.2.1
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -32,9 +32,9 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：千问匹配 + Claude Opus验证
-      AGENT_LLM: qwen
-      MATCH_LLM: qwen
+      # 大模型配置：全部使用Claude Opus（中转直连）
+      AGENT_LLM: claude
+      MATCH_LLM: claude
       VERIFY_LLM: claude
       VERIFY_MODEL: claude-opus-4-6
       VERIFY_CONCURRENT: "3"
@@ -81,9 +81,9 @@ services:
       PYTHONIOENCODING: "utf-8"
       # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
       VECTOR_ENABLED: "false"
-      # 大模型配置：千问匹配 + Claude Opus验证
-      AGENT_LLM: qwen
-      MATCH_LLM: qwen
+      # 大模型配置：全部使用Claude Opus（中转直连）
+      AGENT_LLM: claude
+      MATCH_LLM: claude
       VERIFY_LLM: claude
       VERIFY_MODEL: claude-opus-4-6
       VERIFY_CONCURRENT: "3"
