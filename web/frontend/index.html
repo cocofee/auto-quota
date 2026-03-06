@@ -7,7 +7,15 @@
     <title>J.A.R.V.I.S - 智能造价系统</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- JS加载前的loading提示，React挂载后自动替换 -->
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#dbeafe 0%,#f1f5f9 50%,#e2e8f0 100%)">
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:700;color:#2563eb;letter-spacing:4px;margin-bottom:8px">J.A.R.V.I.S</div>
+          <div style="color:#64748b;font-size:14px">智能造价系统加载中...</div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

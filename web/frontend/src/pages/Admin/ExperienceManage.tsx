@@ -8,7 +8,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Statistic, Row, Col,
-  Select, Modal,
+  Select, Modal, Tooltip,
 } from 'antd';
 import {
   ReloadOutlined, DatabaseOutlined,
@@ -242,7 +242,9 @@ export default function ExperienceManage() {
               pagination={false}
               scroll={{ y: 300 }}
               columns={[
-                { title: '省份', dataIndex: 'province', key: 'province', ellipsis: true },
+                { title: '省份', dataIndex: 'province', key: 'province', ellipsis: true,
+                  render: (v: string) => <Tooltip title={v}><span>{v}</span></Tooltip>,
+                },
                 {
                   title: '条数', dataIndex: 'count', key: 'count', width: 80, align: 'right',
                   sorter: (a, b) => a.count - b.count, defaultSortOrder: 'descend',

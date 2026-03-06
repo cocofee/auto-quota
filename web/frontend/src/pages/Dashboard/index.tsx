@@ -57,9 +57,9 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [loadRecentTasks]);
 
-  // 统计当前页数据（注意：这只是当前页的统计，不是全量数据）
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
-  const runningTasks = tasks.filter((t) => t.status === 'running' || t.status === 'pending');
+  // 统计当前页数据
+  const completedCount = tasks.filter((t) => t.status === 'completed').length;
+  const runningCount = tasks.filter((t) => t.status === 'running' || t.status === 'pending').length;
 
   // 客户表格列（简化）
   const baseColumns = [
@@ -74,7 +74,7 @@ export default function DashboardPage() {
             navigate(`/tasks/${record.id}/results`);
           }
         }}>
-          {name}
+          {name || record.original_filename || '未命名'}
         </a>
       ),
     },
@@ -125,7 +125,9 @@ export default function DashboardPage() {
       render: (_: unknown, record: TaskInfo) => {
         if (!record.stats || !record.stats.total) return '-';
         const rate = Math.round(((record.stats.matched ?? 0) / record.stats.total) * 100);
-        return `${rate}%`;
+        // 匹配率低于70%红色高亮
+        const color = rate < 70 ? '#ff4d4f' : rate < 85 ? '#faad14' : '#52c41a';
+        return <span style={{ color, fontWeight: rate < 70 ? 'bold' : undefined }}>{rate}%</span>;
       },
     },
   ];
@@ -155,9 +157,9 @@ export default function DashboardPage() {
         <Col xs={12} sm={isAdmin ? 6 : 8}>
           <Card hoverable onClick={() => navigate('/tasks?status=completed')}>
             <Statistic
-              title="最近完成"
-              value={completedTasks.length}
-              suffix={total > 10 ? `/${total}` : undefined}
+              title="已完成"
+              value={completedCount}
+              suffix={`/${tasks.length}`}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
             />
@@ -172,6 +174,7 @@ export default function DashboardPage() {
               prefix={<ThunderboltOutlined />}
               valueStyle={{
                 color: quotaBalance !== null && quotaBalance < 100 ? '#ff4d4f' : '#1677ff',
+                whiteSpace: 'nowrap',
               }}
             />
           </Card>
@@ -183,7 +186,7 @@ export default function DashboardPage() {
               <Card>
                 <Statistic
                   title="进行中"
-                  value={runningTasks.length}
+                  value={runningCount}
                   prefix={<ClockCircleOutlined />}
                   valueStyle={{ color: '#1677ff' }}
                 />
@@ -214,6 +217,14 @@ export default function DashboardPage() {
           pagination={false}
           size="middle"
           locale={{ emptyText: '暂无任务，点击右上角新建' }}
+          onRow={(record: TaskInfo) => ({
+            onClick: () => {
+              if (record.status === 'completed') {
+                navigate(`/tasks/${record.id}/results`);
+              }
+            },
+            style: { cursor: record.status === 'completed' ? 'pointer' : 'default' },
+          })}
         />
       </Card>
     </Space>

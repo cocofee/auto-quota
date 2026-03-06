@@ -101,19 +101,36 @@ export default function MainLayout() {
 
     if (!isAdmin) return base;
 
-    // 管理员额外菜单
+    // 管理员额外菜单（分组）
     const adminItems: MenuProps['items'] = [
       { type: 'divider' },
       {
-        key: 'admin-group',
+        key: 'admin-tasks-group',
         type: 'group',
-        label: '管理后台',
+        label: '任务管理',
         children: [
           {
             key: '/admin/tasks',
             icon: <AppstoreOutlined />,
             label: '所有任务',
           },
+          {
+            key: '/admin/feedback',
+            icon: <MessageOutlined />,
+            label: '反馈审核',
+          },
+          {
+            key: '/admin/batch',
+            icon: <CloudServerOutlined />,
+            label: '批量处理',
+          },
+        ],
+      },
+      {
+        key: 'admin-data-group',
+        type: 'group',
+        label: '数据与分析',
+        children: [
           {
             key: '/admin/experience',
             icon: <DatabaseOutlined />,
@@ -130,39 +147,9 @@ export default function MainLayout() {
             label: '知识库',
           },
           {
-            key: '/admin/feedback',
-            icon: <MessageOutlined />,
-            label: '反馈审核',
-          },
-          {
             key: '/admin/analytics',
             icon: <BarChartOutlined />,
             label: '准确率分析',
-          },
-          {
-            key: '/admin/users',
-            icon: <TeamOutlined />,
-            label: '用户管理',
-          },
-          {
-            key: '/admin/settings',
-            icon: <SettingOutlined />,
-            label: '系统设置',
-          },
-          {
-            key: '/admin/logs',
-            icon: <FileTextOutlined />,
-            label: '系统日志',
-          },
-          {
-            key: '/admin/billing',
-            icon: <WalletOutlined />,
-            label: '额度管理',
-          },
-          {
-            key: '/admin/batch',
-            icon: <CloudServerOutlined />,
-            label: '批量处理',
           },
           {
             key: '/admin/error-analysis',
@@ -173,6 +160,33 @@ export default function MainLayout() {
             key: '/admin/data',
             icon: <FolderOpenOutlined />,
             label: '数据管理',
+          },
+        ],
+      },
+      {
+        key: 'admin-system-group',
+        type: 'group',
+        label: '系统管理',
+        children: [
+          {
+            key: '/admin/users',
+            icon: <TeamOutlined />,
+            label: '用户管理',
+          },
+          {
+            key: '/admin/billing',
+            icon: <WalletOutlined />,
+            label: '额度管理',
+          },
+          {
+            key: '/admin/settings',
+            icon: <SettingOutlined />,
+            label: '系统设置',
+          },
+          {
+            key: '/admin/logs',
+            icon: <FileTextOutlined />,
+            label: '系统日志',
           },
         ],
       },
