@@ -1,5 +1,5 @@
 {
-  "run_time": "2026-03-06 09:23",
+  "run_time": "2026-03-06 09:35",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
@@ -12,7 +12,7 @@
         "wrong_tier": 73,
         "wrong_book": 10
       },
-      "elapsed": 40.4,
+      "elapsed": 42.1,
       "details": [
         {
           "bill_name": "配电箱1-AL",
@@ -3704,7 +3704,7 @@
         "synonym_gap": 29,
         "wrong_tier": 35
       },
-      "elapsed": 37.8,
+      "elapsed": 33.8,
       "details": [
         {
           "bill_name": "管道支架",
@@ -5295,7 +5295,7 @@
         "synonym_gap": 74,
         "wrong_tier": 20
       },
-      "elapsed": 18.0,
+      "elapsed": 17.9,
       "details": [
         {
           "bill_name": "抛光砖楼面（A级）",
@@ -6740,7 +6740,7 @@
         "synonym_gap": 90,
         "wrong_tier": 250
       },
-      "elapsed": 79.0,
+      "elapsed": 80.8,
       "details": [
         {
           "bill_name": "碳钢通风管道",
@@ -11539,15 +11539,15 @@
         {
           "bill_name": "UPS不间断电源设备",
           "is_match": false,
-          "algo_id": "C4-10-63",
-          "algo_name": "杆上变配电设备安装 变压器容量(kVA以下) 50",
+          "algo_id": "C4-14-36",
+          "algo_name": "不间断电源调试 不间断电源容量(kV·A以下) 60",
           "stored_ids": [
             "C4-5-67"
           ],
           "stored_names": [
             "不间断电源柜安装 单相不间断电源容量(kV·A) ≤10"
           ],
-          "confidence": 78
+          "confidence": 60
         },
         {
           "bill_name": "空调器",
@@ -14040,7 +14040,7 @@
         "synonym_gap": 7,
         "wrong_tier": 4
       },
-      "elapsed": 2.6,
+      "elapsed": 2.8,
       "details": [
         {
           "bill_name": "钢筋笼 混凝土灌注桩钢筋笼  钢筋 HPB300φ10以内 ",
@@ -14337,14 +14337,14 @@
     {
       "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
       "total": 468,
-      "correct": 193,
-      "wrong": 275,
-      "hit_rate": 41.2,
+      "correct": 187,
+      "wrong": 281,
+      "hit_rate": 40.0,
       "diagnosis": {
-        "wrong_tier": 181,
-        "synonym_gap": 94
+        "wrong_tier": 183,
+        "synonym_gap": 98
       },
-      "elapsed": 76.1,
+      "elapsed": 78.9,
       "details": [
         {
           "bill_name": "配电箱（半周长 2.5m以内）",
@@ -15885,9 +15885,9 @@
         },
         {
           "bill_name": "吸顶灯(自带红外控节能自熄开关)220V",
-          "is_match": true,
-          "algo_id": "4-14-1",
-          "algo_name": "吸顶灯具安装 灯罩周长(mm) ≤800",
+          "is_match": false,
+          "algo_id": "4-14-213",
+          "algo_name": "工厂罩灯安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
@@ -15898,16 +15898,16 @@
         },
         {
           "bill_name": "壁灯(自带红外控节能自熄开关)LED220V",
-          "is_match": true,
-          "algo_id": "4-14-8",
-          "algo_name": "其他普通灯具安装 普通壁灯",
+          "is_match": false,
+          "algo_id": "4-14-245",
+          "algo_name": "吊杆式无影灯",
           "stored_ids": [
             "4-14-8"
           ],
           "stored_names": [
             "其他普通灯具安装 普通壁灯"
           ],
-          "confidence": 66
+          "confidence": 69
         },
         {
           "bill_name": "防水防尘壁灯LED220V",
@@ -15950,9 +15950,9 @@
         },
         {
           "bill_name": "环型荧光灯",
-          "is_match": true,
-          "algo_id": "4-14-204",
-          "algo_name": "荧光灯具安装 吸顶式 单管",
+          "is_match": false,
+          "algo_id": "4-14-120",
+          "algo_name": "组合荧光灯带 吸顶式 单管",
           "stored_ids": [
             "4-14-204"
           ],
@@ -16041,9 +16041,9 @@
         },
         {
           "bill_name": "吸顶灯(自带红外控节能自熄开关)7W",
-          "is_match": true,
-          "algo_id": "4-14-1",
-          "algo_name": "吸顶灯具安装 灯罩周长(mm) ≤800",
+          "is_match": false,
+          "algo_id": "4-14-213",
+          "algo_name": "工厂罩灯安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
@@ -16054,16 +16054,16 @@
         },
         {
           "bill_name": "壁灯(自带红外控节能自熄开关)7W",
-          "is_match": true,
-          "algo_id": "4-14-8",
-          "algo_name": "其他普通灯具安装 普通壁灯",
+          "is_match": false,
+          "algo_id": "4-14-245",
+          "algo_name": "吊杆式无影灯",
           "stored_ids": [
             "4-14-8"
           ],
           "stored_names": [
             "其他普通灯具安装 普通壁灯"
           ],
-          "confidence": 66
+          "confidence": 69
         },
         {
           "bill_name": "T5单管三基色荧光灯20W",
@@ -16147,9 +16147,9 @@
         },
         {
           "bill_name": "环型荧光灯1x18xLED",
-          "is_match": true,
-          "algo_id": "4-14-204",
-          "algo_name": "荧光灯具安装 吸顶式 单管",
+          "is_match": false,
+          "algo_id": "4-14-120",
+          "algo_name": "组合荧光灯带 吸顶式 单管",
           "stored_ids": [
             "4-14-204"
           ],
@@ -16174,8 +16174,8 @@
         {
           "bill_name": "人体感应灯(带红外感应延时开关)10W",
           "is_match": false,
-          "algo_id": "4-14-154",
-          "algo_name": "标志、诱导装饰灯具安装 吸顶式",
+          "algo_id": "4-14-213",
+          "algo_name": "工厂罩灯安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
@@ -19695,8 +19695,8 @@
         {
           "bill_name": "人体感应灯(带红外感应延时开关)1x10W",
           "is_match": false,
-          "algo_id": "4-14-154",
-          "algo_name": "标志、诱导装饰灯具安装 吸顶式",
+          "algo_id": "4-14-213",
+          "algo_name": "工厂罩灯安装 吸顶式",
           "stored_ids": [
             "4-14-1"
           ],
@@ -20582,7 +20582,7 @@
         "wrong_tier": 31,
         "synonym_gap": 37
       },
-      "elapsed": 23.2,
+      "elapsed": 20.7,
       "details": [
         {
           "bill_name": "配线",
@@ -22090,15 +22090,15 @@
     {
       "province": "浙江省通用安装工程预算定额(2018)",
       "total": 475,
-      "correct": 124,
-      "wrong": 351,
-      "hit_rate": 26.1,
+      "correct": 125,
+      "wrong": 350,
+      "hit_rate": 26.3,
       "diagnosis": {
         "wrong_tier": 102,
-        "synonym_gap": 247,
+        "synonym_gap": 246,
         "wrong_book": 2
       },
-      "elapsed": 84.4,
+      "elapsed": 78.1,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -25989,9 +25989,9 @@
         },
         {
           "bill_name": "湿式报警装置",
-          "is_match": false,
-          "algo_id": "9-1-49",
-          "algo_name": "水流指示器 沟槽法兰连接 公称直径(mm以内)150",
+          "is_match": true,
+          "algo_id": "9-1-41",
+          "algo_name": "湿式报警装置 公称直径(mm以内)150",
           "stored_ids": [
             "9-1-41",
             "6-5-81"
@@ -25999,7 +25999,7 @@
           "stored_names": [
             "湿式报警装置 公称直径（mm以内）150"
           ],
-          "confidence": 95
+          "confidence": 80
         },
         {
           "bill_name": "滑触线",
@@ -28362,7 +28362,7 @@
         "wrong_tier": 11,
         "synonym_gap": 9
       },
-      "elapsed": 5.5,
+      "elapsed": 6.0,
       "details": [
         {
           "bill_name": "套管 名称、类型:一般填料套管 规格类型：DN100",
