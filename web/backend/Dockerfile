@@ -8,6 +8,9 @@
 
 FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
 
+# UTF-8编码（镜像层级写死，解决celery worker中文编码ascii错误）
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+
 # 设置工作目录
 WORKDIR /app
 

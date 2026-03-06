@@ -1020,6 +1020,10 @@ class ExperienceDB:
                 return [exact]
             stale_exact = exact
 
+        # 向量搜索关闭时直接跳过（懒猫无GPU场景）
+        if not getattr(config, "VECTOR_ENABLED", True):
+            return [stale_exact] if stale_exact else []
+
         # 向量相似搜索（ChromaDB不可用时跳过，依赖精确匹配兜底）
         coll = self.collection  # 缓存到局部变量，避免多次访问属性
         if coll is None:
@@ -1192,6 +1196,10 @@ class ExperienceDB:
         """
         min_similarity = getattr(config, "CROSS_PROVINCE_MIN_SIMILARITY", 0.80)
         min_confidence = getattr(config, "CROSS_PROVINCE_MIN_CONFIDENCE", 85)
+
+        # 向量搜索关闭时直接跳过
+        if not getattr(config, "VECTOR_ENABLED", True):
+            return []
 
         if self.collection is None:
             logger.warning("经验库向量索引不可用，跳过跨省搜索")
