@@ -462,12 +462,17 @@ def _convert_xls(file_path: str) -> str:
 # ============================================================
 
 def compute_md5(file_path: str) -> str:
-    """计算文件MD5（只读前1MB，大文件也快）"""
+    """计算文件MD5（读前1MB+后1MB，兼顾速度和检测率）"""
     h = hashlib.md5()
     try:
+        file_size = os.path.getsize(file_path)
         with open(file_path, "rb") as f:
-            chunk = f.read(1024 * 1024)
-            h.update(chunk)
+            # 读前1MB
+            h.update(f.read(1024 * 1024))
+            # 如果文件大于2MB，还读后1MB
+            if file_size > 2 * 1024 * 1024:
+                f.seek(-1024 * 1024, 2)  # 从文件尾部往前1MB
+                h.update(f.read(1024 * 1024))
         return h.hexdigest()
     except Exception:
         return None

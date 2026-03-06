@@ -23,6 +23,7 @@ import os
 import sys
 import json
 import time
+import hashlib
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -140,20 +141,22 @@ def _read_sheet_with_mapping(ws, sheet_name: str, mapping: dict) -> list[dict]:
     2. 根据mapping匹配列位置
     3. 从表头下方读取数据行
     """
-    # 读所有行
-    rows = []
-    for row in ws.iter_rows(values_only=True):
-        rows.append(row)
+    # 先读前20行找表头
+    header_rows = []
+    for i, row in enumerate(ws.iter_rows(values_only=True)):
+        header_rows.append(row)
+        if i >= 19:
+            break
 
-    if not rows:
+    if not header_rows:
         return []
 
     # 在前20行中找表头（匹配mapping中的列名）
     header_row_idx = None
     col_map = {}  # field_name → col_index
 
-    for row_idx in range(min(20, len(rows))):
-        row = rows[row_idx]
+    for row_idx in range(len(header_rows)):
+        row = header_rows[row_idx]
         cells = [str(c).strip() if c is not None else "" for c in row]
 
         # 尝试匹配每个字段
@@ -178,10 +181,11 @@ def _read_sheet_with_mapping(ws, sheet_name: str, mapping: dict) -> list[dict]:
     if header_row_idx is None:
         return []
 
-    # 从表头下一行开始读数据
+    # 从表头下一行开始读数据（逐行迭代，不一次性全读进内存）
     items = []
-    for row_idx in range(header_row_idx + 1, len(rows)):
-        row = rows[row_idx]
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
+        if row_idx <= header_row_idx:
+            continue  # 跳过表头及之前的行
         cells = [str(c).strip() if c is not None else "" for c in row]
 
         name = cells[col_map["name"]] if "name" in col_map and col_map["name"] < len(cells) else ""
@@ -534,9 +538,11 @@ def _save_results(file_info, results: list, elapsed: float):
     prov_dir = RESULTS_DIR / prov
     prov_dir.mkdir(parents=True, exist_ok=True)
 
-    # 文件名用原文件名（去掉扩展名）+ .json
+    # 文件名用原文件名（去掉扩展名）+ 路径hash后缀，避免同名文件覆盖
     base_name = Path(file_info["file_name"]).stem
-    result_path = prov_dir / f"{base_name}.json"
+    # 用文件完整路径的hash后4位区分同名文件
+    path_hash = hashlib.md5(file_info["file_path"].encode()).hexdigest()[:4]
+    result_path = prov_dir / f"{base_name}_{path_hash}.json"
 
     # 简化结果（只保留关键字段，减少文件大小）
     # 注意：match_engine 返回的结构是嵌套的：
