@@ -97,6 +97,8 @@ services:
       AGENT_LLM: qwen
       VERIFY_LLM: kimi
       VERIFY_MODEL: kimi-k2.5
+      # 关闭向量搜索（Docker精简镜像没装chromadb/sentence_transformers，纯BM25足够）
+      VECTOR_ENABLED: "false"
     volumes:
       # 挂载数据目录（定额库数据、上传文件、输出结果）
       - ./data:/app/data
@@ -137,6 +139,8 @@ services:
       AGENT_LLM: qwen
       VERIFY_LLM: kimi
       VERIFY_MODEL: kimi-k2.5
+      # 关闭向量搜索（Docker精简镜像没装chromadb/sentence_transformers，纯BM25足够）
+      VECTOR_ENABLED: "false"
     volumes:
       - ./data:/app/data
       - ./db:/app/db

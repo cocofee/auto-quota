@@ -448,6 +448,48 @@ class AgentMatcher:
 
         return results
 
+    # 专业分流规则：根据清单所属专业注入不同的注意事项
+    _SPECIALTY_WARNINGS = {
+        "C4": (  # 电气
+            "### 电气专业注意\n"
+            "- 配电箱按安装方式分：落地式/明装/暗装，不能混用\n"
+            "- 电缆按敷设方式分：沿桥架、穿导管、直埋，选对方式再选截面档位\n"
+            "- 配管按材质分：SC钢管(焊接)/JDG/KBG(扣压)/PVC(塑料)，不能混用\n"
+            "- 电机功率kW是硬参数，必须向上取档（3kW电机选5kW以内定额）"
+        ),
+        "C10": (  # 给排水
+            "### 给排水专业注意\n"
+            "- 管道按材质+连接方式分：镀锌钢管丝接/焊接、PPR热熔、PE热熔/电熔、PVC粘接\n"
+            "- DN是硬参数，必须向上取档（DN32选DN40以内定额）\n"
+            "- 管道安装和管卡/支架是配套关系，不要漏选关联定额\n"
+            "- 给水管≠排水管≠雨水管，管材和连接方式不同"
+        ),
+        "C9": (  # 消防
+            "### 消防专业注意\n"
+            "- 消防管道和给水管道定额不同，即使材质相同也要选消防册(C9)\n"
+            "- 喷头按类型分：下垂型/直立型/侧壁型，按响应温度分档\n"
+            "- 灭火器和灭火器箱是两个独立定额，不能合并"
+        ),
+        "C7": (  # 通风空调
+            "### 通风空调专业注意\n"
+            "- 风管按材质分：镀锌钢板/不锈钢/玻镁复合/玻璃纤维\n"
+            "- 风管按形状分：矩形/圆形，按周长或直径分档\n"
+            "- 风口和风阀是独立定额，不混入风管"
+        ),
+        "C12": (  # 刷油防腐保温
+            "### 刷油防腐保温注意\n"
+            "- 保温材料不能混用：橡塑≠聚氨酯≠玻璃棉≠岩棉\n"
+            "- 保温按管径/壁厚分档，注意向上取档"
+        ),
+    }
+
+    def _get_specialty_warnings(self, specialty: str) -> str:
+        """根据专业返回对应的注意事项文本"""
+        warning = self._SPECIALTY_WARNINGS.get(specialty, "")
+        if warning:
+            return f"\n{warning}\n"
+        return ""
+
     def _build_agent_prompt(self, bill_item: dict, candidates: list[dict],
                             reference_cases: list[dict] = None,
                             rules_context: list[dict] = None,
@@ -469,21 +511,27 @@ class AgentMatcher:
         specialty_name = bill_item.get("specialty_name", "")
         params = bill_item.get("params", {})
 
-        # 格式化候选定额列表（最多20条）
+        # 格式化候选定额列表
+        # 前5条详细展示（含参数匹配信息），后15条精简展示（省token）
         candidate_lines = []
         for i, c in enumerate(candidates[:20], start=1):
-            param_info = c.get("param_detail", "")
-            param_match = "✓参数匹配" if c.get("param_match", True) else "✗参数不匹配"
-            try:
-                score = float(c.get("param_score", 0))
-            except (TypeError, ValueError):
-                score = 0.0
             quota_id = str(c.get("quota_id", "")).strip() or "UNKNOWN"
             quota_name = str(c.get("name", "")).strip() or "未命名候选"
-            candidate_lines.append(
-                f"{i}. [{quota_id}] {quota_name} | 单位:{c.get('unit', '?')} "
-                f"| {param_match}({score:.0%}) {param_info}"
-            )
+            if i <= 5:
+                # 前5条：详细展示
+                param_info = c.get("param_detail", "")
+                param_match = "✓参数匹配" if c.get("param_match", True) else "✗参数不匹配"
+                try:
+                    score = float(c.get("param_score", 0))
+                except (TypeError, ValueError):
+                    score = 0.0
+                candidate_lines.append(
+                    f"{i}. [{quota_id}] {quota_name} | 单位:{c.get('unit', '?')} "
+                    f"| {param_match}({score:.0%}) {param_info}"
+                )
+            else:
+                # 后15条：精简展示（编号+名称）
+                candidate_lines.append(f"{i}. [{quota_id}] {quota_name}")
         candidates_text = "\n".join(candidate_lines)
 
         # 格式化参考案例
@@ -554,6 +602,8 @@ class AgentMatcher:
                 param_parts.append(f"材质:{params['material']}")
             if params.get("connection"):
                 param_parts.append(f"连接:{params['connection']}")
+            if params.get("kw"):
+                param_parts.append(f"功率{params['kw']}kW")
             if params.get("kva"):
                 param_parts.append(f"容量{params['kva']}kVA")
             if param_parts:
@@ -591,10 +641,17 @@ class AgentMatcher:
 - "以内"表示≤，如"DN150以内"适用于DN≤150
 - 材质必须一致（镀锌钢管≠不锈钢管≠PPR管）
 - 连接方式要对应（丝接≠沟槽≠法兰≠卡压）
-- 普通套管≠防水套管，橡塑保温≠聚氨酯保温
-- 灭火器≠灭火装置，水泵≠水泵接合器
 - 关联定额只能是**不同类型**的配套工作（如管道+管卡、设备+调试），不能是同类型的不同规格或不同方式（如不能同时选"沿桥架敷设"和"穿导管敷设"）
 - 一条清单只选一条主定额，不确定时选最可能的那一条
+{self._get_specialty_warnings(specialty)}
+## 常见易混淆品类（必须区分，选错直接判错）
+- 配电箱≠控制箱≠动力柜（按箱体类型区分）
+- 普通套管≠防水套管（防水套管用于穿越防水层/外墙）
+- 灭火器≠灭火装置≠灭火器箱（三者定额完全不同）
+- 水泵≠水泵接合器（接合器是消防设施，不是泵）
+- 橡塑保温≠聚氨酯保温≠玻璃棉保温（按保温材料分）
+- 桥架≠线槽（桥架是大截面金属托盘，线槽是小截面PVC/金属槽）
+- 电缆敷设≠电线穿管（电缆沿桥架/直埋，电线穿导管）
 
 ## 输出格式
 请严格按JSON格式回答：
