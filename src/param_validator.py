@@ -164,10 +164,11 @@ class ParamValidator:
         # 加权融合：param_score * 0.8 + rerank_score * 0.2
         # 参数分占80%主导排序（精确匹配定额稳排在通用定额前面），
         # reranker占20%在参数相近时发挥差异化能力。
-        # （L8原始权重0.7/0.3导致通用定额可能因reranker高分排到精确匹配前面）
+        # M1实验：改为纯字典序（参数分优先）反而退化0.4%，
+        # 说明reranker的20%权重不是选错档位的主因，恢复原方案。
         validated.sort(
             key=lambda x: (
-                x["param_match"],     # 第一级不变：匹配vs不匹配
+                x["param_match"],     # 第一级：匹配vs不匹配
                 x["param_score"] * 0.8 + (  # 第二级：参数分80% + 语义精排20%
                     x.get("rerank_score", x.get("hybrid_score", 0))
                 ) * 0.2,
