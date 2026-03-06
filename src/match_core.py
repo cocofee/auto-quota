@@ -57,35 +57,109 @@ STRONG_MEASURE_KEYWORDS = [
 # 统一打分函数
 # ============================================================
 
-def calculate_confidence(param_score: float, param_match: bool = True) -> int:
+def calculate_confidence(param_score: float, param_match: bool = True,
+                         name_bonus: float = 0.0,
+                         score_gap: float = 1.0,
+                         rerank_score: float = 0.0,
+                         candidates_count: int = 20) -> int:
     """
-    统一的 param_score → confidence 转换函数
+    多信号置信度计算（v2，2026-03-06 校准版）
 
-    全系统唯一的打分入口，消除各模块独立计算导致的不一致。
+    综合 param_score、品类核心词匹配度、top1/top2差距、搜索相关性
+    来计算置信度，解决旧版 param_score*95 严重虚高的问题。
 
-    规则：
-    - 参数匹配通过(param_match=True)：confidence = param_score × 95
-      → param_score=1.0 → 95分（绿灯）
-      → param_score=0.90 → 85分（绿灯门槛）
-      → param_score=0.55 → 52分（红灯）
-    - 参数不匹配(param_match=False)：confidence = param_score × 45，最低15分
-      → 确保不匹配的候选始终低于绿灯门槛(85)
+    旧版问题：自评95%的实际准确率只有35%。
+    新版目标：置信度分段应与实际准确率单调递增对齐。
 
     参数:
         param_score: 参数匹配分数（0.0~1.0）
         param_match: 参数是否匹配通过
+        name_bonus: 品类核心词匹配度（0.0~1.0，来自param_validator）
+        score_gap: top1与top2的综合分差距（0.0~1.0，越大越确定）
+        rerank_score: 搜索语义相关性（0.0~1.0，来自reranker/hybrid_score）
+        candidates_count: 有效候选数量
 
     返回:
         置信度（0~95的整数）
     """
     try:
-        score = float(param_score)
+        ps = float(param_score)
     except (TypeError, ValueError):
-        score = 0.5 if param_match else 0.0
-    if param_match:
-        return int(score * 95)
-    else:
-        return max(int(score * 45), 15)
+        ps = 0.5 if param_match else 0.0
+
+    if not param_match:
+        # 参数不匹配：封顶50，确保不会进绿灯区
+        return max(int(ps * 50), 15)
+
+    # === 基础分（param_score贡献，满分40分） ===
+    base = ps * 40.0
+
+    # === 品类核心词匹配（满分20分） ===
+    # name_bonus是关键区分信号：品类对了才可能选对
+    # 实际数据中name_bonus范围约0~0.5，用非线性映射放大
+    try:
+        nb = float(name_bonus)
+    except (TypeError, ValueError):
+        nb = 0.0
+    nb = min(nb, 1.0)
+    # nb>=0.3视为品类完全命中，给满分
+    nb_normalized = min(nb / 0.3, 1.0)
+    name_part = nb_normalized * 20.0
+
+    # === top1/top2差距（满分15分） ===
+    # score_gap实际范围很小(0~0.2)，用非线性映射放大区分度
+    # gap>=0.15视为"明显领先"给满分，gap=0给0分
+    try:
+        gap = float(score_gap)
+    except (TypeError, ValueError):
+        gap = 0.0
+    gap = min(max(gap, 0.0), 1.0)
+    # 非线性映射：gap/0.15 封顶1.0
+    gap_normalized = min(gap / 0.15, 1.0)
+    gap_part = gap_normalized * 15.0
+
+    # === 搜索语义相关性（满分10分） ===
+    # rerank_score范围通常在0~1，但实际高质量结果一般0.3~0.8
+    try:
+        rr = float(rerank_score)
+    except (TypeError, ValueError):
+        rr = 0.0
+    rerank_part = min(rr, 1.0) * 10.0
+
+    # 基础得分（满分85）
+    raw = base + name_part + gap_part + rerank_part
+
+    # === 奖励项：多信号一致性加分 ===
+    # 当品类词命中+参数满分+有差距时，说明匹配很可靠，额外加分
+    bonus = 0.0
+    good_signals = 0
+    if nb_normalized >= 0.5:
+        good_signals += 1
+    if ps >= 0.9:
+        good_signals += 1
+    if gap_normalized >= 0.5:
+        good_signals += 1
+    if rr >= 0.3:
+        good_signals += 1
+    # 3个以上好信号一致：加10分（可到95）
+    if good_signals >= 3:
+        bonus += 10.0
+
+    # === 惩罚项 ===
+    penalty = 0.0
+
+    # 品类核心词完全没命中：强惩罚（最可疑的虚高信号）
+    if nb < 0.01:
+        penalty += 12.0
+
+    # 候选太少：召回可能有问题
+    if candidates_count < 3:
+        penalty += 8.0
+    elif candidates_count < 5:
+        penalty += 4.0
+
+    result = int(max(raw + bonus - penalty, 10))
+    return min(result, 95)
 
 
 # ============================================================
