@@ -1,0 +1,19 @@
+# Docker专用依赖（无GPU，向量搜索已关闭，不装torch/transformers/chromadb）
+# 本地开发用 requirements.txt（含向量模型全套依赖）
+
+# === 核心搜索 ===
+rank-bm25>=0.2.2                # BM25关键词搜索算法
+jieba>=0.42.1                   # 中文分词
+
+# === 大模型API ===
+anthropic>=0.30.0               # Claude API客户端
+openai>=1.0.0                   # OpenAI/DeepSeek API客户端
+
+# === 数据处理 ===
+openpyxl>=3.1.0                 # Excel读写（.xlsx格式）
+xlrd>=2.0.0                     # Excel读取（.xls旧格式）
+pandas>=2.0.0                   # 表格数据处理
+
+# === 工具 ===
+python-dotenv>=1.0.0            # 读取.env配置文件
+loguru>=0.7.0                   # 日志记录

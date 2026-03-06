@@ -22,7 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 先复制依赖文件，利用 Docker 缓存层（依赖不变时跳过安装）
-COPY requirements.txt /app/requirements.txt
+# Docker用精简版（无torch/transformers/chromadb，镜像从13GB降到~1GB）
+COPY requirements-docker.txt /app/requirements.txt
 COPY web/backend/requirements.txt /app/web/backend/requirements.txt
 
 # 安装 Python 依赖（核心匹配引擎 + Web后端，使用国内PyPI镜像加速）

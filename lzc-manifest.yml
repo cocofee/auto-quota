@@ -30,6 +30,8 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
+      VECTOR_ENABLED: "false"
       # 大模型配置：通义千问（Web端用MATCH_LLM，命令行用AGENT_LLM）
       AGENT_LLM: qwen
       MATCH_LLM: qwen
@@ -67,6 +69,8 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
+      VECTOR_ENABLED: "false"
       # 大模型配置：通义千问
       AGENT_LLM: qwen
       MATCH_LLM: qwen
