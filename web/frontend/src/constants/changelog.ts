@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.97';
+export const APP_VERSION = '0.1.99';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.99',
+    date: '2026-03-06',
+    changes: [
+      { type: 'user', text: 'Agent匹配质量大幅提升：修复数据库配置含不可见字符导致LLM调用ASCII编码错误' },
+      { type: 'admin', text: '数据库LLM配置注入前增加ASCII清洗（去BOM/零宽空格/非ASCII字符）' },
+      { type: 'admin', text: 'agent_matcher和llm_verifier的httpx调用增加防御性ASCII清洗' },
+    ],
+  },
   {
     version: '0.1.97',
     date: '2026-03-06',

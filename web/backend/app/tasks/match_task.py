@@ -135,15 +135,28 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
 
         # 从数据库读取大模型配置，注入到 config 模块
         # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
+        def _clean_ascii(val: str) -> str:
+            """清洗配置值：去除不可见非ASCII字符（BOM/零宽空格等），防止httpx头编码错误"""
+            if not val or not isinstance(val, str):
+                return val or ""
+            # 去除BOM、零宽空格、零宽连接符等不可见Unicode字符
+            for ch in ["\ufeff", "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufffe", "\u00a0"]:
+                val = val.replace(ch, "")
+            # 去除首尾空白（包括\r\n\t等）
+            val = val.strip()
+            # 强制保留纯ASCII（API Key/URL/模型名都应该是纯ASCII）
+            val = val.encode("ascii", errors="ignore").decode("ascii")
+            return val
+
         try:
             from app.services.llm_config_service import get_llm_config_sync, get_verify_config_sync
 
             # ---- 匹配模型配置 ----
             llm_cfg = get_llm_config_sync(session)
-            llm_type = llm_cfg["llm_type"]
-            api_key = llm_cfg["api_key"]
-            base_url = llm_cfg["base_url"]
-            model_name = llm_cfg["model"]
+            llm_type = _clean_ascii(llm_cfg["llm_type"])
+            api_key = _clean_ascii(llm_cfg["api_key"])
+            base_url = _clean_ascii(llm_cfg["base_url"])
+            model_name = _clean_ascii(llm_cfg["model"])
 
             if api_key:
                 key_attr = f"{llm_type.upper()}_API_KEY"
@@ -158,10 +171,10 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
 
             # ---- 验证模型配置 ----
             v_cfg = get_verify_config_sync(session)
-            v_type = v_cfg["llm_type"]
-            v_key = v_cfg["api_key"]
-            v_url = v_cfg["base_url"]
-            v_model = v_cfg["model"]
+            v_type = _clean_ascii(v_cfg["llm_type"])
+            v_key = _clean_ascii(v_cfg["api_key"])
+            v_url = _clean_ascii(v_cfg["base_url"])
+            v_model = _clean_ascii(v_cfg["model"])
 
             if v_type and v_key:
                 # 验证模型单独配置了
