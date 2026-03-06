@@ -100,7 +100,7 @@ def run_province(province, file_count):
         cmd,
         cwd=project_dir,
         env=env,
-        timeout=1800,  # 单省最长30分钟
+        timeout=7200,  # 单省最长2小时
         capture_output=False  # 直接输出到控制台
     )
 

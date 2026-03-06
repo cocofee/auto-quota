@@ -143,10 +143,20 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
         return candidates[0]
 
     desc = item.get("description", "") or ""
+    bill_name = item.get("name", "") or ""
+    bill_text = f"{bill_name} {desc}"
     desc_lines = extract_description_lines(desc)
 
     for cand in candidates[:5]:
         quota_name = cand.get("name", "")
+        # 反向排斥：定额含特定场景词但清单不含时跳过
+        skip = False
+        for kw in _QUOTA_ONLY_KEYWORDS:
+            if kw in quota_name and kw not in bill_text:
+                skip = True
+                break
+        if skip:
+            continue
         error = check_category_mismatch(item, quota_name, desc_lines)
         if not error:
             return cand
