@@ -464,6 +464,7 @@ QUOTA_EXCEL_COLUMNS = {
 # ============================================================
 
 # 向量搜索配置
+VECTOR_ENABLED = os.getenv("VECTOR_ENABLED", "true").lower() == "true"  # 环境变量控制，Docker可关闭
 VECTOR_MODEL_NAME = "BAAI/bge-large-zh-v1.5"  # BGE中文向量模型
 VECTOR_TOP_K = 20                               # 向量搜索返回Top K
 VECTOR_WEIGHT = 0.7                             # 混合搜索中向量的权重（参考OpenClaw的70/30配比）
