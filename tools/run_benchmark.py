@@ -312,12 +312,14 @@ def print_json_summary(results: list[dict], baseline: dict = None):
     header = f"{'省份':<20} {'题数':>5} {'命中率':>8}"
     if baseline:
         header += f" {'基线':>8} {'变化':>8}"
-    header += f" {'同义词缺口':>10} {'选错档位':>10} {'搜偏':>6} {'耗时':>7}"
+    header += f" {'同义词缺口':>10} {'选错档位':>10} {'搜偏':>6} {'oracle在候选':>12} {'耗时':>7}"
     print(header)
-    print('-' * 90)
+    print('-' * 110)
 
     total_correct = 0
     total_items = 0
+    total_oracle_in = 0
+    total_oracle_out = 0
 
     for r in results:
         prov_short = r['province'].split('(')[0].split('（')[0][:18]
@@ -325,6 +327,8 @@ def print_json_summary(results: list[dict], baseline: dict = None):
         syn_gap = diag.get('synonym_gap', 0)
         wrong_tier = diag.get('wrong_tier', 0)
         wrong_book = diag.get('wrong_book', 0)
+        oracle_in = r.get('oracle_in_candidates', 0)
+        oracle_out = r.get('oracle_not_in_candidates', 0)
 
         line = f"{prov_short:<20} {r['total']:>5} {r['hit_rate']:>7.1f}%"
 
@@ -336,14 +340,20 @@ def print_json_summary(results: list[dict], baseline: dict = None):
         elif baseline:
             line += f" {'新':>8} {'':>8}"
 
-        line += f" {syn_gap:>10} {wrong_tier:>10} {wrong_book:>6} {r['elapsed']:>6.1f}s"
+        # oracle统计：错误中有多少正确答案在候选列表里
+        oracle_str = f"{oracle_in}/{oracle_in+oracle_out}" if (oracle_in + oracle_out) > 0 else "-"
+        line += f" {syn_gap:>10} {wrong_tier:>10} {wrong_book:>6} {oracle_str:>12} {r['elapsed']:>6.1f}s"
         print(line)
 
         total_correct += r['correct']
         total_items += r['total']
+        total_oracle_in += oracle_in
+        total_oracle_out += oracle_out
 
     overall_rate = total_correct / max(total_items, 1) * 100
-    print('-' * 90)
+    print('-' * 110)
+    total_oracle = total_oracle_in + total_oracle_out
+    oracle_summary = f"{total_oracle_in}/{total_oracle}" if total_oracle > 0 else "-"
     print(f"{'总计':<20} {total_items:>5} {overall_rate:>7.1f}%")
 
     # 错误分布汇总
@@ -361,7 +371,14 @@ def print_json_summary(results: list[dict], baseline: dict = None):
             print(f"{label} {cnt}({pct:.0f}%) ", end='')
         print()
 
-    print(f"{'='*90}")
+    # oracle汇总：排序问题 vs 召回问题
+    if total_oracle > 0:
+        oracle_rate = total_oracle_in / total_oracle * 100
+        print(f"\noracle诊断: 错误共{total_oracle}条，"
+              f"其中{total_oracle_in}条({oracle_rate:.0f}%)正确答案在候选中(排序问题)，"
+              f"{total_oracle_out}条({100-oracle_rate:.0f}%)不在候选中(召回问题)")
+
+    print(f"{'='*110}")
     return {'total': total_items, 'correct': total_correct, 'rate': round(overall_rate, 1)}
 
 
