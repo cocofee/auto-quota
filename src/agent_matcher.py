@@ -920,7 +920,12 @@ class AgentMatcher:
                 ps = float(c.get("param_score", 0.5))
             except (TypeError, ValueError):
                 ps = 0.5
-            alt_conf = int(ps * 95) if c.get("param_match", True) else max(int(ps * 45), 15)
+            from src.match_core import calculate_confidence as _calc_conf
+            alt_conf = _calc_conf(
+                ps, c.get("param_match", True),
+                name_bonus=c.get("name_bonus", 0.0),
+                rerank_score=c.get("rerank_score", c.get("hybrid_score", 0.0)),
+            )
             alternatives.append({
                 "quota_id": c_quota_id,
                 "name": str(c.get("name", "")).strip() or "未命名候选",
@@ -1004,11 +1009,19 @@ class AgentMatcher:
             matched = [c for c in valid_candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
-                confidence = calculate_confidence(best.get("param_score", 0.5), param_match=True)
+                confidence = calculate_confidence(
+                    best.get("param_score", 0.5), param_match=True,
+                    name_bonus=best.get("name_bonus", 0.0),
+                    rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                    candidates_count=len(valid_candidates),
+                )
             else:
                 best = valid_candidates[0] if valid_candidates else None
                 if best:
-                    confidence = calculate_confidence(best.get("param_score", 0.0), param_match=False)
+                    confidence = calculate_confidence(
+                        best.get("param_score", 0.0), param_match=False,
+                        candidates_count=len(valid_candidates),
+                    )
 
         best_quota_id = str((best or {}).get("quota_id", "")).strip()
         best_name = str((best or {}).get("name", "")).strip() or "未命名候选"

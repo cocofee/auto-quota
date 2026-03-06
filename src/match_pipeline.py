@@ -273,7 +273,11 @@ def _build_alternatives(candidates: list[dict], selected_ids: set = None,
             logger.warning(f"跳过异常候选（缺少quota_id/name）: {alt}")
             continue
         alt_ps = alt.get("param_score", 0.5)
-        alt_conf = calculate_confidence(alt_ps, alt.get("param_match", True))
+        alt_conf = calculate_confidence(
+            alt_ps, alt.get("param_match", True),
+            name_bonus=alt.get("name_bonus", 0.0),
+            rerank_score=alt.get("rerank_score", alt.get("hybrid_score", 0.0)),
+        )
         alternatives.append({
             "quota_id": quota_id,
             "name": quota_name,
@@ -495,12 +499,27 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             # 规则审核前置：跳过类别明显不匹配的候选
             best = _pick_category_safe_candidate(item, matched_candidates)
             param_score = best.get("param_score", 0.5)
-            confidence = calculate_confidence(param_score, param_match=True)
+            # 计算top1与top2的综合分差距（用于置信度校准）
+            _sorted = sorted(matched_candidates,
+                             key=lambda x: x.get("param_score", 0), reverse=True)
+            top1_s = _sorted[0].get("param_score", 0) if len(_sorted) > 0 else 0
+            top2_s = _sorted[1].get("param_score", 0) if len(_sorted) > 1 else 0
+            score_gap = top1_s - top2_s
+            confidence = calculate_confidence(
+                param_score, param_match=True,
+                name_bonus=best.get("name_bonus", 0.0),
+                score_gap=score_gap,
+                rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                candidates_count=len(valid_candidates),
+            )
             explanation = best.get("param_detail", "")
         else:
             best = _pick_category_safe_candidate(item, valid_candidates)
             param_score = best.get("param_score", 0.0)
-            confidence = calculate_confidence(param_score, param_match=False)
+            confidence = calculate_confidence(
+                param_score, param_match=False,
+                candidates_count=len(valid_candidates),
+            )
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
 
     # 收集所有候选定额ID（供benchmark统计"正确答案是否在候选中"）
