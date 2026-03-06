@@ -203,12 +203,12 @@ def main(allow_new=False, only_new=False):
 
     # ---- 写入临时文件 ----
     tmp_main = PROJECT_ROOT / ".tmp_selected_province.txt"
-    with open(tmp_main, "w", encoding="gbk") as f:
+    with open(tmp_main, "w", encoding="utf-8") as f:
         f.write(selected_main)
 
     tmp_aux = PROJECT_ROOT / ".tmp_selected_aux_provinces.txt"
     if selected_aux:
-        with open(tmp_aux, "w", encoding="gbk") as f:
+        with open(tmp_aux, "w", encoding="utf-8") as f:
             f.write(",".join(selected_aux))
     else:
         tmp_aux.unlink(missing_ok=True)

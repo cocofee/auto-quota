@@ -14,7 +14,8 @@ anthropic>=0.30.0               # Claude API客户端
 openai>=1.0.0                   # OpenAI/DeepSeek API客户端
 
 # === 数据处理 ===
-openpyxl>=3.1.0                 # Excel读写
+openpyxl>=3.1.0                 # Excel读写（.xlsx格式）
+xlrd>=2.0.0                     # Excel读取（.xls旧格式）
 pandas>=2.0.0                   # 表格数据处理
 
 # === 工具 ===
