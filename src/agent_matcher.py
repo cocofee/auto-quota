@@ -201,7 +201,8 @@ class AgentMatcher:
                 if self._llm_consecutive_fails >= self._LLM_CIRCUIT_THRESHOLD:
                     self._llm_circuit_open = True
                     self._llm_circuit_open_time = time.time()
-            logger.error(f"Agent大模型调用失败: {e}")
+            import traceback
+            logger.error(f"Agent大模型调用失败: {e}\n{traceback.format_exc()}")
             # 降级：直接用参数验证第1名
             return self._fallback_result(bill_item, candidates, str(e))
 
@@ -276,7 +277,8 @@ class AgentMatcher:
                 if self._llm_consecutive_fails >= self._LLM_CIRCUIT_THRESHOLD:
                     self._llm_circuit_open = True
                     self._llm_circuit_open_time = time.time()
-            logger.error(f"批量审核LLM调用失败: {e}")
+            import traceback
+            logger.error(f"批量审核LLM调用失败: {e}\n{traceback.format_exc()}")
             return [
                 self._fallback_result(item["bill_item"], item["candidates"], str(e))
                 for item in batch_items
@@ -647,6 +649,15 @@ class AgentMatcher:
         }
         api_key = key_map.get(self.llm_type, "")
         base_url = url_map.get(self.llm_type, "")
+
+        # 防御性清洗：去除不可见非ASCII字符（数据库注入的值可能含BOM/零宽空格）
+        def _safe_ascii(val):
+            if not val or not isinstance(val, str):
+                return val or ""
+            return val.strip().encode("ascii", errors="ignore").decode("ascii")
+        api_key = _safe_ascii(api_key)
+        base_url = _safe_ascii(base_url)
+        model = _safe_ascii(model)
 
         # httpx直接调用（绕过SDK编码问题）
         import httpx

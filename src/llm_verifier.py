@@ -171,6 +171,15 @@ class LLMVerifier:
         api_key = key_map.get(self.llm_type, "")
         base_url = url_map.get(self.llm_type, "")
 
+        # 防御性清洗：去除不可见非ASCII字符（数据库注入的值可能含BOM/零宽空格）
+        def _safe_ascii(val):
+            if not val or not isinstance(val, str):
+                return val or ""
+            return val.strip().encode("ascii", errors="ignore").decode("ascii")
+        api_key = _safe_ascii(api_key)
+        base_url = _safe_ascii(base_url)
+        model = _safe_ascii(model)
+
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
