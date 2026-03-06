@@ -662,6 +662,13 @@ class AgentMatcher:
             "max_tokens": 1500,
         }
         response = httpx.post(url, headers=headers, json=data, timeout=config.LLM_TIMEOUT)
+        # 429限流自动重试（等2秒，最多3次）
+        for retry in range(3):
+            if response.status_code != 429:
+                break
+            import time
+            time.sleep(2 * (retry + 1))
+            response = httpx.post(url, headers=headers, json=data, timeout=config.LLM_TIMEOUT)
         response.raise_for_status()
         result = response.json()
         return result["choices"][0]["message"]["content"]
