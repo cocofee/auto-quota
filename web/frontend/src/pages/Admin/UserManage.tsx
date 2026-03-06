@@ -7,7 +7,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Tag, Button, Space, App, Switch, Popconfirm,
-  Statistic, Row, Col,
+  Statistic, Row, Col, Input,
 } from 'antd';
 import {
   ReloadOutlined, UserOutlined, TeamOutlined, SafetyOutlined,
@@ -42,12 +42,13 @@ export default function UserManage() {
   const [adminCount, setAdminCount] = useState(0);
   const [activeCount, setActiveCount] = useState(0);
   const [page, setPage] = useState(1);
+  const [searchText, setSearchText] = useState('');
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get<UserListResponse>('/admin/users', {
-        params: { page, size: 20 },
+        params: { page, size: 20, search: searchText },
       });
       setUsers(data.items);
       setTotal(data.total);
@@ -58,7 +59,7 @@ export default function UserManage() {
     } finally {
       setLoading(false);
     }
-  }, [page, message]);
+  }, [page, searchText, message]);
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
@@ -78,6 +79,7 @@ export default function UserManage() {
       title: '邮箱',
       dataIndex: 'email',
       key: 'email',
+      width: 200,
       ellipsis: true,
     },
     {
@@ -119,6 +121,13 @@ export default function UserManage() {
       key: 'created_at',
       width: 140,
       render: (t: string) => t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '-',
+    },
+    {
+      title: '最后登录',
+      dataIndex: 'last_login_at',
+      key: 'last_login_at',
+      width: 140,
+      render: (t: string | null) => t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '从未登录',
     },
     {
       title: '操作',
@@ -173,7 +182,17 @@ export default function UserManage() {
 
       <Card
         title="用户列表"
-        extra={<Button icon={<ReloadOutlined />} onClick={() => loadUsers()}>刷新</Button>}
+        extra={
+          <Space>
+            <Input.Search
+              placeholder="搜索邮箱或昵称"
+              allowClear
+              style={{ width: 240 }}
+              onSearch={(v) => { setSearchText(v); setPage(1); }}
+            />
+            <Button icon={<ReloadOutlined />} onClick={() => loadUsers()}>刷新</Button>
+          </Space>
+        }
       >
         <Table
           rowKey="id"
@@ -181,6 +200,7 @@ export default function UserManage() {
           columns={columns}
           loading={loading}
           size="middle"
+          scroll={{ x: 1100 }}
           pagination={{
             current: page,
             total,

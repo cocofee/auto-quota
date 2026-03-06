@@ -212,21 +212,31 @@ export default function FeedbackReview() {
           </Card>
         </Col>
         <Col span={8}>
-          <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 100 }}>
-            <Button
-              type="primary"
-              icon={<ImportOutlined />}
-              size="large"
-              onClick={() => setImportVisible(true)}
-            >
-              导入带定额清单
-            </Button>
+          <Card>
+            <Statistic
+              title="学习率"
+              value={totalFeedbacks > 0 ? Math.round((totalLearned / Math.max(totalFeedbacks, 1)) * 100) : 0}
+              suffix="%"
+              prefix={<ImportOutlined />}
+              valueStyle={{ color: '#1677ff' }}
+            />
           </Card>
         </Col>
       </Row>
 
       {/* 反馈列表 */}
-      <Card title="反馈列表">
+      <Card
+        title="反馈列表"
+        extra={
+          <Button
+            type="primary"
+            icon={<ImportOutlined />}
+            onClick={() => setImportVisible(true)}
+          >
+            导入带定额清单
+          </Button>
+        }
+      >
         <Table
           rowKey="task_id"
           dataSource={items}

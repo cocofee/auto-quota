@@ -19,6 +19,7 @@ import 'dayjs/locale/zh-cn';
 
 import router from './routes';
 import { useAuthStore } from './stores/auth';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 // dayjs 中文
@@ -85,7 +86,9 @@ createRoot(document.getElementById('root')!).render(
         }}
       >
         <AntdApp>
-          <RouterProvider router={router} />
+          <ErrorBoundary>
+            <RouterProvider router={router} />
+          </ErrorBoundary>
         </AntdApp>
       </ConfigProvider>
     </QueryClientProvider>

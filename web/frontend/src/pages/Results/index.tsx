@@ -361,19 +361,28 @@ export default function ResultsPage() {
       message.info('没有待确认的高置信度结果');
       return;
     }
-    setConfirmLoading(true);
-    try {
-      const { data } = await api.post(`/tasks/${taskId}/results/confirm`, {
-        result_ids: highConfIds,
-      });
-      message.success(`一键确认 ${data.confirmed} 条高置信度结果`);
-      setSelectedRowKeys([]);
-      loadData();
-    } catch {
-      message.error('确认失败');
-    } finally {
-      setConfirmLoading(false);
-    }
+    // 二次确认弹窗（批量操作，防止误触）
+    modal.confirm({
+      title: '一键确认高置信度',
+      content: `将批量确认 ${highConfIds.length} 条高置信度（≥${GREEN_THRESHOLD}%）结果，确定继续？`,
+      okText: `确认 ${highConfIds.length} 条`,
+      cancelText: '取消',
+      onOk: async () => {
+        setConfirmLoading(true);
+        try {
+          const { data } = await api.post(`/tasks/${taskId}/results/confirm`, {
+            result_ids: highConfIds,
+          });
+          message.success(`一键确认 ${data.confirmed} 条高置信度结果`);
+          setSelectedRowKeys([]);
+          loadData();
+        } catch {
+          message.error('确认失败');
+        } finally {
+          setConfirmLoading(false);
+        }
+      },
+    });
   };
 
   /** 删除单条定额（通过纠正 API 实现） */
@@ -548,11 +557,17 @@ export default function ResultsPage() {
         if (filtered.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
 
         return (
-          <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-            {filtered.map((line: string, idx: number) => (
-              <div key={idx}>{line}</div>
-            ))}
-          </div>
+          <Tooltip title={filtered.join('\n')} placement="topLeft" overlayStyle={{ maxWidth: 400 }}>
+            <div style={{
+              fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap',
+              maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {filtered.slice(0, 3).map((line: string, idx: number) => (
+                <div key={idx}>{line}</div>
+              ))}
+              {filtered.length > 3 && <span style={{ color: '#999' }}>...共{filtered.length}行</span>}
+            </div>
+          </Tooltip>
         );
       },
     },
@@ -646,9 +661,14 @@ export default function ResultsPage() {
 
         // 普通匹配说明
         return text ? (
-          <div style={{ fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
-            {text}
-          </div>
+          <Tooltip title={text} placement="topLeft" overlayStyle={{ maxWidth: 400 }}>
+            <div style={{
+              fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5',
+              maxHeight: 60, overflow: 'hidden',
+            }}>
+              {text}
+            </div>
+          </Tooltip>
         ) : <span style={{ color: '#ccc' }}>-</span>;
       },
     },

@@ -148,6 +148,12 @@ const SOURCE_LABELS: Record<string, string> = {
   user_confirmed: '用户确认',
   user_correction: '用户修正',
   manual: '手动录入',
+  batch_import: '批量导入',
+  promote_from_can: '候选晋升',
+  promote_from_candidate: '候选晋升',
+  auto_review: '自动审核',
+  xml_import: 'XML导入',
+  feedback_learn: '反馈学习',
 };
 
 export function sourceToLabel(source: string): string {

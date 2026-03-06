@@ -217,8 +217,11 @@ export default function AnalyticsPage() {
   const datasetNames = useMemo(() => {
     const names = new Set<string>();
     for (const record of benchmarkHistory) {
-      for (const dsName of Object.keys(record.datasets)) {
-        names.add(dsName);
+      // 防御：后端可能返回 datasets 为 null/undefined
+      if (record.datasets) {
+        for (const dsName of Object.keys(record.datasets)) {
+          names.add(dsName);
+        }
       }
     }
     return Array.from(names);

@@ -259,8 +259,8 @@ export default function BatchDashboard() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0 }}>批量任务看板</h2>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>批量任务看板</h2>
         <Space>
           <Input
             placeholder={defaultDir || '扫描目录（默认自动检测）'}

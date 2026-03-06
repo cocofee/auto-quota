@@ -266,7 +266,8 @@ export default function SettingsPage() {
       </Card>
 
       {/* 匹配模型配置 */}
-      <Card title="匹配模型（Agent）" loading={loading}>
+      <Card title="匹配模型（Agent）" loading={loading}
+        styles={{ header: { borderBottom: '3px solid #2563eb' } }}>
         <Alert
           type="info"
           showIcon
@@ -279,7 +280,7 @@ export default function SettingsPage() {
             当前模型：<Tag color="blue">{llmConfig.llm_type}</Tag>
             <Tag color="green">{llmConfig.model}</Tag>
             {llmConfig.has_api_key
-              ? <Tag color="success">API Key 已配置（{llmConfig.api_key_masked}）</Tag>
+              ? <Tag color="success">API Key 已配置</Tag>
               : <Tag color="error">API Key 未配置</Tag>
             }
           </div>
@@ -308,7 +309,8 @@ export default function SettingsPage() {
       </Card>
 
       {/* 验证模型配置 */}
-      <Card title="验证模型（审核纠偏）" loading={loading}>
+      <Card title="验证模型（审核纠偏）" loading={loading}
+        styles={{ header: { borderBottom: '3px solid #f59e0b' } }}>
         <Alert
           type="info"
           showIcon
@@ -323,7 +325,7 @@ export default function SettingsPage() {
                   当前模型：<Tag color="orange">{verifyConfig.llm_type}</Tag>
                   <Tag color="green">{verifyConfig.model}</Tag>
                   {verifyConfig.has_api_key
-                    ? <Tag color="success">API Key 已配置（{verifyConfig.api_key_masked}）</Tag>
+                    ? <Tag color="success">API Key 已配置</Tag>
                     : <Tag color="error">API Key 未配置</Tag>
                   }
                 </>
@@ -373,14 +375,14 @@ export default function SettingsPage() {
       {/* 系统参数 */}
       <Card title="匹配参数">
         <Descriptions bordered column={2} size="small">
-          <Descriptions.Item label="高置信度阈值">
-            <Badge status="success" text="≥ 85 分" />
+          <Descriptions.Item label="高置信度（绿灯）">
+            <Badge status="success" text="≥ 85 分 → 系统有把握，可直接采用" />
           </Descriptions.Item>
-          <Descriptions.Item label="中置信度阈值">
-            <Badge status="warning" text="70 - 84 分" />
+          <Descriptions.Item label="中置信度（黄灯）">
+            <Badge status="warning" text="70 - 84 分 → 不太确定，需人工复核" />
           </Descriptions.Item>
-          <Descriptions.Item label="低置信度阈值">
-            <Badge status="error" text="< 70 分" />
+          <Descriptions.Item label="低置信度（红灯）">
+            <Badge status="error" text="< 70 分 → 系统没信心，很可能需要修改" />
           </Descriptions.Item>
           <Descriptions.Item label="经验库直通阈值">
             <Badge status="processing" text="权威层精确匹配" />

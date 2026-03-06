@@ -282,9 +282,9 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       key: 'name',
       width: 200,
       ellipsis: { showTitle: false },
-      render: (name: string) => (
-        <Tooltip title={name} placement="topLeft">
-          <span>{name}</span>
+      render: (name: string, record: TaskInfo) => (
+        <Tooltip title={name || record.original_filename} placement="topLeft">
+          <span>{name || record.original_filename || '未命名'}</span>
         </Tooltip>
       ),
     },
@@ -382,23 +382,25 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
         const yPct = t > 0 ? (mid_conf / t) * 100 : 0;
         const rPct = t > 0 ? (low_conf / t) * 100 : 0;
         return (
-          <div style={{ minWidth: 100 }}>
-            {/* 比例条 */}
-            <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
-              {gPct > 0 && <div style={{ width: `${gPct}%`, background: COLORS.greenSolid }} />}
-              {yPct > 0 && <div style={{ width: `${yPct}%`, background: COLORS.yellowSolid }} />}
-              {rPct > 0 && <div style={{ width: `${rPct}%`, background: COLORS.redSolid }} />}
+          <Tooltip title={`★★★推荐: ${high_conf}条 / ★★参考: ${mid_conf}条 / ★待审: ${low_conf}条`}>
+            <div style={{ minWidth: 100 }}>
+              {/* 比例条 */}
+              <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
+                {gPct > 0 && <div style={{ width: `${gPct}%`, background: COLORS.greenSolid }} />}
+                {yPct > 0 && <div style={{ width: `${yPct}%`, background: COLORS.yellowSolid }} />}
+                {rPct > 0 && <div style={{ width: `${rPct}%`, background: COLORS.redSolid }} />}
+              </div>
+              {/* 数字摘要 */}
+              <span style={{ fontSize: 12, color: '#666' }}>
+                <span style={{ color: COLORS.greenSolid }}>{high_conf}</span>
+                /
+                <span style={{ color: COLORS.yellowSolid }}>{mid_conf}</span>
+                /
+                <span style={{ color: COLORS.redSolid }}>{low_conf}</span>
+                <span style={{ color: '#999', marginLeft: 4 }}>共{t}</span>
+              </span>
             </div>
-            {/* 数字摘要 */}
-            <span style={{ fontSize: 12, color: '#666' }}>
-              <span style={{ color: COLORS.greenSolid }}>{high_conf}</span>
-              /
-              <span style={{ color: COLORS.yellowSolid }}>{mid_conf}</span>
-              /
-              <span style={{ color: COLORS.redSolid }}>{low_conf}</span>
-              <span style={{ color: '#999', marginLeft: 4 }}>共{t}</span>
-            </span>
-          </div>
+          </Tooltip>
         );
       },
     },

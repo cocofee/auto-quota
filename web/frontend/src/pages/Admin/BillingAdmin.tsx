@@ -67,6 +67,10 @@ export default function BillingAdmin() {
   const [adjustUser, setAdjustUser] = useState<AdminUserQuota | null>(null);
   const [adjustForm] = Form.useForm();
 
+  // ============== 批量调整弹窗 ==============
+  const [batchVisible, setBatchVisible] = useState(false);
+  const [batchForm] = Form.useForm();
+
   const pageSize = 20;
 
   // 加载用户额度列表
@@ -128,6 +132,37 @@ export default function BillingAdmin() {
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       message.error(detail || '调整额度失败，请重试');
+    }
+  };
+
+  // 批量调整额度
+  const handleBatchAdjust = async () => {
+    try {
+      const values = await batchForm.validateFields();
+      const results: string[] = [];
+      let successCount = 0;
+      for (const user of users) {
+        try {
+          await api.post('/admin/billing/adjust', {
+            user_id: user.user_id,
+            amount: values.amount,
+            note: values.note,
+          });
+          successCount++;
+        } catch {
+          results.push(user.email);
+        }
+      }
+      if (results.length > 0) {
+        message.warning(`成功 ${successCount} 个，失败 ${results.length} 个: ${results.join(', ')}`);
+      } else {
+        message.success(`批量调整成功，共 ${successCount} 个用户`);
+      }
+      setBatchVisible(false);
+      batchForm.resetFields();
+      loadUsers();
+    } catch {
+      // 表单验证失败
     }
   };
 
@@ -271,13 +306,18 @@ export default function BillingAdmin() {
               label: '用户额度',
               children: (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                  <Input.Search
-                    placeholder="搜索邮箱或昵称"
-                    allowClear
-                    enterButton={<SearchOutlined />}
-                    style={{ maxWidth: 400 }}
-                    onSearch={(v) => { setSearchText(v); setUsersPage(1); }}
-                  />
+                  <Space>
+                    <Input.Search
+                      placeholder="搜索邮箱或昵称"
+                      allowClear
+                      enterButton={<SearchOutlined />}
+                      style={{ maxWidth: 400 }}
+                      onSearch={(v) => { setSearchText(v); setUsersPage(1); }}
+                    />
+                    <Button onClick={() => setBatchVisible(true)}>
+                      批量赠送额度
+                    </Button>
+                  </Space>
                   <Table
                     rowKey="user_id"
                     dataSource={users}
@@ -381,6 +421,40 @@ export default function BillingAdmin() {
             </Form>
           </Space>
         )}
+      </Modal>
+      {/* 批量调整额度弹窗 */}
+      <Modal
+        title="批量调整额度"
+        open={batchVisible}
+        onOk={handleBatchAdjust}
+        onCancel={() => setBatchVisible(false)}
+        okText="确认批量调整"
+        cancelText="取消"
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div style={{ color: '#666' }}>
+            将对当前页 <strong>{users.length}</strong> 个用户统一调整额度。
+          </div>
+          <Form form={batchForm} layout="vertical">
+            <Form.Item
+              name="amount"
+              label="调整数量（正数赠送，负数扣减）"
+              rules={[
+                { required: true, message: '请输入调整数量' },
+                { type: 'number', min: -999999, max: 999999, message: '数量不合理' },
+              ]}
+            >
+              <InputNumber style={{ width: '100%' }} placeholder="如: 500 或 -100" />
+            </Form.Item>
+            <Form.Item
+              name="note"
+              label="调整原因（必填）"
+              rules={[{ required: true, message: '请填写调整原因' }]}
+            >
+              <Input.TextArea rows={2} placeholder="如: 批量赠送、活动奖励等" maxLength={200} />
+            </Form.Item>
+          </Form>
+        </Space>
       </Modal>
     </Space>
   );
