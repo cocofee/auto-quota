@@ -202,6 +202,11 @@ class TextParser:
         if kva is not None:
             result["kva"] = kva
 
+        # 提取功率（kW）— 电动机等设备按功率分档
+        kw = self._extract_kw(text)
+        if kw is not None:
+            result["kw"] = kw
+
         # 提取电压等级（kV）
         kv = self._extract_kv(text)
         if kv is not None:
@@ -551,6 +556,27 @@ class TextParser:
         patterns = [
             r'(\d+(?:\.\d+)?)\s*[kK][vV][·.]?[aA]',              # 800kva, 800kV·A
             r'容量\s*(?:\([kK][vV][·.]?[aA](?:以内)?\))?\s*(\d+(?:\.\d+)?)',  # 容量(kV·A) 800
+        ]
+        return self._search_first_float(text, patterns)
+
+    def _extract_kw(self, text: str) -> Optional[float]:
+        """
+        提取功率（kW）— 电动机、水泵等设备按功率分档
+
+        支持格式: 18.5kW, 18.5KW, 功率(kW) 18.5, 容量(kW):18.5KW以下
+        定额格式: (功率kW以下) 220, 功率(kw) ≤30
+        注意区分kW和kVA（变压器用kVA，电机用kW）
+        """
+        patterns = [
+            # 格式: 数字kW/KW（排除kVA/kv·a）
+            r'(\d+(?:\.\d+)?)\s*[kK][wW](?![·.]?[aA])',
+            # 格式: 功率(kW以内/以下) 数字
+            r'功率\s*(?:\([kK][wW](?:以内|以下)?\))?\s*[:\s]*(\d+(?:\.\d+)?)',
+            # 格式: 容量(kW):数字
+            r'容量\s*\([kK][wW]\)\s*[:\s]*(\d+(?:\.\d+)?)',
+            # 定额格式: (功率kW以下) 数字 或 功率(kw) ≤数字
+            r'功率[kK][wW](?:以下|以内)\)\s*(\d+(?:\.\d+)?)',
+            r'功率\s*\([kK][wW]\)\s*[≤<=]*\s*(\d+(?:\.\d+)?)',
         ]
         return self._search_first_float(text, patterns)
 

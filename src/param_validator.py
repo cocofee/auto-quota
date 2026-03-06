@@ -24,7 +24,7 @@ from src.text_parser import parser as text_parser
 class ParamValidator:
     """候选定额的参数验证器"""
     TIER_PARAMS = [
-        "dn", "cable_section", "kva", "circuits", "ampere",
+        "dn", "cable_section", "kva", "kw", "circuits", "ampere",
         "weight_t", "perimeter", "large_side", "elevator_stops",
         "ground_bar_width",  # 接地扁钢宽度（如40×4中的40mm）
         "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
@@ -645,6 +645,27 @@ class ParamValidator:
                 # 通用定额降权：0.64 → confidence=60（黄灯）
                 score_sum += 0.64
                 details.append(f"定额无容量参数(通用定额降权)")
+
+        # === 3b. 功率kW（硬性参数，电动机/水泵等按功率分档） ===
+        if "kw" in bill_params:
+            check_count += 1
+            if "kw" in quota_params:
+                bill_kw = bill_params["kw"]
+                quota_kw = quota_params["kw"]
+                if bill_kw == quota_kw:
+                    score_sum += 1.0
+                    details.append(f"功率{bill_kw}kW={quota_kw}kW 精确匹配")
+                elif bill_kw < quota_kw:
+                    tier_score = self._tier_up_score(bill_kw, quota_kw)
+                    score_sum += tier_score
+                    details.append(f"功率{bill_kw}→{quota_kw}kW 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"功率{bill_kw}kW>{quota_kw}kW 不匹配(清单>定额)")
+            else:
+                score_sum += 0.64
+                details.append(f"定额无功率参数(通用定额降权)")
 
         # === 4. 回路数（硬性参数） ===
         if "circuits" in bill_params:
