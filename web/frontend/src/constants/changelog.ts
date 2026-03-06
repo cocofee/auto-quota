@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.91';
+export const APP_VERSION = '0.1.97';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,27 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.97',
+    date: '2026-03-06',
+    changes: [
+      { type: 'admin', text: 'v0.1.97 更新' },
+    ],
+  },
+  {
+    version: '0.1.96',
+    date: '2026-03-06',
+    changes: [
+      { type: 'user', text: 'Agent匹配质量大幅提升：修复大模型调用编码错误，LLM验证不再全部降级' },
+      { type: 'user', text: 'LLM调用加429限流自动重试（等2秒×3次），避免熔断' },
+      { type: 'admin', text: 'LLM调用从OpenAI SDK改为httpx直接请求（绕过容器ascii编码bug）' },
+      { type: 'admin', text: '懒猫manifest补全千问+Kimi真实API Key和BASE_URL' },
+      { type: 'admin', text: 'LLM验证并发从8路降为3路（避免千问429限流）' },
+      { type: 'admin', text: '向量搜索开关补全：experience_db/reranker在VECTOR_ENABLED=false时跳过' },
+      { type: 'admin', text: 'Docker镜像精简：去torch/chromadb，13GB→~1GB' },
+      { type: 'admin', text: 'Dockerfile写死UTF-8编码环境变量' },
+    ],
+  },
   {
     version: '0.1.91',
     date: '2026-03-06',
