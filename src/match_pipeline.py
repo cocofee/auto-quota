@@ -503,6 +503,13 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             confidence = calculate_confidence(param_score, param_match=False)
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
 
+    # 收集所有候选定额ID（供benchmark统计"正确答案是否在候选中"）
+    all_candidate_ids = [
+        str(c.get("quota_id", "")).strip()
+        for c in valid_candidates
+        if str(c.get("quota_id", "")).strip()
+    ]
+
     result = {
         "bill_item": item,
         "quotas": [{
@@ -515,6 +522,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         "confidence": confidence,
         "explanation": explanation,
         "candidates_count": len(candidates),
+        "all_candidate_ids": all_candidate_ids,
         "match_source": "search",
     }
     _append_trace_step(

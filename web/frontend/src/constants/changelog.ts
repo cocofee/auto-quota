@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.1.90';
+export const APP_VERSION = '0.1.91';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.1.91',
+    date: '2026-03-06',
+    changes: [
+      { type: 'admin', text: '更新benchmark基线和历史数据' },
+      { type: 'admin', text: '向量搜索开关+Docker精简（懒猫无GPU场景优化）' },
+      { type: 'admin', text: 'Codex 5.3审查修复7项批量工具问题' },
+    ],
+  },
   {
     version: '0.1.90',
     date: '2026-03-06',
