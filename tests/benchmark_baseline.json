@@ -1,14 +1,14 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-06 08:59:58",
+  "date": "2026-03-06 11:31:44",
   "note": "",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
       "total": 282,
-      "correct": 128,
-      "hit_rate": 45.4,
+      "correct": 147,
+      "hit_rate": 52.1,
       "diagnosis": {
-        "synonym_gap": 71,
+        "synonym_gap": 52,
         "wrong_tier": 73,
         "wrong_book": 10
       }
@@ -46,8 +46,8 @@
       "hit_rate": 35.8,
       "diagnosis": {
         "wrong_book": 3,
-        "synonym_gap": 90,
-        "wrong_tier": 250
+        "synonym_gap": 89,
+        "wrong_tier": 251
       }
     },
     "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
@@ -70,11 +70,11 @@
     },
     "江西省通用安装工程消耗量定额及统一基价表(2017)": {
       "total": 468,
-      "correct": 193,
-      "hit_rate": 41.2,
+      "correct": 187,
+      "hit_rate": 40.0,
       "diagnosis": {
-        "wrong_tier": 181,
-        "synonym_gap": 94
+        "wrong_tier": 183,
+        "synonym_gap": 98
       }
     },
     "河南省通用安装工程预算定额(2016)": {
@@ -88,11 +88,11 @@
     },
     "浙江省通用安装工程预算定额(2018)": {
       "total": 475,
-      "correct": 125,
-      "hit_rate": 26.3,
+      "correct": 124,
+      "hit_rate": 26.1,
       "diagnosis": {
         "wrong_tier": 102,
-        "synonym_gap": 246,
+        "synonym_gap": 247,
         "wrong_book": 2
       }
     },
@@ -114,7 +114,7 @@
       "yellow_rate": 0.0526,
       "red_rate": 0.0526,
       "exp_hit_rate": 0.0,
-      "avg_time_sec": 0.35
+      "avg_time_sec": 0.44
     }
   }
 }
