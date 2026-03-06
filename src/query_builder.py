@@ -462,11 +462,11 @@ def _normalize_bill_name(name: str) -> str:
         return "接线盒安装"
 
     # 配电箱：去掉编号噪声（AL、SGAT、7-AT-BDS1等），只保留"配电箱"
-    # 清单常写"配电箱AL"/"配电箱7-AT-BDS1"，编号对BM25无用
-    # 不去噪的话编号文字干扰BM25匹配到正确的配电箱定额
-    # 注意：不加"成套"前缀，因为北京叫"配电箱落地/明装"没有"成套"
+    # 不加"安装"后缀——加了会导致BM25匹配到"杆上配电设备安装 配电箱"
+    # （因为"安装"+"配电箱"两词同时出现在该定额名中，BM25给了高分）
+    # 只用"配电箱"反而更好，BM25会优先匹配以"配电箱"开头的定额
     if "配电箱" in name and "杆上" not in name:
-        return "配电箱安装"
+        return "配电箱"
 
     return name
 
@@ -545,6 +545,20 @@ def build_quota_query(parser, name: str, description: str = "",
             material = ""
         elif "螺纹法兰阀门" in name:
             name = name.replace("螺纹法兰阀门", "螺纹法兰阀安装")
+            material = ""
+
+        # 泛称阀门（闸阀/蝶阀/止回阀/球阀等）→ 按DN分流到法兰/螺纹阀门安装
+        # 定额不按阀门类型（闸阀/蝶阀）分类，而是按连接方式（法兰/螺纹）分类
+        # 大口径(DN≥50)通常法兰连接，小口径(DN<50)通常螺纹连接
+        # "闸阀""蝶阀"在定额库中完全搜不到，必须替换
+        _generic_valves = ("闸阀", "蝶阀", "止回阀", "球阀", "截止阀",
+                           "防护闸阀", "涡流蝶阀")
+        if any(v in name for v in _generic_valves) and "法兰" not in name and "螺纹" not in name:
+            _dn_val = int(dn) if dn else 50
+            if _dn_val >= 50:
+                name = "法兰阀门安装"
+            else:
+                name = "螺纹阀门安装"
             material = ""
 
         # PPR/PP-R管 → 定额标准名称：

@@ -98,6 +98,12 @@ _SUBTYPE_KEYWORDS = [
     "密闭阀门",
 ]
 
+# 反向排斥词表：定额名含这些词但清单不含时，丢弃规则匹配
+# 避免规则匹配到不相关的特殊定额（如"杆上配电设备"用于室内配电箱）
+_QUOTA_ONLY_KEYWORDS = [
+    "杆上",     # "杆上配电设备安装"是室外电杆设备，不用于室内配电箱
+]
+
 
 def _check_rule_subtype_conflict(rule_result: dict, bill_text: str) -> dict:
     """检查规则匹配结果的品类子类型是否与清单一致。
@@ -116,6 +122,12 @@ def _check_rule_subtype_conflict(rule_result: dict, bill_text: str) -> dict:
         if kw in bill_text and kw not in quota_name:
             logger.debug(
                 f"规则匹配被品类子类型拦截: 清单含'{kw}'但定额'{quota_name[:30]}'不含")
+            return None
+    # 反向检查：定额名含特定词但清单不含时拒绝
+    for kw in _QUOTA_ONLY_KEYWORDS:
+        if kw in quota_name and kw not in bill_text:
+            logger.debug(
+                f"规则匹配被反向排斥拦截: 定额'{quota_name[:30]}'含'{kw}'但清单不含")
             return None
     return rule_result
 

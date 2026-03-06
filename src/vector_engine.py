@@ -191,9 +191,9 @@ class VectorEngine:
         """
         top_k = top_k or config.VECTOR_TOP_K
 
-        # 检查索引是否存在
+        # 检查索引是否存在（Web端可能没有GPU构建索引，静默降级到纯BM25）
         if self.collection.count() == 0:
-            logger.error("向量索引为空，请先运行 build_index()")
+            logger.debug("向量索引为空，跳过向量搜索（纯BM25模式）")
             return []
 
         # 使用预计算的向量，或者现场编码

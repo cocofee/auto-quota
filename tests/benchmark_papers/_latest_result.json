@@ -1,18 +1,18 @@
 {
-  "run_time": "2026-03-05 22:36",
+  "run_time": "2026-03-06 09:23",
   "results": [
     {
       "province": "北京市建设工程施工消耗量标准(2024)",
       "total": 282,
-      "correct": 127,
-      "wrong": 155,
-      "hit_rate": 45.0,
+      "correct": 128,
+      "wrong": 154,
+      "hit_rate": 45.4,
       "diagnosis": {
         "synonym_gap": 71,
-        "wrong_tier": 74,
+        "wrong_tier": 73,
         "wrong_book": 10
       },
-      "elapsed": 56.3,
+      "elapsed": 40.4,
       "details": [
         {
           "bill_name": "配电箱1-AL",
@@ -853,9 +853,9 @@
         },
         {
           "bill_name": "闸阀",
-          "is_match": false,
-          "algo_id": "C10-5-9",
-          "algo_name": "螺纹阀门 公称直径(mm以内) 100",
+          "is_match": true,
+          "algo_id": "C10-5-32",
+          "algo_name": "螺纹法兰阀门 公称直径(mm以内) 100",
           "stored_ids": [
             "C10-5-32"
           ],
@@ -893,15 +893,15 @@
         {
           "bill_name": "截止阀 名称：铜芯截止阀",
           "is_match": false,
-          "algo_id": "C10-5-196",
-          "algo_name": "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 50",
+          "algo_id": "C10-5-29",
+          "algo_name": "螺纹法兰阀门 公称直径(mm以内) 50",
           "stored_ids": [
             "C10-5-6"
           ],
           "stored_names": [
             "螺纹阀门 公称直径(mm以内) 50"
           ],
-          "confidence": 93
+          "confidence": 84
         },
         {
           "bill_name": "套管 名称：一般填料套管",
@@ -2469,16 +2469,16 @@
         },
         {
           "bill_name": "闸阀 规格、压力等级：DN100",
-          "is_match": false,
-          "algo_id": "C10-5-9",
-          "algo_name": "螺纹阀门 公称直径(mm以内) 100",
+          "is_match": true,
+          "algo_id": "C10-5-32",
+          "algo_name": "螺纹法兰阀门 公称直径(mm以内) 100",
           "stored_ids": [
             "C10-5-32"
           ],
           "stored_names": [
             "螺纹法兰阀门 公称直径(mm以内) 100"
           ],
-          "confidence": 100
+          "confidence": 88
         },
         {
           "bill_name": "安全阀",
@@ -2508,9 +2508,9 @@
         },
         {
           "bill_name": "自动排气阀 含配套截止阀）",
-          "is_match": true,
-          "algo_id": "C10-5-15",
-          "algo_name": "自动排气阀 公称直径(mm以内) 20",
+          "is_match": false,
+          "algo_id": "C10-5-2",
+          "algo_name": "螺纹阀门 公称直径(mm以内) 20",
           "stored_ids": [
             "C10-5-15"
           ],
@@ -3342,9 +3342,9 @@
         },
         {
           "bill_name": "自动排气阀 含配套截止阀",
-          "is_match": true,
-          "algo_id": "C10-5-16",
-          "algo_name": "自动排气阀 公称直径(mm以内) 25",
+          "is_match": false,
+          "algo_id": "C10-5-3",
+          "algo_name": "螺纹阀门 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-16"
           ],
@@ -3364,7 +3364,7 @@
           "stored_names": [
             "螺纹阀门 公称直径(mm以内) 25"
           ],
-          "confidence": 84
+          "confidence": 88
         },
         {
           "bill_name": "管道保温",
@@ -3512,29 +3512,29 @@
         },
         {
           "bill_name": "止回阀",
-          "is_match": false,
-          "algo_id": "C10-5-193",
-          "algo_name": "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 25",
+          "is_match": true,
+          "algo_id": "C10-5-3",
+          "algo_name": "螺纹阀门 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-3"
           ],
           "stored_names": [
             "螺纹阀门 公称直径(mm以内) 25"
           ],
-          "confidence": 100
+          "confidence": 88
         },
         {
           "bill_name": "截止阀 名称：安全阀",
-          "is_match": false,
-          "algo_id": "C10-5-193",
-          "algo_name": "倒流防止器组成与安装(螺纹连接) 公称直径(mm以内) 25",
+          "is_match": true,
+          "algo_id": "C10-5-3",
+          "algo_name": "螺纹阀门 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-3"
           ],
           "stored_names": [
             "螺纹阀门 公称直径(mm以内) 25"
           ],
-          "confidence": 100
+          "confidence": 88
         },
         {
           "bill_name": "灭火器",
@@ -3655,9 +3655,9 @@
         },
         {
           "bill_name": "快速排气阀 含配套截止阀",
-          "is_match": true,
-          "algo_id": "C10-5-16",
-          "algo_name": "自动排气阀 公称直径(mm以内) 25",
+          "is_match": false,
+          "algo_id": "C10-5-3",
+          "algo_name": "螺纹阀门 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-5-16"
           ],
@@ -3697,14 +3697,14 @@
     {
       "province": "宁夏安装工程计价定额(2019)",
       "total": 90,
-      "correct": 27,
-      "wrong": 63,
-      "hit_rate": 30.0,
+      "correct": 26,
+      "wrong": 64,
+      "hit_rate": 28.9,
       "diagnosis": {
         "synonym_gap": 29,
-        "wrong_tier": 34
+        "wrong_tier": 35
       },
-      "elapsed": 39.6,
+      "elapsed": 37.8,
       "details": [
         {
           "bill_name": "管道支架",
@@ -4312,16 +4312,16 @@
         },
         {
           "bill_name": "铜截止阀 类型:铜截止阀 规格、压力等级:DN20 1.0M",
-          "is_match": true,
-          "algo_id": "2-10-5-2",
-          "algo_name": "螺纹阀门安装 公称直径(mm以内) 20",
+          "is_match": false,
+          "algo_id": "2-8-3-223",
+          "algo_name": "中压阀门 安全阀门(螺纹连接) 公称直径(mm以内) 20",
           "stored_ids": [
             "2-10-5-2"
           ],
           "stored_names": [
             "螺纹阀门安装 公称直径(mm以内) 20"
           ],
-          "confidence": 79
+          "confidence": 100
         },
         {
           "bill_name": "管道支架 详见图集03S402-77~79",
@@ -4899,7 +4899,7 @@
         "synonym_gap": 15,
         "wrong_tier": 5
       },
-      "elapsed": 7.8,
+      "elapsed": 5.3,
       "details": [
         {
           "bill_name": "800*800mm瓷砖地面",
@@ -5295,7 +5295,7 @@
         "synonym_gap": 74,
         "wrong_tier": 20
       },
-      "elapsed": 24.4,
+      "elapsed": 18.0,
       "details": [
         {
           "bill_name": "抛光砖楼面（A级）",
@@ -6740,7 +6740,7 @@
         "synonym_gap": 90,
         "wrong_tier": 250
       },
-      "elapsed": 109.5,
+      "elapsed": 79.0,
       "details": [
         {
           "bill_name": "碳钢通风管道",
@@ -12086,8 +12086,8 @@
         {
           "bill_name": "截止阀DN15 类型:截止阀",
           "is_match": false,
-          "algo_id": "C10-3-241",
-          "algo_name": "倒流防止器组成安装(螺纹连接不带水表) 公称直径(mm) 1",
+          "algo_id": "C10-3-52",
+          "algo_name": "水锤消除器安装(螺纹连接) 公称直径(mm以内) 15",
           "stored_ids": [
             "C10-3-1"
           ],
@@ -12099,8 +12099,8 @@
         {
           "bill_name": "截止阀DN20 类型:截止阀",
           "is_match": false,
-          "algo_id": "C10-4-111",
-          "algo_name": "镀锌钢管(螺纹连接) 公称直径(mm以内) 20",
+          "algo_id": "C10-3-130",
+          "algo_name": "Y型过滤器安装(螺纹连接) 公称直径(mm以内) 20",
           "stored_ids": [
             "C10-3-2"
           ],
@@ -12112,8 +12112,8 @@
         {
           "bill_name": "截止阀DN25 类型:截止阀",
           "is_match": false,
-          "algo_id": "C10-3-296",
-          "algo_name": "IC卡水表螺纹连接 公称直径(mm以内) 25",
+          "algo_id": "C10-3-131",
+          "algo_name": "Y型过滤器安装(螺纹连接) 公称直径(mm以内) 25",
           "stored_ids": [
             "C10-3-3"
           ],
@@ -12125,8 +12125,8 @@
         {
           "bill_name": "止回阀DN15 类型:止回阀",
           "is_match": false,
-          "algo_id": "C10-3-241",
-          "algo_name": "倒流防止器组成安装(螺纹连接不带水表) 公称直径(mm) 1",
+          "algo_id": "C10-3-52",
+          "algo_name": "水锤消除器安装(螺纹连接) 公称直径(mm以内) 15",
           "stored_ids": [
             "C10-3-1"
           ],
@@ -13774,7 +13774,7 @@
         "synonym_gap": 18,
         "wrong_tier": 1
       },
-      "elapsed": 2.9,
+      "elapsed": 2.2,
       "details": [
         {
           "bill_name": "挖一般土方",
@@ -14040,7 +14040,7 @@
         "synonym_gap": 7,
         "wrong_tier": 4
       },
-      "elapsed": 3.6,
+      "elapsed": 2.6,
       "details": [
         {
           "bill_name": "钢筋笼 混凝土灌注桩钢筋笼  钢筋 HPB300φ10以内 ",
@@ -14337,14 +14337,14 @@
     {
       "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
       "total": 468,
-      "correct": 165,
-      "wrong": 303,
-      "hit_rate": 35.3,
+      "correct": 193,
+      "wrong": 275,
+      "hit_rate": 41.2,
       "diagnosis": {
-        "wrong_tier": 200,
-        "synonym_gap": 103
+        "wrong_tier": 181,
+        "synonym_gap": 94
       },
-      "elapsed": 132.3,
+      "elapsed": 76.1,
       "details": [
         {
           "bill_name": "配电箱（半周长 2.5m以内）",
@@ -17062,9 +17062,9 @@
         },
         {
           "bill_name": "闸阀 DN150 类型:闸阀",
-          "is_match": false,
-          "algo_id": "10-5-72",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 150",
+          "is_match": true,
+          "algo_id": "10-5-44",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 150",
           "stored_ids": [
             "10-5-44"
           ],
@@ -17075,9 +17075,9 @@
         },
         {
           "bill_name": "闸阀 DN125 类型:闸阀",
-          "is_match": false,
-          "algo_id": "10-5-71",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 125",
+          "is_match": true,
+          "algo_id": "10-5-43",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 125",
           "stored_ids": [
             "10-5-43"
           ],
@@ -17088,9 +17088,9 @@
         },
         {
           "bill_name": "闸阀 DN65 类型:闸阀",
-          "is_match": false,
-          "algo_id": "10-5-68",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 65",
+          "is_match": true,
+          "algo_id": "10-5-40",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 65",
           "stored_ids": [
             "10-5-40"
           ],
@@ -17140,16 +17140,16 @@
         },
         {
           "bill_name": "专用球形止回阀不锈钢 类型:止回阀",
-          "is_match": false,
-          "algo_id": "10-5-159",
-          "algo_name": "不锈钢平焊法兰安装 公称直径(mm以内) 100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
           "stored_names": [
             "法兰阀门安装 公称直径(mm以内) 100"
           ],
-          "confidence": 100
+          "confidence": 88
         },
         {
           "bill_name": "倒流防止器 类型:倒流防止器",
@@ -17364,22 +17364,22 @@
         },
         {
           "bill_name": "闸阀 DN100 类型:闸阀",
-          "is_match": false,
-          "algo_id": "10-6-115",
-          "algo_name": "隔油器 地上式 DN100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
           "stored_names": [
             "法兰阀门安装 公称直径(mm以内) 100"
           ],
-          "confidence": 80
+          "confidence": 88
         },
         {
           "bill_name": "闸阀 DN80 类型:闸阀",
-          "is_match": false,
-          "algo_id": "10-5-69",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 80",
+          "is_match": true,
+          "algo_id": "10-5-41",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 80",
           "stored_ids": [
             "10-5-41"
           ],
@@ -17390,22 +17390,22 @@
         },
         {
           "bill_name": "止回阀 DN100",
-          "is_match": false,
-          "algo_id": "10-6-115",
-          "algo_name": "隔油器 地上式 DN100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
           "stored_names": [
             "法兰阀门安装 公称直径(mm以内) 100"
           ],
-          "confidence": 95
+          "confidence": 100
         },
         {
           "bill_name": "止回阀 DN80",
-          "is_match": false,
-          "algo_id": "10-5-353",
-          "algo_name": "倒流防止器组成安装(法兰连接带水表) 公称直径(mm) 80",
+          "is_match": true,
+          "algo_id": "10-5-41",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 80",
           "stored_ids": [
             "10-5-41"
           ],
@@ -17416,9 +17416,9 @@
         },
         {
           "bill_name": "蝶阀 DN100 类型:蝶阀",
-          "is_match": false,
-          "algo_id": "10-5-70",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
@@ -17429,9 +17429,9 @@
         },
         {
           "bill_name": "蝶阀 DN80 类型:蝶阀",
-          "is_match": false,
-          "algo_id": "10-5-69",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 80",
+          "is_match": true,
+          "algo_id": "10-5-41",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 80",
           "stored_ids": [
             "10-5-41"
           ],
@@ -17442,9 +17442,9 @@
         },
         {
           "bill_name": "防护闸阀 DN80 类型:防护闸阀",
-          "is_match": false,
-          "algo_id": "10-11-143",
-          "algo_name": "管道消毒、冲洗 公称直径(mm以内) 80",
+          "is_match": true,
+          "algo_id": "10-5-41",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 80",
           "stored_ids": [
             "10-5-41"
           ],
@@ -17986,9 +17986,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF20 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-2-116",
-          "algo_name": "复合型矩形风管周长(mm) ＞2000",
+          "is_match": true,
+          "algo_id": "7-3-205",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤200",
           "stored_ids": [
             "7-3-205"
           ],
@@ -17999,9 +17999,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF30 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-136",
-          "algo_name": "柔性接口及伸缩节 有法兰",
+          "is_match": true,
+          "algo_id": "7-3-206",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤300",
           "stored_ids": [
             "7-3-206"
           ],
@@ -18012,9 +18012,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF40 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-136",
-          "algo_name": "柔性接口及伸缩节 有法兰",
+          "is_match": true,
+          "algo_id": "7-3-207",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤400",
           "stored_ids": [
             "7-3-207"
           ],
@@ -18025,9 +18025,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF50 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-136",
-          "algo_name": "柔性接口及伸缩节 有法兰",
+          "is_match": true,
+          "algo_id": "7-3-208",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤500",
           "stored_ids": [
             "7-3-208"
           ],
@@ -18038,9 +18038,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF60 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-136",
-          "algo_name": "柔性接口及伸缩节 有法兰",
+          "is_match": true,
+          "algo_id": "7-3-209",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤600",
           "stored_ids": [
             "7-3-209"
           ],
@@ -18051,9 +18051,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF80 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-136",
-          "algo_name": "柔性接口及伸缩节 有法兰",
+          "is_match": true,
+          "algo_id": "7-3-210",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤800",
           "stored_ids": [
             "7-3-210"
           ],
@@ -18064,9 +18064,9 @@
         },
         {
           "bill_name": "双连杆手动密闭阀门 SMF100 名称：双连杆手动密闭阀门",
-          "is_match": false,
-          "algo_id": "7-3-58",
-          "algo_name": "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤",
+          "is_match": true,
+          "algo_id": "7-3-211",
+          "algo_name": "人防手动密闭阀门安装直径(mm) ≤1000",
           "stored_ids": [
             "7-3-211"
           ],
@@ -18156,67 +18156,67 @@
         {
           "bill_name": "插板阀 D400 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-237",
-          "algo_name": "换气堵头安装 D315",
+          "algo_id": "7-3-231",
+          "algo_name": "密闭穿墙管制作安装 Ⅲ型 直径(mm) ≤700",
           "stored_ids": [
             "7-3-207"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤400"
           ],
-          "confidence": 98
+          "confidence": 87
         },
         {
           "bill_name": "插板阀 D500 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-230",
-          "algo_name": "密闭穿墙管制作安装 Ⅲ型 直径(mm) ≤349",
+          "algo_id": "7-3-227",
+          "algo_name": "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤666",
           "stored_ids": [
             "7-3-208"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤500"
           ],
-          "confidence": 57
+          "confidence": 91
         },
         {
           "bill_name": "插板阀 D600 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-230",
-          "algo_name": "密闭穿墙管制作安装 Ⅲ型 直径(mm) ≤349",
+          "algo_id": "7-3-227",
+          "algo_name": "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤666",
           "stored_ids": [
             "7-3-209"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤600"
           ],
-          "confidence": 57
+          "confidence": 93
         },
         {
           "bill_name": "插板阀 D800 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-70",
-          "algo_name": "碳钢风口安装 带调节阀散流器安装(方、矩形)周长(mm) ≤",
+          "algo_id": "7-3-228",
+          "algo_name": "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤1242",
           "stored_ids": [
             "7-3-210"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤800"
           ],
-          "confidence": 95
+          "confidence": 88
         },
         {
           "bill_name": "插板阀 D1000 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-230",
-          "algo_name": "密闭穿墙管制作安装 Ⅲ型 直径(mm) ≤349",
+          "algo_id": "7-3-228",
+          "algo_name": "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤1242",
           "stored_ids": [
             "7-3-211"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤1000"
           ],
-          "confidence": 57
+          "confidence": 92
         },
         {
           "bill_name": "插板阀 500×800 名称：插板阀",
@@ -18234,15 +18234,15 @@
         {
           "bill_name": "插板阀 D300 名称：插板阀",
           "is_match": false,
-          "algo_id": "7-3-237",
-          "algo_name": "换气堵头安装 D315",
+          "algo_id": "7-3-226",
+          "algo_name": "密闭穿墙管制作安装 Ⅰ型 直径(mm) ≤315",
           "stored_ids": [
             "7-3-206"
           ],
           "stored_names": [
             "人防手动密闭阀门安装直径(mm) ≤300"
           ],
-          "confidence": 98
+          "confidence": 94
         },
         {
           "bill_name": "插板阀 250×160 名称：插板阀",
@@ -18976,9 +18976,9 @@
         },
         {
           "bill_name": "防护闸阀 DN150 类型:防护闸阀",
-          "is_match": false,
-          "algo_id": "10-5-72",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 150",
+          "is_match": true,
+          "algo_id": "10-5-44",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 150",
           "stored_ids": [
             "10-5-44"
           ],
@@ -18989,9 +18989,9 @@
         },
         {
           "bill_name": "防护闸阀 DN65 类型:防护闸阀",
-          "is_match": false,
-          "algo_id": "10-11-142",
-          "algo_name": "管道消毒、冲洗 公称直径(mm以内) 65",
+          "is_match": true,
+          "algo_id": "10-5-40",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 65",
           "stored_ids": [
             "10-5-40"
           ],
@@ -19002,9 +19002,9 @@
         },
         {
           "bill_name": "防护闸阀 DN50 类型:防护闸阀",
-          "is_match": false,
-          "algo_id": "10-5-67",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 50",
+          "is_match": true,
+          "algo_id": "10-5-39",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 50",
           "stored_ids": [
             "10-5-39"
           ],
@@ -19015,9 +19015,9 @@
         },
         {
           "bill_name": "涡流蝶阀不锈钢 DN65 类型:涡流蝶阀不锈钢",
-          "is_match": false,
-          "algo_id": "10-5-68",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 65",
+          "is_match": true,
+          "algo_id": "10-5-40",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 65",
           "stored_ids": [
             "10-5-40"
           ],
@@ -19028,9 +19028,9 @@
         },
         {
           "bill_name": "涡流蝶阀不锈钢 DN80 类型:涡流蝶阀不锈钢",
-          "is_match": false,
-          "algo_id": "10-5-69",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 80",
+          "is_match": true,
+          "algo_id": "10-5-41",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 80",
           "stored_ids": [
             "10-5-41"
           ],
@@ -19041,9 +19041,9 @@
         },
         {
           "bill_name": "涡流蝶阀不锈钢 DN100 类型:涡流蝶阀不锈钢",
-          "is_match": false,
-          "algo_id": "10-5-70",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
@@ -19108,9 +19108,9 @@
         },
         {
           "bill_name": "涡流蝶阀不锈钢 DN50 类型:涡流蝶阀不锈钢",
-          "is_match": false,
-          "algo_id": "10-5-67",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 50",
+          "is_match": true,
+          "algo_id": "10-5-39",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 50",
           "stored_ids": [
             "10-5-39"
           ],
@@ -19122,8 +19122,8 @@
         {
           "bill_name": "涡流蝶阀不锈钢 DN40 类型:涡流蝶阀不锈钢",
           "is_match": false,
-          "algo_id": "10-5-113",
-          "algo_name": "沟槽阀门 公称直径(mm以内) 40",
+          "algo_id": "10-5-128",
+          "algo_name": "螺纹法兰安装 公称直径(mm以内) 40",
           "stored_ids": [
             "10-5-38"
           ],
@@ -19173,9 +19173,9 @@
         },
         {
           "bill_name": "蝶阀 DN65 类型:蝶阀",
-          "is_match": false,
-          "algo_id": "10-5-68",
-          "algo_name": "对夹式蝶阀安装 公称直径(mm以内) 65",
+          "is_match": true,
+          "algo_id": "10-5-40",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 65",
           "stored_ids": [
             "10-5-40"
           ],
@@ -19186,9 +19186,9 @@
         },
         {
           "bill_name": "止回阀 DN65 类型:止回阀",
-          "is_match": false,
-          "algo_id": "10-5-342",
-          "algo_name": "倒流防止器组成安装(法兰连接不带水表) 公称直径(mm) 6",
+          "is_match": true,
+          "algo_id": "10-5-40",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 65",
           "stored_ids": [
             "10-5-40"
           ],
@@ -19225,16 +19225,16 @@
         },
         {
           "bill_name": "防护闸阀 DN100 类型:防护闸阀",
-          "is_match": false,
-          "algo_id": "10-6-115",
-          "algo_name": "隔油器 地上式 DN100",
+          "is_match": true,
+          "algo_id": "10-5-42",
+          "algo_name": "法兰阀门安装 公称直径(mm以内) 100",
           "stored_ids": [
             "10-5-42"
           ],
           "stored_names": [
             "法兰阀门安装 公称直径(mm以内) 100"
           ],
-          "confidence": 80
+          "confidence": 88
         },
         {
           "bill_name": "配电箱（半周长 0.5m以内）",
@@ -20582,7 +20582,7 @@
         "wrong_tier": 31,
         "synonym_gap": 37
       },
-      "elapsed": 27.9,
+      "elapsed": 23.2,
       "details": [
         {
           "bill_name": "配线",
@@ -22094,11 +22094,11 @@
       "wrong": 351,
       "hit_rate": 26.1,
       "diagnosis": {
-        "wrong_tier": 103,
-        "synonym_gap": 246,
+        "wrong_tier": 102,
+        "synonym_gap": 247,
         "wrong_book": 2
       },
-      "elapsed": 97.5,
+      "elapsed": 84.4,
       "details": [
         {
           "bill_name": "消火栓钢管",
@@ -22235,8 +22235,8 @@
         {
           "bill_name": "1.类型:闸阀 2.规格、压力等级:DN65",
           "is_match": false,
-          "algo_id": "10-2-7",
-          "algo_name": "螺纹阀门安装 公称直径(mm以内)65",
+          "algo_id": "10-2-31",
+          "algo_name": "螺纹法兰阀门安装 公称直径(mm以内)65",
           "stored_ids": [
             "10-2-37"
           ],
@@ -22601,16 +22601,16 @@
         },
         {
           "bill_name": "人防手动密闭阀",
-          "is_match": false,
-          "algo_id": "7-4-9",
-          "algo_name": "手动密闭阀门安装直径(mm)≤400",
+          "is_match": true,
+          "algo_id": "7-4-10",
+          "algo_name": "手动密闭阀门安装直径(mm)≤500",
           "stored_ids": [
             "7-4-10"
           ],
           "stored_names": [
             "手动密闭阀门安装直径(mm)≤500"
           ],
-          "confidence": 57
+          "confidence": 95
         },
         {
           "bill_name": "人防超压自动排气阀",
@@ -25989,9 +25989,9 @@
         },
         {
           "bill_name": "湿式报警装置",
-          "is_match": true,
-          "algo_id": "9-1-41",
-          "algo_name": "湿式报警装置 公称直径(mm以内)150",
+          "is_match": false,
+          "algo_id": "9-1-49",
+          "algo_name": "水流指示器 沟槽法兰连接 公称直径(mm以内)150",
           "stored_ids": [
             "9-1-41",
             "6-5-81"
@@ -25999,7 +25999,7 @@
           "stored_names": [
             "湿式报警装置 公称直径（mm以内）150"
           ],
-          "confidence": 80
+          "confidence": 95
         },
         {
           "bill_name": "滑触线",
@@ -26187,15 +26187,15 @@
         {
           "bill_name": "玻璃钢蝶阀",
           "is_match": false,
-          "algo_id": "7-2-100",
-          "algo_name": "玻璃钢圆形风管直径(mm)≤200",
+          "algo_id": "7-3-149",
+          "algo_name": "玻璃钢风帽安装 锥形风帽≤25kg",
           "stored_ids": [
             "7-3-7"
           ],
           "stored_names": [
             "风管蝶阀周长(mm)≤800"
           ],
-          "confidence": 90
+          "confidence": 77
         },
         {
           "bill_name": "玻璃钢风口",
@@ -28362,7 +28362,7 @@
         "wrong_tier": 11,
         "synonym_gap": 9
       },
-      "elapsed": 7.6,
+      "elapsed": 5.5,
       "details": [
         {
           "bill_name": "套管 名称、类型:一般填料套管 规格类型：DN100",

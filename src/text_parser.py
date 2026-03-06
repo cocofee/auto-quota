@@ -342,6 +342,17 @@ class TextParser:
                 if 10 <= val <= 600:
                     return val
 
+        # 人防密闭阀门专用规格：SMF20=直径200mm，D400=直径400mm
+        # SMF后面的数字是厘米(×10→毫米)，D后面的数字直接是毫米
+        _civil_defense_kw = ("密闭阀", "插板阀", "人防")
+        if any(kw in text for kw in _civil_defense_kw):
+            smf_match = re.search(r'SMF\s*(\d+)', text, re.IGNORECASE)
+            if smf_match:
+                return int(smf_match.group(1)) * 10
+            d_match = re.search(r'\bD(\d{3,4})\b', text)
+            if d_match:
+                return int(d_match.group(1))
+
         return None
 
     def _extract_conduit_dn(self, text: str) -> Optional[int]:
