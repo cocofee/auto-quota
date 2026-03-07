@@ -253,7 +253,8 @@ def _extract_desc_equipment_type(fields: dict, bill_name: str) -> str:
 
 def _format_number_for_query(value: float) -> str:
     """数值格式化：整数去小数点，小数保留原样。"""
-    return str(int(value)) if value == int(value) else str(value)
+    # 用 modulo 避免浮点精度问题（如 25.0 == int(25.0) 在某些情况可能不成立）
+    return str(int(value)) if value % 1 == 0 else str(value)
 
 
 def extract_description_fields(description: str) -> dict:

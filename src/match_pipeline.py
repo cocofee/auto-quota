@@ -139,6 +139,8 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     如果所有候选都不通过类别检查，回退到第一个（保持原有行为）。
     只检查前5个候选，避免性能问题。
     """
+    if not candidates:
+        return {}
     if len(candidates) <= 1:
         return candidates[0]
 
