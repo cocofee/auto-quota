@@ -146,22 +146,16 @@ def _is_bill_serial(a_val) -> bool:
 
 
 def _resolve_output_materials(result: dict) -> list[dict]:
-    """获取要输出的主材列表
+    """获取要输出的主材行列表
 
-    优先级：输入文件提取的主材 > 经验库的主材
+    只用输入文件中提取的主材（source_materials），不从经验库凭空加。
+    原则：定额下面是主材，原文件有才带，不平白无故加。
     返回: [{code, name, unit, qty}, ...]
     """
-    # 优先用输入文件中提取的主材（bill_item.source_materials）
     bill_item = result.get("bill_item", {})
     source_mats = bill_item.get("source_materials")
     if isinstance(source_mats, list) and source_mats:
         return source_mats
-
-    # 其次用经验库的主材（result.materials）
-    exp_mats = result.get("materials")
-    if isinstance(exp_mats, list) and exp_mats:
-        return exp_mats
-
     return []
 
 
