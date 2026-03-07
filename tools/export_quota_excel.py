@@ -113,18 +113,21 @@ def parse_trade_xml(xml_path):
 def guess_code_format(records):
     """
     判断编码格式:
-      - "letter": C10-1-1 形式（北京等）
-      - "numeric": 30101001 形式（福建等）
+      - "letter": C10-1-1 形式（北京等，单字母+数字-数字-数字）
+      - "numeric": 30101001 形式（福建等，8位纯数字）
+      - "flat": 电力/风电等行业定额（YT1-1, F3X1-1, 1001等非标格式）
     """
     if not records:
         return "unknown"
 
     sample = records[0][0]
-    if re.match(r"^[A-Z]", sample):
+    # 先检查标准的省级格式
+    if re.match(r"^[A-Z]\d+-\d+-\d+$", sample):
         return "letter"
     elif re.match(r"^\d{8}$", sample):
         return "numeric"
-    return "unknown"
+    # 其余都归为flat格式（电力行业的多字母前缀、纯数字短编码等）
+    return "flat"
 
 
 def parse_code_letter(code):
@@ -314,9 +317,13 @@ def scan_quota_databases():
     """
     扫描所有广联达数据库目录，返回可导出的定额列表
 
+    支持两种目录结构:
+    - 普通省份: {数据库}/北京/定额库/{序列}/定额库/{具体定额}/数据/子目索引.Index
+    - 行业版(GDL11): {数据库}/GDL11/电力/定额库/{序列}/定额库/{具体定额}/数据/子目索引.Index
+
     返回: [
         {
-            "province": "北京",
+            "province": "北京" 或 "电力",
             "series": "北京2024施工消耗量标准",
             "quota_name": "北京市建设工程施工消耗量标准(2024)",
             "index_path": "...",
@@ -336,34 +343,51 @@ def scan_quota_databases():
 
         for province in os.listdir(db_dir):
             province_path = os.path.join(db_dir, province)
+
+            # 收集所有"定额库"入口：普通省份直接有，行业版(GDL11)在子目录下
+            # quota_lib_entries: [(显示省份名, 定额库路径), ...]
+            quota_lib_entries = []
+
             quota_lib = os.path.join(province_path, "定额库")
-            if not os.path.isdir(quota_lib):
-                continue
+            if os.path.isdir(quota_lib):
+                # 普通省份结构: 北京/定额库/...
+                quota_lib_entries.append((province, quota_lib))
+            else:
+                # 行业版结构(如GDL11): GDL11/电力/定额库/...
+                # 扫描下一层子目录找"定额库"
+                if os.path.isdir(province_path):
+                    for sub_name in os.listdir(province_path):
+                        sub_path = os.path.join(province_path, sub_name)
+                        sub_quota_lib = os.path.join(sub_path, "定额库")
+                        if os.path.isdir(sub_quota_lib):
+                            # 用子目录名作为省份名（如"电力"）
+                            quota_lib_entries.append((sub_name, sub_quota_lib))
 
-            for series in os.listdir(quota_lib):
-                series_path = os.path.join(quota_lib, series)
-                if not os.path.isdir(series_path):
-                    continue
+            for display_name, qlib in quota_lib_entries:
+                for series in os.listdir(qlib):
+                    series_path = os.path.join(qlib, series)
+                    if not os.path.isdir(series_path):
+                        continue
 
-                # 找定额库子目录
-                inner_lib = os.path.join(series_path, "定额库")
-                if not os.path.isdir(inner_lib):
-                    continue
+                    # 找定额库子目录
+                    inner_lib = os.path.join(series_path, "定额库")
+                    if not os.path.isdir(inner_lib):
+                        continue
 
-                for quota_name in os.listdir(inner_lib):
-                    quota_path = os.path.join(inner_lib, quota_name)
-                    index_path = os.path.join(quota_path, "数据", "子目索引.Index")
-                    xml_path = os.path.join(quota_path, "基础数据", "子目专业.xml")
+                    for quota_name in os.listdir(inner_lib):
+                        quota_path = os.path.join(inner_lib, quota_name)
+                        index_path = os.path.join(quota_path, "数据", "子目索引.Index")
+                        xml_path = os.path.join(quota_path, "基础数据", "子目专业.xml")
 
-                    if os.path.isfile(index_path):
-                        results.append({
-                            "province": province,
-                            "series": series,
-                            "quota_name": quota_name,
-                            "index_path": index_path,
-                            "xml_path": xml_path if os.path.isfile(xml_path) else None,
-                            "db_source": db_source,
-                        })
+                        if os.path.isfile(index_path):
+                            results.append({
+                                "province": display_name,
+                                "series": series,
+                                "quota_name": quota_name,
+                                "index_path": index_path,
+                                "xml_path": xml_path if os.path.isfile(xml_path) else None,
+                                "db_source": db_source,
+                            })
 
     return results
 
@@ -409,41 +433,60 @@ def export_one_quota(quota_info, output_base_dir):
     category_books = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     unknown_unit_count = 0
-    for code, name in records:
-        if code_format == "letter":
-            parsed = parse_code_letter(code)
-        elif code_format == "numeric":
-            parsed = parse_code_numeric(code)
-        else:
-            continue
 
-        if not parsed:
-            continue
+    if code_format == "flat":
+        # flat格式（电力等行业定额）：不按册/章拆分，直接导出
+        # 所有记录放到一个文件的一个Sheet里
+        for code, name in records:
+            unit = code_to_unit.get(code, "")
+            if not unit:
+                unknown_unit_count += 1
+            # 统一放到 category="", book=1, chapter=1
+            category_books[""][1][1].append((code, name, unit))
+    else:
+        for code, name in records:
+            if code_format == "letter":
+                parsed = parse_code_letter(code)
+            elif code_format == "numeric":
+                parsed = parse_code_numeric(code)
+            else:
+                continue
 
-        # 查找单位
-        unit = ""
-        if code in code_to_unit:
-            unit = code_to_unit[code]
-        elif code_format == "numeric":
-            # 数字格式转字母格式再查
-            letter_code = numeric_code_to_letter(code)
-            unit = code_to_unit.get(letter_code, "")
+            if not parsed:
+                continue
 
-        if not unit:
-            unknown_unit_count += 1
+            # 查找单位
+            unit = ""
+            if code in code_to_unit:
+                unit = code_to_unit[code]
+            elif code_format == "numeric":
+                # 数字格式转字母格式再查
+                letter_code = numeric_code_to_letter(code)
+                unit = code_to_unit.get(letter_code, "")
 
-        category = parsed["category"]
-        book = parsed["book"]
-        chapter = parsed["chapter"]
-        category_books[category][book][chapter].append((code, name, unit))
+            if not unit:
+                unknown_unit_count += 1
+
+            category = parsed["category"]
+            book = parsed["book"]
+            chapter = parsed["chapter"]
+            category_books[category][book][chapter].append((code, name, unit))
 
     if unknown_unit_count > 0:
         print(f"  注意: {unknown_unit_count} 条缺少单位信息")
 
     # 5. 为每个大类的每册生成Excel
-    # 输出目录: output/quota_export/{省份}_{定额名}/
+    # 输出目录结构:
+    #   普通格式: output_base/{省份}_{定额名}/C01_xxx.xlsx（多册多文件）
+    #   flat格式: output_base/{省份}/{定额名}/xxx.xlsx（一个定额版本一个文件）
     safe_name = quota_name.replace("(", "（").replace(")", "）")
-    output_dir = os.path.join(output_base_dir, f"{province}_{safe_name}")
+    if code_format == "flat":
+        # flat格式按 {省份}/{序列名}/ 组织，和其他省份目录结构一致
+        series_name = quota_info.get("series", "")
+        series_safe = series_name.replace("(", "（").replace(")", "）") if series_name else safe_name
+        output_dir = os.path.join(output_base_dir, province, series_safe)
+    else:
+        output_dir = os.path.join(output_base_dir, f"{province}_{safe_name}")
 
     total_files = 0
     total_records = 0
@@ -453,11 +496,16 @@ def export_one_quota(quota_info, output_base_dir):
         for book_num in sorted(books.keys()):
             chapters = books[book_num]
 
-            # 获取册名称
-            book_name = get_book_name(book_num, trade_map, code_format)
+            if code_format == "flat":
+                # flat格式：一个定额版本一个文件，文件名就是定额名
+                file_name = f"{safe_name}.xlsx"
+                book_name = safe_name
+            else:
+                # 获取册名称
+                book_name = get_book_name(book_num, trade_map, code_format)
+                # 文件名: "C01_机械设备安装工程.xlsx"
+                file_name = f"{category}{book_num:02d}_{book_name}.xlsx"
 
-            # 文件名: "C01_机械设备安装工程.xlsx"
-            file_name = f"{category}{book_num:02d}_{book_name}.xlsx"
             # 清理文件名中的非法字符
             file_name = re.sub(r'[<>:"/\\|?*]', '_', file_name)
             output_path = os.path.join(output_dir, file_name)
