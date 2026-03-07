@@ -72,7 +72,7 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
 
     # 初始化搜索引擎
     searcher, validator = init_search_components(resolved_province=province)
-    parser = TextParser()
+    parser = TextParser()  # noqa: F841 — 保留供后续扩展
 
     # 构建bill_items
     bill_items = []
@@ -565,19 +565,19 @@ def main():
                 result = run_json_paper(province, items)
                 json_results.append(result)
 
-                mark = '✓' if result['hit_rate'] >= 50 else '✗'
+                mark = '[OK]' if result['hit_rate'] >= 50 else '[FAIL]'
                 print(f" {mark} 命中 {result['correct']}/{result['total']}"
                       f" = {result['hit_rate']:.1f}% ({result['elapsed']:.0f}s)")
 
                 if args.detail:
                     for d in result['details']:
-                        m = '✓' if d['is_match'] else '✗'
+                        m = '[OK]' if d['is_match'] else '[X]'
                         name = d['bill_name'][:20]
                         algo = d['algo_name'][:20]
                         stored = d['stored_names'][0][:20] if d['stored_names'] else '?'
                         print(f"    {m} {name} → {algo} (答案:{stored})")
 
-            summary = print_json_summary(json_results, baseline)
+            print_json_summary(json_results, baseline)
         else:
             print(f"未找到JSON试卷（{PAPERS_DIR}/ 为空）")
 

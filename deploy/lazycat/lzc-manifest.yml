@@ -24,7 +24,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: production
-      JWT_SECRET_KEY: "8OseAirAJYwPDPdryD4y_mWDItFZVp-5tywgeRdf5io"
+      JWT_SECRET_KEY: "changeme-generate-a-real-key"
       CORS_ORIGINS: http://frontend.cloud.lazycat.app.autoquota.lzcapp
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
