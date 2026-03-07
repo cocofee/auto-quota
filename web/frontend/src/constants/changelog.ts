@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.2.3';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,28 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.3',
+    date: '2026-03-07',
+    changes: [
+      { type: 'admin', text: 'fix(web): 前端26项Bug修复与体验优化' },
+      { type: 'admin', text: '积累的防御性修复和规则优化' },
+      { type: 'admin', text: 'M2召回改善——新增14条同义词覆盖高频缺口' },
+      { type: 'admin', text: '排序权重调整——name_bonus提权，减少品类选错' },
+      { type: 'admin', text: '置信度校准v2——多信号加权替代param_score×95' },
+    ],
+  },
+  {
+    version: '0.2.2',
+    date: '2026-03-07',
+    changes: [
+      { type: 'admin', text: 'fix(web): 前端26项Bug修复与体验优化' },
+      { type: 'admin', text: '积累的防御性修复和规则优化' },
+      { type: 'admin', text: 'M2召回改善——新增14条同义词覆盖高频缺口' },
+      { type: 'admin', text: '排序权重调整——name_bonus提权，减少品类选错' },
+      { type: 'admin', text: '置信度校准v2——多信号加权替代param_score×95' },
+    ],
+  },
   {
     version: '0.2.0',
     date: '2026-03-06',
