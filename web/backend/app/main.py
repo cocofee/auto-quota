@@ -11,10 +11,11 @@ auto-quota Web后端 - FastAPI 入口
 """
 
 import sys
+import time as _time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException, Depends, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
@@ -182,8 +183,14 @@ async def list_provinces():
 # 管理员初始化 API（将指定用户设为管理员）
 # ============================================================
 
+# make-admin 速率限制：防止暴力猜测密钥（每IP每分钟最多5次）
+_make_admin_attempts: dict[str, list[float]] = {}  # {ip: [时间戳列表]}
+_MAKE_ADMIN_RATE_LIMIT = 5   # 每分钟最大尝试次数
+_MAKE_ADMIN_WINDOW = 60      # 窗口期（秒）
+
 @app.post("/api/admin/make-admin", tags=["管理员"])
 async def make_admin(
+    request: Request,
     email: str = Body(description="用户邮箱"),
     admin_secret: str = Body(description="管理员密钥（JWT_SECRET_KEY）"),
 ):
@@ -196,6 +203,24 @@ async def make_admin(
     防止源码中可见的硬编码密钥被滥用。
     """
     from app.config import JWT_SECRET_KEY, _DEV_FALLBACK_KEY
+
+    # 速率限制检查（支持反向代理场景，优先用 X-Forwarded-For）
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    now = _time.time()
+    attempts = _make_admin_attempts.get(client_ip, [])
+    # 清除窗口期外的旧记录
+    attempts = [t for t in attempts if now - t < _MAKE_ADMIN_WINDOW]
+    if len(attempts) >= _MAKE_ADMIN_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="请求过于频繁，请稍后再试。"
+        )
+    attempts.append(now)
+    _make_admin_attempts[client_ip] = attempts
+
     # 安全检查：使用开发默认密钥时拒绝此接口（防止硬编码密钥被滥用）
     if JWT_SECRET_KEY == _DEV_FALLBACK_KEY:
         raise HTTPException(

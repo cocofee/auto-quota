@@ -73,18 +73,27 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
     desc = item.get("description", "") or ""
     desc_lines = extract_description_lines(desc)
 
-    # 依次运行审核检查器（短路：发现第一个错误就返回）
-    error = (
-        check_category_mismatch(item, quota_name, desc_lines)
-        or check_sleeve_mismatch(item, quota_name, desc_lines)
-        or check_material_mismatch(item, quota_name, desc_lines)
-        or check_connection_mismatch(item, quota_name, desc_lines)
-        or check_pipe_usage(item, quota_name, desc_lines)
-        or check_parameter_deviation(item, quota_name, desc_lines)
-        or check_electric_pair(item, quota_name, desc_lines)
-        or check_elevator_type(item, quota_name, desc_lines)
-        or check_elevator_floor(item, quota_name, desc_lines, quota_id=quota_id)
-    )
+    # 运行所有审核检查器，收集全部错误（不再短路）
+    checkers = [
+        check_category_mismatch(item, quota_name, desc_lines),
+        check_sleeve_mismatch(item, quota_name, desc_lines),
+        check_material_mismatch(item, quota_name, desc_lines),
+        check_connection_mismatch(item, quota_name, desc_lines),
+        check_pipe_usage(item, quota_name, desc_lines),
+        check_parameter_deviation(item, quota_name, desc_lines),
+        check_electric_pair(item, quota_name, desc_lines),
+        check_elevator_type(item, quota_name, desc_lines),
+        check_elevator_floor(item, quota_name, desc_lines, quota_id=quota_id),
+    ]
+    errors = [e for e in checkers if e is not None]
+
+    if not errors:
+        return None
+
+    # 返回第一个错误作为主错误（保持向后兼容），附带全部错误列表
+    error = errors[0].copy()  # 用copy避免循环引用（error本身在errors列表里）
+    if len(errors) > 1:
+        error["all_errors"] = errors  # 纠正步骤可以读取全部错误
 
     return error
 

@@ -278,8 +278,9 @@ class TextParser:
         self._set_parse_cache(text, result)
         return dict(result)
 
-    # De外径→DN公称直径转换表（塑料管常用De标记外径，定额用DN标记公称直径）
-    # 标准对照：GB/T 1047, ISO 4065
+    # De外径→DN公称直径转换表（已弃用，保留避免外部引用报错）
+    # 塑料管定额按外径(De)值分档（如"公称外径32mm以内"），不需要转换为DN
+    # 之前误用此表把De32转成DN25，导致搜索和参数验证都对不上定额的外径分档值
     DE_TO_DN = {
         20: 15, 25: 20, 32: 25, 40: 32, 50: 40,
         63: 50, 75: 65, 90: 80, 110: 100, 125: 100,
@@ -315,17 +316,11 @@ class TextParser:
             if match:
                 return int(match.group(1))
 
-        # 匹配De格式（塑料管外径标记），转换为DN
+        # 匹配De格式（塑料管外径标记），直接返回De原值
+        # 塑料管定额按外径(De)分档（如"公称外径32mm以内"），De值=定额分档值
         de_match = re.search(r'[Dd][Ee]\s*(\d+)', text)
         if de_match:
-            de_value = int(de_match.group(1))
-            # 查转换表，找不到则取最接近的DN值
-            if de_value in self.DE_TO_DN:
-                return self.DE_TO_DN[de_value]
-            else:
-                # 找最接近的De值
-                closest_de = min(self.DE_TO_DN.keys(), key=lambda x: abs(x - de_value))
-                return self.DE_TO_DN[closest_de]
+            return int(de_match.group(1))
 
         # 匹配"规格：65"格式（清单描述中常见，管道项的规格通常就是DN值）
         # 安全条件：
