@@ -168,7 +168,12 @@ class BM25Engine:
             if not isinstance(data, dict):
                 raise ValueError("索引根节点不是对象")
 
-            self.quota_ids = [int(x) for x in data.get("quota_ids", [])]
+            self.quota_ids = []
+            for x in data.get("quota_ids", []):
+                try:
+                    self.quota_ids.append(int(x))
+                except (ValueError, TypeError):
+                    self.quota_ids.append(0)
             self.tokenized_corpus = data.get("tokenized_corpus", [])
             if not isinstance(self.tokenized_corpus, list):
                 raise ValueError("tokenized_corpus 不是数组")
