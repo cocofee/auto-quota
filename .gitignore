@@ -69,8 +69,9 @@ tools/download_oss_remaining.py
 data/oss_samples/
 data/experience.db
 
-# 微信文件采集历史（体积大，本地生成）
+# 采集/拉取历史（体积大，本地生成）
 tools/.collect_history.json
+tools/.pull_history.json
 
 # Benchmark运行结果快照（本地生成，不该commit）
 tests/benchmark_papers/_latest_result.json
