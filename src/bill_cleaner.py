@@ -73,7 +73,7 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
 
         classification = classify_specialty(
             item["name"], desc, section_title=section_for_classify,
-            province=province
+            province=province, bill_code=item.get("code")
         )
         item["specialty"] = classification.get("primary")
         item["specialty_name"] = classification.get("primary_name")

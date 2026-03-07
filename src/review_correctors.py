@@ -381,15 +381,33 @@ def validate_correction(error: dict, corrected_id: str, corrected_name: str) -> 
     return True
 
 
-def correct_error(item, error, dn, province=None, conn=None):
+def _is_relevant_correction(item, corrected_name):
+    """防劣化检查：纠正后的定额名必须和清单名有语义关联
+
+    从清单名提取2字中文词，纠正结果必须包含至少一个词。
+    防止跨库搜索到完全无关的定额（如"小便器"→"冷藏库门"）。
+    """
+    bill_name = item.get("name", "")
+    if not bill_name or not corrected_name:
+        return True  # 信息不足时放行，由后续验真兜底
+    # 提取清单名中的2字中文词
+    words = re.findall(r'[\u4e00-\u9fff]{2}', bill_name)
+    if not words:
+        return True  # 无法提取关键词时放行
+    # 纠正后的定额名必须包含至少一个清单关键词
+    return any(w in corrected_name for w in words)
+
+
+def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=None):
     """统一入口：根据错误类型自动调度到对应纠正函数
 
     参数:
         item: 清单项字典（含 name, description 等）
         error: 检测器返回的错误字典（含 type, reason 等）
         dn: 公称直径
-        province: 省份
-        conn: 可选的共享数据库连接
+        province: 省份（主定额库）
+        conn: 可选的共享数据库连接（主库用）
+        sibling_provinces: 兄弟定额库列表（跨库搜索用，如["上海安装"]）
     返回: (quota_id, quota_name) 或 None
            失败时返回 None，失败原因记录到日志
     """
@@ -400,17 +418,44 @@ def correct_error(item, error, dn, province=None, conn=None):
     if not corrector:
         logger.debug(f"纠正跳过: 未知错误类型 '{error_type}'")
         return None
+
+    # 先在主库搜索（现有逻辑不变）
     try:
         result = corrector(item, error, dn, province, conn)
     except Exception as e:
-        # 搜索过程出错（如DB连接异常），记录错误并返回 None（转人工）
         bill_name = item.get("name", "")[:30]
         logger.error(f"纠正搜索出错: [{error_type}] {bill_name} - {e}")
-        return None
-    # 二次验真：搜索结果是否真的修复了问题
-    if result and not validate_correction(error, result[0], result[1]):
-        logger.debug(f"纠正验真不通过: [{error_type}] 纠正结果 {result[0]} 未通过验真，转人工")
-        return None  # 验真不通过，转人工
+        result = None
+
+    # 二次验真 + 防劣化
+    if result:
+        if not validate_correction(error, result[0], result[1]):
+            logger.debug(f"纠正验真不通过: [{error_type}] 纠正结果 {result[0]} 未通过验真")
+            result = None
+        elif not _is_relevant_correction(item, result[1]):
+            logger.debug(f"纠正防劣化拦截: [{error_type}] 纠正结果 {result[1]} 与清单无关")
+            result = None
+
+    # 主库没搜到或验真不通过，尝试兄弟库（跨库搜索）
+    if not result and sibling_provinces:
+        bill_name = item.get("name", "")[:30]
+        for sib_province in sibling_provinces:
+            try:
+                # 兄弟库不共享连接，让search_quota_db自己开关连接
+                sib_result = corrector(item, error, dn, sib_province, None)
+            except Exception as e:
+                logger.error(f"跨库纠正出错: [{error_type}] {bill_name} 在 {sib_province} - {e}")
+                continue
+            if sib_result:
+                if not validate_correction(error, sib_result[0], sib_result[1]):
+                    logger.debug(f"跨库验真不通过: {sib_province} {sib_result[0]}")
+                    continue
+                if not _is_relevant_correction(item, sib_result[1]):
+                    logger.debug(f"跨库防劣化拦截: {sib_province} {sib_result[1]} 与清单无关")
+                    continue
+                logger.info(f"跨库纠正成功: [{error_type}] {bill_name} → {sib_province} {sib_result[0]}")
+                return sib_result
+
     if not result:
         bill_name = item.get("name", "")[:30]
         logger.debug(f"纠正无结果: [{error_type}] {bill_name} 搜索未找到合适定额，转人工")
