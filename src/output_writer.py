@@ -777,10 +777,16 @@ class OutputWriter:
             # 在清单行的J-O列写入推荐度、备选和主材
             self._write_bill_extra_info(ws, row_idx, result)
 
-            # 要插入的行数（定额行+主材行，无定额至少1行用于未匹配提示）
+            # 要插入的行数（定额行+主材行，无定额不插入行）
             materials = _resolve_output_materials(result)
-            quota_rows = len(quotas) if quotas else 1
-            num_insert = quota_rows + len(materials)
+            quota_rows = len(quotas) if quotas else 0
+            mat_rows = len(materials) if quotas else 0
+            num_insert = quota_rows + mat_rows
+
+            if num_insert == 0:
+                # 没有定额也没有主材，不插入任何行
+                # 只在清单行的J-O列写推荐度等信息（已在上面写过）
+                continue
 
             # 插入空行（在清单行的下一行位置）
             ws.insert_rows(row_idx + 1, amount=num_insert)
@@ -802,21 +808,16 @@ class OutputWriter:
                     # 定额行行高：根据名称长度自适应
                     q_name = quota.get("name", "")
                     ws.row_dimensions[q_row].height = 30 if len(q_name) <= 30 else 45
-            else:
-                # 未匹配提示行
-                q_row = row_idx + 1
-                no_reason = result.get("no_match_reason", "未找到匹配定额")
-                self._write_no_match_row(ws, q_row, no_reason, 9)
-                ws.row_dimensions[q_row].height = 30
 
             # 写入主材行（放在所有定额行之后）
-            mat_start = row_idx + 1 + quota_rows
-            for m_idx, mat in enumerate(materials):
-                m_row = mat_start + m_idx
-                self._write_single_material_row(
-                    ws, m_row, mat,
-                    unit_col=unit_col, qty_col=qty_col)
-                ws.row_dimensions[m_row].height = 30
+            if quotas and materials:
+                mat_start = row_idx + 1 + quota_rows
+                for m_idx, mat in enumerate(materials):
+                    m_row = mat_start + m_idx
+                    self._write_single_material_row(
+                        ws, m_row, mat,
+                        unit_col=unit_col, qty_col=qty_col)
+                    ws.row_dimensions[m_row].height = 30
 
         # 第4.5步：恢复所有原始行的行高（按插入偏移量计算新位置）
         # insert_records 已经在第4步记录了所有插入点
