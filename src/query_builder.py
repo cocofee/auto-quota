@@ -152,13 +152,17 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
 
     scope = _load_specialty_scope()
 
-    for key, replacement in synonyms.items():
+    # 按key长度从长到短排序，确保"水泵接合器"优先于"水泵"匹配
+    # 避免短key误匹配长词的子串（如"水泵"匹配"水泵接合器"中的子串）
+    sorted_items = sorted(synonyms.items(), key=lambda x: len(x[0]), reverse=True)
+
+    for key, replacement in sorted_items:
         if key in query:
-            # 防止重复替换：如果替换目标已经出现在query中，不替换也不继续找
+            # 防止重复替换：如果替换目标已经出现在query中，停止搜索
             # 例如：query="消防水泵接合器"，key="水泵接合器"→"消防水泵接合器"
             # 替换后会变成"消防消防水泵接合器"，所以跳过
-            # 用break而非continue：该概念已在query中体现，继续搜索可能命中
-            # 更短的key（如"水泵"→"离心泵"），反而破坏正确内容
+            # 用break而非continue：继续搜索可能命中更短的key（如"水泵"→"离心泵"），
+            # 误替换长词的子串（已排序保证长key优先，此处命中说明概念已被覆盖）
             if replacement in query:
                 break
             if _is_synonym_applicable(key, specialty, scope):

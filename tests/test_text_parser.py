@@ -37,9 +37,9 @@ class TestExtractDN:
         assert result["dn"] == 25
 
     def test_de_format(self):
-        """De外径格式：De110 → 转换为DN100"""
+        """De外径格式：De110 → 直接返回110（塑料管定额按外径分档）"""
         result = parser.parse("PPR管 De110 热熔连接")
-        assert result["dn"] == 100  # De110 → DN100
+        assert result["dn"] == 110  # De110 直接用外径值
 
     def test_phi_format(self):
         """Φ格式：Φ150"""
@@ -291,9 +291,9 @@ class TestEdgeCases:
         assert result.get("cable_section") is None
 
     def test_de_conversion(self):
-        """De63 → DN50（非标对照转换）"""
+        """De63 → 直接返回63（塑料管定额按外径分档，不转换为DN）"""
         result = parser.parse("PPR管 De63 热熔")
-        assert result["dn"] == 50
+        assert result["dn"] == 63
 
     def test_rvv_wire(self):
         """RVV导线：RVV-1.5 → 截面1.5"""

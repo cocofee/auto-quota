@@ -178,7 +178,7 @@ def _safe_json_materials(raw_value) -> list[dict]:
     if isinstance(raw_value, str):
         try:
             parsed = json.loads(raw_value)
-        except Exception:
+        except ValueError:
             return []
         if isinstance(parsed, list):
             return [m for m in parsed if isinstance(m, dict)]
@@ -417,7 +417,8 @@ def try_experience_match(query: str, item: dict, experience_db,
                         logger.debug(
                             f"L5跨省预热: {query[:30]} → "
                             f"提示={hint_keywords[:3]}")
-            except Exception as e:
+            except (KeyError, TypeError, ValueError, AttributeError,
+                    OSError, RuntimeError, ImportError) as e:
                 logger.debug(f"L5跨省搜索跳过: {e}")
         return None
 
@@ -639,10 +640,9 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
                 for r in results:
                     r["_source_province"] = aux.province
                 aux_candidates.extend(results)
-            except Exception as e:
+            except (KeyError, TypeError, ValueError, AttributeError,
+                    OSError, RuntimeError, ImportError) as e:
                 logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
-
-    # 第1步：在主专业+借用专业范围内搜索（比只搜主专业更灵活）
     # 多取一些候选（top_k*2），让借用册有机会出现在结果中
     # 场景：搜"镀锌钢管沟槽连接"时，C10的"镀锌钢管螺纹连接"得分高会挤掉C9的"钢管沟槽连接"
     # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
