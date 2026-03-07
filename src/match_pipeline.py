@@ -441,7 +441,8 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
     if exp_source == "experience_exact":
         exp_conf = min(exp_backup.get("confidence", 0), 88)
         search_conf = result.get("confidence", 0)
-        if exp_conf >= search_conf:
+        # 严格大于才替换（与相似匹配一致，等分时信任搜索+参数验证）
+        if exp_conf > search_conf:
             exp_backup["confidence"] = exp_conf
             _append_trace_step(
                 exp_backup,
@@ -451,7 +452,7 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
             )
             logger.debug(
                 f"经验库精确匹配(降级) vs 搜索: "
-                f"经验{exp_conf}分 >= 搜索{search_conf}分")
+                f"经验{exp_conf}分 > 搜索{search_conf}分")
             return exp_backup, exp_hits + 1
         _append_trace_step(
             result,
@@ -510,12 +511,17 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             # 规则审核前置：跳过类别明显不匹配的候选
             best = _pick_category_safe_candidate(item, matched_candidates)
             param_score = best.get("param_score", 0.5)
-            # 计算top1与top2的综合分差距（用于置信度校准）
-            _sorted = sorted(matched_candidates,
-                             key=lambda x: x.get("param_score", 0), reverse=True)
-            top1_s = _sorted[0].get("param_score", 0) if len(_sorted) > 0 else 0
-            top2_s = _sorted[1].get("param_score", 0) if len(_sorted) > 1 else 0
-            score_gap = top1_s - top2_s
+            # 用和排序一致的综合分来算score_gap（修复#4：和best选择脱节）
+            def _calc_composite(c):
+                """和param_validator排序一致的综合分"""
+                ps = c.get("param_score", 0)
+                nb = c.get("name_bonus", 0)
+                rr = c.get("rerank_score", c.get("hybrid_score", 0))
+                return ps * 0.55 + nb * 0.30 + rr * 0.15
+            best_composite = _calc_composite(best)
+            others = [c for c in matched_candidates if c is not best]
+            second_composite = max((_calc_composite(c) for c in others), default=0)
+            score_gap = best_composite - second_composite
             confidence = calculate_confidence(
                 param_score, param_match=True,
                 name_bonus=best.get("name_bonus", 0.0),

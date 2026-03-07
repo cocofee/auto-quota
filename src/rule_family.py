@@ -17,6 +17,12 @@
 import re
 import jieba
 from loguru import logger
+from src.compat_primitives import (
+    MATERIAL_TRADE_TO_QUOTA,
+    MATERIAL_DEFAULT_CONNECTION,
+    materials_compatible as _compat_materials_compatible,
+    connections_compatible as _compat_connections_compatible,
+)
 
 
 # ================================================================
@@ -37,31 +43,7 @@ GENERIC_MODIFIERS = {
     "开关", "插座", "灯具", "电缆", "管道", "母线", "接地",
 }
 
-# === 行业知识：材质商品名 → 定额中使用的标准名称 ===
-# 造价人员看到"PPR"就知道是给水塑料管(热熔连接)，但系统不知道
-# 这个映射表就是告诉系统这些行业常识
-MATERIAL_TRADE_TO_QUOTA = {
-    # 热塑性塑料管（热熔连接）
-    "PPR":  ["塑料管", "给水塑料管"],     # 聚丙烯管，最常见的给水塑料管
-    "PE":   ["塑料管"],                   # 聚乙烯管
-    "HDPE": ["塑料管"],                   # 高密度聚乙烯管
-    "PB":   ["塑料管"],                   # 聚丁烯管
-    "PERT": ["塑料管"],                   # 耐热聚乙烯管（地暖用）
-    # 热固性塑料管（粘接）
-    "PVC":   ["塑料管"],                  # 聚氯乙烯管
-    "UPVC":  ["塑料管", "排水塑料管"],     # 硬聚氯乙烯管，常用于排水
-    "PVC-U": ["塑料管", "排水塑料管"],     # 同UPVC
-    "CPVC":  ["塑料管"],                  # 氯化聚氯乙烯管（消防用）
-    "ABS":   ["塑料管"],                  # 丙烯腈-丁二烯-苯乙烯管
-}
-
-# === 行业知识：材质 → 默认连接方式 ===
-# PPR/PE等热塑性塑料 → 热熔连接
-# PVC/UPVC等 → 粘接
-MATERIAL_DEFAULT_CONNECTION = {
-    "PPR": "热熔", "PE": "热熔", "HDPE": "热熔", "PB": "热熔", "PERT": "热熔",
-    "PVC": "粘接", "UPVC": "粘接", "PVC-U": "粘接", "CPVC": "粘接", "ABS": "粘接",
-}
+# === MATERIAL_TRADE_TO_QUOTA 和 MATERIAL_DEFAULT_CONNECTION 已移至 compat_primitives.py ===
 
 # === 介质/用途上下文词组 ===
 # 清单描述中包含这些词时，可以区分"给水"vs"排水"等同参数家族
@@ -467,8 +449,8 @@ def _build_text_result(self, entry: dict, matched_quota: dict,
     # 从 value 中提取档位显示数字
     tier_display = self._extract_tier_display(value_str)
 
-    # 置信度：精确匹配85，超档80（需≥80才能跳过搜索）
-    confidence = 80 if exceeded else 85
+    # 置信度：精确匹配85，超档70（低于RULE_DIRECT_CONFIDENCE=80，强制走搜索验证）
+    confidence = 70 if exceeded else 85
 
     explanation_parts = [
         f"规则匹配: 「{family.get('name', '')}」",
@@ -739,57 +721,10 @@ def _family_compatible(self, bill_text: str, bill_params: dict,
 
 def _connections_compatible(self, bill_conn: str,
                             family_conn: str) -> bool:
-    """
-    检查两个连接方式是否兼容
-
-    兼容规则：
-    - 完全相同 → 兼容
-    - 一方包含另一方 → 兼容（如"热熔连接"包含"热熔"、"电熔连接"包含"电熔"）
-    - 都包含"法兰" → 兼容（焊接法兰/螺纹法兰都是法兰的子类型）
-    - 行业同义词 → 兼容（"承插"≈"粘接"：PVC-U排水管的承插连接就是粘接）
-    - 其他 → 不兼容（螺纹≠沟槽、热熔≠粘接 等）
-    """
-    if bill_conn == family_conn:
-        return True
-    # 子串匹配：如"热熔连接"包含"热熔"，"电熔连接"包含"电熔"
-    if bill_conn in family_conn or family_conn in bill_conn:
-        return True
-    # 法兰系列互相兼容：焊接法兰、螺纹法兰、对夹式法兰都是法兰的子类型
-    if "法兰" in bill_conn and "法兰" in family_conn:
-        return True
-    # 行业同义词：PVC-U排水管的"承插连接"实际上就是"粘接"（管子插入承口用胶粘合）
-    conn_synonyms = [
-        {"承插", "粘接"},   # PVC-U排水管：承插连接≈粘接
-    ]
-    for syn_group in conn_synonyms:
-        bill_in = any(s in bill_conn for s in syn_group)
-        family_in = any(s in family_conn for s in syn_group)
-        if bill_in and family_in:
-            return True
-    return False
+    """检查两个连接方式是否兼容（委托给 compat_primitives 统一实现）"""
+    return _compat_connections_compatible(bill_conn, family_conn)
 
 
 def _materials_compatible(self, bill_mat: str, family_mat: str) -> bool:
-    """
-    检查两个材质是否兼容
-
-    兼容规则：
-    - 完全相同 → 兼容
-    - 一方包含另一方 → 兼容（如"不锈钢"和"不锈钢管"）
-    - 清单材质含已知代号（PPR/UPVC等）且代号的定额标准名包含家族材质 → 兼容
-    - 其他 → 不兼容（镀锌钢管≠塑料管、钢塑≠铝塑 等）
-    """
-    if bill_mat == family_mat:
-        return True
-    # 一方包含另一方（如"不锈钢"包含在"不锈钢管"中）
-    if bill_mat in family_mat or family_mat in bill_mat:
-        return True
-    # 材质代号兼容检查：PPR→塑料管、UPVC→塑料管 等
-    bill_upper = bill_mat.upper()
-    for trade_name, quota_names in MATERIAL_TRADE_TO_QUOTA.items():
-        if trade_name in bill_upper:
-            # 清单含该材质代号，检查家族材质是否在其定额标准名列表中
-            for qn in quota_names:
-                if qn == family_mat or qn in family_mat or family_mat in qn:
-                    return True
-    return False
+    """检查两个材质是否兼容（委托给 compat_primitives 统一实现）"""
+    return _compat_materials_compatible(bill_mat, family_mat)

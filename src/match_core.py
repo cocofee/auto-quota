@@ -106,15 +106,16 @@ def calculate_confidence(param_score: float, param_match: bool = True,
 
     # === top1/top2差距（满分15分） ===
     # score_gap实际范围很小(0~0.2)，用非线性映射放大区分度
-    # gap>=0.15视为"明显领先"给满分，gap=0给0分
+    # gap>=0.15视为"明显领先"给满分，gap=0给基础3分（不再给0）
+    # 修复#3：多候选同分时gap=0→虚低问题，基础3分反映"至少通过了品类审核"
     try:
         gap = float(score_gap)
     except (TypeError, ValueError):
         gap = 0.0
     gap = min(max(gap, 0.0), 1.0)
-    # 非线性映射：gap/0.15 封顶1.0
+    # 基础3分 + 差距最多12分 = 仍是满分15
     gap_normalized = min(gap / 0.15, 1.0)
-    gap_part = gap_normalized * 15.0
+    gap_part = gap_normalized * 12.0 + 3.0
 
     # === 搜索语义相关性（满分10分） ===
     # rerank_score范围通常在0~1，但实际高质量结果一般0.3~0.8

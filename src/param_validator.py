@@ -15,10 +15,17 @@
 import math
 import re
 
+import jieba
 from loguru import logger
 
 import config
 from src.text_parser import parser as text_parser
+from src.compat_primitives import (
+    MATERIAL_FAMILIES,
+    GENERIC_MATERIALS,
+    materials_compatible as _compat_materials_compatible,
+    connections_compatible as _compat_connections_compatible,
+)
 
 
 class ParamValidator:
@@ -228,39 +235,37 @@ class ParamValidator:
         '以上', '及其', '工程', '项目', '系统', '配套', '其他', '一般',
     }
 
+    # jieba分词缓存：同一query_text在候选循环中只分词一次
+    _keyword_cache_text = ""
+    _keyword_cache_result = frozenset()
+
     def _bill_keyword_bonus(self, query_text: str, candidate_name: str) -> float:
         """
         清单核心词与候选名称的匹配加分（0~1.0）
 
-        从清单原文提取有意义的中文关键词（≥2字），
+        用jieba分词从清单原文提取有意义的中文关键词（≥2字），
         检查候选定额名称是否包含这些词。
         匹配越多说明品类越吻合，给予加分。
 
-        为什么需要这个？
-        - param_score只比对数值参数（DN、截面等），不比对品类名称
-        - rerank_score(BM25)用的是搜索词而非清单原文，且有短文本偏好
-        - 清单原文包含品类区分信息（如"防水套管"vs"塑料套管"），需要利用
+        为什么用jieba而不是暴力bigram？
+        - bigram会产生"水套""道安"等无意义碎片，噪音大
+        - jieba分词"刚性防水套管"→["刚性","防水","套管"]，精确无噪音
+        - 项目已有3处使用jieba，不增加依赖
         """
         if not query_text or not candidate_name:
             return 0.0
 
-        # 从清单文本提取中文关键词：去掉数字、英文、标点
-        clean = re.sub(r'[0-9a-zA-Z×φΦ≤≥<>*.\-~]+', ' ', query_text)
-        clean = re.sub(r'[()（）\[\]【】{}、，。：；""''·/\\,.:;]', ' ', clean)
+        # 缓存：同一query_text只分词一次（候选循环中反复调用）
+        if query_text != self._keyword_cache_text:
+            clean = re.sub(r'[0-9a-zA-Z×φΦ≤≥<>*.\-~]+', ' ', query_text)
+            clean = re.sub(r'[()（）\[\]【】{}、，。：；""''·/\\,.:;]', ' ', clean)
+            words = jieba.lcut(clean)
+            self._keyword_cache_result = frozenset(
+                w for w in words if len(w) >= 2 and w not in self._KEYWORD_STOPWORDS
+            )
+            self._keyword_cache_text = query_text
 
-        # 提取≥2字的中文片段作为关键词
-        keywords = set()
-        for seg in clean.split():
-            seg = seg.strip()
-            if len(seg) >= 2 and seg not in self._KEYWORD_STOPWORDS:
-                keywords.add(seg)
-                # 长词也拆出2字子串（如"刚性防水套管"→"刚性""防水""水套""套管"）
-                if len(seg) > 2:
-                    for i in range(len(seg) - 1):
-                        bigram = seg[i:i+2]
-                        if bigram not in self._KEYWORD_STOPWORDS:
-                            keywords.add(bigram)
-
+        keywords = self._keyword_cache_result
         if not keywords:
             return 0.0
 
@@ -268,45 +273,9 @@ class ParamValidator:
         matches = sum(1 for kw in keywords if kw in candidate_name)
         return matches / len(keywords)
 
-    # 材质族谱：同族内的材质视为"近似匹配"，跨族则为"不匹配"
-    MATERIAL_FAMILIES = {
-        "钢塑族": ["钢塑", "钢塑复合管", "衬塑钢管", "涂塑钢管", "衬塑", "涂塑",
-                   "涂塑碳钢管", "热浸塑钢管",
-                   "涂覆碳钢管", "涂覆钢管", "PSP钢塑复合管"],  # 涂覆=涂塑, PSP=钢塑复合管品牌
-        "铝塑族": ["铝塑", "铝塑复合管", "塑铝稳态管", "铝合金衬塑管"],
-        "镀锌钢族": ["镀锌钢管", "镀锌"],
-        "焊接钢族": ["焊接钢管", "碳钢", "碳钢管"],
-        "不锈钢族": ["不锈钢管", "薄壁不锈钢管", "不锈钢"],
-        "铸铁族": ["铸铁管", "球墨铸铁管", "柔性铸铁管", "铸铁"],
-        "PPR族": ["PPR管", "PP管", "PPR复合管", "PPR冷水管", "PPR热水管"],
-        "PE族": ["PE管", "HDPE管"],
-        "PVC族": ["PVC管", "UPVC管", "CPVC管"],
-        "铜族": ["铜", "铜管", "铜制", "紫铜管", "黄铜管"],  # 加入"铜"和具体铜管类型
-        "铜芯族": ["铜芯", "铜芯电缆", "铜导线"],
-        "铝芯族": ["铝芯", "铝芯电缆", "铝导线", "高压铝芯电缆"],
-        "碳钢板族": ["碳钢", "薄钢板", "钢板", "钢板制", "镀锌钢板"],  # 碳钢板材系列，含镀锌钢板
-        "玻璃钢族": ["玻璃钢", "玻璃钢管", "FRP管", "FRP"],  # 玻璃钢系列
-    }
-
-    # 泛称→具体材质映射：泛称是一大类的统称，和该类下的所有具体材质都兼容
-    # 例如清单写"塑料管"，定额可能是"PPR管"或"PE管"——都应视为兼容
-    GENERIC_MATERIALS = {
-        "塑料管": ["PPR管", "PE管", "PVC管", "UPVC管", "HDPE管", "PP管",
-                   "ABS管", "CPVC管", "PPR复合管", "PPR冷水管", "PPR热水管"],
-        "复合管": ["钢塑复合管", "铝塑复合管", "PPR复合管", "衬塑钢管", "涂塑钢管",
-                   "钢丝网骨架管", "孔网钢带管", "塑铝稳态管", "铝合金衬塑管"],
-        "钢管": ["镀锌钢管", "焊接钢管", "无缝钢管", "不锈钢管", "薄壁不锈钢管"],
-        "钢板": ["薄钢板", "镀锌钢板", "不锈钢板", "碳钢板"],  # 钢板类泛称
-        "钢制": ["镀锌", "镀锌钢管", "焊接钢管", "碳钢"],  # 钢制=钢材泛称（桥架等钢构件）
-        "金属软管": ["不锈钢软管", "碳钢软管", "不锈钢"],  # 金属软管是泛称，包含不锈钢等
-        # 涂塑/涂覆管道在实际造价中借用镀锌钢管定额换主材（行业通用做法）
-        "涂塑钢管": ["镀锌钢管", "焊接钢管"],
-        "涂塑碳钢管": ["镀锌钢管", "焊接钢管"],
-        "涂覆碳钢管": ["镀锌钢管", "焊接钢管"],
-        "涂覆钢管": ["镀锌钢管", "焊接钢管"],
-        "涂塑": ["镀锌钢管", "镀锌"],
-        "涂覆": ["镀锌钢管", "镀锌"],
-    }
+    # 材质族谱和泛称映射：从 compat_primitives 导入（单一事实来源）
+    MATERIAL_FAMILIES = MATERIAL_FAMILIES
+    GENERIC_MATERIALS = GENERIC_MATERIALS
 
     # 品类互斥表：同组内的品类不应相互匹配
     # 例如清单"阀门"不应匹配到"弯头"定额，清单"水泵"不应匹配到"风机"定额
@@ -358,33 +327,8 @@ class ParamValidator:
     }
 
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:
-        """
-        判断两种材质是否兼容（近似匹配）
-
-        兼容规则（按优先级）：
-        1. 完全相同 → 在外层已处理，这里不会走到
-        2. 同族材质（如"钢塑"和"钢塑复合管"都在钢塑族）→ 兼容
-        3. 泛称兼容（如"塑料管"和"PPR管"，"复合管"和"钢塑复合管"）→ 兼容
-        4. 子串包含（如"复合管"包含在"钢塑复合管"中）→ 兼容
-        5. 以上都不满足 → 不兼容
-        """
-        # 规则2：同族检查
-        for family_members in self.MATERIAL_FAMILIES.values():
-            if mat1 in family_members and mat2 in family_members:
-                return True
-
-        # 规则3：泛称兼容（清单常用泛称，定额用具体名称）
-        for generic, specifics in self.GENERIC_MATERIALS.items():
-            if mat1 == generic and mat2 in specifics:
-                return True
-            if mat2 == generic and mat1 in specifics:
-                return True
-
-        # 规则4：子串包含（如"复合管"⊂"钢塑复合管"等）
-        if mat1 in mat2 or mat2 in mat1:
-            return True
-
-        return False
+        """判断两种材质是否兼容（委托给 compat_primitives 统一实现）"""
+        return _compat_materials_compatible(mat1, mat2)
 
     @staticmethod
     def _check_negative_keywords(bill_text: str, quota_name: str) -> tuple[float, str]:
@@ -498,32 +442,8 @@ class ParamValidator:
 
     @staticmethod
     def _connections_compatible_pv(bill_conn: str, quota_conn: str) -> bool:
-        """
-        判断两个连接方式是否兼容（用于参数验证层）
-
-        兼容规则：
-        1. 子串匹配 → 兼容（如"卡压"包含在"卡压、环压连接"中）
-        2. 都含"法兰" → 兼容（焊接法兰/螺纹法兰都是法兰子类型）
-        3. 行业同义词 → 兼容（"承插"≈"粘接"、"双热熔"≈"热熔"）
-        4. 其他 → 不兼容
-        """
-        # 子串匹配：如"卡压"在"卡压、环压连接"中、"热熔"在"双热熔"中
-        if bill_conn in quota_conn or quota_conn in bill_conn:
-            return True
-        # 法兰系列互相兼容
-        if "法兰" in bill_conn and "法兰" in quota_conn:
-            return True
-        # 行业同义词（每组内的词互相兼容）
-        conn_synonyms = [
-            {"承插", "粘接"},      # PVC排水管：承插连接≈粘接
-            {"双热熔", "热熔"},    # 双热熔是热熔的变体（PSP钢塑管用双热熔）
-        ]
-        for syn_group in conn_synonyms:
-            bill_in = any(s in bill_conn for s in syn_group)
-            quota_in = any(s in quota_conn for s in syn_group)
-            if bill_in and quota_in:
-                return True
-        return False
+        """判断两种连接方式是否兼容（委托给 compat_primitives 统一实现）"""
+        return _compat_connections_compatible(bill_conn, quota_conn)
 
     @staticmethod
     def _tier_up_score(bill_value: float, quota_value: float) -> float:
