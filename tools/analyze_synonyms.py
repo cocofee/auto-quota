@@ -14,11 +14,8 @@
     python tools/analyze_synonyms.py --fix     # 生成修复建议JSON
 """
 import json
-import os
 import sys
-import re
 from pathlib import Path
-from collections import defaultdict
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
