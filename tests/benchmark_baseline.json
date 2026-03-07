@@ -1,25 +1,25 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-06 20:18:48",
+  "date": "2026-03-07 22:20:33",
   "note": "",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
       "total": 282,
-      "correct": 159,
-      "hit_rate": 56.4,
+      "correct": 160,
+      "hit_rate": 56.7,
       "diagnosis": {
         "synonym_gap": 40,
-        "wrong_tier": 73,
+        "wrong_tier": 72,
         "wrong_book": 10
       }
     },
     "宁夏安装工程计价定额(2019)": {
       "total": 90,
-      "correct": 35,
-      "hit_rate": 38.9,
+      "correct": 34,
+      "hit_rate": 37.8,
       "diagnosis": {
         "wrong_tier": 31,
-        "synonym_gap": 24
+        "synonym_gap": 25
       }
     },
     "宁夏房屋建筑装饰工程计价定额(2019)": {
@@ -27,8 +27,8 @@
       "correct": 10,
       "hit_rate": 34.5,
       "diagnosis": {
-        "synonym_gap": 12,
-        "wrong_tier": 7
+        "synonym_gap": 13,
+        "wrong_tier": 6
       }
     },
     "广东省房屋建筑与装饰工程综合定额(2018)": {
@@ -42,12 +42,12 @@
     },
     "广东省通用安装工程综合定额(2018)": {
       "total": 534,
-      "correct": 200,
-      "hit_rate": 37.5,
+      "correct": 199,
+      "hit_rate": 37.3,
       "diagnosis": {
         "wrong_book": 3,
-        "synonym_gap": 80,
-        "wrong_tier": 251
+        "synonym_gap": 72,
+        "wrong_tier": 260
       }
     },
     "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
@@ -70,11 +70,11 @@
     },
     "江西省通用安装工程消耗量定额及统一基价表(2017)": {
       "total": 468,
-      "correct": 198,
-      "hit_rate": 42.3,
+      "correct": 210,
+      "hit_rate": 44.9,
       "diagnosis": {
-        "wrong_tier": 186,
-        "synonym_gap": 84
+        "wrong_tier": 181,
+        "synonym_gap": 77
       }
     },
     "河南省通用安装工程预算定额(2016)": {
@@ -82,17 +82,17 @@
       "correct": 58,
       "hit_rate": 50.9,
       "diagnosis": {
-        "wrong_tier": 31,
-        "synonym_gap": 25
+        "wrong_tier": 32,
+        "synonym_gap": 24
       }
     },
     "浙江省通用安装工程预算定额(2018)": {
       "total": 475,
-      "correct": 141,
-      "hit_rate": 29.7,
+      "correct": 135,
+      "hit_rate": 28.4,
       "diagnosis": {
-        "wrong_tier": 103,
-        "synonym_gap": 229,
+        "wrong_tier": 114,
+        "synonym_gap": 224,
         "wrong_book": 2
       }
     },
@@ -110,11 +110,11 @@
     "B4_脏数据": {
       "total": 19,
       "skip_measure": 0,
-      "green_rate": 0.4737,
-      "yellow_rate": 0.2632,
-      "red_rate": 0.2632,
+      "green_rate": 0.5789,
+      "yellow_rate": 0.2105,
+      "red_rate": 0.2105,
       "exp_hit_rate": 0.0,
-      "avg_time_sec": 0.38
+      "avg_time_sec": 0.36
     }
   }
 }
