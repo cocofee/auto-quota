@@ -171,6 +171,14 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         log_file, encoding="utf-8", level="DEBUG",
         format="{time:HH:mm:ss} | {level:<7} | {name}:{function}:{line} | {message}",
     )
+    # ---- 自动挂载兄弟库（用户不传aux_provinces时，自动获取同省份同年份的兄弟库）----
+    if not aux_provinces and province:
+        from config import get_sibling_provinces
+        aux_provinces = get_sibling_provinces(province)
+        if aux_provinces:
+            logger.info(f"自动挂载兄弟库: {aux_provinces}")
+            print(f"辅助定额: {', '.join(aux_provinces)}（自动挂载）")
+
     logger.info(f"Jarvis流水线启动 | 文件: {excel_path} | 主定额: {province} | 辅助: {aux_provinces}")
 
     json_path = None
