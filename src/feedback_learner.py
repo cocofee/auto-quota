@@ -23,6 +23,7 @@ from loguru import logger
 
 import config
 from src.experience_db import ExperienceDB
+from src.bill_reader import _is_material_code
 from db.sqlite import connect as _db_connect
 
 
@@ -159,6 +160,7 @@ class FeedbackLearner:
 
                 current_bill = None   # 当前正在处理的清单项
                 current_quotas = []   # 当前清单项对应的定额列表
+                current_materials = []  # 当前清单项对应的主材列表
 
                 for row in ws.iter_rows(min_row=1, values_only=True):
                     cells = list(row) if row else []
@@ -167,6 +169,8 @@ class FeedbackLearner:
                     c = str(cells[2]).strip() if len(cells) > 2 and cells[2] is not None else ""
                     d = str(cells[3]).strip() if len(cells) > 3 and cells[3] is not None else ""
                     e = str(cells[4]).strip() if len(cells) > 4 and cells[4] is not None else ""
+                    # F列：主材数量
+                    f = str(cells[5]).strip() if len(cells) > 5 and cells[5] is not None else ""
 
                     is_labeled_bill = (a == "清单")
                     is_labeled_quota = (a == "定额")
@@ -176,11 +180,17 @@ class FeedbackLearner:
                     is_quota_row = bool(current_bill) and (
                         is_labeled_quota or ((not a) and bool(quota_id_pattern.match(b)))
                     )
+                    # 主材行：A列空，在清单块内，B列是材料编码，C列有名称
+                    is_material_row = (
+                        bool(current_bill) and (not a) and
+                        (not is_quota_row) and bool(b) and bool(c) and
+                        _is_material_code(b)
+                    )
 
                     if is_labeled_bill or is_numbered_bill:
                         # 如果之前有未保存的清单+定额对，先保存
                         if current_bill and current_quotas:
-                            if self._save_bill_quota_pair(current_bill, current_quotas):
+                            if self._save_bill_quota_pair(current_bill, current_quotas, current_materials):
                                 stats["learned"] += 1
 
                         # 开始新的清单项
@@ -201,6 +211,7 @@ class FeedbackLearner:
                                 "description": d,
                             }
                         current_quotas = []
+                        current_materials = []
                         stats["total"] += 1
 
                     elif is_quota_row:
@@ -213,9 +224,18 @@ class FeedbackLearner:
                                 "name": quota_name,
                             })
 
+                    elif is_material_row:
+                        # 主材行，收集主材信息
+                        current_materials.append({
+                            "code": b,
+                            "name": c,
+                            "unit": e,
+                            "qty": f,
+                        })
+
                 # 保存最后一条
                 if current_bill and current_quotas:
-                    if self._save_bill_quota_pair(current_bill, current_quotas):
+                    if self._save_bill_quota_pair(current_bill, current_quotas, current_materials):
                         stats["learned"] += 1
         finally:
             wb.close()
@@ -224,7 +244,8 @@ class FeedbackLearner:
 
         return stats
 
-    def _save_bill_quota_pair(self, bill: dict, quotas: list[dict]) -> bool:
+    def _save_bill_quota_pair(self, bill: dict, quotas: list[dict],
+                              materials: list[dict] = None) -> bool:
         """保存一条清单→定额的对应关系到经验库，返回是否写入成功。"""
         from src.text_parser import normalize_bill_text
         bill_text = normalize_bill_text(bill.get('name', ''), bill.get('description', ''))
@@ -246,6 +267,7 @@ class FeedbackLearner:
             bill_unit=bill.get("unit"),
             source="user_correction",
             confidence=95,
+            materials=materials or [],
         )
         if record_id <= 0:
             logger.warning(f"Excel学习写入被拦截: {bill_text[:60]} -> {quota_ids}")

@@ -67,6 +67,10 @@ def _is_material_code(code: str) -> bool:
     # 含@且不是标准清单编码（广联达材料变体都用@标记，清单编码不含@）
     if '@' in c:
         return True
+    # 7-8位纯数字（如13030795醇酸防锈漆、20010360钢板平焊法兰）
+    # 清单编码是12位数字，定额编号有字母或连字符，不会冲突
+    if re.fullmatch(r'\d{7,8}', c):
+        return True
     return False
 
 
@@ -373,7 +377,106 @@ class BillReader:
             item["sheet_bill_seq"] = sheet_bill_seq
             items.append(item)
 
+        # 后处理：从原始行中提取主材信息，挂到对应清单上
+        self._extract_materials_from_rows(items, all_rows, col_map, header_row_idx)
+
         return items
+
+    def _extract_materials_from_rows(self, items: list[dict],
+                                     all_rows: list, col_map: dict,
+                                     header_row_idx: int):
+        """从原始行数据中提取主材行，挂到对应清单项的 source_materials 上
+
+        状态机扫描：
+        - 遇到清单行 → 记住当前清单（通过 source_row 匹配 items 中的项）
+        - 遇到定额行 → 跳过（不是主材）
+        - 遇到主材行 → 提取信息挂到当前清单
+
+        主材行判定（上下文+词法双判定）：
+        - A列为空，且在某个清单块内
+        - B列不是定额编码
+        - B列符合材料编码格式（_is_material_code 或 8位纯数字）
+        - C列有名称
+        """
+        if not items:
+            return
+
+        # 建立 source_row → item 的映射，用于快速查找当前清单
+        row_to_item = {item["source_row"]: item for item in items if item.get("source_row")}
+
+        # 获取列索引
+        idx_col = col_map.get("index", 0)  # 序号列（A列）
+        code_col = col_map.get("code", 1)  # 编码列（B列）
+        name_col = col_map.get("name", 2)  # 名称列（C列）
+        unit_col = col_map.get("unit")      # 单位列
+        qty_col = col_map.get("quantity")   # 工程量列
+
+        current_item = None  # 当前所属的清单项
+
+        for i, row in enumerate(all_rows):
+            if i <= header_row_idx:
+                continue
+            if not row:
+                continue
+
+            source_row = i + 1  # Excel行号从1开始
+
+            # 获取各列值
+            def _get(col_idx):
+                if col_idx is not None and col_idx < len(row):
+                    v = row[col_idx]
+                    return str(v).strip() if v is not None else ""
+                return ""
+
+            a_val = _get(idx_col)
+            b_val = _get(code_col)
+            c_val = _get(name_col)
+
+            # 判断是否是清单行（A列有序号或source_row在items中）
+            if source_row in row_to_item:
+                current_item = row_to_item[source_row]
+                if "source_materials" not in current_item:
+                    current_item["source_materials"] = []
+                continue
+
+            # 没有当前清单 → 跳过（还没遇到第一条清单）
+            if current_item is None:
+                continue
+
+            # A列有值（序号）→ 说明是新的清单行但不在items里（可能被过滤了），重置
+            if a_val and (a_val.isdigit() or re.fullmatch(r"\d+\.0+", a_val)):
+                current_item = None
+                continue
+
+            # A列为空，B列有值 → 可能是定额行或主材行
+            if (not a_val) and b_val:
+                # 定额行 → 跳过
+                if _is_quota_code(b_val):
+                    continue
+
+                # 主材行判定：B列符合材料编码格式 或 8位纯数字
+                is_material = _is_material_code(b_val)
+                if not is_material:
+                    # 补充判定：8位纯数字（如13030795）
+                    is_material = bool(re.fullmatch(r'\d{7,8}', b_val))
+
+                if is_material and c_val:
+                    # 提取单位和工程量
+                    mat_unit = _get(unit_col) if unit_col is not None else ""
+                    mat_qty_str = _get(qty_col) if qty_col is not None else ""
+                    mat_qty = None
+                    if mat_qty_str:
+                        try:
+                            mat_qty = float(mat_qty_str.replace(",", ""))
+                        except (ValueError, TypeError):
+                            pass
+
+                    current_item["source_materials"].append({
+                        "code": b_val,
+                        "name": c_val,
+                        "unit": mat_unit,
+                        "qty": mat_qty,
+                    })
 
     def _detect_columns(self, header_rows: list) -> tuple[dict, int]:
         """

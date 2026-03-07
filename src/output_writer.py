@@ -27,6 +27,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from loguru import logger
 
 import config
+from src.bill_reader import _is_material_code
 
 
 # 颜色定义
@@ -142,6 +143,26 @@ def _is_bill_serial(a_val) -> bool:
     if text.isdigit():
         return True
     return bool(re.fullmatch(r"\d+\.0+", text))
+
+
+def _resolve_output_materials(result: dict) -> list[dict]:
+    """获取要输出的主材列表
+
+    优先级：输入文件提取的主材 > 经验库的主材
+    返回: [{code, name, unit, qty}, ...]
+    """
+    # 优先用输入文件中提取的主材（bill_item.source_materials）
+    bill_item = result.get("bill_item", {})
+    source_mats = bill_item.get("source_materials")
+    if isinstance(source_mats, list) and source_mats:
+        return source_mats
+
+    # 其次用经验库的主材（result.materials）
+    exp_mats = result.get("materials")
+    if isinstance(exp_mats, list) and exp_mats:
+        return exp_mats
+
+    return []
 
 
 def _is_quota_code(code: str) -> bool:
@@ -390,6 +411,124 @@ class OutputWriter:
         more = len(materials) - len(parts)
         suffix = f" 等{len(materials)}项" if more > 0 else ""
         return safe_excel_text("; ".join(parts) + suffix)
+
+    # 噪声词黑名单：这些文本出现在描述字段值中时，不是有效的主材名称
+    _MATERIAL_NOISE_WORDS = {
+        "详见图纸", "同清单", "见附件", "按设计", "按图纸", "见图纸",
+        "见设计", "详见设计", "按规范", "见规范", "暂定", "待定",
+        "按实际", "详见", "同上", "以上", "以下",
+    }
+
+    # 描述字段中可能包含主材名称的标签（按优先级排列）
+    _MATERIAL_FIELD_KEYS = ("名称", "主材", "设备名称", "材质、规格",
+                            "材质,规格", "规格型号", "材质", "规格", "类型")
+
+    @staticmethod
+    def _extract_material_from_description(bill_item: dict) -> str:
+        """从清单特征描述中提取主材名称（经验库无主材时的兜底）
+
+        安装定额的主材就是被安装的物品本身，名称藏在清单的项目特征描述里。
+        例：清单"开关安装"，特征"1.名称:单联双控开关" → 主材是"单联双控开关"
+        例：清单"管道安装"，特征"1.材质、规格:PSP钢塑复合管DN20" → 主材是"PSP钢塑复合管DN20"
+        """
+        if not isinstance(bill_item, dict):
+            return ""
+        description = bill_item.get("description", "") or ""
+        if not description:
+            return ""
+
+        # ---- 第1步：从描述中提取 {标签: 值} 字典 ----
+        # 内联简化版，不依赖query_builder的私有函数
+        fields = {}
+        # 有序号格式：1.名称:XXX / 2.规格:YYY
+        for m in re.finditer(r'\d+[.、．]\s*([^:：\n]+)[：:]\s*([^\n]*)', description):
+            key = m.group(1).strip()
+            val = m.group(2).strip()
+            if key and val:
+                fields[key] = val
+        # 无序号格式兜底
+        if not fields:
+            for m in re.finditer(r'([^:：\n]{2,8})[：:]\s*([^\n]+)', description):
+                key = m.group(1).strip()
+                val = m.group(2).strip()
+                if key and val:
+                    fields[key] = val
+
+        if not fields:
+            return ""
+
+        # ---- 第2步：按优先级查找主材名称 ----
+        # 容错查找：字段key可能含清单名碎片前缀（如"钢阀门 名称"而非"名称"）
+        def _find_field(target: str) -> str:
+            if target in fields:
+                return fields[target]
+            for k, v in fields.items():
+                if k.endswith(target) or target in k:
+                    return v
+            return ""
+
+        result_text = ""
+        for field_key in OutputWriter._MATERIAL_FIELD_KEYS:
+            val = _find_field(field_key)
+            if not val or len(val) < 2:
+                continue
+
+            # 噪声词过滤
+            if any(noise in val for noise in OutputWriter._MATERIAL_NOISE_WORDS):
+                continue
+
+            # 纯型号过滤（中文字符不到一半→大概率是型号如"APE-Z"、"XZP100"）
+            chinese_count = sum(1 for c in val if '\u4e00' <= c <= '\u9fff')
+            if chinese_count < len(val.strip()) / 3:
+                continue
+
+            # "材质"和"规格"分开时，尝试组合
+            if field_key == "材质":
+                spec = _find_field("规格")
+                if spec and spec not in val:
+                    val = f"{val} {spec}"
+
+            result_text = val.strip()
+            break
+
+        if not result_text:
+            return ""
+
+        # ---- 第3步：清理和截断 ----
+        # 截断过长文本（主材名称一般不超过40字）
+        if len(result_text) > 40:
+            result_text = result_text[:40]
+
+        return safe_excel_text(result_text)
+
+    @staticmethod
+    def _get_material_text(result: dict) -> str:
+        """获取主材文本：优先用输入文件主材，其次经验库，最后从清单描述提取
+
+        统一入口，三处O列写入点都调用这个方法。
+        """
+        # 优先用输入文件中提取的主材（source_materials），与主材行口径一致
+        bill_item = result.get("bill_item", {})
+        source_mats = bill_item.get("source_materials")
+        if isinstance(source_mats, list) and source_mats:
+            parts = [m.get("name", "") for m in source_mats if m.get("name")]
+            if parts:
+                return safe_excel_text("; ".join(parts[:4]) +
+                                       (f" 等{len(parts)}项" if len(parts) > 4 else ""))
+        # 经验库有主材（有编号、单位、价格，更完整）→ 次优先
+        text = OutputWriter._brief_materials(result)
+        if text:
+            return text
+        # 措施项不填主材
+        if result.get("match_source") == "skip_measure":
+            return ""
+        # 没有匹配结果的也不填
+        quotas = result.get("quotas", [])
+        if not quotas:
+            return ""
+        # 从清单描述提取主材名称
+        bill_item = result.get("bill_item", {})
+        return OutputWriter._extract_material_from_description(bill_item)
 
     @staticmethod
     def _write_no_match_row(ws, row_idx: int, no_reason: str, max_col: int):
@@ -644,8 +783,10 @@ class OutputWriter:
             # 在清单行的J-O列写入推荐度、备选和主材
             self._write_bill_extra_info(ws, row_idx, result)
 
-            # 要插入的行数（至少1行用于未匹配提示）
-            num_insert = max(len(quotas), 1)
+            # 要插入的行数（定额行+主材行，无定额至少1行用于未匹配提示）
+            materials = _resolve_output_materials(result)
+            quota_rows = len(quotas) if quotas else 1
+            num_insert = quota_rows + len(materials)
 
             # 插入空行（在清单行的下一行位置）
             ws.insert_rows(row_idx + 1, amount=num_insert)
@@ -674,6 +815,15 @@ class OutputWriter:
                 self._write_no_match_row(ws, q_row, no_reason, 9)
                 ws.row_dimensions[q_row].height = 30
 
+            # 写入主材行（放在所有定额行之后）
+            mat_start = row_idx + 1 + quota_rows
+            for m_idx, mat in enumerate(materials):
+                m_row = mat_start + m_idx
+                self._write_single_material_row(
+                    ws, m_row, mat,
+                    unit_col=unit_col, qty_col=qty_col)
+                ws.row_dimensions[m_row].height = 30
+
         # 第4.5步：恢复所有原始行的行高（按插入偏移量计算新位置）
         # insert_records 已经在第4步记录了所有插入点
         sorted_inserts = sorted(insert_records, key=lambda x: x[0])
@@ -700,10 +850,10 @@ class OutputWriter:
             for row_idx in range(header_row + 1, ws.max_row + 1):
                 a_val = ws.cell(row=row_idx, column=1).value
                 b_val = ws.cell(row=row_idx, column=2).value
-                # 识别定额行：A列为空，B列是定额编号格式
+                # 识别定额行或主材行：A列为空，B列有值
                 if (a_val is None or str(a_val).strip() == "") and b_val:
                     b_str = str(b_val).strip()
-                    if _is_quota_code(b_str):
+                    if _is_quota_code(b_str) or _is_material_code(b_str):
                         for min_col, max_col in bill_row_merges:
                             try:
                                 ws.merge_cells(
@@ -872,25 +1022,29 @@ class OutputWriter:
                 pass  # 合并失败不影响主流程（可能与新插入的行重叠）
 
     def _remove_existing_quota_rows(self, ws, header_row: int):
-        """删除已有的定额行（从下往上删，避免行号偏移）"""
-        existing_quota_rows = []
+        """删除已有的定额行和主材行（从下往上删，避免行号偏移）"""
+        rows_to_delete = []
 
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
             b_val = ws.cell(row=row_idx, column=2).value
 
-            # 已有定额行：A列为空，B列是定额编号格式（如C4-4-31、5-325）
+            # A列为空、B列有值 → 可能是定额行或主材行
             if (a_val is None or str(a_val).strip() == "") and b_val:
                 b_str = str(b_val).strip()
+                # 定额行（如C4-4-31、5-325）
                 if _is_quota_code(b_str):
-                    existing_quota_rows.append(row_idx)
+                    rows_to_delete.append(row_idx)
+                # 主材行（如01290303@1、13030795、补充主材005）
+                elif _is_material_code(b_str):
+                    rows_to_delete.append(row_idx)
 
         # 从下往上删除
-        for row_idx in reversed(existing_quota_rows):
+        for row_idx in reversed(rows_to_delete):
             ws.delete_rows(row_idx, 1)
 
-        if existing_quota_rows:
-            logger.info(f"Sheet [{ws.title}]: 删除 {len(existing_quota_rows)} 条已有定额行")
+        if rows_to_delete:
+            logger.info(f"Sheet [{ws.title}]: 删除 {len(rows_to_delete)} 条已有定额/主材行")
 
     def _write_bill_extra_info(self, ws, row_idx: int, result: dict):
         """在清单行的J-O列写入推荐度、匹配说明、备选定额和主材"""
@@ -939,8 +1093,8 @@ class OutputWriter:
             ws, row_idx, start_col=12, alternatives=result.get("alternatives", [])
         )
 
-        # O列：主材
-        material_text = self._brief_materials(result)
+        # O列：主材（优先经验库，否则从清单描述提取）
+        material_text = self._get_material_text(result)
         cell_o = _safe_write_cell(ws, row_idx, 15, material_text)
         if cell_o:
             cell_o.font = BILL_FONT
@@ -973,6 +1127,12 @@ class OutputWriter:
             # 未匹配提示行
             no_reason = result.get("no_match_reason", "未找到匹配定额")
             self._write_no_match_row(ws, current_row, no_reason, max_col)
+            current_row += 1
+
+        # 写入主材行（定额之后）
+        materials = _resolve_output_materials(result)
+        for mat in materials:
+            self._write_single_material_row(ws, current_row, mat)
             current_row += 1
 
         return current_row
@@ -1022,6 +1182,49 @@ class OutputWriter:
             if cell.alignment is None or cell.alignment == Alignment():
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
 
+    def _write_single_material_row(self, ws, m_row: int, material: dict,
+                                    unit_col: int = 5, qty_col: int = 6):
+        """写入一行主材数据（格式与定额行一致：宋体9号、thin边框）
+
+        主材行特征：A列空，B列=材料编码，C列=材料名称，E列=单位，F列=数量
+        """
+        # B列：材料编码（居中）
+        cell_b = ws.cell(row=m_row, column=2,
+                         value=safe_excel_text(material.get("code", "")))
+        cell_b.font = GLD_FONT
+        cell_b.alignment = Alignment(horizontal="center", vertical="center",
+                                     wrap_text=True)
+
+        # C列：材料名称（左对齐）
+        cell_c = ws.cell(row=m_row, column=3,
+                         value=safe_excel_text(material.get("name", "")))
+        cell_c.font = GLD_FONT
+        cell_c.alignment = Alignment(horizontal="left", vertical="center",
+                                     wrap_text=True)
+
+        # E列：单位（居中）
+        mat_unit = material.get("unit", "")
+        cell_e = ws.cell(row=m_row, column=unit_col, value=mat_unit)
+        cell_e.font = GLD_FONT
+        cell_e.alignment = Alignment(horizontal="center", vertical="center",
+                                     wrap_text=True)
+
+        # F列：数量（右对齐）
+        mat_qty = material.get("qty")
+        cell_f = ws.cell(row=m_row, column=qty_col, value=mat_qty)
+        cell_f.font = GLD_FONT
+        cell_f.alignment = Alignment(horizontal="right", vertical="center",
+                                     wrap_text=True)
+
+        # 所有列统一 thin 边框 + 宋体9号
+        for col in range(1, 12):  # A-K列
+            cell = ws.cell(row=m_row, column=col)
+            cell.border = THIN_BORDER
+            if cell.font == Font() or cell.font is None:
+                cell.font = GLD_FONT
+            if cell.alignment is None or cell.alignment == Alignment():
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+
     def _add_extra_headers(self, ws, header_row: int):
         """在表头行添加J-O列标题"""
         extra_headers = {
@@ -1059,7 +1262,7 @@ class OutputWriter:
             for col, width in STANDARD_COL_WIDTHS.items():
                 ws.column_dimensions[col].width = width
 
-        # 2. 只格式化清单行和定额行，跳过分部/合计等原始行
+        # 2. 只格式化清单行、定额行和主材行，跳过分部/合计等原始行
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
             b_val = ws.cell(row=row_idx, column=2).value
@@ -1069,8 +1272,15 @@ class OutputWriter:
                 and b_val
                 and _is_quota_code(str(b_val).strip())
             )
+            # 主材行：A列空，B列是材料编码格式
+            is_material = (
+                (a_val is None or str(a_val).strip() == "")
+                and b_val
+                and not _is_quota_code(str(b_val).strip())
+                and _is_material_code(str(b_val).strip())
+            )
 
-            if not is_bill and not is_quota:
+            if not is_bill and not is_quota and not is_material:
                 continue  # 分部/合计/空行等，保留原始格式不动
 
             for col_idx in range(1, 16):  # A-O 列（1-15）
@@ -1179,7 +1389,7 @@ class OutputWriter:
             self._write_alternative_cells(
                 ws, current_row, start_col=12, alternatives=result.get("alternatives", [])
             )
-            ws.cell(row=current_row, column=15, value=self._brief_materials(result))
+            ws.cell(row=current_row, column=15, value=self._get_material_text(result))
 
             self._apply_row_style(ws, current_row, 1, 15, {4, 15})
             if quotas:
@@ -1273,7 +1483,7 @@ class OutputWriter:
             self._write_alternative_cells(
                 ws, current_row, start_col=8, alternatives=alternatives
             )
-            ws.cell(row=current_row, column=11, value=self._brief_materials(result))
+            ws.cell(row=current_row, column=11, value=self._get_material_text(result))
 
             # 格式（项目特征、定额名称、问题说明、主材列自动换行）
             self._apply_row_style(ws, current_row, 1, 11, {2, 3, 5, 7, 11})
