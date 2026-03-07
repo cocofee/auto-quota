@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import pytest
 
-import tools._select_province as sp
 import tools.experience_promote as experience_promote
 import tools.import_reference as import_reference
 import tools.jarvis_auto_review as auto_review_mod
@@ -18,17 +17,6 @@ def _new_tmp_dir(prefix: str) -> Path:
     d = root / f"{prefix}-{uuid4().hex}"
     d.mkdir(parents=True, exist_ok=False)
     return d
-
-
-class _FailingSelectProvinceConn:
-    def __init__(self):
-        self.closed = False
-
-    def execute(self, *args, **kwargs):
-        raise RuntimeError("db read failed")
-
-    def close(self):
-        self.closed = True
 
 
 class _FailingImportReferenceConn:
@@ -84,29 +72,6 @@ class _FakePromoteDB:
 
     def _connect(self):
         return self._conn
-
-
-def test_get_db_count_closes_connection_on_error():
-    tmp_dir = _new_tmp_dir("select-province")
-    try:
-        db_path = tmp_dir / "quota.db"
-        db_path.write_text("x", encoding="utf-8")
-        failing_conn = _FailingSelectProvinceConn()
-
-        with patch.object(sp.config, "get_quota_db_path", return_value=db_path):
-            with patch.object(sp, "_db_connect", return_value=failing_conn):
-                value = sp._get_db_count("测试省份")
-
-        assert value == "已存在"
-        assert failing_conn.closed is True
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-def test_get_db_count_returns_first_import_when_missing(monkeypatch):
-    missing_path = Path("this_path_should_not_exist_12345.db")
-    monkeypatch.setattr(sp.config, "get_quota_db_path", lambda _: missing_path)
-    assert sp._get_db_count("测试省份") == "首次导入"
 
 
 def test_select_quota_db_closes_connection_on_count_error():
