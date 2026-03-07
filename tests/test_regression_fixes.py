@@ -257,18 +257,30 @@ def test_cascade_search_aux_sorts_by_hybrid_score(monkeypatch):
     ])
 
     # 构造一个假的主搜索器，挂载两个辅助库
+    # 主搜索器需要有 search 方法（现在主库和辅助库并行搜索，不再互斥）
     class FakeSearcher:
         aux_searchers = [aux1, aux2]
+        uses_standard_books = True
 
-    # 非安装分类（不以C开头），触发辅助库路由
+        class bm25_engine:
+            quota_books = []
+
+        def search(self, query, top_k=None, books=None):
+            # 主库返回一个低分结果，验证辅助库高分结果排在前面
+            return [{"quota_id": "M-1", "name": "主库定额", "hybrid_score": 0.1}]
+
+    # 非安装分类（不以C开头）
     classification = {"primary": "A01", "fallbacks": []}
     result = match_core.cascade_search(FakeSearcher(), "测试查询", classification)
 
-    # 高分项应排在第一位
-    assert len(result) == 2
+    # 高分项应排在第一位（辅助库B-1得分0.9最高）
     assert result[0]["quota_id"] == "B-1"
     assert result[0]["hybrid_score"] == 0.9
-    assert result[1]["quota_id"] == "A-1"
+    # 辅助库和主库结果都应该出现在合并结果中
+    all_ids = {r["quota_id"] for r in result}
+    assert "A-1" in all_ids
+    assert "B-1" in all_ids
+    assert "M-1" in all_ids
 
 
 # ============================================================

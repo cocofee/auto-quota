@@ -566,6 +566,36 @@ def _translate_books_for_industry(c_books: list[str],
 
     return valid
 
+
+def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
+                    top_k: int) -> list[dict]:
+    """合并主库和辅助库搜索结果，按 hybrid_score 统一排序。
+
+    如果辅助库无结果，直接返回主库结果（零开销）。
+    去重逻辑：主库和辅助库是不同定额库，编号体系不同，不做跨库去重。
+    同一辅助库内的同 quota_id 保留分数最高的那条。
+    """
+    if not aux_candidates:
+        return main_candidates
+
+    # 主库结果直接保留（不去重，主库内部已由 HybridSearcher 去重）
+    merged = list(main_candidates)
+
+    # 辅助库结果按"quota_id@来源库"去重（同一辅助库内可能有重复）
+    aux_seen = {}
+    for r in aux_candidates:
+        qid = r.get("quota_id") or id(r)  # 无quota_id时用对象id，避免误合并
+        source = r.get("_source_province", "aux")
+        key = f"{qid}@{source}"
+        score = r.get("hybrid_score", 0)
+        if key not in aux_seen or score > aux_seen[key][0]:
+            aux_seen[key] = (score, r)
+
+    merged.extend(v[1] for v in aux_seen.values())
+    merged.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
+    return merged[:top_k]
+
+
 def cascade_search(searcher: HybridSearcher, search_query: str,
                    classification: dict, top_k: int = None) -> list[dict]:
     """
@@ -575,8 +605,8 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     直接在"主专业+借用专业"范围内搜索，让Reranker和参数验证来挑最好的。
 
     辅助定额库：
-    当清单项被分类为非安装专业（如A=土建、D=市政、E=园林），
-    搜索用户选择的所有辅助定额库，取最佳结果。
+    无论清单专业是什么（C/A/D/E），都同时搜索所有辅助库，
+    结果与主库合并后按 hybrid_score 统一排序。
 
     参数:
         searcher: 混合搜索引擎实例（可能挂载了 aux_searchers）
@@ -596,26 +626,21 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     if not primary:
         return searcher.search(search_query, top_k=top_k, books=None)
 
-    # ---- 辅助定额库路由 ----
-    # 清单项分类为非安装（A/D/E）时，搜索所有辅助定额库
+    # ---- 辅助定额库搜索（与主库并行，不互斥） ----
+    # 无论清单是什么专业（C/A/D/E），都搜索所有辅助库
+    # 辅助库结果在最后与主库结果合并排序，不提前return
     aux_searchers = getattr(searcher, 'aux_searchers', [])
-    if aux_searchers and not primary.startswith("C"):
-        # 搜索每个辅助库，合并结果取最好的
-        all_candidates = []
+    aux_candidates = []
+    if aux_searchers:
         for aux in aux_searchers:
             try:
                 results = aux.search(search_query, top_k=top_k, books=None)
                 # 给每条结果打上来源库标记，用于后续去重时区分不同库的同编号定额
                 for r in results:
                     r["_source_province"] = aux.province
-                all_candidates.extend(results)
+                aux_candidates.extend(results)
             except Exception as e:
                 logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
-        if all_candidates:
-            # 按 hybrid_score 降序排序，取 top_k
-            # 注意：HybridSearcher.search() 输出的主分字段是 hybrid_score，不是 score
-            all_candidates.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
-            return all_candidates[:top_k]
 
     # 第1步：在主专业+借用专业范围内搜索（比只搜主专业更灵活）
     # 多取一些候选（top_k*2），让借用册有机会出现在结果中
@@ -641,7 +666,7 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
     if len(candidates) >= CASCADE_MIN_CANDIDATES:
         # 候选较多（>= 5个）：直接返回，不需要额外质量检查
         if len(candidates) >= CASCADE_MIN_CANDIDATES + 2:
-            return candidates
+            return _merge_with_aux(candidates, aux_candidates, top_k * 2)
         # 候选较少（3-4个）：检查top候选是否有明确的分差优势
         # 如果top1和top3分数太接近，说明搜索结果不确定，需要扩大搜索
         top_score = candidates[0].get("hybrid_score", 0)
@@ -649,7 +674,7 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
         third_score = candidates[third_idx].get("hybrid_score", 0)
         quality_threshold = getattr(config, "CASCADE_QUALITY_THRESHOLD", 0.3)
         if top_score > 0 and (top_score - third_score) / top_score >= quality_threshold:
-            return candidates
+            return _merge_with_aux(candidates, aux_candidates, top_k * 2)
         # 分差不够，继续全库搜索补充候选
         logger.debug(
             f"主搜{len(candidates)}条但质量不足"
@@ -659,7 +684,7 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
 
     # 第2步：兜底全库搜索
     candidates = searcher.search(search_query, top_k=top_k, books=None)
-    return candidates
+    return _merge_with_aux(candidates, aux_candidates, top_k)
 
 
 def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
