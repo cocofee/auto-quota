@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.3';
+export const APP_VERSION = '0.2.5';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,34 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.5',
+    date: '2026-03-07',
+    changes: [
+      { type: 'admin', text: '补漏——pull_history加gitignore并移出git，删docs/archive空目录' },
+      { type: 'admin', text: '修复test_connection_close_resilience引用已删模块导致测试阻断' },
+      { type: 'admin', text: '系统清理——删除30+废弃文件，补.gitignore' },
+      { type: 'admin', text: '同义词表清理——删39个精确自映射+修5个错误映射+新增分析工具' },
+      { type: 'admin', text: '未匹配定额不再插入提示行，没有定额时不写主材行' },
+      { type: 'admin', text: '主材行只用输入文件的source_materials，不从经验库凭空加' },
+      { type: 'admin', text: '输出Excel带上主材行——读取提取+输出写入+学习保存' },
+      { type: 'admin', text: '辅助库搜索路由修复——主库辅助库并行搜索+清单编码过滤' },
+    ],
+  },
+  {
+    version: '0.2.4',
+    date: '2026-03-07',
+    changes: [
+      { type: 'admin', text: '补漏——pull_history加gitignore并移出git，删docs/archive空目录' },
+      { type: 'admin', text: '修复test_connection_close_resilience引用已删模块导致测试阻断' },
+      { type: 'admin', text: '系统清理——删除30+废弃文件，补.gitignore' },
+      { type: 'admin', text: '同义词表清理——删39个精确自映射+修5个错误映射+新增分析工具' },
+      { type: 'admin', text: '未匹配定额不再插入提示行，没有定额时不写主材行' },
+      { type: 'admin', text: '主材行只用输入文件的source_materials，不从经验库凭空加' },
+      { type: 'admin', text: '输出Excel带上主材行——读取提取+输出写入+学习保存' },
+      { type: 'admin', text: '辅助库搜索路由修复——主库辅助库并行搜索+清单编码过滤' },
+    ],
+  },
   {
     version: '0.2.3',
     date: '2026-03-07',
