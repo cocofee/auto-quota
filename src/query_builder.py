@@ -17,6 +17,12 @@ from loguru import logger
 
 _LAMP_RULE_EXCLUDE_PATTERN = r"灯杆|灯塔|路灯基础|灯槽|灯箱|灯带槽"
 
+# 清单编码过滤正则（WMSGCS001001、050402001001 等编码会污染搜索词）
+_BILL_CODE_PATTERN = re.compile(
+    r'[A-Za-z]{4,}\d{6,}'   # 字母前缀+数字后缀（WMSGCS001001）
+    r'|\b\d{10,12}\b'       # 10-12位纯数字编码（050402001001）
+)
+
 # ===== 工程同义词表（清单常用名 → 定额库常用名） =====
 # 只加载一次，后续复用缓存
 _SYNONYMS_CACHE = None
@@ -490,6 +496,14 @@ def build_quota_query(parser, name: str, description: str = "",
     返回:
         构建好的搜索query
     """
+    # 过滤清单编码（如 WMSGCS001001、HJBHCS001001、050402001001 等）
+    # 这些编码混在特征描述中会污染搜索词，导致BM25搜不到正确定额
+    original_name = name
+    name = _BILL_CODE_PATTERN.sub('', name or '').strip() or original_name
+    if description:
+        description = _BILL_CODE_PATTERN.sub('', description).strip()
+    description = description or ""
+
     full_text = f"{name} {description}".strip()
     # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
     params = bill_params if bill_params is not None else parser.parse(full_text)
