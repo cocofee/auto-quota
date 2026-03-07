@@ -244,7 +244,7 @@ def pipeline(excel_path, province=None, aux_provinces=None,
             from jarvis_auto_review import auto_review
 
         summary, auto_corrections, manual_items, measure_items = auto_review(
-            json_path, province
+            json_path, province, sibling_provinces=aux_provinces
         )
         manual_rows, manual_reminders = _count_manual_review_rows(manual_items)
 

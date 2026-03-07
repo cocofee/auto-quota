@@ -130,8 +130,11 @@ def _detect_phase(results):
 # Phase 2: 纠正（查DB，统一调度）
 # ============================================================
 
-def _correct_phase(detected_errors, province, db_conn):
+def _correct_phase(detected_errors, province, db_conn, sibling_provinces=None):
     """对检测到的错误批量搜索纠正定额
+
+    参数:
+        sibling_provinces: 兄弟定额库列表，主库搜不到时按专业优先级依次搜兄弟库
 
     返回: (error_items, manual_items)
         - error_items: 已找到纠正定额的项
@@ -144,8 +147,18 @@ def _correct_phase(detected_errors, province, db_conn):
         bill = d["bill_item"]
         desc_lines = extract_description_lines(bill.get("description", ""))
 
+        # 根据清单专业对兄弟库排序：安装类专业(C开头)优先搜安装库
+        sorted_siblings = sibling_provinces
+        if sibling_provinces:
+            specialty = bill.get("specialty", "")
+            if specialty and specialty.startswith("C"):
+                # 安装类专业(C1-C12) → 安装库优先
+                sorted_siblings = sorted(sibling_provinces,
+                    key=lambda p: 0 if "安装" in p else 1)
+
         correction = correct_error(
-            bill, d["error"], d["dn"], province, conn=db_conn
+            bill, d["error"], d["dn"], province, conn=db_conn,
+            sibling_provinces=sorted_siblings
         )
 
         entry = {
@@ -164,9 +177,13 @@ def _correct_phase(detected_errors, province, db_conn):
         }
 
         if correction:
-            entry["corrected_quota_id"] = correction[0]
-            entry["corrected_quota_name"] = correction[1]
-            error_items.append(entry)
+            # 纠正后编号和原来一样 → 说明搜不到更好的，不标"AI纠正"，转人工
+            if correction[0] == d["quota_id"]:
+                manual_items.append(entry)
+            else:
+                entry["corrected_quota_id"] = correction[0]
+                entry["corrected_quota_name"] = correction[1]
+                error_items.append(entry)
         else:
             manual_items.append(entry)
 
@@ -177,12 +194,13 @@ def _correct_phase(detected_errors, province, db_conn):
 # 三阶段编排入口
 # ============================================================
 
-def auto_review(json_path, province=None):
+def auto_review(json_path, province=None, sibling_provinces=None):
     """自动审核匹配结果（三阶段流水线）
 
     参数:
         json_path: 审核JSON文件路径
         province: 省份
+        sibling_provinces: 兄弟定额库列表（跨库纠正用），未传时自动获取
 
     返回: (summary_text, auto_corrections, manual_items, measure_items)
     """
@@ -196,6 +214,13 @@ def auto_review(json_path, province=None):
     detected, measure_items, no_match_items, correct_count = _detect_phase(results)
 
     # Phase 2: 纠正（一次DB连接，批量处理）
+    # 自动获取兄弟库（未传时用 get_sibling_provinces）
+    if sibling_provinces is None and province:
+        from config import get_sibling_provinces
+        sibling_provinces = get_sibling_provinces(province)
+        if sibling_provinces:
+            logger.info(f"自动获取兄弟库: {sibling_provinces}")
+
     db_path = get_quota_db_path(province)
     db_conn = None
     if os.path.exists(db_path):
@@ -225,7 +250,7 @@ def auto_review(json_path, province=None):
             })
     else:
         try:
-            error_items, manual_from_correction = _correct_phase(detected, province, db_conn)
+            error_items, manual_from_correction = _correct_phase(detected, province, db_conn, sibling_provinces)
         finally:
             if db_conn:
                 db_conn.close()

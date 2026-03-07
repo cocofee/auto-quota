@@ -215,7 +215,8 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
     }
     if not classification["primary"]:
         classification = classify_specialty(
-            name, desc, section_title=section, province=province
+            name, desc, section_title=section, province=province,
+            bill_code=item.get("code")
         )
     return _normalize_classification(classification)
 
