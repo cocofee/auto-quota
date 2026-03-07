@@ -240,8 +240,8 @@ class TestSynonymLoading:
         qb._SYNONYMS_CACHE = None
         synonyms = qb._load_synonyms()
         assert len(synonyms) > 0, "手工同义词表应非空"
-        # 手工表中的经典条目应存在
-        assert "镀锌钢管" in synonyms
+        # 手工表中的经典条目应存在（镀锌钢管自映射已清理，改用热镀锌钢管）
+        assert "热镀锌钢管" in synonyms
 
     def test_manual_overrides_auto(self, monkeypatch):
         """手工同义词表应覆盖自动表（同一key以手工为准）"""
