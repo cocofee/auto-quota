@@ -8,10 +8,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Card, List, Input, Select, Button, Space, Typography, Tag, Empty, Spin,
+  Card, List, Input, Select, Button, Space, Typography, Tag, Empty, Spin, Modal,
 } from 'antd';
 import {
-  ReloadOutlined, FileTextOutlined, SearchOutlined,
+  ReloadOutlined, FileTextOutlined, SearchOutlined, FullscreenOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -48,6 +48,8 @@ export default function LogViewer() {
   // 搜索参数
   const [keyword, setKeyword] = useState('');
   const [lines, setLines] = useState(200);
+  const [levelFilter, setLevelFilter] = useState<string>(''); // 日志级别筛选
+  const [fullscreen, setFullscreen] = useState(false); // 全屏模式
 
   // 加载文件列表（只在首次加载和手动刷新时调用）
   const loadFiles = useCallback(() => {
@@ -114,6 +116,17 @@ export default function LogViewer() {
       </div>
     );
   };
+
+  // 按级别过滤日志行
+  const filteredLines = logContent
+    ? logContent.content.split('\n').filter((line) => {
+        if (!levelFilter) return true;
+        if (levelFilter === 'ERROR') return /\bERROR\b/i.test(line);
+        if (levelFilter === 'WARNING') return /\bWARNING\b/i.test(line);
+        if (levelFilter === 'INFO') return /\bINFO\b/i.test(line);
+        return true;
+      })
+    : [];
 
   // 文件列表中正在选中的项高亮
   const fileTypeTag = (filename: string) => {
@@ -187,6 +200,18 @@ export default function LogViewer() {
           style={{ flex: 1, minWidth: 0 }}
           extra={
             <Space>
+              <Select
+                value={levelFilter}
+                onChange={setLevelFilter}
+                size="small"
+                style={{ width: 100 }}
+                options={[
+                  { label: '全部级别', value: '' },
+                  { label: 'ERROR', value: 'ERROR' },
+                  { label: 'WARNING', value: 'WARNING' },
+                  { label: 'INFO', value: 'INFO' },
+                ]}
+              />
               <Input
                 placeholder="搜索关键词"
                 prefix={<SearchOutlined />}
@@ -211,6 +236,14 @@ export default function LogViewer() {
                 ]}
               />
               <Button
+                icon={<FullscreenOutlined />}
+                size="small"
+                onClick={() => setFullscreen(true)}
+                disabled={!logContent}
+              >
+                全屏
+              </Button>
+              <Button
                 icon={<ReloadOutlined />}
                 size="small"
                 onClick={loadContent}
@@ -234,7 +267,8 @@ export default function LogViewer() {
               <div style={{ marginBottom: 8 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   共 {logContent.total_lines} 行，显示最后 {logContent.returned_lines} 行
-                  {keyword && `（过滤: "${keyword}"）`}
+                  {keyword && `（搜索: "${keyword}"）`}
+                  {levelFilter && `（级别: ${levelFilter}，${filteredLines.length} 条）`}
                 </Text>
               </div>
               <div
@@ -252,12 +286,53 @@ export default function LogViewer() {
                   wordBreak: 'break-all',
                 }}
               >
-                {logContent.content.split('\n').map(renderLogLine)}
+                {filteredLines.map(renderLogLine)}
               </div>
             </div>
           )}
         </Card>
       </div>
+
+      {/* 全屏预览弹窗 */}
+      <Modal
+        title={selectedFile || '日志预览'}
+        open={fullscreen}
+        onCancel={() => setFullscreen(false)}
+        footer={null}
+        width="95vw"
+        styles={{ body: { height: '80vh', overflow: 'auto', padding: 0 } }}
+      >
+        <div
+          style={{
+            fontFamily: 'Consolas, "Courier New", monospace',
+            fontSize: 12,
+            lineHeight: 1.6,
+            height: '100%',
+            overflow: 'auto',
+            background: '#1e1e1e',
+            color: '#d4d4d4',
+            padding: 16,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {filteredLines.map((line, index) => {
+            const isError = /\bERROR\b/i.test(line);
+            const isWarning = /\bWARNING\b/i.test(line);
+            let color = '#d4d4d4';
+            if (isError) color = '#f48771';
+            if (isWarning) color = '#cca700';
+            return (
+              <div key={index} style={{ color, fontWeight: isError ? 'bold' : 'normal' }}>
+                <span style={{ color: '#858585', marginRight: 12, userSelect: 'none' }}>
+                  {String(index + 1).padStart(4)}
+                </span>
+                {line}
+              </div>
+            );
+          })}
+        </div>
+      </Modal>
     </div>
   );
 }

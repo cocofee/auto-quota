@@ -30,6 +30,7 @@ export default function QuotaManage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [regionFilter, setRegionFilter] = useState<string | undefined>(undefined);
+  const [activeKeys, setActiveKeys] = useState<string[]>([]); // 折叠面板展开状态
 
   // 导入对话框
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -185,7 +186,11 @@ export default function QuotaManage() {
             allowClear
             placeholder="全部地区"
             value={regionFilter}
-            onChange={setRegionFilter}
+            onChange={(v) => {
+              setRegionFilter(v);
+              // 选了地区自动展开，清除时全部折叠
+              setActiveKeys(v ? [v] : []);
+            }}
             style={{ width: 160 }}
             options={regionOptions}
           />
@@ -209,7 +214,9 @@ export default function QuotaManage() {
       ) : (
         <Collapse
           bordered={false}
-          defaultActiveKey={regionGroups.length > 0 ? [regionGroups[0].region] : []}
+          /* 受控模式：默认全折叠，选地区时自动展开 */
+          activeKey={activeKeys}
+          onChange={(keys) => setActiveKeys(keys as string[])}
           style={{ background: 'transparent' }}
           items={regionGroups.map((g) => ({
             key: g.region,
@@ -243,6 +250,20 @@ export default function QuotaManage() {
                     key: 'name',
                     width: '54%',
                     ellipsis: true,
+                    render: (name: string, _: ProvinceInfo, i: number) => {
+                      // 第一个（定额最多）视为主库，其余缩进显示
+                      const isMain = i === 0;
+                      return (
+                        <span style={{
+                          paddingLeft: isMain ? 0 : 20,
+                          fontWeight: isMain ? 600 : 'normal',
+                          color: isMain ? '#1a1a1a' : '#555',
+                        }}>
+                          {!isMain && <span style={{ color: '#d9d9d9', marginRight: 6 }}>├</span>}
+                          {name}
+                        </span>
+                      );
+                    },
                   },
                   {
                     title: '定额条数',
