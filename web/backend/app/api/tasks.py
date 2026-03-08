@@ -224,7 +224,22 @@ async def list_tasks(
     )
     tasks = (await db.execute(query)).scalars().all()
 
-    return TaskListResponse(items=tasks, total=total, page=page, size=size, total_bills=total_bills)
+    # 管理员视图：查询每个任务的用户昵称
+    items = []
+    if all_users and user.is_admin and tasks:
+        user_ids = list({t.user_id for t in tasks})
+        user_rows = (await db.execute(
+            select(User.id, User.nickname, User.email).where(User.id.in_(user_ids))
+        )).all()
+        user_map = {r.id: r.nickname or r.email for r in user_rows}
+        for t in tasks:
+            resp = TaskResponse.model_validate(t)
+            resp.username = user_map.get(t.user_id, "")
+            items.append(resp)
+    else:
+        items = [TaskResponse.model_validate(t) for t in tasks]
+
+    return TaskListResponse(items=items, total=total, page=page, size=size, total_bills=total_bills)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)

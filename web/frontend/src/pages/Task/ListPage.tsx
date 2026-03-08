@@ -288,6 +288,15 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
         </Tooltip>
       ),
     },
+    // 管理员视图：显示任务所属用户
+    ...(adminView ? [{
+      title: '用户',
+      dataIndex: 'username',
+      key: 'username',
+      width: 100,
+      ellipsis: true,
+      render: (username: string) => username || '-',
+    }] : []),
     {
       title: '定额库',
       dataIndex: 'province',
