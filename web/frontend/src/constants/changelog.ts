@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.9';
+export const APP_VERSION = '0.2.11';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,27 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.11',
+    date: '2026-03-08',
+    changes: [
+      { type: 'admin', text: '删除未使用的COLORS导入（修复TS构建失败）' },
+      { type: 'admin', text: '准确率分析页面拆分为4个Tab组件' },
+      { type: 'admin', text: '省份统计API增加匹配条数和平均置信度' },
+      { type: 'admin', text: 'analytics API防御性修复（Codex审查）' },
+      { type: 'admin', text: '三级审核流程漏洞修复+Codex审查修复' },
+    ],
+  },
+  {
+    version: '0.2.10',
+    date: '2026-03-08',
+    changes: [
+      { type: 'admin', text: '准确率分析页面拆分为4个Tab组件' },
+      { type: 'admin', text: '省份统计API增加匹配条数和平均置信度' },
+      { type: 'admin', text: 'analytics API防御性修复（Codex审查）' },
+      { type: 'admin', text: '三级审核流程漏洞修复+Codex审查修复' },
+    ],
+  },
   {
     version: '0.2.9',
     date: '2026-03-08',
