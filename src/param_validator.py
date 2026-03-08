@@ -14,8 +14,11 @@
 
 import math
 import re
+from difflib import SequenceMatcher
+from pathlib import Path
 
 import jieba
+import numpy as np
 from loguru import logger
 
 import config
@@ -37,6 +40,38 @@ class ParamValidator:
         "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
         "switch_gangs",  # 开关联数（单联/双联/三联/四联）
     ]
+
+    # LTR模型特征列名（必须和训练时一致）
+    _LTR_FEATURES = [
+        "bm25_score", "vector_score", "hybrid_score", "rerank_score",
+        "param_score", "param_match",
+        "param_tier_0", "param_tier_1", "param_tier_2",
+        "name_bonus", "candidates_count",
+        "bm25_rank_score", "vector_rank_score",
+        "name_edit_dist", "score_gap_to_top1", "dual_recall",
+    ]
+
+    # LTR模型（类级别单例，所有实例共享）
+    _ltr_model = None
+    _ltr_model_loaded = False
+
+    @classmethod
+    def _load_ltr_model(cls):
+        """加载LTR排序模型（只加载一次）"""
+        if cls._ltr_model_loaded:
+            return
+        cls._ltr_model_loaded = True
+        model_path = Path(__file__).parent.parent / "data" / "ltr_model.txt"
+        if model_path.exists():
+            try:
+                import lightgbm as lgb
+                cls._ltr_model = lgb.Booster(model_file=str(model_path))
+                logger.info(f"LTR排序模型已加载: {model_path}")
+            except Exception as e:
+                logger.warning(f"LTR模型加载失败，回退到手工公式: {e}")
+                cls._ltr_model = None
+        else:
+            logger.debug("LTR模型文件不存在，使用手工排序公式")
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
                             supplement_query: str = None,
@@ -119,18 +154,8 @@ class ParamValidator:
                 c["name_bonus"] = self._bill_keyword_bonus(
                     query_text, c.get("name", ""))
 
-            # 无参数分支：品类词主导排序（清单没有可验证的参数）
-            candidates.sort(
-                key=lambda x: (
-                    x.get("param_tier", 1),  # 第一级：三层分级（替代param_match布尔值）
-                    x["param_score"] * 0.20 + (
-                        x.get("name_bonus", 0)
-                    ) * 0.55 + (
-                        x.get("rerank_score", x.get("hybrid_score", 0))
-                    ) * 0.25,
-                ),
-                reverse=True,
-            )
+            # 无参数分支：用LTR模型或品类词主导排序
+            self._ltr_sort(candidates, query_text)
             return candidates
 
         # 逐个验证候选定额
@@ -179,24 +204,113 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # M1排序改进：三层分级 + 三项融合（有参数分支）
-        # param_tier: 2=精确匹配 > 1=部分匹配/无参数 > 0=硬失败（硬分层，不可跨越）
-        # param_score * 0.55（参数匹配仍重要，但不再独大）
-        # name_bonus * 0.30（品类核心词匹配，大幅提权解决品类选错）
-        # rerank_score * 0.15（BM25语义精排）
-        validated.sort(
+        # 有参数分支：用LTR模型或三项融合排序
+        self._ltr_sort(validated, query_text)
+
+        return validated
+
+    def _ltr_sort(self, candidates: list[dict], query_text: str):
+        """
+        用LTR模型排序候选（如果模型可用），否则回退到手工公式。
+
+        两阶段排序：
+        1. param_tier=0（硬失败）永远排最后（业务规则不让模型越界）
+        2. tier>0的候选用LTR模型打分排序
+        """
+        self._load_ltr_model()
+
+        if self._ltr_model is not None:
+            try:
+                features = self._extract_ltr_features(candidates, query_text)
+                scores = self._ltr_model.predict(features)
+                for i, c in enumerate(candidates):
+                    # 硬失败候选不让模型翻身
+                    if c.get("param_tier", 1) == 0:
+                        c["ltr_score"] = -1e9
+                    else:
+                        c["ltr_score"] = float(scores[i])
+                candidates.sort(key=lambda x: x.get("ltr_score", 0), reverse=True)
+                return
+            except Exception as e:
+                logger.warning(f"LTR模型预测失败，回退手工公式: {e}")
+
+        # 回退：手工公式排序（有参数分支权重）
+        candidates.sort(
             key=lambda x: (
-                x.get("param_tier", 1),   # 第一级：三层分级（替代param_match布尔值）
-                x["param_score"] * 0.55 + (  # 第二级：三项融合
-                    x.get("name_bonus", 0)
-                ) * 0.30 + (
-                    x.get("rerank_score", x.get("hybrid_score", 0))
-                ) * 0.15,
+                x.get("param_tier", 1),
+                x.get("param_score", 0) * 0.55
+                + x.get("name_bonus", 0) * 0.30
+                + (x.get("rerank_score") or x.get("hybrid_score") or 0) * 0.15,
             ),
             reverse=True,
         )
 
-        return validated
+    def _extract_ltr_features(self, candidates: list[dict],
+                              query_text: str) -> np.ndarray:
+        """
+        从候选列表中提取LTR特征矩阵（和训练时一致的16维）。
+        """
+        n = len(candidates)
+        # 提取清单名称（取query_text的第一段）
+        bill_name = query_text.split()[0] if query_text else ""
+
+        # 构建bm25/vector排名映射
+        bm25_sorted = sorted(range(n),
+                             key=lambda i: candidates[i].get("bm25_score") or 0,
+                             reverse=True)
+        vector_sorted = sorted(range(n),
+                               key=lambda i: candidates[i].get("vector_score") or 0,
+                               reverse=True)
+
+        bm25_rank = {candidates[idx].get("quota_id", ""): i / max(n, 1)
+                     for i, idx in enumerate(bm25_sorted)}
+        vector_rank = {candidates[idx].get("quota_id", ""): i / max(n, 1)
+                       for i, idx in enumerate(vector_sorted)}
+
+        bm25_ids = {candidates[i].get("quota_id", "") for i in range(n)
+                    if (candidates[i].get("bm25_score") or 0) > 0}
+        vector_ids = {candidates[i].get("quota_id", "") for i in range(n)
+                      if (candidates[i].get("vector_score") or 0) > 0}
+
+        # top1的composite分（用于score_gap_to_top1）
+        top1 = candidates[0] if candidates else {}
+        top1_composite = (
+            (top1.get("param_score") or 0) * 0.55
+            + (top1.get("name_bonus") or 0) * 0.30
+            + (top1.get("rerank_score") or top1.get("hybrid_score") or 0) * 0.15
+        )
+
+        features = np.zeros((n, 16), dtype=np.float64)
+        for i, c in enumerate(candidates):
+            qid = str(c.get("quota_id", ""))
+            tier = c.get("param_tier", 1)
+            ps = c.get("param_score") or 0
+            nb = c.get("name_bonus") or 0
+            rr = c.get("rerank_score") or c.get("hybrid_score") or 0
+            composite = ps * 0.55 + nb * 0.30 + rr * 0.15
+            cand_name = c.get("name", "")
+
+            features[i] = [
+                c.get("bm25_score") or 0,            # 1
+                c.get("vector_score") or 0,           # 2
+                c.get("hybrid_score") or 0,           # 3
+                c.get("rerank_score") or 0,           # 4
+                ps,                                    # 5
+                1 if c.get("param_match", True) else 0,  # 6
+                1 if tier == 0 else 0,                 # 7
+                1 if tier == 1 else 0,                 # 8
+                1 if tier == 2 else 0,                 # 9
+                nb,                                    # 10
+                n,                                     # 11
+                1.0 - bm25_rank.get(qid, 1.0),        # 12
+                1.0 - vector_rank.get(qid, 1.0),      # 13
+                SequenceMatcher(None, bill_name, cand_name).ratio()
+                if bill_name and cand_name else 0.0,   # 14
+                top1_composite - composite,            # 15
+                1 if (qid in bm25_ids and qid in vector_ids) else 0,  # 16
+            ]
+
+        return features
 
     def _get_db_params(self, candidate: dict) -> dict:
         """从候选定额的数据库字段中提取参数"""
