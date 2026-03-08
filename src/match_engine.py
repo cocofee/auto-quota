@@ -846,7 +846,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         else:
                             # 按param_score降序排列，取前20条
                             merged = sorted(seen_ids.values(),
-                                            key=lambda x: (x.get("param_match", False),
+                                            key=lambda x: (x.get("param_tier", 1),
                                                            x.get("param_score", 0)),
                                             reverse=True)[:20]
                             logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新增{new_added}=合并{len(merged)}条")

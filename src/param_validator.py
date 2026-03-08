@@ -95,6 +95,7 @@ class ParamValidator:
                     c["param_score"] = 1.0  # 无参数可验证，默认通过
                     c["param_detail"] = "无参数可验证"
                 c["param_match"] = True  # 默认为匹配
+                c["param_tier"] = 1  # 无清单参数，归为部分匹配层
 
                 # 即使无参数，仍需检查品类冲突（如"喷淋泵"不应配"喷头"定额）
                 cat_penalty, cat_detail = self._check_category_conflict(
@@ -104,8 +105,7 @@ class ParamValidator:
                     c["param_detail"] += f"; {cat_detail}"
                     if cat_penalty >= 0.3:
                         c["param_match"] = False
-
-                # 即使无参数，仍需检查负向关键词（如"普通插座"不应配"防爆插座"）
+                        c["param_tier"] = 0  # 品类冲突降为硬失败层（如"普通插座"不应配"防爆插座"）
                 neg_penalty, neg_detail = self._check_negative_keywords(
                     query_text, c.get("name", ""))
                 if neg_penalty > 0:
@@ -113,8 +113,7 @@ class ParamValidator:
                     c["param_detail"] += f"; {neg_detail}"
                     if neg_penalty >= 0.3:
                         c["param_match"] = False
-
-            # 无参数分支也计算核心词加分
+                        c["param_tier"] = 0  # 负向关键词降为硬失败层
             for c in candidates:
                 c["name_bonus"] = self._bill_keyword_bonus(
                     query_text, c.get("name", ""))
@@ -122,7 +121,7 @@ class ParamValidator:
             # 无参数分支：品类词主导排序（清单没有可验证的参数）
             candidates.sort(
                 key=lambda x: (
-                    x["param_match"],
+                    x.get("param_tier", 1),  # 第一级：三层分级（替代param_match布尔值）
                     x["param_score"] * 0.20 + (
                         x.get("name_bonus", 0)
                     ) * 0.55 + (
@@ -171,6 +170,7 @@ class ParamValidator:
             candidate["param_score"] = score
             candidate["param_detail"] = detail
             candidate["param_match"] = is_match
+            candidate["param_tier"] = self._determine_param_tier(is_match, score, detail)
 
             # 清单核心词匹配加分：清单关键词在候选名称中出现越多，排序越靠前
             candidate["name_bonus"] = self._bill_keyword_bonus(
@@ -178,13 +178,14 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # M1排序改进：三项融合（有参数分支）
+        # M1排序改进：三层分级 + 三项融合（有参数分支）
+        # param_tier: 2=精确匹配 > 1=部分匹配/无参数 > 0=硬失败（硬分层，不可跨越）
         # param_score * 0.55（参数匹配仍重要，但不再独大）
         # name_bonus * 0.30（品类核心词匹配，大幅提权解决品类选错）
         # rerank_score * 0.15（BM25语义精排）
         validated.sort(
             key=lambda x: (
-                x["param_match"],     # 第一级：匹配vs不匹配（保留硬分层）
+                x.get("param_tier", 1),   # 第一级：三层分级（替代param_match布尔值）
                 x["param_score"] * 0.55 + (  # 第二级：三项融合
                     x.get("name_bonus", 0)
                 ) * 0.30 + (
@@ -475,6 +476,33 @@ class ParamValidator:
         # score = 1.0 - 0.1 * log2(ratio)，限制在 [0.55, 1.0]
         score = 1.0 - 0.1 * math.log2(ratio)
         return max(0.55, min(1.0, score))
+
+    @staticmethod
+    def _determine_param_tier(is_match: bool, score: float, detail: str) -> int:
+        """
+        根据参数匹配结果判定排序层级（三层分级）
+
+        param_tier决定排序优先级，tier高的永远排在tier低的前面，
+        不受BM25/name_bonus等软分数影响。
+
+        判定依据：不看分数高低，而是看定额是否**缺少**清单要求的参数。
+        - 定额有参数且匹配（精确/向上取档）→ tier=2
+        - 定额缺少清单要求的参数（通用定额）→ tier=1
+        - 参数明显不匹配（硬失败）→ tier=0
+
+        返回:
+            2 = 精确匹配（定额有清单要求的参数，且匹配通过）
+            1 = 部分匹配/无参数（定额缺少关键参数，属于"万金油"通用定额）
+            0 = 硬失败（参数明显不匹配，param_match=False）
+        """
+        if not is_match:
+            return 0
+        # 检查detail中是否有"通用定额降权"标记
+        # 这些标记由_check_params在定额缺少清单参数时写入
+        if "通用定额降权" in detail or "定额无参数可验证" in detail or "无共同参数可对比" in detail:
+            return 1
+        # 定额有参数且匹配通过 → 精确匹配层
+        return 2
 
     def _check_params(self, bill_params: dict, quota_params: dict) -> tuple[bool, float, str]:
         """
