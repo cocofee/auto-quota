@@ -673,6 +673,10 @@ VERIFY_TIMEOUT = int(os.getenv("VERIFY_TIMEOUT", "30"))
 # 绿灯抽检率（置信度>=阈值的也随机抽检一部分，保底质量监控）
 VERIFY_SPOT_CHECK_RATE = float(os.getenv("VERIFY_SPOT_CHECK_RATE", "0.05"))
 
+# OPUS兜底搜索（quotas为空时OPUS主动生成搜索词重搜，修复第3层审核漏洞）
+VERIFY_RESCUE_MAX_PER_RUN = int(os.getenv("VERIFY_RESCUE_MAX_PER_RUN", "10"))  # 每次运行最多rescue几条
+VERIFY_RESCUE_CONCURRENT = int(os.getenv("VERIFY_RESCUE_CONCURRENT", "3"))     # rescue并发数
+
 # 批量审核模式（中置信度项打包一次LLM调用，减少API调用次数）
 AGENT_BATCH_ENABLED = True              # 是否启用批量审核
 AGENT_BATCH_SIZE = 8                     # 每批最多几条
