@@ -44,6 +44,8 @@ class TaskResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    # 用户信息（管理员查看所有任务时显示）
+    username: str | None = None
     # 反馈上传相关字段（用户纠正Excel上传后填入）
     feedback_path: str | None = None
     feedback_uploaded_at: datetime | None = None
