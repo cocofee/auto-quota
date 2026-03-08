@@ -16,6 +16,9 @@ openpyxl>=3.1.0                 # Excel读写（.xlsx格式）
 xlrd>=2.0.0                     # Excel读取（.xls旧格式）
 pandas>=2.0.0                   # 表格数据处理
 
+# === 排序模型 ===
+lightgbm>=4.0.0                 # LTR排序模型（LambdaRank，+5.4%准确率）
+
 # === 工具 ===
 python-dotenv>=1.0.0            # 读取.env配置文件
 loguru>=0.7.0                   # 日志记录
