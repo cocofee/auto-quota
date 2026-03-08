@@ -1,0 +1,3467 @@
+{
+  "_meta": {
+    "description": "品类词→专业册号映射表（从98882条经验库自动挖掘）",
+    "generated": "2026-03-08",
+    "source": "db/common/experience.db authority层",
+    "tier1_threshold": ">=90%集中度, >=20次出现",
+    "tier2_threshold": ">=75%集中度, >=10次出现",
+    "generic_words_removed": [
+      "不锈钢",
+      "以上",
+      "以下",
+      "以内",
+      "低压",
+      "保护",
+      "内径",
+      "器件",
+      "圆形",
+      "型号",
+      "外径",
+      "大于",
+      "安装",
+      "室内",
+      "室外",
+      "小于",
+      "工程",
+      "施工",
+      "普通",
+      "标准",
+      "特殊",
+      "矩形",
+      "碳钢",
+      "管路",
+      "管道",
+      "系统",
+      "规格",
+      "设备",
+      "设置",
+      "配件",
+      "配置",
+      "铝及",
+      "镀锌",
+      "附件",
+      "高压"
+    ],
+    "tier1_count": 226,
+    "tier2_count": 150,
+    "tier2_conflict_words_removed": [
+      "离心",
+      "焊接",
+      "材料",
+      "部件",
+      "接口",
+      "中心",
+      "安全",
+      "检测",
+      "检查",
+      "钢筋",
+      "成品",
+      "高度",
+      "小型",
+      "常规",
+      "标志",
+      "形状",
+      "利用"
+    ]
+  },
+  "tier1": {
+    "配电箱": {
+      "book": "C4",
+      "confidence": 0.986,
+      "count": 14168,
+      "distribution": {
+        "C4": 13971,
+        "C2": 182,
+        "C5": 12
+      }
+    },
+    "电力电缆": {
+      "book": "C4",
+      "confidence": 0.978,
+      "count": 6044,
+      "distribution": {
+        "C4": 5914,
+        "C2": 130
+      }
+    },
+    "配线": {
+      "book": "C4",
+      "confidence": 0.976,
+      "count": 4947,
+      "distribution": {
+        "C4": 4830,
+        "C2": 112,
+        "C5": 5
+      }
+    },
+    "风口": {
+      "book": "C7",
+      "confidence": 0.994,
+      "count": 3296,
+      "distribution": {
+        "C7": 3276,
+        "C2": 18,
+        "C1": 2
+      }
+    },
+    "散流器": {
+      "book": "C7",
+      "confidence": 0.997,
+      "count": 3163,
+      "distribution": {
+        "C7": 3153,
+        "C2": 10
+      }
+    },
+    "配管": {
+      "book": "C4",
+      "confidence": 0.967,
+      "count": 3130,
+      "distribution": {
+        "C4": 3028,
+        "C2": 94,
+        "C10": 5
+      }
+    },
+    "塑料管": {
+      "book": "C10",
+      "confidence": 0.934,
+      "count": 2828,
+      "distribution": {
+        "C10": 2642,
+        "C8": 109,
+        "C2": 51
+      }
+    },
+    "铝合金": {
+      "book": "C7",
+      "confidence": 0.993,
+      "count": 2786,
+      "distribution": {
+        "C7": 2766,
+        "C2": 12,
+        "C1": 4
+      }
+    },
+    "螺纹": {
+      "book": "C10",
+      "confidence": 0.938,
+      "count": 2525,
+      "distribution": {
+        "C10": 2368,
+        "C2": 77,
+        "C8": 70
+      }
+    },
+    "装饰灯": {
+      "book": "C4",
+      "confidence": 0.983,
+      "count": 2352,
+      "distribution": {
+        "C4": 2313,
+        "C2": 37,
+        "C5": 2
+      }
+    },
+    "桥架": {
+      "book": "C4",
+      "confidence": 0.984,
+      "count": 1948,
+      "distribution": {
+        "C4": 1917,
+        "C2": 29,
+        "C3": 1
+      }
+    },
+    "电缆": {
+      "book": "C4",
+      "confidence": 0.931,
+      "count": 1377,
+      "distribution": {
+        "C4": 1282,
+        "C5": 74,
+        "C2": 21
+      }
+    },
+    "开关": {
+      "book": "C4",
+      "confidence": 0.938,
+      "count": 1087,
+      "distribution": {
+        "C4": 1020,
+        "C2": 40,
+        "C5": 9
+      }
+    },
+    "复合管": {
+      "book": "C10",
+      "confidence": 0.956,
+      "count": 1074,
+      "distribution": {
+        "C10": 1027,
+        "C2": 47
+      }
+    },
+    "消火栓": {
+      "book": "C9",
+      "confidence": 0.941,
+      "count": 1071,
+      "distribution": {
+        "C9": 1008,
+        "C10": 39,
+        "C2": 15
+      }
+    },
+    "灯具": {
+      "book": "C4",
+      "confidence": 0.966,
+      "count": 1062,
+      "distribution": {
+        "C4": 1026,
+        "C2": 35,
+        "C5": 1
+      }
+    },
+    "喷淋": {
+      "book": "C9",
+      "confidence": 0.959,
+      "count": 976,
+      "distribution": {
+        "C9": 936,
+        "C10": 33,
+        "C1": 4
+      }
+    },
+    "照明": {
+      "book": "C4",
+      "confidence": 0.943,
+      "count": 958,
+      "distribution": {
+        "C4": 903,
+        "C2": 43,
+        "C5": 6
+      }
+    },
+    "扩声系统": {
+      "book": "C5",
+      "confidence": 0.976,
+      "count": 900,
+      "distribution": {
+        "C5": 878,
+        "C9": 13,
+        "C6": 7
+      }
+    },
+    "荧光灯": {
+      "book": "C4",
+      "confidence": 0.98,
+      "count": 866,
+      "distribution": {
+        "C4": 849,
+        "C2": 17
+      }
+    },
+    "消声器": {
+      "book": "C7",
+      "confidence": 0.999,
+      "count": 775,
+      "distribution": {
+        "C7": 774,
+        "C2": 1
+      }
+    },
+    "接地": {
+      "book": "C4",
+      "confidence": 0.957,
+      "count": 723,
+      "distribution": {
+        "C4": 692,
+        "C2": 20,
+        "C5": 11
+      }
+    },
+    "水表": {
+      "book": "C10",
+      "confidence": 0.988,
+      "count": 664,
+      "distribution": {
+        "C10": 656,
+        "C5": 3,
+        "C2": 3
+      }
+    },
+    "母线": {
+      "book": "C4",
+      "confidence": 0.969,
+      "count": 572,
+      "distribution": {
+        "C4": 554,
+        "C2": 18
+      }
+    },
+    "刷油": {
+      "book": "C12",
+      "confidence": 0.98,
+      "count": 562,
+      "distribution": {
+        "C12": 551,
+        "C2": 9,
+        "C11": 2
+      }
+    },
+    "绝热": {
+      "book": "C12",
+      "confidence": 0.956,
+      "count": 551,
+      "distribution": {
+        "C12": 527,
+        "C2": 23,
+        "C11": 1
+      }
+    },
+    "接头": {
+      "book": "C10",
+      "confidence": 0.933,
+      "count": 541,
+      "distribution": {
+        "C10": 505,
+        "C5": 11,
+        "C8": 10
+      }
+    },
+    "监控": {
+      "book": "C5",
+      "confidence": 0.953,
+      "count": 527,
+      "distribution": {
+        "C5": 502,
+        "C9": 17,
+        "C2": 4
+      }
+    },
+    "离心式": {
+      "book": "C1",
+      "confidence": 0.956,
+      "count": 518,
+      "distribution": {
+        "C1": 495,
+        "C7": 11,
+        "C2": 8
+      }
+    },
+    "交换机": {
+      "book": "C5",
+      "confidence": 0.977,
+      "count": 513,
+      "distribution": {
+        "C5": 501,
+        "C11": 5,
+        "C2": 4
+      }
+    },
+    "软管": {
+      "book": "C10",
+      "confidence": 0.955,
+      "count": 508,
+      "distribution": {
+        "C10": 485,
+        "C8": 9,
+        "C2": 8
+      }
+    },
+    "摄像": {
+      "book": "C5",
+      "confidence": 0.99,
+      "count": 496,
+      "distribution": {
+        "C5": 491,
+        "C2": 3,
+        "C6": 1
+      }
+    },
+    "百叶窗": {
+      "book": "C7",
+      "confidence": 0.979,
+      "count": 431,
+      "distribution": {
+        "C7": 422,
+        "C2": 8,
+        "C4": 1
+      }
+    },
+    "接线盒": {
+      "book": "C4",
+      "confidence": 0.964,
+      "count": 411,
+      "distribution": {
+        "C4": 396,
+        "C2": 14,
+        "C5": 1
+      }
+    },
+    "出入口": {
+      "book": "C5",
+      "confidence": 0.992,
+      "count": 390,
+      "distribution": {
+        "C5": 387,
+        "C4": 2,
+        "C7": 1
+      }
+    },
+    "潜水泵": {
+      "book": "C1",
+      "confidence": 0.997,
+      "count": 387,
+      "distribution": {
+        "C1": 386,
+        "C2": 1
+      }
+    },
+    "显示": {
+      "book": "C5",
+      "confidence": 0.936,
+      "count": 374,
+      "distribution": {
+        "C5": 350,
+        "C6": 9,
+        "C9": 6
+      }
+    },
+    "双绞线": {
+      "book": "C5",
+      "confidence": 0.965,
+      "count": 367,
+      "distribution": {
+        "C5": 354,
+        "C2": 11,
+        "C6": 1
+      }
+    },
+    "光缆": {
+      "book": "C5",
+      "confidence": 0.994,
+      "count": 362,
+      "distribution": {
+        "C5": 360,
+        "C2": 2
+      }
+    },
+    "景观灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 355,
+      "distribution": {
+        "C4": 355
+      }
+    },
+    "联动": {
+      "book": "C9",
+      "confidence": 0.991,
+      "count": 352,
+      "distribution": {
+        "C9": 349,
+        "C2": 2,
+        "C4": 1
+      }
+    },
+    "入侵": {
+      "book": "C5",
+      "confidence": 0.939,
+      "count": 345,
+      "distribution": {
+        "C5": 324,
+        "C4": 6,
+        "C6": 6
+      }
+    },
+    "水箱": {
+      "book": "C10",
+      "confidence": 0.988,
+      "count": 338,
+      "distribution": {
+        "C10": 334,
+        "C2": 2,
+        "C1": 1
+      }
+    },
+    "管件": {
+      "book": "C8",
+      "confidence": 0.976,
+      "count": 338,
+      "distribution": {
+        "C8": 330,
+        "C3": 4,
+        "C5": 2
+      }
+    },
+    "给水": {
+      "book": "C10",
+      "confidence": 0.985,
+      "count": 335,
+      "distribution": {
+        "C10": 330,
+        "C1": 5
+      }
+    },
+    "电器": {
+      "book": "C4",
+      "confidence": 0.979,
+      "count": 332,
+      "distribution": {
+        "C4": 325,
+        "C9": 4,
+        "C2": 1
+      }
+    },
+    "探测器": {
+      "book": "C9",
+      "confidence": 0.973,
+      "count": 330,
+      "distribution": {
+        "C9": 321,
+        "C2": 7,
+        "C6": 1
+      }
+    },
+    "点型": {
+      "book": "C9",
+      "confidence": 0.984,
+      "count": 316,
+      "distribution": {
+        "C9": 311,
+        "C2": 5
+      }
+    },
+    "信息": {
+      "book": "C5",
+      "confidence": 0.927,
+      "count": 300,
+      "distribution": {
+        "C5": 278,
+        "C4": 12,
+        "C2": 9
+      }
+    },
+    "视频": {
+      "book": "C5",
+      "confidence": 0.943,
+      "count": 299,
+      "distribution": {
+        "C5": 282,
+        "C2": 7,
+        "C6": 7
+      }
+    },
+    "服务器": {
+      "book": "C5",
+      "confidence": 0.973,
+      "count": 291,
+      "distribution": {
+        "C5": 283,
+        "C2": 6,
+        "C11": 1
+      }
+    },
+    "一体机": {
+      "book": "C9",
+      "confidence": 0.96,
+      "count": 276,
+      "distribution": {
+        "C9": 265,
+        "C5": 6,
+        "C2": 4
+      }
+    },
+    "配线架": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 242,
+      "distribution": {
+        "C5": 242
+      }
+    },
+    "电位": {
+      "book": "C4",
+      "confidence": 0.92,
+      "count": 237,
+      "distribution": {
+        "C4": 218,
+        "C2": 19
+      }
+    },
+    "软件": {
+      "book": "C5",
+      "confidence": 0.987,
+      "count": 233,
+      "distribution": {
+        "C5": 230,
+        "C9": 2,
+        "C2": 1
+      }
+    },
+    "铸铁管": {
+      "book": "C10",
+      "confidence": 0.935,
+      "count": 232,
+      "distribution": {
+        "C10": 217,
+        "C2": 11,
+        "C5": 4
+      }
+    },
+    "金属结构": {
+      "book": "C12",
+      "confidence": 0.968,
+      "count": 216,
+      "distribution": {
+        "C12": 209,
+        "C2": 6,
+        "C11": 1
+      }
+    },
+    "跳线": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 206,
+      "distribution": {
+        "C5": 206
+      }
+    },
+    "风扇": {
+      "book": "C4",
+      "confidence": 0.995,
+      "count": 205,
+      "distribution": {
+        "C4": 204,
+        "C5": 1
+      }
+    },
+    "网络": {
+      "book": "C5",
+      "confidence": 0.946,
+      "count": 204,
+      "distribution": {
+        "C5": 193,
+        "C4": 7,
+        "C2": 3
+      }
+    },
+    "接线箱": {
+      "book": "C4",
+      "confidence": 0.941,
+      "count": 203,
+      "distribution": {
+        "C4": 191,
+        "C9": 9,
+        "C5": 2
+      }
+    },
+    "灭火器": {
+      "book": "C9",
+      "confidence": 0.95,
+      "count": 201,
+      "distribution": {
+        "C9": 191,
+        "C2": 10
+      }
+    },
+    "电气": {
+      "book": "C4",
+      "confidence": 0.96,
+      "count": 198,
+      "distribution": {
+        "C4": 190,
+        "C10": 4,
+        "C9": 4
+      }
+    },
+    "背景音乐": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 197,
+      "distribution": {
+        "C5": 197
+      }
+    },
+    "识别": {
+      "book": "C5",
+      "confidence": 0.989,
+      "count": 186,
+      "distribution": {
+        "C5": 184,
+        "C2": 2
+      }
+    },
+    "工厂": {
+      "book": "C4",
+      "confidence": 0.989,
+      "count": 180,
+      "distribution": {
+        "C4": 178,
+        "C2": 2
+      }
+    },
+    "目标": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 178,
+      "distribution": {
+        "C5": 178
+      }
+    },
+    "广播": {
+      "book": "C9",
+      "confidence": 0.944,
+      "count": 177,
+      "distribution": {
+        "C9": 167,
+        "C2": 9,
+        "C4": 1
+      }
+    },
+    "静压": {
+      "book": "C7",
+      "confidence": 0.994,
+      "count": 175,
+      "distribution": {
+        "C7": 174,
+        "C2": 1
+      }
+    },
+    "路灯": {
+      "book": "C4",
+      "confidence": 0.994,
+      "count": 174,
+      "distribution": {
+        "C4": 173,
+        "C5": 1
+      }
+    },
+    "稳压": {
+      "book": "C10",
+      "confidence": 0.982,
+      "count": 171,
+      "distribution": {
+        "C10": 168,
+        "C9": 2,
+        "C4": 1
+      }
+    },
+    "声光报警": {
+      "book": "C9",
+      "confidence": 0.946,
+      "count": 167,
+      "distribution": {
+        "C9": 158,
+        "C2": 6,
+        "C5": 3
+      }
+    },
+    "指示器": {
+      "book": "C9",
+      "confidence": 0.945,
+      "count": 163,
+      "distribution": {
+        "C9": 154,
+        "C6": 6,
+        "C2": 2
+      }
+    },
+    "水流": {
+      "book": "C9",
+      "confidence": 0.981,
+      "count": 157,
+      "distribution": {
+        "C9": 154,
+        "C2": 2,
+        "C8": 1
+      }
+    },
+    "管理": {
+      "book": "C5",
+      "confidence": 0.993,
+      "count": 151,
+      "distribution": {
+        "C5": 150,
+        "C2": 1
+      }
+    },
+    "灭火": {
+      "book": "C9",
+      "confidence": 0.966,
+      "count": 146,
+      "distribution": {
+        "C9": 141,
+        "C2": 4,
+        "C4": 1
+      }
+    },
+    "停车场": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 142,
+      "distribution": {
+        "C5": 142
+      }
+    },
+    "变频": {
+      "book": "C10",
+      "confidence": 0.922,
+      "count": 141,
+      "distribution": {
+        "C10": 130,
+        "C1": 5,
+        "C4": 4
+      }
+    },
+    "压力仪表": {
+      "book": "C6",
+      "confidence": 0.979,
+      "count": 141,
+      "distribution": {
+        "C6": 138,
+        "C2": 2,
+        "C8": 1
+      }
+    },
+    "风管": {
+      "book": "C7",
+      "confidence": 0.993,
+      "count": 141,
+      "distribution": {
+        "C7": 140,
+        "C2": 1
+      }
+    },
+    "压环": {
+      "book": "C4",
+      "confidence": 0.993,
+      "count": 141,
+      "distribution": {
+        "C4": 140,
+        "C2": 1
+      }
+    },
+    "挡烟": {
+      "book": "C7",
+      "confidence": 0.979,
+      "count": 140,
+      "distribution": {
+        "C7": 137,
+        "C9": 2,
+        "C5": 1
+      }
+    },
+    "垂壁": {
+      "book": "C7",
+      "confidence": 0.979,
+      "count": 140,
+      "distribution": {
+        "C7": 137,
+        "C9": 2,
+        "C5": 1
+      }
+    },
+    "输入": {
+      "book": "C5",
+      "confidence": 0.948,
+      "count": 135,
+      "distribution": {
+        "C5": 128,
+        "C9": 3,
+        "C6": 1
+      }
+    },
+    "手动": {
+      "book": "C7",
+      "confidence": 0.94,
+      "count": 133,
+      "distribution": {
+        "C7": 125,
+        "C10": 3,
+        "C2": 2
+      }
+    },
+    "防范": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 130,
+      "distribution": {
+        "C5": 130
+      }
+    },
+    "下线": {
+      "book": "C4",
+      "confidence": 0.961,
+      "count": 129,
+      "distribution": {
+        "C4": 124,
+        "C2": 5
+      }
+    },
+    "执行机构": {
+      "book": "C5",
+      "confidence": 0.992,
+      "count": 126,
+      "distribution": {
+        "C5": 125,
+        "C6": 1
+      }
+    },
+    "防潮层": {
+      "book": "C12",
+      "confidence": 0.984,
+      "count": 126,
+      "distribution": {
+        "C12": 124,
+        "C2": 2
+      }
+    },
+    "保护层": {
+      "book": "C12",
+      "confidence": 0.984,
+      "count": 126,
+      "distribution": {
+        "C12": 124,
+        "C2": 2
+      }
+    },
+    "百叶": {
+      "book": "C7",
+      "confidence": 0.935,
+      "count": 123,
+      "distribution": {
+        "C7": 115,
+        "C2": 8
+      }
+    },
+    "探测": {
+      "book": "C5",
+      "confidence": 0.917,
+      "count": 121,
+      "distribution": {
+        "C5": 111,
+        "C4": 3,
+        "C10": 3
+      }
+    },
+    "通风": {
+      "book": "C7",
+      "confidence": 0.904,
+      "count": 115,
+      "distribution": {
+        "C7": 104,
+        "C4": 10,
+        "C6": 1
+      }
+    },
+    "复合型": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 112,
+      "distribution": {
+        "C7": 112
+      }
+    },
+    "光纤": {
+      "book": "C5",
+      "confidence": 0.954,
+      "count": 109,
+      "distribution": {
+        "C5": 104,
+        "C11": 3,
+        "C6": 1
+      }
+    },
+    "接合": {
+      "book": "C9",
+      "confidence": 0.981,
+      "count": 107,
+      "distribution": {
+        "C9": 105,
+        "C2": 2
+      }
+    },
+    "扬声器": {
+      "book": "C9",
+      "confidence": 0.972,
+      "count": 107,
+      "distribution": {
+        "C9": 104,
+        "C2": 3
+      }
+    },
+    "分系统": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 107,
+      "distribution": {
+        "C5": 107
+      }
+    },
+    "系统软件": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 107,
+      "distribution": {
+        "C5": 107
+      }
+    },
+    "应急": {
+      "book": "C4",
+      "confidence": 0.962,
+      "count": 106,
+      "distribution": {
+        "C4": 102,
+        "C5": 1,
+        "C9": 1
+      }
+    },
+    "不锈钢板": {
+      "book": "C7",
+      "confidence": 0.943,
+      "count": 106,
+      "distribution": {
+        "C7": 100,
+        "C8": 6
+      }
+    },
+    "减压": {
+      "book": "C9",
+      "confidence": 0.962,
+      "count": 105,
+      "distribution": {
+        "C9": 101,
+        "C10": 3,
+        "C2": 1
+      }
+    },
+    "孔板": {
+      "book": "C9",
+      "confidence": 0.99,
+      "count": 100,
+      "distribution": {
+        "C9": 99,
+        "C2": 1
+      }
+    },
+    "防火阀": {
+      "book": "C7",
+      "confidence": 0.908,
+      "count": 98,
+      "distribution": {
+        "C7": 89,
+        "C2": 9
+      }
+    },
+    "仪表": {
+      "book": "C6",
+      "confidence": 0.918,
+      "count": 98,
+      "distribution": {
+        "C6": 90,
+        "C12": 4,
+        "C4": 3
+      }
+    },
+    "防止": {
+      "book": "C10",
+      "confidence": 0.969,
+      "count": 97,
+      "distribution": {
+        "C10": 94,
+        "C9": 2,
+        "C8": 1
+      }
+    },
+    "区域": {
+      "book": "C9",
+      "confidence": 0.969,
+      "count": 97,
+      "distribution": {
+        "C9": 94,
+        "C2": 2,
+        "C4": 1
+      }
+    },
+    "接口卡": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 96,
+      "distribution": {
+        "C5": 96
+      }
+    },
+    "线路": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 95,
+      "distribution": {
+        "C4": 95
+      }
+    },
+    "存储设备": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 95,
+      "distribution": {
+        "C5": 95
+      }
+    },
+    "照明灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 94,
+      "distribution": {
+        "C4": 94
+      }
+    },
+    "热泵": {
+      "book": "C10",
+      "confidence": 0.967,
+      "count": 92,
+      "distribution": {
+        "C10": 89,
+        "C2": 2,
+        "C4": 1
+      }
+    },
+    "倒流": {
+      "book": "C10",
+      "confidence": 0.989,
+      "count": 91,
+      "distribution": {
+        "C10": 90,
+        "C8": 1
+      }
+    },
+    "地源": {
+      "book": "C10",
+      "confidence": 0.978,
+      "count": 91,
+      "distribution": {
+        "C10": 89,
+        "C2": 2
+      }
+    },
+    "水源": {
+      "book": "C10",
+      "confidence": 0.978,
+      "count": 91,
+      "distribution": {
+        "C10": 89,
+        "C2": 2
+      }
+    },
+    "气源": {
+      "book": "C10",
+      "confidence": 0.978,
+      "count": 91,
+      "distribution": {
+        "C10": 89,
+        "C2": 2
+      }
+    },
+    "线槽": {
+      "book": "C4",
+      "confidence": 0.912,
+      "count": 91,
+      "distribution": {
+        "C4": 83,
+        "C2": 7,
+        "C5": 1
+      }
+    },
+    "分析": {
+      "book": "C6",
+      "confidence": 0.912,
+      "count": 91,
+      "distribution": {
+        "C6": 83,
+        "C12": 4,
+        "C2": 2
+      }
+    },
+    "动力": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 89,
+      "distribution": {
+        "C4": 89
+      }
+    },
+    "电缆头": {
+      "book": "C4",
+      "confidence": 0.943,
+      "count": 88,
+      "distribution": {
+        "C4": 83,
+        "C2": 5
+      }
+    },
+    "同轴电缆": {
+      "book": "C5",
+      "confidence": 0.953,
+      "count": 85,
+      "distribution": {
+        "C5": 81,
+        "C2": 3,
+        "C11": 1
+      }
+    },
+    "过程": {
+      "book": "C6",
+      "confidence": 0.952,
+      "count": 84,
+      "distribution": {
+        "C6": 80,
+        "C12": 4
+      }
+    },
+    "异步电动": {
+      "book": "C4",
+      "confidence": 0.975,
+      "count": 81,
+      "distribution": {
+        "C4": 79,
+        "C2": 2
+      }
+    },
+    "射频": {
+      "book": "C5",
+      "confidence": 0.962,
+      "count": 78,
+      "distribution": {
+        "C5": 75,
+        "C2": 3
+      }
+    },
+    "堵洞": {
+      "book": "C4",
+      "confidence": 0.961,
+      "count": 76,
+      "distribution": {
+        "C4": 73,
+        "C10": 2,
+        "C2": 1
+      }
+    },
+    "单层": {
+      "book": "C7",
+      "confidence": 0.974,
+      "count": 76,
+      "distribution": {
+        "C7": 74,
+        "C2": 1,
+        "C10": 1
+      }
+    },
+    "路由器": {
+      "book": "C5",
+      "confidence": 0.961,
+      "count": 76,
+      "distribution": {
+        "C5": 73,
+        "C6": 2,
+        "C2": 1
+      }
+    },
+    "插孔": {
+      "book": "C9",
+      "confidence": 0.96,
+      "count": 75,
+      "distribution": {
+        "C9": 72,
+        "C2": 3
+      }
+    },
+    "电动机": {
+      "book": "C4",
+      "confidence": 0.986,
+      "count": 74,
+      "distribution": {
+        "C4": 73,
+        "C5": 1
+      }
+    },
+    "接地装置": {
+      "book": "C4",
+      "confidence": 0.932,
+      "count": 74,
+      "distribution": {
+        "C4": 69,
+        "C2": 4,
+        "C8": 1
+      }
+    },
+    "对数": {
+      "book": "C5",
+      "confidence": 0.986,
+      "count": 74,
+      "distribution": {
+        "C5": 73,
+        "C11": 1
+      }
+    },
+    "热水器": {
+      "book": "C10",
+      "confidence": 0.972,
+      "count": 72,
+      "distribution": {
+        "C10": 70,
+        "C4": 2
+      }
+    },
+    "单管": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 71,
+      "distribution": {
+        "C4": 71
+      }
+    },
+    "末端": {
+      "book": "C9",
+      "confidence": 0.93,
+      "count": 71,
+      "distribution": {
+        "C9": 66,
+        "C10": 3,
+        "C2": 2
+      }
+    },
+    "减压器": {
+      "book": "C10",
+      "confidence": 0.915,
+      "count": 71,
+      "distribution": {
+        "C10": 65,
+        "C9": 6
+      }
+    },
+    "传输": {
+      "book": "C5",
+      "confidence": 0.915,
+      "count": 71,
+      "distribution": {
+        "C5": 65,
+        "C4": 3,
+        "C9": 2
+      }
+    },
+    "试水": {
+      "book": "C9",
+      "confidence": 0.943,
+      "count": 70,
+      "distribution": {
+        "C9": 66,
+        "C10": 3,
+        "C2": 1
+      }
+    },
+    "检测仪表": {
+      "book": "C6",
+      "confidence": 0.943,
+      "count": 70,
+      "distribution": {
+        "C6": 66,
+        "C4": 4
+      }
+    },
+    "集线器": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 69,
+      "distribution": {
+        "C5": 69
+      }
+    },
+    "消毒器": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 67,
+      "distribution": {
+        "C10": 67
+      }
+    },
+    "现浇": {
+      "book": "C5",
+      "confidence": 0.985,
+      "count": 66,
+      "distribution": {
+        "C5": 65,
+        "C3": 1
+      }
+    },
+    "蓄电池": {
+      "book": "C4",
+      "confidence": 0.984,
+      "count": 64,
+      "distribution": {
+        "C4": 63,
+        "C5": 1
+      }
+    },
+    "终端盒": {
+      "book": "C5",
+      "confidence": 0.968,
+      "count": 63,
+      "distribution": {
+        "C5": 61,
+        "C2": 2
+      }
+    },
+    "刚性": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 61,
+      "distribution": {
+        "C10": 61
+      }
+    },
+    "物位": {
+      "book": "C6",
+      "confidence": 0.951,
+      "count": 61,
+      "distribution": {
+        "C6": 58,
+        "C4": 3
+      }
+    },
+    "开水": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 61,
+      "distribution": {
+        "C10": 61
+      }
+    },
+    "试运行": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 61,
+      "distribution": {
+        "C5": 61
+      }
+    },
+    "布放": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 56,
+      "distribution": {
+        "C5": 56
+      }
+    },
+    "尾纤": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 55,
+      "distribution": {
+        "C5": 55
+      }
+    },
+    "远程": {
+      "book": "C9",
+      "confidence": 0.963,
+      "count": 54,
+      "distribution": {
+        "C9": 52,
+        "C4": 2
+      }
+    },
+    "异步": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 53,
+      "distribution": {
+        "C4": 53
+      }
+    },
+    "落地式": {
+      "book": "C4",
+      "confidence": 0.962,
+      "count": 52,
+      "distribution": {
+        "C4": 50,
+        "C5": 2
+      }
+    },
+    "管网": {
+      "book": "C9",
+      "confidence": 0.961,
+      "count": 51,
+      "distribution": {
+        "C9": 49,
+        "C2": 2
+      }
+    },
+    "防腐蚀": {
+      "book": "C12",
+      "confidence": 0.961,
+      "count": 51,
+      "distribution": {
+        "C12": 49,
+        "C2": 1,
+        "C11": 1
+      }
+    },
+    "插箱": {
+      "book": "C5",
+      "confidence": 0.98,
+      "count": 50,
+      "distribution": {
+        "C5": 49,
+        "C2": 1
+      }
+    },
+    "水锤": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 49,
+      "distribution": {
+        "C10": 49
+      }
+    },
+    "消除器": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 49,
+      "distribution": {
+        "C10": 49
+      }
+    },
+    "防火墙": {
+      "book": "C5",
+      "confidence": 0.979,
+      "count": 48,
+      "distribution": {
+        "C5": 47,
+        "C2": 1
+      }
+    },
+    "开多叶": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 45,
+      "distribution": {
+        "C7": 45
+      }
+    },
+    "收发器": {
+      "book": "C5",
+      "confidence": 0.929,
+      "count": 42,
+      "distribution": {
+        "C5": 39,
+        "C6": 3
+      }
+    },
+    "紫外线": {
+      "book": "C10",
+      "confidence": 0.952,
+      "count": 42,
+      "distribution": {
+        "C10": 40,
+        "C4": 2
+      }
+    },
+    "管理器": {
+      "book": "C5",
+      "confidence": 0.952,
+      "count": 42,
+      "distribution": {
+        "C5": 40,
+        "C2": 2
+      }
+    },
+    "雨水": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 41,
+      "distribution": {
+        "C10": 41
+      }
+    },
+    "喷泉": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 41,
+      "distribution": {
+        "C10": 41
+      }
+    },
+    "吸顶灯": {
+      "book": "C4",
+      "confidence": 0.925,
+      "count": 40,
+      "distribution": {
+        "C4": 37,
+        "C2": 3
+      }
+    },
+    "标志灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 40,
+      "distribution": {
+        "C4": 40
+      }
+    },
+    "应用": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 40,
+      "distribution": {
+        "C5": 40
+      }
+    },
+    "板卷": {
+      "book": "C8",
+      "confidence": 1.0,
+      "count": 40,
+      "distribution": {
+        "C8": 40
+      }
+    },
+    "消毒": {
+      "book": "C10",
+      "confidence": 0.974,
+      "count": 39,
+      "distribution": {
+        "C10": 38,
+        "C4": 1
+      }
+    },
+    "导流": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 38,
+      "distribution": {
+        "C7": 38
+      }
+    },
+    "叶片": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 38,
+      "distribution": {
+        "C7": 38
+      }
+    },
+    "弯头": {
+      "book": "C7",
+      "confidence": 0.974,
+      "count": 38,
+      "distribution": {
+        "C7": 37,
+        "C8": 1
+      }
+    },
+    "隔板": {
+      "book": "C4",
+      "confidence": 0.973,
+      "count": 37,
+      "distribution": {
+        "C4": 36,
+        "C2": 1
+      }
+    },
+    "面板": {
+      "book": "C4",
+      "confidence": 0.944,
+      "count": 36,
+      "distribution": {
+        "C4": 34,
+        "C5": 1,
+        "C6": 1
+      }
+    },
+    "负压": {
+      "book": "C10",
+      "confidence": 0.972,
+      "count": 36,
+      "distribution": {
+        "C10": 35,
+        "C1": 1
+      }
+    },
+    "单控": {
+      "book": "C4",
+      "confidence": 0.914,
+      "count": 35,
+      "distribution": {
+        "C4": 32,
+        "C2": 3
+      }
+    },
+    "手摇泵": {
+      "book": "C8",
+      "confidence": 1.0,
+      "count": 35,
+      "distribution": {
+        "C8": 35
+      }
+    },
+    "直形": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 35,
+      "distribution": {
+        "C5": 35
+      }
+    },
+    "附属": {
+      "book": "C4",
+      "confidence": 0.912,
+      "count": 34,
+      "distribution": {
+        "C4": 31,
+        "C6": 1,
+        "C5": 1
+      }
+    },
+    "除湿机": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 34,
+      "distribution": {
+        "C7": 34
+      }
+    },
+    "气压": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 33,
+      "distribution": {
+        "C10": 33
+      }
+    },
+    "及其": {
+      "book": "C4",
+      "confidence": 0.969,
+      "count": 32,
+      "distribution": {
+        "C4": 31,
+        "C5": 1
+      }
+    },
+    "防尘": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 30,
+      "distribution": {
+        "C4": 30
+      }
+    },
+    "双管": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 30,
+      "distribution": {
+        "C4": 30
+      }
+    },
+    "连体": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 30,
+      "distribution": {
+        "C4": 30
+      }
+    },
+    "橡胶": {
+      "book": "C10",
+      "confidence": 0.931,
+      "count": 29,
+      "distribution": {
+        "C10": 27,
+        "C2": 2
+      }
+    },
+    "贮存": {
+      "book": "C9",
+      "confidence": 0.966,
+      "count": 29,
+      "distribution": {
+        "C9": 28,
+        "C2": 1
+      }
+    },
+    "自带": {
+      "book": "C4",
+      "confidence": 0.929,
+      "count": 28,
+      "distribution": {
+        "C4": 26,
+        "C5": 1,
+        "C9": 1
+      }
+    },
+    "连杆": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 28,
+      "distribution": {
+        "C7": 28
+      }
+    },
+    "电视墙": {
+      "book": "C5",
+      "confidence": 0.964,
+      "count": 28,
+      "distribution": {
+        "C5": 27,
+        "C6": 1
+      }
+    },
+    "换气扇": {
+      "book": "C4",
+      "confidence": 0.926,
+      "count": 27,
+      "distribution": {
+        "C4": 25,
+        "C7": 2
+      }
+    },
+    "壁灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 27,
+      "distribution": {
+        "C4": 27
+      }
+    },
+    "单相": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 27,
+      "distribution": {
+        "C4": 27
+      }
+    },
+    "疏散": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 27,
+      "distribution": {
+        "C4": 27
+      }
+    },
+    "冷水": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 27,
+      "distribution": {
+        "C10": 27
+      }
+    },
+    "短管": {
+      "book": "C10",
+      "confidence": 0.963,
+      "count": 27,
+      "distribution": {
+        "C10": 26,
+        "C2": 1
+      }
+    },
+    "雨水管": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 26,
+      "distribution": {
+        "C10": 26
+      }
+    },
+    "钢塑": {
+      "book": "C10",
+      "confidence": 0.962,
+      "count": 26,
+      "distribution": {
+        "C10": 25,
+        "C8": 1
+      }
+    },
+    "充电": {
+      "book": "C4",
+      "confidence": 0.962,
+      "count": 26,
+      "distribution": {
+        "C4": 25,
+        "C5": 1
+      }
+    },
+    "甲乙": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 26,
+      "distribution": {
+        "C10": 26
+      }
+    },
+    "插板": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 25,
+      "distribution": {
+        "C7": 25
+      }
+    },
+    "投入": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 25,
+      "distribution": {
+        "C4": 25
+      }
+    },
+    "输出设备": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 25,
+      "distribution": {
+        "C5": 25
+      }
+    },
+    "温度仪表": {
+      "book": "C6",
+      "confidence": 0.917,
+      "count": 24,
+      "distribution": {
+        "C6": 22,
+        "C2": 2
+      }
+    },
+    "衬塑": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 24,
+      "distribution": {
+        "C10": 24
+      }
+    },
+    "超压": {
+      "book": "C7",
+      "confidence": 0.958,
+      "count": 24,
+      "distribution": {
+        "C7": 23,
+        "C10": 1
+      }
+    },
+    "电动葫芦": {
+      "book": "C1",
+      "confidence": 1.0,
+      "count": 24,
+      "distribution": {
+        "C1": 24
+      }
+    },
+    "燃气": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 24,
+      "distribution": {
+        "C10": 24
+      }
+    },
+    "杀菌": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 24,
+      "distribution": {
+        "C10": 24
+      }
+    },
+    "警铃": {
+      "book": "C9",
+      "confidence": 0.958,
+      "count": 24,
+      "distribution": {
+        "C9": 23,
+        "C5": 1
+      }
+    },
+    "软风": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 23,
+      "distribution": {
+        "C7": 23
+      }
+    },
+    "接线": {
+      "book": "C4",
+      "confidence": 0.913,
+      "count": 23,
+      "distribution": {
+        "C4": 21,
+        "C6": 2
+      }
+    },
+    "土方": {
+      "book": "C1",
+      "confidence": 1.0,
+      "count": 23,
+      "distribution": {
+        "C1": 23
+      }
+    },
+    "工业": {
+      "book": "C6",
+      "confidence": 0.913,
+      "count": 23,
+      "distribution": {
+        "C6": 21,
+        "C10": 1,
+        "C5": 1
+      }
+    },
+    "中水": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 23,
+      "distribution": {
+        "C10": 23
+      }
+    },
+    "收集": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 23,
+      "distribution": {
+        "C10": 23
+      }
+    },
+    "红外": {
+      "book": "C4",
+      "confidence": 0.909,
+      "count": 22,
+      "distribution": {
+        "C4": 20,
+        "C5": 2
+      }
+    },
+    "避雷针": {
+      "book": "C4",
+      "confidence": 0.955,
+      "count": 22,
+      "distribution": {
+        "C4": 21,
+        "C2": 1
+      }
+    },
+    "录像": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 22,
+      "distribution": {
+        "C5": 22
+      }
+    },
+    "沸水": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 22,
+      "distribution": {
+        "C10": 22
+      }
+    },
+    "壁装": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 21,
+      "distribution": {
+        "C4": 21
+      }
+    },
+    "人体": {
+      "book": "C4",
+      "confidence": 0.905,
+      "count": 21,
+      "distribution": {
+        "C4": 19,
+        "C5": 2
+      }
+    },
+    "分支": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 21,
+      "distribution": {
+        "C4": 21
+      }
+    },
+    "风帽": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 21,
+      "distribution": {
+        "C7": 21
+      }
+    },
+    "周长": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 20,
+      "distribution": {
+        "C4": 20
+      }
+    },
+    "混流": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 20,
+      "distribution": {
+        "C7": 20
+      }
+    }
+  },
+  "tier2": {
+    "插座": {
+      "book": "C4",
+      "confidence": 0.76,
+      "count": 1355,
+      "distribution": {
+        "C4": 1030,
+        "C5": 295,
+        "C2": 30
+      }
+    },
+    "通风管道": {
+      "book": "C7",
+      "confidence": 0.869,
+      "count": 1265,
+      "distribution": {
+        "C7": 1099,
+        "C12": 107,
+        "C2": 59
+      }
+    },
+    "模块": {
+      "book": "C9",
+      "confidence": 0.896,
+      "count": 651,
+      "distribution": {
+        "C9": 583,
+        "C5": 44,
+        "C2": 14
+      }
+    },
+    "消防": {
+      "book": "C9",
+      "confidence": 0.824,
+      "count": 494,
+      "distribution": {
+        "C9": 407,
+        "C4": 66,
+        "C2": 14
+      }
+    },
+    "人防": {
+      "book": "C7",
+      "confidence": 0.817,
+      "count": 442,
+      "distribution": {
+        "C7": 361,
+        "C10": 79,
+        "C3": 1
+      }
+    },
+    "避雷": {
+      "book": "C4",
+      "confidence": 0.882,
+      "count": 373,
+      "distribution": {
+        "C4": 329,
+        "C5": 29,
+        "C2": 15
+      }
+    },
+    "机柜": {
+      "book": "C5",
+      "confidence": 0.887,
+      "count": 301,
+      "distribution": {
+        "C5": 267,
+        "C4": 21,
+        "C2": 9
+      }
+    },
+    "端子": {
+      "book": "C4",
+      "confidence": 0.875,
+      "count": 255,
+      "distribution": {
+        "C4": 223,
+        "C2": 30,
+        "C9": 2
+      }
+    },
+    "机架": {
+      "book": "C5",
+      "confidence": 0.873,
+      "count": 244,
+      "distribution": {
+        "C5": 213,
+        "C4": 21,
+        "C2": 6
+      }
+    },
+    "主机": {
+      "book": "C9",
+      "confidence": 0.85,
+      "count": 214,
+      "distribution": {
+        "C9": 182,
+        "C5": 11,
+        "C2": 9
+      }
+    },
+    "喷头": {
+      "book": "C9",
+      "confidence": 0.832,
+      "count": 197,
+      "distribution": {
+        "C9": 164,
+        "C10": 31,
+        "C2": 2
+      }
+    },
+    "电话": {
+      "book": "C9",
+      "confidence": 0.776,
+      "count": 174,
+      "distribution": {
+        "C9": 135,
+        "C5": 19,
+        "C2": 13
+      }
+    },
+    "交流": {
+      "book": "C4",
+      "confidence": 0.821,
+      "count": 162,
+      "distribution": {
+        "C4": 133,
+        "C9": 25,
+        "C1": 2
+      }
+    },
+    "闸阀": {
+      "book": "C10",
+      "confidence": 0.77,
+      "count": 148,
+      "distribution": {
+        "C10": 114,
+        "C2": 34
+      }
+    },
+    "排水": {
+      "book": "C10",
+      "confidence": 0.82,
+      "count": 128,
+      "distribution": {
+        "C10": 105,
+        "C2": 12,
+        "C6": 7
+      }
+    },
+    "管内": {
+      "book": "C4",
+      "confidence": 0.754,
+      "count": 122,
+      "distribution": {
+        "C4": 92,
+        "C2": 22,
+        "C5": 8
+      }
+    },
+    "穿线": {
+      "book": "C4",
+      "confidence": 0.782,
+      "count": 119,
+      "distribution": {
+        "C4": 93,
+        "C2": 21,
+        "C5": 5
+      }
+    },
+    "开关柜": {
+      "book": "C4",
+      "confidence": 0.886,
+      "count": 114,
+      "distribution": {
+        "C4": 101,
+        "C6": 9,
+        "C2": 4
+      }
+    },
+    "除污器": {
+      "book": "C10",
+      "confidence": 0.78,
+      "count": 109,
+      "distribution": {
+        "C10": 85,
+        "C8": 18,
+        "C2": 5
+      }
+    },
+    "盘管": {
+      "book": "C4",
+      "confidence": 0.829,
+      "count": 105,
+      "distribution": {
+        "C4": 87,
+        "C2": 10,
+        "C7": 4
+      }
+    },
+    "气体": {
+      "book": "C9",
+      "confidence": 0.838,
+      "count": 105,
+      "distribution": {
+        "C9": 88,
+        "C10": 8,
+        "C2": 4
+      }
+    },
+    "机组": {
+      "book": "C10",
+      "confidence": 0.894,
+      "count": 104,
+      "distribution": {
+        "C10": 93,
+        "C4": 7,
+        "C2": 4
+      }
+    },
+    "火灾": {
+      "book": "C9",
+      "confidence": 0.794,
+      "count": 97,
+      "distribution": {
+        "C9": 77,
+        "C5": 7,
+        "C2": 6
+      }
+    },
+    "流量仪表": {
+      "book": "C6",
+      "confidence": 0.896,
+      "count": 96,
+      "distribution": {
+        "C6": 86,
+        "C10": 7,
+        "C8": 3
+      }
+    },
+    "铜管": {
+      "book": "C10",
+      "confidence": 0.833,
+      "count": 90,
+      "distribution": {
+        "C10": 75,
+        "C8": 15
+      }
+    },
+    "系统控制": {
+      "book": "C9",
+      "confidence": 0.888,
+      "count": 89,
+      "distribution": {
+        "C9": 79,
+        "C6": 4,
+        "C4": 3
+      }
+    },
+    "报警装置": {
+      "book": "C9",
+      "confidence": 0.762,
+      "count": 80,
+      "distribution": {
+        "C9": 61,
+        "C6": 17,
+        "C1": 1
+      }
+    },
+    "调节阀": {
+      "book": "C7",
+      "confidence": 0.756,
+      "count": 78,
+      "distribution": {
+        "C7": 59,
+        "C6": 16,
+        "C2": 2
+      }
+    },
+    "排水管": {
+      "book": "C10",
+      "confidence": 0.812,
+      "count": 64,
+      "distribution": {
+        "C10": 52,
+        "C2": 12
+      }
+    },
+    "地漏": {
+      "book": "C10",
+      "confidence": 0.783,
+      "count": 60,
+      "distribution": {
+        "C10": 47,
+        "C2": 13
+      }
+    },
+    "配电装置": {
+      "book": "C4",
+      "confidence": 0.864,
+      "count": 59,
+      "distribution": {
+        "C4": 51,
+        "C2": 8
+      }
+    },
+    "预埋": {
+      "book": "C10",
+      "confidence": 0.868,
+      "count": 53,
+      "distribution": {
+        "C10": 46,
+        "C5": 5,
+        "C2": 1
+      }
+    },
+    "保护器": {
+      "book": "C4",
+      "confidence": 0.8,
+      "count": 50,
+      "distribution": {
+        "C4": 40,
+        "C5": 9,
+        "C12": 1
+      }
+    },
+    "家居": {
+      "book": "C5",
+      "confidence": 0.857,
+      "count": 49,
+      "distribution": {
+        "C5": 42,
+        "C4": 7
+      }
+    },
+    "不间断": {
+      "book": "C4",
+      "confidence": 0.872,
+      "count": 47,
+      "distribution": {
+        "C4": 41,
+        "C5": 4,
+        "C2": 1
+      }
+    },
+    "抹灰": {
+      "book": "C12",
+      "confidence": 0.841,
+      "count": 44,
+      "distribution": {
+        "C12": 37,
+        "C9": 7
+      }
+    },
+    "防雨": {
+      "book": "C7",
+      "confidence": 0.838,
+      "count": 37,
+      "distribution": {
+        "C7": 31,
+        "C2": 6
+      }
+    },
+    "补偿器": {
+      "book": "C10",
+      "confidence": 0.784,
+      "count": 37,
+      "distribution": {
+        "C10": 29,
+        "C2": 4,
+        "C5": 3
+      }
+    },
+    "给水管": {
+      "book": "C10",
+      "confidence": 0.75,
+      "count": 36,
+      "distribution": {
+        "C10": 27,
+        "C2": 8,
+        "C8": 1
+      }
+    },
+    "防护": {
+      "book": "C10",
+      "confidence": 0.771,
+      "count": 35,
+      "distribution": {
+        "C10": 27,
+        "C4": 8
+      }
+    },
+    "回填": {
+      "book": "C1",
+      "confidence": 0.812,
+      "count": 32,
+      "distribution": {
+        "C1": 26,
+        "C10": 4,
+        "C5": 2
+      }
+    },
+    "感应": {
+      "book": "C4",
+      "confidence": 0.793,
+      "count": 29,
+      "distribution": {
+        "C4": 23,
+        "C1": 2,
+        "C2": 2
+      }
+    },
+    "循环": {
+      "book": "C1",
+      "confidence": 0.897,
+      "count": 29,
+      "distribution": {
+        "C1": 26,
+        "C2": 2,
+        "C10": 1
+      }
+    },
+    "五孔": {
+      "book": "C4",
+      "confidence": 0.857,
+      "count": 28,
+      "distribution": {
+        "C4": 24,
+        "C2": 4
+      }
+    },
+    "电视": {
+      "book": "C5",
+      "confidence": 0.75,
+      "count": 28,
+      "distribution": {
+        "C5": 21,
+        "C2": 5,
+        "C4": 2
+      }
+    },
+    "聚乙烯": {
+      "book": "C2",
+      "confidence": 0.778,
+      "count": 27,
+      "distribution": {
+        "C2": 21,
+        "C10": 6
+      }
+    },
+    "预留": {
+      "book": "C10",
+      "confidence": 0.885,
+      "count": 26,
+      "distribution": {
+        "C10": 23,
+        "C4": 2,
+        "C2": 1
+      }
+    },
+    "备用": {
+      "book": "C9",
+      "confidence": 0.8,
+      "count": 25,
+      "distribution": {
+        "C9": 20,
+        "C4": 4,
+        "C6": 1
+      }
+    },
+    "电池": {
+      "book": "C9",
+      "confidence": 0.84,
+      "count": 25,
+      "distribution": {
+        "C9": 21,
+        "C4": 4
+      }
+    },
+    "报警信号": {
+      "book": "C5",
+      "confidence": 0.84,
+      "count": 25,
+      "distribution": {
+        "C5": 21,
+        "C4": 3,
+        "C9": 1
+      }
+    },
+    "打洞": {
+      "book": "C10",
+      "confidence": 0.75,
+      "count": 24,
+      "distribution": {
+        "C10": 18,
+        "C5": 4,
+        "C4": 1
+      }
+    },
+    "热媒": {
+      "book": "C2",
+      "confidence": 0.87,
+      "count": 23,
+      "distribution": {
+        "C2": 20,
+        "C8": 2,
+        "C10": 1
+      }
+    },
+    "集配": {
+      "book": "C2",
+      "confidence": 0.87,
+      "count": 23,
+      "distribution": {
+        "C2": 20,
+        "C8": 2,
+        "C10": 1
+      }
+    },
+    "涂覆": {
+      "book": "C9",
+      "confidence": 0.87,
+      "count": 23,
+      "distribution": {
+        "C9": 20,
+        "C10": 3
+      }
+    },
+    "减压阀": {
+      "book": "C10",
+      "confidence": 0.857,
+      "count": 21,
+      "distribution": {
+        "C10": 18,
+        "C2": 3
+      }
+    },
+    "双联": {
+      "book": "C4",
+      "confidence": 0.85,
+      "count": 20,
+      "distribution": {
+        "C4": 17,
+        "C2": 3
+      }
+    },
+    "切换": {
+      "book": "C4",
+      "confidence": 0.8,
+      "count": 20,
+      "distribution": {
+        "C4": 16,
+        "C2": 4
+      }
+    },
+    "基色": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 19,
+      "distribution": {
+        "C4": 19
+      }
+    },
+    "线缆": {
+      "book": "C5",
+      "confidence": 0.895,
+      "count": 19,
+      "distribution": {
+        "C5": 17,
+        "C6": 2
+      }
+    },
+    "软线": {
+      "book": "C2",
+      "confidence": 0.947,
+      "count": 19,
+      "distribution": {
+        "C2": 18,
+        "C4": 1
+      }
+    },
+    "母线槽": {
+      "book": "C4",
+      "confidence": 0.944,
+      "count": 18,
+      "distribution": {
+        "C4": 17,
+        "C2": 1
+      }
+    },
+    "指示灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 18,
+      "distribution": {
+        "C4": 18
+      }
+    },
+    "吸收器": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 18,
+      "distribution": {
+        "C7": 18
+      }
+    },
+    "水泥砂浆": {
+      "book": "C11",
+      "confidence": 0.778,
+      "count": 18,
+      "distribution": {
+        "C11": 14,
+        "C9": 3,
+        "C3": 1
+      }
+    },
+    "联机": {
+      "book": "C7",
+      "confidence": 0.889,
+      "count": 18,
+      "distribution": {
+        "C7": 16,
+        "C4": 2
+      }
+    },
+    "景观": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 18,
+      "distribution": {
+        "C4": 18
+      }
+    },
+    "真空": {
+      "book": "C10",
+      "confidence": 0.882,
+      "count": 17,
+      "distribution": {
+        "C10": 15,
+        "C1": 2
+      }
+    },
+    "龙头": {
+      "book": "C10",
+      "confidence": 0.941,
+      "count": 17,
+      "distribution": {
+        "C10": 16,
+        "C2": 1
+      }
+    },
+    "火圈": {
+      "book": "C10",
+      "confidence": 0.941,
+      "count": 17,
+      "distribution": {
+        "C10": 16,
+        "C2": 1
+      }
+    },
+    "铜及": {
+      "book": "C8",
+      "confidence": 0.941,
+      "count": 17,
+      "distribution": {
+        "C8": 16,
+        "C10": 1
+      }
+    },
+    "铜合金": {
+      "book": "C8",
+      "confidence": 0.941,
+      "count": 17,
+      "distribution": {
+        "C8": 16,
+        "C10": 1
+      }
+    },
+    "管理系统": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 17,
+      "distribution": {
+        "C5": 17
+      }
+    },
+    "耗电量": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C7": 16
+      }
+    },
+    "换气": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C7": 16
+      }
+    },
+    "堵头": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C7": 16
+      }
+    },
+    "分体": {
+      "book": "C7",
+      "confidence": 0.875,
+      "count": 16,
+      "distribution": {
+        "C7": 14,
+        "C10": 2
+      }
+    },
+    "梁板": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C5": 16
+      }
+    },
+    "检查井": {
+      "book": "C5",
+      "confidence": 0.812,
+      "count": 16,
+      "distribution": {
+        "C5": 13,
+        "C10": 3
+      }
+    },
+    "水炮": {
+      "book": "C9",
+      "confidence": 0.938,
+      "count": 16,
+      "distribution": {
+        "C9": 15,
+        "C4": 1
+      }
+    },
+    "中央": {
+      "book": "C5",
+      "confidence": 0.938,
+      "count": 16,
+      "distribution": {
+        "C5": 15,
+        "C4": 1
+      }
+    },
+    "紫外": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C10": 16
+      }
+    },
+    "智能化": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 16,
+      "distribution": {
+        "C5": 16
+      }
+    },
+    "水器": {
+      "book": "C10",
+      "confidence": 0.933,
+      "count": 15,
+      "distribution": {
+        "C10": 14,
+        "C8": 1
+      }
+    },
+    "排气扇": {
+      "book": "C4",
+      "confidence": 0.867,
+      "count": 15,
+      "distribution": {
+        "C4": 13,
+        "C2": 2
+      }
+    },
+    "送风口": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 15,
+      "distribution": {
+        "C7": 15
+      }
+    },
+    "障碍": {
+      "book": "C2",
+      "confidence": 0.867,
+      "count": 15,
+      "distribution": {
+        "C2": 13,
+        "C4": 2
+      }
+    },
+    "系列": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 15,
+      "distribution": {
+        "C10": 15
+      }
+    },
+    "门禁": {
+      "book": "C5",
+      "confidence": 0.867,
+      "count": 15,
+      "distribution": {
+        "C5": 13,
+        "C9": 1,
+        "C11": 1
+      }
+    },
+    "应用软件": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 15,
+      "distribution": {
+        "C5": 15
+      }
+    },
+    "封堵": {
+      "book": "C4",
+      "confidence": 0.929,
+      "count": 14,
+      "distribution": {
+        "C4": 13,
+        "C2": 1
+      }
+    },
+    "客梯": {
+      "book": "C1",
+      "confidence": 1.0,
+      "count": 14,
+      "distribution": {
+        "C1": 14
+      }
+    },
+    "可调式": {
+      "book": "C10",
+      "confidence": 0.786,
+      "count": 14,
+      "distribution": {
+        "C10": 11,
+        "C2": 3
+      }
+    },
+    "破坏": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 14,
+      "distribution": {
+        "C10": 14
+      }
+    },
+    "风量": {
+      "book": "C7",
+      "confidence": 0.857,
+      "count": 14,
+      "distribution": {
+        "C7": 12,
+        "C1": 2
+      }
+    },
+    "集中控制": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 14,
+      "distribution": {
+        "C4": 14
+      }
+    },
+    "控制台": {
+      "book": "C4",
+      "confidence": 0.786,
+      "count": 14,
+      "distribution": {
+        "C4": 11,
+        "C5": 2,
+        "C6": 1
+      }
+    },
+    "送风": {
+      "book": "C7",
+      "confidence": 0.923,
+      "count": 13,
+      "distribution": {
+        "C7": 12,
+        "C5": 1
+      }
+    },
+    "三极": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C4": 13
+      }
+    },
+    "承台": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C4": 13
+      }
+    },
+    "熔断器": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C4": 13
+      }
+    },
+    "始端": {
+      "book": "C4",
+      "confidence": 0.846,
+      "count": 13,
+      "distribution": {
+        "C4": 11,
+        "C2": 2
+      }
+    },
+    "回路": {
+      "book": "C6",
+      "confidence": 0.923,
+      "count": 13,
+      "distribution": {
+        "C6": 12,
+        "C4": 1
+      }
+    },
+    "模拟": {
+      "book": "C6",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C6": 13
+      }
+    },
+    "仪表阀门": {
+      "book": "C6",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C6": 13
+      }
+    },
+    "布线": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C5": 13
+      }
+    },
+    "室内天线": {
+      "book": "C5",
+      "confidence": 0.923,
+      "count": 13,
+      "distribution": {
+        "C5": 12,
+        "C11": 1
+      }
+    },
+    "安全检查": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C5": 13
+      }
+    },
+    "计量泵": {
+      "book": "C1",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C1": 13
+      }
+    },
+    "热板": {
+      "book": "C9",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C9": 13
+      }
+    },
+    "打印机": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 13,
+      "distribution": {
+        "C5": 13
+      }
+    },
+    "橡塑": {
+      "book": "C12",
+      "confidence": 0.833,
+      "count": 12,
+      "distribution": {
+        "C12": 10,
+        "C2": 2
+      }
+    },
+    "单联": {
+      "book": "C4",
+      "confidence": 0.833,
+      "count": 12,
+      "distribution": {
+        "C4": 10,
+        "C2": 2
+      }
+    },
+    "灯头": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C4": 12
+      }
+    },
+    "清洁": {
+      "book": "C7",
+      "confidence": 0.833,
+      "count": 12,
+      "distribution": {
+        "C7": 10,
+        "C10": 2
+      }
+    },
+    "送风机": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C7": 12
+      }
+    },
+    "管式": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C7": 12
+      }
+    },
+    "报价": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C10": 12
+      }
+    },
+    "螺纹钢筋": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C5": 12
+      }
+    },
+    "垫层": {
+      "book": "C5",
+      "confidence": 0.917,
+      "count": 12,
+      "distribution": {
+        "C5": 11,
+        "C3": 1
+      }
+    },
+    "异形": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C5": 12
+      }
+    },
+    "钢质": {
+      "book": "C8",
+      "confidence": 0.75,
+      "count": 12,
+      "distribution": {
+        "C8": 9,
+        "C9": 2,
+        "C1": 1
+      }
+    },
+    "洗涤": {
+      "book": "C10",
+      "confidence": 0.75,
+      "count": 12,
+      "distribution": {
+        "C10": 9,
+        "C2": 2,
+        "C4": 1
+      }
+    },
+    "管卡": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C10": 12
+      }
+    },
+    "通用": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C5": 12
+      }
+    },
+    "浴室柜": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C10": 12
+      }
+    },
+    "换热器": {
+      "book": "C2",
+      "confidence": 1.0,
+      "count": 12,
+      "distribution": {
+        "C2": 12
+      }
+    },
+    "压力表": {
+      "book": "C6",
+      "confidence": 0.909,
+      "count": 11,
+      "distribution": {
+        "C6": 10,
+        "C2": 1
+      }
+    },
+    "射灯": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C4": 11
+      }
+    },
+    "吸顶式": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C4": 11
+      }
+    },
+    "踢脚线": {
+      "book": "C11",
+      "confidence": 0.818,
+      "count": 11,
+      "distribution": {
+        "C11": 9,
+        "C1": 2
+      }
+    },
+    "埋地": {
+      "book": "C12",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C12": 11
+      }
+    },
+    "温控": {
+      "book": "C4",
+      "confidence": 0.909,
+      "count": 11,
+      "distribution": {
+        "C4": 10,
+        "C5": 1
+      }
+    },
+    "电线管": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C4": 11
+      }
+    },
+    "系统工程": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C5": 11
+      }
+    },
+    "灭藻": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 11,
+      "distribution": {
+        "C10": 11
+      }
+    },
+    "孔井": {
+      "book": "C11",
+      "confidence": 0.818,
+      "count": 11,
+      "distribution": {
+        "C11": 9,
+        "C10": 1,
+        "C4": 1
+      }
+    },
+    "二三": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C4": 10
+      }
+    },
+    "节能": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C4": 10
+      }
+    },
+    "油网": {
+      "book": "C7",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C7": 10
+      }
+    },
+    "水龙头": {
+      "book": "C10",
+      "confidence": 0.8,
+      "count": 10,
+      "distribution": {
+        "C10": 8,
+        "C2": 2
+      }
+    },
+    "涡流": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C10": 10
+      }
+    },
+    "弧形": {
+      "book": "C5",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C5": 10
+      }
+    },
+    "潜污泵": {
+      "book": "C1",
+      "confidence": 0.9,
+      "count": 10,
+      "distribution": {
+        "C1": 9,
+        "C2": 1
+      }
+    },
+    "淋浴器": {
+      "book": "C10",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C10": 10
+      }
+    },
+    "格栅": {
+      "book": "C2",
+      "confidence": 0.8,
+      "count": 10,
+      "distribution": {
+        "C2": 8,
+        "C7": 2
+      }
+    },
+    "电容器": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C4": 10
+      }
+    },
+    "控制屏": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C4": 10
+      }
+    },
+    "筒灯": {
+      "book": "C4",
+      "confidence": 0.9,
+      "count": 10,
+      "distribution": {
+        "C4": 9,
+        "C2": 1
+      }
+    },
+    "电脑": {
+      "book": "C5",
+      "confidence": 0.8,
+      "count": 10,
+      "distribution": {
+        "C5": 8,
+        "C11": 2
+      }
+    },
+    "漏电": {
+      "book": "C4",
+      "confidence": 1.0,
+      "count": 10,
+      "distribution": {
+        "C4": 10
+      }
+    }
+  }
+}

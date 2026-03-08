@@ -11,7 +11,9 @@
 所有需要"区分专业"的地方都调用这个模块，保证全系统用同一套标准。
 """
 
+import json
 import re
+from pathlib import Path
 from loguru import logger
 
 
@@ -462,8 +464,85 @@ def classify_by_bill_code(bill_code: str) -> str | None:
 
 
 # ================================================================
-# 核心函数
+# 品类词路由（从经验库挖掘的品类词→册号映射）
 # ================================================================
+
+# 品类词路由表（懒加载，首次调用时读文件）
+# tier1: 高置信（90%+集中度），tier2: 中置信（75-90%集中度）
+_category_routing_cache: dict | None = None  # tier1路由表
+_category_routing_tier2_cache: dict | None = None  # tier2路由表
+
+
+def _load_category_routing() -> tuple[dict, dict]:
+    """加载品类词路由表（data/category_routing.json）
+
+    返回: (tier1字典, tier2字典)，格式都是 {词: 册号}
+    """
+    global _category_routing_cache, _category_routing_tier2_cache
+    if _category_routing_cache is not None:
+        return _category_routing_cache, _category_routing_tier2_cache
+
+    routing_path = Path(__file__).parent.parent / "data" / "category_routing.json"
+    if not routing_path.exists():
+        logger.warning(f"品类词路由表不存在: {routing_path}")
+        _category_routing_cache = {}
+        _category_routing_tier2_cache = {}
+        return _category_routing_cache, _category_routing_tier2_cache
+
+    try:
+        data = json.loads(routing_path.read_text(encoding="utf-8"))
+        # tier1: 高置信路由（90%+集中度，≥20次出现）
+        tier1 = {}
+        for word, info in data.get("tier1", {}).items():
+            tier1[word] = info["book"]
+        # tier2: 中置信路由（75-90%集中度，≥10次出现）
+        tier2 = {}
+        for word, info in data.get("tier2", {}).items():
+            tier2[word] = info["book"]
+        _category_routing_cache = tier1
+        _category_routing_tier2_cache = tier2
+        logger.debug(f"品类词路由表已加载: tier1={len(tier1)}个, tier2={len(tier2)}个")
+    except (json.JSONDecodeError, OSError, KeyError) as e:
+        logger.warning(f"品类词路由表加载失败: {e}")
+        _category_routing_cache = {}
+        _category_routing_tier2_cache = {}
+
+    return _category_routing_cache, _category_routing_tier2_cache
+
+
+def classify_by_category_words(bill_name: str) -> tuple[str | None, str]:
+    """用品类关键词判断专业册号
+
+    从清单名称中提取关键词，查找品类词路由表（从9.8万条经验库挖掘）。
+    优先查tier1（90%+集中度），tier1未命中再查tier2（75-90%集中度）。
+
+    选词策略：优先用最长匹配的词（长词比短词更精确）。
+    例如"电力电缆"比"电缆"更精确，"消火栓"比"消防"更精确。
+
+    参数:
+        bill_name: 清单项目名称
+
+    返回:
+        (册号, tier等级)：如 ("C10", "tier1")。无法判断时返回 (None, "")
+    """
+    if not bill_name:
+        return None, ""
+
+    tier1, tier2 = _load_category_routing()
+
+    # 先查tier1（高置信），再查tier2（中置信）
+    for tier_name, routing in [("tier1", tier1), ("tier2", tier2)]:
+        if not routing:
+            continue
+        # 按词长降序匹配，优先长词（更精确）
+        for word in sorted(routing.keys(), key=len, reverse=True):
+            if word in bill_name:
+                logger.debug(
+                    f"品类词路由({tier_name}): '{bill_name}' 中 '{word}' → {routing[word]}"
+                )
+                return routing[word], tier_name
+
+    return None, ""
 
 def classify(bill_name: str, bill_desc: str = "",
              section_title: str = None, province: str = None,
@@ -475,6 +554,7 @@ def classify(bill_name: str, bill_desc: str = "",
     0. 项目级覆盖（硬规则，如"配管"永远归C4电气）
     1. 分部标题（最可靠，直接从Excel结构来的）
     1.5. 清单编码（GB 50500国标，前缀直接对应专业，有编码时用编码辅助判断）
+    1.8. 品类词路由（从9.8万条经验库挖掘的品类词→册号映射）
     2. 数据驱动分类（从定额库学习的TF-IDF模型，像老造价师的经验）
     3. 关键词匹配（手写规则，兜底）
     4. 默认返回None（无法判断，全库搜索）
@@ -533,6 +613,22 @@ def classify(bill_name: str, bill_desc: str = "",
                 "confidence": "high",
                 "reason": f"清单编码匹配: {bill_code[:4]} → {BOOKS[code_book]['name']}",
             }
+
+    # 第1.8优先：品类词路由（从9.8万条经验库挖掘的品类词→册号映射）
+    # 比TF-IDF更稳定——用统计数据直接查表，不依赖定额库是否已导入
+    # tier1(90%+集中度)给medium置信度，tier2(75-90%)给low-medium置信度
+    cat_book, cat_tier = classify_by_category_words(bill_name)
+    if cat_book and cat_book in BOOKS:
+        fallbacks = BORROW_PRIORITY.get(cat_book, ["C12"])
+        # tier1和tier2都给medium置信度（都是经验库统计数据，足够可靠）
+        confidence = "medium"
+        return {
+            "primary": cat_book,
+            "primary_name": BOOKS[cat_book]["name"],
+            "fallbacks": fallbacks,
+            "confidence": confidence,
+            "reason": f"品类词路由({cat_tier}): '{bill_name}' → {BOOKS[cat_book]['name']}",
+        }
 
     # 第2优先：数据驱动分类（从定额库学习的TF-IDF模型）
     # 像老造价师一样——看过几万条定额后自然知道"过滤器"属于给排水册
