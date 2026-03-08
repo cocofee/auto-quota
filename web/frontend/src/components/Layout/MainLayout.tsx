@@ -27,7 +27,6 @@ import {
   AppstoreOutlined,
   BookOutlined,
   FileTextOutlined,
-  BulbOutlined,
   WalletOutlined,
   CloudServerOutlined,
   AlertOutlined,
@@ -140,11 +139,6 @@ export default function MainLayout() {
             key: '/admin/quotas',
             icon: <BookOutlined />,
             label: '定额库',
-          },
-          {
-            key: '/admin/knowledge',
-            icon: <BulbOutlined />,
-            label: '知识库',
           },
           {
             key: '/admin/analytics',
