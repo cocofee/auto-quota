@@ -506,9 +506,15 @@ class LLMVerifier:
 
         try:
             data = json.loads(text)
+            raw_alt = data.get("alt_queries", [])
+            # 防御：LLM返回字符串时不要被list()拆成字符数组
+            if isinstance(raw_alt, str):
+                raw_alt = [raw_alt] if raw_alt else []
+            elif not isinstance(raw_alt, list):
+                raw_alt = []
             return {
                 "primary_query": str(data.get("primary_query", "")),
-                "alt_queries": list(data.get("alt_queries", []))[:2],
+                "alt_queries": [str(q) for q in raw_alt[:2] if q],
                 "reason": str(data.get("reason", "")),
             }
         except (json.JSONDecodeError, ValueError):
@@ -711,14 +717,14 @@ class LLMVerifier:
                     task = futures[future]
                     logger.warning(f"验证任务异常(idx={task[0]}): {e}")
 
-                # 进度回调
+                # 进度回调（统一用total_tasks作分母，避免进度倒退）
                 if progress_callback and (completed % 5 == 0
                                           or completed == len(verify_tasks)):
                     try:
-                        pct = int(90 + 9 * completed / max(len(verify_tasks), 1))
+                        pct = int(90 + 9 * completed / max(total_tasks, 1))
                         progress_callback(
                             pct, completed,
-                            f"验证中 {completed}/{len(verify_tasks)} "
+                            f"验证中 {completed}/{total_tasks} "
                             f"(纠正{self.stats['corrected']}条)")
                     except Exception:
                         pass
