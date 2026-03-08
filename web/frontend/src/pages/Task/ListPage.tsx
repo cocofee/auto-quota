@@ -380,33 +380,43 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       },
     },
     {
-      title: '统计',
+      title: (
+        <Tooltip title="高=推荐直接用 / 中=需复核 / 低=大概率要改">
+          <span>统计 <span style={{ fontSize: 10, color: '#999' }}>高/中/低</span></span>
+        </Tooltip>
+      ),
       key: 'stats',
-      width: 160,
+      width: 180,
       render: (_: unknown, record: TaskInfo) => {
+        // 进行中的任务：显示实时进度
+        if ((record.status === 'running' || record.status === 'pending') && record.progress > 0) {
+          return (
+            <span style={{ fontSize: 12, color: '#1677ff' }}>
+              匹配中 {record.progress}%
+            </span>
+          );
+        }
         if (!record.stats || !record.stats.total) return '-';
         const { total: t, high_conf, mid_conf, low_conf } = record.stats;
-        // 横向比例条 + 数字，比4个Tag紧凑
         const gPct = t > 0 ? (high_conf / t) * 100 : 0;
         const yPct = t > 0 ? (mid_conf / t) * 100 : 0;
         const rPct = t > 0 ? (low_conf / t) * 100 : 0;
         return (
-          <Tooltip title={`★★★推荐: ${high_conf}条 / ★★参考: ${mid_conf}条 / ★待审: ${low_conf}条`}>
-            <div style={{ minWidth: 100 }}>
+          <Tooltip title={`推荐: ${high_conf}条 / 参考: ${mid_conf}条 / 待审: ${low_conf}条`}>
+            <div style={{ minWidth: 120 }}>
               {/* 比例条 */}
               <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
                 {gPct > 0 && <div style={{ width: `${gPct}%`, background: COLORS.greenSolid }} />}
                 {yPct > 0 && <div style={{ width: `${yPct}%`, background: COLORS.yellowSolid }} />}
                 {rPct > 0 && <div style={{ width: `${rPct}%`, background: COLORS.redSolid }} />}
               </div>
-              {/* 数字摘要 */}
-              <span style={{ fontSize: 12, color: '#666' }}>
-                <span style={{ color: COLORS.greenSolid }}>{high_conf}</span>
-                /
-                <span style={{ color: COLORS.yellowSolid }}>{mid_conf}</span>
-                /
-                <span style={{ color: COLORS.redSolid }}>{low_conf}</span>
-                <span style={{ color: '#999', marginLeft: 4 }}>共{t}</span>
+              {/* 数字摘要：带标签 */}
+              <span style={{ fontSize: 12 }}>
+                <span style={{ color: COLORS.greenSolid }}>高{high_conf}</span>
+                {' '}
+                <span style={{ color: COLORS.yellowSolid }}>中{mid_conf}</span>
+                {' '}
+                <span style={{ color: COLORS.redSolid }}>低{low_conf}</span>
               </span>
             </div>
           </Tooltip>

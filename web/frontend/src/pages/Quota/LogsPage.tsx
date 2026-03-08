@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { Card, Table, Tag, Statistic, Space, App } from 'antd';
+import { Card, Table, Tag, Statistic, Space, App, Tooltip } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
@@ -73,7 +73,7 @@ export default function LogsPage() {
       key: 'amount',
       width: 100,
       render: (amount: number) => (
-        <span style={{ color: amount > 0 ? '#52c41a' : '#ff4d4f', fontWeight: 'bold' }}>
+        <span style={{ color: amount > 0 ? '#52c41a' : '#ff4d4f', fontWeight: 'bold', fontSize: 15 }}>
           {amount > 0 ? '+' : ''}{amount}
         </span>
       ),
@@ -89,7 +89,12 @@ export default function LogsPage() {
       title: '说明',
       dataIndex: 'note',
       key: 'note',
-      ellipsis: true,
+      ellipsis: { showTitle: false },
+      render: (note: string) => (
+        <Tooltip title={note} placement="topLeft">
+          <span>{note || '-'}</span>
+        </Tooltip>
+      ),
     },
   ];
 

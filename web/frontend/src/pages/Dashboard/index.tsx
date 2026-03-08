@@ -7,7 +7,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Statistic, Table, Tag, Button, Space, App } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Button, Space, App, Tooltip } from 'antd';
 import {
   FileTextOutlined,
   CheckCircleOutlined,
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [total, setTotal] = useState(0);
+  const [completedTotal, setCompletedTotal] = useState(0);
   const [quotaBalance, setQuotaBalance] = useState<number | null>(null);
 
   const loadRecentTasks = useCallback(async () => {
@@ -40,6 +41,11 @@ export default function DashboardPage() {
       });
       setTasks(data.items);
       setTotal(data.total);
+      // 单独查一次已完成总数（不受分页限制）
+      const completedRes = await api.get<TaskListResponse>('/tasks', {
+        params: { page: 1, size: 1, status_filter: 'completed' },
+      });
+      setCompletedTotal(completedRes.data.total);
     } catch {
       message.error('加载任务列表失败');
     } finally {
@@ -58,8 +64,8 @@ export default function DashboardPage() {
   }, [loadRecentTasks]);
 
   // 统计当前页数据
-  const completedCount = tasks.filter((t) => t.status === 'completed').length;
   const runningCount = tasks.filter((t) => t.status === 'running' || t.status === 'pending').length;
+  const completionRate = total > 0 ? Math.round((completedTotal / total) * 100) : 0;
 
   // 客户表格列（简化）
   const baseColumns = [
@@ -67,15 +73,18 @@ export default function DashboardPage() {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
-      ellipsis: true,
+      width: 250,
+      ellipsis: { showTitle: false },
       render: (name: string, record: TaskInfo) => (
-        <a onClick={() => {
-          if (record.status === 'completed') {
-            navigate(`/tasks/${record.id}/results`);
-          }
-        }}>
-          {name || record.original_filename || '未命名'}
-        </a>
+        <Tooltip title={name || record.original_filename} placement="topLeft">
+          <a onClick={() => {
+            if (record.status === 'completed') {
+              navigate(`/tasks/${record.id}/results`);
+            }
+          }}>
+            {name || record.original_filename || '未命名'}
+          </a>
+        </Tooltip>
       ),
     },
     {
@@ -123,9 +132,12 @@ export default function DashboardPage() {
       key: 'match_rate',
       width: 80,
       render: (_: unknown, record: TaskInfo) => {
+        // 进行中：显示实时进度
+        if ((record.status === 'running' || record.status === 'pending') && record.progress > 0) {
+          return <span style={{ color: '#1677ff' }}>{record.progress}%</span>;
+        }
         if (!record.stats || !record.stats.total) return '-';
         const rate = Math.round(((record.stats.matched ?? 0) / record.stats.total) * 100);
-        // 匹配率低于70%红色高亮
         const color = rate < 70 ? '#ff4d4f' : rate < 85 ? '#faad14' : '#52c41a';
         return <span style={{ color, fontWeight: rate < 70 ? 'bold' : undefined }}>{rate}%</span>;
       },
@@ -157,9 +169,9 @@ export default function DashboardPage() {
         <Col xs={12} sm={isAdmin ? 6 : 8}>
           <Card hoverable onClick={() => navigate('/tasks?status=completed')}>
             <Statistic
-              title="已完成"
-              value={completedCount}
-              suffix={`/${tasks.length}`}
+              title="完成率"
+              value={completionRate}
+              suffix={`% (${completedTotal}/${total})`}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
             />
