@@ -860,7 +860,11 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 for j, (task, result) in enumerate(zip(batch_task_refs, batch_results)):
                     task_idx = task[0]  # idx
                     # 批量结果也走低置信度重试，修复批量模式跳过第2层审核的漏洞
-                    result, _, _ = _maybe_retry_low_confidence(result, task)
+                    result, retry_exp, retry_rule = _maybe_retry_low_confidence(result, task)
+                    if retry_exp:
+                        exp_hits += retry_exp
+                    if retry_rule:
+                        rule_hits += retry_rule
                     results_by_idx[task_idx] = result
                     _update_match_stats(result)
                     agent_hits += 1
