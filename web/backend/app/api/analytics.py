@@ -146,15 +146,18 @@ async def analytics_by_province(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """按省份统计"""
+    """按省份统计（含匹配条数和平均置信度）"""
     query = (
         select(
             Task.province,
-            func.count().label("task_count"),
+            func.count(func.distinct(Task.id)).label("task_count"),
+            func.count(MatchResult.id).label("match_count"),
+            func.avg(MatchResult.confidence).label("avg_confidence"),
         )
+        .join(MatchResult, MatchResult.task_id == Task.id, isouter=True)
         .where(Task.status == "completed")
         .group_by(Task.province)
-        .order_by(func.count().desc())
+        .order_by(func.count(func.distinct(Task.id)).desc())
     )
     rows = (await db.execute(query)).all()
 
@@ -163,6 +166,8 @@ async def analytics_by_province(
         items.append({
             "province": row.province,
             "task_count": row.task_count,
+            "match_count": row.match_count or 0,
+            "avg_confidence": round(row.avg_confidence, 1) if row.avg_confidence else 0,
         })
 
     return {"items": items}
