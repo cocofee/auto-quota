@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.11';
+export const APP_VERSION = '0.2.12';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.12',
+    date: '2026-03-08',
+    changes: [
+      { type: 'admin', text: 'Docker添加向量搜索依赖（sentence-transformers+chromadb）' },
+      { type: 'admin', text: '刷油防腐保温同义词+8条（C12册术语映射）' },
+      { type: 'admin', text: '安装方式参数提取与验证（明装/暗装/落地/挂墙/嵌入/吊装）' },
+      { type: 'admin', text: '前端页面细节优化（日志查看器/看板/任务列表）' },
+      { type: 'admin', text: '品类词硬路由（从9.8万经验库挖掘品类词→册号映射）' },
+      { type: 'admin', text: '分析页面细节修复（用户反馈+Codex审查）' },
+    ],
+  },
   {
     version: '0.2.11',
     date: '2026-03-08',
