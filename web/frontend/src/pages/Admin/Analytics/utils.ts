@@ -87,13 +87,28 @@ export function TrendArrow({ current, previous, higherIsBetter }: {
   );
 }
 
-/** 省份名缩短：去掉"省建设工程""市建设工程"等后缀，保留核心名+年份 */
+/** 省份名缩短：从定额库全名提取"省份·专业年份"格式
+ *  "江苏省安装工程计价定额(2014)" → "江苏·安装2014"
+ *  "北京市建设工程计价依据(2024)" → "北京2024"
+ */
 export function shortenProvince(name: string): string {
   if (!name) return '未知';
-  return name
-    .replace(/省建设工程.*?(?=\d{4}|$)/, '')
-    .replace(/市建设工程.*?(?=\d{4}|$)/, '')
-    .replace(/(维吾尔|壮族|回族)自治区建设工程.*?(?=\d{4}|$)/, '')
-    .replace(/自治区建设工程.*?(?=\d{4}|$)/, '')
-    .trim();
+  // 提取年份
+  const yearMatch = name.match(/(\d{4})/);
+  const year = yearMatch ? yearMatch[1] : '';
+  // 提取省份简称（贪婪匹配2-4个中文字，靠后面的"省/市/自治区"边界截断）
+  // 注意：必须用贪婪{2,4}，懒惰{2,4}?会把"黑龙江"截成"黑龙"
+  const provinceMatch = name.match(/^([\u4e00-\u9fa5]{2,4})(省|市|自治区|特别行政区)/)
+    || name.match(/^([\u4e00-\u9fa5]{2,3})/);
+  const province = provinceMatch ? provinceMatch[1] : name.slice(0, 4);
+  // 提取专业关键词
+  let specialty = '';
+  if (name.includes('安装')) specialty = '安装';
+  else if (name.includes('市政')) specialty = '市政';
+  else if (name.includes('建筑') || name.includes('房屋')) specialty = '建筑';
+  else if (name.includes('装饰')) specialty = '装饰';
+  else if (name.includes('园林')) specialty = '园林';
+  // 拼接
+  if (specialty) return `${province}·${specialty}${year}`;
+  return `${province}${year}`;
 }

@@ -59,6 +59,9 @@ export default function ProvinceTab() {
                 title: '平均置信度 %',
                 labelFormatter: (v: number) => `${v}%`,
               },
+              y: {
+                size: 120, // 省份名较长，给Y轴标签留够空间
+              },
             }}
             style={{
               fill: ({ avg_confidence }: { avg_confidence: number }) =>
