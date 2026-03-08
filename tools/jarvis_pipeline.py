@@ -427,6 +427,8 @@ def main():
                         help="不存经验库（默认自动存入候选层）")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="静默模式，抑制进度条")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="跑完后自动诊断人工审核项的根因")
     args = parser.parse_args()
 
     if not os.path.exists(args.excel_path):
@@ -478,6 +480,16 @@ def main():
 
     if result is None:
         sys.exit(1)
+
+    # 自动诊断人工审核项
+    if args.diagnose and result.get("stats", {}).get("manual", 0) > 0:
+        print()
+        try:
+            from tools.jarvis_diagnose import diagnose
+            diagnose(result["output_excel"], province,
+                     sibling_provinces=aux_provinces)
+        except Exception as e:
+            print(f"诊断跳过: {e}")
 
 
 if __name__ == "__main__":
