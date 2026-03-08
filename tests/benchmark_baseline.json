@@ -1,6 +1,6 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-08 10:10:09",
+  "date": "2026-03-08 14:08:41",
   "note": "",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
@@ -70,11 +70,11 @@
     },
     "江西省通用安装工程消耗量定额及统一基价表(2017)": {
       "total": 468,
-      "correct": 209,
-      "hit_rate": 44.7,
+      "correct": 215,
+      "hit_rate": 45.9,
       "diagnosis": {
-        "wrong_tier": 175,
-        "synonym_gap": 84
+        "wrong_tier": 173,
+        "synonym_gap": 80
       }
     },
     "河南省通用安装工程预算定额(2016)": {
@@ -88,11 +88,11 @@
     },
     "浙江省通用安装工程预算定额(2018)": {
       "total": 475,
-      "correct": 135,
-      "hit_rate": 28.4,
+      "correct": 134,
+      "hit_rate": 28.2,
       "diagnosis": {
         "wrong_tier": 117,
-        "synonym_gap": 221,
+        "synonym_gap": 222,
         "wrong_book": 2
       }
     },
@@ -114,7 +114,7 @@
       "yellow_rate": 0.3158,
       "red_rate": 0.5263,
       "exp_hit_rate": 0.0,
-      "avg_time_sec": 0.61
+      "avg_time_sec": 0.49
     }
   }
 }
