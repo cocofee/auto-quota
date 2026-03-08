@@ -190,9 +190,19 @@ exit /b 0
 
 echo.
 
+echo [RESTART] Restarting celery worker to pick up new data...
+
+%SSH_CMD% "lzc-docker restart cloudlazycatappautoquota-celery-worker-1"
+
+echo [RESTART] Restarting backend...
+
+%SSH_CMD% "lzc-docker restart cloudlazycatappautoquota-backend-1"
+
+echo.
+
 echo  ========================================
 
-echo   Sync done! Refresh browser to see data
+echo   Sync done! Services restarted.
 
 echo  ========================================
 
@@ -505,7 +515,7 @@ echo.
 
 echo [GIT] Auto commit...
 
-git add -A
+git add lzc-manifest.yml CHANGELOG.md scripts/
 
 git commit -m "deploy: v!NEW!"
 
