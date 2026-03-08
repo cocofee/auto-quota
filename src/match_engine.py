@@ -732,6 +732,104 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         if batch_count > 0:
             logger.info(f"L6分组: 批量审核{batch_count}条, 逐条分析{individual_count}条")
 
+        # ===== 低置信度重试（批量+逐条共用）=====
+        def _maybe_retry_low_confidence(result, task, overview_ctx=None):
+            """低置信度/AI推荐不在候选时，用AI建议的搜索词重搜+重选。
+
+            批量模式和逐条模式共用此函数，修复批量模式跳过重试的流程漏洞。
+            返回: (result, exp_hits, rule_hits) — 可能是改善后的结果或原结果
+            """
+            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            if is_audit or not candidates:
+                return result, 0, 0
+
+            retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+            confidence = result.get("confidence", 100)
+            ai_not_found = result.get("_ai_recommended_not_found", False)
+
+            # LLM已熔断时跳过重试（避免放大失败开销）
+            if hasattr(agent, "is_circuit_open"):
+                llm_circuit_open = bool(agent.is_circuit_open())
+            else:
+                llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+
+            need_retry = (confidence < retry_threshold) or ai_not_found
+            if not need_retry or llm_circuit_open:
+                return result, 0, 0
+
+            # 优先用AI建议的搜索词，其次用AI推荐的定额编号，最后用原始query
+            ai_suggested = result.get("suggested_search", "")
+            ai_rec_id = result.get("_ai_recommended_id", "")
+            retry_query = ai_suggested or ai_rec_id or search_query
+            retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+            logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_query}'")
+
+            ctx = overview_ctx or _build_overview_context()
+            task_exp_hits, task_rule_hits = 0, 0
+
+            try:
+                # 全库搜索（不限册号），增加候选数
+                retry_candidates = searcher.search(
+                    retry_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+                if retry_candidates and len(retry_candidates) > 1:
+                    retry_candidates = reranker.rerank(retry_query, retry_candidates)
+                if retry_candidates:
+                    retry_candidates = validator.validate_candidates(
+                        full_query, retry_candidates, supplement_query=retry_query)
+                if retry_candidates:
+                    # 合并原候选和重试候选，按quota_id去重，重复ID保留param_score更高的
+                    seen_ids = {}
+                    for c in candidates:
+                        qid = c.get("quota_id", "")
+                        if qid:
+                            seen_ids[qid] = c
+                    new_added = 0
+                    for c in retry_candidates:
+                        qid = c.get("quota_id", "")
+                        if not qid:
+                            continue
+                        if qid not in seen_ids:
+                            seen_ids[qid] = c
+                            new_added += 1
+                        else:
+                            # 重复ID保留param_score更高的
+                            old_score = seen_ids[qid].get("param_score", 0)
+                            new_score = c.get("param_score", 0)
+                            if new_score > old_score:
+                                seen_ids[qid] = c
+                    if not seen_ids:
+                        logger.debug(f"#{idx} 候选融合后为空，跳过重试")
+                    else:
+                        # 按param_score降序排列，取前20条
+                        merged = sorted(seen_ids.values(),
+                                        key=lambda x: (x.get("param_tier", 1),
+                                                       x.get("param_score", 0)),
+                                        reverse=True)[:20]
+                        logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新增{new_added}=合并{len(merged)}条")
+                        # 用合并候选重新调用LLM
+                        retry_result, r_exp, r_rule = _resolve_agent_mode_result(
+                            agent=agent, item=item, candidates=merged,
+                            experience_db=experience_db, full_query=full_query,
+                            search_query=retry_query, rule_kb=rule_kb,
+                            name=name, desc=desc, exp_backup=exp_backup,
+                            rule_backup=rule_backup, exp_hits=0, rule_hits=0,
+                            province=province,
+                            reference_cases_cache=reference_cases_cache,
+                            reference_cases_cache_lock=reference_cases_cache_lock,
+                            rules_context_cache=rules_context_cache,
+                            rules_context_cache_lock=rules_context_cache_lock,
+                            method_cards_db=method_cards_db,
+                            overview_context=ctx,
+                        )
+                        retry_conf = retry_result.get("confidence", 0)
+                        if retry_conf > confidence:
+                            logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
+                            return retry_result, r_exp, r_rule
+            except Exception as e:
+                logger.debug(f"#{idx} AI引导重试失败（保留原结果）: {e}")
+
+            return result, task_exp_hits, task_rule_hits
+
         # ===== L6 批量审核处理 =====
         if batch_tasks:
             # 分批（每批最多 batch_size 条）
@@ -758,9 +856,11 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     individual_tasks.extend(batch)
                     continue
 
-                # 把批量结果写入 results_by_idx
+                # 把批量结果写入 results_by_idx（修复：批量也走低置信度重试）
                 for j, (task, result) in enumerate(zip(batch_task_refs, batch_results)):
                     task_idx = task[0]  # idx
+                    # 批量结果也走低置信度重试，修复批量模式跳过第2层审核的漏洞
+                    result, _, _ = _maybe_retry_low_confidence(result, task)
                     results_by_idx[task_idx] = result
                     _update_match_stats(result)
                     agent_hits += 1
@@ -793,86 +893,13 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 method_cards_db=method_cards_db,
                 overview_context=ctx_summary,
             )
-            # 低置信度重试 或 AI推荐定额不在候选中 → 用AI建议的搜索词重搜
-            retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
-            confidence = result.get("confidence", 100)
-            ai_not_found = result.get("_ai_recommended_not_found", False)
-            # LLM已熔断时跳过重试（避免放大失败开销）
-            if hasattr(agent, "is_circuit_open"):
-                llm_circuit_open = bool(agent.is_circuit_open())
-            else:
-                llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
-            need_retry = (confidence < retry_threshold) or ai_not_found
-            if not is_audit and need_retry and candidates and not llm_circuit_open:
-                # 优先用AI建议的搜索词，其次用AI推荐的定额编号，最后用原始query
-                ai_suggested = result.get("suggested_search", "")
-                ai_rec_id = result.get("_ai_recommended_id", "")
-                retry_query = ai_suggested or ai_rec_id or search_query
-                retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
-                logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_query}'")
-                try:
-                    # 全库搜索（不限册号），增加候选数
-                    retry_candidates = searcher.search(
-                        retry_query, top_k=config.HYBRID_TOP_K + 5, books=None)
-                    if retry_candidates and len(retry_candidates) > 1:
-                        retry_candidates = reranker.rerank(retry_query, retry_candidates)
-                    if retry_candidates:
-                        retry_candidates = validator.validate_candidates(
-                            full_query, retry_candidates, supplement_query=retry_query)
-                    if retry_candidates:
-                        # 合并原候选和重试候选，按quota_id去重，重复ID保留param_score更高的
-                        seen_ids = {}
-                        for c in candidates:
-                            qid = c.get("quota_id", "")
-                            if qid:
-                                seen_ids[qid] = c
-                        new_added = 0
-                        for c in retry_candidates:
-                            qid = c.get("quota_id", "")
-                            if not qid:
-                                continue
-                            if qid not in seen_ids:
-                                seen_ids[qid] = c
-                                new_added += 1
-                            else:
-                                # 重复ID保留param_score更高的
-                                old_score = seen_ids[qid].get("param_score", 0)
-                                new_score = c.get("param_score", 0)
-                                if new_score > old_score:
-                                    seen_ids[qid] = c
-                        if not seen_ids:
-                            # 极端情况：所有候选都没有quota_id，跳过重试
-                            logger.debug(f"#{idx} 候选融合后为空，跳过重试")
-                        else:
-                            # 按param_score降序排列，取前20条
-                            merged = sorted(seen_ids.values(),
-                                            key=lambda x: (x.get("param_tier", 1),
-                                                           x.get("param_score", 0)),
-                                            reverse=True)[:20]
-                            logger.info(f"#{idx} 候选融合: 原{len(candidates)}+新增{new_added}=合并{len(merged)}条")
-                            # 用合并候选重新调用LLM
-                            retry_result, r_exp, r_rule = _resolve_agent_mode_result(
-                                agent=agent, item=item, candidates=merged,
-                                experience_db=experience_db, full_query=full_query,
-                                search_query=retry_query, rule_kb=rule_kb,
-                                name=name, desc=desc, exp_backup=exp_backup,
-                                rule_backup=rule_backup, exp_hits=0, rule_hits=0,
-                                province=province,
-                                reference_cases_cache=reference_cases_cache,
-                                reference_cases_cache_lock=reference_cases_cache_lock,
-                                rules_context_cache=rules_context_cache,
-                                rules_context_cache_lock=rules_context_cache_lock,
-                                method_cards_db=method_cards_db,
-                                overview_context=ctx_summary,
-                            )
-                            retry_conf = retry_result.get("confidence", 0)
-                            if retry_conf > confidence:
-                                logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
-                                result = retry_result
-                                task_exp_hits = r_exp
-                                task_rule_hits = r_rule
-                except Exception as e:
-                    logger.debug(f"#{idx} AI引导重试失败（保留原结果）: {e}")
+            # 低置信度重试（复用提取的公共函数）
+            result, retry_exp, retry_rule = _maybe_retry_low_confidence(
+                result, task, overview_ctx=ctx_summary)
+            if retry_exp:
+                task_exp_hits = retry_exp
+            if retry_rule:
+                task_rule_hits = retry_rule
 
             return idx, result, task_exp_hits, task_rule_hits, is_audit
 

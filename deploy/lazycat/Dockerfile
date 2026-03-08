@@ -48,6 +48,9 @@ COPY web/backend/requirements.txt /app/web/backend/requirements.txt
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn -r /app/requirements.txt \
     && pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ --trusted-host pypi.tuna.tsinghua.edu.cn -r /app/web/backend/requirements.txt
 
+# 删除Debian nginx的默认欢迎页站点（否则会覆盖我们的配置）
+RUN rm -f /etc/nginx/sites-enabled/default
+
 # 复制前端构建产物 + nginx配置
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY deploy/lazycat/nginx.conf /etc/nginx/conf.d/default.conf

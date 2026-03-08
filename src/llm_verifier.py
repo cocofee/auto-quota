@@ -54,6 +54,8 @@ class LLMVerifier:
             "skipped": 0,        # 跳过（高置信度/经验库直通等）
             "llm_error": 0,      # LLM调用失败
             "spot_checked": 0,   # 绿灯抽检条数
+            "rescued": 0,        # OPUS兜底搜索成功条数
+            "rescue_failed": 0,  # OPUS兜底搜索失败条数
         }
 
     def _inc_stat(self, key: str, delta: int = 1):
@@ -228,10 +230,10 @@ class LLMVerifier:
         confidence = result.get("confidence", 0) or 0
         match_source = result.get("match_source", "")
 
-        # 无匹配结果的跳过（没东西可验证）
+        # 无匹配结果 → OPUS兜底搜索（而非跳过，修复第3层审核漏洞）
         quotas = result.get("quotas", [])
         if not quotas:
-            return "skip"
+            return "rescue"
 
         # 经验库直通的跳过（人工验证过的数据，质量有保障）
         if match_source == "experience":
@@ -459,6 +461,161 @@ class LLMVerifier:
         except Exception as e:
             logger.debug(f"同步通用知识库失败（不影响主流程）: {e}")
 
+    def _build_rescue_prompt(self, bill_name: str, bill_desc: str,
+                              province: str = "", search_query: str = "") -> str:
+        """构造OPUS兜底搜索的prompt — 让OPUS生成搜索词"""
+        prompt = (
+            "你是工程造价专家。当前匹配系统未找到合适定额，请你根据清单信息生成搜索词。\n\n"
+            f"清单名称: {bill_name}\n"
+            f"清单描述: {bill_desc}\n"
+        )
+        if province:
+            prompt += f"省份定额: {province}\n"
+        if search_query:
+            prompt += f"原搜索词(已搜过，没搜到): {search_query}\n"
+        prompt += (
+            "\n请分析这条清单应该套什么定额，生成搜索词。用JSON格式回答:\n"
+            '{"primary_query": "主搜索词(8~24字)", '
+            '"alt_queries": ["备选搜索词1", "备选搜索词2"], '
+            '"reason": "一句话解释为什么用这个搜索词"}\n\n'
+            "要求:\n"
+            "1. primary_query 必须是定额名称关键词（如\"管道安装 DN50\"），不能是清单名\n"
+            "2. 不要编造定额编号，只给搜索关键词\n"
+            "3. alt_queries 最多2个，角度不同的搜索词\n"
+            "只输出JSON,不要其他文字。"
+        )
+        return prompt
+
+    def _parse_rescue_response(self, response: str) -> dict:
+        """解析OPUS兜底搜索的回复"""
+        text = response.strip()
+        # 提取JSON
+        if "```json" in text:
+            start = text.index("```json") + 7
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
+        elif "```" in text:
+            start = text.index("```") + 3
+            end = text.index("```", start) if "```" in text[start:] else len(text)
+            text = text[start:end].strip()
+
+        brace_start = text.find("{")
+        brace_end = text.rfind("}")
+        if brace_start >= 0 and brace_end > brace_start:
+            text = text[brace_start:brace_end + 1]
+
+        try:
+            data = json.loads(text)
+            return {
+                "primary_query": str(data.get("primary_query", "")),
+                "alt_queries": list(data.get("alt_queries", []))[:2],
+                "reason": str(data.get("reason", "")),
+            }
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+    def rescue_no_match(self, result: dict, searcher=None) -> dict:
+        """对无匹配结果的条目，让OPUS生成搜索方向并重搜
+
+        修复第3层审核漏洞：quotas为空时不再跳过，而是主动搜索。
+        rescue成功后会再走一次 verify_result() 做双重验证。
+
+        参数:
+            result: quotas为空的匹配结果
+            searcher: 搜索引擎实例
+
+        返回:
+            rescue后的结果（可能有新的quotas，也可能仍为空）
+        """
+        bill_item = result.get("bill_item", {})
+        bill_name = bill_item.get("name", "")
+        bill_desc = bill_item.get("description", "")
+        search_query = result.get("search_query", "")
+
+        if not bill_name:
+            result["verify_status"] = "rescue_skipped"
+            return result
+
+        # 构造prompt让OPUS生成搜索词
+        prompt = self._build_rescue_prompt(bill_name, bill_desc,
+                                            search_query=search_query)
+
+        try:
+            llm_response = self._call_llm(prompt)
+            direction = self._parse_rescue_response(llm_response)
+        except Exception as e:
+            logger.warning(f"OPUS兜底搜索LLM调用失败: {e}")
+            self._inc_stat("llm_error")
+            result["verify_status"] = "rescue_failed"
+            return result
+
+        primary_query = direction.get("primary_query", "")
+        alt_queries = direction.get("alt_queries", [])
+        reason = direction.get("reason", "")
+
+        if not primary_query:
+            logger.debug(f"OPUS兜底: [{bill_name}] 未生成有效搜索词")
+            self._inc_stat("rescue_failed")
+            result["verify_status"] = "rescue_failed"
+            return result
+
+        logger.info(f"OPUS兜底: [{bill_name}] 搜索词='{primary_query}'")
+
+        if not searcher:
+            self._inc_stat("rescue_failed")
+            result["verify_status"] = "rescue_failed"
+            return result
+
+        # 用OPUS生成的搜索词重搜
+        all_candidates = []
+        for query in [primary_query] + alt_queries:
+            if not query:
+                continue
+            try:
+                candidates = searcher.search(query, top_k=5)
+                if candidates:
+                    all_candidates.extend(candidates)
+            except Exception as e:
+                logger.debug(f"OPUS兜底重搜失败(query={query}): {e}")
+
+        if not all_candidates:
+            logger.debug(f"OPUS兜底: [{bill_name}] 重搜无结果")
+            self._inc_stat("rescue_failed")
+            result["verify_status"] = "rescue_failed"
+            return result
+
+        # 按quota_id去重，取第一个
+        seen_ids = set()
+        unique_candidates = []
+        for c in all_candidates:
+            qid = c.get("quota_id", "")
+            if qid and qid not in seen_ids:
+                seen_ids.add(qid)
+                unique_candidates.append(c)
+
+        if not unique_candidates:
+            self._inc_stat("rescue_failed")
+            result["verify_status"] = "rescue_failed"
+            return result
+
+        best = unique_candidates[0]
+        result["quotas"] = [{
+            "quota_id": best.get("quota_id", ""),
+            "name": best.get("name", ""),
+            "unit": best.get("unit", ""),
+            "reason": f"OPUS兜底: {reason}",
+            "db_id": best.get("id"),
+        }]
+        result["confidence"] = 70  # 兜底结果给中等置信度
+        result["confidence_text"] = self._confidence_text(70)
+        result["match_source"] = "opus_rescue"
+        result["explanation"] = f"[OPUS兜底] {primary_query}"
+
+        # rescue成功后再走一次verify_result做双重验证
+        self._inc_stat("rescued")
+        verified_result = self.verify_result(result, searcher=searcher)
+        return verified_result
+
     def _confidence_text(self, confidence: int) -> str:
         """生成置信度文本"""
         if confidence >= 85:
@@ -495,29 +652,46 @@ class LLMVerifier:
         logger.info(f"LLM验证开始: 共{total}条，模型:{self.llm_type}({model_name})")
 
         # 第1步：筛选需要验证的项
-        verify_tasks = []  # [(idx, result, task_type)]
+        verify_tasks = []   # [(idx, result, task_type)]
+        rescue_tasks = []   # [(idx, result, "rescue")] — 单独管理，有预算控制
+        rescue_max = getattr(config, "VERIFY_RESCUE_MAX_PER_RUN", 10)
+
         for idx, result in enumerate(results):
             decision = self._should_verify(result)
             if decision == "skip":
                 self._inc_stat("skipped")
+            elif decision == "rescue":
+                rescue_tasks.append((idx, result, "rescue"))
             elif decision == "spot_check":
                 verify_tasks.append((idx, result, "spot_check"))
                 self._inc_stat("spot_checked")
             else:
                 verify_tasks.append((idx, result, "verify"))
 
+        # rescue预算控制：超出限额的标记跳过
+        if len(rescue_tasks) > rescue_max:
+            logger.info(f"  OPUS兜底: 需{len(rescue_tasks)}条，预算限{rescue_max}条，"
+                        f"超出{len(rescue_tasks) - rescue_max}条跳过")
+            for task in rescue_tasks[rescue_max:]:
+                task[1]["verify_status"] = "rescue_skipped_budget"
+                self._inc_stat("skipped")
+            rescue_tasks = rescue_tasks[:rescue_max]
+
         skip_count = self.stats["skipped"]
         spot_count = self.stats["spot_checked"]
+        rescue_count = len(rescue_tasks)
         logger.info(f"  筛选结果: 需验证{len(verify_tasks)}条"
-                    f"（含抽检{spot_count}条），跳过{skip_count}条")
+                    f"（含抽检{spot_count}条），OPUS兜底{rescue_count}条，"
+                    f"跳过{skip_count}条")
 
-        if not verify_tasks:
+        if not verify_tasks and not rescue_tasks:
             logger.info("LLM验证完成: 全部跳过，无需验证")
             return results
 
-        # 第2步：并发执行验证
+        # 第2步：并发执行验证（普通验证）
         concurrent = max(1, getattr(config, "VERIFY_CONCURRENT", 8))
         completed = 0
+        total_tasks = len(verify_tasks) + len(rescue_tasks)
 
         def _verify_one(task):
             """单条验证任务（线程安全）"""
@@ -549,6 +723,39 @@ class LLMVerifier:
                     except Exception:
                         pass
 
+        # 第3步：并发执行OPUS兜底搜索（独立并发数控制）
+        if rescue_tasks:
+            rescue_concurrent = max(1, getattr(config, "VERIFY_RESCUE_CONCURRENT", 3))
+            logger.info(f"OPUS兜底搜索: {len(rescue_tasks)}条，{rescue_concurrent}路并发")
+
+            def _rescue_one(task):
+                """单条rescue任务（线程安全）"""
+                idx, result, _ = task
+                self.rescue_no_match(result, searcher=searcher)
+                return idx
+
+            with ThreadPoolExecutor(max_workers=rescue_concurrent) as pool:
+                futures = {pool.submit(_rescue_one, task): task
+                           for task in rescue_tasks}
+                for future in as_completed(futures):
+                    completed += 1
+                    try:
+                        future.result()
+                    except Exception as e:
+                        task = futures[future]
+                        logger.warning(f"OPUS兜底任务异常(idx={task[0]}): {e}")
+
+                    if progress_callback and (completed % 3 == 0
+                                              or completed == total_tasks):
+                        try:
+                            pct = int(90 + 9 * completed / max(total_tasks, 1))
+                            progress_callback(
+                                pct, completed,
+                                f"OPUS兜底 {completed}/{total_tasks} "
+                                f"(rescue成功{self.stats['rescued']}条)")
+                        except Exception:
+                            pass
+
         # 打印汇总
         s = self.stats
         logger.info(
@@ -558,6 +765,7 @@ class LLMVerifier:
             f"错误{s['wrong']}("
             f"纠正{s['corrected']}, "
             f"未纠正{s['correct_failed']}), "
+            f"OPUS兜底(成功{s['rescued']},失败{s['rescue_failed']}), "
             f"跳过{s['skipped']}, "
             f"抽检{s['spot_checked']}, "
             f"LLM失败{s['llm_error']}"
