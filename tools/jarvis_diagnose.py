@@ -515,15 +515,40 @@ def _write_ob_report(stem: str, province: str, report: dict,
                      synonym_gap: list, ranking_miss: list, needs_manual: list):
     """将诊断报告写入 Obsidian 笔记（自动生成，用户可直接查看）"""
     from datetime import datetime
+    import re
 
     ob_dir = Path(r"D:\Obsidian\工程造价\系统更新\诊断报告")
     if not ob_dir.exists():
         return
 
     today = datetime.now().strftime("%Y-%m-%d")
-    # 项目名从stem提取（去掉"匹配结果_"前缀和时间戳后缀）
-    project_name = stem.replace("匹配结果_", "").split("_20")[0][:20]
-    ob_path = ob_dir / f"{today} 诊断报告-{project_name}.md"
+    # 项目名从stem提取（去掉"匹配结果_"等前缀和时间戳后缀，只留项目名）
+    project_name = stem
+    for prefix in ["匹配结果_", "diagnosis_"]:
+        project_name = project_name.replace(prefix, "")
+    project_name = re.split(r"_\d{8}_", project_name)[0]
+    project_name = re.split(r"[-—]工程量清单", project_name)[0]
+    project_name = project_name[:20]
+    ob_path = ob_dir / f"{today} {project_name}.md"
+
+    # 自动提取标签（从清单名称中识别专业分类）
+    tag_keywords = {
+        "装饰": ["隔断", "吊顶", "天棚", "墙面", "地板", "地面", "涂料", "油漆", "踢脚", "装饰板", "玻璃", "门", "窗"],
+        "给排水": ["管道", "阀门", "水管", "排水", "给水", "地漏", "小便器", "洗漱", "水龙头", "减压"],
+        "电气": ["配电箱", "开关", "插座", "配管", "电缆", "照明", "灯"],
+        "弱电": ["网络", "光纤", "光缆", "监控", "摄像", "信息插座", "大屏", "机柜"],
+        "消防": ["消防", "喷淋", "报警", "灭火"],
+        "结构": ["钢筋", "混凝土", "砌体", "基础", "防水"],
+        "拆除": ["拆除", "铲除"],
+        "措施": ["脚手架", "搬运", "保护费"],
+    }
+    all_names = " ".join(r.get("name", "") for r in synonym_gap + ranking_miss + needs_manual)
+    tags = []
+    for tag, keywords in tag_keywords.items():
+        if any(kw in all_names for kw in keywords):
+            tags.append(tag)
+    if not tags:
+        tags = ["综合"]
 
     lines = [
         f"---",
@@ -531,6 +556,7 @@ def _write_ob_report(stem: str, province: str, report: dict,
         f"project: {project_name}",
         f"province: {province}",
         f"date: {today}",
+        f"tags: [{', '.join(tags)}]",
         f"---",
         f"# 诊断报告: {project_name}",
         f"",
@@ -565,9 +591,12 @@ def _write_ob_report(stem: str, province: str, report: dict,
         fix = report.get("fix_result")
         if fix:
             lines.append(f"### 自动修复结果")
-            lines.append(f"- 通过验证: {fix['verified']}对")
-            lines.append(f"- 实际写入: {fix['written']}对")
-            lines.append(f"- Benchmark: {'通过' if fix['benchmark_ok'] else '退化（已回滚）'}")
+            lines.append(f"")
+            lines.append(f"| 项目 | 结果 |")
+            lines.append(f"|------|------|")
+            lines.append(f"| 通过验证 | {fix['verified']}对 |")
+            lines.append(f"| 实际写入 | {fix['written']}对 |")
+            lines.append(f"| Benchmark | {'通过' if fix['benchmark_ok'] else '退化（已回滚）'} |")
             lines.append(f"")
 
     # 排序偏差
@@ -575,10 +604,14 @@ def _write_ob_report(stem: str, province: str, report: dict,
         lines.append(f"## 排序偏差（{len(ranking_miss)}条）")
         lines.append(f"正确定额在候选中但没排第一，需要改进排序算法。")
         lines.append(f"")
-        for r in ranking_miss[:10]:  # 只显示前10条，太多了不方便看
-            lines.append(f"- **{r['name'][:25]}**: {r['detail']}")
-        if len(ranking_miss) > 10:
-            lines.append(f"- ...还有{len(ranking_miss) - 10}条")
+        lines.append(f"| 清单名称 | 搜到的候选 | 置信度 |")
+        lines.append(f"|----------|-----------|--------|")
+        for r in ranking_miss[:15]:
+            rec = r.get("recommend", "")[:10]
+            detail = r.get("detail", "")[:35]
+            lines.append(f"| {r['name'][:20]} | {detail} | {rec} |")
+        if len(ranking_miss) > 15:
+            lines.append(f"| ...还有{len(ranking_miss) - 15}条 | | |")
         lines.append(f"")
 
     # 需人工
@@ -586,15 +619,14 @@ def _write_ob_report(stem: str, province: str, report: dict,
         lines.append(f"## 需人工（{len(needs_manual)}条）")
         lines.append(f"定额库中未找到对应项，需要人工判断。")
         lines.append(f"")
-        for r in needs_manual[:15]:  # 只显示前15条
-            desc = r.get("desc", "")[:40]
-            lines.append(f"- **{r['name'][:25]}**")
-            if desc:
-                lines.append(f"  - 特征: {desc}")
-            if r.get("quota_id"):
-                lines.append(f"  - 当前: {r['quota_id']} {r['quota_name'][:25]}")
-        if len(needs_manual) > 15:
-            lines.append(f"- ...还有{len(needs_manual) - 15}条")
+        lines.append(f"| 清单名称 | 项目特征 | 当前匹配 |")
+        lines.append(f"|----------|----------|----------|")
+        for r in needs_manual[:20]:
+            desc = r.get("desc", "")[:30].replace("\n", " ")
+            quota = f"{r.get('quota_id', '')} {r.get('quota_name', '')[:20]}" if r.get("quota_id") else "无匹配"
+            lines.append(f"| {r['name'][:20]} | {desc} | {quota} |")
+        if len(needs_manual) > 20:
+            lines.append(f"| ...还有{len(needs_manual) - 20}条 | | |")
         lines.append(f"")
 
     with open(ob_path, "w", encoding="utf-8") as f:
