@@ -265,6 +265,11 @@ class TextParser:
         if elevator_stops is not None:
             result["elevator_stops"] = elevator_stops
 
+        # 提取开关联数（单联=1、双联=2、三联=3、四联=4）
+        switch_gangs = self._extract_switch_gangs(text)
+        if switch_gangs is not None:
+            result["switch_gangs"] = switch_gangs
+
         # 提取电梯类型（从名称关键词判断：货梯→载货电梯、客梯→曳引式电梯等）
         elevator_type = self._extract_elevator_type(text)
         if elevator_type:
@@ -373,8 +378,9 @@ class TextParser:
         if standard_dn:
             return None
 
+        # PVC放在PC前面，避免PC误匹配PVC的前两个字母
         pipe_code_match = re.search(
-            r'(?:SC|PC|JDG|KBG|RC|MT|FPC)\s*(\d+)', text)
+            r'(?:SC|PVC|PC|JDG|KBG|RC|MT|FPC)\s*(\d+)', text)
         if pipe_code_match:
             return int(pipe_code_match.group(1))
         return None
@@ -871,6 +877,46 @@ class TextParser:
     def _is_valid_elevator_stops(stops: int) -> bool:
         """电梯站数合理范围校验。"""
         return 2 <= stops <= 200
+
+    # 中文数字→阿拉伯数字映射（开关联数用）
+    _CN_GANG_NUM = {"单": 1, "双": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+                     "一": 1, "二": 2}
+
+    def _extract_switch_gangs(self, text: str) -> Optional[int]:
+        """
+        提取开关联数（单联/双联/三联/四联，开关按联数分档）
+
+        支持格式：
+        - 清单名称："单联单控开关" → 1, "双联双控开关" → 2
+        - 定额名称："暗装式开关面板(单控) 单联" → 1
+        - 定额名称："≤3联" / "联数(联以内) 3" → 3
+
+        只在含"开关"或"按钮"上下文中提取，避免误匹配（如"联动""联锁"等）
+        """
+        # 守卫条件：只有开关/按钮相关的文本才提取联数
+        if not any(kw in text for kw in ["开关", "按钮"]):
+            return None
+
+        # 格式1："单联"、"双联"等中文数字+联
+        match = re.search(r'([单双三四五六一二])联', text)
+        if match:
+            return self._CN_GANG_NUM.get(match.group(1))
+
+        # 格式2："3联"等数字+联（排除"联动""联锁"等非联数词）
+        match = re.search(r'(\d)\s*联(?!动|锁|合|网|系|通)', text)
+        if match:
+            val = int(match.group(1))
+            if 1 <= val <= 6:
+                return val
+
+        # 格式3：定额格式"联数(联以内) 3"
+        match = re.search(r'联数\s*(?:[（(][^)）]*[)）])?\s*[≤≥<>]?\s*(\d+)', text)
+        if match:
+            val = int(match.group(1))
+            if 1 <= val <= 6:
+                return val
+
+        return None
 
     # 电梯类型判断规则（按优先级排列：具体类型优先，泛称在后）
     _ELEVATOR_TYPE_RULES = [

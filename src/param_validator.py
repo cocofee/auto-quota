@@ -35,6 +35,7 @@ class ParamValidator:
         "weight_t", "perimeter", "large_side", "elevator_stops",
         "ground_bar_width",  # 接地扁钢宽度（如40×4中的40mm）
         "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
+        "switch_gangs",  # 开关联数（单联/双联/三联/四联）
     ]
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
@@ -870,6 +871,29 @@ class ParamValidator:
                 check_count += 1
                 score_sum += 0.64
                 details.append("定额无扁钢宽度参数(通用定额降权)")
+
+        # === 16. 开关联数（硬性参数：单联≠双联，按联数分档） ===
+        if "switch_gangs" in bill_params:
+            check_count += 1
+            if "switch_gangs" in quota_params:
+                bill_sg = bill_params["switch_gangs"]
+                quota_sg = quota_params["switch_gangs"]
+                if bill_sg == quota_sg:
+                    score_sum += 1.0
+                    details.append(f"联数{bill_sg}={quota_sg} 精确匹配")
+                elif bill_sg < quota_sg:
+                    # 向上取档（如单联清单匹配≤3联定额）
+                    tier_score = self._tier_up_score(bill_sg, quota_sg)
+                    score_sum += tier_score
+                    details.append(f"联数{bill_sg}→{quota_sg} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"联数{bill_sg}>{quota_sg} 不匹配(清单>定额)")
+            else:
+                # 定额无联数参数（通用定额降权）
+                score_sum += 0.64
+                details.append("定额无联数参数(通用定额降权)")
 
         # 计算最终分数
         if check_count == 0:

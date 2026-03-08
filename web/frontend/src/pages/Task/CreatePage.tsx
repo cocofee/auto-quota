@@ -27,22 +27,26 @@ const { Dragger } = Upload;
 /** 非清单Sheet的关键词（这些Sheet通常不包含需要匹配的清单数据） */
 const SKIP_KEYWORDS = [
   '汇总', '造价汇总', '规费', '税金', '措施', '人材机', '人工', '材料',
-  '机械', '主材', '甲供', '暂估', '签证', '索赔', '封面', '目录',
+  '机械', '主材', '甲供', '暂估', '暂列金额', '签证', '索赔', '封面', '目录',
   '说明', '编制说明', '取费', '费率', '调差', '价差',
+  '投标报价', '报价汇总',
 ];
+
+/** 推荐关键词（优先级高于跳过关键词，含这些词的Sheet不会被跳过） */
+const RECOMMEND_KEYWORDS = ['分部分项', '工程量清单'];
 
 /** 判断Sheet名称是否为非清单Sheet（汇总表、措施费等） */
 function isSkipSheet(name: string): boolean {
   const n = name.replace(/\s+/g, '');
+  // 推荐优先：含"分部分项"等关键词的Sheet永远不跳过
+  if (RECOMMEND_KEYWORDS.some(kw => n.includes(kw))) return false;
   return SKIP_KEYWORDS.some(kw => n.includes(kw));
 }
 
 /** 判断Sheet名称是否为推荐的清单Sheet（只推荐"分部分项清单"这类核心Sheet） */
 function isRecommendSheet(name: string): boolean {
   const n = name.replace(/\s+/g, '');
-  // 只推荐明确包含"分部分项"或"工程量清单"的Sheet
-  const recommendKeywords = ['分部分项', '工程量清单'];
-  return recommendKeywords.some(kw => n.includes(kw));
+  return RECOMMEND_KEYWORDS.some(kw => n.includes(kw));
 }
 
 export default function TaskCreatePage() {
