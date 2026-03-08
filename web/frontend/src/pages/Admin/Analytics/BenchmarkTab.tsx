@@ -6,9 +6,9 @@
  */
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { Card, Table, Tag, Space, Select, Button, Modal, Input, App } from 'antd';
+import { Card, Table, Tag, Space, Select, Button, Modal, Input, App, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlayCircleOutlined, LoadingOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, LoadingOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { Line } from '@ant-design/charts';
 import api from '../../../services/api';
 import { TrendArrow, fmtRate } from './utils';
@@ -125,6 +125,16 @@ export default function BenchmarkTab() {
       key: 'note',
       ellipsis: true,
       render: (v: string) => v || '-',
+    },
+    {
+      title: '数据集',
+      key: 'dsCount',
+      width: 75,
+      align: 'center',
+      render: (_: unknown, record: EnrichedRecord) => {
+        const count = Object.keys(record.datasets || {}).length;
+        return <Tag>{count}个</Tag>;
+      },
     },
     {
       title: '综合绿率',
@@ -258,7 +268,7 @@ export default function BenchmarkTab() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {/* 筛选器 + 运行跑分按钮 */}
+      {/* 筛选器 */}
       <Card size="small">
         <Space wrap>
           <span style={{ color: '#666' }}>数据集筛选：</span>
@@ -272,31 +282,28 @@ export default function BenchmarkTab() {
             options={allDatasetNames.map(name => ({ value: name, label: name }))}
             allowClear
           />
-          <span style={{ flex: 1 }} />
-          {bmRunning && (
-            <span style={{ fontSize: 12, color: '#1677ff' }}>
-              <LoadingOutlined style={{ marginRight: 4 }} />
-              {bmProgress}
-            </span>
-          )}
-          <Button
-            type="primary"
-            icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
-            disabled={bmRunning}
-            onClick={() => setBmModalOpen(true)}
-            size="small"
-          >
-            {bmRunning ? '跑分中...' : '运行跑分'}
-          </Button>
         </Space>
       </Card>
 
       {benchmarkHistory.length === 0 ? (
-        <Card loading={loading}>
+        <Card
+          loading={loading}
+          extra={
+            <Button
+              type="primary"
+              icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
+              disabled={bmRunning}
+              onClick={() => setBmModalOpen(true)}
+              size="small"
+            >
+              {bmRunning ? '跑分中...' : '运行跑分'}
+            </Button>
+          }
+        >
           <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>
             暂无跑分历史数据
             <br />
-            <span style={{ fontSize: 12 }}>点击"运行跑分"按钮开始第一次跑分</span>
+            <span style={{ fontSize: 12 }}>点击右上角"运行跑分"按钮开始第一次跑分</span>
           </div>
         </Card>
       ) : (
@@ -327,7 +334,29 @@ export default function BenchmarkTab() {
           </Card>
 
           {/* 汇总表格（精简5列 + 可展开行） */}
-          <Card title="跑分明细" loading={loading}>
+          <Card
+            title="跑分明细"
+            loading={loading}
+            extra={
+              <Space>
+                {bmRunning && (
+                  <span style={{ fontSize: 12, color: '#1677ff' }}>
+                    <LoadingOutlined style={{ marginRight: 4 }} />
+                    {bmProgress}
+                  </span>
+                )}
+                <Button
+                  type="primary"
+                  icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
+                  disabled={bmRunning}
+                  onClick={() => setBmModalOpen(true)}
+                  size="small"
+                >
+                  {bmRunning ? '跑分中...' : '运行跑分'}
+                </Button>
+              </Space>
+            }
+          >
             <Table
               rowKey={(_, index) => String(index)}
               dataSource={enrichedHistory}
@@ -337,6 +366,15 @@ export default function BenchmarkTab() {
               expandable={{
                 expandedRowRender,
                 rowExpandable: (record) => Object.keys(record.datasets || {}).length > 0,
+                expandIcon: ({ expanded, onExpand, record }) =>
+                  Object.keys(record.datasets || {}).length > 0 ? (
+                    <Tooltip title="点击查看各数据集详情">
+                      <InfoCircleOutlined
+                        style={{ color: expanded ? '#1677ff' : '#999', cursor: 'pointer' }}
+                        onClick={e => onExpand(record, e)}
+                      />
+                    </Tooltip>
+                  ) : null,
               }}
               locale={{ emptyText: '暂无数据' }}
             />

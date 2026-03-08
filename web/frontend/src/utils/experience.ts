@@ -121,6 +121,8 @@ const SPECIALTY_NAMES: Record<string, string> = {
   A: '土建工程', B: '装饰装修工程', D: '市政工程', E: '园林绿化工程',
   // 其他可能出现的大类前缀
   G: '轨道交通',
+  // 非标编码（部分省份特有的编码格式）
+  NT4: '电气(NT4)', NT9: '消防(NT9)',
 };
 
 /** 专业册号转中文名，如 "C4" → "电气设备安装" */
@@ -133,7 +135,7 @@ export function specialtyLabel(code: string | undefined | null): string {
     const withC = `C${code}`;
     if (SPECIALTY_NAMES[withC]) return SPECIALTY_NAMES[withC];
   }
-  return '未分类';
+  return `未分类(${code})`;
 }
 
 // ============================================================

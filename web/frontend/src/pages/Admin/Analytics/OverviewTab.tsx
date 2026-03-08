@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Space, Select, App } from 'antd';
 import {
-  CheckCircleOutlined, BarChartOutlined, FileTextOutlined, ExperimentOutlined,
+  CheckCircleOutlined, BarChartOutlined, FileTextOutlined, DashboardOutlined,
 } from '@ant-design/icons';
 import { Pie, Line } from '@ant-design/charts';
 import api from '../../../services/api';
@@ -89,7 +89,7 @@ export default function OverviewTab() {
               title="平均置信度"
               value={overview?.avg_confidence || 0}
               suffix="%"
-              prefix={<ExperimentOutlined />}
+              prefix={<DashboardOutlined />}
               valueStyle={{
                 color: (overview?.avg_confidence || 0) >= GREEN_THRESHOLD ? COLORS.greenSolid
                   : (overview?.avg_confidence || 0) >= YELLOW_THRESHOLD ? COLORS.yellowSolid : COLORS.redSolid,
