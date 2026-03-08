@@ -429,6 +429,10 @@ def main():
                         help="静默模式，抑制进度条")
     parser.add_argument("--diagnose", action="store_true",
                         help="跑完后自动诊断人工审核项的根因")
+    parser.add_argument("--fix", action="store_true",
+                        help="诊断后自动修复同义词缺口（需配合--diagnose使用）")
+    parser.add_argument("--skip-benchmark", action="store_true",
+                        help="自动修复时跳过benchmark回归检查（调试用）")
     args = parser.parse_args()
 
     if not os.path.exists(args.excel_path):
@@ -487,7 +491,9 @@ def main():
         try:
             from tools.jarvis_diagnose import diagnose
             diagnose(result["output_excel"], province,
-                     sibling_provinces=aux_provinces)
+                     sibling_provinces=aux_provinces,
+                     auto_fix=args.fix,
+                     skip_benchmark=getattr(args, "skip_benchmark", False))
         except Exception as e:
             print(f"诊断跳过: {e}")
 

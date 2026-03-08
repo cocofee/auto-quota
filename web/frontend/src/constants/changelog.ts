@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.5';
+export const APP_VERSION = '0.2.6';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,23 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.6',
+    date: '2026-03-08',
+    changes: [
+      { type: 'admin', text: 'param_validator增加param_tier字段用于候选排序' },
+      { type: 'admin', text: '添加extract_manual_items辅助提取工具' },
+      { type: 'admin', text: '新增jarvis_diagnose诊断工具，分析人工审核项根因' },
+      { type: 'admin', text: 'pipeline自动挂载兄弟库，用户不需要手动指定--aux-province' },
+      { type: 'admin', text: '跨库纠正+清单编码辅助专业分类' },
+      { type: 'admin', text: 'export_quota_excel支持flat编码格式和行业版目录结构' },
+      { type: 'admin', text: '统一兼容性词典+修复2个bug+删7个废弃工具（净删1100+行）' },
+      { type: 'admin', text: '加回38个自映射"保护伞"同义词+2个有效映射，修复北京退化' },
+      { type: 'admin', text: 'Codex审查修复——同义词排序+循环引用+异常收窄+速率限制+De外径' },
+      { type: 'admin', text: 'P0防御性修复——空列表IndexError+浮点比较精度+int转换防护' },
+      { type: 'admin', text: 'Codex 5.3审查意见修复——密钥占位符+测试适配+编码兼容' },
+    ],
+  },
   {
     version: '0.2.5',
     date: '2026-03-07',
