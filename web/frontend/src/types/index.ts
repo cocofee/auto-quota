@@ -74,6 +74,8 @@ export interface TaskInfo {
   feedback_path: string | null;
   feedback_uploaded_at: string | null;
   feedback_stats: { total: number; learned: number } | null;
+  // 用户信息（管理员视图）
+  username: string | null;
 }
 
 /** 任务统计（run() 返回的 stats） */
