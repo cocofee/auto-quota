@@ -1,9 +1,11 @@
-# Docker专用依赖（无GPU，向量搜索已关闭，不装torch/transformers/chromadb）
-# 本地开发用 requirements.txt（含向量模型全套依赖）
+# Docker专用依赖（CPU模式，向量搜索用CPU推理）
+# 本地开发用 requirements.txt（含GPU加速依赖）
 
 # === 核心搜索 ===
 rank-bm25>=0.2.2                # BM25关键词搜索算法
 jieba>=0.42.1                   # 中文分词
+sentence-transformers>=2.2.0    # BGE向量模型（CPU模式，语义搜索必需）
+chromadb>=0.4.0                 # 向量数据库（经验库+规则库向量检索）
 
 # === 大模型API ===
 anthropic>=0.30.0               # Claude API客户端
