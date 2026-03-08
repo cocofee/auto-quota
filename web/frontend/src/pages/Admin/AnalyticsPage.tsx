@@ -5,14 +5,14 @@
  * 1. 概览统计卡片
  * 2. 省份分布
  * 3. 专业统计（置信度对比）
- * 4. 任务趋势
- * 5. 算法跑分趋势（Benchmark历史）
+ * 4. 任务趋势（折线图）
+ * 5. 算法跑分趋势（多折线图 + 表格）
  */
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   Card, Row, Col, Statistic, Table, Tag, Space, App, Progress, Tooltip,
-  Button, Modal, Input,
+  Button, Modal, Input, Select,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -21,6 +21,7 @@ import {
   ArrowUpOutlined, ArrowDownOutlined, MinusOutlined,
   PlayCircleOutlined, LoadingOutlined,
 } from '@ant-design/icons';
+import { Line } from '@ant-design/charts';
 import api from '../../services/api';
 import { COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD } from '../../utils/experience';
 
@@ -76,15 +77,13 @@ interface BenchmarkRecord {
 function TrendArrow({ current, previous, higherIsBetter }: {
   current: number;
   previous: number | undefined;
-  higherIsBetter: boolean;  // true = 数值越高越好（如绿率），false = 越低越好（如红率）
+  higherIsBetter: boolean;
 }) {
   if (previous === undefined) {
-    // 第一条记录，没有对比对象
     return null;
   }
   const diff = current - previous;
   if (Math.abs(diff) < 0.001) {
-    // 变化太小，视为不变
     return <MinusOutlined style={{ color: '#999', fontSize: 10, marginLeft: 4 }} />;
   }
   const isGood = higherIsBetter ? diff > 0 : diff < 0;
@@ -111,18 +110,33 @@ export default function AnalyticsPage() {
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
   const [specialties, setSpecialties] = useState<SpecialtyItem[]>([]);
   const [trends, setTrends] = useState<TrendItem[]>([]);
+  const [trendDays, setTrendDays] = useState(30);
   const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>([]);
 
   // 跑分相关状态
-  const [bmRunning, setBmRunning] = useState(false);           // 是否正在跑分
-  const [bmProgress, setBmProgress] = useState('');            // 进度文字（如"正在跑 B2_电气 (2/4)"）
-  const [bmModalOpen, setBmModalOpen] = useState(false);       // 确认弹窗是否打开
-  const [bmNote, setBmNote] = useState('');                    // 用户输入的备注
-  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);  // 轮询定时器
+  const [bmRunning, setBmRunning] = useState(false);
+  const [bmProgress, setBmProgress] = useState('');
+  const [bmModalOpen, setBmModalOpen] = useState(false);
+  const [bmNote, setBmNote] = useState('');
+  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   useEffect(() => {
     loadAll();
   }, []);
+
+  // 趋势天数变化时重新加载
+  useEffect(() => {
+    loadTrends(trendDays);
+  }, [trendDays]);
+
+  const loadTrends = async (days: number) => {
+    try {
+      const res = await api.get<{ items: TrendItem[] }>('/admin/analytics/trends', { params: { days } });
+      setTrends(res.data.items);
+    } catch {
+      // 静默失败
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -131,7 +145,7 @@ export default function AnalyticsPage() {
         api.get<OverviewData>('/admin/analytics/overview'),
         api.get<{ items: ProvinceItem[] }>('/admin/analytics/by-province'),
         api.get<{ items: SpecialtyItem[] }>('/admin/analytics/by-specialty'),
-        api.get<{ items: TrendItem[] }>('/admin/analytics/trends'),
+        api.get<{ items: TrendItem[] }>('/admin/analytics/trends', { params: { days: trendDays } }),
         api.get<{ items: BenchmarkRecord[] }>('/admin/analytics/benchmark-history'),
       ]);
       setOverview(ovRes.data);
@@ -159,29 +173,24 @@ export default function AnalyticsPage() {
         const { state, progress, result, error } = res.data;
 
         if (state === 'PROGRESS' && progress) {
-          // 正在跑分中，更新进度文字
           setBmProgress(`正在跑 ${progress.dataset} (${progress.current + 1}/${progress.total})`);
         } else if (state === 'SUCCESS') {
-          // 跑分完成
           clearInterval(pollTimer.current!);
           setBmRunning(false);
           setBmProgress('');
           message.success(result?.message || '跑分完成');
-          // 刷新历史表格
           const bmRes = await api.get<{ items: BenchmarkRecord[] }>('/admin/analytics/benchmark-history');
           setBenchmarkHistory(bmRes.data.items);
         } else if (state === 'FAILURE') {
-          // 跑分失败
           clearInterval(pollTimer.current!);
           setBmRunning(false);
           setBmProgress('');
           message.error(`跑分失败: ${error || '未知错误'}`);
         }
-        // PENDING 状态继续等待
       } catch {
-        // 网络错误不终止轮询，等下次重试
+        // 网络错误不终止轮询
       }
-    }, 3000); // 每3秒轮询一次
+    }, 3000);
   }, [message]);
 
   /** 确认并启动跑分 */
@@ -196,7 +205,6 @@ export default function AnalyticsPage() {
         note: bmNote.trim(),
       });
       const { task_id } = res.data;
-      // 开始轮询任务状态
       pollBenchmarkStatus(task_id);
     } catch {
       setBmRunning(false);
@@ -204,7 +212,7 @@ export default function AnalyticsPage() {
       message.error('启动跑分失败');
     }
 
-    setBmNote(''); // 清空备注
+    setBmNote('');
   };
 
   // 置信度分布百分比
@@ -213,11 +221,28 @@ export default function AnalyticsPage() {
   const midPct = Math.round(((overview?.mid_confidence || 0) / totalResults) * 100);
   const lowPct = Math.round(((overview?.low_confidence || 0) / totalResults) * 100);
 
+  // ========== 跑分多折线图数据 ==========
+  // 把 benchmarkHistory 转成扁平数组，每条 = {date, dataset, green_rate}
+  const benchmarkChartData = useMemo(() => {
+    const points: { date: string; dataset: string; green_rate: number }[] = [];
+    for (const record of benchmarkHistory) {
+      if (!record.datasets) continue;
+      const dateStr = record.date?.split(' ')[0] || '';
+      for (const [dsName, metrics] of Object.entries(record.datasets)) {
+        points.push({
+          date: dateStr,
+          dataset: dsName,
+          green_rate: Math.round(metrics.green_rate * 1000) / 10, // 转百分比保留1位
+        });
+      }
+    }
+    return points;
+  }, [benchmarkHistory]);
+
   // 收集所有出现过的数据集名称（用于动态列）
   const datasetNames = useMemo(() => {
     const names = new Set<string>();
     for (const record of benchmarkHistory) {
-      // 防御：后端可能返回 datasets 为 null/undefined
       if (record.datasets) {
         for (const dsName of Object.keys(record.datasets)) {
           names.add(dsName);
@@ -229,7 +254,6 @@ export default function AnalyticsPage() {
 
   // Benchmark 历史表格列定义（动态生成）
   const benchmarkColumns = useMemo<ColumnsType<BenchmarkRecord>>(() => {
-    // 基础列：序号、日期、备注
     const baseCols: ColumnsType<BenchmarkRecord> = [
       {
         title: '#',
@@ -243,10 +267,7 @@ export default function AnalyticsPage() {
         dataIndex: 'date',
         key: 'date',
         width: 140,
-        render: (v: string) => {
-          // 只显示日期部分（去掉时间）
-          return v?.split(' ')[0] || v;
-        },
+        render: (v: string) => v?.split(' ')[0] || v,
       },
       {
         title: '备注',
@@ -258,10 +279,8 @@ export default function AnalyticsPage() {
       },
     ];
 
-    // 为每个数据集生成 绿率 + 红率 两列
     const dsCols: ColumnsType<BenchmarkRecord> = [];
     for (const dsName of datasetNames) {
-      // 数据集名称简化显示（去掉 B1_ B2_ 等前缀里的下划线后面部分太长时截断）
       const shortName = dsName.replace(/^B\d+_/, '');
       dsCols.push({
         title: <Tooltip title={dsName}>{shortName}</Tooltip>,
@@ -422,37 +441,46 @@ export default function AnalyticsPage() {
         </Col>
       </Row>
 
-      {/* 任务趋势 */}
-      <Card title="最近任务趋势" loading={loading}>
-        {trends.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>暂无完成的任务数据</div>
-        ) : (
-          <Table
-            rowKey="date"
-            dataSource={trends}
-            size="small"
-            pagination={false}
-            columns={[
-              { title: '日期', dataIndex: 'date', key: 'date' },
-              {
-                title: '完成任务数',
-                dataIndex: 'task_count',
-                key: 'task_count',
-                width: 120,
-                render: (v: number) => (
-                  <Progress
-                    percent={Math.min(v * 20, 100)}
-                    format={() => `${v}`}
-                    size="small"
-                  />
-                ),
-              },
+      {/* 任务趋势（折线图） */}
+      <Card
+        title="任务趋势"
+        loading={loading}
+        extra={
+          <Select
+            value={trendDays}
+            onChange={setTrendDays}
+            style={{ width: 100 }}
+            options={[
+              { value: 7, label: '最近7天' },
+              { value: 30, label: '最近30天' },
+              { value: 90, label: '最近90天' },
             ]}
+          />
+        }
+      >
+        {trends.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>暂无任务数据</div>
+        ) : (
+          <Line
+            data={trends}
+            xField="date"
+            yField="task_count"
+            height={260}
+            axis={{
+              x: {
+                labelAutoRotate: true,
+                label: { formatter: (v: string) => v.slice(5) },
+              },
+              y: { title: '任务数' },
+            }}
+            style={{ lineWidth: 2 }}
+            point={{ size: 3 }}
+            interaction={{ tooltip: true }}
           />
         )}
       </Card>
 
-      {/* 算法跑分趋势（Benchmark历史） */}
+      {/* 算法跑分趋势（多折线图 + 表格） */}
       <Card
         title="算法跑分趋势"
         loading={loading}
@@ -485,16 +513,44 @@ export default function AnalyticsPage() {
             </span>
           </div>
         ) : (
-          <Table
-            rowKey={(_, index) => String(index)}
-            dataSource={benchmarkHistory}
-            columns={benchmarkColumns}
-            size="small"
-            pagination={false}
-            bordered
-            scroll={{ x: 'max-content' }}
-            locale={{ emptyText: '暂无数据' }}
-          />
+          <>
+            {/* 多折线图：各数据集绿率趋势 */}
+            <div style={{ marginBottom: 24 }}>
+              <Line
+                data={benchmarkChartData}
+                xField="date"
+                yField="green_rate"
+                colorField="dataset"
+                height={320}
+                axis={{
+                  x: {
+                    labelAutoRotate: true,
+                    label: { formatter: (v: string) => v.slice(5) },
+                  },
+                  y: {
+                    title: '绿率 %',
+                    labelFormatter: (v: number) => `${v}%`,
+                  },
+                }}
+                style={{ lineWidth: 2 }}
+                point={{ size: 3 }}
+                interaction={{ tooltip: true }}
+                legend={{ position: 'top' }}
+              />
+            </div>
+
+            {/* 详细表格 */}
+            <Table
+              rowKey={(_, index) => String(index)}
+              dataSource={benchmarkHistory}
+              columns={benchmarkColumns}
+              size="small"
+              pagination={false}
+              bordered
+              scroll={{ x: 'max-content' }}
+              locale={{ emptyText: '暂无数据' }}
+            />
+          </>
         )}
       </Card>
 

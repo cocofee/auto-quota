@@ -12,6 +12,7 @@
 """
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -126,11 +127,15 @@ async def analytics_trends(
     )
     rows = (await db.execute(query)).all()
 
+    # 补零天：没有任务的日子也返回 task_count=0，避免折线图断档
+    row_map = {row.date: row.task_count for row in rows if row.date}
+    today = date.today()
     items = []
-    for row in reversed(rows):  # 按时间正序
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
         items.append({
-            "date": row.date.isoformat() if row.date else "",
-            "task_count": row.task_count,
+            "date": d.isoformat(),
+            "task_count": row_map.get(d, 0),
         })
 
     return {"items": items, "days": days}
@@ -209,11 +214,45 @@ async def benchmark_history(
     except (json.JSONDecodeError, OSError):
         return {"items": []}
 
-    # data 是一个数组，每条记录包含 version/date/mode/note/datasets
+    # data 是一个数组，每条记录包含 version/date/mode/note/datasets 或 json_papers+excel_datasets
     if not isinstance(data, list):
         return {"items": []}
 
-    return {"items": data}
+    # 归一化：把新旧两种格式统一输出
+    # 旧格式(index<172): datasets → {green_rate, red_rate, ...}
+    # 新格式(index>=172): json_papers → {hit_rate, total, correct} + excel_datasets → 同旧格式
+    # 统一输出 datasets 字段，json_papers 中的 hit_rate 映射为 green_rate
+    normalized = []
+    for record in data:
+        item = {
+            "version": record.get("version", ""),
+            "date": record.get("date", ""),
+            "mode": record.get("mode", ""),
+            "note": record.get("note", ""),
+            "datasets": {},
+        }
+
+        if "datasets" in record and record["datasets"]:
+            # 旧格式：直接用
+            item["datasets"] = record["datasets"]
+        else:
+            # 新格式：json_papers 转换 + excel_datasets 合并
+            for name, metrics in record.get("json_papers", {}).items():
+                item["datasets"][name] = {
+                    "total": metrics.get("total", 0),
+                    "green_rate": metrics.get("hit_rate", 0) / 100,  # hit_rate是百分比，转成0-1
+                    "red_rate": 1 - metrics.get("hit_rate", 0) / 100,
+                    "yellow_rate": 0,
+                    "exp_hit_rate": 0,
+                    "fallback_rate": 0,
+                    "avg_time_sec": 0,
+                }
+            for name, metrics in record.get("excel_datasets", {}).items():
+                item["datasets"][name] = metrics
+
+        normalized.append(item)
+
+    return {"items": normalized}
 
 
 # ============================================================
