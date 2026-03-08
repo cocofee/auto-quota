@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { Card, Table, Tag, Space, Button, App } from 'antd';
 import { Pie } from '@ant-design/charts';
 import api from '../../../services/api';
-import { COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD, specialtyLabel } from '../../../utils/experience';
+import { GREEN_THRESHOLD, YELLOW_THRESHOLD, specialtyLabel } from '../../../utils/experience';
 import type { SpecialtyItem } from './utils';
 
 export default function SpecialtyTab() {

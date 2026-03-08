@@ -11,7 +11,6 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlayCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import { Line } from '@ant-design/charts';
 import api from '../../../services/api';
-import { COLORS } from '../../../utils/experience';
 import { TrendArrow, fmtRate } from './utils';
 import type { BenchmarkRecord, DatasetMetrics } from './utils';
 
