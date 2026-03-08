@@ -237,18 +237,31 @@ async def benchmark_history(
             item["datasets"] = record["datasets"]
         else:
             # 新格式：json_papers 转换 + excel_datasets 合并
-            for name, metrics in record.get("json_papers", {}).items():
+            # 防御：字段为null时用空字典兜底
+            json_papers = record.get("json_papers") or {}
+            for name, metrics in json_papers.items():
+                if not isinstance(metrics, dict):
+                    continue
+                hit_rate = metrics.get("hit_rate", 0)
+                # 类型兜底：确保hit_rate是数字且在合理范围内
+                try:
+                    hit_rate = float(hit_rate)
+                except (TypeError, ValueError):
+                    hit_rate = 0
+                hit_rate = max(0, min(100, hit_rate))
                 item["datasets"][name] = {
                     "total": metrics.get("total", 0),
-                    "green_rate": metrics.get("hit_rate", 0) / 100,  # hit_rate是百分比，转成0-1
-                    "red_rate": 1 - metrics.get("hit_rate", 0) / 100,
+                    "green_rate": hit_rate / 100,  # hit_rate是百分比，转成0-1
+                    "red_rate": 1 - hit_rate / 100,
                     "yellow_rate": 0,
                     "exp_hit_rate": 0,
                     "fallback_rate": 0,
                     "avg_time_sec": 0,
                 }
-            for name, metrics in record.get("excel_datasets", {}).items():
-                item["datasets"][name] = metrics
+            excel_datasets = record.get("excel_datasets") or {}
+            for name, metrics in excel_datasets.items():
+                if isinstance(metrics, dict):
+                    item["datasets"][name] = metrics
 
         normalized.append(item)
 
