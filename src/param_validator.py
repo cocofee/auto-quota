@@ -217,6 +217,8 @@ class ParamValidator:
             params["material"] = candidate["material"]
         if candidate.get("connection"):
             params["connection"] = candidate["connection"]
+        if candidate.get("install_method"):
+            params["install_method"] = candidate["install_method"]
         if candidate.get("circuits") is not None:
             params["circuits"] = candidate["circuits"]
         if candidate.get("shape"):
@@ -248,11 +250,6 @@ class ParamValidator:
         用jieba分词从清单原文提取有意义的中文关键词（≥2字），
         检查候选定额名称是否包含这些词。
         匹配越多说明品类越吻合，给予加分。
-
-        为什么用jieba而不是暴力bigram？
-        - bigram会产生"水套""道安"等无意义碎片，噪音大
-        - jieba分词"刚性防水套管"→["刚性","防水","套管"]，精确无噪音
-        - 项目已有3处使用jieba，不增加依赖
         """
         if not query_text or not candidate_name:
             return 0.0
@@ -446,6 +443,24 @@ class ParamValidator:
     def _connections_compatible_pv(bill_conn: str, quota_conn: str) -> bool:
         """判断两种连接方式是否兼容（委托给 compat_primitives 统一实现）"""
         return _compat_connections_compatible(bill_conn, quota_conn)
+
+    # 安装方式兼容组：同组内的表达方式互相兼容
+    _INSTALL_COMPAT_GROUPS = [
+        {"挂墙", "壁挂"},  # "挂墙"和"壁挂"是同一种安装方式
+        {"明装", "明敷"},  # 电气设备用"明装"，母线/线缆用"明敷"
+        {"暗装", "暗敷"},  # 同上
+        {"悬挂", "嵌入"},  # 配电箱定额"悬挂、嵌入式"共用同一条，不区分
+    ]
+
+    @classmethod
+    def _install_methods_compatible(cls, m1: str, m2: str) -> bool:
+        """判断两种安装方式是否兼容（同义表达视为兼容）"""
+        if m1 == m2:
+            return True
+        for group in cls._INSTALL_COMPAT_GROUPS:
+            if m1 in group and m2 in group:
+                return True
+        return False
 
     @staticmethod
     def _tier_up_score(bill_value: float, quota_value: float) -> float:
@@ -719,6 +734,21 @@ class ParamValidator:
                 check_count += 1
                 score_sum += 0.7
                 details.append(f"清单有连接方式'{bill_params['connection']}'但定额无连接方式信息")
+
+        # === 8.5 安装/敷设方式（只加分不扣分：匹配时boost，不匹配时跳过） ===
+        # 为什么只加分不扣分？因为各省定额命名差异大：
+        # - 北京"弱电箱"清单说暗装但正确定额叫"挂墙安装"
+        # - 浙江"插座箱"清单说挂墙但定额叫"悬挂式"
+        # 扣分会误杀这些正确匹配，只加分则安全：匹配的候选拉高，不匹配的不变
+        if "install_method" in bill_params:
+            bill_im = bill_params["install_method"]
+            quota_im = quota_params.get("install_method", "")
+            if quota_im and (bill_im == quota_im
+                             or self._install_methods_compatible(bill_im, quota_im)):
+                check_count += 1
+                score_sum += 1.0
+                details.append(f"安装方式'{bill_im}'匹配")
+
         # === 9. 风管形状（硬性参数：矩形≠圆形，形状错了定额完全不同） ===
         if "shape" in bill_params:
             quota_shape = quota_params.get("shape", "")

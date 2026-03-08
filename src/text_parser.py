@@ -270,6 +270,11 @@ class TextParser:
         if switch_gangs is not None:
             result["switch_gangs"] = switch_gangs
 
+        # 提取安装方式（明装/暗装/落地/挂墙/嵌入/吊装/悬挂/明敷/暗敷）
+        install_method = self._extract_install_method(text)
+        if install_method:
+            result["install_method"] = install_method
+
         # 提取电梯类型（从名称关键词判断：货梯→载货电梯、客梯→曳引式电梯等）
         elevator_type = self._extract_elevator_type(text)
         if elevator_type:
@@ -917,6 +922,43 @@ class TextParser:
                 return val
 
         return None
+
+    # 安装/敷设方式关键词规则（按优先级排列，长词优先避免误匹配）
+    # 统一归类为：明装/暗装/落地/挂墙/嵌入/吊装/悬挂/明敷/暗敷
+    _INSTALL_METHOD_RULES = [
+        # 敷设方式（电缆/接地母线等用"明敷/暗敷"）
+        (["明敷设", "明敷"], "明敷"),
+        (["暗敷设", "暗敷"], "暗敷"),
+        # 安装方式-具体子类（长词优先）
+        (["壁挂安装", "壁挂式", "挂墙安装", "挂墙式", "挂墙"], "挂墙"),
+        (["落地安装", "落地式"], "落地"),
+        (["嵌入式", "嵌入安装"], "嵌入"),
+        (["吊装", "吊顶内安装", "吊顶安装"], "吊装"),
+        (["悬挂式", "悬挂安装", "悬吊"], "悬挂"),
+        # 明装/暗装（最通用的二分法，放在最后避免覆盖更具体的类型）
+        (["明装"], "明装"),
+        (["暗装"], "暗装"),
+    ]
+
+    def _extract_install_method(self, text: str) -> str:
+        """
+        从清单或定额名称提取安装/敷设方式
+
+        覆盖场景：
+        - 配电箱：明装/暗装/落地/挂墙/嵌入
+        - 开关插座：明装/暗装
+        - 接地母线：明敷/暗敷
+        - 灯具：吊装/吸顶（吸顶不提取，由其他规则处理）
+
+        返回归一化的安装方式字符串，如"明装""暗敷""落地"等。
+        未识别则返回空字符串。
+        """
+        if not text:
+            return ""
+        for keywords, method in self._INSTALL_METHOD_RULES:
+            if any(kw in text for kw in keywords):
+                return method
+        return ""
 
     # 电梯类型判断规则（按优先级排列：具体类型优先，泛称在后）
     _ELEVATOR_TYPE_RULES = [
