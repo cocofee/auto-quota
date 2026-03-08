@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.2.12
+version: 0.2.13
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -18,8 +18,8 @@ services:
       - backend
 
   backend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
-    command: sh -c "cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.12
+    command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
@@ -30,8 +30,8 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
-      VECTOR_ENABLED: "false"
+      # 向量搜索（CPU模式，sentence-transformers已安装）
+      VECTOR_ENABLED: "true"
       # 大模型配置：全部使用Claude Opus（中转直连）
       AGENT_LLM: claude
       MATCH_LLM: claude
@@ -47,6 +47,7 @@ services:
       CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
       CLAUDE_BASE_URL: "http://47.243.74.21:8080"
       CLAUDE_MODEL: claude-opus-4-6
+      # 模型已手动传到model_cache，纯离线不联网
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
       HF_DATASETS_OFFLINE: "1"
@@ -70,8 +71,8 @@ services:
       - redis
 
   celery-worker:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
-    command: sh -c "cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.12
+    command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
@@ -79,8 +80,8 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 关闭向量搜索（懒猫无GPU，CPU跑BGE太慢，纯BM25足够）
-      VECTOR_ENABLED: "false"
+      # 向量搜索（CPU模式，sentence-transformers已安装）
+      VECTOR_ENABLED: "true"
       # 大模型配置：全部使用Claude Opus（中转直连）
       AGENT_LLM: claude
       MATCH_LLM: claude
@@ -96,8 +97,8 @@ services:
       CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
       CLAUDE_BASE_URL: "http://47.243.74.21:8080"
       CLAUDE_MODEL: claude-opus-4-6
-      TRANSFORMERS_OFFLINE: "1"
-      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "0"
+      HF_HUB_OFFLINE: "0"
       HF_DATASETS_OFFLINE: "1"
     binds:
       - /lzcapp/var/data:/app/data
