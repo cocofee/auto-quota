@@ -135,10 +135,23 @@ class BillReader:
         logger.info(f"读取清单文件: {file_path}")
 
         # .xls 文件自动转换为临时 .xlsx（openpyxl 不支持旧版 .xls 格式）
+        # 有些文件后缀是.xlsx但实际内容是.xls格式，通过文件头判断
         temp_xlsx_path = None
         actual_path = file_path
 
-        if file_path.suffix.lower() == ".xls":
+        is_old_xls = file_path.suffix.lower() == ".xls"
+        if not is_old_xls:
+            # 检查文件头：OLE2/CDFV2格式（.xls）的magic bytes是 D0 CF 11 E0
+            try:
+                with open(file_path, "rb") as f:
+                    magic = f.read(4)
+                if magic == b'\xd0\xcf\x11\xe0':
+                    is_old_xls = True
+                    logger.info(f"  文件后缀是.xlsx但实际是.xls格式，自动转换")
+            except Exception:
+                pass
+
+        if is_old_xls:
             try:
                 temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
                 actual_path = Path(temp_xlsx_path)
