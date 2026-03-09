@@ -355,7 +355,7 @@ def test_experience_similar_missing_version_returns_stale(monkeypatch):
             return [[0.1, 0.2]]
 
     class FakeModel:
-        def encode(self, _texts, normalize_embeddings=True):
+        def encode(self, _texts, **kwargs):
             return FakeEmbedding()
 
     class FakeCollection:

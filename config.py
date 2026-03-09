@@ -82,23 +82,26 @@ def _safe_dir_name(name: str) -> str:
     return f"{ascii_part}_{hash_suffix}" if ascii_part else f"p_{hash_suffix}"
 
 def get_chroma_quota_dir(province=None):
-    """获取定额向量数据库目录（使用ASCII安全路径，避免Windows中文路径问题）"""
+    """获取定额向量数据库目录（按model_key隔离，避免不同模型维度冲突）"""
     province = province or get_current_province()
     safe_name = _safe_dir_name(province)
-    new_path = DB_DIR / "chroma" / f"{safe_name}_quota"
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / f"{safe_name}_quota"
 
-    # 兼容迁移：如果旧路径存在而新路径不存在，自动迁移
-    old_path = get_province_db_dir(province) / "chroma_quota"
-    if old_path.exists() and not new_path.exists():
-        try:
-            import shutil
-            new_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(str(old_path), str(new_path))
-        except Exception as e:
-            # 迁移失败时回退到旧路径，不中断系统启动
-            import logging
-            logging.getLogger(__name__).warning(f"向量库迁移失败({e})，继续使用旧路径: {old_path}")
-            return old_path
+    # 兼容迁移：旧路径(无model_key层)存在时，只在bge模式下迁移
+    if VECTOR_MODEL_KEY == "bge":
+        old_path_v2 = DB_DIR / "chroma" / f"{safe_name}_quota"
+        old_path_v1 = get_province_db_dir(province) / "chroma_quota"
+        for old_path in [old_path_v2, old_path_v1]:
+            if old_path.exists() and not new_path.exists():
+                try:
+                    import shutil
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(str(old_path), str(new_path))
+                    break
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"向量库迁移失败({e})，继续使用旧路径: {old_path}")
+                    return old_path
 
     return new_path
 
@@ -111,27 +114,48 @@ def get_universal_kb_path():
     return COMMON_DB_DIR / "universal_kb.db"
 
 def get_chroma_experience_dir():
-    """获取经验库向量数据库目录（使用ASCII安全路径）"""
-    new_path = DB_DIR / "chroma" / "common_experience"
+    """获取经验库向量数据库目录（按model_key隔离）"""
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_experience"
 
-    # 兼容迁移：旧路径存在而新路径不存在时自动迁移
-    old_path = COMMON_DB_DIR / "chroma_experience"
-    if old_path.exists() and not new_path.exists():
-        try:
-            import shutil
-            new_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(str(old_path), str(new_path))
-        except Exception as e:
-            # 迁移失败时回退到旧路径，不中断系统启动
-            import logging
-            logging.getLogger(__name__).warning(f"经验库向量迁移失败({e})，继续使用旧路径: {old_path}")
-            return old_path
+    # 兼容迁移：旧路径存在时，只在bge模式下迁移
+    if VECTOR_MODEL_KEY == "bge":
+        old_path_v2 = DB_DIR / "chroma" / "common_experience"
+        old_path_v1 = COMMON_DB_DIR / "chroma_experience"
+        for old_path in [old_path_v2, old_path_v1]:
+            if old_path.exists() and not new_path.exists():
+                try:
+                    import shutil
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(str(old_path), str(new_path))
+                    break
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"经验库向量迁移失败({e})，继续使用旧路径: {old_path}")
+                    return old_path
 
     return new_path
 
 def get_chroma_universal_kb_dir():
-    """获取通用知识库向量数据库目录"""
-    return DB_DIR / "chroma" / "common_universal_kb"
+    """获取通用知识库向量数据库目录（按model_key隔离）"""
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_universal_kb"
+
+    # 兼容迁移：旧路径存在时，只在bge模式下迁移
+    if VECTOR_MODEL_KEY == "bge":
+        old_path_v2 = DB_DIR / "chroma" / "common_universal_kb"
+        old_path_v1 = COMMON_DB_DIR / "chroma_universal_kb"
+        for old_path in [old_path_v2, old_path_v1]:
+            if old_path.exists() and not new_path.exists():
+                try:
+                    import shutil
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(str(old_path), str(new_path))
+                    break
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"通用知识库向量迁移失败({e})，继续使用旧路径: {old_path}")
+                    return old_path
+
+    return new_path
 
 def get_current_quota_version(province=None):
     """获取当前定额库的版本号（供经验库写入时绑定）
@@ -465,7 +489,16 @@ QUOTA_EXCEL_COLUMNS = {
 
 # 向量搜索配置
 VECTOR_ENABLED = os.getenv("VECTOR_ENABLED", "true").lower() == "true"  # 环境变量控制，Docker可关闭
-VECTOR_MODEL_NAME = "BAAI/bge-large-zh-v1.5"  # BGE中文向量模型
+VECTOR_MODEL_KEY = os.getenv("VECTOR_MODEL_KEY", "bge").lower()  # 模型标识：bge 或 qwen3
+# 验证key合法性：必须与model_profile注册表一致，避免路径和模型不匹配
+_VALID_MODEL_KEYS = {"bge", "qwen3"}
+if VECTOR_MODEL_KEY not in _VALID_MODEL_KEYS:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        f"VECTOR_MODEL_KEY={VECTOR_MODEL_KEY!r} 不在支持列表{_VALID_MODEL_KEYS}中，回退到bge"
+    )
+    VECTOR_MODEL_KEY = "bge"
+VECTOR_MODEL_NAME = os.getenv("VECTOR_MODEL_NAME", "BAAI/bge-large-zh-v1.5")  # 可被VECTOR_MODEL_KEY覆盖
 VECTOR_TOP_K = 20                               # 向量搜索返回Top K
 VECTOR_WEIGHT = 0.7                             # 混合搜索中向量的权重（参考OpenClaw的70/30配比）
 

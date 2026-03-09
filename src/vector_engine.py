@@ -119,13 +119,12 @@ class VectorEngine:
             ids = [str(row["id"]) for row in batch_rows]
             texts = [row["search_text"] for row in batch_rows]
 
-            # BGE模型向量化
-            # BGE模型建议在查询文本前加"为这个句子生成表示以用于检索"
-            embeddings = self.model.encode(
-                texts,
+            # 文档端向量化（统一入口，自动处理前缀差异）
+            from src.model_profile import encode_documents
+            embeddings = encode_documents(
+                self.model, texts,
                 batch_size=batch_size,
-                show_progress_bar=False,
-                normalize_embeddings=True  # L2归一化，配合余弦相似度
+                show_progress=False,
             )
 
             # 每条定额的元数据（book + specialty），用于搜索时过滤
@@ -165,13 +164,9 @@ class VectorEngine:
                 VectorEngine._model_unavailable_warned = True
             VectorEngine._model_skip_count += 1
             return [None] * len(queries)
-        query_prefix = "为这个句子生成表示以用于检索中文文档: "
-        prefixed = [query_prefix + q for q in queries]
-        embeddings = self.model.encode(
-            prefixed,
-            batch_size=len(prefixed),
-            normalize_embeddings=True
-        )
+        query_prefix = ""  # 前缀由model_profile统一管理
+        from src.model_profile import encode_queries
+        embeddings = encode_queries(self.model, queries)
         return embeddings
 
     def search(self, query: str, top_k: int = None, books: list[str] = None,
@@ -201,11 +196,8 @@ class VectorEngine:
             import numpy as np
             query_embedding = np.array(precomputed_embedding).reshape(1, -1)
         elif self.model is not None:
-            query_prefix = "为这个句子生成表示以用于检索中文文档: "
-            query_embedding = self.model.encode(
-                [query_prefix + query],
-                normalize_embeddings=True
-            )
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [query])
         else:
             # 向量模型不可用且无预计算向量，无法执行向量搜索
             VectorEngine._model_skip_count += 1

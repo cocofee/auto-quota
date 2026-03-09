@@ -215,11 +215,11 @@ def rebuild_vector_index(self):
 
     logger.info(f"第1阶段: GPU编码 {total} 条文本 (batch={encode_batch})...")
     t0 = _time.time()
-    all_embeddings = self.model.encode(
-        all_texts,
+    from src.model_profile import encode_documents
+    all_embeddings = encode_documents(
+        self.model, all_texts,
         batch_size=encode_batch,
-        normalize_embeddings=True,
-        show_progress_bar=True,
+        show_progress=True,
     )
     t1 = _time.time()
     logger.info(f"GPU编码完成: {total}条, {t1-t0:.1f}秒 ({total/(t1-t0):.0f}条/秒)")
