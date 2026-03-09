@@ -162,10 +162,28 @@ async def health_check():
 async def list_provinces():
     """获取可用省份列表 —— 前端下拉选择用
 
-    返回 provinces（名称列表）和 groups（分组映射），
-    分组来自 data/quota_data/ 的文件夹结构。
+    远程模式时从本地匹配服务获取，本地模式时直接读 data/quota_data/。
     """
     try:
+        from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+
+        if MATCH_BACKEND == "remote" and LOCAL_MATCH_URL:
+            # 远程模式：从本地匹配服务的 /health 接口获取省份列表
+            import httpx
+            resp = httpx.get(
+                f"{LOCAL_MATCH_URL}/health",
+                headers={"X-API-Key": LOCAL_MATCH_API_KEY or ""},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "provinces": data.get("provinces", []),
+                "groups": data.get("groups", {}),
+                "subgroups": data.get("subgroups", {}),
+            }
+
+        # 本地模式：直接读定额库目录
         import config as quota_config
         provinces = quota_config.list_db_provinces()
         groups = quota_config.get_province_groups()
@@ -175,7 +193,7 @@ async def list_provinces():
         logger.error(f"获取省份列表失败: {e}")
         raise HTTPException(
             status_code=500,
-            detail="获取省份列表失败，请检查定额库是否已导入"
+            detail="获取省份列表失败，请确认本地匹配服务已启动"
         )
 
 
