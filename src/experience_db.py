@@ -953,10 +953,8 @@ class ExperienceDB:
             if self.collection is None:
                 logger.warning("向量索引不可用，跳过添加")
                 return
-            embedding = self.model.encode(
-                [bill_text],
-                normalize_embeddings=True
-            )
+            from src.model_profile import encode_documents
+            embedding = encode_documents(self.model, [bill_text])
             self.collection.upsert(
                 ids=[str(record_id)],
                 documents=[bill_text],
@@ -1041,12 +1039,9 @@ class ExperienceDB:
             if self.model is None:
                 return [stale_exact] if stale_exact else []
 
-            query_prefix = "为这个句子生成表示以用于检索中文文档: "
-            query_embedding = self.model.encode(
-                [query_prefix + query_text],
-                normalize_embeddings=True
-            )
-
+            query_prefix = ""  # 前缀由model_profile统一管理
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [query_text])
             # 先尝试按省份过滤的向量搜索
             try:
                 results = coll.query(
@@ -1213,12 +1208,9 @@ class ExperienceDB:
             if self.model is None:
                 return []
 
-            query_prefix = "为这个句子生成表示以用于检索中文文档: "
-            query_embedding = self.model.encode(
-                [query_prefix + query_text],
-                normalize_embeddings=True
-            )
-
+            query_prefix = ""  # 前缀由model_profile统一管理
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [query_text])
             # 向量搜索全库（不按省份过滤）
             n_results = min(max(top_k * 5, 20), collection_count)
             results = coll.query(

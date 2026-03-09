@@ -426,9 +426,8 @@ class UniversalKB:
             if self.model is None:
                 return None
 
-            query_embedding = self.model.encode(
-                [bill_pattern], normalize_embeddings=True
-            )
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [bill_pattern])
 
             results = self.collection.query(
                 query_embeddings=query_embedding.tolist(),
@@ -486,9 +485,8 @@ class UniversalKB:
     def _add_to_vector_index(self, record_id: int, bill_pattern: str):
         """将知识记录添加到向量索引"""
         try:
-            embedding = self.model.encode(
-                [bill_pattern], normalize_embeddings=True
-            )
+            from src.model_profile import encode_documents
+            embedding = encode_documents(self.model, [bill_pattern])
             self.collection.upsert(
                 ids=[str(record_id)],
                 documents=[bill_pattern],
@@ -547,11 +545,8 @@ class UniversalKB:
             return results
 
         try:
-            query_prefix = "为这个句子生成表示以用于检索中文文档: "
-            query_embedding = self.model.encode(
-                [query_prefix + query_text],
-                normalize_embeddings=True
-            )
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [query_text])
 
             search_results = self.collection.query(
                 query_embeddings=query_embedding.tolist(),
@@ -826,9 +821,11 @@ class UniversalKB:
             ids = [str(row["id"]) for row in batch]
             texts = [row["bill_pattern"] for row in batch]
 
-            embeddings = self.model.encode(
-                texts, batch_size=batch_size,
-                normalize_embeddings=True
+            from src.model_profile import encode_documents
+            embeddings = encode_documents(
+                self.model, texts,
+                batch_size=batch_size,
+                show_progress=False,
             )
 
             self.collection.add(

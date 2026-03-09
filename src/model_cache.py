@@ -2,13 +2,13 @@
 全局模型和连接缓存
 
 功能：
-1. 向量模型（BGE）和Reranker模型在整个进程中只加载一次
+1. 向量模型（BGE/Qwen3）和Reranker模型在整个进程中只加载一次
 2. ChromaDB客户端按路径缓存，避免多模块各自创建导致连接冲突
 3. VectorEngine、ExperienceDB、UniversalKB 都从这里获取模型和客户端
 
 使用方式：
     from src.model_cache import ModelCache
-    model = ModelCache.get_vector_model()           # 获取BGE向量模型
+    model = ModelCache.get_vector_model()           # 获取向量模型（BGE或Qwen3）
     reranker = ModelCache.get_reranker_model()       # 获取Reranker模型
     client = ModelCache.get_chroma_client(path)      # 获取ChromaDB客户端（按路径缓存）
 """
@@ -54,9 +54,9 @@ class ModelCache:
 
     @classmethod
     def get_vector_model(cls):
-        """获取BGE向量模型（全局单例，首次调用时加载）
+        """获取向量模型（全局单例，首次调用时加载）
 
-        加载失败3次后进入60秒冷却期，期间返回None避免反复重试
+        根据model_profile自动选择BGE或Qwen3，加载失败3次后进入60秒冷却期
         """
         if cls._vector_model is not None:
             return cls._vector_model
@@ -72,14 +72,30 @@ class ModelCache:
             if cls._in_cooldown(cls._vector_fail_count, cls._vector_fail_time):
                 return None
 
-            logger.info(f"[ModelCache] 加载向量模型: {config.VECTOR_MODEL_NAME}")
+            # 从model_profile获取当前模型配置
+            from src.model_profile import get_active_profile
+            profile = get_active_profile()
+
+            logger.info(f"[ModelCache] 加载向量模型: {profile.model_name} (key={profile.key}, dim={profile.embedding_dim})")
             try:
                 from sentence_transformers import SentenceTransformer
+                # GPU加载：根据模型类型传不同参数（Qwen3需要bf16）
                 cls._vector_model = SentenceTransformer(
-                    config.VECTOR_MODEL_NAME,
-                    device="cuda"
+                    profile.model_name,
+                    device="cuda",
+                    **profile.load_kwargs,
                 )
-                logger.info("[ModelCache] 向量模型加载成功（GPU模式）")
+                # 加载后验证维度（不匹配则拒绝使用，避免写入错误维度的索引）
+                test_emb = cls._vector_model.encode(["test"], normalize_embeddings=True)
+                actual_dim = len(test_emb[0])
+                if actual_dim != profile.embedding_dim:
+                    logger.error(
+                        f"[ModelCache] 向量维度不匹配: 期望{profile.embedding_dim}, "
+                        f"实际{actual_dim}，拒绝加载（防止索引损坏）"
+                    )
+                    cls._vector_model = None
+                    raise ValueError(f"向量维度不匹配: 期望{profile.embedding_dim}, 实际{actual_dim}")
+                logger.info(f"[ModelCache] 向量模型加载成功（GPU模式，维度={actual_dim}）")
                 cls._vector_fail_count = 0  # 成功则重置计数
             except Exception as e:
                 logger.warning(f"[ModelCache] GPU加载失败({e})，切换到CPU模式")
@@ -92,10 +108,22 @@ class ModelCache:
                     pass
                 try:
                     from sentence_transformers import SentenceTransformer
+                    # CPU回退：使用cpu专用参数（不强制bf16）
                     cls._vector_model = SentenceTransformer(
-                        config.VECTOR_MODEL_NAME,
-                        device="cpu"
+                        profile.model_name,
+                        device="cpu",
+                        **profile.cpu_load_kwargs,
                     )
+                    # CPU模式也验证维度
+                    test_emb = cls._vector_model.encode(["test"], normalize_embeddings=True)
+                    actual_dim = len(test_emb[0])
+                    if actual_dim != profile.embedding_dim:
+                        logger.error(
+                            f"[ModelCache] CPU模式向量维度不匹配: 期望{profile.embedding_dim}, "
+                            f"实际{actual_dim}，拒绝加载"
+                        )
+                        cls._vector_model = None
+                        raise ValueError(f"CPU向量维度不匹配: 期望{profile.embedding_dim}, 实际{actual_dim}")
                     logger.info("[ModelCache] 向量模型加载成功（CPU模式）")
                     cls._vector_fail_count = 0
                 except Exception as e2:
