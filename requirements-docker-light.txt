@@ -1,0 +1,16 @@
+# 轻量Docker依赖（远程匹配模式）
+#
+# 只包含 Web 框架需要的额外依赖。
+# 匹配引擎的重型依赖（sentence-transformers、chromadb、lightgbm等）不需要安装。
+# Web 框架依赖（fastapi、sqlalchemy、celery 等）在 web/backend/requirements.txt 中。
+#
+# 这个文件只补充 web/backend/requirements.txt 没有的：
+
+# HTTP客户端（调用本地匹配API用）
+httpx>=0.25.0
+
+# 日志（Web后端和匹配引擎共用）
+loguru>=0.7.0
+
+# 环境变量加载
+python-dotenv>=1.0.0

@@ -134,6 +134,25 @@ if MATCH_LLM not in ("claude", "deepseek", "kimi", "qwen", "openai"):
 
 
 # ============================================================
+# 匹配后端模式（本机执行 或 远程API）
+# ============================================================
+
+# 匹配后端：
+#   "local" — 在本机运行 main.run()（需要完整镜像+定额库+模型，默认）
+#   "remote" — 转发到本地电脑的匹配API（轻量镜像，不需要定额库和模型）
+MATCH_BACKEND = os.getenv("MATCH_BACKEND", "local")
+if MATCH_BACKEND not in ("local", "remote"):
+    raise ValueError(f"MATCH_BACKEND 必须是 local 或 remote，当前值: {MATCH_BACKEND}")
+
+# 远程匹配API地址（MATCH_BACKEND=remote 时必填）
+# 格式: http://你的电脑IP:9527
+LOCAL_MATCH_URL = os.getenv("LOCAL_MATCH_URL", "")
+
+# 远程匹配API密钥（和本地匹配服务的 LOCAL_MATCH_API_KEY 保持一致）
+LOCAL_MATCH_API_KEY = os.getenv("LOCAL_MATCH_API_KEY", "")
+
+
+# ============================================================
 # 好易支付配置（额度购买）
 # ============================================================
 

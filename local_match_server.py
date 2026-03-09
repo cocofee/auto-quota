@@ -1,0 +1,376 @@
+"""
+本地匹配API服务 — 在你的电脑上运行，提供定额匹配算力
+
+懒猫盒子通过HTTP调用这个服务来执行匹配任务，
+这样懒猫只需要轻量镜像（~200MB），算力全在你的电脑上。
+
+启动方式：
+    python local_match_server.py
+    或者双击「启动匹配服务.bat」
+
+端口：9527（固定）
+"""
+
+import json
+import os
+import shutil
+import time
+import uuid
+import threading
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+import uvicorn
+
+# 加载项目 .env
+load_dotenv()
+
+import config  # 项目全局配置（省份列表等）
+import main as auto_quota_main  # 匹配入口
+
+# ============================================================
+# 配置
+# ============================================================
+
+# API密钥（从环境变量读取，未设置则自动生成一个随机密钥）
+_DEFAULT_KEY = uuid.uuid4().hex[:16]
+API_KEY = os.getenv("LOCAL_MATCH_API_KEY", _DEFAULT_KEY)
+
+# 最大并发匹配任务数
+MAX_CONCURRENT = int(os.getenv("LOCAL_MATCH_MAX_CONCURRENT", "2"))
+
+# 临时文件目录
+TEMP_DIR = Path("output/temp/remote_match")
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# 任务保留时间（秒），超时后自动清理
+TASK_TTL = 3600  # 1小时
+
+# 服务端口
+PORT = int(os.getenv("LOCAL_MATCH_PORT", "9527"))
+
+# ============================================================
+# 全局状态
+# ============================================================
+
+# 任务字典：match_id → 任务状态
+# 状态结构：{
+#   "status": "running" / "completed" / "failed",
+#   "progress": 0~100,
+#   "current_idx": 当前第几条,
+#   "message": 进度文字,
+#   "results": 匹配结果（完成后填入）,
+#   "error": 错误信息（失败时填入）,
+#   "created_at": 创建时间戳,
+#   "work_dir": 工作目录路径,
+# }
+_tasks: dict[str, dict] = {}
+_tasks_lock = threading.Lock()
+
+# 并发控制信号量
+_semaphore = threading.Semaphore(MAX_CONCURRENT)
+
+# ============================================================
+# FastAPI 应用
+# ============================================================
+
+app = FastAPI(
+    title="本地匹配API服务",
+    description="提供定额匹配算力，供懒猫盒子远程调用",
+    version="1.0.0",
+)
+
+
+def _verify_api_key(api_key: str):
+    """验证API密钥"""
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="API Key不正确")
+
+
+@app.get("/health")
+def health_check(x_api_key: str = Header(default="")):
+    """健康检查 — 返回版本号和可用省份列表"""
+    _verify_api_key(x_api_key)
+
+    # 获取可用省份列表
+    provinces = config.list_db_provinces()
+
+    # 统计当前活跃任务数
+    with _tasks_lock:
+        active = sum(1 for t in _tasks.values() if t["status"] == "running")
+
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "provinces": provinces,
+        "active_tasks": active,
+        "max_concurrent": MAX_CONCURRENT,
+    }
+
+
+@app.post("/match")
+async def create_match(
+    file: UploadFile,
+    province: str = Form(...),
+    mode: str = Form(default="search"),
+    sheet: str = Form(default=None),
+    limit: int = Form(default=None),
+    no_experience: bool = Form(default=False),
+    agent_llm: str = Form(default=None),
+    x_api_key: str = Header(default=""),
+):
+    """提交匹配任务 — 上传Excel+参数，异步执行，返回match_id"""
+    _verify_api_key(x_api_key)
+
+    # 检查并发限制（非阻塞尝试获取信号量）
+    if not _semaphore.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail=f"服务繁忙，当前已有{MAX_CONCURRENT}个任务在执行，请稍后重试"
+        )
+
+    try:
+        # 生成任务ID和工作目录
+        match_id = str(uuid.uuid4())
+        work_dir = TEMP_DIR / match_id
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # 保存上传的Excel文件
+        input_path = work_dir / "input.xlsx"
+        content = await file.read()
+        input_path.write_bytes(content)
+
+        # 初始化任务状态
+        with _tasks_lock:
+            _tasks[match_id] = {
+                "status": "running",
+                "progress": 0,
+                "current_idx": 0,
+                "message": "任务已创建，等待执行...",
+                "results": None,
+                "error": None,
+                "created_at": time.time(),
+                "work_dir": str(work_dir),
+            }
+
+        # 组装匹配参数
+        params = {
+            "input_file": str(input_path),
+            "province": province,
+            "mode": mode,
+            "sheet": sheet,
+            "limit": limit,
+            "no_experience": no_experience,
+            "agent_llm": agent_llm,
+        }
+
+        # 启动后台线程执行匹配
+        thread = threading.Thread(
+            target=_run_match,
+            args=(match_id, params),
+            daemon=True,
+        )
+        thread.start()
+
+        return {"match_id": match_id}
+
+    except Exception:
+        # 出错时释放信号量
+        _semaphore.release()
+        raise
+
+
+@app.get("/match/{match_id}/progress")
+def get_progress(match_id: str, x_api_key: str = Header(default="")):
+    """查询匹配进度"""
+    _verify_api_key(x_api_key)
+
+    with _tasks_lock:
+        task = _tasks.get(match_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    return {
+        "status": task["status"],
+        "progress": task["progress"],
+        "current_idx": task["current_idx"],
+        "message": task["message"],
+        "error": task.get("error"),
+    }
+
+
+@app.get("/match/{match_id}/results")
+def get_results(match_id: str, x_api_key: str = Header(default="")):
+    """获取匹配结果 — 任务完成后才能调用"""
+    _verify_api_key(x_api_key)
+
+    with _tasks_lock:
+        task = _tasks.get(match_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if task["status"] == "running":
+        raise HTTPException(status_code=409, detail="任务还在执行中")
+
+    if task["status"] == "failed":
+        raise HTTPException(status_code=500, detail=task.get("error", "匹配失败"))
+
+    # 返回结果JSON
+    return task["results"]
+
+
+@app.get("/match/{match_id}/output.xlsx")
+def download_excel(match_id: str, x_api_key: str = Header(default="")):
+    """下载输出的Excel文件"""
+    _verify_api_key(x_api_key)
+
+    with _tasks_lock:
+        task = _tasks.get(match_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    excel_path = Path(task["work_dir"]) / "output.xlsx"
+    if not excel_path.exists():
+        raise HTTPException(status_code=404, detail="Excel文件不存在")
+
+    return FileResponse(
+        path=str(excel_path),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="output.xlsx",
+    )
+
+
+# ============================================================
+# 后台匹配执行
+# ============================================================
+
+def _run_match(match_id: str, params: dict):
+    """在后台线程中执行匹配（调用 main.run()）"""
+    try:
+        work_dir = Path(_tasks[match_id]["work_dir"])
+
+        # 进度回调：更新内存字典
+        def progress_cb(percent, current_idx, message, result=None):
+            with _tasks_lock:
+                if match_id in _tasks:
+                    _tasks[match_id].update(
+                        progress=percent,
+                        current_idx=current_idx,
+                        message=message,
+                    )
+
+        # 输出路径
+        excel_output = str(work_dir / "output.xlsx")
+        json_output = str(work_dir / "results.json")
+
+        # 调用核心匹配函数
+        result = auto_quota_main.run(
+            input_file=params["input_file"],
+            mode=params["mode"],
+            output=excel_output,
+            province=params["province"],
+            sheet=params.get("sheet"),
+            limit=params.get("limit"),
+            no_experience=params.get("no_experience", False),
+            agent_llm=params.get("agent_llm"),
+            json_output=json_output,
+            interactive=False,  # API调用不能交互
+            progress_callback=progress_cb,
+        )
+
+        # 标记完成
+        with _tasks_lock:
+            if match_id in _tasks:
+                _tasks[match_id].update(
+                    status="completed",
+                    progress=100,
+                    message="匹配完成",
+                    results=result,
+                )
+
+    except Exception as e:
+        # 标记失败
+        with _tasks_lock:
+            if match_id in _tasks:
+                _tasks[match_id].update(
+                    status="failed",
+                    error=str(e),
+                    message=f"匹配失败: {e}",
+                )
+    finally:
+        # 释放并发信号量
+        _semaphore.release()
+
+
+# ============================================================
+# 定时清理过期任务
+# ============================================================
+
+def _cleanup_expired_tasks():
+    """每10分钟清理一次过期任务（完成超过1小时的）"""
+    while True:
+        time.sleep(600)  # 10分钟检查一次
+        now = time.time()
+        expired = []
+
+        with _tasks_lock:
+            for mid, task in list(_tasks.items()):
+                if task["status"] in ("completed", "failed"):
+                    if now - task["created_at"] > TASK_TTL:
+                        expired.append(mid)
+            for mid in expired:
+                del _tasks[mid]
+
+        # 清理临时文件
+        for mid in expired:
+            work_dir = TEMP_DIR / mid
+            if work_dir.exists():
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+        if expired:
+            print(f"[清理] 已清理 {len(expired)} 个过期任务")
+
+
+# ============================================================
+# 启动入口
+# ============================================================
+
+def main():
+    """启动本地匹配API服务"""
+    # 启动清理线程
+    cleaner = threading.Thread(target=_cleanup_expired_tasks, daemon=True)
+    cleaner.start()
+
+    # 打印启动信息
+    print("=" * 60)
+    print("  本地匹配API服务")
+    print("=" * 60)
+    print(f"  端口: {PORT}")
+    print(f"  API Key: {API_KEY}")
+    print(f"  最大并发: {MAX_CONCURRENT}")
+    print(f"  临时目录: {TEMP_DIR}")
+    print()
+    print("  把以下配置填入懒猫盒子的环境变量：")
+    print(f"    MATCH_BACKEND=remote")
+    print(f"    LOCAL_MATCH_URL=http://你的电脑IP:{PORT}")
+    print(f"    LOCAL_MATCH_API_KEY={API_KEY}")
+    print()
+    print("  按 Ctrl+C 停止服务")
+    print("=" * 60)
+
+    # 启动服务
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    main()

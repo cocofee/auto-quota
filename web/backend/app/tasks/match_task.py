@@ -123,103 +123,21 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
         json_output = str(output_dir / "results.json")
         excel_output = str(output_dir / "output.xlsx")
 
-        # ---- 第3步：调用现有的 run() 函数 ----
-        # main.py 已通过 celery_app.py 的 sys.path 设置可被导入
-        logger.info(
-            f"任务 {task_id}: 开始匹配 "
-            f"(mode={params.get('mode')}, province={params.get('province')})"
-        )
+        # ---- 第3步：选择匹配后端（本地执行 或 远程API） ----
+        from app.config import MATCH_BACKEND
 
-        import main as auto_quota_main  # 延迟导入，避免循环依赖
-        import config as quota_config
-
-        # 从数据库读取大模型配置，注入到 config 模块
-        # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
-        def _clean_ascii(val: str) -> str:
-            """清洗配置值：去除不可见非ASCII字符（BOM/零宽空格等），防止httpx头编码错误"""
-            if not val or not isinstance(val, str):
-                return val or ""
-            # 去除BOM、零宽空格、零宽连接符等不可见Unicode字符
-            for ch in ["\ufeff", "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufffe", "\u00a0"]:
-                val = val.replace(ch, "")
-            # 去除首尾空白（包括\r\n\t等）
-            val = val.strip()
-            # 强制保留纯ASCII（API Key/URL/模型名都应该是纯ASCII）
-            val = val.encode("ascii", errors="ignore").decode("ascii")
-            return val
-
-        try:
-            from app.services.llm_config_service import get_llm_config_sync, get_verify_config_sync
-
-            # ---- 匹配模型配置 ----
-            llm_cfg = get_llm_config_sync(session)
-            llm_type = _clean_ascii(llm_cfg["llm_type"])
-            api_key = _clean_ascii(llm_cfg["api_key"])
-            base_url = _clean_ascii(llm_cfg["base_url"])
-            model_name = _clean_ascii(llm_cfg["model"])
-
-            if api_key:
-                key_attr = f"{llm_type.upper()}_API_KEY"
-                url_attr = f"{llm_type.upper()}_BASE_URL"
-                model_attr = f"{llm_type.upper()}_MODEL"
-                setattr(quota_config, key_attr, api_key)
-                if base_url:
-                    setattr(quota_config, url_attr, base_url)
-                if model_name:
-                    setattr(quota_config, model_attr, model_name)
-                quota_config.AGENT_LLM = llm_type
-
-            # ---- 验证模型配置 ----
-            v_cfg = get_verify_config_sync(session)
-            v_type = _clean_ascii(v_cfg["llm_type"])
-            v_key = _clean_ascii(v_cfg["api_key"])
-            v_url = _clean_ascii(v_cfg["base_url"])
-            v_model = _clean_ascii(v_cfg["model"])
-
-            if v_type and v_key:
-                # 验证模型单独配置了
-                v_key_attr = f"{v_type.upper()}_API_KEY"
-                v_url_attr = f"{v_type.upper()}_BASE_URL"
-                v_model_attr = f"{v_type.upper()}_MODEL"
-                setattr(quota_config, v_key_attr, v_key)
-                if v_url:
-                    setattr(quota_config, v_url_attr, v_url)
-                quota_config.VERIFY_LLM = v_type
-                if v_model:
-                    quota_config.VERIFY_MODEL = v_model
-            elif not v_type:
-                # 验证模型未配置，跟匹配模型走
-                quota_config.VERIFY_LLM = ""
-                quota_config.VERIFY_MODEL = ""
-
-            verify_label = f"{quota_config.VERIFY_LLM}/{quota_config.VERIFY_MODEL}" if quota_config.VERIFY_LLM else "同匹配"
-            logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}，验证:{verify_label}")
-        except Exception as e:
-            logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
-
-        # 自动挂载同批辅助定额库（同省份+同年份的兄弟库）
-        province = params.get("province", "")
-        aux_provinces = quota_config.get_sibling_provinces(province)
-        if aux_provinces:
-            logger.info(f"任务 {task_id}: 自动挂载同批辅助库: {aux_provinces}")
-
-        # 创建进度回调（匹配过程中实时更新数据库进度）
-        progress_cb = _make_progress_callback(session, task, output_dir)
-
-        result = auto_quota_main.run(
-            input_file=file_path,
-            mode=params.get("mode", "search"),
-            output=excel_output,
-            province=params.get("province"),
-            aux_provinces=aux_provinces or None,  # 同批兄弟库自动挂载
-            sheet=params.get("sheet"),
-            limit=params.get("limit"),
-            agent_llm=params.get("agent_llm"),
-            json_output=json_output,
-            no_experience=params.get("no_experience", False),
-            interactive=False,  # Web调用不需要交互式提示
-            progress_callback=progress_cb,
-        )
+        if MATCH_BACKEND == "remote":
+            # 远程模式：把Excel发到本地电脑的匹配API
+            result = _execute_remote_match(
+                session, task, task_id, file_path, params,
+                output_dir, json_output, excel_output,
+            )
+        else:
+            # 本地模式：在本机执行 main.run()
+            result = _execute_local_match(
+                session, task, task_id, file_path, params,
+                output_dir, json_output, excel_output,
+            )
 
         # ---- 第4步：扣减用户额度（必须在保存结果之前） ----
         # 先扣费再保存结果，防止余额不足时用户白拿匹配结果
@@ -299,3 +217,195 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
 
     finally:
         session.close()
+
+
+# ============================================================
+# 本地匹配（现有逻辑，原样提取为独立函数）
+# ============================================================
+
+def _execute_local_match(session, task, task_id, file_path, params,
+                         output_dir, json_output, excel_output):
+    """在本机执行 main.run()（需要完整的匹配引擎+定额库+模型）"""
+    logger.info(
+        f"任务 {task_id}: 本地匹配模式 "
+        f"(mode={params.get('mode')}, province={params.get('province')})"
+    )
+
+    import main as auto_quota_main  # 延迟导入，避免循环依赖
+    import config as quota_config
+
+    # 从数据库读取大模型配置，注入到 config 模块
+    # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
+    def _clean_ascii(val: str) -> str:
+        """清洗配置值：去除不可见非ASCII字符（BOM/零宽空格等），防止httpx头编码错误"""
+        if not val or not isinstance(val, str):
+            return val or ""
+        for ch in ["\ufeff", "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufffe", "\u00a0"]:
+            val = val.replace(ch, "")
+        val = val.strip()
+        val = val.encode("ascii", errors="ignore").decode("ascii")
+        return val
+
+    try:
+        from app.services.llm_config_service import get_llm_config_sync, get_verify_config_sync
+
+        # ---- 匹配模型配置 ----
+        llm_cfg = get_llm_config_sync(session)
+        llm_type = _clean_ascii(llm_cfg["llm_type"])
+        api_key = _clean_ascii(llm_cfg["api_key"])
+        base_url = _clean_ascii(llm_cfg["base_url"])
+        model_name = _clean_ascii(llm_cfg["model"])
+
+        if api_key:
+            key_attr = f"{llm_type.upper()}_API_KEY"
+            url_attr = f"{llm_type.upper()}_BASE_URL"
+            model_attr = f"{llm_type.upper()}_MODEL"
+            setattr(quota_config, key_attr, api_key)
+            if base_url:
+                setattr(quota_config, url_attr, base_url)
+            if model_name:
+                setattr(quota_config, model_attr, model_name)
+            quota_config.AGENT_LLM = llm_type
+
+        # ---- 验证模型配置 ----
+        v_cfg = get_verify_config_sync(session)
+        v_type = _clean_ascii(v_cfg["llm_type"])
+        v_key = _clean_ascii(v_cfg["api_key"])
+        v_url = _clean_ascii(v_cfg["base_url"])
+        v_model = _clean_ascii(v_cfg["model"])
+
+        if v_type and v_key:
+            v_key_attr = f"{v_type.upper()}_API_KEY"
+            v_url_attr = f"{v_type.upper()}_BASE_URL"
+            v_model_attr = f"{v_type.upper()}_MODEL"
+            setattr(quota_config, v_key_attr, v_key)
+            if v_url:
+                setattr(quota_config, v_url_attr, v_url)
+            quota_config.VERIFY_LLM = v_type
+            if v_model:
+                quota_config.VERIFY_MODEL = v_model
+        elif not v_type:
+            quota_config.VERIFY_LLM = ""
+            quota_config.VERIFY_MODEL = ""
+
+        verify_label = f"{quota_config.VERIFY_LLM}/{quota_config.VERIFY_MODEL}" if quota_config.VERIFY_LLM else "同匹配"
+        logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}，验证:{verify_label}")
+    except Exception as e:
+        logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
+
+    # 自动挂载同批辅助定额库（同省份+同年份的兄弟库）
+    province = params.get("province", "")
+    aux_provinces = quota_config.get_sibling_provinces(province)
+    if aux_provinces:
+        logger.info(f"任务 {task_id}: 自动挂载同批辅助库: {aux_provinces}")
+
+    # 创建进度回调（匹配过程中实时更新数据库进度）
+    progress_cb = _make_progress_callback(session, task, output_dir)
+
+    result = auto_quota_main.run(
+        input_file=file_path,
+        mode=params.get("mode", "search"),
+        output=excel_output,
+        province=params.get("province"),
+        aux_provinces=aux_provinces or None,
+        sheet=params.get("sheet"),
+        limit=params.get("limit"),
+        agent_llm=params.get("agent_llm"),
+        json_output=json_output,
+        no_experience=params.get("no_experience", False),
+        interactive=False,
+        progress_callback=progress_cb,
+    )
+
+    return result
+
+
+# ============================================================
+# 远程匹配（HTTP转发到本地电脑的匹配API）
+# ============================================================
+
+def _execute_remote_match(session, task, task_id, file_path, params,
+                          output_dir, json_output, excel_output):
+    """远程匹配：把Excel发到本地电脑的匹配API，轮询进度，取回结果
+
+    流程：
+    1. 健康检查 → 确认本地服务在线
+    2. 上传Excel+参数 → 获取 match_id
+    3. 每3秒轮询进度 → 同步更新数据库（前端SSE自动推送）
+    4. 获取结果JSON → 下载Excel文件
+    """
+    import json as _json
+    from app.config import LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+    from app.services.remote_match import RemoteMatchClient
+
+    logger.info(
+        f"任务 {task_id}: 远程匹配模式 → {LOCAL_MATCH_URL} "
+        f"(mode={params.get('mode')}, province={params.get('province')})"
+    )
+
+    if not LOCAL_MATCH_URL:
+        raise RuntimeError(
+            "远程匹配模式需要配置 LOCAL_MATCH_URL（本地匹配服务地址）\n"
+            "例如: LOCAL_MATCH_URL=http://192.168.1.100:9527"
+        )
+
+    client = RemoteMatchClient(base_url=LOCAL_MATCH_URL, api_key=LOCAL_MATCH_API_KEY)
+
+    # 1. 健康检查
+    health = client.check_health()
+    if not health:
+        raise RuntimeError(
+            "无法连接本地匹配服务，请确认：\n"
+            "1. 电脑上的匹配服务已启动（双击「启动匹配服务.bat」）\n"
+            "2. LOCAL_MATCH_URL 配置的IP地址正确\n"
+            "3. 电脑和懒猫盒子在同一个局域网"
+        )
+    logger.info(f"任务 {task_id}: 本地匹配服务在线 (版本={health.get('version')}，活跃任务={health.get('active_tasks')})")
+
+    # 2. 提交匹配任务（上传Excel+参数）
+    match_id = client.submit_match(file_path, params)
+    logger.info(f"任务 {task_id}: 已提交到本地匹配服务，远程ID={match_id}")
+
+    # 3. 轮询进度（每3秒一次，更新数据库让前端SSE推送）
+    while True:
+        time.sleep(3)
+        progress = client.poll_progress(match_id)
+
+        # 更新数据库进度
+        try:
+            task.progress = progress.get("progress", 0)
+            task.progress_current = progress.get("current_idx", 0)
+            task.progress_message = progress.get("message", "")
+            session.commit()
+        except Exception as e:
+            logger.debug(f"远程进度更新写入DB失败（不影响匹配）: {e}")
+            try:
+                session.rollback()
+            except Exception:
+                pass
+
+        status = progress.get("status", "running")
+        if status == "completed":
+            logger.info(f"任务 {task_id}: 远程匹配完成")
+            break
+        elif status == "failed":
+            error_msg = progress.get("error", "未知错误")
+            raise RuntimeError(f"远程匹配失败: {error_msg}")
+
+    # 4. 获取结果
+    result = client.get_results(match_id)
+    logger.info(f"任务 {task_id}: 已获取远程匹配结果，共 {len(result.get('results', []))} 条")
+
+    # 5. 保存结果到本地文件（保持和本地模式一致的文件结构）
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 保存JSON结果
+    if json_output:
+        Path(json_output).parent.mkdir(parents=True, exist_ok=True)
+        with open(json_output, "w", encoding="utf-8") as f:
+            _json.dump(result, f, ensure_ascii=False, indent=2)
+
+    # 下载Excel文件
+    client.download_excel(match_id, excel_output)
+
+    return result
