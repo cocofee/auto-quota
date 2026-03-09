@@ -15,14 +15,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from loguru import logger
 
-# tools/price_backfill.py 中的核心函数
-from tools.price_backfill import (
-    _detect_original_structure,
-    _read_gld_prices,
-    _build_mapping,
-    _write_prices,
-)
-import openpyxl
+# tools/price_backfill.py 中的核心函数（延迟导入，轻量镜像没有tools/目录）
 
 router = APIRouter()
 
@@ -52,6 +45,10 @@ async def _save_upload(file: UploadFile, prefix: str) -> str:
 
 def _do_preview(orig_path: str, gld_path: str) -> dict:
     """在同步线程中执行预览逻辑（CPU密集型操作，不阻塞事件循环）"""
+    import openpyxl
+    from tools.price_backfill import (
+        _detect_original_structure, _read_gld_prices, _build_mapping,
+    )
     # 1. 读取甲方原始Excel结构
     wb_orig = openpyxl.load_workbook(orig_path)
     ws_orig = wb_orig.active
@@ -109,6 +106,7 @@ def _do_preview(orig_path: str, gld_path: str) -> dict:
 
 def _do_execute(orig_path: str, gld_path: str) -> str:
     """在同步线程中执行回填，返回结果文件路径"""
+    from tools.price_backfill import _write_prices
     # 复用预览逻辑获取映射
     preview = _do_preview(orig_path, gld_path)
     mapping = preview["mapping"]
