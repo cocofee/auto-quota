@@ -19,101 +19,52 @@ services:
 
   backend:
     image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
-    command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
+    command: sh -c "cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: production
       JWT_SECRET_KEY: "8OseAirAJYwPDPdryD4y_mWDItFZVp-5tywgeRdf5io"
       CORS_ORIGINS: http://frontend.cloud.lazycat.app.autoquota.lzcapp
-      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
+      # UTF-8编码
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 向量搜索（CPU模式，sentence-transformers已安装）
-      VECTOR_ENABLED: "true"
-      # 大模型配置：全部使用Claude Opus（中转直连）
-      AGENT_LLM: claude
-      MATCH_LLM: claude
-      VERIFY_LLM: claude
-      VERIFY_MODEL: claude-opus-4-6
-      VERIFY_CONCURRENT: "3"
-      QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
-      QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      QWEN_MODEL: qwen-plus
-      KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
-      KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      KIMI_MODEL: kimi-k2.5
-      CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
-      CLAUDE_BASE_URL: "http://47.243.74.21:8080"
-      CLAUDE_MODEL: claude-opus-4-6
-      # 模型已手动传到model_cache，纯离线不联网
-      TRANSFORMERS_OFFLINE: "1"
-      HF_HUB_OFFLINE: "1"
-      HF_DATASETS_OFFLINE: "1"
+      # 远程模式不需要向量搜索和大模型（全部在本地电脑上）
+      VECTOR_ENABLED: "false"
       # Cookie安全配置（懒猫微服通过HTTPS提供服务）
       COOKIE_SECURE: "true"
       COOKIE_SAMESITE: "lax"
-      # 好易支付配置（注册后填入）
-      EPAY_PID: ""
-      EPAY_KEY: ""
-      EPAY_URL: ""
-      EPAY_NOTIFY_BASE_URL: ""
-      EPAY_RETURN_BASE_URL: ""
       # 远程匹配模式（算力在本地电脑，懒猫只做前端+调度）
       MATCH_BACKEND: "remote"
       LOCAL_MATCH_URL: "http://192.168.1.175:9527"
       LOCAL_MATCH_API_KEY: "f4d20d44381b4368"
     binds:
-      - /lzcapp/var/data:/app/data
-      - /lzcapp/var/db:/app/db
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
-      - /lzcapp/var/model_cache:/root/.cache
     depends_on:
       - postgres
       - redis
 
   celery-worker:
     image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:latest
-    command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
+    command: sh -c "cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
-      # UTF-8编码（解决Docker容器中文乱码/ascii编码错误）
+      # UTF-8编码
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      # 向量搜索（CPU模式，sentence-transformers已安装）
-      VECTOR_ENABLED: "true"
-      # 大模型配置：全部使用Claude Opus（中转直连）
-      AGENT_LLM: claude
-      MATCH_LLM: claude
-      VERIFY_LLM: claude
-      VERIFY_MODEL: claude-opus-4-6
-      VERIFY_CONCURRENT: "3"
-      QWEN_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
-      QWEN_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      QWEN_MODEL: qwen-plus
-      KIMI_API_KEY: "sk-73d9053f50c44f07860736923cd5c11b"
-      KIMI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      KIMI_MODEL: kimi-k2.5
-      CLAUDE_API_KEY: "sk-2f054a94bf58375bac459e0a8d24f24fbf757e4e559afd31a8b286d4121be585"
-      CLAUDE_BASE_URL: "http://47.243.74.21:8080"
-      CLAUDE_MODEL: claude-opus-4-6
-      TRANSFORMERS_OFFLINE: "0"
-      HF_HUB_OFFLINE: "0"
-      HF_DATASETS_OFFLINE: "1"
+      # 远程模式不需要向量搜索和大模型
+      VECTOR_ENABLED: "false"
       # 远程匹配模式（和backend保持一致）
       MATCH_BACKEND: "remote"
       LOCAL_MATCH_URL: "http://192.168.1.175:9527"
       LOCAL_MATCH_API_KEY: "f4d20d44381b4368"
     binds:
-      - /lzcapp/var/data:/app/data
-      - /lzcapp/var/db:/app/db
       - /lzcapp/var/output:/app/output
       - /lzcapp/var/logs:/app/logs
-      - /lzcapp/var/model_cache:/root/.cache
     depends_on:
       - postgres
       - redis
