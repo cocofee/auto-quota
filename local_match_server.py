@@ -39,7 +39,7 @@ _DEFAULT_KEY = uuid.uuid4().hex[:16]
 API_KEY = os.getenv("LOCAL_MATCH_API_KEY", _DEFAULT_KEY)
 
 # 最大并发匹配任务数
-MAX_CONCURRENT = int(os.getenv("LOCAL_MATCH_MAX_CONCURRENT", "2"))
+MAX_CONCURRENT = int(os.getenv("LOCAL_MATCH_MAX_CONCURRENT", "5"))
 
 # 临时文件目录
 TEMP_DIR = Path("output/temp/remote_match")
@@ -96,6 +96,8 @@ def health_check(x_api_key: str = Header(default="")):
 
     # 获取可用省份列表
     provinces = config.list_db_provinces()
+    groups = config.get_province_groups()
+    subgroups = config.get_province_subgroups()
 
     # 统计当前活跃任务数
     with _tasks_lock:
@@ -105,6 +107,8 @@ def health_check(x_api_key: str = Header(default="")):
         "status": "ok",
         "version": "1.0.0",
         "provinces": provinces,
+        "groups": groups,
+        "subgroups": subgroups,
         "active_tasks": active,
         "max_concurrent": MAX_CONCURRENT,
     }
