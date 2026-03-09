@@ -21,6 +21,10 @@ pandas>=2.0.0                   # 表格数据处理
 # === 排序学习（LTR） ===
 lightgbm>=4.0.0                 # LambdaRank排序模型
 
+# === Embedding微调 ===
+peft>=0.7.0                     # LoRA微调框架（Qwen3-Embedding用）
+datasets>=2.14.0                # HuggingFace数据集加载
+
 # === 工具 ===
 python-dotenv>=1.0.0            # 读取.env配置文件
 loguru>=0.7.0                   # 日志记录
