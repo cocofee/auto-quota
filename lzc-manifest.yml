@@ -18,7 +18,7 @@ services:
       - backend
 
   backend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.12
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.13
     command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
@@ -60,6 +60,10 @@ services:
       EPAY_URL: ""
       EPAY_NOTIFY_BASE_URL: ""
       EPAY_RETURN_BASE_URL: ""
+      # 远程匹配模式（算力在本地电脑，懒猫只做前端+调度）
+      MATCH_BACKEND: "remote"
+      LOCAL_MATCH_URL: "http://192.168.1.175:9527"
+      LOCAL_MATCH_API_KEY: "21e81d8013f248ed"
     binds:
       - /lzcapp/var/data:/app/data
       - /lzcapp/var/db:/app/db
@@ -71,7 +75,7 @@ services:
       - redis
 
   celery-worker:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.12
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.13
     command: sh -c "export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 && cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=2 --pool=prefork"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
@@ -100,6 +104,10 @@ services:
       TRANSFORMERS_OFFLINE: "0"
       HF_HUB_OFFLINE: "0"
       HF_DATASETS_OFFLINE: "1"
+      # 远程匹配模式（和backend保持一致）
+      MATCH_BACKEND: "remote"
+      LOCAL_MATCH_URL: "http://192.168.1.175:9527"
+      LOCAL_MATCH_API_KEY: "21e81d8013f248ed"
     binds:
       - /lzcapp/var/data:/app/data
       - /lzcapp/var/db:/app/db

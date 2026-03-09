@@ -1,0 +1,51 @@
+# auto-quota 轻量版后端 Dockerfile（远程匹配模式）
+#
+# 只包含 Web 前端+用户管理+任务调度，不包含匹配引擎。
+# 匹配计算由本地电脑的 local_match_server.py 提供。
+#
+# 镜像体积：~200MB（完整版 8.5GB）
+# 部署时间：~5分钟（完整版 40分钟）
+#
+# 构建命令:
+#   docker build -f web/backend/Dockerfile.light -t autoquota-backend-light .
+
+FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
+
+# UTF-8编码
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+
+WORKDIR /app
+
+# 阿里云Debian镜像
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; true
+
+# 系统依赖（只需要PostgreSQL客户端库）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python依赖（只装 Web 框架 + httpx，不装匹配引擎的重型依赖）
+COPY requirements-docker-light.txt /app/requirements-light.txt
+COPY web/backend/requirements.txt /app/web/backend/requirements.txt
+
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
+    -r /app/requirements-light.txt \
+    -r /app/web/backend/requirements.txt
+
+# Web后端代码
+COPY web/backend/ /app/web/backend/
+
+# config.py 需要复制（Web config 引用 PROJECT_ROOT）
+# main.py 不复制（远程模式不会调用 main.run()）
+COPY config.py /app/config.py
+
+# 不复制 src/, tools/, data/, db/, knowledge/（远程模式不需要）
+
+# 创建必要目录
+RUN mkdir -p /app/output/uploads /app/output/tasks /app/logs
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
