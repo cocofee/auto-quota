@@ -868,6 +868,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     results_by_idx[task_idx] = result
                     _update_match_stats(result)
                     agent_hits += 1
+                    # 批量审核也更新进度（避免前端卡在60%不动）
+                    batch_completed = sum(1 for t in batch_tasks if t[0] in results_by_idx)
+                    _notify_progress(batch_completed, phase=2, phase_total=len(batch_tasks) + len(individual_tasks))
 
         # ===== 逐条LLM分析（原有逻辑）=====
         def _process_llm_task(task):
@@ -990,7 +993,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
                 if completed % 10 == 0 or completed == len(individual_tasks):
                     logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
-                _notify_progress(completed, phase=2, phase_total=len(individual_tasks))
+                _notify_progress(len(batch_tasks) + completed, phase=2, phase_total=len(batch_tasks) + len(individual_tasks))
 
     # ========== 组装最终结果（按原始顺序）==========
     results = []

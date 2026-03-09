@@ -55,9 +55,9 @@ celery_app.conf.update(
     # 任务结果过期时间（24小时后自动清除）
     result_expires=86400,
 
-    # 任务超时（匹配任务可能很耗时，硬限制30分钟，软限制28分钟提前通知）
-    task_time_limit=1800,
-    task_soft_time_limit=1680,
+    # 任务超时（远程模式只是轮询不占CPU，放宽到2小时）
+    task_time_limit=7200,
+    task_soft_time_limit=7080,
 
     # 存储完整的异常信息（便于调试失败的任务）
     result_extended=True,

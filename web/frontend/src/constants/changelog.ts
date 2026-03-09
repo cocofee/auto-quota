@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.13';
+export const APP_VERSION = '0.2.14';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,23 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.14',
+    date: '2026-03-09',
+    changes: [
+      { type: 'admin', text: 'API模式改造——懒猫轻量前端+本地电脑算力（方案B）' },
+      { type: 'admin', text: 'benchmark基线更新（LTR模型后44.4%）' },
+      { type: 'admin', text: '懒猫部署优化（离线模型+向量搜索+LTR依赖）' },
+      { type: 'admin', text: '懒猫部署配置更新+前端changelog' },
+      { type: 'admin', text: 'LTR排序模型上线（LightGBM LambdaRank，39.0%→44.4%）' },
+      { type: 'admin', text: 'Docker添加向量搜索依赖（sentence-transformers+chromadb）' },
+      { type: 'admin', text: '刷油防腐保温同义词+8条（C12册术语映射）' },
+      { type: 'admin', text: '安装方式参数提取与验证（明装/暗装/落地/挂墙/嵌入/吊装）' },
+      { type: 'admin', text: '前端页面细节优化（日志查看器/看板/任务列表）' },
+      { type: 'admin', text: '品类词硬路由（从9.8万经验库挖掘品类词→册号映射）' },
+      { type: 'admin', text: '分析页面细节修复（用户反馈+Codex审查）' },
+    ],
+  },
   {
     version: '0.2.13',
     date: '2026-03-08',
