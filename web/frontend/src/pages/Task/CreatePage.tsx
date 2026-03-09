@@ -63,6 +63,8 @@ export default function TaskCreatePage() {
   const [selectedSheets, setSelectedSheets] = useState<string[]>([]); // 用户勾选的工作表
   const [sheetFilter, setSheetFilter] = useState<'all' | 'selected' | 'skipped'>('all'); // Sheet筛选模式
   const [sheetSearch, setSheetSearch] = useState(''); // Sheet搜索关键词
+  const [sheetData, setSheetData] = useState<Record<string, unknown[][]>>({}); // 每个Sheet的前30行原始数据
+  const [previewSheet, setPreviewSheet] = useState(''); // 当前预览的Sheet名（与勾选分开）
 
   // 根据筛选条件过滤Sheet列表
   const filteredSheets = useMemo(() => {
@@ -75,6 +77,14 @@ export default function TaskCreatePage() {
       return true;
     });
   }, [sheetNames, sheetSearch, sheetFilter, selectedSheets]);
+
+  // 筛选结果变化时，如果当前预览项不在列表中，自动切到第一个
+  useEffect(() => {
+    if (previewSheet && filteredSheets.length > 0 && !filteredSheets.includes(previewSheet)) {
+      setPreviewSheet(filteredSheets[0]);
+    }
+  }, [filteredSheets, previewSheet]);
+
   const [currentStep, setCurrentStep] = useState(0);
   const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup, getSubgroup } = useProvinceStore(); // 全局缓存的定额库列表
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
@@ -312,18 +322,24 @@ export default function TaskCreatePage() {
             {filteredSheets.length > 0 ? filteredSheets.map((name) => {
               const skip = isSkipSheet(name);
               const recommend = isRecommendSheet(name);
+              const isPreviewing = previewSheet === name;
               return (
                 <div
                   key={name}
+                  onClick={() => setPreviewSheet(name)}
                   style={{
                     padding: '6px 16px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
+                    cursor: 'pointer',
                     opacity: skip && !selectedSheets.includes(name) ? 0.5 : 1,
                     background: selectedSheets.includes(name) ? '#f6ffed' : 'transparent',
+                    borderLeft: isPreviewing ? '3px solid #1890ff' : '3px solid transparent',
                   }}
                 >
+                  {/* 勾选区域阻止冒泡，避免勾选时触发预览切换 */}
+                  <span onClick={(e) => e.stopPropagation()}>
                   <Checkbox
                     checked={selectedSheets.includes(name)}
                     onChange={(e) => {
@@ -338,6 +354,7 @@ export default function TaskCreatePage() {
                       {name}
                     </span>
                   </Checkbox>
+                  </span>
                   {recommend && (
                     <Tooltip title="系统识别为清单Sheet，推荐处理">
                       <Tag color="green" style={{ marginLeft: 'auto', cursor: 'help', fontSize: 13 }}>
@@ -360,6 +377,63 @@ export default function TaskCreatePage() {
               </div>
             )}
           </div>
+
+          {/* Sheet内容预览表格 */}
+          {previewSheet && sheetData[previewSheet] && (
+            <div style={{ borderTop: '1px solid #f0f0f0', padding: '12px 16px' }}>
+              <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+                预览：<strong>{previewSheet}</strong>（前30行）
+              </div>
+              <div style={{ overflow: 'auto', maxHeight: 300, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                <table style={{ borderCollapse: 'collapse', fontSize: 12, whiteSpace: 'nowrap' }}>
+                  <thead>
+                    <tr style={{ background: '#fafafa', position: 'sticky', top: 0, zIndex: 1 }}>
+                      <th style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', color: '#999', fontWeight: 500 }}>#</th>
+                      {(() => {
+                        // 计算最大列数，用Excel风格列名（A~Z, AA~AZ...）
+                        const rows = sheetData[previewSheet] || [];
+                        const maxCols = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
+                        // Excel风格列名：A..Z, AA..AZ, BA..BZ...
+                        const colName = (i: number) => {
+                          let name = '';
+                          let n = i;
+                          while (n >= 0) {
+                            name = String.fromCharCode(65 + (n % 26)) + name;
+                            n = Math.floor(n / 26) - 1;
+                          }
+                          return name;
+                        };
+                        return Array.from({ length: maxCols }, (_, i) => (
+                          <th key={i} style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', color: '#999', fontWeight: 500 }}>
+                            {colName(i)}
+                          </th>
+                        ));
+                      })()}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(sheetData[previewSheet] || []).map((row, ri) => (
+                      <tr key={ri} style={{ background: ri % 2 === 0 ? '#fff' : '#fafafa' }}>
+                        <td style={{ padding: '3px 8px', borderBottom: '1px solid #f5f5f5', color: '#bbb', textAlign: 'center' }}>{ri + 1}</td>
+                        {(() => {
+                          const rows = sheetData[previewSheet] || [];
+                          const maxCols = rows.reduce((max, r) => Math.max(max, Array.isArray(r) ? r.length : 0), 0);
+                          return Array.from({ length: maxCols }, (_, ci) => (
+                            <td key={ci} style={{ padding: '3px 8px', borderBottom: '1px solid #f5f5f5', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
+                            </td>
+                          ));
+                        })()}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {(sheetData[previewSheet] || []).length === 0 && (
+                <div style={{ textAlign: 'center', color: '#999', padding: 16 }}>此工作表为空</div>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
@@ -413,7 +487,7 @@ export default function TaskCreatePage() {
                     type="text"
                     danger
                     icon={<DeleteOutlined />}
-                    onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); }}
+                    onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); setSheetData({}); setPreviewSheet(''); }}
                   >
                     移除
                   </Button>
@@ -442,15 +516,29 @@ export default function TaskCreatePage() {
                     const reader = new FileReader();
                     reader.onload = (e) => {
                       try {
-                        // sheetRows:5 只读前5行（性能优化，不加载全部数据）
-                        const wb = read(e.target?.result, { type: 'array', sheetRows: 5 });
+                        // sheetRows:30 读前30行用于预览（性能和预览体验的平衡）
+                        const wb = read(e.target?.result, { type: 'array', sheetRows: 30 });
                         setSheetNames(wb.SheetNames || []);
+
+                        // 读取每个Sheet的前30行原始数据（用于预览）
+                        const dataMap: Record<string, unknown[][]> = {};
+                        for (const sn of wb.SheetNames) {
+                          const ws = wb.Sheets[sn];
+                          if (!ws) continue;
+                          const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1, defval: '' });
+                          dataMap[sn] = rows;
+                        }
+                        setSheetData(dataMap);
 
                         // 智能选中：非清单Sheet（汇总、措施费等）默认不勾选
                         const autoSelected = (wb.SheetNames || []).filter(
                           (name: string) => !isSkipSheet(name)
                         );
                         setSelectedSheets(autoSelected);
+
+                        // 默认预览第一个推荐Sheet（或第一个Sheet）
+                        const firstRecommend = (wb.SheetNames || []).find((n: string) => isRecommendSheet(n));
+                        setPreviewSheet(firstRecommend || (wb.SheetNames || [])[0] || '');
 
                         // 校验必备列：从所有Sheet的前几行中查找列名
                         const requiredCols: { name: string; aliases: string[] }[] = [
@@ -460,12 +548,10 @@ export default function TaskCreatePage() {
                           { name: '单位', aliases: ['计量单位', '单位'] },
                         ];
 
-                        // 从所有Sheet中收集表头（通常在前3行内）
+                        // 从所有Sheet中收集表头（复用已解析的dataMap，不重复调sheet_to_json）
                         const allHeaders = new Set<string>();
                         for (const sheetName of wb.SheetNames) {
-                          const ws = wb.Sheets[sheetName];
-                          if (!ws) continue;
-                          const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1 });
+                          const rows = dataMap[sheetName] || [];
                           for (const row of rows) {
                             if (!Array.isArray(row)) continue;
                             for (const cell of row) {
@@ -490,6 +576,8 @@ export default function TaskCreatePage() {
                         }
                       } catch {
                         setSheetNames([]);
+                        setSheetData({});
+                        setPreviewSheet('');
                       }
                     };
                     reader.readAsArrayBuffer(file);
