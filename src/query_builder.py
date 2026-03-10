@@ -134,11 +134,17 @@ def _is_synonym_applicable(key: str, specialty: str, scope: dict) -> bool:
 
 
 def _apply_synonyms(query: str, specialty: str = "") -> str:
-    """应用工程同义词替换：把清单常用名替换为定额常用名
+    """应用工程同义词扩展：在原词基础上追加定额常用名
+
+    策略：**追加而非替换**，保留原词不丢失信息。
+    BM25对短文本敏感，替换会丢掉原词导致召回下降。
 
     例如：
-      "镀锌钢管 DN25" → "焊接钢管 镀锌 DN25"
-      "PPR管 热熔连接" → "PP-R管 热熔连接"
+      "镀锌钢管 DN25" → "镀锌钢管 焊接钢管 镀锌 DN25"（原词保留）
+      "PPR管 热熔连接" → "PPR管 PP-R管 热熔连接"（原词保留）
+
+    特殊情况（自映射）：key==value的条目不追加（无意义），
+    但仍通过break阻止更短的key误匹配长词子串（"保护伞"机制）。
 
     参数:
         query: 搜索query字符串
@@ -158,16 +164,18 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
 
     for key, replacement in sorted_items:
         if key in query:
-            # 防止重复替换：如果替换目标已经出现在query中，停止搜索
-            # 例如：query="消防水泵接合器"，key="水泵接合器"→"消防水泵接合器"
-            # 替换后会变成"消防消防水泵接合器"，所以跳过
+            # 防止重复：如果扩展目标已经出现在query中，停止搜索
+            # 例如：query="消防水泵接合器"，key="水泵接合器"→已包含，跳过
             # 用break而非continue：继续搜索可能命中更短的key（如"水泵"→"离心泵"），
             # 误替换长词的子串（已排序保证长key优先，此处命中说明概念已被覆盖）
             if replacement in query:
                 break
             if _is_synonym_applicable(key, specialty, scope):
-                query = query.replace(key, replacement, 1)  # 只替换第一次出现
-                break  # 只做一次替换，避免连锁替换引发副作用
+                # 自映射（key==value）是"保护伞"，不追加内容，只通过break阻断
+                if key != replacement:
+                    # 追加扩展词到query末尾，保留原词不丢信息
+                    query = f"{query} {replacement}"
+                break  # 只做一次扩展，避免连锁追加导致query过长
 
     return query
 _SPECIAL_LAMP_PATTERN = r"紫外|杀菌|消毒|舞台|投光|泛光|景观|水下|地埋|航空障碍|手术|无影|植物|补光|洗墙|轨道"
