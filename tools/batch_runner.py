@@ -104,7 +104,9 @@ def read_file_items(file_path: str, fmt: str, sheet_info: list) -> list[dict]:
     # .xls 转换
     actual_path = file_path
     temp_path = None
-    if fp.suffix.lower() == ".xls":
+    # 用统一的magic bytes检测，兼容后缀是.xlsx但实际是.xls的文件
+    from src.bill_reader import is_xls_format
+    if is_xls_format(file_path):
         from tools.batch_scanner import _convert_xls
         temp_path = _convert_xls(file_path)
         actual_path = temp_path

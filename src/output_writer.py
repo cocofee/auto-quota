@@ -616,7 +616,8 @@ class OutputWriter:
         # Windows下 openpyxl.load_workbook(path) 会锁住文件，导致后续 save 到
         # 同一路径时 PermissionError。所以先读到内存再加载。
         import io
-        if Path(original_file).suffix.lower() == ".xls":
+        from src.bill_reader import is_xls_format
+        if is_xls_format(original_file):
             # .xls 需要先转换为 .xlsx 格式
             self._convert_xls_for_output(original_file, output_path)
             with open(output_path, "rb") as f:
