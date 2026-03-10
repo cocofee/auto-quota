@@ -42,6 +42,8 @@ class ParamValidator:
     ]
 
     # LTR模型特征列名（必须和训练时一致）
+    # v1: 16维原始特征
+    # v2: 21维（+5个参数距离特征，解决57%的"选错档位"问题）
     _LTR_FEATURES = [
         "bm25_score", "vector_score", "hybrid_score", "rerank_score",
         "param_score", "param_match",
@@ -49,6 +51,12 @@ class ParamValidator:
         "name_bonus", "candidates_count",
         "bm25_rank_score", "vector_rank_score",
         "name_edit_dist", "score_gap_to_top1", "dual_recall",
+        # v2新增：参数距离特征（让模型学会"DN精确匹配远比语义相似更重要"）
+        "param_main_exact",       # 17. 主参数(DN/截面等)是否精确匹配(0/1)
+        "param_main_rel_dist",    # 18. 主参数相对距离(0=精确, 1=最远)
+        "param_main_direction",   # 19. 向上取(+1)/向下取(-1)/精确(0)
+        "param_material_match",   # 20. 材质匹配度(1.0精确/0.7兼容/0.0冲突/-1无信息)
+        "param_n_checks",         # 21. 参数检查项数(越多越可信)
     ]
 
     # LTR模型（类级别单例，所有实例共享）
@@ -150,6 +158,14 @@ class ParamValidator:
                     if neg_penalty >= 0.3:
                         c["param_match"] = False
                         c["param_tier"] = 0  # 负向关键词降为硬失败层
+                # 无参数分支：LTR参数特征设为默认值（无参数可比较）
+                c["_ltr_param"] = {
+                    "param_main_exact": 0,
+                    "param_main_rel_dist": 1.0,
+                    "param_main_direction": 0,
+                    "param_material_match": -1.0,
+                    "param_n_checks": 0,
+                }
             for c in candidates:
                 c["name_bonus"] = self._bill_keyword_bonus(
                     query_text, c.get("name", ""))
@@ -198,6 +214,10 @@ class ParamValidator:
             candidate["param_match"] = is_match
             candidate["param_tier"] = self._determine_param_tier(is_match, score, detail)
 
+            # 存LTR参数距离特征（供排序模型学习"参数精确匹配比语义相似更重要"）
+            candidate["_ltr_param"] = self._compute_param_ltr_features(
+                bill_params, merged_quota_params)
+
             # 清单核心词匹配加分：清单关键词在候选名称中出现越多，排序越靠前
             candidate["name_bonus"] = self._bill_keyword_bonus(
                 query_text, candidate.get("name", ""))
@@ -208,6 +228,73 @@ class ParamValidator:
         self._ltr_sort(validated, query_text)
 
         return validated
+
+    def _compute_param_ltr_features(self, bill_params: dict,
+                                     quota_params: dict) -> dict:
+        """
+        计算LTR参数距离特征（5维）
+
+        用途：让排序模型学会区分"DN精确匹配"和"DN差一档"，
+        解决57%的"选错档位"错误。
+
+        返回:
+            dict，包含5个特征值
+        """
+        features = {
+            "param_main_exact": 0,        # 主参数是否精确匹配
+            "param_main_rel_dist": 1.0,   # 主参数相对距离(默认最大)
+            "param_main_direction": 0,    # 方向(+1向上/-1向下/0精确)
+            "param_material_match": -1.0, # 材质(-1=无信息)
+            "param_n_checks": 0,          # 参数检查项数
+        }
+
+        # 找主参数：清单中第一个出现的数值型取档参数
+        main_param = None
+        for p in self.TIER_PARAMS:
+            if p in bill_params:
+                main_param = p
+                break
+
+        # 计算主参数距离
+        if main_param:
+            bill_val = bill_params[main_param]
+            if main_param in quota_params:
+                quota_val = quota_params[main_param]
+                if bill_val == quota_val:
+                    features["param_main_exact"] = 1
+                    features["param_main_rel_dist"] = 0.0
+                    features["param_main_direction"] = 0
+                else:
+                    max_val = max(abs(bill_val), abs(quota_val), 1)
+                    features["param_main_rel_dist"] = abs(
+                        bill_val - quota_val) / max_val
+                    features["param_main_direction"] = (
+                        1 if quota_val > bill_val else -1)
+            # else: 定额无此参数（通用定额），保持默认值
+
+        # 材质匹配度
+        if "material" in bill_params and "material" in quota_params:
+            bill_mat = bill_params["material"]
+            quota_mat = quota_params["material"]
+            if bill_mat == quota_mat:
+                features["param_material_match"] = 1.0
+            elif self._materials_compatible(bill_mat, quota_mat):
+                features["param_material_match"] = 0.7
+            else:
+                features["param_material_match"] = 0.0
+
+        # 参数检查项数（清单提供了几个可比较的参数）
+        count = 0
+        for p in self.TIER_PARAMS:
+            if p in bill_params:
+                count += 1
+        if "material" in bill_params:
+            count += 1
+        if "connection" in bill_params:
+            count += 1
+        features["param_n_checks"] = count
+
+        return features
 
     def _ltr_sort(self, candidates: list[dict], query_text: str):
         """
@@ -248,9 +335,20 @@ class ParamValidator:
     def _extract_ltr_features(self, candidates: list[dict],
                               query_text: str) -> np.ndarray:
         """
-        从候选列表中提取LTR特征矩阵（和训练时一致的16维）。
+        从候选列表中提取LTR特征矩阵。
+        v1: 16维（兼容旧模型）
+        v2: 21维（+5个参数距离特征）
         """
         n = len(candidates)
+        # 检查模型期望的特征数（兼容旧16维模型）
+        n_features = 21  # v2默认21维
+        if self._ltr_model is not None:
+            try:
+                model_n_features = self._ltr_model.num_feature()
+                if model_n_features == 16:
+                    n_features = 16  # 旧模型只要16维
+            except Exception:
+                pass
         # 提取清单名称（取query_text的第一段）
         bill_name = query_text.split()[0] if query_text else ""
 
@@ -280,7 +378,7 @@ class ParamValidator:
             + (top1.get("rerank_score") or top1.get("hybrid_score") or 0) * 0.15
         )
 
-        features = np.zeros((n, 16), dtype=np.float64)
+        features = np.zeros((n, n_features), dtype=np.float64)
         for i, c in enumerate(candidates):
             qid = str(c.get("quota_id", ""))
             tier = c.get("param_tier", 1)
@@ -290,7 +388,8 @@ class ParamValidator:
             composite = ps * 0.55 + nb * 0.30 + rr * 0.15
             cand_name = c.get("name", "")
 
-            features[i] = [
+            # 基础16维特征
+            row = [
                 c.get("bm25_score") or 0,            # 1
                 c.get("vector_score") or 0,           # 2
                 c.get("hybrid_score") or 0,           # 3
@@ -309,6 +408,19 @@ class ParamValidator:
                 top1_composite - composite,            # 15
                 1 if (qid in bm25_ids and qid in vector_ids) else 0,  # 16
             ]
+
+            # v2新增：5个参数距离特征
+            if n_features >= 21:
+                ltr_param = c.get("_ltr_param", {})
+                row.extend([
+                    ltr_param.get("param_main_exact", 0),       # 17
+                    ltr_param.get("param_main_rel_dist", 1.0),  # 18
+                    ltr_param.get("param_main_direction", 0),   # 19
+                    ltr_param.get("param_material_match", -1.0),  # 20
+                    ltr_param.get("param_n_checks", 0),         # 21
+                ])
+
+            features[i] = row
 
         return features
 
