@@ -11,7 +11,9 @@
 使用位置：在 main.py 读取清单后、匹配前调用
 """
 
+import json
 import re
+from pathlib import Path
 
 from loguru import logger
 
@@ -226,6 +228,59 @@ def _annotate_local_context(items: list[dict]):
                 kw_scores[kw] = kw_scores.get(kw, 0) + w
             sorted_kws = sorted(kw_scores.items(), key=lambda x: -x[1])
             item["_context_hints"] = [kw for kw, _ in sorted_kws[:3]]
+
+    # 第二轮补充：频率先验兜底（没有邻居上下文的短名称，用历史统计）
+    priors = _load_short_name_priors()
+    if priors:
+        prior_injected = 0
+        for item in items:
+            if (item.get("_is_ambiguous_short")
+                    and not item.get("_context_hints")):
+                prior_key = (item.get("name", "").strip(),
+                             item.get("specialty", ""))
+                prior_family = priors.get(prior_key)
+                if prior_family:
+                    item["_prior_family"] = prior_family
+                    prior_injected += 1
+        if prior_injected:
+            logger.info(f"频率先验兜底: {prior_injected}条短名称获得历史统计提示")
+
+
+# ======== 短名称频率先验加载 ========
+_SHORT_NAME_PRIORS = None  # 懒加载缓存
+
+
+def _load_short_name_priors() -> dict:
+    """加载短名称频率先验表（只tier1，tier2不注入）
+
+    数据来自 tools/mine_short_name_priors.py 挖掘的
+    data/short_name_priors.json，按(短名称, 专业)查找最可能的定额族名。
+    """
+    global _SHORT_NAME_PRIORS
+    if _SHORT_NAME_PRIORS is not None:
+        return _SHORT_NAME_PRIORS
+
+    prior_path = Path(__file__).parent.parent / "data" / "short_name_priors.json"
+    if not prior_path.exists():
+        _SHORT_NAME_PRIORS = {}
+        return _SHORT_NAME_PRIORS
+
+    try:
+        data = json.loads(prior_path.read_text(encoding="utf-8"))
+        # 只加载tier1（可自动注入的高置信先验）
+        merged = {}
+        for key, info in data.get("tier1", {}).items():
+            name = info.get("short_name", key.split("|")[0])
+            sp = info.get("specialty", key.split("|")[-1])
+            merged[(name, sp)] = info.get("top_family", "")
+        _SHORT_NAME_PRIORS = merged
+        if merged:
+            logger.debug(f"短名称频率先验已加载: {len(merged)}个tier1条目")
+    except Exception as e:
+        logger.warning(f"加载短名称频率先验失败: {e}")
+        _SHORT_NAME_PRIORS = {}
+
+    return _SHORT_NAME_PRIORS
 
 
 def extract_real_name(bill_name: str, description: str) -> str | None:

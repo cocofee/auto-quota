@@ -787,6 +787,11 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         context_text = " ".join(str(h) for h in context_hints[:3] if h)
         search_query = f"{search_query} {context_text}"
 
+    # 频率先验兜底：没有邻居上下文时，用历史统计的定额族名作为搜索提示
+    prior_family = item.get("_prior_family", "") if isinstance(item, dict) else ""
+    if prior_family and prior_family not in search_query:
+        search_query = f"{search_query} {prior_family}"
+
     # 从清单项获取已清洗的参数，传给参数验证（避免重新提取）
     item_params = item.get("params") if isinstance(item, dict) else None
     candidates = _prepare_candidates(
