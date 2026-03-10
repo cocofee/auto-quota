@@ -332,7 +332,8 @@ class MaterialDB:
                   price_date: str = "", source_doc: str = "",
                   batch_id: int = None, unit: str = "",
                   authority_level: str = "reference",
-                  usable_for_quote: int = 1) -> int:
+                  usable_for_quote: int = 1,
+                  dedup: bool = False) -> int:
         """
         添加价格记录
 
@@ -340,6 +341,7 @@ class MaterialDB:
                      | 'enterprise_price_lib'（企业集采价格库）
         authority_level: 'official' | 'verified' | 'reference'
         usable_for_quote: 1=可用于报价, 0=仅参考（如2023年旧价格）
+        dedup: True时，同材料+同价格+同来源文件不重复插入
         """
         price_excl_tax = round(price_incl_tax / (1 + tax_rate), 2) if tax_rate > 0 else price_incl_tax
         if not price_date:
@@ -351,6 +353,15 @@ class MaterialDB:
 
         conn = self._conn()
         try:
+            # 去重检查：同材料+同价格+同来源文件
+            if dedup and source_doc:
+                existing = conn.execute(
+                    "SELECT id FROM price_fact WHERE material_id=? AND price_incl_tax=? AND source_doc=?",
+                    (material_id, price_incl_tax, source_doc)
+                ).fetchone()
+                if existing:
+                    return existing["id"]
+
             cursor = conn.execute(
                 """INSERT INTO price_fact
                    (material_id, price_incl_tax, price_excl_tax, tax_rate, unit,
