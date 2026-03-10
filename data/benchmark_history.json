@@ -5153,5 +5153,368 @@
         "avg_time_sec": 0.62
       }
     }
+  },
+  {
+    "version": "unified_v1",
+    "date": "2026-03-10 08:43:30",
+    "note": "",
+    "json_papers": {
+      "北京市建设工程施工消耗量标准(2024)": {
+        "total": 282,
+        "correct": 142,
+        "hit_rate": 50.4,
+        "diagnosis": {
+          "wrong_tier": 98,
+          "synonym_gap": 32,
+          "wrong_book": 10
+        }
+      },
+      "宁夏安装工程计价定额(2019)": {
+        "total": 90,
+        "correct": 43,
+        "hit_rate": 47.8,
+        "diagnosis": {
+          "synonym_gap": 17,
+          "wrong_tier": 30
+        }
+      },
+      "宁夏房屋建筑装饰工程计价定额(2019)": {
+        "total": 29,
+        "correct": 20,
+        "hit_rate": 69.0,
+        "diagnosis": {
+          "wrong_tier": 7,
+          "synonym_gap": 2
+        }
+      },
+      "广东省房屋建筑与装饰工程综合定额(2018)": {
+        "total": 106,
+        "correct": 43,
+        "hit_rate": 40.6,
+        "diagnosis": {
+          "wrong_tier": 15,
+          "synonym_gap": 48
+        }
+      },
+      "广东省通用安装工程综合定额(2018)": {
+        "total": 534,
+        "correct": 264,
+        "hit_rate": 49.4,
+        "diagnosis": {
+          "wrong_book": 3,
+          "synonym_gap": 72,
+          "wrong_tier": 195
+        }
+      },
+      "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
+        "total": 19,
+        "correct": 0,
+        "hit_rate": 0.0,
+        "diagnosis": {
+          "synonym_gap": 18,
+          "wrong_tier": 1
+        }
+      },
+      "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": {
+        "total": 22,
+        "correct": 15,
+        "hit_rate": 68.2,
+        "diagnosis": {
+          "wrong_tier": 4,
+          "synonym_gap": 3
+        }
+      },
+      "江西省通用安装工程消耗量定额及统一基价表(2017)": {
+        "total": 468,
+        "correct": 232,
+        "hit_rate": 49.6,
+        "diagnosis": {
+          "wrong_tier": 176,
+          "synonym_gap": 60
+        }
+      },
+      "河南省通用安装工程预算定额(2016)": {
+        "total": 114,
+        "correct": 60,
+        "hit_rate": 52.6,
+        "diagnosis": {
+          "wrong_tier": 35,
+          "synonym_gap": 19
+        }
+      },
+      "浙江省通用安装工程预算定额(2018)": {
+        "total": 475,
+        "correct": 173,
+        "hit_rate": 36.4,
+        "diagnosis": {
+          "wrong_tier": 90,
+          "synonym_gap": 186,
+          "wrong_book": 24,
+          "no_result": 2
+        }
+      },
+      "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {
+        "total": 35,
+        "correct": 21,
+        "hit_rate": 60.0,
+        "diagnosis": {
+          "wrong_tier": 13,
+          "synonym_gap": 1
+        }
+      }
+    },
+    "excel_datasets": {
+      "B4_脏数据": {
+        "total": 19,
+        "skip_measure": 0,
+        "green_rate": 0.1579,
+        "yellow_rate": 0.0526,
+        "red_rate": 0.7895,
+        "exp_hit_rate": 0.0,
+        "avg_time_sec": 1.15
+      }
+    }
+  },
+  {
+    "version": "unified_v1",
+    "date": "2026-03-10 11:41:26",
+    "note": "",
+    "json_papers": {
+      "北京市建设工程施工消耗量标准(2024)": {
+        "total": 282,
+        "correct": 142,
+        "hit_rate": 50.4,
+        "diagnosis": {
+          "wrong_tier": 97,
+          "synonym_gap": 33,
+          "wrong_book": 10
+        }
+      },
+      "宁夏安装工程计价定额(2019)": {
+        "total": 90,
+        "correct": 43,
+        "hit_rate": 47.8,
+        "diagnosis": {
+          "synonym_gap": 17,
+          "wrong_tier": 30
+        }
+      },
+      "宁夏房屋建筑装饰工程计价定额(2019)": {
+        "total": 29,
+        "correct": 20,
+        "hit_rate": 69.0,
+        "diagnosis": {
+          "wrong_tier": 7,
+          "synonym_gap": 2
+        }
+      },
+      "广东省房屋建筑与装饰工程综合定额(2018)": {
+        "total": 106,
+        "correct": 43,
+        "hit_rate": 40.6,
+        "diagnosis": {
+          "wrong_tier": 15,
+          "synonym_gap": 48
+        }
+      },
+      "广东省通用安装工程综合定额(2018)": {
+        "total": 534,
+        "correct": 264,
+        "hit_rate": 49.4,
+        "diagnosis": {
+          "wrong_book": 3,
+          "synonym_gap": 72,
+          "wrong_tier": 195
+        }
+      },
+      "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
+        "total": 19,
+        "correct": 0,
+        "hit_rate": 0.0,
+        "diagnosis": {
+          "synonym_gap": 18,
+          "wrong_tier": 1
+        }
+      },
+      "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": {
+        "total": 22,
+        "correct": 15,
+        "hit_rate": 68.2,
+        "diagnosis": {
+          "wrong_tier": 4,
+          "synonym_gap": 3
+        }
+      },
+      "江西省通用安装工程消耗量定额及统一基价表(2017)": {
+        "total": 468,
+        "correct": 237,
+        "hit_rate": 50.6,
+        "diagnosis": {
+          "wrong_tier": 165,
+          "synonym_gap": 66
+        }
+      },
+      "河南省通用安装工程预算定额(2016)": {
+        "total": 114,
+        "correct": 60,
+        "hit_rate": 52.6,
+        "diagnosis": {
+          "wrong_tier": 35,
+          "synonym_gap": 19
+        }
+      },
+      "浙江省通用安装工程预算定额(2018)": {
+        "total": 475,
+        "correct": 173,
+        "hit_rate": 36.4,
+        "diagnosis": {
+          "wrong_tier": 90,
+          "synonym_gap": 186,
+          "wrong_book": 24,
+          "no_result": 2
+        }
+      },
+      "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {
+        "total": 35,
+        "correct": 21,
+        "hit_rate": 60.0,
+        "diagnosis": {
+          "wrong_tier": 13,
+          "synonym_gap": 1
+        }
+      }
+    },
+    "excel_datasets": {
+      "B4_脏数据": {
+        "total": 19,
+        "skip_measure": 0,
+        "green_rate": 0.1579,
+        "yellow_rate": 0.0526,
+        "red_rate": 0.7895,
+        "exp_hit_rate": 0.0,
+        "avg_time_sec": 0.69
+      }
+    }
+  },
+  {
+    "version": "unified_v1",
+    "date": "2026-03-10 11:58:52",
+    "note": "",
+    "json_papers": {
+      "北京市建设工程施工消耗量标准(2024)": {
+        "total": 282,
+        "correct": 142,
+        "hit_rate": 50.4,
+        "diagnosis": {
+          "wrong_tier": 97,
+          "synonym_gap": 33,
+          "wrong_book": 10
+        }
+      },
+      "宁夏安装工程计价定额(2019)": {
+        "total": 90,
+        "correct": 43,
+        "hit_rate": 47.8,
+        "diagnosis": {
+          "synonym_gap": 17,
+          "wrong_tier": 30
+        }
+      },
+      "宁夏房屋建筑装饰工程计价定额(2019)": {
+        "total": 29,
+        "correct": 20,
+        "hit_rate": 69.0,
+        "diagnosis": {
+          "wrong_tier": 7,
+          "synonym_gap": 2
+        }
+      },
+      "广东省房屋建筑与装饰工程综合定额(2018)": {
+        "total": 106,
+        "correct": 43,
+        "hit_rate": 40.6,
+        "diagnosis": {
+          "wrong_tier": 15,
+          "synonym_gap": 48
+        }
+      },
+      "广东省通用安装工程综合定额(2018)": {
+        "total": 534,
+        "correct": 264,
+        "hit_rate": 49.4,
+        "diagnosis": {
+          "wrong_book": 3,
+          "synonym_gap": 72,
+          "wrong_tier": 195
+        }
+      },
+      "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
+        "total": 19,
+        "correct": 0,
+        "hit_rate": 0.0,
+        "diagnosis": {
+          "synonym_gap": 18,
+          "wrong_tier": 1
+        }
+      },
+      "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": {
+        "total": 22,
+        "correct": 15,
+        "hit_rate": 68.2,
+        "diagnosis": {
+          "wrong_tier": 4,
+          "synonym_gap": 3
+        }
+      },
+      "江西省通用安装工程消耗量定额及统一基价表(2017)": {
+        "total": 468,
+        "correct": 237,
+        "hit_rate": 50.6,
+        "diagnosis": {
+          "wrong_tier": 165,
+          "synonym_gap": 66
+        }
+      },
+      "河南省通用安装工程预算定额(2016)": {
+        "total": 114,
+        "correct": 60,
+        "hit_rate": 52.6,
+        "diagnosis": {
+          "wrong_tier": 35,
+          "synonym_gap": 19
+        }
+      },
+      "浙江省通用安装工程预算定额(2018)": {
+        "total": 475,
+        "correct": 173,
+        "hit_rate": 36.4,
+        "diagnosis": {
+          "wrong_tier": 89,
+          "synonym_gap": 187,
+          "wrong_book": 24,
+          "no_result": 2
+        }
+      },
+      "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {
+        "total": 35,
+        "correct": 21,
+        "hit_rate": 60.0,
+        "diagnosis": {
+          "wrong_tier": 13,
+          "synonym_gap": 1
+        }
+      }
+    },
+    "excel_datasets": {
+      "B4_脏数据": {
+        "total": 19,
+        "skip_measure": 0,
+        "green_rate": 0.1579,
+        "yellow_rate": 0.0526,
+        "red_rate": 0.7895,
+        "exp_hit_rate": 0.0,
+        "avg_time_sec": 0.63
+      }
+    }
   }
 ]
