@@ -121,14 +121,15 @@ def _update_consistency_memory(memory: dict, item: dict, result: dict):
     quotas = result.get("quotas", [])
     if not quotas:
         return
-    item_name = item.get("name", "")
-    if not item_name:
-        return
+    # 用 (名称, 专业) 做联合key，避免跨专业污染
+    # 例如同一文件中消防分部的"阀门"和给排水分部的"阀门"是不同场景
+    specialty = item.get("specialty", "")
+    memory_key = (item_name, specialty)
     # 提取定额名称中的前2-4字中文关键词作为"定额族"标识
     quota_name = quotas[0].get("name", "")
     cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', quota_name)
     if cn_words:
-        memory[item_name] = cn_words[0]
+        memory[memory_key] = cn_words[0]
 
 
 def _prepare_match_iteration(item: dict, idx: int, total: int,
@@ -485,13 +486,14 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
     # 同文件一致性先验：记录已高置信匹配的"短名称→定额族"映射
     # 当后续遇到同名短名称时，把之前匹配好的定额关键词作为搜索提示
-    consistency_memory = {}  # {清单名称: "定额族关键词"}
+    consistency_memory = {}  # {(清单名称, 专业): "定额族关键词"}
 
     for idx, item in enumerate(bill_items, start=1):
-        # 同文件一致性注入：如果之前同名清单已高置信匹配，给短名称补提示
+        # 同文件一致性注入：如果之前同名同专业清单已高置信匹配，给短名称补提示
         item_name = item.get("name", "")
-        if item_name in consistency_memory and item.get("_is_ambiguous_short"):
-            family_kw = consistency_memory[item_name]
+        memory_key = (item_name, item.get("specialty", ""))
+        if memory_key in consistency_memory and item.get("_is_ambiguous_short"):
+            family_kw = consistency_memory[memory_key]
             hints = item.get("_context_hints", [])
             if family_kw not in hints:
                 item.setdefault("_context_hints", []).append(family_kw)
@@ -694,8 +696,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     for idx, item in enumerate(bill_items, start=1):
         # 同文件一致性注入
         item_name = item.get("name", "")
-        if item_name in consistency_memory_agent and item.get("_is_ambiguous_short"):
-            family_kw = consistency_memory_agent[item_name]
+        memory_key = (item_name, item.get("specialty", ""))
+        if memory_key in consistency_memory_agent and item.get("_is_ambiguous_short"):
+            family_kw = consistency_memory_agent[memory_key]
             hints = item.get("_context_hints", [])
             if family_kw not in hints:
                 item.setdefault("_context_hints", []).append(family_kw)

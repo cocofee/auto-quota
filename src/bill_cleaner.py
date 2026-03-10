@@ -47,9 +47,10 @@ def is_ambiguous_short_name(item: dict) -> bool:
     if cn_chars > 6:
         return False
     # 有强参数的不算歧义（参数本身就能区分定额档位）
+    # 注意：text_parser实际产出的字段是 kva/kw/ampere，不是 current/power
     params = item.get("params", {})
     has_strong = any(
-        params.get(k) for k in ["dn", "cable_section", "current", "power"]
+        params.get(k) for k in ["dn", "cable_section", "kva", "kw", "ampere"]
     )
     if has_strong:
         return False
@@ -59,8 +60,8 @@ def is_ambiguous_short_name(item: dict) -> bool:
     # 命中灰名单
     if name.strip() in AMBIGUOUS_SHORT_NAMES:
         return True
-    # 名称<=3个中文字且无强参数
-    if cn_chars <= 3:
+    # 名称<=3个中文字且无强参数（但至少要有1个中文字，纯型号/空名称不算）
+    if cn_chars <= 3 and cn_chars > 0:
         return True
     return False
 
@@ -180,8 +181,12 @@ def _annotate_local_context(items: list[dict]):
 
         section = item.get("section", "")
         sheet = item.get("sheet_name", "")
+
+        # section和sheet都为空时，无法判断邻居是否同类，跳过上下文注入
+        if not section and not sheet:
+            continue
+
         context_keywords = []  # [(关键词, 权重)]
-        context_books = []     # [(专业册号, 权重)]
 
         # 前后各看5条，但只看同section的
         for offset in range(-5, 6):
@@ -208,11 +213,6 @@ def _annotate_local_context(items: list[dict]):
             distance = abs(offset)
             weight = 1.0 / (1 + distance)
 
-            # 提取邻居的专业册号
-            n_specialty = neighbor.get("specialty", "")
-            if n_specialty:
-                context_books.append((n_specialty, weight))
-
             # 从邻居名称提取2-4字中文品类词
             n_name = neighbor.get("name", "")
             cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', n_name)
@@ -226,16 +226,6 @@ def _annotate_local_context(items: list[dict]):
                 kw_scores[kw] = kw_scores.get(kw, 0) + w
             sorted_kws = sorted(kw_scores.items(), key=lambda x: -x[1])
             item["_context_hints"] = [kw for kw, _ in sorted_kws[:3]]
-
-        # 汇总专业投票：取权重最高的册号
-        if context_books:
-            book_scores = {}
-            for book, w in context_books:
-                book_scores[book] = book_scores.get(book, 0) + w
-            sorted_books = sorted(book_scores.items(), key=lambda x: -x[1])
-            top_book = sorted_books[0][0]
-            if top_book != item.get("specialty"):
-                item["_context_suggested_book"] = top_book
 
 
 def extract_real_name(bill_name: str, description: str) -> str | None:
