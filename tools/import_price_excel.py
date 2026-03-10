@@ -648,6 +648,106 @@ def _extract_record(cells: dict, col_map: dict,
     }
 
 
+def parse_word_pipe(filepath: str) -> list:
+    """
+    解析管材管件Word报价文件（.docx格式）
+
+    典型文件：联塑战略集采管材管件报价，85个表格
+    两种表格格式：
+    - 12列管材：序号|描述|管径|壁厚|颜色|市场含税|市场不含税|折扣率|不含税|增值税|含税单价|备注
+    - 11列管件：序号|描述|规格|颜色|市场含税|市场不含税|折扣率|不含税|增值税|含税单价|备注
+    """
+    from docx import Document
+
+    doc = Document(filepath)
+    records = []
+    current_category = ""  # 当前品类（如"PPR给水管材"、"UPVC排水管材"）
+
+    for table in doc.tables:
+        ncols = len(table.columns)
+        if ncols < 10:
+            continue  # 跳过小表格
+
+        # 判断是管材(12列)还是管件(11列)
+        is_pipe = (ncols == 12)  # 管材多一列"壁厚"
+        default_unit = "m" if is_pipe else "个"
+
+        for row in table.rows:
+            cells = [cell.text.strip().replace('\n', ' ') for cell in row.cells]
+
+            # 跳过表头行（含"序号"/"系列"/"品牌"等）
+            if not cells or cells[0] in ("序号", "系列", "品牌", ""):
+                continue
+
+            # 品类标题行：所有列都是同一个值（合并单元格）
+            unique_vals = set(c for c in cells if c)
+            if len(unique_vals) <= 2 and any(
+                kw in cells[0] for kw in ["管材", "管件", "产品", "PPR", "UPVC",
+                                          "PE", "HDPE", "3S", "电线管", "波纹管"]
+            ):
+                current_category = cells[0].split("：")[-1] if "：" in cells[0] else cells[0]
+                continue
+
+            # 数据行：第0列是序号（数字）
+            try:
+                int(cells[0])
+            except (ValueError, IndexError):
+                continue
+
+            name = cells[1]  # 一般描述
+            if not name or len(name) < 2:
+                continue
+
+            # 规格：管材用管径(col2)，管件用规格型号(col2)
+            spec = cells[2] if len(cells) > 2 else ""
+
+            # 含税单价：管材=col10，管件=col9（倒数第2列）
+            price_col = ncols - 2  # 含税单价总是倒数第2列（最后是备注）
+            price = None
+            try:
+                price_str = cells[price_col].replace(",", "").replace("，", "")
+                if price_str:
+                    price = float(price_str)
+            except (ValueError, IndexError):
+                pass
+
+            # 如果价格为0或None，尝试市场含税价(col5)作为备选
+            if not price or price <= 0:
+                try:
+                    alt_col = 5
+                    alt_str = cells[alt_col].replace(",", "")
+                    if alt_str:
+                        price = float(alt_str)
+                except (ValueError, IndexError):
+                    pass
+
+            # 组装材料名称：品类+描述+规格
+            # 如 "PPR给水管材" + "S5冷水管" + "De20" → "PPR S5冷水管 De20"
+            full_name = name
+            if current_category and current_category not in name:
+                # 提取品类前缀（如PPR/UPVC/PE/HDPE）
+                prefix = ""
+                for p in ["PPR", "UPVC", "PVC", "PE", "HDPE", "3SPP", "3S"]:
+                    if p in current_category.upper():
+                        prefix = p
+                        break
+                if prefix and prefix.upper() not in name.upper():
+                    full_name = f"{prefix} {name}"
+
+            records.append({
+                "name": full_name,
+                "spec": spec,
+                "unit": default_unit,
+                "brand": "联塑",
+                "category": "管材" if is_pipe else "管件",
+                "subcategory": current_category,
+                "price": round(price, 2) if price and price > 0 else None,
+                "tax_rate": 0.13,
+            })
+
+    return records
+
+
 def parse_generic(filepath: str, category: str = "", brand: str = "",
                   default_unit: str = "个",
                   skip_sheets: list = None) -> list:
@@ -751,6 +851,11 @@ TEMPLATES = {
         "name": "通用解析器（自动识别表头）",
         "parser": parse_generic,
         "categories": list(CATEGORY_CONFIGS.keys()),
+    },
+    "word_pipe": {
+        "name": "Word管材管件报价（联塑.docx）",
+        "parser": parse_word_pipe,
+        "categories": ["安装01-Word"],
     },
 }
 
