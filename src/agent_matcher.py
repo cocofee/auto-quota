@@ -1028,6 +1028,7 @@ class AgentMatcher:
                     name_bonus=best.get("name_bonus", 0.0),
                     rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
                     candidates_count=len(valid_candidates),
+                    is_ambiguous_short=bill_item.get("_is_ambiguous_short", False),
                 )
             else:
                 best = valid_candidates[0] if valid_candidates else None
@@ -1035,6 +1036,7 @@ class AgentMatcher:
                     confidence = calculate_confidence(
                         best.get("param_score", 0.0), param_match=False,
                         candidates_count=len(valid_candidates),
+                        is_ambiguous_short=bill_item.get("_is_ambiguous_short", False),
                     )
 
         best_quota_id = str((best or {}).get("quota_id", "")).strip()

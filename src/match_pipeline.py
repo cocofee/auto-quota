@@ -529,6 +529,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
                 score_gap=score_gap,
                 rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
                 candidates_count=len(valid_candidates),
+                is_ambiguous_short=item.get("_is_ambiguous_short", False),
             )
             explanation = best.get("param_detail", "")
         else:
@@ -537,6 +538,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             confidence = calculate_confidence(
                 param_score, param_match=False,
                 candidates_count=len(valid_candidates),
+                is_ambiguous_short=item.get("_is_ambiguous_short", False),
             )
             explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
 

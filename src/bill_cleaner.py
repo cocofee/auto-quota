@@ -20,6 +20,51 @@ from src.specialty_classifier import parse_section_title
 from src.text_parser import parser as text_parser
 
 
+# ======== 短名称歧义检测 ========
+# 这些词在定额库中有多个完全不同的子类型，
+# 比如"水箱"可能是消防水箱/生活水箱/膨胀水箱，光靠名称无法区分
+AMBIGUOUS_SHORT_NAMES = {
+    "水箱", "阀门", "水泵", "风机", "开关", "灯具", "桥架",
+    "风口", "散流器", "管道", "管件", "接头", "仪表",
+    "配电箱", "控制柜", "风管", "保温", "支架", "水表",
+    "电缆", "电线", "线缆", "风阀", "止回阀", "蝶阀",
+}
+
+
+def is_ambiguous_short_name(item: dict) -> bool:
+    """
+    判断是否为短名称歧义项（需要上下文补偿）
+
+    满足以下条件的item会被标记：
+    1. 名称很短（<=6个中文字符）
+    2. 没有强参数（DN/截面/电流/功率）
+    3. 没被名称修正过（说明描述中也没有更具体的名称）
+    4. 命中灰名单 或 名称<=3字
+    """
+    name = item.get("name", "")
+    # 统计中文字符数
+    cn_chars = len([c for c in name if '\u4e00' <= c <= '\u9fff'])
+    if cn_chars > 6:
+        return False
+    # 有强参数的不算歧义（参数本身就能区分定额档位）
+    params = item.get("params", {})
+    has_strong = any(
+        params.get(k) for k in ["dn", "cable_section", "current", "power"]
+    )
+    if has_strong:
+        return False
+    # 已被名称修正过，说明描述中有更具体的名称
+    if item.get("original_name") and item["original_name"] != item.get("name"):
+        return False
+    # 命中灰名单
+    if name.strip() in AMBIGUOUS_SHORT_NAMES:
+        return True
+    # 名称<=3个中文字且无强参数
+    if cn_chars <= 3:
+        return True
+    return False
+
+
 def _section_has_specialty(section: str) -> bool:
     """判断 section 标题能否识别出专业"""
     return parse_section_title(section) is not None
@@ -106,7 +151,91 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
                 f"名称修正{name_fixed}条, 专业分类{classified}条, "
                 f"有参数{with_params}条, 线缆标签{cable_tagged}条")
 
+    # 第二轮：局部上下文注入（为短名称歧义项补充邻居提示）
+    _annotate_local_context(items)
+    ambiguous_count = sum(1 for i in items if i.get("_is_ambiguous_short"))
+    if ambiguous_count:
+        hinted = sum(1 for i in items if i.get("_context_hints"))
+        logger.info(f"短名称歧义项: {ambiguous_count}条, "
+                    f"其中{hinted}条获得上下文提示")
+
     return items
+
+
+def _annotate_local_context(items: list[dict]):
+    """
+    第二轮清洗：为短名称歧义项注入局部上下文提示
+
+    核心思路：同一个分部下，"水箱"旁边如果都是"消防泵""喷淋管"，
+    那这个"水箱"大概率是消防水箱。从前后邻居提取关键词作为搜索提示。
+
+    只对 is_ambiguous_short_name() 判定为True的item生效。
+    """
+    for i, item in enumerate(items):
+        if not is_ambiguous_short_name(item):
+            continue
+
+        # 标记为短名称歧义项（后续置信度封顶用）
+        item["_is_ambiguous_short"] = True
+
+        section = item.get("section", "")
+        sheet = item.get("sheet_name", "")
+        context_keywords = []  # [(关键词, 权重)]
+        context_books = []     # [(专业册号, 权重)]
+
+        # 前后各看5条，但只看同section的
+        for offset in range(-5, 6):
+            if offset == 0:
+                continue
+            j = i + offset
+            if j < 0 or j >= len(items):
+                continue
+            neighbor = items[j]
+
+            # 跨section断开（不同分部的信息不可靠）
+            n_section = neighbor.get("section", "")
+            n_sheet = neighbor.get("sheet_name", "")
+            if section and n_section != section:
+                continue
+            if not section and sheet and n_sheet != sheet:
+                continue
+
+            # 邻居自己也是短名称 → 不可靠，跳过
+            if is_ambiguous_short_name(neighbor):
+                continue
+
+            # 距离衰减：越近的邻居权重越高
+            distance = abs(offset)
+            weight = 1.0 / (1 + distance)
+
+            # 提取邻居的专业册号
+            n_specialty = neighbor.get("specialty", "")
+            if n_specialty:
+                context_books.append((n_specialty, weight))
+
+            # 从邻居名称提取2-4字中文品类词
+            n_name = neighbor.get("name", "")
+            cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', n_name)
+            for w in cn_words[:2]:  # 每个邻居最多贡献2个词
+                context_keywords.append((w, weight))
+
+        # 汇总关键词：按权重排序，取top3
+        if context_keywords:
+            kw_scores = {}
+            for kw, w in context_keywords:
+                kw_scores[kw] = kw_scores.get(kw, 0) + w
+            sorted_kws = sorted(kw_scores.items(), key=lambda x: -x[1])
+            item["_context_hints"] = [kw for kw, _ in sorted_kws[:3]]
+
+        # 汇总专业投票：取权重最高的册号
+        if context_books:
+            book_scores = {}
+            for book, w in context_books:
+                book_scores[book] = book_scores.get(book, 0) + w
+            sorted_books = sorted(book_scores.items(), key=lambda x: -x[1])
+            top_book = sorted_books[0][0]
+            if top_book != item.get("specialty"):
+                item["_context_suggested_book"] = top_book
 
 
 def extract_real_name(bill_name: str, description: str) -> str | None:
