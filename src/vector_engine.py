@@ -9,6 +9,8 @@
 而不只是匹配关键词。与BM25互补使用效果最好。
 """
 
+import os
+
 from loguru import logger
 
 import config
@@ -108,7 +110,10 @@ class VectorEngine:
             logger.debug(f"向量索引旧集合删除跳过: {e}")
         self._collection = self._chroma_client.create_collection(
             name="quotas",
-            metadata={"hnsw:space": "cosine"}
+            metadata={
+                "hnsw:space": "cosine",
+                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
+            }
         )
 
         # 分批向量化并存入ChromaDB

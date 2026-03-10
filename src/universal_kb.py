@@ -19,6 +19,7 @@
 """
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -808,7 +809,10 @@ class UniversalKB:
             logger.debug(f"通用知识库旧向量集合删除跳过: {e}")
         self._collection = self._chroma_client.create_collection(
             name="universal_kb",
-            metadata={"hnsw:space": "cosine"}
+            metadata={
+                "hnsw:space": "cosine",
+                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
+            }
         )
 
         # 批量向量化

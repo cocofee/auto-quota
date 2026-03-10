@@ -11,6 +11,8 @@
     db.import_from_project(records, ...)  # 和拆分前一样调用
 """
 
+import os
+
 import config
 from loguru import logger
 from src.specialty_classifier import get_book_from_quota_id
@@ -201,7 +203,10 @@ def rebuild_vector_index(self):
     try:
         self._collection = self._chroma_client.create_collection(
             name="experiences",
-            metadata={"hnsw:space": "cosine"}
+            metadata={
+                "hnsw:space": "cosine",
+                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
+            }
         )
     except Exception as e:
         logger.error(f"经验库向量集合创建失败: {e}")
