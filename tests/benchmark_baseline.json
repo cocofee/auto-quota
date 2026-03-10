@@ -1,25 +1,25 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-10 11:58:52",
+  "date": "2026-03-10 15:36:01",
   "note": "",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
       "total": 282,
-      "correct": 142,
-      "hit_rate": 50.4,
+      "correct": 140,
+      "hit_rate": 49.6,
       "diagnosis": {
-        "wrong_tier": 97,
+        "wrong_tier": 99,
         "synonym_gap": 33,
         "wrong_book": 10
       }
     },
     "宁夏安装工程计价定额(2019)": {
       "total": 90,
-      "correct": 43,
-      "hit_rate": 47.8,
+      "correct": 42,
+      "hit_rate": 46.7,
       "diagnosis": {
         "synonym_gap": 17,
-        "wrong_tier": 30
+        "wrong_tier": 31
       }
     },
     "宁夏房屋建筑装饰工程计价定额(2019)": {
@@ -42,11 +42,11 @@
     },
     "广东省通用安装工程综合定额(2018)": {
       "total": 534,
-      "correct": 264,
-      "hit_rate": 49.4,
+      "correct": 262,
+      "hit_rate": 49.1,
       "diagnosis": {
         "wrong_book": 3,
-        "synonym_gap": 72,
+        "synonym_gap": 74,
         "wrong_tier": 195
       }
     },
@@ -91,8 +91,8 @@
       "correct": 173,
       "hit_rate": 36.4,
       "diagnosis": {
-        "wrong_tier": 89,
         "synonym_gap": 187,
+        "wrong_tier": 89,
         "wrong_book": 24,
         "no_result": 2
       }
@@ -115,7 +115,7 @@
       "yellow_rate": 0.0526,
       "red_rate": 0.7895,
       "exp_hit_rate": 0.0,
-      "avg_time_sec": 0.63
+      "avg_time_sec": 0.64
     }
   }
 }
