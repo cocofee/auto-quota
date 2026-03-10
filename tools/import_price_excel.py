@@ -54,6 +54,33 @@ def normalize_unit(unit: str) -> str:
     return UNIT_NORM.get(u, u)
 
 
+# ======== 垃圾数据过滤 ========
+# 非材料关键词黑名单（费率/人工/管理费等不是材料，不应入库）
+JUNK_KEYWORDS = [
+    "人工费", "管理费", "利润", "税金", "费率", "运杂费",
+    "机械费", "保护费", "制作费", "安装费", "运输费", "综合费",
+    "材料费", "利润率", "辅材费", "措施费", "检验费", "规费",
+    "企业管理费", "社会保险费", "住房公积金", "工伤保险",
+    "成品保护", "文明施工", "临时设施", "安全防护",
+    "竣工清理", "二次搬运", "夜间施工", "冬雨季施工",
+]
+
+
+def is_junk_material(name: str) -> bool:
+    """判断是否为非材料项（费率/人工/管理费等垃圾数据）"""
+    name_clean = name.strip()
+    for kw in JUNK_KEYWORDS:
+        if kw in name_clean:
+            return True
+    # 纯数字行（序号被误识别为名称）
+    try:
+        float(name_clean.replace(",", ""))
+        return True
+    except ValueError:
+        pass
+    return False
+
+
 # ======== 规格标准化 ========
 def normalize_spec(spec: str) -> str:
     """规格标准化（去空格、统一分隔符）"""
@@ -144,7 +171,8 @@ def import_records(db, records: list, batch_id: int,
             if price and float(price) > 0:
                 tax_rate = float(rec.get("tax_rate", 0.13))
                 price_unit = normalize_unit(rec.get("price_unit", unit))
-                db.add_price(
+                # 去重：同材料+同价格+同来源文件 不重复插入
+                added = db.add_price(
                     material_id=material_id,
                     price_incl_tax=float(price),
                     source_type="enterprise_price_lib",
@@ -155,6 +183,7 @@ def import_records(db, records: list, batch_id: int,
                     authority_level="reference",
                     usable_for_quote=0,  # 2023年旧价格，仅参考
                     price_date="2023-01-30",  # 会被品类模板覆盖
+                    dedup=True,  # 启用去重
                 )
 
             stats["imported"] += 1
@@ -610,6 +639,9 @@ def _extract_record(cells: dict, col_map: dict,
         return None
     # 跳过小计/合计/说明行
     if name in ("合计", "小计", "总计", "备注", "说明") or name.startswith("合计"):
+        return None
+    # 跳过非材料项（费率/人工/管理费等垃圾数据）
+    if is_junk_material(name):
         return None
 
     spec = str(cells.get(col_map.get("spec"), "") or "").strip()
