@@ -536,6 +536,18 @@ def build_quota_query(parser, name: str, description: str = "",
     cable_section = params.get("cable_section")
     shape = params.get("shape", "")  # 风管形状：矩形/圆形
 
+    # 补充提取连接方式：text_parser有时漏提取描述中的"连接方式:xxx"
+    # 例如"连接方式:卡压式连接"在parser中未被识别，导致query丢失关键区分词
+    if not connection:
+        _conn_match = re.search(
+            r'连接方式[：:]\s*'
+            r'(卡压式?连接|环压式?连接|焊接|螺纹连接|法兰连接'
+            r'|热熔连接|粘接|承插连接|沟槽连接|卡箍连接'
+            r'|对接电弧焊|承插氩弧焊|对焊连接)',
+            full_text)
+        if _conn_match:
+            connection = _conn_match.group(1)
+
     # ===== 管道类：有材质或DN参数，且不是电气类（电缆/配管/穿线） =====
     # 电气类即使有material/dn也应走下面的电气专用query构建
     # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
@@ -589,6 +601,21 @@ def build_quota_query(parser, name: str, description: str = "",
             else:
                 # 冷水/给水/未指定用途 → 默认给水（PPR最常见用途）
                 material = "室内塑料给水管(热熔连接)"
+
+        # 给水不锈钢管（卡压/环压连接）→ C10定额标准名称：
+        # 清单写"304薄壁不锈钢管"/"不锈钢管"，定额叫"给排水管道 室内薄壁不锈钢管(卡压连接)"
+        # 不做此替换时，"不锈钢管"会被BM25匹配到C8工业管道"低压 不锈钢管件(电弧焊)"
+        # 或C6仪表"不锈钢管缆"，因为它们名称更短、词频密度更高
+        # 窄触发条件：不锈钢 + 卡压/环压 + 管类（不含阀门/管件/软管）
+        _is_stainless = "不锈钢" in (material or "") or "不锈钢" in name
+        _is_press_fit = connection and ("卡压" in connection or "环压" in connection)
+        _is_pipe = "管" in name and not any(
+            kw in name for kw in ("阀", "管件", "软管", "管缆"))
+        if _is_stainless and _is_press_fit and _is_pipe:
+            material = "室内薄壁不锈钢管(卡压连接)"
+            connection = ""  # 连接方式已融入material
+            if not usage or usage in ("给水", "热水", "冷水"):
+                usage = "给排水管道"
 
         if material and "管" in material:
             core = f"{location}{usage}{material}"
