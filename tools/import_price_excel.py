@@ -496,8 +496,8 @@ def _find_header_and_parse(ws, fmt: str, max_header_row: int = 15,
     records = []
 
     # 名称列关键词（优先级从高到低）
-    name_keywords = ["材料名称", "商品名称", "产品名称", "项目名称",
-                     "灯具类型", "清单名称", "设备", "名称"]
+    name_keywords = ["材料名称", "商品名称", "产品名称", "元件名称",
+                     "项目名称", "灯具类型", "清单名称", "设备", "名称"]
     # 价格列关键词
     price_keywords = ["含税单价", "含税战略", "战略单价含税", "综合单价",
                       "战略价", "商品单价", "单价（含", "单价"]
@@ -526,7 +526,9 @@ def _find_header_and_parse(ws, fmt: str, max_header_row: int = 15,
 
     for ri in range(min(nrows, max_header_row)):
         cells = get_row_cells(ri)
-        text_map = {ci: str(v or "").strip() for ci, v in cells.items()}
+        # 去掉多余空格（配电箱等表格"单   价"→"单价"）
+        text_map = {ci: re.sub(r'\s+', '', str(v or "")).strip()
+                    for ci, v in cells.items()}
         full_text = " ".join(text_map.values())
 
         # 必须同时有名称词和价格词
