@@ -21,7 +21,7 @@ import pandas as pd
 
 sys.path.insert(0, ".")
 
-# 特征列（和 ltr_prepare_data.py 一致）
+# 特征列（和 ltr_prepare_data.py 一致，v2: 21维）
 FEATURE_COLUMNS = [
     "bm25_score", "vector_score", "hybrid_score", "rerank_score",
     "param_score", "param_match",
@@ -29,6 +29,9 @@ FEATURE_COLUMNS = [
     "name_bonus", "candidates_count",
     "bm25_rank_score", "vector_rank_score",
     "name_edit_dist", "score_gap_to_top1", "dual_recall",
+    # v2新增：参数距离特征
+    "param_main_exact", "param_main_rel_dist", "param_main_direction",
+    "param_material_match", "param_n_checks",
 ]
 
 

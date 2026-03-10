@@ -3,7 +3,10 @@
 LTR训练数据生成器
 
 跑 benchmark 2174条试卷，每条清单产生约20个候选，
-提取16维特征 + 分级标注(0/1/2)，输出CSV供LightGBM训练。
+提取21维特征 + 分级标注(0/1/2)，输出CSV供LightGBM训练。
+
+v1: 16维（原始语义+参数聚合特征）
+v2: 21维（+5个参数距离特征，解决57%的"选错档位"问题）
 
 用法:
     python tools/ltr_prepare_data.py                  # 全量生成
@@ -21,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-# 16维特征列名
+# 21维特征列名（v2: 原16维 + 5个参数距离特征）
 FEATURE_COLUMNS = [
     "bm25_score",          # 1. BM25文本匹配分
     "vector_score",        # 2. 向量语义相似度
@@ -39,6 +42,12 @@ FEATURE_COLUMNS = [
     "name_edit_dist",      # 14. 清单名称vs候选名称编辑距离（归一化）
     "score_gap_to_top1",   # 15. 与top1的composite分差
     "dual_recall",         # 16. 是否同时被BM25和向量召回
+    # v2新增：参数距离特征（让模型学会"参数精确匹配比语义相似更重要"）
+    "param_main_exact",    # 17. 主参数(DN/截面等)是否精确匹配(0/1)
+    "param_main_rel_dist", # 18. 主参数相对距离(0=精确, 1=最远)
+    "param_main_direction",# 19. 向上取(+1)/向下取(-1)/精确(0)
+    "param_material_match",# 20. 材质匹配度(1.0精确/0.7兼容/0.0冲突/-1无信息)
+    "param_n_checks",      # 21. 参数检查项数(越多越可信)
 ]
 
 # CSV列：query_id + province + 特征 + label
@@ -72,7 +81,7 @@ def extract_features(candidate: dict, bill_name: str,
                      n_candidates: int, top1_composite: float,
                      bm25_ranks: dict, vector_ranks: dict,
                      bm25_ids: set, vector_ids: set) -> dict:
-    """从单个候选提取16维特征"""
+    """从单个候选提取21维特征"""
     qid = str(candidate.get("quota_id", ""))
     tier = candidate.get("param_tier", 1)
 
@@ -81,6 +90,9 @@ def extract_features(candidate: dict, bill_name: str,
     nb = candidate.get("name_bonus", 0)
     rr = candidate.get("rerank_score", candidate.get("hybrid_score", 0))
     composite = ps * 0.55 + nb * 0.30 + rr * 0.15
+
+    # v2新增：从candidate["_ltr_param"]读取参数距离特征
+    ltr_param = candidate.get("_ltr_param", {})
 
     return {
         "bm25_score": candidate.get("bm25_score") or 0,
@@ -99,6 +111,12 @@ def extract_features(candidate: dict, bill_name: str,
         "name_edit_dist": compute_name_edit_dist(bill_name, candidate.get("name", "")),
         "score_gap_to_top1": top1_composite - composite,
         "dual_recall": 1 if (qid in bm25_ids and qid in vector_ids) else 0,
+        # v2新增：参数距离特征
+        "param_main_exact": ltr_param.get("param_main_exact", 0),
+        "param_main_rel_dist": ltr_param.get("param_main_rel_dist", 1.0),
+        "param_main_direction": ltr_param.get("param_main_direction", 0),
+        "param_material_match": ltr_param.get("param_material_match", -1.0),
+        "param_n_checks": ltr_param.get("param_n_checks", 0),
     }
 
 
