@@ -320,16 +320,16 @@ def main():
     if bge_results:
         diff = qo["recall"] - bo["recall"]
         if diff > 0.05:
-            print(f"✅ Qwen3 微调效果显著！Recall@{args.top_k} 提升 {diff:.1%}")
+            print(f"[OK] Qwen3 微调效果显著！Recall@{args.top_k} 提升 {diff:.1%}")
             print("   建议：替换搜索管线，上线使用")
         elif diff > 0:
-            print(f"⚠️ Qwen3 略有提升 (+{diff:.1%})，但幅度不大")
+            print(f"[WARN] Qwen3 略有提升 (+{diff:.1%})，但幅度不大")
             print("   建议：考虑增加训练数据或epochs后重训")
         elif diff > -0.02:
-            print(f"⚠️ Qwen3 与BGE基本持平 ({diff:+.1%})")
+            print(f"[WARN] Qwen3 与BGE基本持平 ({diff:+.1%})")
             print("   建议：调参重训（增加epochs/学习率）")
         else:
-            print(f"❌ Qwen3 不如BGE ({diff:+.1%})")
+            print(f"[FAIL] Qwen3 不如BGE ({diff:+.1%})")
             print("   建议：检查训练数据质量，或尝试4B模型")
     else:
         print(f"Qwen3 Recall@{args.top_k}: {qo['recall']:.1%}")
