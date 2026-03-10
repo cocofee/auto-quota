@@ -110,6 +110,9 @@ class MaterialDB:
                 -- 来源追踪
                 source_doc TEXT DEFAULT '',       -- 来源文件名/URL
                 batch_id INTEGER,                -- 导入批次ID
+                -- 使用控制
+                usable_for_quote INTEGER DEFAULT 1,  -- 是否可用于报价（0=仅参考，1=可报价）
+                    -- 2023年旧价格、企业集采价等设为0，防止被误当最新价
                 -- 元数据
                 created_at TEXT DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (material_id) REFERENCES material_master(id)
@@ -169,7 +172,9 @@ class MaterialDB:
                 source_file TEXT DEFAULT '',       -- 来源文件
                 province TEXT DEFAULT '',
                 record_count INTEGER DEFAULT 0,    -- 导入条数
+                parser_template TEXT DEFAULT '',   -- 使用的解析模板名称
                 status TEXT DEFAULT 'completed',   -- 状态
+                notes TEXT DEFAULT '',             -- 备注
                 created_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
@@ -187,7 +192,28 @@ class MaterialDB:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qmo_material ON quota_material_observation(material_name)")
 
         conn.commit()
+
+        # ======== 表结构迁移（兼容旧数据库）========
+        self._migrate(conn)
+
         conn.close()
+
+    def _migrate(self, conn):
+        """自动迁移旧表结构（加新字段）"""
+        # price_fact 加 usable_for_quote 字段
+        try:
+            conn.execute("SELECT usable_for_quote FROM price_fact LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE price_fact ADD COLUMN usable_for_quote INTEGER DEFAULT 1")
+            conn.commit()
+
+        # import_batch 加 parser_template 和 notes 字段
+        try:
+            conn.execute("SELECT parser_template FROM import_batch LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE import_batch ADD COLUMN parser_template TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE import_batch ADD COLUMN notes TEXT DEFAULT ''")
+            conn.commit()
 
     def _conn(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -305,12 +331,15 @@ class MaterialDB:
                   period_start: str = "", period_end: str = "",
                   price_date: str = "", source_doc: str = "",
                   batch_id: int = None, unit: str = "",
-                  authority_level: str = "reference") -> int:
+                  authority_level: str = "reference",
+                  usable_for_quote: int = 1) -> int:
         """
         添加价格记录
 
         source_type: 'official_info' | 'market_web' | 'manual_quote' | 'historical_project'
+                     | 'enterprise_price_lib'（企业集采价格库）
         authority_level: 'official' | 'verified' | 'reference'
+        usable_for_quote: 1=可用于报价, 0=仅参考（如2023年旧价格）
         """
         price_excl_tax = round(price_incl_tax / (1 + tax_rate), 2) if tax_rate > 0 else price_incl_tax
         if not price_date:
@@ -327,12 +356,12 @@ class MaterialDB:
                    (material_id, price_incl_tax, price_excl_tax, tax_rate, unit,
                     source_type, authority_level, province, city,
                     period_start, period_end, price_date,
-                    source_doc, batch_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    source_doc, batch_id, usable_for_quote)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (material_id, price_incl_tax, price_excl_tax, tax_rate, unit,
                  source_type, authority_level, province, city,
                  period_start, period_end, price_date,
-                 source_doc, batch_id)
+                 source_doc, batch_id, usable_for_quote)
             )
             conn.commit()
             return cursor.lastrowid
@@ -340,19 +369,25 @@ class MaterialDB:
             conn.close()
 
     def get_latest_price(self, material_id: int, province: str = "",
-                         prefer_official: bool = True) -> Optional[dict]:
+                         prefer_official: bool = True,
+                         include_reference: bool = False) -> Optional[dict]:
         """
         获取材料最新价格
 
         prefer_official=True时，优先返回信息价，没有才返回市场价
+        include_reference=False时，排除usable_for_quote=0的参考价（如2023年旧价格）
         """
         conn = self._conn()
         try:
+            # 可报价过滤条件（默认排除仅参考价格）
+            quote_filter = "" if include_reference else " AND usable_for_quote=1"
+
             if prefer_official and province:
                 # 先查信息价
                 row = conn.execute(
-                    """SELECT * FROM price_fact
+                    f"""SELECT * FROM price_fact
                        WHERE material_id=? AND province=? AND source_type='official_info'
+                       {quote_filter}
                        ORDER BY period_end DESC, created_at DESC LIMIT 1""",
                     (material_id, province)
                 ).fetchone()
@@ -361,7 +396,7 @@ class MaterialDB:
 
             # 查所有价格（按时间倒序）
             params = [material_id]
-            sql = "SELECT * FROM price_fact WHERE material_id=?"
+            sql = f"SELECT * FROM price_fact WHERE material_id=?{quote_filter}"
             if province:
                 sql += " AND province=?"
                 params.append(province)
