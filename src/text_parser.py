@@ -1021,24 +1021,27 @@ class TextParser:
         特征：宽度远大于厚度（比值≥3），如40×4、60×6、25×4。
         定额按宽度分档，所以提取宽度作为参数。
 
-        与电缆截面的区别：
-        - 电缆"4×185"：芯数×截面积，第二个数较大
-        - 扁钢"40×4"：宽×厚，第一个数远大于第二个（比值≥3）
+        改进（Codex 5.4审核）：用局部上下文正则，N×N必须紧邻接地/扁钢关键词，
+        避免电缆清单工作内容中远处的"接地"触发误提取（如"3×185...接地、测绝缘"）
         """
-        # 只在接地相关上下文中提取
-        ground_keywords = ["接地", "母线", "母带", "扁钢", "扁铁"]
-        if not any(kw in text for kw in ground_keywords):
-            return None
+        # 局部上下文匹配：N×N必须在接地/扁钢关键词附近（±15字符内）
+        # 模式1：关键词在前 — "接地扁钢 40×4"、"接地母线 25×4"
+        ground_ctx = r'(?:接地(?:母线|母带)?|扁钢|扁铁)'
+        p1 = rf'{ground_ctx}.{{0,15}}?(\d+)\s*[*×xX]\s*(\d+)'
+        # 模式2：关键词在后 — "40×4 扁钢"、"25*4 接地母线"
+        p2 = rf'(\d+)\s*[*×xX]\s*(\d+).{{0,10}}?(?:扁钢|扁铁|接地母线|接地母带)'
 
-        # 匹配"W×H"格式（支持"规格：40*4"和定额名中的"60×6"）
-        match = re.search(r'(\d+)\s*[*×xX]\s*(\d+)', text)
-        if match:
-            a, b = float(match.group(1)), float(match.group(2))
-            width = max(a, b)      # 宽度（大的那个值）
-            thickness = min(a, b)  # 厚度（小的那个值）
-            # 扁钢特征：宽/厚比≥3，且宽度在合理范围（通常20-100mm）
-            if thickness > 0 and width / thickness >= 3 and 10 <= width <= 200:
-                return width
+        for pattern in [p1, p2]:
+            match = re.search(pattern, text)
+            if match:
+                a, b = float(match.group(1)), float(match.group(2))
+                # 扁钢"宽×厚"，宽>厚；兼容少量反写（4×40）
+                width, thickness = a, b
+                if width < thickness:
+                    width, thickness = thickness, width
+                # 扁钢特征：宽/厚比≥3，且宽度在合理范围（通常20-200mm）
+                if thickness > 0 and width / thickness >= 3 and 10 <= width <= 200:
+                    return width
         return None
 
     def build_search_text(self, name: str, description: str = "") -> str:

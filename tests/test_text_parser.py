@@ -304,3 +304,35 @@ class TestEdgeCases:
         """ZR-前缀导线：ZR-BV-4 → 截面4（ZR被跳过，BV-4匹配）"""
         result = parser.parse("配线 ZR-BV-4")
         assert result["cable_section"] == 4
+
+
+class TestGroundBarVsCableConflict:
+    """接地扁钢与电缆截面的优先级冲突回归测试（Codex 5.4审核建议）"""
+
+    def test_cable_with_ground_in_work_content(self):
+        """电缆清单工作内容含"接地"，不应提取为扁钢"""
+        # 真实场景：江西清单"电力电缆 YJV-3×185 ... 接地、测绝缘电阻"
+        text = "电力电缆 YJV-3×185+2×95 接地、测绝缘电阻"
+        result = parser.parse(text)
+        assert result.get("cable_section") == 185.0
+        assert "ground_bar_width" not in result
+
+    def test_ground_bar_normal(self):
+        """正常接地扁钢应正确提取"""
+        result = parser.parse("接地扁钢 40×4")
+        assert result.get("ground_bar_width") == 40.0
+
+    def test_mixed_cable_and_ground_bar(self):
+        """混合文本：电缆+真实扁钢规格，扁钢应能提取"""
+        result = parser.parse("控制电缆敷设，接地扁钢40×4")
+        assert result.get("ground_bar_width") == 40.0
+
+    def test_ground_bar_reversed_format(self):
+        """扁钢反写格式：4×40也应正确识别"""
+        result = parser.parse("接地母线 4×40")
+        assert result.get("ground_bar_width") == 40.0
+
+    def test_ground_bar_keyword_after(self):
+        """关键词在数字后面：60×6 扁铁"""
+        result = parser.parse("60×6 扁铁 安装")
+        assert result.get("ground_bar_width") == 60.0
