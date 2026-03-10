@@ -454,6 +454,280 @@ def _extract_spec_from_name(name: str) -> str:
     return ""
 
 
+# ======== 通用解析器 ========
+
+def _open_workbook(filepath: str):
+    """
+    统一打开Excel文件，支持.xlsx和.xls
+
+    返回: (sheets, format)
+      sheets = [(sheet_name, header_finder_func, data_reader_func), ...]
+      format = 'xlsx' | 'xls'
+    """
+    fpath = str(filepath)
+    if fpath.endswith('.xls') and not fpath.endswith('.xlsx'):
+        # .xls 用 xlrd
+        import xlrd
+        wb = xlrd.open_workbook(fpath)
+        sheets = []
+        for si in range(wb.nsheets):
+            ws = wb.sheet_by_index(si)
+            sheets.append((ws.name, ws.nrows, ws.ncols, ws))
+        return wb, sheets, 'xls'
+    else:
+        # .xlsx 用 openpyxl
+        import openpyxl
+        wb = openpyxl.load_workbook(fpath, data_only=True, read_only=True)
+        sheets = []
+        for ws in wb:
+            sheets.append((ws.title, None, None, ws))
+        return wb, sheets, 'xlsx'
+
+
+def _find_header_and_parse(ws, fmt: str, max_header_row: int = 15,
+                           category: str = "", brand: str = "",
+                           default_unit: str = "个",
+                           skip_sheets: list = None) -> list:
+    """
+    在单个Sheet中自动查找表头行并解析数据
+
+    表头识别规则：一行中同时包含"名称类关键词"和"价格类关键词"
+    """
+    records = []
+
+    # 名称列关键词（优先级从高到低）
+    name_keywords = ["材料名称", "商品名称", "产品名称", "项目名称",
+                     "灯具类型", "清单名称", "设备", "名称"]
+    # 价格列关键词
+    price_keywords = ["含税单价", "含税战略", "战略单价含税", "综合单价",
+                      "战略价", "商品单价", "单价（含", "单价"]
+    # 排除的价格列（不含税优先级低）
+    price_excl_keywords = ["不含税", "除税"]
+
+    # 读取前max_header_row行找表头
+    if fmt == 'xls':
+        nrows = ws.nrows
+        ncols = ws.ncols
+        def get_row_cells(ri):
+            return {ci + 1: ws.cell_value(ri, ci) for ci in range(ncols)}
+    else:
+        # openpyxl
+        all_rows = []
+        for i, row in enumerate(ws.iter_rows(max_row=max_header_row, values_only=False)):
+            cells = {c.column: c.value for c in row if hasattr(c, 'column')}
+            all_rows.append(cells)
+        def get_row_cells(ri):
+            return all_rows[ri] if ri < len(all_rows) else {}
+        nrows = max_header_row  # 只用于表头搜索
+
+    # 找表头行
+    header_row_idx = None
+    col_map = {}
+
+    for ri in range(min(nrows, max_header_row)):
+        cells = get_row_cells(ri)
+        text_map = {ci: str(v or "").strip() for ci, v in cells.items()}
+        full_text = " ".join(text_map.values())
+
+        # 必须同时有名称词和价格词
+        has_name = any(kw in full_text for kw in name_keywords)
+        has_price = any(kw in full_text for kw in price_keywords)
+
+        if not (has_name and has_price):
+            continue
+
+        # 建立列映射
+        temp_map = {}
+        for ci, val in text_map.items():
+            if not val:
+                continue
+            # 名称列
+            if "name" not in temp_map:
+                for kw in name_keywords:
+                    if kw in val:
+                        temp_map["name"] = ci
+                        break
+            # 规格/型号列
+            if "spec" not in temp_map:
+                if "型号" in val or "规格" in val:
+                    # 避免和名称列重复
+                    if ci != temp_map.get("name"):
+                        temp_map["spec"] = ci
+            # 单位列
+            if "unit" not in temp_map:
+                if val in ("单位", "计量单位") or "计量" in val:
+                    temp_map["unit"] = ci
+            # 品牌列
+            if "brand" not in temp_map:
+                if "品牌" in val or "产地" in val:
+                    temp_map["brand"] = ci
+            # 含税价格列（优先）
+            if "price" not in temp_map:
+                for kw in price_keywords:
+                    if kw in val and not any(ek in val for ek in price_excl_keywords):
+                        temp_map["price"] = ci
+                        break
+            # 不含税价格列（备选）
+            if "price_excl" not in temp_map:
+                if any(ek in val for ek in price_excl_keywords) and "单价" in val:
+                    temp_map["price_excl"] = ci
+
+        if "name" in temp_map and ("price" in temp_map or "price_excl" in temp_map):
+            header_row_idx = ri
+            col_map = temp_map
+            break
+
+    if header_row_idx is None or "name" not in col_map:
+        return records
+
+    # 读数据行
+    if fmt == 'xls':
+        for ri in range(header_row_idx + 1, ws.nrows):
+            cells = {ci + 1: ws.cell_value(ri, ci) for ci in range(ncols)}
+            rec = _extract_record(cells, col_map, category, brand, default_unit)
+            if rec:
+                records.append(rec)
+    else:
+        # openpyxl — 需要重新读
+        for row in ws.iter_rows(min_row=header_row_idx + 2, values_only=False):
+            cells = {c.column: c.value for c in row if hasattr(c, 'column')}
+            rec = _extract_record(cells, col_map, category, brand, default_unit)
+            if rec:
+                records.append(rec)
+
+    return records
+
+
+def _extract_record(cells: dict, col_map: dict,
+                    category: str, brand: str, default_unit: str) -> dict:
+    """从一行单元格中提取记录"""
+    name = str(cells.get(col_map["name"], "") or "").strip()
+    # 去换行
+    name = name.replace("\n", " ").replace("\r", "").strip()
+    if not name or len(name) < 2:
+        return None
+    # 跳过小计/合计/说明行
+    if name in ("合计", "小计", "总计", "备注", "说明") or name.startswith("合计"):
+        return None
+
+    spec = str(cells.get(col_map.get("spec"), "") or "").strip()
+    spec = spec.replace("\n", " ").strip()[:200]  # 截断过长规格
+    unit = str(cells.get(col_map.get("unit"), "") or default_unit).strip()
+    rec_brand = str(cells.get(col_map.get("brand"), "") or brand).strip()
+
+    # 取价格：优先含税，其次不含税×1.13
+    price = None
+    if "price" in col_map:
+        pv = cells.get(col_map["price"])
+        if pv is not None:
+            try:
+                price = float(pv)
+            except (ValueError, TypeError):
+                pass
+    if price is None and "price_excl" in col_map:
+        pv = cells.get(col_map["price_excl"])
+        if pv is not None:
+            try:
+                price = float(pv) * 1.13
+            except (ValueError, TypeError):
+                pass
+
+    if price is not None and price <= 0:
+        price = None
+
+    return {
+        "name": name,
+        "spec": spec,
+        "unit": unit,
+        "brand": rec_brand,
+        "category": category,
+        "price": round(price, 2) if price else None,
+        "tax_rate": 0.13,
+    }
+
+
+def parse_generic(filepath: str, category: str = "", brand: str = "",
+                  default_unit: str = "个",
+                  skip_sheets: list = None) -> list:
+    """
+    通用解析器：自动识别表头，提取名称+规格+单位+价格
+
+    支持.xlsx和.xls，跳过封面/说明等无数据Sheet
+    """
+    wb, sheets, fmt = _open_workbook(filepath)
+    records = []
+
+    skip_names = skip_sheets or []
+    # 默认跳过的Sheet名称关键词
+    skip_keywords = ["封面", "说明", "编制", "界面", "品牌表", "汇总",
+                     "报价说明", "备注"]
+
+    for sheet_name, _, _, ws in sheets:
+        # 跳过指定Sheet
+        if sheet_name in skip_names:
+            continue
+        if any(kw in sheet_name for kw in skip_keywords):
+            continue
+
+        recs = _find_header_and_parse(
+            ws, fmt, category=category, brand=brand,
+            default_unit=default_unit
+        )
+        records.extend(recs)
+
+    if hasattr(wb, 'close'):
+        wb.close()
+    return records
+
+
+# ======== 品类配置表 ========
+# 每个品类的解析参数（通用解析器通过这些参数适配不同品类）
+CATEGORY_CONFIGS = {
+    "02": {"category": "厨房电器", "brand": "", "unit": "台",
+           "name": "厨房电器报价清单"},
+    "04": {"category": "浴霸", "brand": "", "unit": "台",
+           "name": "浴霸清单"},
+    "05": {"category": "中央空调", "brand": "", "unit": "台",
+           "name": "中央空调报价"},
+    "06": {"category": "可视对讲", "brand": "", "unit": "个",
+           "name": "可视对讲设备"},
+    "07": {"category": "卫浴洁具", "brand": "", "unit": "个",
+           "name": "卫浴洁具"},
+    "08": {"category": "新风系统", "brand": "", "unit": "台",
+           "name": "新风系统设备"},
+    "09": {"category": "空气源", "brand": "", "unit": "台",
+           "name": "空气源热泵"},
+    "10": {"category": "电梯", "brand": "", "unit": "台",
+           "name": "电梯设备"},
+    "11": {"category": "智能化", "brand": "", "unit": "套",
+           "name": "弱电智能化"},
+    "12": {"category": "水泵", "brand": "", "unit": "台",
+           "name": "水泵"},
+    "13": {"category": "太阳能", "brand": "", "unit": "套",
+           "name": "太阳能设备"},
+    "16": {"category": "卫浴五金", "brand": "", "unit": "个",
+           "name": "卫浴五金"},
+    "19": {"category": "配电箱", "brand": "", "unit": "台",
+           "name": "配电箱"},
+    "29": {"category": "抗震支架", "brand": "", "unit": "套",
+           "name": "抗震支架"},
+    "30": {"category": "发电机", "brand": "", "unit": "套",
+           "name": "柴油发电机"},
+    "31": {"category": "供水设备", "brand": "", "unit": "",
+           "name": "供水工程主材"},
+    "32": {"category": "充电桩", "brand": "", "unit": "套",
+           "name": "充电桩"},
+    "33": {"category": "泛光照明", "brand": "", "unit": "套",
+           "name": "泛光照明"},
+    "34": {"category": "消防", "brand": "", "unit": "",
+           "name": "消防工程"},
+    "35": {"category": "水电安装", "brand": "", "unit": "",
+           "name": "水电安装"},
+    "38": {"category": "供配电", "brand": "", "unit": "",
+           "name": "供配电工程"},
+}
+
+
 # ======== 模板注册表 ========
 TEMPLATES = {
     "pipe": {
@@ -470,6 +744,11 @@ TEMPLATES = {
         "name": "灯具清单",
         "parser": parse_light_fixture,
         "categories": ["安装03"],
+    },
+    "generic": {
+        "name": "通用解析器（自动识别表头）",
+        "parser": parse_generic,
+        "categories": list(CATEGORY_CONFIGS.keys()),
     },
 }
 
