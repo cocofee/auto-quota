@@ -298,7 +298,9 @@ def classify_excel_format(file_path: str) -> dict:
     # .xls 需要特殊处理
     actual_path = file_path
     temp_path = None
-    if fp.suffix.lower() == ".xls":
+    # 用统一的magic bytes检测，兼容后缀是.xlsx但实际是.xls的文件
+    from src.bill_reader import is_xls_format
+    if is_xls_format(file_path):
         try:
             temp_path = _convert_xls(file_path)
             actual_path = temp_path

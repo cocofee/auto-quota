@@ -19,6 +19,26 @@ from pathlib import Path
 import openpyxl
 from loguru import logger
 
+
+def is_xls_format(file_path) -> bool:
+    """检测文件是否为旧版.xls格式（OLE2/CDFV2）
+
+    有些文件后缀是.xlsx但实际内容是.xls格式（从某些系统导出时会出现）。
+    通过检查文件头 magic bytes（D0 CF 11 E0）来判断真实格式。
+
+    返回True表示需要用xlrd转换后才能被openpyxl加载。
+    """
+    from pathlib import Path
+    p = Path(file_path)
+    if p.suffix.lower() == ".xls":
+        return True
+    try:
+        with open(p, "rb") as f:
+            magic = f.read(4)
+        return magic == b'\xd0\xcf\x11\xe0'
+    except Exception:
+        return False
+
 import config
 from src.text_parser import parser as text_parser
 
@@ -139,19 +159,9 @@ class BillReader:
         temp_xlsx_path = None
         actual_path = file_path
 
-        is_old_xls = file_path.suffix.lower() == ".xls"
-        if not is_old_xls:
-            # 检查文件头：OLE2/CDFV2格式（.xls）的magic bytes是 D0 CF 11 E0
-            try:
-                with open(file_path, "rb") as f:
-                    magic = f.read(4)
-                if magic == b'\xd0\xcf\x11\xe0':
-                    is_old_xls = True
-                    logger.info(f"  文件后缀是.xlsx但实际是.xls格式，自动转换")
-            except Exception:
-                pass
-
-        if is_old_xls:
+        if is_xls_format(file_path):
+            if file_path.suffix.lower() != ".xls":
+                logger.info(f"  文件后缀是.xlsx但实际是.xls格式，自动转换")
             try:
                 temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
                 actual_path = Path(temp_xlsx_path)
@@ -306,7 +316,18 @@ class BillReader:
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
-        wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
+        # 假.xlsx（实际是.xls）也要能正确检测Sheet
+        actual_path = file_path
+        temp_xlsx_path = None
+        if is_xls_format(file_path):
+            try:
+                temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
+                actual_path = Path(temp_xlsx_path)
+            except Exception as e:
+                logger.warning(f"get_sheet_info: .xls转换失败: {e}")
+                raise
+
+        wb = openpyxl.load_workbook(str(actual_path), read_only=True, data_only=True)
         result = []
         try:
             for sn in wb.sheetnames:
@@ -331,6 +352,12 @@ class BillReader:
                 })
         finally:
             wb.close()
+            # 清理临时转换文件
+            if temp_xlsx_path:
+                try:
+                    Path(temp_xlsx_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
         return result
 
     def _read_sheet(self, ws, sheet_name: str) -> list[dict]:
