@@ -12,6 +12,7 @@
 底层组件见 match_core.py，处理流水线见 match_pipeline.py。
 """
 
+import re
 import threading
 import time
 
@@ -106,6 +107,28 @@ def _consume_early_result(results: list[dict], early_result: dict, early_type: s
                 idx, total, exp_hits, rule_hits, interval, show_percent=False)
 
     return True, exp_hits, rule_hits
+
+
+def _update_consistency_memory(memory: dict, item: dict, result: dict):
+    """
+    更新同文件一致性记忆
+
+    高置信(>=80)匹配结果产生后，提取定额名称的关键词存入记忆，
+    后续同名短名称可以借用这个信息辅助搜索。
+    """
+    if not result or result.get("confidence", 0) < 80:
+        return
+    quotas = result.get("quotas", [])
+    if not quotas:
+        return
+    item_name = item.get("name", "")
+    if not item_name:
+        return
+    # 提取定额名称中的前2-4字中文关键词作为"定额族"标识
+    quota_name = quotas[0].get("name", "")
+    cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', quota_name)
+    if cn_words:
+        memory[item_name] = cn_words[0]
 
 
 def _prepare_match_iteration(item: dict, idx: int, total: int,
@@ -460,7 +483,19 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             except Exception:
                 pass
 
+    # 同文件一致性先验：记录已高置信匹配的"短名称→定额族"映射
+    # 当后续遇到同名短名称时，把之前匹配好的定额关键词作为搜索提示
+    consistency_memory = {}  # {清单名称: "定额族关键词"}
+
     for idx, item in enumerate(bill_items, start=1):
+        # 同文件一致性注入：如果之前同名清单已高置信匹配，给短名称补提示
+        item_name = item.get("name", "")
+        if item_name in consistency_memory and item.get("_is_ambiguous_short"):
+            family_kw = consistency_memory[item_name]
+            hints = item.get("_context_hints", [])
+            if family_kw not in hints:
+                item.setdefault("_context_hints", []).append(family_kw)
+
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
             idx=idx,
@@ -480,6 +515,9 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
         )
         if consumed:
             _notify_progress(idx, result=results[-1] if results else None)
+            # 经验库/规则直通的结果也更新一致性记忆
+            if results:
+                _update_consistency_memory(consistency_memory, item, results[-1])
             continue
 
         _, _, _, candidates, exp_backup, rule_backup = prepared_bundle
@@ -489,6 +527,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
         _append_search_result_and_log(
             results, result, idx, total, exp_hits, rule_hits)
+        _update_consistency_memory(consistency_memory, item, result)
         _notify_progress(idx, result=result)
 
     _log_exp_rule_summary(exp_hits, rule_hits, total)
@@ -649,7 +688,18 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         except Exception:
             pass
 
+    # 同文件一致性先验（agent模式同样适用）
+    consistency_memory_agent = {}
+
     for idx, item in enumerate(bill_items, start=1):
+        # 同文件一致性注入
+        item_name = item.get("name", "")
+        if item_name in consistency_memory_agent and item.get("_is_ambiguous_short"):
+            family_kw = consistency_memory_agent[item_name]
+            hints = item.get("_context_hints", [])
+            if family_kw not in hints:
+                item.setdefault("_context_hints", []).append(family_kw)
+
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
             idx=idx,
@@ -673,6 +723,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             # 经验库/规则直通命中，结果在 _consumed_buf 最后一条
             results_by_idx[idx] = _consumed_buf[-1]
             _update_match_stats(_consumed_buf[-1])
+            _update_consistency_memory(consistency_memory_agent, item, _consumed_buf[-1])
             _notify_progress(idx, phase=1)
             continue
 
@@ -687,6 +738,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             fastpath_hits += 1
             results_by_idx[idx] = fast_result
             _update_match_stats(fast_result)
+            _update_consistency_memory(consistency_memory_agent, item, fast_result)
 
             # 质量护栏：抽检走快通道的条目（收集到LLM任务里一起并发）
             if _should_audit_fastpath():

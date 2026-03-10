@@ -59,7 +59,8 @@ def calculate_confidence(param_score: float, param_match: bool = True,
                          name_bonus: float = 0.0,
                          score_gap: float = 1.0,
                          rerank_score: float = 0.0,
-                         candidates_count: int = 20) -> int:
+                         candidates_count: int = 20,
+                         is_ambiguous_short: bool = False) -> int:
     """
     多信号置信度计算（v2，2026-03-06 校准版）
 
@@ -156,6 +157,12 @@ def calculate_confidence(param_score: float, param_match: bool = True,
         penalty += 8.0
     elif candidates_count < 5:
         penalty += 4.0
+
+    # 短名称歧义项：封顶黄灯（最高75），防止信息不足时误给绿灯
+    if is_ambiguous_short:
+        penalty += 5.0
+        result = int(max(raw + bonus - penalty, 10))
+        return min(result, 75)
 
     result = int(max(raw + bonus - penalty, 10))
     return min(result, 95)
@@ -773,6 +780,12 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         # 防御：确保每个元素都是字符串
         hint_text = " ".join(str(h) for h in cross_hints[:3] if h)
         search_query = f"{search_query} {hint_text}"
+
+    # L6局部上下文提示：短名称歧义项从邻居获取的提示词
+    context_hints = item.get("_context_hints", []) if isinstance(item, dict) else []
+    if context_hints:
+        context_text = " ".join(str(h) for h in context_hints[:3] if h)
+        search_query = f"{search_query} {context_text}"
 
     # 从清单项获取已清洗的参数，传给参数验证（避免重新提取）
     item_params = item.get("params") if isinstance(item, dict) else None
