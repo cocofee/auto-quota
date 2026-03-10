@@ -336,3 +336,89 @@ class TestGroundBarVsCableConflict:
         """关键词在数字后面：60×6 扁铁"""
         result = parser.parse("60×6 扁铁 安装")
         assert result.get("ground_bar_width") == 60.0
+
+
+class TestHalfPerimeter:
+    """半周长提取回归测试（覆盖30省4种格式）"""
+
+    # --- 广东格式：安装方式(半周长m以内) 数值 ---
+
+    def test_guangdong_suspended(self):
+        """广东悬挂式：悬挂式(半周长m以内) 1.0 → 1000mm"""
+        result = parser.parse("控制箱安装 悬挂式(半周长m以内) 1.0")
+        assert result["half_perimeter"] == 1000.0
+
+    def test_guangdong_embedded(self):
+        """广东嵌入式：嵌入式(半周长m以内) 1.5 → 1500mm"""
+        result = parser.parse("成套配电箱安装 嵌入式(半周长m以内) 1.5")
+        assert result["half_perimeter"] == 1500.0
+
+    def test_guangdong_mm_format(self):
+        """广东mm格式：接线箱半周长(mm以内) 700 → 700mm"""
+        result = parser.parse("接线箱明装 接线箱半周长(mm以内) 700")
+        assert result["half_perimeter"] == 700.0
+
+    # --- 江西格式 ---
+
+    def test_jiangxi_m_suffix(self):
+        """江西m后缀：(半周长) 1.5m → 1500mm"""
+        result = parser.parse("成套配电箱安装 悬挂、嵌入式(半周长) 1.5m")
+        assert result["half_perimeter"] == 1500.0
+
+    def test_jiangxi_mm_le(self):
+        """江西mm带≤：半周长(mm) ≤1500 → 1500mm"""
+        result = parser.parse("接线箱明装 半周长(mm) ≤1500")
+        assert result["half_perimeter"] == 1500.0
+
+    def test_jiangxi_m_le(self):
+        """江西m带≤：半周长(m) ≤1.5 → 1500mm"""
+        result = parser.parse("半周长(m) ≤1.5")
+        assert result["half_perimeter"] == 1500.0
+
+    # --- 浙江格式 ---
+
+    def test_zhejiang_no_parens(self):
+        """浙江无括号：悬挂式半周长1.0m → 1000mm"""
+        result = parser.parse("成套配电箱安装 悬挂式半周长1.0m")
+        assert result["half_perimeter"] == 1000.0
+
+    def test_zhejiang_mm_no_space(self):
+        """浙江mm无空格：半周长(mm)≤1500 → 1500mm"""
+        result = parser.parse("接线箱明装半周长(mm)≤1500")
+        assert result["half_perimeter"] == 1500.0
+
+    # --- 上海格式（之前的bug触发格式） ---
+
+    def test_shanghai_parens_m(self):
+        """上海括号m格式：(半周长) 1.5m以内 → 1500mm"""
+        result = parser.parse("小型配电箱安装(半周长) 1.5m以内")
+        assert result["half_perimeter"] == 1500.0
+
+    def test_shanghai_mm_with_install(self):
+        """上海mm带安装方式：明装 半周长500mm以内 → 500mm（之前误返回500000）"""
+        result = parser.parse("接线箱安装 明装 半周长500mm以内")
+        assert result["half_perimeter"] == 500.0
+
+    def test_shanghai_mm_with_install_dark(self):
+        """上海暗装mm格式：暗装 半周长1500mm以内 → 1500mm（之前误返回1500000）"""
+        result = parser.parse("接线箱安装 暗装 半周长1500mm以内")
+        assert result["half_perimeter"] == 1500.0
+
+    def test_shanghai_le_m(self):
+        """上海≤m格式：半周长≤1.5m → 1500mm（之前返回N/A）"""
+        result = parser.parse("悬挂嵌入式程序控制箱安装 半周长≤1.5m")
+        assert result["half_perimeter"] == 1500.0
+
+    # --- 清单规格计算 ---
+
+    def test_spec_wh(self):
+        """从清单规格W*H计算半周长"""
+        result = parser.parse("配电箱 规格：420*470*120")
+        assert result["half_perimeter"] == 890.0  # 420+470
+
+    # --- 默认值 ---
+
+    def test_default_value(self):
+        """无规格的配电箱默认1500mm"""
+        result = parser.parse("照明配电箱安装")
+        assert result["half_perimeter"] == 1500.0
