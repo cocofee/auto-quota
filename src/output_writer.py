@@ -24,6 +24,7 @@ from datetime import datetime
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from loguru import logger
 
 import config
@@ -674,6 +675,10 @@ class OutputWriter:
         # 返回原始合并范围，插入完定额行后恢复
         saved_merges = self._unmerge_data_area(ws, header_row)
 
+        # 计算匹配结果列的起始位置（追加到原表最后一列之后，不覆盖原始数据）
+        # 保底不小于10（J列），避免原表只有5列时结果列和数据混在一起
+        extra_start = max(ws.max_column + 1, 10)
+
         # 第1步：删除已有定额行（如果原文件中有旧的定额行）
         self._remove_existing_quota_rows(ws, header_row)
 
@@ -774,8 +779,8 @@ class OutputWriter:
         for row_idx, result in sorted(row_result_pairs, key=lambda x: x[0], reverse=True):
             quotas = _ensure_list(result.get("quotas", []))
 
-            # 在清单行的J-O列写入推荐度、备选和主材
-            self._write_bill_extra_info(ws, row_idx, result)
+            # 在清单行的额外列写入推荐度、备选和主材（动态列位置）
+            self._write_bill_extra_info(ws, row_idx, result, extra_start)
 
             # 要插入的行数（定额行+主材行，无定额不插入行）
             materials = _resolve_output_materials(result)
@@ -801,7 +806,7 @@ class OutputWriter:
                     q_row = row_idx + 1 + q_idx
                     self._write_single_quota_row(
                         ws, q_row, quota, bill_unit, bill_qty,
-                        unit_col=unit_col, qty_col=qty_col)
+                        unit_col=unit_col, qty_col=qty_col, extra_start=extra_start)
                     # 注意：定额行的列合并（F:G, I:J等）不在这里做！
                     # 因为后续的 insert_rows 会错误移位这些合并，导致合并跑到
                     # 页面结构行上产生"竖杠"。改为第4.9步统一处理。
@@ -816,7 +821,7 @@ class OutputWriter:
                     m_row = mat_start + m_idx
                     self._write_single_material_row(
                         ws, m_row, mat,
-                        unit_col=unit_col, qty_col=qty_col)
+                        unit_col=unit_col, qty_col=qty_col, extra_start=extra_start)
                     ws.row_dimensions[m_row].height = 30
 
         # 第4.5步：恢复所有原始行的行高（按插入偏移量计算新位置）
@@ -857,12 +862,12 @@ class OutputWriter:
                             except Exception:
                                 pass  # 合并失败（可能与其他合并重叠）不影响主流程
 
-        # 第5步：在表头行添加J-O列标题
-        self._add_extra_headers(ws, header_row)
+        # 第5步：在表头行添加额外列标题（动态列位置）
+        self._add_extra_headers(ws, header_row, extra_start)
 
         # 第6步：格式化清单行和定额行（保留原表列宽，不覆盖）
         self._apply_post_format(ws, header_row, quantity_col=qty_col,
-                                keep_col_widths=True)
+                                keep_col_widths=True, extra_start=extra_start)
 
         logger.info(f"Sheet [{ws.title}]: 处理 {len(row_result_pairs)} 条清单项")
 
@@ -1041,8 +1046,11 @@ class OutputWriter:
         if rows_to_delete:
             logger.info(f"Sheet [{ws.title}]: 删除 {len(rows_to_delete)} 条已有定额/主材行")
 
-    def _write_bill_extra_info(self, ws, row_idx: int, result: dict):
-        """在清单行的J-O列写入推荐度、匹配说明、备选定额和主材"""
+    def _write_bill_extra_info(self, ws, row_idx: int, result: dict, extra_start: int = 10):
+        """在清单行的额外列写入推荐度、匹配说明、备选定额和主材
+
+        extra_start: 额外列的起始列号（动态计算，追加到原表最后一列之后）
+        """
         confidence = _safe_confidence(result.get("confidence", 0), default=0)
         quotas = _ensure_list(result.get("quotas", []))
         explanation = result.get("explanation", "")
@@ -1054,16 +1062,16 @@ class OutputWriter:
         # 置信度颜色
         conf_fill = self._confidence_fill(confidence)
 
-        # J列：星级推荐（安全写入，跳过合并单元格）
+        # 推荐度列（extra_start）：星级推荐（安全写入，跳过合并单元格）
         conf_text = confidence_to_stars(confidence, bool(quotas))
-        cell_j = _safe_write_cell(ws, row_idx, 10, conf_text)
+        cell_j = _safe_write_cell(ws, row_idx, extra_start, conf_text)
         if cell_j:
             cell_j.font = BILL_FONT
             cell_j.border = THIN_BORDER
             if quotas:
                 cell_j.fill = conf_fill
 
-        # K列：匹配说明（L4请教/同类待定/需复核 前缀标记）
+        # 匹配说明列（extra_start+1）：L4请教/同类待定/需复核 前缀标记
         brief = self._brief_explanation(explanation)
         if result.get("l4_representative"):
             # L4代表项：用户只需改这条，同类自动学习
@@ -1078,19 +1086,19 @@ class OutputWriter:
         rule_hints = result.get("rule_hints", "")
         if rule_hints:
             brief = f"{brief} [规则]{rule_hints}" if brief else f"[规则]{rule_hints}"
-        cell_k = _safe_write_cell(ws, row_idx, 11, brief)
+        cell_k = _safe_write_cell(ws, row_idx, extra_start + 1, brief)
         if cell_k:
             cell_k.font = BILL_FONT
             cell_k.border = THIN_BORDER
 
-        # L/M/N列：备选定额
+        # 备选定额列（extra_start+2 起，共3列）
         self._write_alternative_cells(
-            ws, row_idx, start_col=12, alternatives=result.get("alternatives", [])
+            ws, row_idx, start_col=extra_start + 2, alternatives=result.get("alternatives", [])
         )
 
-        # O列：主材（优先经验库，否则从清单描述提取）
+        # 主材列（extra_start+5）：优先经验库，否则从清单描述提取
         material_text = self._get_material_text(result)
-        cell_o = _safe_write_cell(ws, row_idx, 15, material_text)
+        cell_o = _safe_write_cell(ws, row_idx, extra_start + 5, material_text)
         if cell_o:
             cell_o.font = BILL_FONT
             cell_o.border = THIN_BORDER
@@ -1134,7 +1142,8 @@ class OutputWriter:
 
     def _write_single_quota_row(self, ws, q_row: int, quota: dict,
                                 bill_unit: str, bill_qty,
-                                unit_col: int = 5, qty_col: int = 6):
+                                unit_col: int = 5, qty_col: int = 6,
+                                extra_start: int = 10):
         """写入一行定额数据（广联达标准格式：宋体9号、thin边框、无背景、不合并）"""
         # A列留空（广联达靠这个区分清单行和子目行）
 
@@ -1168,8 +1177,8 @@ class OutputWriter:
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
 
-        # 所有列统一 thin 边框 + 宋体9号（和清单行一致，覆盖到K列）
-        for col in range(1, 12):  # A-K列
+        # 所有列统一 thin 边框 + 宋体9号（和清单行一致，覆盖到额外列末尾）
+        for col in range(1, extra_start + 6):  # A列到主材列
             cell = ws.cell(row=q_row, column=col)
             cell.border = THIN_BORDER
             if cell.font == Font() or cell.font is None:
@@ -1178,7 +1187,8 @@ class OutputWriter:
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
 
     def _write_single_material_row(self, ws, m_row: int, material: dict,
-                                    unit_col: int = 5, qty_col: int = 6):
+                                    unit_col: int = 5, qty_col: int = 6,
+                                    extra_start: int = 10):
         """写入一行主材数据（格式与定额行一致：宋体9号、thin边框）
 
         主材行特征：A列空，B列=材料编码，C列=材料名称，E列=单位，F列=数量
@@ -1211,8 +1221,8 @@ class OutputWriter:
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
 
-        # 所有列统一 thin 边框 + 宋体9号
-        for col in range(1, 12):  # A-K列
+        # 所有列统一 thin 边框 + 宋体9号（覆盖到额外列末尾）
+        for col in range(1, extra_start + 6):  # A列到主材列
             cell = ws.cell(row=m_row, column=col)
             cell.border = THIN_BORDER
             if cell.font == Font() or cell.font is None:
@@ -1220,29 +1230,27 @@ class OutputWriter:
             if cell.alignment is None or cell.alignment == Alignment():
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
 
-    def _add_extra_headers(self, ws, header_row: int):
-        """在表头行添加J-O列标题"""
+    def _add_extra_headers(self, ws, header_row: int, extra_start: int = 10):
+        """在表头行添加额外列标题（推荐度/匹配说明/备选/主材）"""
         extra_headers = {
-            10: ("推荐度", HEADER_FILL),
-            11: ("匹配说明", HEADER_FILL),
-            12: ("备选1", LIGHT_BLUE_FILL),
-            13: ("备选2", LIGHT_BLUE_FILL),
-            14: ("备选3", LIGHT_BLUE_FILL),
-            15: ("主材", LIGHT_BLUE_FILL),
+            extra_start: ("推荐度", HEADER_FILL),
+            extra_start + 1: ("匹配说明", HEADER_FILL),
+            extra_start + 2: ("备选1", LIGHT_BLUE_FILL),
+            extra_start + 3: ("备选2", LIGHT_BLUE_FILL),
+            extra_start + 4: ("备选3", LIGHT_BLUE_FILL),
+            extra_start + 5: ("主材", LIGHT_BLUE_FILL),
         }
         for col, (title, fill) in extra_headers.items():
             self._set_header_cell(ws, header_row, col, title, fill)
 
-        # 设置额外列宽
-        ws.column_dimensions["J"].width = 14
-        ws.column_dimensions["K"].width = 40
-        ws.column_dimensions["L"].width = 30
-        ws.column_dimensions["M"].width = 30
-        ws.column_dimensions["N"].width = 30
-        ws.column_dimensions["O"].width = 36
+        # 设置额外列宽（用动态列号转字母）
+        col_widths = [14, 40, 30, 30, 30, 36]  # 推荐度/匹配说明/备选1/备选2/备选3/主材
+        for i, width in enumerate(col_widths):
+            col_letter = get_column_letter(extra_start + i)
+            ws.column_dimensions[col_letter].width = width
 
     def _apply_post_format(self, ws, header_row: int, quantity_col: int = 6,
-                           keep_col_widths: bool = False):
+                           keep_col_widths: bool = False, extra_start: int = 10):
         """
         格式化清单行和定额行（不动分部/合计等原始行，保留其原始格式）
 
@@ -1258,6 +1266,8 @@ class OutputWriter:
                 ws.column_dimensions[col].width = width
 
         # 2. 只格式化清单行、定额行和主材行，跳过分部/合计等原始行
+        # 额外列的列号集合（匹配说明/备选1/备选2/备选3/主材 = extra_start+1 到 extra_start+5）
+        extra_left_align_cols = set(range(extra_start + 1, extra_start + 6))
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
             b_val = ws.cell(row=row_idx, column=2).value
@@ -1278,7 +1288,7 @@ class OutputWriter:
             if not is_bill and not is_quota and not is_material:
                 continue  # 分部/合计/空行等，保留原始格式不动
 
-            for col_idx in range(1, 16):  # A-O 列（1-15）
+            for col_idx in range(1, extra_start + 6):  # A列到主材列
                 cell = ws.cell(row=row_idx, column=col_idx)
                 if isinstance(cell, MergedCell):
                     continue  # 合并单元格跳过，避免写样式崩溃
@@ -1292,7 +1302,7 @@ class OutputWriter:
 
                 # 对齐 + wrap_text：根据列确定对齐方式
                 h_align = "center"
-                if col_idx in (3, 4, 11, 12, 13, 14, 15):  # C/D/K/L/M/N/O：左对齐
+                if col_idx in (3, 4) or col_idx in extra_left_align_cols:  # C/D/额外列：左对齐
                     h_align = "left"
                 elif col_idx in (quantity_col, 7, 8):  # 数量/单价/合价：右对齐
                     h_align = "right"
