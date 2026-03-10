@@ -791,36 +791,52 @@ class TextParser:
         来源：
         1. 定额名称："半周长1.0m" → 1000 (mm)
         2. 定额名称："半周长(mm以内) 1000" → 1000
-        3. 清单规格："规格：420*470*120" → 半周长 = 420+470 = 890 (mm)
-        4. 清单无规格但含"配电箱" → 默认1500mm（行业惯例按1.5m套用）
+        3. 定额名称："半周长500mm以内" → 500 (mm)
+        4. 定额名称："半周长≤1.5m" → 1500 (mm)
+        5. 清单规格："规格：420*470*120" → 半周长 = 420+470 = 890 (mm)
+        6. 清单无规格但含"配电箱" → 默认1500mm（行业惯例按1.5m套用）
+
+        匹配顺序：mm格式优先于m格式，防止"500mm"被误当"500m"
         """
-        # 优先：定额名称中的 "半周长X.Xm" 格式
-        m_match = re.search(r'半周长\s*(\d+(?:\.\d+)?)\s*m', text)
-        if m_match:
-            return float(m_match.group(1)) * 1000  # m → mm
+        # === 1. mm格式优先（不会和m混淆） ===
 
-        # 其次：标准 "半周长(mm以内) 数字" 格式
-        named = self._search_first_float(
-            text, [r'半周长\s*[（(]\s*mm以内\s*[)）]\s*(\d+)'])
-        if named is not None:
-            return named
+        # 1a: "半周长(mm以内) 700" / "半周长(mm) ≤1500" / "半周长(mm)≤1500"
+        m_mm_paren = re.search(
+            r'半周长[^)]*mm[^)]*[)）]\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)', text)
+        if m_mm_paren:
+            return float(m_mm_paren.group(1))  # 已是mm
 
-        # 再次："(半周长m以内) 2.5" 格式（广东等省定额名称，半周长在括号内，值在括号外）
-        # 注意：必须在mm格式之后检查（mm格式已在上面处理，不会重复匹配）
-        m_paren = re.search(r'半周长[^)]*\)\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)', text)
+        # 1b: "半周长500mm以内" / "半周长1500mm"（无括号，mm直接跟数字后面）
+        m_mm_suffix = re.search(
+            r'半周长\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)\s*mm', text)
+        if m_mm_suffix:
+            return float(m_mm_suffix.group(1))  # 已是mm
+
+        # === 2. m格式（需×1000转mm） ===
+
+        # 2a: "(半周长m以内) 1.5" / "(半周长) 1.5m以内" / "嵌入式(半周长m以内) 1.5"
+        m_paren = re.search(
+            r'半周长[^)]*[)）]\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)', text)
         if m_paren:
             val = float(m_paren.group(1))
             if val < 10:  # 小于10视为米（配电箱半周长一般0.5~5m）
                 return val * 1000  # m → mm
-            return val  # 大于10视为毫米
+            return val  # 大于10视为毫米（兼容旧格式）
 
-        # 从清单规格 W*H 计算 (W+H)
+        # 2b: "半周长1.5m" / "半周长≤1.5m" / "悬挂式半周长1.0m"
+        # m(?!m) 负向前瞻：确保m后面不是m（避免匹配到mm的第一个m）
+        m_m_suffix = re.search(
+            r'半周长\s*[≤≥<>]?\s*(\d+(?:\.\d+)?)\s*m(?!m)', text)
+        if m_m_suffix:
+            return float(m_m_suffix.group(1)) * 1000  # m → mm
+
+        # === 3. 从清单规格 W*H 计算 ===
         spec_wh = self._extract_spec_wh(text)
         if spec_wh:
             w, h = spec_wh
             return w + h  # 半周长 = W + H（单位mm）
 
-        # 清单无规格但含"配电箱"关键词 → 默认按1.5m套用（行业惯例）
+        # === 4. 默认值 ===
         if re.search(r'配电箱|配电柜|动力箱|照明箱', text):
             return 1500.0
 
