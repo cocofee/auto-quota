@@ -32,7 +32,8 @@ from app.api.shared import get_user_task, store_experience, store_experience_bat
 
 router = APIRouter()
 
-# 置信度分档阈值（和 config.py 的 CONFIDENCE_GREEN / CONFIDENCE_YELLOW 保持一致）
+# 置信度分档阈值（必须与 config.py CONFIDENCE_GREEN/YELLOW 和前端 experience.ts 保持一致）
+# 修改时三处同步：config.py:585-586 / experience.ts:12-13 / 此处
 _GREEN_THRESHOLD = 85
 _YELLOW_THRESHOLD = 70
 
