@@ -37,11 +37,12 @@ def _parse_json_list(raw_text: str, field_name: str) -> list:
 
 def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
               reason: str = "", specialty: str = "", province: str = None,
-              confirmed: bool = False):
+              confirmed: bool = False, materials: list = None):
     """存入一条纠正到经验库
 
     参数:
         confirmed: True=用户已确认，直接写权威层；False=自动纠正，写候选层
+        materials: 主材列表 [{"code":"CL170...", "name":"镀锌钢管", "unit":"m", "qty":1.05}]
     """
     province = province or config.get_current_province()
     exp_db = ExperienceDB()
@@ -57,6 +58,7 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
         bill_text=bill_text,
         quota_ids=quota_ids,
         quota_names=quota_names,
+        materials=materials or [],
         source=source,
         confidence=confidence,
         specialty=specialty,
@@ -83,6 +85,33 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
                 # 不影响经验库存入，仅记录日志
                 from loguru import logger as _logger
                 _logger.debug(f"通用知识库同步跳过: {e}")
+
+        # 主材存入主材库（定额→主材观测）
+        if materials:
+            try:
+                from src.material_db import MaterialDB
+                mat_db = MaterialDB()
+                quota_id_str = quota_ids[0] if quota_ids else ""
+                quota_name_str = quota_names[0] if quota_names else ""
+                for mat in materials:
+                    mat_name = mat.get("name", "").strip()
+                    if not mat_name:
+                        continue
+                    mat_db.add_quota_observation(
+                        quota_id=quota_id_str,
+                        quota_name=quota_name_str,
+                        material_name=mat_name,
+                        material_spec=mat.get("spec", ""),
+                        material_unit=mat.get("unit", ""),
+                        quantity=float(mat.get("qty", 0) or 0),
+                        material_code=mat.get("code", ""),
+                        province=province,
+                        project_name=reason,
+                    )
+            except Exception as e:
+                from loguru import logger as _logger
+                _logger.debug(f"主材库同步跳过: {e}")
+
         return True
     elif record_id == -1:
         print(f"  被校验拦截: {name} → {quota_ids} (定额编号可能不存在)")
@@ -164,6 +193,7 @@ def store_batch(filepath: str, province: str = None, confirmed: bool = False):
             desc=item.get("description", ""),
             quota_ids=quota_ids,
             quota_names=quota_names,
+            materials=item.get("materials", item.get("source_materials", [])),
             reason=item.get("reason", ""),
             specialty=item.get("specialty", ""),
             province=province,

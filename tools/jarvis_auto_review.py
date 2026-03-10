@@ -174,6 +174,7 @@ def _correct_phase(detected_errors, province, db_conn, sibling_provinces=None):
             "error_type": d["error"]["type"],
             "error_reason": d["error"]["reason"],
             "confidence": d["confidence"],
+            "source_materials": bill.get("source_materials", []),
         }
 
         if correction:
@@ -284,6 +285,7 @@ def auto_review(json_path, province=None, sibling_provinces=None):
                 "sheet_name": item.get("sheet_name", ""),
                 "sheet_bill_seq": item.get("sheet_bill_seq"),
                 "source_row": item.get("source_row"),
+                "source_materials": item.get("source_materials", []),
             })
 
     return summary, auto_corrections, manual_items, measure_items
