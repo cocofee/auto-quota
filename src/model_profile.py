@@ -46,10 +46,10 @@ _BGE_PROFILE = VectorModelProfile(
     cpu_load_kwargs={},
 )
 
-# Qwen3微调模型（v2，分层采样15万条训练）
+# Qwen3微调模型（v3，分层采样20万条训练，含清单库/行业数据）
 _QWEN3_PROFILE = VectorModelProfile(
     key="qwen3",
-    model_name="models/qwen3-embedding-quota-v2",
+    model_name="models/qwen3-embedding-quota-v3",
     embedding_dim=1024,
     query_prefix="",  # Qwen3不需要查询前缀
     load_kwargs={
