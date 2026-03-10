@@ -121,6 +121,9 @@ def _update_consistency_memory(memory: dict, item: dict, result: dict):
     quotas = result.get("quotas", [])
     if not quotas:
         return
+    item_name = item.get("name", "")
+    if not item_name:
+        return
     # 用 (名称, 专业) 做联合key，避免跨专业污染
     # 例如同一文件中消防分部的"阀门"和给排水分部的"阀门"是不同场景
     specialty = item.get("specialty", "")

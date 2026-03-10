@@ -1,0 +1,162 @@
+{
+  "_meta": {
+    "generated": "2026-03-10 16:55",
+    "source": "experience.db authority层",
+    "source_rows": 98883,
+    "filtered_short_name_rows": 43245,
+    "group_by": "(bill_name, specialty)",
+    "family_extract": "clean_quota_name() — 去参数/档位，保留核心名词",
+    "tier1_threshold": ">=20次 AND >=90%集中度 AND top1>=2×top2",
+    "tier2_threshold": ">=15次 AND >=80%集中度（观测层，不自动注入）",
+    "tier1_count": 6,
+    "tier2_count": 6
+  },
+  "tier1": {
+    "塑料管|C5": {
+      "short_name": "塑料管",
+      "specialty": "C5",
+      "top_family": "塑料管安装 管外径",
+      "top_family_count": 22,
+      "second_family": "",
+      "second_family_count": 0,
+      "total_count": 22,
+      "concentration": 1.0,
+      "top2_gap": 1.0,
+      "province_count": 2
+    },
+    "气压罐|C10": {
+      "short_name": "气压罐",
+      "specialty": "C10",
+      "top_family": "气压罐 罐体直径",
+      "top_family_count": 30,
+      "second_family": "",
+      "second_family_count": 0,
+      "total_count": 30,
+      "concentration": 1.0,
+      "top2_gap": 1.0,
+      "province_count": 2
+    },
+    "空调器|C12": {
+      "short_name": "空调器",
+      "specialty": "C12",
+      "top_family": "手工除锈 一般钢结构轻锈",
+      "top_family_count": 20,
+      "second_family": "",
+      "second_family_count": 0,
+      "total_count": 20,
+      "concentration": 1.0,
+      "top2_gap": 1.0,
+      "province_count": 1
+    },
+    "配电箱|C2": {
+      "short_name": "配电箱",
+      "specialty": "C2",
+      "top_family": "成套配电箱安装 悬挂、嵌入式",
+      "top_family_count": 85,
+      "second_family": "端子箱、端子板安装及端子板外部接线 户内端子箱安装",
+      "second_family_count": 1,
+      "total_count": 86,
+      "concentration": 0.988,
+      "top2_gap": 0.977,
+      "province_count": 1
+    },
+    "静压箱|C7": {
+      "short_name": "静压箱",
+      "specialty": "C7",
+      "top_family": "静压箱安装展开面积",
+      "top_family_count": 147,
+      "second_family": "静压箱安装 展开面积",
+      "second_family_count": 7,
+      "total_count": 162,
+      "concentration": 0.907,
+      "top2_gap": 0.864,
+      "province_count": 3
+    },
+    "风机|C1": {
+      "short_name": "风机",
+      "specialty": "C1",
+      "top_family": "轴流通风机 设备重量",
+      "top_family_count": 46,
+      "second_family": "",
+      "second_family_count": 0,
+      "total_count": 46,
+      "concentration": 1.0,
+      "top2_gap": 1.0,
+      "province_count": 2
+    }
+  },
+  "tier2": {
+    "凿（压）槽|13": {
+      "short_name": "凿（压）槽",
+      "specialty": "13",
+      "top_family": "混凝土刨沟槽 管径",
+      "top_family_count": 48,
+      "second_family": "混凝土刨沟槽 管径32~二次精装修工程，砖墙开槽增加费",
+      "second_family_count": 3,
+      "total_count": 56,
+      "concentration": 0.857,
+      "top2_gap": 0.804,
+      "province_count": 1
+    },
+    "桥架|C4": {
+      "short_name": "桥架",
+      "specialty": "C4",
+      "top_family": "钢制槽式桥架",
+      "top_family_count": 1496,
+      "second_family": "钢制托盘式桥架",
+      "second_family_count": 184,
+      "total_count": 1867,
+      "concentration": 0.801,
+      "top2_gap": 0.703,
+      "province_count": 8
+    },
+    "洗脸盆|C4": {
+      "short_name": "洗脸盆",
+      "specialty": "C4",
+      "top_family": "自动冲洗感应器接线",
+      "top_family_count": 17,
+      "second_family": "红外感应器",
+      "second_family_count": 3,
+      "total_count": 20,
+      "concentration": 0.85,
+      "top2_gap": 0.7,
+      "province_count": 1
+    },
+    "盘、箱、柜|C6": {
+      "short_name": "盘、箱、柜",
+      "specialty": "C6",
+      "top_family": "柜式、框架式盘",
+      "top_family_count": 18,
+      "second_family": "操作台",
+      "second_family_count": 2,
+      "total_count": 22,
+      "concentration": 0.818,
+      "top2_gap": 0.727,
+      "province_count": 1
+    },
+    "铁构件|13": {
+      "short_name": "铁构件",
+      "specialty": "13",
+      "top_family": "一般铁构件制作",
+      "top_family_count": 85,
+      "second_family": "一般铁构件安装",
+      "second_family_count": 8,
+      "total_count": 97,
+      "concentration": 0.876,
+      "top2_gap": 0.794,
+      "province_count": 1
+    },
+    "除湿机|C7": {
+      "short_name": "除湿机",
+      "specialty": "C7",
+      "top_family": "除湿器",
+      "top_family_count": 28,
+      "second_family": "CLFHZ105F风冷调温除湿机室内机20:30风量：3/h 制冷量：158.W 输入功率：45.W 机外静压：450Pa",
+      "second_family_count": 2,
+      "total_count": 34,
+      "concentration": 0.824,
+      "top2_gap": 0.765,
+      "province_count": 3
+    }
+  }
+}
