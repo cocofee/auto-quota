@@ -61,6 +61,7 @@ def rebuild_quota_indices():
         logger.info(f"[{i}/{len(provinces)}] 重建定额索引: {province}")
         logger.info(f"{'='*60}")
 
+        engine = None
         try:
             engine = VectorEngine(province=province)
 
@@ -94,6 +95,16 @@ def rebuild_quota_indices():
         except Exception as e:
             logger.error(f"  失败: {e}")
             fail_count += 1
+        finally:
+            # 释放Chroma client缓存，避免211个省份句柄累积（Codex H1）
+            if engine is not None:
+                from src.model_cache import ModelCache
+                chroma_path = str(engine.chroma_dir)
+                if chroma_path in ModelCache._chroma_clients:
+                    try:
+                        del ModelCache._chroma_clients[chroma_path]
+                    except Exception:
+                        pass
 
     elapsed_total = time.time() - t_start
     logger.info(f"\n{'='*60}")
@@ -187,16 +198,20 @@ def main():
     total_elapsed = time.time() - t_global
     logger.info(f"\n全部完成! 总耗时: {total_elapsed/60:.1f}分钟")
 
-    # 输出新索引目录大小
+    # 输出新索引目录大小（跨平台，不依赖Unix du命令）
     qwen3_dir = config.DB_DIR / "chroma" / "qwen3"
     if qwen3_dir.exists():
-        import subprocess
-        result = subprocess.run(
-            ["du", "-sh", str(qwen3_dir)],
-            capture_output=True, text=True
+        total_size = sum(
+            f.stat().st_size for f in qwen3_dir.rglob("*") if f.is_file()
         )
-        if result.returncode == 0:
-            logger.info(f"新索引目录大小: {result.stdout.strip()}")
+        # 转为可读格式
+        if total_size >= 1024 ** 3:
+            size_str = f"{total_size / 1024**3:.1f}GB"
+        elif total_size >= 1024 ** 2:
+            size_str = f"{total_size / 1024**2:.1f}MB"
+        else:
+            size_str = f"{total_size / 1024:.0f}KB"
+        logger.info(f"新索引目录大小: {size_str}")
 
 
 if __name__ == "__main__":
