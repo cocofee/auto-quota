@@ -58,7 +58,11 @@ def load_json_papers(province_filter: str = None) -> dict:
             continue
         if province_filter and province_filter not in prov:
             continue
-        papers[prov] = data
+        # 同省多份试卷（如正常卷+脏数据卷）合并items，不覆盖
+        if prov in papers:
+            papers[prov]['items'].extend(data.get('items', []))
+        else:
+            papers[prov] = data
     return papers
 
 
