@@ -47,7 +47,8 @@ class DiffLearner:
             logger.debug(f"L5通用知识库同步跳过（不影响经验库）: {e}")
 
     def diff_and_learn(self, original_path: str, corrected_path: str,
-                       province: str = None) -> dict:
+                       province: str = None,
+                       all_authority: bool = False) -> dict:
         """
         对比原始输出和修正后文件，自动学习差异
 
@@ -55,6 +56,9 @@ class DiffLearner:
             original_path: 原始输出Excel路径（系统生成的）
             corrected_path: 修正后Excel路径（用户在广联达里改过的）
             province: 省份（如"北京2024"），默认使用配置文件中的省份
+            all_authority: 是否全部存权威层
+                - True:  改过的和没改过的都存权威层（用户逐条确认过）
+                - False: 改过的→权威层(user_correction)，没改过的→候选层(auto_review)
 
         返回:
             学习统计结果:
@@ -117,10 +121,18 @@ class DiffLearner:
                 # 未修改 → 用户确认了系统匹配正确
                 confirmed += 1
 
-                # 存入经验库（user_confirmed，权威层）
+                # 存入经验库：根据 all_authority 决定存哪一层
+                # all_authority=True → 权威层(user_confirmed)，用户逐条看过
+                # all_authority=False → 候选层(auto_review)，用户只是没改，不代表确认
                 if corr_quotas:
                     normalized_text = normalize_bill_text(bill_name, bill_desc)
                     corr_names = corr_item.get("quota_names", [])
+                    if all_authority:
+                        confirm_source = "user_confirmed"   # → 权威层
+                        confirm_confidence = 90
+                    else:
+                        confirm_source = "auto_review"      # → 候选层
+                        confirm_confidence = 75
                     record_id = experience_db.add_experience(
                         bill_text=normalized_text,
                         quota_ids=corr_quotas,
@@ -128,8 +140,8 @@ class DiffLearner:
                         bill_name=bill_name,
                         bill_code=bill_code,
                         bill_unit=bill_unit,
-                        source="user_confirmed",
-                        confidence=90,
+                        source=confirm_source,
+                        confidence=confirm_confidence,
                         province=province,
                         notes="diff_learner自动对比确认",
                     )
