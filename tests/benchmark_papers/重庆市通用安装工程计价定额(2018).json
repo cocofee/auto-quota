@@ -1,0 +1,2670 @@
+{
+  "province": "重庆市通用安装工程计价定额(2018)",
+  "total_items": 200,
+  "authority_count": 200,
+  "candidate_count": 0,
+  "content_hash": "1eee15cb",
+  "created": "2026-03-11",
+  "items": [
+    {
+      "id": 12992,
+      "bill_text": "止回阀 规格型号:1000*400 甲供材:止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0305"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13113,
+      "bill_text": "多联室内机(风管式) 规格型号:制冷量:3.6kW, 制热量:4.0kW, 功率:0.072kW/220V, 标准风量:540m³/h, 最大静压:30Pa,噪声:32dB 接管管径:φ12.7/6.4 带回风口、线控器及控制线 甲供材:多联室内机(风管式)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13149,
+      "bill_text": "分歧器 规格型号:φ15.9/φ9.52 甲供材:分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0037"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤15.9"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13371,
+      "bill_text": "电动对开多叶调节阀 规格型号：320*200,DC24V 甲供材：电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13118,
+      "bill_text": "双层百叶送风口 规格型号:300*300 甲供材:双层百叶送风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0325"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1280"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13256,
+      "bill_text": "70℃防火阀 FD 规格型号：常开,1250*500 中板加阀 甲供材：70℃防火阀 FD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13097,
+      "bill_text": "直埋式聚氨酯保温管 规格型号:DN100 甲供材:热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0676"
+      ],
+      "quota_names": [
+        "室外预制直埋保温管(电弧焊) 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13068,
+      "bill_text": "自动排气阀(配球阀) 规格型号:DN20 甲供材:自动排气阀(配球阀)",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0939"
+      ],
+      "quota_names": [
+        "自动排气阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13402,
+      "bill_text": "室内机线控器 规格型号：综合考虑 甲供材：室内机线控器",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0004"
+      ],
+      "quota_names": [
+        "温度开关"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12967,
+      "bill_text": "管道式排气扇 规格型号:风量:500m³/h 噪声:45dB 全压:250pa 功率:0.04kW/220V 带止回阀 甲供材:管道式排气扇",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0141"
+      ],
+      "quota_names": [
+        "卫生间通风器安装 风量(m3/h) ≤1200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12971,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,250*160 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13339,
+      "bill_text": "Δ=0.5MM的不锈钢板保护壳 名称：不锈钢板保护壳 规格型号：0.5MM厚 甲供材：锈钢板保护壳",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1592"
+      ],
+      "quota_names": [
+        "铁皮保护层 铆钉固定"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12990,
+      "bill_text": "止回阀 规格型号:500*320 甲供材:止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0304"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤2000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13338,
+      "bill_text": "0.8MM厚铝皮保护层 名称：0.8MM厚保护层 规格型号：0.8MM厚 甲供材：铝皮保护层",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1592"
+      ],
+      "quota_names": [
+        "铁皮保护层 铆钉固定"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13391,
+      "bill_text": "磷酸脱氧无缝紫铜管 规格型号：φ6.35 甲供材：铜管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0026"
+      ],
+      "quota_names": [
+        "多联机铜管安装 铜管外径(mm) ≤6.4"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13282,
+      "bill_text": "止回阀 规格型号：800*500 甲供材：止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0305"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13230,
+      "bill_text": "单层百叶风口 AV /T 规格型号：300*300 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0325"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1280"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13003,
+      "bill_text": "管道式消声器 XSQ 名称:管道式消声器 规格型号:阻抗复合型,500*320,L=800mm 甲供材:管道式消声器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0481"
+      ],
+      "quota_names": [
+        "阻抗式消声器安装周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13212,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀 规格型号：常开,400*250 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13042,
+      "bill_text": "止回阀 规格型号:1000*500 甲供材:止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0305"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13336,
+      "bill_text": "直埋式聚氨酯保温管 规格型号：DN100 甲供材：聚氨酯保温管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0676"
+      ],
+      "quota_names": [
+        "室外预制直埋保温管(电弧焊) 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13291,
+      "bill_text": "一体式超声波冷热量表 规格型号：DN150,流量150m³/h,带通讯接口,防护等级IP65，配防雨棚 甲供材：一体式超声波冷热量表",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0969"
+      ],
+      "quota_names": [
+        "焊接法兰阀 公称直径 ≤150mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12968,
+      "bill_text": "贯流式空气幕 规格型号:风量:2000m³/h,功率:0.2kW/220V 出口风速:8~12m/s,噪声:46dB(A) 参考长度:1.2m 甲供材:贯流式空气幕",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0076"
+      ],
+      "quota_names": [
+        "空气幕 质量(kg) ≤200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13121,
+      "bill_text": "单层百叶回风口 规格型号:800*200 甲供材:单层百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0327"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤2500"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13373,
+      "bill_text": "电动对开多叶调节阀 规格型号：500*320,DC24V 甲供材：电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13215,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀 规格型号：常开,1250*500 中板加阀 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13333,
+      "bill_text": "无缝钢管,焊接连接 名称：无缝钢管 规格型号：DN125,焊接连接 甲供材：无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0171",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤125mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13044,
+      "bill_text": "单层百叶风口 AV 规格型号: 800*500 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13123,
+      "bill_text": "多联机外机 制冷量:28.0kW, 制热量:31.5kW, 环保冷媒:R410a 参考功率:7.8kW, 噪声:58dB,,APF≥4.8 甲供材:多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0017"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤30"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13222,
+      "bill_text": "手动对开多叶调节阀 规格型号：630*320 甲供材：手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13202,
+      "bill_text": "壁式轴流风机 规格型号：(NO2.5) 风量:800m³/h, 全压:50pa, 功率:0.025kW/220V 噪声:58dB, 重量:15kg,η≥76% t 甲供材：壁式轴流风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0114"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤8900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13137,
+      "bill_text": "电动对开多叶调节阀 规格型号:400*250 DC24V 甲供材:电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12998,
+      "bill_text": "防雨百叶风口 W 名称:防雨百叶风口 规格型号:200*120 甲供材:防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0324"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13088,
+      "bill_text": "闸阀(接清洗泵) 规格型号:DN20 甲供材:闸阀(接清洗泵)",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13185,
+      "bill_text": "镀锌钢板风管0.75mm 名称:镀锌钢板风管 材质、厚度:镀锌薄钢板  δ=0.75mm 甲供材：镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0158"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤1000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12966,
+      "bill_text": "管道式排气扇 规格型号:风量:200m³/h 噪声:44dB 全压:220pa 功率:0.032kW/220V 带止回阀 甲供材:管道式排气扇",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0140"
+      ],
+      "quota_names": [
+        "卫生间通风器安装 风量(m3/h) ≤400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13270,
+      "bill_text": "镀锌钢板风管1.0mm 名称：镀锌薄钢板 规格型号：镀锌薄钢板  δ=1.0mm 甲供材：镀锌薄钢板",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0154"
+      ],
+      "quota_names": [
+        "镀锌薄钢板矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤2000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12963,
+      "bill_text": "轴流风机 规格型号:(NO3.15,φ325) 风量:2800m³/h 全压:300pa,功率:0.37kw 噪声:71dB,重量:17kg,η≥76% 甲供材:轴流风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0114"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤8900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13223,
+      "bill_text": "手动对开多叶调节阀 规格型号：800*400 甲供材：手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12952,
+      "bill_text": "壁挂式分体式空调 规格型号:制冷量:2.6kW,制热量:3.0kW, 风量:600m³/h 制冷(热)率:0.58(1.18)kW/220V, APF≥5.0 配套冷媒管及保温材料 甲供材:壁挂式分体式空调",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0081"
+      ],
+      "quota_names": [
+        "风机盘管 壁挂式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13295,
+      "bill_text": "电动调节蝶阀 规格型号：DN125、24V 配套压差传感器 甲供材：电动调节蝶阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0983"
+      ],
+      "quota_names": [
+        "法兰电磁阀 公称直径 ≤125mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13103,
+      "bill_text": "0.8mm厚铝皮保护层 名称:铝皮保护层 规格型号:0.8mm厚 甲供材:铝皮保护层",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1592"
+      ],
+      "quota_names": [
+        "铁皮保护层 铆钉固定"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13209,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀 规格型号：常开,260*260(参考,配套风机确定) 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13235,
+      "bill_text": "单层百叶风口 AV/T(侧) 名称：单层百叶风口 AV/T 规格型号：1000*120 带风阀 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0335"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤2400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13052,
+      "bill_text": "防火封堵 规格型号:无机防火封堵材料 甲供材:无机防火封堵材料",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0815"
+      ],
+      "quota_names": [
+        "孔洞封堵 发泡剂"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12999,
+      "bill_text": "防雨百叶风口 W 名称:防雨百叶风口 规格型号:250*160 甲供材:防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0324"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13152,
+      "bill_text": "分歧器 规格型号:φ25.4/φ12.7 甲供材:分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0040"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13388,
+      "bill_text": "分歧器 规格型号：φ28.6/φ15.9 甲供材：分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0040"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13294,
+      "bill_text": "电动双位蝶阀 规格型号：DN125、24V 甲供材：电动双位蝶阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0983"
+      ],
+      "quota_names": [
+        "法兰电磁阀 公称直径 ≤125mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13032,
+      "bill_text": "280℃排烟防火阀 FDH 规格型号:常开,1000*6300 甲供材:排烟防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0318"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤8000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13264,
+      "bill_text": "双层百叶风口 AV/T 名称：双层百叶风口 规格型号：1000*630 带风阀 甲供材：双层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0336"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13010,
+      "bill_text": "镀锌钢板风管0.5mm 名称:镀锌钢板风管 规格型号:镀锌薄钢板  δ=0.5mm 甲供材:镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0156"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤320"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13250,
+      "bill_text": "镀锌钢板风管1.0mm 名称:镀锌薄钢板风管 材质、厚度:镀锌薄钢板  δ=1.0mm 甲供材：镀锌薄钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0154"
+      ],
+      "quota_names": [
+        "镀锌薄钢板矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤2000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13238,
+      "bill_text": "防雨百叶风口 W 规格型号： 250*160 甲供材：防雨百叶风口 W",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0324"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13376,
+      "bill_text": "手动对开多叶调节阀 规格型号：320*200 甲供材：手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13271,
+      "bill_text": "轴流式消防排烟风机 规格型号：(NO7,φ710) 风量:22000m³/h, 全压:650pa,功率:7.5kw 噪声:88dB, 耐温:280℃、0.5h, 重量:165kg 甲供材：轴流式消防排烟风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0115"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤25000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13002,
+      "bill_text": "防火百叶风口 规格型号:800*630 甲供材:防火百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13326,
+      "bill_text": "热镀锌钢管,螺纹连接 名称：热镀锌钢管 规格型号：DN25，螺纹连接 甲供材：热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0038"
+      ],
+      "quota_names": [
+        "空调冷热水室内镀锌钢管(螺纹连接) 公称直径 ≤25mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13190,
+      "bill_text": "单层百叶回风口 规格型号：700*250 带可卸式铝质滤网 甲供材：单层百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0335"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤2400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13087,
+      "bill_text": "温度计 规格型号: 综合考虑 甲供材:温度计",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0002"
+      ],
+      "quota_names": [
+        "膨胀式温度计 双金属温度计"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12957,
+      "bill_text": "机房专用空调(风冷) 规格型号:制冷量(总/显)QL=7.46/7.24KW, 制冷功率:2.7kW/380V 加热量:4.5KW, 最大输入功率:8.0kW, 加湿量:5.0kg/h AEER≥4.0 配套冷媒管及保温材料 甲供材:机房专用空调(风冷)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0011"
+      ],
+      "quota_names": [
+        "落地式空调器安装质量(t) ≤1.0"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13268,
+      "bill_text": "镀锌钢板风管0.6mm 规格型号：镀锌薄钢板  δ=0.6mm 甲供材：镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0151"
+      ],
+      "quota_names": [
+        "镀锌薄钢板矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤450"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12987,
+      "bill_text": "止回阀 规格型号:320*160 甲供材:止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0303"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤1200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13015,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,1200*800 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0317"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤5400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13186,
+      "bill_text": "镀锌钢板风管1.0mm 名称:镀锌钢板风管 材质、厚度:镀锌薄钢板  δ=1.0mm 甲供材：镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0160"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤2000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12953,
+      "bill_text": "柜式分体式空调 规格型号:制冷量:12kW,制热量:14kW, 风量:2000m³/h 制冷(热)功率:3.5(3.85)kW/380V, APF≥4.2 设来电启动装置 配套冷媒管及保温材料 甲供材:柜式分体式空调",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0080"
+      ],
+      "quota_names": [
+        "风机盘管 落地式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13147,
+      "bill_text": "单层百叶风口 规格型号:320*200 图中未绘制 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0325"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1280"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12961,
+      "bill_text": "低噪声离心风机箱 规格型号:风量:7700m³/h 全压:500pa,功率:1.8kw 噪声:64dB,重量:175kg,η≥75%t 1级能效 甲供材:低噪声离心风机箱",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0110"
+      ],
+      "quota_names": [
+        "离心式通风机安装 风量(m3/h) ≤19300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13025,
+      "bill_text": "防雨百叶风口 W 名称:防雨百叶风口 规格型号:1200*800 甲供材:防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0329"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤4800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13276,
+      "bill_text": "280℃排烟防火阀 FDEH 名称：280℃排烟防火阀 规格型号：常开,连锁风机,1250*500 中板加阀 甲供材：280℃排烟防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13119,
+      "bill_text": "单层百叶回风口 规格型号:500*200 甲供材:单层百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0326"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13231,
+      "bill_text": "单层百叶风口 AV(侧) 名称：单层百叶风口 AV/T 规格型号：200*200 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0324"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12935,
+      "bill_text": "门铰式百叶回风口 规格型号:16000*300(带过滤网) 拉通布置 甲供材:门铰式百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0337"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤4000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12948,
+      "bill_text": "卧式暗装风机盘管 规格型号:风量:960m³/h(中档风量), 静压:30Pa, 噪声:48dB(A), 制冷(热)量:6.4(10.5)kW, 功率:0.16kW/220V 甲供材:卧式暗装风机盘管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0082"
+      ],
+      "quota_names": [
+        "风机盘管 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12936,
+      "bill_text": "球形喷口 规格型号:直径:φ400,夏天0~10°, 冬天向下0~10° 风口风量:2100m³/h, 噪声:38dB(A), 射程:≥30m 甲供材:球形喷口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0363"
+      ],
+      "quota_names": [
+        "碳钢风口安装 旋转吹风口安装直径(mm) ≤450"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13369,
+      "bill_text": "70℃防火阀 FD 规格型号：常开,630*320 甲供材：70℃防火阀 FD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13120,
+      "bill_text": "单层百叶回风口 规格型号:630*200 甲供材:单层百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0326"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13199,
+      "bill_text": "静音型管道风机 规格型号：风量:1200m³/h, 全压:300pa, 功率:0.25kW/220V 噪声:45dB, 重量:24kg,η≥75% t 甲供材：静音型管道风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0114"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤8900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13308,
+      "bill_text": "橡胶软接头 规格型号：DN125 甲供材：橡胶软接头",
+      "bill_name": "",
+      "quota_ids": [
+        "CK1171"
+      ],
+      "quota_names": [
+        "法兰式软接头安装 公称直径 ≤125mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13274,
+      "bill_text": "280℃排烟防火阀 FDH 名称：280℃排烟防火阀 规格型号：常开,1250*500 甲供材：280℃排烟防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13345,
+      "bill_text": "多联室内机(风管式) 规格型号：制冷量:3.6kW, 制热量:4.0kW, 功率:0.072kW/220V, 标准风量:540m³/h, 最大静压:30Pa, 噪声:32dB 甲供材：多联室内机(风管式)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13299,
+      "bill_text": "蝶阀 规格型号：DN100 甲供材：蝶阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0967"
+      ],
+      "quota_names": [
+        "焊接法兰阀 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13094,
+      "bill_text": "无缝钢管,焊接连接 名称:无缝钢管 规格型号:DN125,焊接连接 甲供材:无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0171",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤125mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13051,
+      "bill_text": "防火板 规格型号:2.0h 甲供材:防火板",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1592"
+      ],
+      "quota_names": [
+        "铁皮保护层 铆钉固定"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13279,
+      "bill_text": "排烟阀 BECH 规格型号：800*400 常闭,现场手动、远程手动, 带钢绳和控制盒 甲供材：排烟阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12925,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,1800*630 中板设 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0317"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤5400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13218,
+      "bill_text": "手动对开多叶调节阀 规格型号：320*160 甲供材：手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13067,
+      "bill_text": "不锈钢波纹补偿器 规格型号:DN100,补偿量不小于40mm 甲供材:不锈钢波纹补偿器",
+      "bill_name": "",
+      "quota_ids": [
+        "CK1157"
+      ],
+      "quota_names": [
+        "法兰式补偿器安装 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12997,
+      "bill_text": "单层百叶风口 AV/T 名称:单层百叶风口 规格型号:1000*120H 带调节阀 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0335"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤2400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13193,
+      "bill_text": "柜式分体式空调 规格型号：制冷量:12kW,制热量:14kW, 风量:2000m³/h 制冷(热)功率:3.5(3.85)kW/380V, APF≥4.2 甲供材：柜式分体式空调",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0022"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 落地式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13069,
+      "bill_text": "流量开关 规格型号:DN125 甲供材:流量开关",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0117"
+      ],
+      "quota_names": [
+        "流量开关"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13296,
+      "bill_text": "电动二通阀 规格型号：DN80、24V 甲供材：电动二通阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0981"
+      ],
+      "quota_names": [
+        "法兰电磁阀 公称直径 ≤80mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13021,
+      "bill_text": "单层百叶风口 AV 名称:单层百叶风口 规格型号:400*400H 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0326"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13004,
+      "bill_text": "管道式消声器XSQ 规格型号:阻抗复合型,630*400,L=800mm 甲供材:管道式消声器XSQ",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0481"
+      ],
+      "quota_names": [
+        "阻抗式消声器安装周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13246,
+      "bill_text": "防雨弯头 规格型号：900*500 设置防虫网 甲供材：防雨弯头",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13356,
+      "bill_text": "镀锌钢板风管0.75mm 名称：镀锌钢板风管 规格型号：镀锌薄钢板  δ=0.75mm 甲供材：镀锌薄钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0158"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤1000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13386,
+      "bill_text": "分歧器 规格型号：φ25.4/φ12.7 甲供材：分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0040"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13280,
+      "bill_text": "排烟阀 BECH 名称：排烟阀 规格型号：800*500 常闭,现场手动、远程手动, 带钢绳和控制盒 甲供材：排烟阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13354,
+      "bill_text": "单层百叶回风口 规格型号：800*200 甲供材：单层百叶回风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0327"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤2500"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13183,
+      "bill_text": "防火不燃柔性风管 名称：防火柔性软风管 规格详见图纸 甲供材：防火不燃柔性风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0474"
+      ],
+      "quota_names": [
+        "软管接口"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13334,
+      "bill_text": "无缝钢管,焊接连接 名称：无缝钢管 规格型号：DN150,焊接连接 甲供材：无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0172",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤150mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13001,
+      "bill_text": "防雨百叶风口 W 名称:防雨百叶风口 规格型号:400*200 接管320*160 甲供材:防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0325"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1280"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12945,
+      "bill_text": "镀锌钢板风管1.0mm 名称:镀锌钢板风管 材质、厚度:镀锌薄钢板  δ=1.0mm 甲供材:镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0160"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤2000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13063,
+      "bill_text": "蝶阀 规格型号:DN100 地埋 甲供材:蝶阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0967"
+      ],
+      "quota_names": [
+        "焊接法兰阀 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12959,
+      "bill_text": "静音型管道风机 规格型号:风量:2400m³/h 全压:260pa,功率:0.45kw 噪声:61dB,重量:52kg,η≥75% 1级能效 甲供材:静音型管道风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0114"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤8900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13398,
+      "bill_text": "磷酸脱氧无缝紫铜管 规格型号：φ28.6 甲供材：铜管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0032"
+      ],
+      "quota_names": [
+        "多联机铜管安装 铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13365,
+      "bill_text": "70℃防火阀 FD 规格型号：常开,320*200 甲供材：70℃防火阀 FD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13257,
+      "bill_text": "电动双位阀 规格型号：1000*400,DC24V 甲供材：电动双位阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13306,
+      "bill_text": "压力表 规格型号：0~1.0MPa 甲供材：压力表",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0046"
+      ],
+      "quota_names": [
+        "压力表、真空表 就地"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13022,
+      "bill_text": "单层百叶风口 AV 名称:单层百叶风口 规格型号:630*1000H 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12947,
+      "bill_text": "卧式暗装风机盘管 规格型号:风量:680m³/h(中档风量), 静压:30Pa, 噪声:4.5dB(A), 制冷(热)量:4.0(6.7)kW, 功率:0.09kW/220V 甲供材:卧式暗装风机盘管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0082"
+      ],
+      "quota_names": [
+        "风机盘管 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13272,
+      "bill_text": "轴流式消防排烟风机 规格型号：(NO7,φ710) 风量:38100m³/h, 全压:590pa,功率:11kw 噪声:88dB,耐温:280℃、0.5h, 重量:165kg 甲供材：轴流式消防排烟风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0116"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤63000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13171,
+      "bill_text": "手动对开多叶调节阀 规格型号：630*400 甲供材：手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13045,
+      "bill_text": "单层百叶风口 AV 规格型号:1000*500 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13437,
+      "bill_text": "消声静压箱 规格型号:2000*1500*1000",
+      "bill_name": "消声静压箱",
+      "quota_ids": [
+        "CG0500"
+      ],
+      "quota_names": [
+        "消声静压箱安装展开面积(m2) ≤20"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 13074,
+      "bill_text": "金属软管 规格型号:DN40 甲供材:金属软管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0915"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤40mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13415,
+      "bill_text": "对开多叶调节阀(电动)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0311"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤5200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13379,
+      "bill_text": "双层百叶风口 BV 规格型号：320*200 甲供材：双层百叶风口 BV",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0325"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1280"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13260,
+      "bill_text": "电动防烟防火阀 DFD 规格型号：常闭,800*320 甲供材：电动防烟防火阀 DFD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13098,
+      "bill_text": "热镀锌钢管,螺纹连接 名称:热镀锌钢管 规格型号:DN50,螺纹连接 甲供材:热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0041"
+      ],
+      "quota_names": [
+        "空调冷热水室内镀锌钢管(螺纹连接) 公称直径 ≤50mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13115,
+      "bill_text": "多联室内机(风管式) 规格型号:制冷量:7.1kW, 制热量:8.0kW, 功率:0.105kW/220V, 标准风量:1000m³/h, 最大静压:30Pa,噪声:32dB 接管管径:φ15.9/9.5 带回风口、线控器及控制线 甲供材:多联室内机(风管式)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13211,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀 规格型号：常开,320*200 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13166,
+      "bill_text": "无风管远程射流空气处理机 规格型号：风量:2000m³/h， 制冷量:12kW,制热量:15kW, 机外余压:250Pa, 水流量:2m³/h,水阻:28kPa 功率:0.32kW/220V, 噪声:≤55dB,工作压力:1Mpa 工况点下风机效率:≥70%, 参考尺寸:1200*790*650(h) 带φ400球形喷口及软接1个, 射程:26m,参考重量:110kg 回风工况,四排管 其中长度尺寸包含软接及球形喷口长度 甲供材：无风管远程射流空气处理机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0010"
+      ],
+      "quota_names": [
+        "吊顶式空调器安装质量(t) ≤0.4"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13344,
+      "bill_text": "多联室内机(风管式) 规格型号：制冷量:2.8kW, 制热量:3.2kW, 功率:0.068kW/220V, 标准风量:485m³/h, 最大静压:30Pa, 噪声:28dB 甲供材：多联室内机(风管式)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12950,
+      "bill_text": "双层百叶送风口 规格型号:700*250 带调节阀 尺寸不明确 甲供材:双层百叶送风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0335"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤2400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13341,
+      "bill_text": "多联机外机 规格型号：制冷量:40.0kW, 制热量:45.0kW, 环保冷媒:R410a 参考功率:12.3kW, 噪声:61dB,APF≥4.5 甲供材：多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0018"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤50"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13214,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀 规格型号：常开,1000*400 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13232,
+      "bill_text": "单层百叶风口 AV/D 名称：单层百叶风口 AV/T 规格型号：300*300 带调节阀 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0333"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤1200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13237,
+      "bill_text": "单层百叶风口 规格型号：600*400 甲供材：单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0327"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤2500"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13240,
+      "bill_text": "自然补风百叶 规格型号： 1200*400 甲供材：自然补风百叶",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0328"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤3300"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13196,
+      "bill_text": "机房专用空调(风冷) 规格型号：制冷量(总/显)QL=12.5/11.3KW, 制冷功率:4.3kW/380V 加热量:4KW, 最大输入功率:9.6kW, 加湿量:2.5kg/h 甲供材：机房专用空调(风冷)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0011"
+      ],
+      "quota_names": [
+        "落地式空调器安装质量(t) ≤1.0"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13095,
+      "bill_text": "无缝钢管,焊接连接 名称:无缝钢管 规格型号:DN150,焊接连接 甲供材:无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0172",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤150mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13096,
+      "bill_text": "直埋式聚氨酯保温管 规格型号:DN80 甲供材:热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0675"
+      ],
+      "quota_names": [
+        "室外预制直埋保温管(电弧焊) 公称直径 ≤80mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13315,
+      "bill_text": "截止阀 规格型号：DN20 甲供材：截止阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13093,
+      "bill_text": "无缝钢管,焊接连接 名称:无缝钢管 规格型号:DN100,焊接连接 甲供材:无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0170",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤100mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13368,
+      "bill_text": "70℃防火阀 FD 规格型号：常开,500*320 甲供材：70℃防火阀 FD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13081,
+      "bill_text": "橡胶软接头 规格型号: DN100 甲供材:橡胶软接头",
+      "bill_name": "",
+      "quota_ids": [
+        "CK1170"
+      ],
+      "quota_names": [
+        "法兰式软接头安装 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13038,
+      "bill_text": "排烟阀 BECH 名称:排烟阀  BECH 规格型号:1000*400 常闭,现场手动、远程手动,带钢绳和控制盒 甲供材:排烟阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13327,
+      "bill_text": "热镀锌钢管,螺纹连接 名称：热镀锌钢管 规格型号：DN32，螺纹连接 甲供材：热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0039"
+      ],
+      "quota_names": [
+        "空调冷热水室内镀锌钢管(螺纹连接) 公称直径 ≤32mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13342,
+      "bill_text": "多联机外机 规格型号：制冷量:73.0kW, 制热量:81.5kW, 环保冷媒:R410a 参考功率:21.2kW, 噪声:63dB,,APF≥4.0 甲供材：多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0019"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤90"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13108,
+      "bill_text": "多联机外机 规格型号:制冷量:18.0kW, 制热量:20.0kW, 环保冷媒:R410a 参考功率:5.35kW, 噪声:60dB,APF≥4.5 甲供材:多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0017"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤30"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13313,
+      "bill_text": "Y形过滤器 规格型号：DN20 甲供材：Y形过滤器",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13364,
+      "bill_text": "70℃防火阀 FD 规格型号：常开,250*160 甲供材：70℃防火阀 FD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13252,
+      "bill_text": "轴流风机 规格型号:(NO2.5,φ260) 风量:1800m³/h, 全压:250pa, 功率:0.18kW 噪声:63dB, 重量:15kg,η≥76% t 风机及阀门配防雨棚 甲供材：轴流风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0114"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤8900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13286,
+      "bill_text": "不锈钢板风管 规格型号：不锈钢钢板  δ=1.2mm 甲供材：不锈钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0199"
+      ],
+      "quota_names": [
+        "不锈钢板矩形风管(电弧焊)长边长(mm)×壁厚(mm) ≤560×2"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13234,
+      "bill_text": "单层百叶风口 AV/T 规格型号：200*200 带风阀 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0332"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13019,
+      "bill_text": "止回阀 规格型号:260*260 (参考,配套风机确定) 甲供材:止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0303"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤1200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13277,
+      "bill_text": "280℃排烟防火阀 FDEH 名称：280℃排烟防火阀 规格型号：常开,连锁风机,800*500 甲供材：280℃排烟防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13228,
+      "bill_text": "单层百叶风口 AV/T 规格型号：1000*630 带风阀 甲供材：单层百叶风口 AV/T",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0336"
+      ],
+      "quota_names": [
+        "碳钢风口安装 带调节阀(过滤器)百叶风口安装周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13049,
+      "bill_text": "复合型耐火风管 规格型号:复合型耐火风管  δ=1.0mm 甲供材:复合型耐火风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0257"
+      ],
+      "quota_names": [
+        "双面铝箔离心玻璃棉复合风管直径(mm) ≤1000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13390,
+      "bill_text": "分歧器 规格型号：φ41.3/φ19.05 甲供材：分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0043"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤44.4"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13328,
+      "bill_text": "热镀锌钢管,螺纹连接 名称：热镀锌钢管 规格型号：DN40，螺纹连接 甲供材：热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0040"
+      ],
+      "quota_names": [
+        "空调冷热水室内镀锌钢管(螺纹连接) 公称直径 ≤40mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13078,
+      "bill_text": "金属软管 规格型号:DN20 甲供材:金属软管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12996,
+      "bill_text": "单层百叶风口 AV 名称:单层百叶风口 规格型号:600*400 甲供材:单层百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0327"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤2500"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13139,
+      "bill_text": "电动对开多叶调节阀 规格型号:630*400 DC24V 甲供材:电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13374,
+      "bill_text": "电动对开多叶调节阀 规格型号：630*320,DC24V 甲供材：电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13288,
+      "bill_text": "防火板 规格型号：3.0h 甲供材：防火板",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1592"
+      ],
+      "quota_names": [
+        "铁皮保护层 铆钉固定"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13154,
+      "bill_text": "分歧器 规格型号:φ28.6/φ15.9 甲供材:分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0040"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13307,
+      "bill_text": "温度计 规格型号：综合考虑 甲供材：温度计",
+      "bill_name": "",
+      "quota_ids": [
+        "CF0002"
+      ],
+      "quota_names": [
+        "膨胀式温度计 双金属温度计"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13179,
+      "bill_text": "管道式消声器 规格型号：1600*630,L=1200mm △L≥15dB(A 甲供材：管道式消声器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0489"
+      ],
+      "quota_names": [
+        "管式消声器安装周长(mm) ≤4000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13011,
+      "bill_text": "轴流风机 规格型号:(NO7,φ710) 风量:18600m³/h 全压:380pa,功率:4.0kw 噪声:82dB,重量:176kg,η≥76%,Ws=0.162t 1级能效 带温控装置 甲供材:轴流风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0115"
+      ],
+      "quota_names": [
+        "轴流式、斜流式、混流式通风机安装 风量(m3/h) ≤25000"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13372,
+      "bill_text": "电动对开多叶调节阀 规格型号：400*250,DC24V 甲供材：电动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13314,
+      "bill_text": "金属软管 规格型号：DN20 甲供材：金属软管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13242,
+      "bill_text": "管道式消声器 规格型号： 800*500,L=1000mm △L≥12dB(A) 甲供材：管道式消声器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0488"
+      ],
+      "quota_names": [
+        "管式消声器安装周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13102,
+      "bill_text": "热镀锌钢管,螺纹连接 名称:热镀锌钢管 规格型号:DN20,螺纹连接 甲供材:热镀锌钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0037"
+      ],
+      "quota_names": [
+        "空调冷热水室内镀锌钢管(螺纹连接) 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13133,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,630*250 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13150,
+      "bill_text": "分歧器 规格型号:φ19.05/φ9.52 甲供材:分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0038"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤19.1"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12986,
+      "bill_text": "手动对开多叶调节阀 规格型号: 630*320 甲供材:手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13184,
+      "bill_text": "镀锌钢板风管0.6mm 名称:镀锌钢板风管 材质、厚度:镀锌薄钢板  δ=0.6mm 甲供材：镀锌钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0151"
+      ],
+      "quota_names": [
+        "镀锌薄钢板矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤450"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13320,
+      "bill_text": "动态平衡电动调节阀 规格型号：DN100,设定范围40~100%,24V 参数现场可调,配温度和压力 传感器,带通讯接口 甲供材：动态平衡电动调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0982"
+      ],
+      "quota_names": [
+        "法兰电磁阀 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12956,
+      "bill_text": "机房专用空调(风冷) 规格型号:制冷量(总/显)QL=21.7/19.7KW, 制冷功率:7.9kW/380V 加热量:6KW,最大输入功率:13.5kW, 加湿量:2.5kg/h AEER≥4.0 配套冷媒管及保温材料 甲供材:机房专用空调(风冷)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0011"
+      ],
+      "quota_names": [
+        "落地式空调器安装质量(t) ≤1.0"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13169,
+      "bill_text": "70℃防火阀 FD 名称：70℃防火阀                          2、规格型号常开，1800*630 中板加阀 甲供材：70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0317"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤5400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13109,
+      "bill_text": "多联机外机 规格型号:制冷量:33.5kW, 制热量:37.5kW, 环保冷媒:R410a 参考功率:8.7kW, 噪声:60dB,APF≥4.5 甲供材:多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0018"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤50"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12938,
+      "bill_text": "管道式消声器 规格型号:阻抗复合型,1800*630,L=800mm 甲供材:管道式消声器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0485"
+      ],
+      "quota_names": [
+        "阻抗式消声器安装周长(mm) ≤5800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13163,
+      "bill_text": "桥架 名称：钢制桥架 规格、型号：200x150 甲供材：桥架",
+      "bill_name": "",
+      "quota_ids": [
+        "CD1537"
+      ],
+      "quota_names": [
+        "钢制槽式桥架安装(宽+高mm以下) 400"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13194,
+      "bill_text": "壁挂式分体式空调 规格型号：制冷量:5.1kW,制热量:7.2kW, 风量:1000m³/h 制冷(热)功率:1.3(2.1)kW/220V, APF≥4.5 甲供材：壁挂式分体式空调",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0023"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 明装壁挂式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13317,
+      "bill_text": "橡胶软接头 规格型号：DN100 甲供材：橡胶软接头",
+      "bill_name": "",
+      "quota_ids": [
+        "CK1170"
+      ],
+      "quota_names": [
+        "法兰式软接头安装 公称直径 ≤100mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13153,
+      "bill_text": "分歧器 规格型号:φ28.6/φ12.7 甲供材:分歧器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0040"
+      ],
+      "quota_names": [
+        "分歧管安装 分歧管分歧前端铜管外径(mm) ≤28.6"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13362,
+      "bill_text": "多联新风机 规格型号：制冷量:14.0kW; 制热量:13.9kW; 最大静压:250Pa 功率:0.15kW/220V； 风量:1000m³/h,噪声:39dB 甲供材：多联新风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13248,
+      "bill_text": "镀锌钢板风管0.6mm 名称:镀锌薄钢板风管 材质、厚度:镀锌薄钢板  δ=0.6mm 甲供材：镀锌薄钢板风管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0151"
+      ],
+      "quota_names": [
+        "镀锌薄钢板矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤450"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13091,
+      "bill_text": "无缝钢管,焊接连接 名称:无缝钢管 规格型号:DN65,焊接连接 甲供材:无缝钢管",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0168",
+        "CL0001",
+        "CL0059",
+        "CL0060",
+        "CL0068",
+        "CL0069"
+      ],
+      "quota_names": [
+        "空调冷热水室内钢管(电弧焊) 公称直径 ≤65mm",
+        "手工除锈 管道 轻锈",
+        "管道刷油 红丹防锈漆 第一遍",
+        "管道刷油 红丹防锈漆 每增一遍",
+        "管道刷油 调和漆 第一遍",
+        "管道刷油 调和漆 每增一遍"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13261,
+      "bill_text": "止回阀 规格型号：1250*500 甲供材：止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0305"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤3200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13258,
+      "bill_text": "电动防烟防火阀 DFD 规格型号：常闭,连锁开启风机,370*370 (参考,配套风机确定) 甲供材：电动防烟防火阀 DFD",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12985,
+      "bill_text": "手动对开多叶调节阀 规格型号: 400*320 甲供材:手动对开多叶调节阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0309"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13322,
+      "bill_text": "闸阀(接清洗泵) 规格型号：DN20 甲供材：闸阀(接清洗泵)",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0912"
+      ],
+      "quota_names": [
+        "螺纹阀 公称直径 ≤20mm"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13382,
+      "bill_text": "镀锌钢板风管0.6mm 名称:镀锌薄钢板风管 材质、厚度:镀锌薄钢板  δ=0.6mm 甲供材：镀锌薄钢板",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0157"
+      ],
+      "quota_names": [
+        "镀锌薄钢板共板法兰矩形风管(δ=1.2mm以内咬口)长边长(mm) ≤450"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13265,
+      "bill_text": "防雨百叶风口 W 名称：防雨百叶风口 规格型号：1200*800 甲供材：防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0329"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤4800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13160,
+      "bill_text": "难燃B1级复合橡塑保温 规格型号:20mm厚 甲供材:难燃B1级复合橡塑保温",
+      "bill_name": "",
+      "quota_ids": [
+        "CL1440"
+      ],
+      "quota_names": [
+        "管道绝热 橡塑管壳安装(管道) DN50以下"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13132,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,400*250 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12983,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,1250*500 中板设阀 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0316"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤3600"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12937,
+      "bill_text": "管道式消声器 规格型号:阻抗复合型,1600*630,L=1000mm 甲供材:管道式消声器",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0485"
+      ],
+      "quota_names": [
+        "阻抗式消声器安装周长(mm) ≤5800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13148,
+      "bill_text": "防雨百叶风口 W 名称:防雨百叶风口 规格型号: 630*250 甲供材:防雨百叶风口",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0326"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤1800"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13224,
+      "bill_text": "止回阀 规格型号：320*250 甲供材：止回阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0303"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 圆、方形风管止回阀周长(mm) ≤1200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13159,
+      "bill_text": "磷酸脱氧无缝紫铜管 规格型号: φ9.52 甲供材:铜管",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0027"
+      ],
+      "quota_names": [
+        "多联机铜管安装 铜管外径(mm) ≤9.5"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13195,
+      "bill_text": "机房专用空调(风冷) 规格型号：制冷量(总/显)QL=5.5/5.1KW, 制冷功率:1.89kW/380V 加热量:3.5KW, 最大输入功率:5.6kW, 加湿量:2.5kg/h 甲供材：机房专用空调(风冷)",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0011"
+      ],
+      "quota_names": [
+        "落地式空调器安装质量(t) ≤1.0"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13377,
+      "bill_text": "双层百叶风口 BV 规格型号：200*200 甲供材：双层百叶风口 BV",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0324"
+      ],
+      "quota_names": [
+        "碳钢风口安装 百叶风口安装周长(mm) ≤900"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 12972,
+      "bill_text": "70℃防火阀 FD 名称:70℃防火阀 规格型号:常开,320*120 甲供材:70℃防火阀",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0315"
+      ],
+      "quota_names": [
+        "碳钢调节阀安装 风管防火阀周长(mm) ≤2200"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13111,
+      "bill_text": "多联机外机 规格型号:制冷量:95.0kW, 制热量:106kW, 环保冷媒:R410a 参考功率:27kW, 噪声:64dB,APF≥4.0 甲供材:多联机外机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0020"
+      ],
+      "quota_names": [
+        "多联式空调机室外机 制冷量(kW) ≤140"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13360,
+      "bill_text": "多联新风机 规格型号：制冷量:28.0kW; 制热量:17.4kW; 静压:400Pa 功率:0.3kW/220V； 风量:2100m³/h,噪声:45dB 甲供材：多联新风机",
+      "bill_name": "",
+      "quota_ids": [
+        "CG0024"
+      ],
+      "quota_names": [
+        "多联式空调机室内机 吊顶式"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    },
+    {
+      "id": 13084,
+      "bill_text": "Y形过滤器 规格型号:DN125 甲供材:Y形过滤器",
+      "bill_name": "",
+      "quota_ids": [
+        "CK0968"
+      ],
+      "quota_names": [
+        "焊接法兰阀 公称直径 ≤125m"
+      ],
+      "specialty": "",
+      "layer": "authority"
+    }
+  ]
+}
