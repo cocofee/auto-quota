@@ -430,6 +430,16 @@ class RuleValidator:
             if value is not None:
                 return value
 
+        # 策略1.5：电缆截面专用提取（mm2参数需要识别电缆型号格式）
+        # 清单里电缆截面写成 "WDZB-YJY-3*185+2*95"、"BTLY-5*16" 格式，
+        # 上面的正则只认 "截面185mm2" 这种格式，认不出来。
+        # 借鉴 text_parser._extract_cable_section() 的逻辑：
+        # 先排除三维尺寸和功率，再从 N*截面 格式中取最大截面值。
+        if param_unit == "mm2":
+            cable_section = self._extract_cable_section_for_rule(bill_text)
+            if cable_section is not None:
+                return cable_section
+
         # 策略2：如果参数名称是"回路"、"火"等中文单位
         chinese_units = {
             "回路": [r'(\d+)\s*回路', r'(\d+)\s*路'],
@@ -468,6 +478,52 @@ class RuleValidator:
                 # 没有精确映射，近似取0.8倍（外径→内径近似）
                 return float(int(de_val * 0.8))
 
+        return None
+
+    def _extract_cable_section_for_rule(self, bill_text: str) -> float:
+        """
+        从电缆型号格式中提取截面积（mm²），用于规则匹配的参数驱动策略。
+
+        识别格式：
+        - WDZB-YJY-3*185+2*95 → 185（取最大截面）
+        - BTLY-5*16 → 16
+        - 4×70 → 70（前面数字≤61才是芯数×截面，不是尺寸）
+
+        不识别（已被上游的mm2正则处理）：
+        - 截面185mm2、50平方 等显式写法
+
+        返回:
+            截面值(float)，提取不到返回 None
+        """
+        if not bill_text:
+            return None
+
+        text = bill_text
+        # 排除功率（15W、1.5kW），避免误识别
+        text = re.sub(r'\d+(?:\.\d+)?\s*[kK]?[wW]\b', ' ', text)
+        # 排除三维尺寸（600x800x300），不是截面
+        text = re.sub(r'\d+\s*[*×xX]\s*\d+\s*[*×xX]\s*\d+', ' ', text)
+
+        # 从 N*截面 格式中提取（如 3*185、5*16、4×70）
+        matches = re.findall(r'(\d+)\s*[*×xX]\s*(\d+(?:\.\d+)?)', text)
+        if not matches:
+            return None
+
+        # 标准电缆截面值，用来区分"芯数×截面"和"面板尺寸"
+        standard_sections = {1.5, 2.5, 4, 6, 10, 16, 25, 35, 50,
+                             70, 95, 120, 150, 185, 240, 300, 400, 500}
+        cable_sections = []
+        for core_str, section_str in matches:
+            core = int(core_str)
+            section = float(section_str)
+            # 芯数通常≤61，截面是标准值；两个都>10且不是标准截面则是面板尺寸
+            if core > 61:
+                continue
+            if section in standard_sections or core <= 10:
+                cable_sections.append(section)
+
+        if cable_sections:
+            return max(cable_sections)  # 多股取最大截面
         return None
 
     def _find_correct_tier(self, value: float, tiers: list) -> float:
