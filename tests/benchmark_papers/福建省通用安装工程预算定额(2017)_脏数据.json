@@ -1,0 +1,1816 @@
+{
+  "province": "福建省通用安装工程预算定额(2017)",
+  "source": "dirty_data_from_experience_db",
+  "generated_at": "2026-03-12",
+  "description": "从福建省通用安装工程预算定额(2017)经验库数据中筛选的格式异常记录，测试容错能力",
+  "is_dirty_test": true,
+  "dirty_types": {
+    "超短名称": 23,
+    "超长描述": 11,
+    "多余空格": 19,
+    "含分隔符": 45,
+    "括号混乱": 7,
+    "模糊描述": 5,
+    "缺字段极简": 25
+  },
+  "total_items": 135,
+  "items": [
+    {
+      "bill_text": "减压器",
+      "bill_name": "减压器",
+      "quota_ids": [
+        "31005265"
+      ],
+      "quota_names": [
+        "可调式减压阀组(立式可调式减压阀、Y型过滤器、压力表×2、截止阀×2)DN20"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "光纤连接",
+      "bill_name": "光纤连接",
+      "quota_ids": [
+        "30502062"
+      ],
+      "quota_names": [
+        "光纤连接(机械法 单模)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "插座箱",
+      "bill_name": "插座箱",
+      "quota_ids": [
+        "30413184"
+      ],
+      "quota_names": [
+        "插座箱"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "标准机柜",
+      "bill_name": "标准机柜",
+      "quota_ids": [
+        "30502002"
+      ],
+      "quota_names": [
+        "标准机柜"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "桥架",
+      "bill_name": "桥架",
+      "quota_ids": [
+        "30409122"
+      ],
+      "quota_names": [
+        "防火封闭金属线槽MR-150×100(加隔板)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "普通灯具",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414008"
+      ],
+      "quota_names": [
+        "壁灯(LED光源,40W)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "潜水泵",
+      "bill_name": "潜水泵",
+      "quota_ids": [
+        "30108121"
+      ],
+      "quota_names": [
+        "3#一体化泵站"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "控制电缆",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "30409288"
+      ],
+      "quota_names": [
+        "室内铜芯控制电缆敷设 WDZBN-KYJY-14*1.5 室外敷设 室外敷设"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "洗脸盆",
+      "bill_name": "洗脸盆",
+      "quota_ids": [
+        "31006020"
+      ],
+      "quota_names": [
+        "洗脸盆(台上式 冷水)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "配电箱",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402074"
+      ],
+      "quota_names": [
+        "成套配电箱安装(落地式)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "防火隔板",
+      "bill_name": "防火隔板",
+      "quota_ids": [
+        "30409304"
+      ],
+      "quota_names": [
+        "电缆防火设施安装(防火隔板安装)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "装饰灯",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "30414156"
+      ],
+      "quota_names": [
+        "应急照明灯(LED光源,2*5W)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "控制器",
+      "bill_name": "控制器",
+      "quota_ids": [
+        "30505045"
+      ],
+      "quota_names": [
+        "控制器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "插座",
+      "bill_name": "插座",
+      "quota_ids": [
+        "30414307"
+      ],
+      "quota_names": [
+        "插座"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "互感器",
+      "bill_name": "互感器",
+      "quota_ids": [
+        "30415056"
+      ],
+      "quota_names": [
+        "互感器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "跳块",
+      "bill_name": "跳块",
+      "quota_ids": [
+        "30502040"
+      ],
+      "quota_names": [
+        "跳线(RJ45/RJ11接头)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "堵洞",
+      "bill_name": "堵洞",
+      "quota_ids": [
+        "31011198"
+      ],
+      "quota_names": [
+        "堵洞(公称直径50mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "控制屏",
+      "bill_name": "控制屏",
+      "quota_ids": [
+        "30404001"
+      ],
+      "quota_names": [
+        "控制、继电、模拟屏安装(控制屏)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "蓄电池",
+      "bill_name": "蓄电池",
+      "quota_ids": [
+        "30405012"
+      ],
+      "quota_names": [
+        "蓄电池"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "接地母线",
+      "bill_name": "接地母线",
+      "quota_ids": [
+        "30410059"
+      ],
+      "quota_names": [
+        "户外接地母线敷设 -40X4热镀锌扁钢"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "水力警铃",
+      "bill_name": "水力警铃",
+      "quota_ids": [
+        "30904012"
+      ],
+      "quota_names": [
+        "水力警铃"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "行程开关",
+      "bill_name": "行程开关",
+      "quota_ids": [
+        "30415036"
+      ],
+      "quota_names": [
+        "行程开关"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "接地装置",
+      "bill_name": "接地装置",
+      "quota_ids": [
+        "30410086"
+      ],
+      "quota_names": [
+        "接地系统测试(接地网)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "铸铁管 连接形式:胶圈接口//安装部位:室外//介质:给水//接口材料:T型柔性接口//材质、规格:球墨铸铁给水管 DN100//压力试验及吹、洗设计要求:满足规范及设计要求",
+      "bill_name": "铸铁管",
+      "quota_ids": [
+        "31001184"
+      ],
+      "quota_names": [
+        "室外(球墨铸铁给水管,T型柔性接口公称直径100mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "室内消火栓 型号、规格:减压稳压型消火栓(带两具灭火器)//安装方式:距地1.1m//附件材质、规格:消火栓口应朝外并不应安装在门轴侧,栓口中心距地1.10m,室内消火栓单口SN65,%%C19水枪,25m麻质内衬胶水龙带,铝合金箱体,并配有SNJ25,%%C6水枪,30m长胶带的消防卷盘。",
+      "bill_name": "室内消火栓",
+      "quota_ids": [
+        "30901076"
+      ],
+      "quota_names": [
+        "减压稳压型消火栓(带两具灭火器)消火栓口应朝外并不应安装在门轴侧,栓口中心距地1.10m,室内消火栓单口SN65,%%C19水枪,25m麻质内衬胶水龙带,铝合金箱体,并配有SNJ25,%%C6水枪,30m长胶带的消防卷盘。"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "塑料管 连接形式:橡胶承插接口//安装部位:室外//介质:排水//材质、规格:PVC-U双壁波纹排水管 DN200 环刚度8kN/m2//压力试验及吹、洗设计要求:满足规范及设计要求",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "31001308"
+      ],
+      "quota_names": [
+        "PVC-U双壁波纹排水管(橡胶承插接口)  DN200"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "复合管 连接形式:螺纹连接//安装部位:室内//介质:给水//材质、规格:PSP钢塑复合管(P=1.0MPa 内衬PE)DN40//压力试验及吹、洗设计要求:按设计规范要求//警示带形式:",
+      "bill_name": "复合管",
+      "quota_ids": [
+        "31001443",
+        "31011136"
+      ],
+      "quota_names": [
+        "PSP钢塑复合管(P=1.0MPa，内衬PE)(螺纹连接)DN40",
+        "管道消毒、冲洗(公称直径40mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "管道支架 名称:多管水管侧向抗震支架SG-DN80+DN100×5+DN150×2-T//其他：包含螺母、螺柱、锚固装置、托架、管卡、线缆夹、连接件、垫片等所有整套所需附件。",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "31011220"
+      ],
+      "quota_names": [
+        "多管水管侧向抗震支架SG-DN80+DN100×5+DN150×2-T"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "轴流通风机 名称:轴流式消防加压风机//规格:风量26600(m3/h) 机外压力550(Pa) 转速1450(rpm) 风机效率≥75％ 电动机功率5.5(kW) 电压380V/3N~50Hz 重量140(kg) 噪声86(dB)//减振底座形式、数量://单击试运转要求:符合设计要求",
+      "bill_name": "轴流通风机",
+      "quota_ids": [
+        "30701058",
+        "30701059"
+      ],
+      "quota_names": [
+        "轴流式消防加压风机 风量26600(m3/h)，机外压力550(Pa)，转速1450(rpm)，风机效率≥75％，电动机功率5.5(kW)，电压380V/3N~50Hz，重量140(kg)，噪声86(dB)",
+        "轴流式、斜流式、混流式通风机安装风量≤63000m3/h"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "荧光灯 规格:AC220V/24W/2400Lm/4000K/LED//名称:发光二极管吸顶灯(自带人体红外声光感应延时开关,延时时间为1min)//安装形式:吸顶",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "30414204"
+      ],
+      "quota_names": [
+        "荧光灯具安装(吸顶式 单管)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "减压器 附件配置:含压力表2个、闸阀2个、Y型过滤器1个、橡胶软接头1个、水表1个//连接形式:螺纹连接//材质:钢制//规格、压力等级:可调式减压阀组 DN40",
+      "bill_name": "减压器",
+      "quota_ids": [
+        "31005268"
+      ],
+      "quota_names": [
+        "可调式减压阀组 DN40"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "螺旋缝焊接钢管 规格、压力等级:DN300//连接形式:焊接//安装部位:综合考虑//介质:空调水//压力试验及吹、洗设计要求:满足设计及规范要求//警示带形式:满足设计及规范要求//其他:管道支架制作安装、防腐刷油及标识费用综合考虑在单价中，其他未详之处详见设计图纸及招标文件。",
+      "bill_name": "螺旋缝焊接钢管",
+      "quota_ids": [
+        "31003038",
+        "31011001",
+        "31011002"
+      ],
+      "quota_names": [
+        "空调冷热水钢管(电弧焊)(公称直径300mm以内)",
+        "管道支架制作(单件重量100kg以内)",
+        "管道支架安装(单件重量100kg以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZB1N-YJY//规格:五芯//材质:铜芯电力电缆//名称:室内铜芯电力电缆敷设WDZB1N-YJY-5*2.5 五芯电力电缆敷设//电压等级(kV):1KV内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设WDZB1N-YJY-5*2.5 五芯电力电缆敷设"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "碳钢通风管道制作安装 规格:直径≤320mm//材质:镀锌薄钢板//名称:圆形风管//形状:圆形//板材厚度:3mm//管件、法兰等附件及支架设计要求:按设计及规范要求//接口形式:咬口",
+      "bill_name": "碳钢通风管道制作安装",
+      "quota_ids": [
+        "30702021"
+      ],
+      "quota_names": [
+        "薄钢板圆形风管制作、安装 (δ=3mm以内焊接、直径≤320mm)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "超长描述"
+    },
+    {
+      "bill_text": "轴流通风机 名称:轴流式消防排烟风机(1台吊装)HTF-11-I-A        N=5.5kw，L=36375m3/h    P=387pa",
+      "bill_name": "轴流通风机",
+      "quota_ids": [
+        "30701059"
+      ],
+      "quota_names": [
+        "轴流式消防排烟风机(1台吊装)HTF-11-I-A        N=5.5kw，L=36375m3/h    P=387pa"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "插座 材质:塑料//规格:86*86//名称:带控制开关、带防溅盒的洗衣机插座  J/305B   10A //安装方式:暗装",
+      "bill_name": "插座",
+      "quota_ids": [
+        "30414305"
+      ],
+      "quota_names": [
+        "带控制开关、带防溅盒的洗衣机插座  J/305B   10A"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "大便器 蹲式大便器  高水箱(6L)//预留孔洞(混凝土楼板 公称直径100mm以内)//堵洞(公称直径100mm以内)",
+      "bill_name": "大便器",
+      "quota_ids": [
+        "31006038",
+        "31011179",
+        "31011201"
+      ],
+      "quota_names": [
+        "蹲式大便器  高水箱(6L)",
+        "预留孔洞(混凝土楼板 公称直径100mm以内)",
+        "堵洞(公称直径100mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "荧光灯 T5 LED一体化应急灯管  2*24W//电气设备超高增加费 建筑层数≦18层 檐高≦60m",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "30414204"
+      ],
+      "quota_names": [
+        "T5 LED一体化应急灯管  2*24W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "事故照明切换屏 规格:1F-AE10//名称:应急照明集中电源箱  带应急照明集中电源 (蓄电池持续供电t>180min,蓄电池采用锂电池)",
+      "bill_name": "事故照明切换屏",
+      "quota_ids": [
+        "30404058"
+      ],
+      "quota_names": [
+        "应急照明集中电源箱 -1F-AE10"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "普通灯具 规格:FBPAK-D08-122C-Y(改),光通亮:1250lm/22W:色温:4000K,防爆标志 Exd II  BT6,防护等级 IP65 带非燃烧体外罩//名称:防爆灯",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414236"
+      ],
+      "quota_names": [
+        "防爆灯 FBPAK-D08-122C-Y(改),光通亮:1250lm/22W:色温:4000K,防爆标志 Exd II  BT6,防护等级 IP65 带非燃烧体外罩"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "消火栓钢管 内外壁热镀锌钢管(沟槽连接)  DN100",
+      "bill_name": "消火栓钢管",
+      "quota_ids": [
+        "30901018"
+      ],
+      "quota_names": [
+        "内外壁热镀锌钢管(沟槽连接)  DN100"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "配电箱 成套配电箱安装   潜污泵控制箱ACW[1.5]",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "成套配电箱安装   潜污泵控制箱ACW[1.5]"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "螺纹阀门 闸阀  DN50",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "31005015"
+      ],
+      "quota_names": [
+        "闸阀  DN50"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "电力电缆 铜芯电力电缆敷设  YJV-5×2.5",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设  YJV-5×2.5"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "扩声系统设备 IP网络广播服务器//\"产品用途 IP网络数字广播服务器软件的运行载体，是广播的控制中心； 安装在主控室，对整个广播系统进行实时有效的管理。 产品特点 工业级机柜式机箱设计，机箱采用钢结构，有较高的防磁、防尘、防冲击的能力 15英寸纯平多点电容触摸屏，简单易用的触摸屏操控，可扩展为17.3寸高清大屏 工业级专用主板设计，嵌入式工业级处理器，处理速度更快，运作性能更强 采用流媒体网络音频技术，完全符合TCP/IP协议传输，对原网络无影响 通过局域网传输，只要有网络覆盖的区域，就能使用本系统实现本地或远程网络广播 集背景音乐、消防紧急广播、网络会议、远程教学等功能为一体 可与已有局域网无缝对接，施工方便 可同时传输多路音源，可对多点寻呼和广播 支持多主机级联，可分别设置优先级 ★10.支持手机APP点播，任意选择播放终端；支持音频文件播放、语音广播、远程播报功能11.硬解码技术采用128K*16位采样率，不受电磁干扰，高保真效果，立体声CD音质 在紧急情况下，可打开任意控制点紧急通知或广播，可实现N+1、N、N-1临层报警 广播终端都设有独有的IP地址，可任意更改，任意分组，可实现点对点广播，分组广播 实现系统管理、用户管理、终端管理、节目管理、任务管理等管理功能 ★15.支持随时查看广播系统操作日志及会话记录，避免无关人员误操作 实现真正的无人值守，有完善的电源管理系统，保证24小时正常、安全的连续工作 ★17.具备双备份功能，当主机有故障时，即时切换备用服务器，保证系统正常运行 技术参数 屏幕尺寸 15英寸 屏幕亮度 300cd/m2 操控方式 1024 x 768分辨率纯平多点电容 环境温度：-10℃～50℃； 相对湿度：20%～80%相对湿度，无结露 主板 低功耗工业主板 CPU Intel Celeron J1900 2.0GHz四核四线程 标准接口 1×PS/2接口；4×USB；6×串口；1×VGA；2×LAN；1×MIC-in 硬盘 120G SSD 固态硬盘 内存 DDR3  4G（因产品不断升级，容量会不断增加） 网卡 Realtek RTL8111F千兆网卡 声卡 ALC 662 系统音频信号信噪比 LINE：70dB；MIC：60dB 操作系统 支持Windows 7 /8 /10 /Linux 参考尺寸 484×311×346mm 安装方式 19英寸7U上架式",
+      "bill_name": "扩声系统设备",
+      "quota_ids": [
+        "30506108"
+      ],
+      "quota_names": [
+        "IP网络广播服务器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "管道支架 材质:钢质//管架形式:矩形风管双向抗震支架  尺寸1000X320",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "31011221"
+      ],
+      "quota_names": [
+        "矩形风管双向抗震支架  尺寸1000X320"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "荧光灯 双管节能荧光灯 PAK-A02-221-AD  2*21W",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "30414205"
+      ],
+      "quota_names": [
+        "双管节能荧光灯 PAK-A02-221-AD  2*21W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "工厂灯 LED投光灯 220V  3000K  18W  45°IP65",
+      "bill_name": "工厂灯",
+      "quota_ids": [
+        "30414224"
+      ],
+      "quota_names": [
+        "LED投光灯 220V  3000K  18W  45°IP65"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "其他风机 吸顶式排气扇(自带止回阀)JVF-CP-300Q=300m/h   P=220pa   N=0.035kW",
+      "bill_name": "其他风机",
+      "quota_ids": [
+        "30701065"
+      ],
+      "quota_names": [
+        "吸顶式排气扇(自带止回阀)JVF-CP-300Q=300m/h   P=220pa   N=0.035kW"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "普通灯具 规格: LED灯  1*18W 光通量≥1100,色温为4000K 显示指数为80。//名称:防潮吸顶灯",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414001"
+      ],
+      "quota_names": [
+        "防潮吸顶灯 LED灯  1*18W 光通量≥1100,色温为4000K，显示指数为80。"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "钢制排水漏斗制作安装 口径规格:钢制排水漏斗  DN80",
+      "bill_name": "钢制排水漏斗制作安装",
+      "quota_ids": [
+        "30807067"
+      ],
+      "quota_names": [
+        "钢制排水漏斗制作安装(公称直径100mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "其他风机 规格:Q=500m3/h  P=50pa N=0.040kW贴梁底敷设//名称:壁式排气扇//灌浆配合比:按设计要求//型号:JVF-AP-20//减振底座形式、数量:按设计要求",
+      "bill_name": "其他风机",
+      "quota_ids": [
+        "30701065"
+      ],
+      "quota_names": [
+        "壁式排气扇 JVF-AP-20 Q=500m3/h P=50pa N=0.040kW"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "焊接法兰阀门 铜闸阀   De63//法兰连接//压力同管道压力",
+      "bill_name": "焊接法兰阀门",
+      "quota_ids": [
+        "31005042"
+      ],
+      "quota_names": [
+        "法兰阀门安装(公称直径50mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "装饰灯 规格:6W/m  光通量>80lm/W 中色温 ~4000K COS%%C≥0.9//名称:LED灯带 //安装形式:吊顶嵌入式安装",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "30414124"
+      ],
+      "quota_names": [
+        "LED灯带 6W/m"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "普通灯具 规格:13W带防水灯罩//名称:LED防水防尘灯",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414220"
+      ],
+      "quota_names": [
+        "LED防水防尘灯13W带防水灯罩"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "混凝土井 钢筋砼矩形水表井1200x1200x1400mm，参照图集07MS101-2-134页 DN32//混凝土强度等级:C15垫层、C25底板、C25盖板//垫层、基础材质及厚度:100mm厚C15砼垫层、200mm厚C25砼底板//防渗、防水要求:1：2水泥砂浆//井盖、井圈材质及规格:铸铁井盖井座 Φ700//踏步材质、规格:塑钢",
+      "bill_name": "混凝土井",
+      "quota_ids": [
+        "40501005",
+        "40501010",
+        "40501104",
+        "40501123",
+        "40501047",
+        "40304007",
+        "40304003",
+        "40501045",
+        "31011053",
+        "31011065",
+        "40501025"
+      ],
+      "quota_names": [
+        "排水井垫层(混凝土)",
+        "C25现浇预拌非泵送细石混凝土井壁(预拌非泵送细石混凝土井壁 矩形20cm以内)",
+        "C25预拌非泵送普通混凝土(矩形盖板 板厚20cm以内)",
+        "安装(井室盖板 矩形盖板(每块体积在0.5m3以内))",
+        "井盖、井箅安装(铸铁井盖井座 Φ700)",
+        "现浇混凝土(螺纹钢筋 φ10以外)",
+        "预制混凝土(螺纹钢筋 φ10以外)",
+        "井盖、井箅安装(塑钢爬梯踏步)",
+        "刚性防水套管制作(介质管道公称直径50mm以内)",
+        "刚性防水套管安装(介质管道公称直径50mm以内)",
+        "勾缝及抹灰(砖墙 抹灰 井内侧)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "碳钢阀门 规格:1600×400//名称:防火阀 //型号:280℃//支架形式、材质:型钢支架",
+      "bill_name": "碳钢阀门",
+      "quota_ids": [
+        "30703027"
+      ],
+      "quota_names": [
+        "280℃防火阀 1600×400"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "低压碳钢管 Q235B//DN40//管道水压试验(公称直径40mm以内)",
+      "bill_name": "低压碳钢管",
+      "quota_ids": [
+        "30801022",
+        "31011116"
+      ],
+      "quota_names": [
+        "低压管道 碳钢管(电弧焊) 公称直径40mm以内",
+        "管道水压试验(公称直径40mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "沟槽阀门 类型:防止旋流器YQFX-19P(带锁具)//规格、压力等级:DN50//连接形式:沟槽连接",
+      "bill_name": "沟槽阀门",
+      "quota_ids": [
+        "31005120"
+      ],
+      "quota_names": [
+        "防止旋流器YQFX-19P(带锁具)DN50"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "焊接法兰阀门 连接形式:法兰连接//材质:铜制//规格、压力等级:DN65//类型:闸阀",
+      "bill_name": "焊接法兰阀门",
+      "quota_ids": [
+        "31005043"
+      ],
+      "quota_names": [
+        "闸阀 DN65"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "插座 规格:250V 10A//名称:安全型二三极插座//安装方式:底边距地0.3m暗装",
+      "bill_name": "插座",
+      "quota_ids": [
+        "30414307"
+      ],
+      "quota_names": [
+        "安全型二三极插座 250V 10A"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "潜水泵 50QW(WQ)20-15-2.2//名称:潜水泵（含控制箱） 配减震器//型号:(Q=20m3/h,H=15m,N=2.2KW)",
+      "bill_name": "潜水泵",
+      "quota_ids": [
+        "30108120"
+      ],
+      "quota_names": [
+        "潜污泵 50QW(WQ)20-15-2.2(Q=20m3/h,H=15m,N=2.2KW)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配管 材质:SC//规格:DN25//名称:电气配管//接地要求:按规范要求//配置形式:砖、混凝土结构暗配",
+      "bill_name": "配管",
+      "quota_ids": [
+        "30412036"
+      ],
+      "quota_names": [
+        "钢管敷设(砖、混凝土结构暗配 SC25)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "低压法兰阀门 名称:电动阀//连接形式:法兰连接//材质:铜芯//型号、规格:DN350//焊接方法:焊接",
+      "bill_name": "低压法兰阀门",
+      "quota_ids": [
+        "30803030"
+      ],
+      "quota_names": [
+        "电动阀 DN350"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "消防广播(扬声器) 名称:消防广播扬声器//安装方式:吸顶//功率:5W",
+      "bill_name": "消防广播(扬声器)",
+      "quota_ids": [
+        "30904021"
+      ],
+      "quota_names": [
+        "消防广播扬声器5W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "管道支架 材质:C型槽钢//管架形式:消防管侧向抗震支架---XF80T",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "31011219"
+      ],
+      "quota_names": [
+        "消防管侧向抗震支架---XF80T"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZB-YJY-//规格:4×4//材质:铜芯//名称:电力电缆敷设 //电压等级(kV):1KV以下//敷设方式、部位:室内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设 WDZB-YJY-4×4"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆头 型号:WDZB-YJY//规格:-5*16//材质:铜芯//名称:电力电缆头//电压等级(kV):1KV//敷设方式、部位:室内",
+      "bill_name": "电力电缆头",
+      "quota_ids": [
+        "30409222"
+      ],
+      "quota_names": [
+        "1KV以下室内干包式铜芯电力电缆(电缆截面≤16mm2) 五芯电力电缆头制作安装"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "套管 规格:DN150//名称、类型:柔性防水套管",
+      "bill_name": "套管",
+      "quota_ids": [
+        "31011033",
+        "31011045"
+      ],
+      "quota_names": [
+        "柔性防水套管制作(介质管道公称直径150mm以内)",
+        "柔性防水套管安装(介质管道公称直径150mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:5AW1//名称:电表箱 //安装方式:距地1.6m",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "电表箱 5AW1"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配管 材质:DN20//规格:≤0.5m//名称:金属软管敷",
+      "bill_name": "配管",
+      "quota_ids": [
+        "30412227"
+      ],
+      "quota_names": [
+        "金属软管DN20"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZB-YJY//规格:5X4//材质:铜芯//名称:电力电缆//电压等级(kV):1kv//敷设方式、部位:室内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设(电缆截面≤10mm2)WDZB-YJY-5X4\r 五芯电力电缆敷设"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "法兰 材质:碳钢//连接形式:焊接法兰连接//规格、压力等级:DN50",
+      "bill_name": "法兰",
+      "quota_ids": [
+        "31005145"
+      ],
+      "quota_names": [
+        "碳钢平焊法兰安装(公称直径50mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZB-YJY//规格:5*4//材质:铜芯//名称:电力电缆敷设//电压等级(kV):1KV//敷设方式、部位:室内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设 WDZB-YJY-5*4 五芯电力电缆敷设"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆头 规格:4*50//名称:电力电缆头//安装部位:箱内//型号:WDZBN-YJY//电压等级(kV):1kv//材质、类型:铜芯",
+      "bill_name": "电力电缆头",
+      "quota_ids": [
+        "30409224"
+      ],
+      "quota_names": [
+        "1KV以下室内干包式铜芯电力电缆WDZBN-YJY-4*50"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:3AL1//名称:成套配电箱安装//安装方式:距地1.5米//型号:非标",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402076"
+      ],
+      "quota_names": [
+        "成套配电箱安装 3AL1"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZBN-YJY//规格:4*16//材质:铜芯//名称:电力电缆//电压等级(kV):0.6/1KV//敷设方式、部位:室内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409136"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设 WDZBN-YJY-4x16"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "消火栓钢管 连接形式:沟槽连接//安装部位:室内//材质、规格:加厚内外壁热镀锌钢管DN65//钢管镀锌设计要求:加厚内外壁热镀锌//压力试验及冲洗设计要求:符合设计要求",
+      "bill_name": "消火栓钢管",
+      "quota_ids": [
+        "30901016"
+      ],
+      "quota_names": [
+        "加厚内外壁热镀锌钢管(沟槽连接)DN65"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:非标//名称:空调插座配电箱2ALkt1//安装方式:挂墙明装 距地1.5m",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "空调插座配电箱 2ALkt1"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "灯带槽 灯带型式、尺寸:LED灯带 12W//安装固定方式:嵌装",
+      "bill_name": "灯带槽",
+      "quota_ids": [
+        "30414137"
+      ],
+      "quota_names": [
+        "LED灯带 12W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "管道绝热 绝热材料品种:难燃B1级闭孔柔性泡沫橡塑保温材料//绝热厚度:20mm//管道外径:管道 DN50mm以下",
+      "bill_name": "管道绝热",
+      "quota_ids": [
+        "31104341"
+      ],
+      "quota_names": [
+        "橡塑管壳安装(管道)(管道 DN50mm以下)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配管 材质:紧定式JDG镀锌钢管//规格:DN20//名称:配管(超高)//接地要求:符合规范及设计要求//配置形式:明配",
+      "bill_name": "配管",
+      "quota_ids": [
+        "30412002"
+      ],
+      "quota_names": [
+        "JDG管明配 JDG20 安装高度距楼、地面大于5m"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:350X450X120//名称:办公室配电箱AL-BG2//安装方式:暗装，距地1.4m",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402076"
+      ],
+      "quota_names": [
+        "办公室配电箱AL-BG2"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 1APcf4//安装方式:距地1.6m",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402076"
+      ],
+      "quota_names": [
+        "配电箱 1APcf4"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZ-YJY//规格:5X4//材质:铜芯//名称:电力电缆敷设//电压等级(kV):1KV//敷设方式、部位:室内",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409135"
+      ],
+      "quota_names": [
+        "室内铜芯电力电缆敷设 WDZ-YJY-5X4 五芯电力电缆敷设"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 名称:户内照明配电箱//型号:楼层空调配电箱1AL8//安装方式:暗装,底边距地 1.5m",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402076"
+      ],
+      "quota_names": [
+        "成套配电箱安装 楼层空调配电箱1AL8"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 //安装方式:壁挂//型号:B-B1ATpy42",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "配电箱B-B1ATpy42"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "桥架 MR-300*150//金属线槽",
+      "bill_name": "桥架",
+      "quota_ids": [
+        "30409066"
+      ],
+      "quota_names": [
+        "MR-300*150"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配管 材质:热镀锌焊接钢//规格:SC20//名称:电气配管//配置形式:砖、混凝土结构暗配",
+      "bill_name": "配管",
+      "quota_ids": [
+        "30412088"
+      ],
+      "quota_names": [
+        "热镀锌焊接钢敷设 砖、混凝土结构暗配 SC20"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "接地母线 规格:-40*5//材质:镀铜扁钢//名称:接地母线敷设(接地母线敷设)//安装部位:户外",
+      "bill_name": "接地母线",
+      "quota_ids": [
+        "30410059"
+      ],
+      "quota_names": [
+        "接地母线敷设户外接地母线敷设)-40*5热镀铜扁钢"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "装饰灯 名称:疏散出口指示灯(显示\"出口指示标志\"标识)//规格:1W/DC36V",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "30414156"
+      ],
+      "quota_names": [
+        "疏散指示标志灯 1W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:根据设计图纸综合考虑//名称:商业用电动力箱1APsy2//安装方式:明装//接线端子材质、规格:综合考虑//端子板外部接线材质、规格:综合考虑//基础形式、材质、规格:综合考虑//其他:未详之处详见设计图纸及招标文件",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402076"
+      ],
+      "quota_names": [
+        "商业用电动力箱1APsy2"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "铸铁管 连接形式:胶圈连接//安装部位:室外//介质:消火栓//材质、规格:球墨铸铁管 DN300//压力试验及吹、洗设计要求:符合设计要求",
+      "bill_name": "铸铁管",
+      "quota_ids": [
+        "31001188"
+      ],
+      "quota_names": [
+        "室外(铸铁给水管(胶圈接口) 公称直径300mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "管道绝热 绝热材料品种:难燃型发泡橡塑保温//绝热厚度:19mm//管道外径:DN50mm以下",
+      "bill_name": "管道绝热",
+      "quota_ids": [
+        "31104104"
+      ],
+      "quota_names": [
+        "难燃B1级发泡橡塑管壳(闭泡)(管道DN50以下 厚度19mm)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配电箱 规格:根据设计图纸综合考虑//名称:国际航站楼一层照明配电箱2ATzm3//安装方式:明装//接线端子材质、规格:综合考虑//端子板外部接线材质、规格:综合考虑//基础形式、材质、规格:综合考虑//其他:未详之处详见设计图纸及招标文件",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "双电源切换箱 2ATzm3"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "接线盒 //安装形式:暗装",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "30413193"
+      ],
+      "quota_names": [
+        "接线盒"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "消火栓钢管 连接形式:沟槽连接//安装部位:室外//材质、规格:内外热镀锌钢管DN150//钢管镀锌设计要求:内外热镀锌//压力试验及冲洗设计要求:符合设计要求",
+      "bill_name": "消火栓钢管",
+      "quota_ids": [
+        "30901020"
+      ],
+      "quota_names": [
+        "内外热镀锌钢管(沟槽连接) DN150"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "配线 材质:铜芯//规格:-2.5//名称:电气配线//型号:ZB-BYJ//配线形式:管内配线//配线部位:室内",
+      "bill_name": "配线",
+      "quota_ids": [
+        "30413005"
+      ],
+      "quota_names": [
+        "穿照明线(铜芯 ZB-BYJ-2.5"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "含分隔符"
+    },
+    {
+      "bill_text": "水表 附件配置:(1个无线远传水表DN20、1个止回阀、1个截止阀、1个干扰阀DN20、2个内接、1个补径DN25*20)（主材甲供）//连接形式:螺纹连接//安装部位(室内外):室外//型号、规格:水表组成安装DN25",
+      "bill_name": "水表",
+      "quota_ids": [
+        "31005308"
+      ],
+      "quota_names": [
+        "水表组成安装DN25(1个无线远传水表DN20、1个止回阀、1个截止阀、1个干扰阀DN20、2个内接、1个补径DN25*20)（主材甲供）"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "稳压给水设备 型号、规格:XW(L)-II-3.0-66-ADL Q=3.0L/s,H=66m,N=4.0kW//设备名称:消火栓稳压泵稳压设备//附件名称、规格、数量:（含控制箱、管路、阀门、气压罐SQL1000X0.6 Vs=220L 等）//减震装置形式:减震垫",
+      "bill_name": "稳压给水设备",
+      "quota_ids": [
+        "31009007"
+      ],
+      "quota_names": [
+        "稳压给水设备(设备重量0.4t以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "配电箱 规格:非标//名称:A型应急照明集中电源箱（容量为300W）//安装方式:距地1.6m明装//型号:1ALE2(A)",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "3#1ALE2(A) 2回路/安装容量:300W"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "扩声系统设备 寻呼话筒      1.采用话筒桌面式设计 带有7英寸显示屏 带触摸控制功能；显示屏自带数字键、功能键 支持通过触摸呼叫广播 支持呼叫分区及多个分区 呼叫全区广播；可支持10个按键自定义一键呼叫广播功能。2.内置1路网络硬件音频解码模块 具有1路RJ45网络接口 100Mbps传输速率。3.支持监听任意终端功能 内置2W全频扬声器 实现双向通话和网络监听。▲4.支持1路音频线路输入 支持采集播放功能；具有1路音频线路输出 可外接功率放大器。（提供设备线路输入与输出接口佐证图 并盖投标人公章）5.支持直接操作呼叫或对讲任意终端 支持通过话筒广播呼叫功能 广播延时低于100毫秒。6.支持多种呼叫策略 包括无响应转移、占线转移、关机转移；自动接听、手动接听 支持自定义接听提示音 支持转移时间、无人接听时间、呼叫等待时间自定义。7.具有1个3.5耳机接口、1路3.5话筒输入接口。▲8.具有1路短路输出接口、1路短路输入接口。（提供设备短路输入与输出接口佐证图 并盖投标人公章）技术参数1.网络接口：标准RJ45输入2.支持协议：TCP/IP UDP3.网络协议：支持IPv6、IPv4网络协议4.音频格式：MP35.采样率：8KHz~48KHz6.传输速率：100Mbps7.音频模式：16位CD音质8.显示屏尺寸：7英寸9.屏幕分辨率：800 x 480 像素10.屏幕类型：65K色DGUS屏11.键盘类型：虚拟QWERTY键盘12.键盘输入方式：触控13.内接扬声器阻抗及额定功率：4Ω 2W14.总偕波失真：≤1%15.内置喇叭频率响应：317Hz~3.4KHz  +1/-3dB16.LIEN OUT频率响应：80Hz~16KHz +1/-3dB17.信噪比：>65dB18.PHONE OUT输出阻抗及额定功率：32Ω，2mW19.LINE OUT 输出电平：1000mV 工业标准压线接线端子20.LINE OUT 输出阻抗：470Ω21.LINE IN输入灵敏度：350mV 工业标准压线接线端子22.MIC输入灵敏度（非平衡）：10mV23.短路输入：干接点输入24.短路输出：最大1A/30VDC干接点25.工作温度：5℃～40℃26.工作湿度：20%～80%相对湿度 无结露27.整机功耗：≤6W28.输入电源：～190V-240V 50Hz-60Hz(电源适配器);DC24V/1.5A29.尺寸：200×160×60 mm30.净重：1.2kg",
+      "bill_name": "扩声系统设备",
+      "quota_ids": [
+        "30506079"
+      ],
+      "quota_names": [
+        "寻呼话筒      1.采用话筒桌面式设计，带有7英寸显示屏，带触摸控制功能；显示屏自带数字键、功能键，支持通过触摸呼叫广播，支持呼叫分区及多个分区，呼叫全区广播；可支持10个按键自定义一键呼叫广播功能。2.内置1路网络硬件音频解码模块，具有1路RJ45网络接口，100Mbps传输速率。3.支持监听任意终端功能，内置2W全频扬声器，实现双向通话和网络监听。▲4.支持1路音频线路输入，支持采集播放功能；具有1路音频线路输出，可外接功率放大器。（提供设备线路输入与输出接口佐证图，并盖投标人公章）5.支持直接操作呼叫或对讲任意终端，支持通过话筒广播呼叫功能，广播延时低于100毫秒。6.支持多种呼叫策略，包括无响应转移、占线转移、关机转移；自动接听、手动接听，支持自定义接听提示音，支持转移时间、无人接听时间、呼叫等待时间自定义。7.具有1个3.5耳机接口、1路3.5话筒输入接口。▲8.具有1路短路输出接口、1路短路输入接口。（提供设备短路输入与输出接口佐证图，并盖投标人公章）\r\n技术参数\r\n1.网络接口：标准RJ45输入\r\n2.支持协议：TCP/IP，UDP\r\n3.网络协议：支持IPv6、IPv4网络协议\r\n4.音频格式：MP3\r\n5.采样率：8KHz~48KHz\r\n6.传输速率：100Mbps\r\n7.音频模式：16位CD音质\r\n8.显示屏尺寸：7英寸\r\n9.屏幕分辨率：800 x 480 像素\r\n10.屏幕类型：65K色DGUS屏\r\n11.键盘类型：虚拟QWERTY键盘\r\n12.键盘输入方式：触控\r\n13.内接扬声器阻抗及额定功率：4Ω，2W\r\n14.总偕波失真：≤1%\r\n15.内置喇叭频率响应：317Hz~3.4KHz  +1/-3dB\r\n16.LIEN OUT频率响应：80Hz~16KHz  +1/-3dB\r\n17.信噪比：>65dB\r\n18.PHONE OUT输出阻抗及额定功率：32Ω，2mW\r\n19.LINE OUT 输出电平：1000mV 工业标准压线接线端子\r\n20.LINE OUT 输出阻抗：470Ω\r\n21.LINE IN输入灵敏度：350mV  工业标准压线接线端子\r\n22.MIC输入灵敏度（非平衡）：10mV\r\n23.短路输入：干接点输入\r\n24.短路输出：最大1A/30VDC干接点\r\n25.工作温度：5℃～40℃\r\n26.工作湿度：20%～80%相对湿度，无结露\r\n27.整机功耗：≤6W\r\n28.输入电源：～190V-240V 50Hz-60Hz(电源适配器);DC24V/1.5A\r\n29.尺寸：200×160×60 mm\r\n30.净重：1.2kg"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "扩声系统设备 效果处理器//产品描述：//是一款高性能、多种音频处理技术高集成的4路输入4路输出的数字音频处理器 采用DSP音频处理技术 为用户提供卓越的声音品质；内置反馈抑制、回声消除、噪声消除等功能 还原高品质声音。主要应用于中大型场所 可以满足远程视频会议、体育场馆、会议中心、礼堂、宴会厅、展厅、多媒体会议、指挥中心等公共扩声系统等多方面的应用需求。//功能特点：//1.输入每通道：4路平衡式话筒/线路，采用裸线接口端子，平衡接法。 //2.输出每通道：4路平衡式线路输出 采用裸线接口端子 平衡接法。//3.提供24bit/48KHz卓越的高品质声音。//4.全功能矩阵混音 支持用户灵活、简单的信号路由操作 路由路径可自由组合。//5.面板具备USB接口 支持多媒体存储 可进行播放或存储录播。//6.配置双向RS-232接口 可用于控制外部设备。//7.配置RS-485接口 可实现自动摄像跟踪功能。//8.配置8通道可编程GPIO控制接口（可自定义输入输出）。//9.支持断电自动保护记忆功能。//10.支持通道拷贝、粘贴、联控功能。//11.Enternet多用途数据传输及控制端口 可以支持实时管理单台及多台设备。//12.支持通过浏览器访问设备 下载自带管理控制软件；软件界面直观、图形化 可工作在XP/Windows7、8、10等系统环境下。//13.支持iOS、iPad、Android的手机/平板APP进行操作控制。//技术参数//1.输入通道：前级放大、信号发生器、扩展器、压缩器、5段参量均衡、AM自动混音功能、AFC自适应反馈消除、AEC回声消除、ANC噪声消除//2.输出通道：31段图示均衡器、延时器、分频器、高低通滤波器、限幅器//3.采样率：48K//4.幻象供电：DC 48V//5.频率响应：20Hz-20KHz//6.总谐波失真+噪声：＜0.002% @1KHz ,4dBu//7.数/模动态范围(A-计权)：120dB//8.模/数动态范围(A-计权)：120dB//9.输入阻抗(平衡式)：20KΩ//10.最大输出阻抗（平衡式)：100Ω//11.通道隔离度：1kHz 100dB//12.输入共模抑制：60Hz 80dB//13.最大输出电平：+24dBu 平衡//14.最大输入电平：+24dBu 平衡//15.工作温度：0℃-40℃//16.工作电源：AC110V-220V,50Hz/60Hz//17.电源功耗：<40W//18.尺寸(宽x深x高)：482×258×45(mm)//19.净重：1.95kg//20.毛重：2.9kg//9.输入阻抗(平衡式)：20KΩ//10.最大输出阻抗（平衡式)：100Ω//11.通道隔离度：1kHz 100dB//12.输入共模抑制：60Hz 80dB//13.最大输出电平：+24dBu 平衡//14.最大输入电平：+24dBu 平衡//15.工作温度：0℃-40℃//16.工作电源：AC110V-220V,50Hz/60Hz//17.电源功耗：<40W//18.尺寸(宽x深x高)：482×258×45(mm)//19.净重：1.95kg//20.毛重：2.9kg",
+      "bill_name": "扩声系统设备",
+      "quota_ids": [
+        "30506029"
+      ],
+      "quota_names": [
+        "效果处理器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "分线接线箱(盒) 材质:铁皮//名称:有线电视前端箱（空箱）//安装方式:距地0.5米明装",
+      "bill_name": "分线接线箱(盒)",
+      "quota_ids": [
+        "30502006"
+      ],
+      "quota_names": [
+        "有线电视前端箱（空箱）"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "消防广播(扬声器) 名称:消防吸顶音箱//安装方式:吸顶安装（安装高度≤10）",
+      "bill_name": "消防广播(扬声器)",
+      "quota_ids": [
+        "30904021"
+      ],
+      "quota_names": [
+        "消防广播(扬声器)安装(扬声器 吸顶式(3W-5W)) 安装高度≤10"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "括号混乱"
+    },
+    {
+      "bill_text": "智能照明控制面板 规格:NEO 8键可编程控制面板带红外_灰+银//名称:智能照明控制面板//其他:未详之处详见设计图纸及招标文件",
+      "bill_name": "智能照明控制面板",
+      "quota_ids": [
+        "30503207"
+      ],
+      "quota_names": [
+        "动态液晶面板(可中文显示、分页浏览)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "模糊描述"
+    },
+    {
+      "bill_text": "电力电缆 型号:WDZBN-YJY-0.6/1KV-//规格:3*70+1*35//材质:铜芯//名称:动力电缆//电压等级(kV):0.4//敷设方式、部位:桥架/穿管//其他:未详之处详见设计图纸及招标文件",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "30409139"
+      ],
+      "quota_names": [
+        "电缆 WDZBN-YJY-3*70+1*35"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "模糊描述"
+    },
+    {
+      "bill_text": "配电箱 规格:详见图纸//名称:风机控制箱//安装方式:悬挂式//型号:2ATpy1",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "30402077"
+      ],
+      "quota_names": [
+        "风机控制箱2ATpy1"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "模糊描述"
+    },
+    {
+      "bill_text": "装饰灯 名称:A型集电应急筒灯（大型）//型号:非持续型灯具 A型应急照明电源集中供电//规格:LED-7W/DC36V//安装形式:吊顶内安装//其他:未详之处详见设计图纸及招标文件",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "30414163"
+      ],
+      "quota_names": [
+        "A型集电应急筒灯 LED-7W/DC36V 非持续型灯具（大型）"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "模糊描述"
+    },
+    {
+      "bill_text": "室内消火栓 型号、规格:减压稳压型消火栓 SNW65-III型 不含灭火器//安装方式:距地1.1m 详见图集15S202-15//附件材质、规格:含DN65消火栓,喷嘴直径19mm的水枪,公称直径65、长度25m的麻质衬胶水带,消防软管(内径19mm、长度30m)卷盘,喷嘴直径6mm的水枪。//尺寸:1000X700X180//消防栓字和边框为反光材质",
+      "bill_name": "室内消火栓",
+      "quota_ids": [
+        "30901076"
+      ],
+      "quota_names": [
+        "室内消火栓(暗装)自救卷盘(公称直径单栓65mm以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "模糊描述"
+    },
+    {
+      "bill_text": "普通灯具 E7应急灯",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414001"
+      ],
+      "quota_names": [
+        "E7应急灯"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "接线盒 规格:灯头盒",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "30413198"
+      ],
+      "quota_names": [
+        "接线盒安装(接线盒 暗装 难燃聚氯乙烯暗装灯头盒)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "低压封闭式插接母线槽",
+      "bill_name": "低压封闭式插接母线槽",
+      "quota_ids": [
+        "30403110"
+      ],
+      "quota_names": [
+        "密集绝缘母线槽 1250A/4P"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "双绞线缆 网线",
+      "bill_name": "双绞线缆",
+      "quota_ids": [
+        "30502021"
+      ],
+      "quota_names": [
+        "网线"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "接线盒 密闭盒",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "30413193"
+      ],
+      "quota_names": [
+        "密闭盒"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "焊接法兰阀门 消能桶",
+      "bill_name": "焊接法兰阀门",
+      "quota_ids": [
+        "31005044"
+      ],
+      "quota_names": [
+        "消能桶"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "机柜、机架 室外箱",
+      "bill_name": "机柜、机架",
+      "quota_ids": [
+        "30502002"
+      ],
+      "quota_names": [
+        "室外箱"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "烟雾变送器",
+      "bill_name": "烟雾变送器",
+      "quota_ids": [
+        "30503076"
+      ],
+      "quota_names": [
+        "烟雾传感器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "按钮 名称:报警按钮",
+      "bill_name": "按钮",
+      "quota_ids": [
+        "30904009"
+      ],
+      "quota_names": [
+        "报警按钮"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "管道支架 槽钢支架",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "31011001",
+        "31011002"
+      ],
+      "quota_names": [
+        "管道支架制作(单件重量100kg以内)",
+        "管道支架安装(单件重量100kg以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "控制器(模块)",
+      "bill_name": "控制器(模块)",
+      "quota_ids": [
+        "30503028"
+      ],
+      "quota_names": [
+        "余压控制器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "小电器 名称:风扇",
+      "bill_name": "小电器",
+      "quota_ids": [
+        "30415071"
+      ],
+      "quota_names": [
+        "风扇"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "光缆 名称:4芯光纤",
+      "bill_name": "光缆",
+      "quota_ids": [
+        "30502024"
+      ],
+      "quota_names": [
+        "4芯光纤"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "大便器 拆除马桶",
+      "bill_name": "大便器",
+      "quota_ids": [
+        "31006041"
+      ],
+      "quota_names": [
+        "坐式大便器安装(分体水箱)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "交换机 48口交换机",
+      "bill_name": "交换机",
+      "quota_ids": [
+        "30501086"
+      ],
+      "quota_names": [
+        "48口交换机"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "普通灯具 声控吸顶灯",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "30414001"
+      ],
+      "quota_names": [
+        "声控吸顶灯"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "声光报警器 声报警器",
+      "bill_name": "声光报警器",
+      "quota_ids": [
+        "30904013"
+      ],
+      "quota_names": [
+        "声报警器"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "电缆保护管",
+      "bill_name": "电缆保护管",
+      "quota_ids": [
+        "30409030"
+      ],
+      "quota_names": [
+        "钢管铺设 SC25"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "管道支架 制作与安装",
+      "bill_name": "管道支架",
+      "quota_ids": [
+        "31011001",
+        "31011002"
+      ],
+      "quota_names": [
+        "管道支架制作(单件重量100kg以内)",
+        "管道支架安装(单件重量100kg以内)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "水位计安装 液位计",
+      "bill_name": "水位计安装",
+      "quota_ids": [
+        "30807143"
+      ],
+      "quota_names": [
+        "液位计"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "小电器 卫生间排气扇",
+      "bill_name": "小电器",
+      "quota_ids": [
+        "30415073"
+      ],
+      "quota_names": [
+        "卫生间排气扇"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "微型电机、电加热器",
+      "bill_name": "微型电机、电加热器",
+      "quota_ids": [
+        "30406041",
+        "30417146"
+      ],
+      "quota_names": [
+        "微型电机、变频机组检查接线(微型电机)",
+        "微型电机调试(综合)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "打印机 含USB连接",
+      "bill_name": "打印机",
+      "quota_ids": [
+        "30501008"
+      ],
+      "quota_names": [
+        "打印机（含USB连接）"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "小便器 拆除小便器",
+      "bill_name": "小便器",
+      "quota_ids": [
+        "31006045"
+      ],
+      "quota_names": [
+        "壁挂式小便器安装(手动开关)"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "接线盒 软管盖板",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "30414290"
+      ],
+      "quota_names": [
+        "软管盖板"
+      ],
+      "specialty": "",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    }
+  ]
+}
