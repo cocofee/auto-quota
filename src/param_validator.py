@@ -44,6 +44,7 @@ class ParamValidator:
     # LTR模型特征列名（必须和训练时一致）
     # v1: 16维原始特征
     # v2: 21维（+5个参数距离特征，解决57%的"选错档位"问题）
+    # v3: 23维（+book_match, token_overlap）
     _LTR_FEATURES = [
         "bm25_score", "vector_score", "hybrid_score", "rerank_score",
         "param_score", "param_match",
@@ -57,6 +58,9 @@ class ParamValidator:
         "param_main_direction",   # 19. 向上取(+1)/向下取(-1)/精确(0)
         "param_material_match",   # 20. 材质匹配度(1.0精确/0.7兼容/0.0冲突/-1无信息)
         "param_n_checks",         # 21. 参数检查项数(越多越可信)
+        # v3新增：册号匹配+词级重叠（Claude+Codex联合确认）
+        "book_match",             # 22. 候选册号vs清单分类目标册号匹配度(1/0.5/0)
+        "token_overlap",          # 23. 同义词归一化后词级Jaccard重叠度
     ]
 
     # LTR模型（类级别单例，所有实例共享）
@@ -83,7 +87,8 @@ class ParamValidator:
 
     def validate_candidates(self, query_text: str, candidates: list[dict],
                             supplement_query: str = None,
-                            bill_params: dict = None) -> list[dict]:
+                            bill_params: dict = None,
+                            search_books: list[str] = None) -> list[dict]:
         """
         对候选定额进行参数验证和重排序
 
@@ -94,6 +99,7 @@ class ParamValidator:
                              典型场景：原文"BV4"提取不到截面，但 search_query"管内穿铜芯线 导线截面 4"可以
             bill_params: 清单已清洗的参数字典（来自bill_cleaner）。
                          如果提供，优先使用；否则从文本重新提取。
+            search_books: 清单分类的搜索册号列表（用于v3 book_match特征）
 
         返回:
             验证后的候选列表，每条增加 param_score 和 param_detail 字段
@@ -171,7 +177,7 @@ class ParamValidator:
                     query_text, c.get("name", ""))
 
             # 无参数分支：用LTR模型或品类词主导排序
-            self._ltr_sort(candidates, query_text)
+            self._ltr_sort(candidates, query_text, search_books=search_books)
             return candidates
 
         # 逐个验证候选定额
@@ -225,7 +231,7 @@ class ParamValidator:
             validated.append(candidate)
 
         # 有参数分支：用LTR模型或三项融合排序
-        self._ltr_sort(validated, query_text)
+        self._ltr_sort(validated, query_text, search_books=search_books)
 
         return validated
 
@@ -296,7 +302,8 @@ class ParamValidator:
 
         return features
 
-    def _ltr_sort(self, candidates: list[dict], query_text: str):
+    def _ltr_sort(self, candidates: list[dict], query_text: str,
+                  search_books: list[str] = None):
         """
         用LTR模型排序候选（如果模型可用），否则回退到手工公式。
 
@@ -308,7 +315,8 @@ class ParamValidator:
 
         if self._ltr_model is not None:
             try:
-                features = self._extract_ltr_features(candidates, query_text)
+                features = self._extract_ltr_features(
+                    candidates, query_text, search_books=search_books)
                 scores = self._ltr_model.predict(features)
                 for i, c in enumerate(candidates):
                     # 硬失败候选不让模型翻身
@@ -333,20 +341,28 @@ class ParamValidator:
         )
 
     def _extract_ltr_features(self, candidates: list[dict],
-                              query_text: str) -> np.ndarray:
+                              query_text: str,
+                              search_books: list[str] = None) -> np.ndarray:
         """
         从候选列表中提取LTR特征矩阵。
         v1: 16维（兼容旧模型）
         v2: 21维（+5个参数距离特征）
+        v3: 23维（+book_match, token_overlap）
+
+        Args:
+            search_books: 清单分类的搜索册号列表（用于book_match特征）
         """
         n = len(candidates)
-        # 检查模型期望的特征数（兼容旧16维模型）
-        n_features = 21  # v2默认21维
+        # 检查模型期望的特征数（兼容旧16/21维模型）
+        n_features = 23  # v3默认23维
         if self._ltr_model is not None:
             try:
                 model_n_features = self._ltr_model.num_feature()
                 if model_n_features == 16:
-                    n_features = 16  # 旧模型只要16维
+                    n_features = 16  # v1旧模型
+                elif model_n_features == 21:
+                    n_features = 21  # v2模型
+                # 23维模型直接用默认值
             except Exception:
                 pass
         # 提取清单名称（取query_text的第一段）
@@ -420,9 +436,56 @@ class ParamValidator:
                     ltr_param.get("param_n_checks", 0),         # 21
                 ])
 
+            # v3新增：册号匹配+词级重叠
+            if n_features >= 23:
+                row.extend([
+                    self._compute_book_match(c, search_books or []),  # 22
+                    self._compute_token_overlap(bill_name, cand_name),  # 23
+                ])
+
             features[i] = row
 
         return features
+
+    @staticmethod
+    def _compute_book_match(candidate: dict, search_books: list[str]) -> float:
+        """计算候选册号与搜索册号的匹配度（1=主专业/0.5=借用/0=不在范围）"""
+        from src.specialty_classifier import get_book_from_quota_id
+        qid = str(candidate.get("quota_id", ""))
+        if not qid or not search_books:
+            return 0.0
+        cand_book = get_book_from_quota_id(qid)
+        if not cand_book:
+            return 0.0
+        cand_book_upper = cand_book.upper()
+        if search_books[0].upper() == cand_book_upper:
+            return 1.0
+        for book in search_books[1:]:
+            if book.upper() == cand_book_upper:
+                return 0.5
+        return 0.0
+
+    @staticmethod
+    def _compute_token_overlap(bill_name: str, cand_name: str) -> float:
+        """计算词级Jaccard重叠度（jieba分词后）"""
+        if not bill_name or not cand_name:
+            return 0.0
+
+        def _tokenize(text: str) -> set[str]:
+            tokens = set()
+            for w in jieba.cut(text):
+                w = w.strip()
+                if len(w) >= 2 and not re.match(r'^[\d.]+$', w):
+                    tokens.add(w)
+            return tokens
+
+        bill_tokens = _tokenize(bill_name)
+        cand_tokens = _tokenize(cand_name)
+        if not bill_tokens or not cand_tokens:
+            return 0.0
+        intersection = bill_tokens & cand_tokens
+        union = bill_tokens | cand_tokens
+        return len(intersection) / len(union) if union else 0.0
 
     def _get_db_params(self, candidate: dict) -> dict:
         """从候选定额的数据库字段中提取参数"""

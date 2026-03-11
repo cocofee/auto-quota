@@ -3,10 +3,11 @@
 LTR训练数据生成器
 
 跑 benchmark 2174条试卷，每条清单产生约20个候选，
-提取21维特征 + 分级标注(0/1/2)，输出CSV供LightGBM训练。
+提取23维特征 + 分级标注(0/1/2)，输出CSV供LightGBM训练。
 
 v1: 16维（原始语义+参数聚合特征）
 v2: 21维（+5个参数距离特征，解决57%的"选错档位"问题）
+v3: 23维（+book_match, token_overlap）
 
 用法:
     python tools/ltr_prepare_data.py                  # 全量生成
@@ -17,14 +18,19 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
 
+import jieba
+
 sys.path.insert(0, ".")
 
-# 21维特征列名（v2: 原16维 + 5个参数距离特征）
+# 23维特征列名
+# v2: 原16维 + 5个参数距离特征
+# v3: +2个新特征（book_match, token_overlap）
 FEATURE_COLUMNS = [
     "bm25_score",          # 1. BM25文本匹配分
     "vector_score",        # 2. 向量语义相似度
@@ -48,6 +54,9 @@ FEATURE_COLUMNS = [
     "param_main_direction",# 19. 向上取(+1)/向下取(-1)/精确(0)
     "param_material_match",# 20. 材质匹配度(1.0精确/0.7兼容/0.0冲突/-1无信息)
     "param_n_checks",      # 21. 参数检查项数(越多越可信)
+    # v3新增：册号匹配+词级重叠（Claude+Codex联合确认）
+    "book_match",          # 22. 候选册号vs清单分类目标册号匹配度(1/0.5/0)
+    "token_overlap",       # 23. 同义词归一化后的词级Jaccard重叠度
 ]
 
 # CSV列：query_id + province + 特征 + label
@@ -77,11 +86,109 @@ def compute_name_edit_dist(bill_name: str, candidate_name: str) -> float:
     return SequenceMatcher(None, bill_name, candidate_name).ratio()
 
 
+def compute_book_match(candidate: dict, search_books: list[str]) -> float:
+    """计算候选定额的册号与清单分类目标册号的匹配度
+
+    返回:
+        1.0 = 候选册号是主专业（search_books的第一个）
+        0.5 = 候选册号在借用专业列表中
+        0.0 = 不在搜索范围内
+    """
+    from src.specialty_classifier import get_book_from_quota_id
+    qid = str(candidate.get("quota_id", ""))
+    if not qid or not search_books:
+        return 0.0
+    cand_book = get_book_from_quota_id(qid)
+    if not cand_book:
+        return 0.0
+    cand_book_upper = cand_book.upper()
+    # 主专业（search_books第一个）
+    if search_books and search_books[0].upper() == cand_book_upper:
+        return 1.0
+    # 借用专业
+    for book in search_books[1:]:
+        if book.upper() == cand_book_upper:
+            return 0.5
+    return 0.0
+
+
+# 同义词表缓存（用于token_overlap归一化）
+_SYNONYM_MAP_CACHE = None
+
+
+def _load_synonym_map() -> dict:
+    """加载同义词表，构建 清单词→定额词 的映射（惰性加载）"""
+    global _SYNONYM_MAP_CACHE
+    if _SYNONYM_MAP_CACHE is not None:
+        return _SYNONYM_MAP_CACHE
+    _SYNONYM_MAP_CACHE = {}
+    syn_path = Path(__file__).parent.parent / "data" / "engineering_synonyms.json"
+    try:
+        with open(syn_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        for k, v in raw.items():
+            if not k.startswith("_") and isinstance(v, list) and v:
+                # 同义词映射：key的token → value[0]的token
+                _SYNONYM_MAP_CACHE[k] = v[0]
+    except Exception:
+        pass
+    return _SYNONYM_MAP_CACHE
+
+
+def compute_token_overlap(bill_name: str, candidate_name: str) -> float:
+    """计算同义词归一化后的词级Jaccard重叠度
+
+    先用jieba分词，再用同义词表归一化（把清单常用词映射到定额常用词），
+    最后算Jaccard = |交集| / |并集|。
+    """
+    if not bill_name or not candidate_name:
+        return 0.0
+
+    # 分词（过滤掉长度<2的纯数字和单字符停用词）
+    def _tokenize(text: str) -> set[str]:
+        tokens = set()
+        for w in jieba.cut(text):
+            w = w.strip()
+            if len(w) >= 2 and not re.match(r'^[\d.]+$', w):
+                tokens.add(w)
+        return tokens
+
+    bill_tokens = _tokenize(bill_name)
+    cand_tokens = _tokenize(candidate_name)
+
+    if not bill_tokens or not cand_tokens:
+        return 0.0
+
+    # 同义词归一化：把清单中的词替换为定额中对应的词
+    syn_map = _load_synonym_map()
+    normalized_bill = set()
+    for t in bill_tokens:
+        # 检查token是否是某个同义词key的子串或精确匹配
+        mapped = False
+        for key, val in syn_map.items():
+            if t == key:
+                normalized_bill.add(val)
+                mapped = True
+                break
+        if not mapped:
+            normalized_bill.add(t)
+
+    # 计算Jaccard系数
+    intersection = normalized_bill & cand_tokens
+    union = normalized_bill | cand_tokens
+    return len(intersection) / len(union) if union else 0.0
+
+
 def extract_features(candidate: dict, bill_name: str,
                      n_candidates: int, top1_composite: float,
                      bm25_ranks: dict, vector_ranks: dict,
-                     bm25_ids: set, vector_ids: set) -> dict:
-    """从单个候选提取21维特征"""
+                     bm25_ids: set, vector_ids: set,
+                     search_books: list[str] = None) -> dict:
+    """从单个候选提取23维特征
+
+    Args:
+        search_books: 清单分类的搜索册号列表（第一个为主专业，后续为借用）
+    """
     qid = str(candidate.get("quota_id", ""))
     tier = candidate.get("param_tier", 1)
 
@@ -117,6 +224,9 @@ def extract_features(candidate: dict, bill_name: str,
         "param_main_direction": ltr_param.get("param_main_direction", 0),
         "param_material_match": ltr_param.get("param_material_match", -1.0),
         "param_n_checks": ltr_param.get("param_n_checks", 0),
+        # v3新增：册号匹配+词级重叠
+        "book_match": compute_book_match(candidate, search_books or []),
+        "token_overlap": compute_token_overlap(bill_name, candidate.get("name", "")),
     }
 
 
@@ -242,8 +352,11 @@ def process_province(province: str, items: list[dict],
             candidates = reranker.rerank(search_query, candidates)
 
         # 参数验证（会添加param_score/name_bonus/param_tier等）
+        # 传入search_books用于v3 book_match特征
+        search_books = classification.get("search_books", [])
         candidates = validator.validate_candidates(
-            full_query, candidates, supplement_query=search_query)
+            full_query, candidates, supplement_query=search_query,
+            search_books=search_books)
 
         if not candidates:
             stats["skipped"] += 1
@@ -266,13 +379,16 @@ def process_province(province: str, items: list[dict],
         # 标注每个候选
         has_positive = False
         rows = []
+        # 从classification中提取搜索册号（用于book_match特征）
+        search_books = classification.get("search_books", [])
         for c in candidates:
             label = label_candidate(c, correct_ids, correct_names)
             if label >= 1:
                 has_positive = True
             features = extract_features(
                 c, bill_name, n_candidates, top1_composite,
-                bm25_ranks, vector_ranks, bm25_ids, vector_ids)
+                bm25_ranks, vector_ranks, bm25_ids, vector_ids,
+                search_books=search_books)
             row = [query_id, province]
             row.extend(features[col] for col in FEATURE_COLUMNS)
             row.append(label)
