@@ -1,6 +1,6 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-11 14:24:16",
+  "date": "2026-03-11 23:33:36",
   "note": "",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
@@ -15,10 +15,10 @@
     },
     "宁夏安装工程计价定额(2019)": {
       "total": 90,
-      "correct": 51,
-      "hit_rate": 56.7,
+      "correct": 50,
+      "hit_rate": 55.6,
       "diagnosis": {
-        "synonym_gap": 11,
+        "synonym_gap": 12,
         "wrong_tier": 28
       }
     },
@@ -36,18 +36,27 @@
       "correct": 55,
       "hit_rate": 51.9,
       "diagnosis": {
-        "wrong_tier": 18,
-        "synonym_gap": 33
+        "wrong_tier": 20,
+        "synonym_gap": 31
       }
     },
     "广东省通用安装工程综合定额(2018)": {
       "total": 534,
-      "correct": 274,
-      "hit_rate": 51.3,
+      "correct": 252,
+      "hit_rate": 47.2,
       "diagnosis": {
         "wrong_book": 3,
-        "synonym_gap": 59,
-        "wrong_tier": 198
+        "synonym_gap": 57,
+        "wrong_tier": 222
+      }
+    },
+    "江苏省安装工程计价定额(2014)": {
+      "total": 200,
+      "correct": 47,
+      "hit_rate": 23.5,
+      "diagnosis": {
+        "synonym_gap": 144,
+        "wrong_tier": 9
       }
     },
     "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
@@ -61,47 +70,103 @@
     },
     "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": {
       "total": 22,
-      "correct": 15,
-      "hit_rate": 68.2,
+      "correct": 17,
+      "hit_rate": 77.3,
       "diagnosis": {
-        "wrong_tier": 2,
-        "synonym_gap": 5
+        "wrong_tier": 1,
+        "synonym_gap": 4
       }
     },
     "江西省通用安装工程消耗量定额及统一基价表(2017)": {
       "total": 468,
-      "correct": 226,
-      "hit_rate": 48.3,
+      "correct": 231,
+      "hit_rate": 49.4,
       "diagnosis": {
-        "wrong_tier": 184,
-        "synonym_gap": 58
+        "wrong_tier": 187,
+        "synonym_gap": 50
       }
     },
     "河南省通用安装工程预算定额(2016)": {
       "total": 114,
-      "correct": 76,
-      "hit_rate": 66.7,
+      "correct": 62,
+      "hit_rate": 54.4,
       "diagnosis": {
-        "wrong_tier": 24,
-        "synonym_gap": 14
+        "wrong_tier": 20,
+        "synonym_gap": 32
       }
     },
     "浙江省通用安装工程预算定额(2018)": {
       "total": 475,
-      "correct": 236,
-      "hit_rate": 49.7,
+      "correct": 234,
+      "hit_rate": 49.3,
       "diagnosis": {
-        "synonym_gap": 155,
-        "wrong_tier": 82,
+        "synonym_gap": 156,
+        "wrong_tier": 83,
         "wrong_book": 2
       }
     },
     "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {
       "total": 35,
-      "correct": 25,
-      "hit_rate": 71.4,
+      "correct": 19,
+      "hit_rate": 54.3,
       "diagnosis": {
-        "wrong_tier": 10
+        "wrong_tier": 8,
+        "synonym_gap": 8
+      }
+    },
+    "福建省园林绿化工程预算定额(2017)": {
+      "total": 200,
+      "correct": 72,
+      "hit_rate": 36.0,
+      "diagnosis": {
+        "synonym_gap": 105,
+        "wrong_tier": 23
+      }
+    },
+    "福建省市政工程预算定额(2017)": {
+      "total": 200,
+      "correct": 46,
+      "hit_rate": 23.0,
+      "diagnosis": {
+        "wrong_tier": 34,
+        "synonym_gap": 120
+      }
+    },
+    "福建省房屋建筑与装饰工程预算定额(2017)": {
+      "total": 199,
+      "correct": 75,
+      "hit_rate": 37.7,
+      "diagnosis": {
+        "wrong_tier": 44,
+        "synonym_gap": 80
+      }
+    },
+    "福建省通用安装工程预算定额(2017)": {
+      "total": 200,
+      "correct": 40,
+      "hit_rate": 20.0,
+      "diagnosis": {
+        "synonym_gap": 131,
+        "wrong_tier": 29
+      }
+    },
+    "辽宁省通用安装工程定额(2024)": {
+      "total": 58,
+      "correct": 36,
+      "hit_rate": 62.1,
+      "diagnosis": {
+        "synonym_gap": 9,
+        "wrong_tier": 13
+      }
+    },
+    "重庆市通用安装工程计价定额(2018)": {
+      "total": 200,
+      "correct": 59,
+      "hit_rate": 29.5,
+      "diagnosis": {
+        "wrong_tier": 113,
+        "wrong_book": 21,
+        "synonym_gap": 7
       }
     }
   },
@@ -113,7 +178,7 @@
       "yellow_rate": 0.1053,
       "red_rate": 0.7895,
       "exp_hit_rate": 0.0,
-      "avg_time_sec": 0.82
+      "avg_time_sec": 0.72
     }
   }
 }

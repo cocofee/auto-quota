@@ -1,0 +1,2714 @@
+{
+  "province": "江苏省安装工程计价定额(2014)",
+  "total_items": 200,
+  "authority_count": 200,
+  "candidate_count": 0,
+  "content_hash": "304ec80e",
+  "created": "2026-03-11",
+  "items": [
+    {
+      "id": 13895,
+      "bill_text": "配线 规格：BYJ2.5mm2 配线线制：管内穿线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1359"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面2.5mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61592,
+      "bill_text": "插座 名称:五孔插座(安全型) 规格:10A 250V",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-373"
+      ],
+      "quota_names": [
+        "单相暗插座15A 5孔"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13790,
+      "bill_text": "接线盒 材质：钢制 规格：86型",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "4-1545"
+      ],
+      "quota_names": [
+        "接线盒暗装 接线盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61938,
+      "bill_text": "普通灯具 嵌入式筒灯CEA1601H 15W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 11601H 158(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13922,
+      "bill_text": "电力电缆 规格：WDZB-YJY-0.6/1KV-2*35mm2+1*16mm2 其余详见设计图纸要求",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-727"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面35mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61571,
+      "bill_text": "装饰灯 名称：led天花射灯 12W*6  4000K 规格：轨道4.6m",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1757",
+        "4-1756"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具 滑轨［示意图号］182、183、184、185、186、187185、186、187",
+        "点光源艺术装饰灯具 射灯 滑轨式 ［示意图号］182、183、184、185、186、187"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61570,
+      "bill_text": "装饰灯 名称：led天花射灯 12W*4  4000K 规格：轨道3m",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1757",
+        "4-1756"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具 滑轨［示意图号］182、183、184、185、186、187185、186、187",
+        "点光源艺术装饰灯具 射灯 滑轨式 ［示意图号］182、183、184、185、186、187"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14962,
+      "bill_text": "管道防腐蚀 名称：管廊外部埋地管 外防腐 涂刷（喷）品种：环氧煤沥青防腐涂料，涂层间缠绕玻璃布 涂刷（喷）遍数、漆膜厚度：底漆一层、玻璃布一层、底漆一层、埋地管用的面漆二层",
+      "bill_name": "管道防腐蚀",
+      "quota_ids": [
+        "11-327"
+      ],
+      "quota_names": [
+        "环氧煤沥青防腐 一布"
+      ],
+      "specialty": "C11",
+      "layer": "authority"
+    },
+    {
+      "id": 13806,
+      "bill_text": "电力电缆 规格：WDZBN-YJY23-0.6/1kV 3X25+2X16",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-741"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般五芯电缆 电缆截面35mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61930,
+      "bill_text": "插座 两孔加三孔地面插座",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-385"
+      ],
+      "quota_names": [
+        "地面插座,地面插座(包含“成套插座“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14980,
+      "bill_text": "管道绝热 绝热材料品种：50mm岩棉（容重100Kg/m3） 满足招标文件及图纸技术参数要求",
+      "bill_name": "管道绝热",
+      "quota_ids": [
+        "11-1897"
+      ],
+      "quota_names": [
+        "纤维类制品(板)安装 通风管道 厚度50mm"
+      ],
+      "specialty": "C11",
+      "layer": "authority"
+    },
+    {
+      "id": 61660,
+      "bill_text": "配线 名称：空调信号线 型号：KVV2*0.75mm2",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1398"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导线二芯以内 导线截面0.75mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61631,
+      "bill_text": "小便器 材质：陶瓷 规格、类型：立式小便斗 附件名称、数量：含手压阀、下水等五金件",
+      "bill_name": "小便器",
+      "quota_ids": [
+        "10-711"
+      ],
+      "quota_names": [
+        "立式小便器 普通式"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61887,
+      "bill_text": "塑料管 PP-R给水管De40,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-236",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 32/40(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13900,
+      "bill_text": "铁构件 材质：明配管支吊架 型钢、除锈刷漆",
+      "bill_name": "铁构件",
+      "quota_ids": [
+        "4-1811",
+        "4-1812"
+      ],
+      "quota_names": [
+        "一般铁构件 制作",
+        "一般铁构件 安装"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61947,
+      "bill_text": "塑料管 PP-R热水管De63,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-238",
+        "10-372"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 50/63(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13721,
+      "bill_text": "不锈钢地漏 成品不锈钢地漏DN110",
+      "bill_name": "不锈钢地漏",
+      "quota_ids": [
+        "10-751"
+      ],
+      "quota_names": [
+        "地漏安装 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61894,
+      "bill_text": "塑料管 UPVC排水管De50,含管件，胶水粘接",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-309"
+      ],
+      "quota_names": [
+        "承插塑料排水管(零件粘接),公称直径(mm以内) 50(包含“承插塑料排水管 dn50“,“承插塑料排水管件 dn50“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14907,
+      "bill_text": "浪涌保护器 名称：网络+电源防雷器 规格：与云台摄像机配套使用",
+      "bill_name": "浪涌保护器",
+      "quota_ids": [
+        "5-625"
+      ],
+      "quota_names": [
+        "电子设备防雷接地装置安装 电视摄像头避雷器雷电通流8/20μs 1kA"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61620,
+      "bill_text": "配线 名称:电线 配线形式:管内穿线 型号:WDZDN-BYJ2.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1359"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面2.5mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61884,
+      "bill_text": "接线盒 86型灯头盒",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "4-1545"
+      ],
+      "quota_names": [
+        "接线盒安装,暗装 接线盒(包含“接线盒“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13907,
+      "bill_text": "装饰灯 名称：疏散指示(5W,LED光源)-带蓄电池,应急时间≥60min(套) 参数：其余详见设计图纸要求",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1745"
+      ],
+      "quota_names": [
+        "标志、诱导装饰灯具 墙壁式 ［示意图号］171、172、173、174"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61943,
+      "bill_text": "普通灯具 嵌入式筒灯CEA1601H 9W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 11601H 98(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61574,
+      "bill_text": "荧光灯 名称：R03a  双管荧光灯（计算机网络教室灯具）",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1798"
+      ],
+      "quota_names": [
+        "R03a  双管荧光灯（计算机网络教室灯具）"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61562,
+      "bill_text": "普通灯具 名称：led条形灯盘4000K, 48W 规格：1500*200  铝合金灯身，扩散板灯罩",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1723"
+      ],
+      "quota_names": [
+        "led条形灯盘4000K, 36W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13914,
+      "bill_text": "电力电缆 名称：环线连接电缆（含电缆头制作、安装） 规格：电缆(2x2x1.5mm2/低烟无卤/交联聚乙烯绝缘) 其余详见设计图纸要求",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-723"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面4mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61575,
+      "bill_text": "装饰灯 名称：LED灯带 7W/M 4000K",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1781"
+      ],
+      "quota_names": [
+        "LED灯带 7W/M 4000K"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61628,
+      "bill_text": "给、排水附（配）件 材质：不锈钢 型号、规格：地面扫除口 DN50",
+      "bill_name": "给、排水附（配）件",
+      "quota_ids": [
+        "10-753"
+      ],
+      "quota_names": [
+        "地面扫除口安装 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61951,
+      "bill_text": "螺纹阀门 恒温混水阀DN50,螺纹连接",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "10-423"
+      ],
+      "quota_names": [
+        "螺纹阀,公称直径(mm以内) 50(包含“螺纹阀门 DN50“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14817,
+      "bill_text": "配线 名称：铁丝 配线形式：管内穿线 规格：12#",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1413"
+      ],
+      "quota_names": [
+        "管内预留铁丝"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61598,
+      "bill_text": "接线盒 和开关盒 规格:86",
+      "bill_name": "接线盒",
+      "quota_ids": [
+        "4-1545",
+        "4-1546"
+      ],
+      "quota_names": [
+        "接线盒暗装 接线盒",
+        "接线盒暗装 开关盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13783,
+      "bill_text": "控制电缆 规格：WDZBN-KYJYP-10*1.5",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-801"
+      ],
+      "quota_names": [
+        "一般电缆 电缆14芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13925,
+      "bill_text": "防火堵洞 名称：室外设备防火堵洞 其余详见设计图纸要求",
+      "bill_name": "防火堵洞",
+      "quota_ids": [
+        "4-887"
+      ],
+      "quota_names": [
+        "防火堵洞 盘柜下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61580,
+      "bill_text": "配管 名称:PVC电线管 规格:Φ40mm内 配置形式:暗配，墙体剔槽补槽",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1253"
+      ],
+      "quota_names": [
+        "砖、混凝土结构暗配 刚性阻燃管公称直径40mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61933,
+      "bill_text": "普通灯具 LED吸顶灯CEX12-03 12W",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1556"
+      ],
+      "quota_names": [
+        "圆球吸顶灯 灯罩直径(mm以内) 300(包含“成套灯具“,“圆木台 275～350“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 15009,
+      "bill_text": "不锈钢焊接法兰 材质：不锈钢法兰（含螺栓螺母） 型号、规格：DN300",
+      "bill_name": "不锈钢焊接法兰",
+      "quota_ids": [
+        "8-1540"
+      ],
+      "quota_names": [
+        "低压法兰 不锈钢平焊法兰(电弧焊) 公称直径300mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61650,
+      "bill_text": "铜管 材质、压力等级：紫铜 规格：∅28.58 焊接方法：焊接 保温：B1级橡塑保温，厚度30mm",
+      "bill_name": "铜管",
+      "quota_ids": [
+        "8-253",
+        "8-2481",
+        "8-2462",
+        "11-2291"
+      ],
+      "quota_names": [
+        "低压管道 铜管(氧乙炔焊) 管外径30mm以内",
+        "管道系统空气吹扫 公称直径50mm以内",
+        "低中压管道泄露性试验 公称直径50mm以内",
+        "橡塑保温套管安装管道 厚度32mm"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 14924,
+      "bill_text": "显示设备 名称：微型交通信息诱导屏(全彩) 规格：三基色全点阵,2.56m*0.64m,10mm点距",
+      "bill_name": "显示设备",
+      "quota_ids": [
+        "5-804"
+      ],
+      "quota_names": [
+        "微型交通信息诱导屏(全彩)"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 14192,
+      "bill_text": "电力电缆 名称：电缆 规格：YJV-4*50",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-728"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面120mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13916,
+      "bill_text": "电力电缆 名称：接地电缆（含电缆头制作、安装） 规格：DWZR-BYP-16mm2 其余详见设计图纸要求",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-712"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般单芯电缆 电缆截面16mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61637,
+      "bill_text": "塑料管 介质：冷水 材质、规格：PPR管（含管件） DN20 连接形式：热熔连接 压力试验及吹、洗设计要求：水压试验、管道冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-234",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 20/25mm",
+        "管道消毒、冲洗 公称直径50mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13894,
+      "bill_text": "配管 名称：塑料管 规格：SG20 配置形式：暗配（含墙体开槽修复等）",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1250"
+      ],
+      "quota_names": [
+        "砖、混凝土结构暗配 刚性阻燃管公称直径20mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61922,
+      "bill_text": "配管 砖、混凝土结构暗配 刚性阻燃管公称直径(mm以内) 20(包含“刚性阻燃管“)",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1250"
+      ],
+      "quota_names": [
+        "砖、混凝土结构暗配 刚性阻燃管公称直径(mm以内) 20(包含“刚性阻燃管“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61941,
+      "bill_text": "普通灯具 防水LED筒灯15W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 178(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14974,
+      "bill_text": "消防广播及对讲电话主机（柜） 名称：录音系统 规格、线制：全通道实时监听、同时录音;3000小时硬盘自动循环写盘,容量2000G 满足招标文件及图纸技术参数要求",
+      "bill_name": "消防广播及对讲电话主机（柜）",
+      "quota_ids": [
+        "9-208"
+      ],
+      "quota_names": [
+        "火灾事故广播安装 录音机"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 14188,
+      "bill_text": "电力电缆 名称：电缆 规格：YJV-4*25+1*16",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-727"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面35mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13863,
+      "bill_text": "控制电缆 控制电缆 KVVR-20*1.0：电缆敷设，电缆头制作安装，编号，挂牌",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-802"
+      ],
+      "quota_names": [
+        "一般电缆 电缆24芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13837,
+      "bill_text": "配线 线缆敷设 RVSP-2X1.0：线缆敷设，端子接线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1399"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导线二芯以内 导线截面1mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13913,
+      "bill_text": "灭火器 规格、型号：5kg干粉灭火器2具+灭火器箱组合",
+      "bill_name": "灭火器",
+      "quota_ids": [
+        "9-75"
+      ],
+      "quota_names": [
+        "灭火器安装 放置式"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 61561,
+      "bill_text": "普通灯具 名称：led条形灯盘4000K, 36W 规格：1200*200  铝合金灯身，扩散板灯罩",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1723"
+      ],
+      "quota_names": [
+        "led条形灯盘4000K, 36W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61595,
+      "bill_text": "插座 名称:柜式空调插座（安全型） 规格:16A 250V",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-371"
+      ],
+      "quota_names": [
+        "单相暗插座15A 3孔"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61662,
+      "bill_text": "楼（地）面涂膜防水 地面聚氨脂防水涂料1.5厚",
+      "bill_name": "楼（地）面涂膜防水",
+      "quota_ids": [
+        "10-116"
+      ],
+      "quota_names": [
+        "刷聚氨脂防水涂料 (平面)二涂2.0mm"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13800,
+      "bill_text": "接线箱 名称：地下通道防护盒 参数：含防雷单元、配电单元、配线单元等，满足图纸和招标技术要求",
+      "bill_name": "接线箱",
+      "quota_ids": [
+        "4-1542"
+      ],
+      "quota_names": [
+        "接线箱明装 接线箱半周长1500mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 15010,
+      "bill_text": "低压碳钢焊接法兰 材质：平焊法兰（含螺栓螺母） 型号、规格：DN500",
+      "bill_name": "低压碳钢焊接法兰",
+      "quota_ids": [
+        "8-1516"
+      ],
+      "quota_names": [
+        "低压法兰 碳钢平焊法兰(电弧焊) 公称直径500mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 13834,
+      "bill_text": "配线 线缆敷设 RVV-3*2.5：线缆敷设，端子接线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1405"
+      ],
+      "quota_names": [
+        "线缆敷设 RVV-3*2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14999,
+      "bill_text": "低压法兰阀门 名称：电动蝶阀 型号、规格：DN300  PN1.0（1.0MPa） 采用一体式，IP55 连接方式：法兰连接",
+      "bill_name": "低压法兰阀门",
+      "quota_ids": [
+        "8-1283"
+      ],
+      "quota_names": [
+        "低压阀门 法兰阀门 公称直径300mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 14892,
+      "bill_text": "电力电缆 规格：YJV-5*16",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-740"
+      ],
+      "quota_names": [
+        "电力电缆YIV-5*16"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13795,
+      "bill_text": "接地母线 材质：型钢 规格：热镀锌扁钢-40*4",
+      "bill_name": "接地母线",
+      "quota_ids": [
+        "4-905"
+      ],
+      "quota_names": [
+        "户内接地母线敷设"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13902,
+      "bill_text": "荧光灯 名称：格栅灯(3*14W) 参数：其余详见设计图纸要求",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1802"
+      ],
+      "quota_names": [
+        "荧光灯安装 嵌入式 三管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13905,
+      "bill_text": "荧光灯 名称：应急-固定式LED长条吸顶灯\\白色铝合金边框\\4000kw中性灯\\1200*250mm单支\\28W 参数：其余详见设计图纸要求",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1800"
+      ],
+      "quota_names": [
+        "荧光灯安装 嵌入式 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14189,
+      "bill_text": "电力电缆 名称：电缆 规格：YJV-4*10",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-725"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面10mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61897,
+      "bill_text": "大便器 坐式大便器（FB16198M）",
+      "bill_name": "大便器",
+      "quota_ids": [
+        "10-704"
+      ],
+      "quota_names": [
+        "坐式大便器,坐式 带水箱坐便(包含“坐便器带水箱“,“瓷蹲式座便器低水箱配件“,“座便器桶盖“,“角阀“,“金属软管“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14968,
+      "bill_text": "中央信号装置 调试 变电所系统",
+      "bill_name": "中央信号装置",
+      "quota_ids": [
+        "4-1843"
+      ],
+      "quota_names": [
+        "中央信号装置调试 变电所系统"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13897,
+      "bill_text": "配线 规格：BYJ4mm2 配线线制：管内穿线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1360"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面4mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14235,
+      "bill_text": "配线 名称：电源线 配线形式：管内穿线 型号：RVV-3*1.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1404"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导管四芯以内 导线截面1.5mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14398,
+      "bill_text": "涂膜防水 部位：底板、贴壁段侧墙 涂膜品种、遍数、厚度：1mm水泥基渗透结晶防水涂料，用量不小于1.5kg/m2 防水做法：详见设计图纸 结构阴阳角（侧墙与顶板）附加层防水涂料及聚合物水泥防水砂浆倒角包含在综合单价中",
+      "bill_name": "涂膜防水",
+      "quota_ids": [
+        "10-120"
+      ],
+      "quota_names": [
+        "刷水泥基渗透结晶防水材料 二~三遍(厚2mm)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14258,
+      "bill_text": "控制电缆 型号：KVVR-5*1.0 敷设方式、部位：管内敷设",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-800"
+      ],
+      "quota_names": [
+        "一般电缆 电缆6芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13838,
+      "bill_text": "配线 线缆敷设 RVSP-2X0.75：线缆敷设，端子接线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1398"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导线二芯以内 导线截面0.75mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61638,
+      "bill_text": "塑料管 介质：冷水 材质、规格：PPR管（含管件） DN15 连接形式：热熔连接 压力试验及吹、洗设计要求：水压试验、管道冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-233",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 15/20mm",
+        "管道消毒、冲洗 公称直径50mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 15013,
+      "bill_text": "消火栓 名称： 地上式智能消火栓 SS150/65-1.0  详见13S201,P25。具备实时报警、 水压监控等功能并同步安装计量设施。",
+      "bill_name": "消火栓",
+      "quota_ids": [
+        "9-64"
+      ],
+      "quota_names": [
+        "室外地上式消火栓 1.0MPa 深150型"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 61916,
+      "bill_text": "给、排水附(配)件 水龙头安装,公称直径(mm以内) 15(包含“水嘴“)",
+      "bill_name": "给、排水附(配)件",
+      "quota_ids": [
+        "10-738"
+      ],
+      "quota_names": [
+        "水龙头安装,公称直径(mm以内) 15(包含“水嘴“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14236,
+      "bill_text": "配线 名称：电源线 配线形式：管内穿线 型号：RVV-2*1.0",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1399"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导线二芯以内 导线截面1mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61589,
+      "bill_text": "照明开关 名称:三联单控开关 规格:RA86K31-10，~250V，10A",
+      "bill_name": "照明开关",
+      "quota_ids": [
+        "4-341"
+      ],
+      "quota_names": [
+        "扳式暗开关(单控) 三联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61609,
+      "bill_text": "装饰灯 名称：LED三基色柔光灯冷光灯 100W",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1774"
+      ],
+      "quota_names": [
+        "LED三基色柔光灯冷光灯 100W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14994,
+      "bill_text": "管道刷油 除锈级别：外防腐构造采用一底四油一布(加强级) 油漆品种：底漆,粘嵌,面漆,面漆,玻璃布,面漆,面漆,厚度不小于0.4mm 其他：外防腐施工质量及检验按 GB50268-2008规定执行。",
+      "bill_name": "管道刷油",
+      "quota_ids": [
+        "11-80",
+        "11-2161"
+      ],
+      "quota_names": [
+        "管道刷油 冷底子 第一遍",
+        "防潮层、保护层安装 玻璃布 管道"
+      ],
+      "specialty": "C11",
+      "layer": "authority"
+    },
+    {
+      "id": 14219,
+      "bill_text": "监控摄像设备 名称：LED补光灯 类别：详见图纸 安装方式：支架安装",
+      "bill_name": "监控摄像设备",
+      "quota_ids": [
+        "5-752"
+      ],
+      "quota_names": [
+        "楼宇安全防范系统 摄像设备安装(镜头与摄像机一体) 照明灯(含红外灯)"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 14975,
+      "bill_text": "消防广播及对讲电话主机（柜） 名称：IP语音交换机 控制回路：200门",
+      "bill_name": "消防广播及对讲电话主机（柜）",
+      "quota_ids": [
+        "9-215"
+      ],
+      "quota_names": [
+        "消防通信、报警备用电源安装 电话交换机 60门"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 14191,
+      "bill_text": "电力电缆 名称：电缆 规格：YJV-3*16",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-726"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面16mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61630,
+      "bill_text": "洗脸盆 材质：陶瓷 规格、类型：台下式洗脸盆 附件名称、数量：含龙头、角阀等五金件",
+      "bill_name": "洗脸盆",
+      "quota_ids": [
+        "10-679"
+      ],
+      "quota_names": [
+        "台式洗脸盆安装 台下盆"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61950,
+      "bill_text": "减压器 减压器(螺纹连接),公称直径(mm以内) 50(包含“螺纹减压阀 DN50“)",
+      "bill_name": "减压器",
+      "quota_ids": [
+        "10-517"
+      ],
+      "quota_names": [
+        "减压器(螺纹连接),公称直径(mm以内) 50(包含“螺纹减压阀 DN50“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61558,
+      "bill_text": "装饰灯 名称：led节能筒灯 12W 4000K 规格：开孔φ105mm",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1753"
+      ],
+      "quota_names": [
+        "led节能筒灯 12W 4000K"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61639,
+      "bill_text": "给、排水附（配）件 材质：不锈钢 型号、规格：地面扫除口 DN100",
+      "bill_name": "给、排水附（配）件",
+      "quota_ids": [
+        "10-755"
+      ],
+      "quota_names": [
+        "地面扫除口安装 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61885,
+      "bill_text": "塑料管 PP-R给水管De63,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-238",
+        "10-372"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 50/63(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 100"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14187,
+      "bill_text": "电力电缆 名称：电缆 规格：YJV-5*16",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-740"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般五芯电缆 电缆截面16mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14493,
+      "bill_text": "接地极 L50×5扁钢+铜包钢接地极",
+      "bill_name": "接地极",
+      "quota_ids": [
+        "4-901"
+      ],
+      "quota_names": [
+        "圆钢接地极 普通土"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61642,
+      "bill_text": "空调器 名称：环绕气流嵌入式室内机 规格：制冷量14kw，制热量16kw，不带电辅热 安装形式：吊装式，检查接线",
+      "bill_name": "空调器",
+      "quota_ids": [
+        "7-8",
+        "7-66",
+        "7-67",
+        "4-417"
+      ],
+      "quota_names": [
+        "空调器安装 吊顶式 重量0.15t以内",
+        "设备支架CG327 50kg以下 制作",
+        "设备支架CG327 50kg以下 安装",
+        "风机盘管检查接线"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 13929,
+      "bill_text": "装饰灯 名称：LED灯带 规格：10W/M",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1726"
+      ],
+      "quota_names": [
+        "荧光灯光沿 [示意图号]146"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61886,
+      "bill_text": "塑料管 PP-R给水管De50,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-237",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 50/50(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61560,
+      "bill_text": "普通灯具 名称：led条形灯盘4000K, 28W 规格：900*200 铝合金灯身，扩散板灯罩",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1723"
+      ],
+      "quota_names": [
+        "led条形灯盘4000K, 28W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14254,
+      "bill_text": "配管 名称：硅芯管 规格：HDPEφ40外径,壁厚5MM 配置形式：埋地 其它：含土方开挖回填",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1278"
+      ],
+      "quota_names": [
+        "半硬质阻燃管埋地敷设 半硬质塑料管公称直径32mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13798,
+      "bill_text": "接地极 名称：接地连接板 规格：热镀锌钢板120x60x6",
+      "bill_name": "接地极",
+      "quota_ids": [
+        "4-964"
+      ],
+      "quota_names": [
+        "等电位端子箱、测试板 断接卡子制作、安装"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 15000,
+      "bill_text": "低压法兰阀门 名称：手动闸阀 型号、规格：DN300  PN1.0（1.0MPa） 连接方式：法兰连接",
+      "bill_name": "低压法兰阀门",
+      "quota_ids": [
+        "8-1283"
+      ],
+      "quota_names": [
+        "低压阀门 法兰阀门 公称直径300mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61635,
+      "bill_text": "塑料管 介质：冷水 材质、规格：PPR管（含管件） DN32 连接形式：热熔连接 压力试验及吹、洗设计要求：水压试验、管道冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-236",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 32/40mm",
+        "管道消毒、冲洗 公称直径50mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61581,
+      "bill_text": "配管 名称:金属软管 规格:D25",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1291"
+      ],
+      "quota_names": [
+        "金属软管敷设 公称管径25mm以内 每根管长1000mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61893,
+      "bill_text": "塑料管 UPVC排水管De75,含管件，胶水粘接",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-310"
+      ],
+      "quota_names": [
+        "承插塑料排水管(零件粘接),公称直径(mm以内) 75(包含“承插塑料排水管 dn75“,“承插塑料排水管件 dn75“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61903,
+      "bill_text": "螺纹阀门 PP-R截止阀DN40,螺纹连接",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "10-422"
+      ],
+      "quota_names": [
+        "螺纹阀,公称直径(mm以内) 40(包含“螺纹阀门 DN40“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61643,
+      "bill_text": "空调器 名称：多联机外机 规格：58匹 安装形式：落地式，检查接线 隔振垫（器）、支架形式、材质：减震垫 基础：槽钢基础",
+      "bill_name": "空调器",
+      "quota_ids": [
+        "7-11",
+        "7-68",
+        "7-69",
+        "11-7",
+        "11-117",
+        "11-118",
+        "11-126",
+        "11-127",
+        "4-524"
+      ],
+      "quota_names": [
+        "空调器安装 落地式 重量1t以内",
+        "设备支架CG327 50kg以上 制作",
+        "设备支架CG327 50kg以上 安装",
+        "手工除锈 一般钢结构 轻锈",
+        "一般钢结构 红丹防锈漆 第一遍",
+        "一般钢结构 红丹防锈漆 第二遍",
+        "一般钢结构 调和漆 第一遍",
+        "一般钢结构 调和漆 第二遍",
+        "直流电机检查接线 功率30kW以下"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 61585,
+      "bill_text": "配线 名称:电线 配线形式:管内穿线 型号:WDZCN-BYJ2.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1359"
+      ],
+      "quota_names": [
+        "照明线路 导线截面(mm2以内) NHBV2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61879,
+      "bill_text": "插座 带开关三孔插座",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-371"
+      ],
+      "quota_names": [
+        "普通插座,单相暗插座15A 3孔(包含“成套插座“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14628,
+      "bill_text": "配管 名称：可挠电气导管 规格：KV-3（50#）",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1209"
+      ],
+      "quota_names": [
+        "砖、混凝土结构暗配 可挠金属套管规格 50#"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13791,
+      "bill_text": "荧光灯 名称：固定式LED长条吸顶灯\\白色铝合金边框\\4000kw中性灯\\1200*200mm单支\\18W 参数：其余详见设计图纸要求",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1800"
+      ],
+      "quota_names": [
+        "荧光灯安装 嵌入式 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61925,
+      "bill_text": "配线 管内穿照明线WDZ-BYJ-6",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1387"
+      ],
+      "quota_names": [
+        "动力线路(铜芯) 导线截面(mm2以内) 6(包含“铜芯绝缘导线“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13763,
+      "bill_text": "监控摄像设备 名称：高清网络球型摄像机 参数：含支架及安装配件，满足图纸和招标技术要求",
+      "bill_name": "监控摄像设备",
+      "quota_ids": [
+        "5-749"
+      ],
+      "quota_names": [
+        "楼宇安全防范系统 摄像设备安装(镜头与摄像机一体) 球型一体机"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61634,
+      "bill_text": "塑料管 介质：冷水 材质、规格：PPR管（含管件） DN40 连接形式：热熔连接 压力试验及吹、洗设计要求：水压试验、管道冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-237",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 40/50mm",
+        "管道消毒、冲洗 公称直径50mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61602,
+      "bill_text": "普通灯具 名称:公共部位吸顶灯(LED) 型号:PAK-D07-24S-24W",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1558"
+      ],
+      "quota_names": [
+        "半圆球吸顶灯 灯罩直径(mm以内) 300"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61918,
+      "bill_text": "其他零星工程 混凝土墙、楼板打孔,混凝土墙、楼板打孔  孔径(mm以内) 50",
+      "bill_name": "其他零星工程",
+      "quota_ids": [
+        "10-983"
+      ],
+      "quota_names": [
+        "混凝土墙、楼板打孔,混凝土墙、楼板打孔  孔径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61913,
+      "bill_text": "给、排水附(配)件 网框式地漏DN150",
+      "bill_name": "给、排水附(配)件",
+      "quota_ids": [
+        "10-752"
+      ],
+      "quota_names": [
+        "地漏安装,地漏 150(包含“普通地漏 DN150“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61954,
+      "bill_text": "普通灯具 嵌入式筒灯CEA1401H 9W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 11401H 98(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61936,
+      "bill_text": "荧光灯 吸顶式线性灯CEB2012B-B  30W",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1797"
+      ],
+      "quota_names": [
+        "成套型,吸顶式 单管(包含“成套灯具“,“圆木台 63～138×22“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13808,
+      "bill_text": "传感器 其他：符合验收及标准要求",
+      "bill_name": "传感器",
+      "quota_ids": [
+        "9-189"
+      ],
+      "quota_names": [
+        "光照度传感器"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 61874,
+      "bill_text": "配线 管内穿照明线WDZ-BYJ-2.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1359"
+      ],
+      "quota_names": [
+        "照明线路 导线截面(mm2以内) 铜芯2.5(包含“绝缘导线“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61583,
+      "bill_text": "配管 名称:金属软管 规格:D40",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1297"
+      ],
+      "quota_names": [
+        "金属软管敷设 公称管径40mm以内 每根管长1000mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13762,
+      "bill_text": "监控摄像设备 名称：高清网络枪型摄像机 参数：含支架及安装配件，满足图纸和招标技术要求",
+      "bill_name": "监控摄像设备",
+      "quota_ids": [
+        "5-745"
+      ],
+      "quota_names": [
+        "楼宇安全防范系统 摄像设备安装(镜头与摄像机一体) 彩色CCD带定焦镜头"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 13864,
+      "bill_text": "控制电缆 控制电缆 KVVR-10*1.0 ：电缆敷设，电缆头制作安装，编号，挂牌",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-801"
+      ],
+      "quota_names": [
+        "一般电缆 电缆14芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61626,
+      "bill_text": "塑料管 介质：污水 材质、规格：UPVC静音排水管 DN75 连接形式：承插粘接 压力试验及吹、洗设计要求：按设计要求",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-310"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 承插塑料排水管(零件粘接) 公称直径75mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61891,
+      "bill_text": "塑料管 UPVC排水管De160,含管件，胶水粘接",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-312"
+      ],
+      "quota_names": [
+        "承插塑料排水管(零件粘接),公称直径(mm以内) 160(包含“承插塑料排水管 dn160“,“承插塑料排水管件 dn160“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61906,
+      "bill_text": "螺纹阀门 PP-R截止阀DN20,螺纹连接",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "10-419"
+      ],
+      "quota_names": [
+        "螺纹阀,公称直径(mm以内) 20(包含“螺纹阀门 DN20“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14909,
+      "bill_text": "浪涌保护器 名称：电源避雷器 安装形式：放置于抱杆机箱内",
+      "bill_name": "浪涌保护器",
+      "quota_ids": [
+        "5-636"
+      ],
+      "quota_names": [
+        "电源避雷器"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61654,
+      "bill_text": "塑料管 介质：水 材质、规格：DN32 保温：橡塑保温B1级，厚度15mm",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-316",
+        "11-2288"
+      ],
+      "quota_names": [
+        "室内给排水、采暖管道 承插塑料空调凝结水管、雨水管(零件粘接) 公称直径32mm",
+        "橡塑保温套管安装管道 厚度15mm"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61942,
+      "bill_text": "普通灯具 LED射灯CEJ1095 15W",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1755"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,射灯 吸顶式 ［示意图号］ 182、183、184、 185、186、187(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61617,
+      "bill_text": "配管 名称:金属软管 规格:D20",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1286"
+      ],
+      "quota_names": [
+        "金属软管敷设 公称管径20mm以内 每根管长1000mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61905,
+      "bill_text": "螺纹阀门 PP-R截止阀DN25,螺纹连接",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "10-420"
+      ],
+      "quota_names": [
+        "螺纹阀,公称直径(mm以内) 25(包含“螺纹阀门 DN25“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61582,
+      "bill_text": "配管 名称:金属软管 规格:D32",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1292"
+      ],
+      "quota_names": [
+        "金属软管敷设 公称管径32mm以内 每根管长1000mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13899,
+      "bill_text": "配线 规格：ZB-BYJ4mm2 配线线制：管内穿线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1360"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面4mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61586,
+      "bill_text": "配线 名称:电线 配线形式:线槽内穿线 型号:WDZ-BYJ2.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1510"
+      ],
+      "quota_names": [
+        "线槽配线 导线截面2.5mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14954,
+      "bill_text": "钢管件安装 DN150弯头90",
+      "bill_name": "钢管件安装",
+      "quota_ids": [
+        "8-651"
+      ],
+      "quota_names": [
+        "低压管件 碳钢管件(电弧焊) 公称直径150mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61904,
+      "bill_text": "螺纹阀门 PP-R截止阀DN32,螺纹连接",
+      "bill_name": "螺纹阀门",
+      "quota_ids": [
+        "10-421"
+      ],
+      "quota_names": [
+        "螺纹阀,公称直径(mm以内) 32(包含“螺纹阀门 DN32“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13775,
+      "bill_text": "配管 名称：金属软管 规格：DN25",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1293"
+      ],
+      "quota_names": [
+        "金属软管敷设 公称管径25mm以内 每根管长1000mm以上"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61608,
+      "bill_text": "装饰灯 名称：舞台全彩led面光灯cob100W",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1774"
+      ],
+      "quota_names": [
+        "舞台全彩led面光灯cob100W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14426,
+      "bill_text": "配管 名称：可绕电气导管 规格：KV-3（50#）",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1209"
+      ],
+      "quota_names": [
+        "砖、混凝土结构暗配 可挠金属套管规格 50#"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14216,
+      "bill_text": "避雷器 名称：网络+电源防雷器 规格：详见图纸",
+      "bill_name": "避雷器",
+      "quota_ids": [
+        "5-625"
+      ],
+      "quota_names": [
+        "网络+电源防雷器"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61629,
+      "bill_text": "给、排水附（配）件 材质：不锈钢 型号、规格：地漏 DN50",
+      "bill_name": "给、排水附（配）件",
+      "quota_ids": [
+        "10-749"
+      ],
+      "quota_names": [
+        "地漏安装 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61797,
+      "bill_text": "屋面变形缝 成品变形缝盖板260mm宽3厚铝板（白色氟碳喷涂）",
+      "bill_name": "屋面变形缝",
+      "quota_ids": [
+        "10-182"
+      ],
+      "quota_names": [
+        "盖缝  铝合金板盖面 平面"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61795,
+      "bill_text": "楼（地）面变形缝 成品变形缝盖板260mm宽3厚铝板（白色氟碳喷涂）",
+      "bill_name": "楼（地）面变形缝",
+      "quota_ids": [
+        "10-182"
+      ],
+      "quota_names": [
+        "盖缝  铝合金板盖面 平面"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61910,
+      "bill_text": "水表 螺纹水表,公称直径(mm以内) 25(包含“螺纹水表 DN25“)",
+      "bill_name": "水表",
+      "quota_ids": [
+        "10-628"
+      ],
+      "quota_names": [
+        "螺纹水表,公称直径(mm以内) 25(包含“螺纹水表 DN25“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13903,
+      "bill_text": "荧光灯 名称：固定式LED长条吸顶灯\\白色铝合金边框\\4000kw中性灯\\1200*250mm单支\\28W 参数：其余详见设计图纸要求",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1800"
+      ],
+      "quota_names": [
+        "荧光灯安装 嵌入式 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61610,
+      "bill_text": "配电箱 1AL1（改 端子板外部接线材质、规格:端子接线",
+      "bill_name": "配电箱",
+      "quota_ids": [
+        "4-269"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂嵌入式(半周长m) 1.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61940,
+      "bill_text": "普通灯具 嵌入式筒灯CEA1401H 12W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 11401H 128(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61641,
+      "bill_text": "洗涤盆 材质：陶瓷 规格、类型：拖把池 附件名称、数量：含龙头、角阀等五金件",
+      "bill_name": "洗涤盆",
+      "quota_ids": [
+        "10-681"
+      ],
+      "quota_names": [
+        "洗涤盆 单嘴"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 13898,
+      "bill_text": "配线 规格：ZBN-BYJ4mm2 配线线制：管内穿线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1360"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面4mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61653,
+      "bill_text": "低压铜及铜合金管件 材质：铜质 规格：分歧器 焊接方法：氧气焊",
+      "bill_name": "低压铜及铜合金管件",
+      "quota_ids": [
+        "8-882"
+      ],
+      "quota_names": [
+        "低压管件 铜管件(氧乙炔焊) 管外径30mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61949,
+      "bill_text": "塑料管 PP-R热水管De20,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-233",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 20/20(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14243,
+      "bill_text": "停车场管理设备 名称：地感线圈 类别：地感线圈地面锯缝、细砂回填、沥青灌封",
+      "bill_name": "停车场管理设备",
+      "quota_ids": [
+        "5-644"
+      ],
+      "quota_names": [
+        "地感线圈"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 13766,
+      "bill_text": "显示设备 名称：LCD显示屏 参数：含支架及安装配件，满足图纸和招标技术要求",
+      "bill_name": "显示设备",
+      "quota_ids": [
+        "5-799"
+      ],
+      "quota_names": [
+        "楼宇安全防范系统 显示记录设备安装、调试 监视器 ≤56cm"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61594,
+      "bill_text": "插座 名称:壁挂式空调插座（安全型） 规格:16A 250V",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-371"
+      ],
+      "quota_names": [
+        "单相暗插座15A 3孔"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14964,
+      "bill_text": "母线 系统调试 电压等级（kV）：1kV",
+      "bill_name": "母线",
+      "quota_ids": [
+        "4-1852"
+      ],
+      "quota_names": [
+        "母线系统调试 1kV以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14391,
+      "bill_text": "刚性防水层 部位：泵房及水池内部 种类：聚合物防水砂浆 厚度：25mm",
+      "bill_name": "刚性防水层",
+      "quota_ids": [
+        "10-75"
+      ],
+      "quota_names": [
+        "刚性防水屋面  防水砂浆 无分格缝 25mm厚"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 15002,
+      "bill_text": "低压法兰阀门 名称：双法兰传力伸缩接头（含法兰） 型号、规格：DN500  PN1.0  C2F 连接方式：法兰连接",
+      "bill_name": "低压法兰阀门",
+      "quota_ids": [
+        "10-555"
+      ],
+      "quota_names": [
+        "焊接法兰式套筒伸缩器安装 公称直径500mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14257,
+      "bill_text": "控制电缆 型号：KVVR-10*1.0 敷设方式、部位：管内敷设",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-801"
+      ],
+      "quota_names": [
+        "一般电缆 电缆14芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61606,
+      "bill_text": "装饰灯 名称：led天花射灯 12W*11  4000K 规格：轨道28m",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1757",
+        "4-1756"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具 滑轨［示意图号］182、183、184、185、186、187185、186、187",
+        "点光源艺术装饰灯具 射灯 滑轨式 ［示意图号］182、183、184、185、186、187"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61927,
+      "bill_text": "照明开关 智能照明控制面板",
+      "bill_name": "照明开关",
+      "quota_ids": [
+        "4-339"
+      ],
+      "quota_names": [
+        "照明开关,扳式暗开关(单控) 单联(包含“照明开关“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61914,
+      "bill_text": "给、排水附(配)件 清扫口DN100",
+      "bill_name": "给、排水附(配)件",
+      "quota_ids": [
+        "10-755"
+      ],
+      "quota_names": [
+        "地面扫除口安装,地面扫除口 100(包含“扫除口 DN100“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 15004,
+      "bill_text": "低压法兰阀门 名称：双法兰传力伸缩接头（含法兰） 型号、规格：DN200  PN1.0  C2F 连接方式：法兰连接",
+      "bill_name": "低压法兰阀门",
+      "quota_ids": [
+        "10-552"
+      ],
+      "quota_names": [
+        "焊接法兰式套筒伸缩器安装 公称直径200mm以内"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61619,
+      "bill_text": "配线 名称:电线 配线形式:管内穿线 型号:WDZDN-BYJ1.5",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1358"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面1.5mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13816,
+      "bill_text": "接地装置调试 名称：钢轨对地绝缘电阻测试",
+      "bill_name": "接地装置调试",
+      "quota_ids": [
+        "8-765"
+      ],
+      "quota_names": [
+        "接地网电阻测试"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 14414,
+      "bill_text": "施工缝 部位：中隔墙垂直施工缝 工艺要求：缝内涂刷水泥基渗透结晶型防水涂料，不小于1.5kg/m2 按设计图示尺寸（墙或板的中心线到中心线）以长度计算",
+      "bill_name": "施工缝",
+      "quota_ids": [
+        "10-120"
+      ],
+      "quota_names": [
+        "刷水泥基渗透结晶防水材料 二~三遍(厚2mm)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61644,
+      "bill_text": "空调器 名称：多联机外机 规格：42匹 安装形式：落地式，检查接线 隔振垫（器）、支架形式、材质：减震垫 基础：槽钢基础",
+      "bill_name": "空调器",
+      "quota_ids": [
+        "7-11",
+        "7-68",
+        "7-69",
+        "11-7",
+        "11-117",
+        "11-118",
+        "11-126",
+        "11-127",
+        "4-524"
+      ],
+      "quota_names": [
+        "空调器安装 落地式 重量1t以内",
+        "设备支架CG327 50kg以上 制作",
+        "设备支架CG327 50kg以上 安装",
+        "手工除锈 一般钢结构 轻锈",
+        "一般钢结构 红丹防锈漆 第一遍",
+        "一般钢结构 红丹防锈漆 第二遍",
+        "一般钢结构 调和漆 第一遍",
+        "一般钢结构 调和漆 第二遍",
+        "直流电机检查接线 功率30kW以下"
+      ],
+      "specialty": "C7",
+      "layer": "authority"
+    },
+    {
+      "id": 14831,
+      "bill_text": "电力变压器系统 名称：变压器调试 型号：S13-M-250 容量(KV·A)：10",
+      "bill_name": "电力变压器系统",
+      "quota_ids": [
+        "4-1815"
+      ],
+      "quota_names": [
+        "电力变压器系统调试 10kV以下变压器 容量560kVA以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 15016,
+      "bill_text": "配线 名称：钢丝绳 满足招标文件及图纸技术参数要求",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1520"
+      ],
+      "quota_names": [
+        "钢索架设 直径φ6mm以内 钢丝绳"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13918,
+      "bill_text": "控制电缆 名称：交通控制器接口电缆（含电缆头制作、安装） 规格：电缆DWZR-PTYA23-0.75mm2 24芯) 其余详见设计图纸要求",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-802"
+      ],
+      "quota_names": [
+        "一般电缆 电缆24芯以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13784,
+      "bill_text": "接线箱 名称：BAS控制箱（含控制器） 参数：满足图纸和招标技术要求",
+      "bill_name": "接线箱",
+      "quota_ids": [
+        "4-1541"
+      ],
+      "quota_names": [
+        "接线箱明装 接线箱半周长700mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61593,
+      "bill_text": "插座 名称:电视电源插座(安全型) 规格:10A 250V",
+      "bill_name": "插座",
+      "quota_ids": [
+        "4-373"
+      ],
+      "quota_names": [
+        "单相暗插座15A 5孔"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61563,
+      "bill_text": "普通灯具 名称：led条形灯盘4000K, 56W 规格：1800*200  铝合金灯身，扩散板灯罩",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1723"
+      ],
+      "quota_names": [
+        "led条形灯盘4000K, 56W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14387,
+      "bill_text": "钢质防火门 门代号及洞口尺寸：甲级不锈钢防火门，尺寸详见设计 成品购入钢质甲级防火门及门框安装、灌缝，含油漆、执手锁、不锈钢合页、闭门器等五金配件 具体详见说明，满足设计及规范验收要求 按设计图示洞口尺寸以面积计算",
+      "bill_name": "钢质防火门",
+      "quota_ids": [
+        "9-32"
+      ],
+      "quota_names": [
+        "特种门  成品门扇 木质防火门"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 13772,
+      "bill_text": "配线 名称：接地线 规格：BVR16mm²",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1389"
+      ],
+      "quota_names": [
+        "管内穿线 动力线路(铜芯) 导线截面16mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14894,
+      "bill_text": "控制电缆 规格：KVVR-750/450-10*1.0",
+      "bill_name": "控制电缆",
+      "quota_ids": [
+        "4-801"
+      ],
+      "quota_names": [
+        "控制电缆KVVR-750/450-10*1.0"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13896,
+      "bill_text": "配线 规格：ZBN-BYJ2.5mm2 配线线制：管内穿线",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1359"
+      ],
+      "quota_names": [
+        "管内穿线 照明线路 导线截面2.5mm2以内 铜芯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14970,
+      "bill_text": "电容器 调试 电压等级（kV）：1KV",
+      "bill_name": "电容器",
+      "quota_ids": [
+        "4-1855"
+      ],
+      "quota_names": [
+        "电容器调试 1kV以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61605,
+      "bill_text": "装饰灯 名称：包厢五头吊灯",
+      "bill_name": "装饰灯",
+      "quota_ids": [
+        "4-1635"
+      ],
+      "quota_names": [
+        "包厢五头吊灯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61573,
+      "bill_text": "荧光灯 名称:单管日光灯 型号:PAK-1*28W/840",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1797"
+      ],
+      "quota_names": [
+        "荧光灯安装 成套型 吸顶式 单管"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13921,
+      "bill_text": "MD环线 其余详见设计图纸要求",
+      "bill_name": "MD环线",
+      "quota_ids": [
+        "5-644"
+      ],
+      "quota_names": [
+        "停车场管理系统 车辆检测识别设备安装、调试 电感线圈车辆探测器"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 14966,
+      "bill_text": "送配电装置系统 调试 电压等级（kV）：1KV",
+      "bill_name": "送配电装置系统",
+      "quota_ids": [
+        "4-1821"
+      ],
+      "quota_names": [
+        "送配电装置系统调试 1kV以下交流供电 (综合)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14971,
+      "bill_text": "安全防范分系统调试 名称：电视监控系统试运行",
+      "bill_name": "安全防范分系统调试",
+      "quota_ids": [
+        "5-813"
+      ],
+      "quota_names": [
+        "楼宇安全防范系统工程试运行 电视监控系统"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 14835,
+      "bill_text": "电容器 调试 电压等级（kV）：1",
+      "bill_name": "电容器",
+      "quota_ids": [
+        "4-1855"
+      ],
+      "quota_names": [
+        "电容器调试 1kV以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13820,
+      "bill_text": "避雷器 网络+电源防雷器：本体安装，调试，详见设计说明。",
+      "bill_name": "避雷器",
+      "quota_ids": [
+        "5-634"
+      ],
+      "quota_names": [
+        "电子设备防雷接地装置安装 用户分电源避雷器 220V 雷电通流 8/20μS 20kA"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61809,
+      "bill_text": "墙面涂膜防水 刷聚氨脂防水涂料 (立面)二涂2.0mm",
+      "bill_name": "墙面涂膜防水",
+      "quota_ids": [
+        "10-117"
+      ],
+      "quota_names": [
+        "刷聚氨脂防水涂料 (立面)二涂2.0mm"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61892,
+      "bill_text": "塑料管 UPVC排水管De110,含管件，胶水粘接",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-311"
+      ],
+      "quota_names": [
+        "承插塑料排水管(零件粘接),公称直径(mm以内) 110(包含“承插塑料排水管 dn110“,“承插塑料排水管件 dn110“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14967,
+      "bill_text": "避雷器 调试 电压等级（kV）：10KV",
+      "bill_name": "避雷器",
+      "quota_ids": [
+        "4-1854"
+      ],
+      "quota_names": [
+        "避雷器调试 10kV以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61889,
+      "bill_text": "塑料管 PP-R给水管De25,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-234",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 25/25(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 14983,
+      "bill_text": "金属结构刷油 除锈级别：轻锈 油漆品种：防锈漆、调和漆 涂刷遍数、漆膜厚度：各二道",
+      "bill_name": "金属结构刷油",
+      "quota_ids": [
+        "11-7",
+        "11-117",
+        "11-118",
+        "11-126",
+        "11-127"
+      ],
+      "quota_names": [
+        "手工除锈 一般钢结构 轻锈",
+        "一般钢结构 红丹防锈漆 第一遍",
+        "一般钢结构 红丹防锈漆 第二遍",
+        "一般钢结构 调和漆 第一遍",
+        "一般钢结构 调和漆 第二遍"
+      ],
+      "specialty": "C11",
+      "layer": "authority"
+    },
+    {
+      "id": 61880,
+      "bill_text": "普通灯具 LED吸顶灯CEA1401H 12W",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1556"
+      ],
+      "quota_names": [
+        "圆球吸顶灯 灯罩直径(mm以内) 300(包含“成套灯具“,“圆木台 275～350“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14952,
+      "bill_text": "套管制作安装 规格：预埋柔性防水套管DN500（侧墙），含封堵",
+      "bill_name": "套管制作安装",
+      "quota_ids": [
+        "8-2930",
+        "8-2941"
+      ],
+      "quota_names": [
+        "柔性防水套管制作 公称直径500mm以内",
+        "柔性防水套管安装 公称直径500mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61647,
+      "bill_text": "铜管 材质、压力等级：紫铜 规格：∅15.88 焊接方法：焊接 保温：B1级橡塑保温，厚度30mm",
+      "bill_name": "铜管",
+      "quota_ids": [
+        "8-252",
+        "8-2481",
+        "8-2462",
+        "11-2291"
+      ],
+      "quota_names": [
+        "低压管道 铜管(氧乙炔焊) 管外径20mm以内",
+        "管道系统空气吹扫 公称直径50mm以内",
+        "低中压管道泄露性试验 公称直径50mm以内",
+        "橡塑保温套管安装管道 厚度32mm"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 13771,
+      "bill_text": "配线 名称：接地线 规格：BVR10mm²",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1388"
+      ],
+      "quota_names": [
+        "管内穿线 动力线路(铜芯) 导线截面10mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13794,
+      "bill_text": "避雷引下线 名称：利用两根柱筋引下 规格：主筋两根(>∅10) 断接卡子制作安装",
+      "bill_name": "避雷引下线",
+      "quota_ids": [
+        "4-915"
+      ],
+      "quota_names": [
+        "避雷引下线敷设 利用建筑物主筋引下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61911,
+      "bill_text": "水表 螺纹水表,公称直径(mm以内) 20(包含“螺纹水表 DN20“)",
+      "bill_name": "水表",
+      "quota_ids": [
+        "10-627"
+      ],
+      "quota_names": [
+        "螺纹水表,公称直径(mm以内) 20(包含“螺纹水表 DN20“)"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 61872,
+      "bill_text": "配管 砖、混凝土结构明配 紧定式镀锌电线管公称直径(mm以内) 20(包含“紧定式镀锌电线管“)",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1074"
+      ],
+      "quota_names": [
+        "砖、混凝土结构明配 紧定式镀锌电线管公称直径(mm以内) 20(包含“紧定式镀锌电线管“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61564,
+      "bill_text": "普通灯具 名称：led条形灯盘4000K, 72W 规格：2400*200 铝合金灯身，扩散板灯罩",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1723"
+      ],
+      "quota_names": [
+        "led条形灯盘4000K, 72W"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61601,
+      "bill_text": "普通灯具 名称：厨房灯（防火防爆防水) 12W 4000K 规格：600*600",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1560"
+      ],
+      "quota_names": [
+        "厨房灯（防火防爆防水) 12W 4000K"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61648,
+      "bill_text": "铜管 材质、压力等级：紫铜 规格：∅19.05 焊接方法：焊接 保温：B1级橡塑保温，厚度30mm",
+      "bill_name": "铜管",
+      "quota_ids": [
+        "8-252",
+        "8-2481",
+        "8-2462",
+        "11-2291"
+      ],
+      "quota_names": [
+        "低压管道 铜管(氧乙炔焊) 管外径20mm以内",
+        "管道系统空气吹扫 公称直径50mm以内",
+        "低中压管道泄露性试验 公称直径50mm以内",
+        "橡塑保温套管安装管道 厚度32mm"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 14224,
+      "bill_text": "信号灯检测器 名称：红灯检测器 类别：至少支持八路红灯相位检测",
+      "bill_name": "信号灯检测器",
+      "quota_ids": [
+        "5-645"
+      ],
+      "quota_names": [
+        "红灯检测器"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 61659,
+      "bill_text": "配线 名称：空调控制线 型号：KVV2*0.75mm2",
+      "bill_name": "配线",
+      "quota_ids": [
+        "4-1398"
+      ],
+      "quota_names": [
+        "管内穿线 多芯软导线二芯以内 导线截面0.75mm2以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 13780,
+      "bill_text": "电力电缆 名称：铜芯电力电缆 规格：WDZB-YJY-3*16mm2",
+      "bill_name": "电力电缆",
+      "quota_ids": [
+        "4-726"
+      ],
+      "quota_names": [
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面16mm2以下"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14615,
+      "bill_text": "钢质防火门 门代号及洞口尺寸：甲级防火门，尺寸详见设计 成品购入不锈钢甲级防火门及门框安装、灌缝，含油漆、执手锁、不锈钢合页、闭门器等五金配件 具体详见说明，满足设计及规范验收要求 按设计图示洞口尺寸以面积计算",
+      "bill_name": "钢质防火门",
+      "quota_ids": [
+        "9-32"
+      ],
+      "quota_names": [
+        "特种门  成品门扇 木质防火门"
+      ],
+      "specialty": "C9",
+      "layer": "authority"
+    },
+    {
+      "id": 13773,
+      "bill_text": "配管 名称：热镀锌钢管 规格：SC100 配置形式：明配",
+      "bill_name": "配管",
+      "quota_ids": [
+        "4-1137"
+      ],
+      "quota_names": [
+        "钢管敷设 砖、混凝土结构明配 钢管公称直径100mm以内"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61937,
+      "bill_text": "荧光灯 荧光灯CEB3012G 300*1200 1*32W 嵌入式",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1800"
+      ],
+      "quota_names": [
+        "嵌入式 单管(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61953,
+      "bill_text": "荧光灯 吸顶式线性灯CEB2012B-B 30W",
+      "bill_name": "荧光灯",
+      "quota_ids": [
+        "4-1797"
+      ],
+      "quota_names": [
+        "成套型,吸顶式 单管(包含“成套灯具“,“圆木台 63～138×22“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 61939,
+      "bill_text": "普通灯具 嵌入式筒灯CEJ1095 15W LED",
+      "bill_name": "普通灯具",
+      "quota_ids": [
+        "4-1751"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具,吸顶式 示意图号 11095 158(包含“成套灯具“)"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 14953,
+      "bill_text": "套管制作安装 规格：预埋柔性防水套管DN800（侧墙），含封堵",
+      "bill_name": "套管制作安装",
+      "quota_ids": [
+        "8-2933",
+        "8-2943"
+      ],
+      "quota_names": [
+        "柔性防水套管制作 公称直径800mm以内",
+        "柔性防水套管安装 公称直径800mm以内"
+      ],
+      "specialty": "C8",
+      "layer": "authority"
+    },
+    {
+      "id": 61890,
+      "bill_text": "塑料管 PP-R给水管De20,热熔连接(含管件)，管道消毒、冲洗",
+      "bill_name": "塑料管",
+      "quota_ids": [
+        "10-233",
+        "10-371"
+      ],
+      "quota_names": [
+        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 20/20(包含“PP-R给水管“)",
+        "管道消毒、冲洗,公称直径(mm以内) 50"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    }
+  ]
+}

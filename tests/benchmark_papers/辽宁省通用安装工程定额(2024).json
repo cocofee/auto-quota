@@ -1,0 +1,774 @@
+{
+  "province": "辽宁省通用安装工程定额(2024)",
+  "total_items": 58,
+  "authority_count": 58,
+  "candidate_count": 0,
+  "content_hash": "76f25d7f",
+  "created": "2026-03-11",
+  "items": [
+    {
+      "id": 11499,
+      "bill_text": "橡塑管壳安装(管道) 管道 DN50mm以下 名称：管道保温 泡沫橡塑管壳，δ=20mm",
+      "bill_name": "橡塑管壳安装(管道) 管道 DN50mm以下",
+      "quota_ids": [
+        "12-1459"
+      ],
+      "quota_names": [
+        "橡塑管壳安装(管道) 管道 DN50mm以下"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 11459,
+      "bill_text": "室内直埋塑料给水管(热熔连接) 外径(mm以内) 20 DN15",
+      "bill_name": "室内直埋塑料给水管(热熔连接)",
+      "quota_ids": [
+        "10-522"
+      ],
+      "quota_names": [
+        "室内直埋塑料给水管(热熔连接) 外径(mm以内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 11467,
+      "bill_text": "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10 6KV YJV3x10",
+      "bill_name": "室内敷设电力电缆",
+      "quota_ids": [
+        "4-722"
+      ],
+      "quota_names": [
+        "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11447,
+      "bill_text": "条形实木地板(成品) 铺在水泥地面上 三层实木",
+      "bill_name": "条形实木地板(成品) 铺在水泥地面上 三层实木",
+      "quota_ids": [
+        "11-60"
+      ],
+      "quota_names": [
+        "条形实木地板(成品) 铺在水泥地面上"
+      ],
+      "specialty": "C11",
+      "layer": "authority"
+    },
+    {
+      "id": 11510,
+      "bill_text": "双绞线缆 线槽内布放 ≤4对 名称：线槽内敷设 规格：UTP",
+      "bill_name": "双绞线缆 线槽内布放 ≤4对 名称：线槽内敷设",
+      "quota_ids": [
+        "5-151"
+      ],
+      "quota_names": [
+        "双绞线缆 线槽内布放 ≤4对"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 11492,
+      "bill_text": "剔堵槽、沟 砖结构 宽mm×深mm 70×70 名称：墙面剔槽",
+      "bill_name": "剔堵槽、沟 砖结构 宽mm×深mm 70×70",
+      "quota_ids": [
+        "10-1007"
+      ],
+      "quota_names": [
+        "剔堵槽、沟 砖结构 宽mm×深mm 70×70"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 11502,
+      "bill_text": "网络设备安装试验 无线路由器 名称：无线接入点(无线网络发射器)",
+      "bill_name": "网络设备安装试验 无线路由器",
+      "quota_ids": [
+        "6-575"
+      ],
+      "quota_names": [
+        "网络设备安装试验 无线路由器"
+      ],
+      "specialty": "C6",
+      "layer": "authority"
+    },
+    {
+      "id": 11475,
+      "bill_text": "普通插座安装 单相带接地 暗插座电流(A) ≤15 名称:安全型单相五孔地面插座 规格型号:250V 10A E86Z13A10防护等级IP65",
+      "bill_name": "普通插座安装 单相带接地 暗插座电流(A) ≤15",
+      "quota_ids": [
+        "4-454"
+      ],
+      "quota_names": [
+        "普通插座安装 单相带接地 暗插座电流(A) ≤15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11495,
+      "bill_text": "暗装接线盒 名称:墙壁接线盒",
+      "bill_name": "暗装接线盒",
+      "quota_ids": [
+        "4-1699"
+      ],
+      "quota_names": [
+        "暗装接线盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11455,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤15 DN15",
+      "bill_name": "镀锌钢管敷设",
+      "quota_ids": [
+        "4-1375"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11452,
+      "bill_text": "电箱安装（利旧） 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "bill_name": "电箱安装（利旧）",
+      "quota_ids": [
+        "4-340"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.0m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11470,
+      "bill_text": "吸顶灯具安装 灯罩周长(mm) ≤800 吸顶灯",
+      "bill_name": "吸顶灯具安装 灯罩周长(mm) ≤800 吸顶灯",
+      "quota_ids": [
+        "4-1703"
+      ],
+      "quota_names": [
+        "吸顶灯具安装 灯罩周长(mm) ≤800"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11489,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40 名称:配管 材质：SC 规格：40 配置形式:暗敷",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40",
+      "quota_ids": [
+        "4-1379"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11482,
+      "bill_text": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤2.5 名称：管内穿线 规格：BV2.5 敷设方式、部位:管道内敷设",
+      "bill_name": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤2.5 名称：管内穿线",
+      "quota_ids": [
+        "4-1539"
+      ],
+      "quota_names": [
+        "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11511,
+      "bill_text": "安装机柜、机架 落地式 名称：弱电机柜3RD1 规格型号：全封闭12U 落地机柜,互联网核心交换机、12 口互联网POE供电交换机(接三楼无线AP)、含理线架、配线架、10 位 PDU机柜插座",
+      "bill_name": "安装机柜、机架 落地式",
+      "quota_ids": [
+        "5-128"
+      ],
+      "quota_names": [
+        "安装机柜、机架 落地式"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 11485,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤15 名称:配管 材质：SC 规格：15 配置形式:吊顶内敷设",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤15",
+      "quota_ids": [
+        "4-1364",
+        "Z00141@2"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤15",
+        "SC15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11501,
+      "bill_text": "安装机柜、机架 落地式 名称：弱电机柜1RD1 规格型号：全封闭12U 落地机柜,内含LED显示屏网络交换机（设备自带）、互联网接人交换机、互联网AC交换机、互联网控制器，12 口互联网POE供电交换机(接一楼无线AP)、含理线架、配线架、10 位 PDU机柜插座",
+      "bill_name": "安装机柜、机架 落地式",
+      "quota_ids": [
+        "5-128"
+      ],
+      "quota_names": [
+        "安装机柜、机架 落地式"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 11473,
+      "bill_text": "集中空调开关 名称:空调控制器 规格型号：250V10A",
+      "bill_name": "集中空调开关",
+      "quota_ids": [
+        "4-363"
+      ],
+      "quota_names": [
+        "集中空调开关"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11457,
+      "bill_text": "普通插座安装 单相带接地 暗插座电流(A) ≤15",
+      "bill_name": "普通插座安装 单相带接地 暗插座电流(A) ≤15",
+      "quota_ids": [
+        "4-454"
+      ],
+      "quota_names": [
+        "普通插座安装 单相带接地 暗插座电流(A) ≤15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11479,
+      "bill_text": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤2.5 名称：管内穿线 规格：BVVB-3*2.5 敷设方式、部位:管道内敷设",
+      "bill_name": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤2.5 名称：管内穿线",
+      "quota_ids": [
+        "4-1561"
+      ],
+      "quota_names": [
+        "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11466,
+      "bill_text": "强弱电电箱更换安装 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "bill_name": "强弱电电箱更换安装",
+      "quota_ids": [
+        "4-340"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.0m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11488,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32 名称:配管 材质：SC 规格：32 配置形式:暗敷",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32",
+      "quota_ids": [
+        "4-1378",
+        "Z00141@1"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32",
+        "SC32"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11508,
+      "bill_text": "成套配电箱安装 悬挂、嵌入式 半周长1.5m 名称:配电箱3AL1 规格型号:600*800*200",
+      "bill_name": "成套配电箱安装 悬挂、嵌入式 半周长1.5m",
+      "quota_ids": [
+        "4-341"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.5m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11476,
+      "bill_text": "点光源艺术装饰灯具安装 嵌入式筒灯 反射杯口径(英寸) ≤3 名称:嵌入式防眩筒灯 规格型号:220V LED 11W4000K",
+      "bill_name": "点光源艺术装饰灯具安装 嵌入式筒灯 反射杯口径(英寸) ≤3",
+      "quota_ids": [
+        "4-1897"
+      ],
+      "quota_names": [
+        "点光源艺术装饰灯具安装 嵌入式筒灯 反射杯口径(英寸) ≤3"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11463,
+      "bill_text": "一层墙面护墙板制作 细木工板基层δ15",
+      "bill_name": "一层墙面护墙板制作 细木工板基层δ15",
+      "quota_ids": [
+        "12-153"
+      ],
+      "quota_names": [
+        "墙饰面 夹板、卷材基层 细木工板基层"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 11483,
+      "bill_text": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4 名称：管内穿线 规格：BV4 敷设方式、部位:管道内敷设",
+      "bill_name": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4 名称：管内穿线",
+      "quota_ids": [
+        "4-1540",
+        "Z01253@2"
+      ],
+      "quota_names": [
+        "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4",
+        "BV-4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11445,
+      "bill_text": "一层墙面护墙板制作 竹木纤维墙板面层",
+      "bill_name": "一层墙面护墙板制作 竹木纤维墙板面层",
+      "quota_ids": [
+        "12-174"
+      ],
+      "quota_names": [
+        "墙饰面 面层 纤维板"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 11478,
+      "bill_text": "成套配电箱安装 悬挂、嵌入式 半周长1.5m 名称:配电箱1AL1 规格型号:600*800*200",
+      "bill_name": "成套配电箱安装 悬挂、嵌入式 半周长1.5m",
+      "quota_ids": [
+        "4-341"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.5m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11480,
+      "bill_text": "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤1.5 名称：管内穿线 规格：RVVP-2*1.5 敷设方式、部位:管道内敷设",
+      "bill_name": "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤1.5 名称：管内穿线",
+      "quota_ids": [
+        "4-1555"
+      ],
+      "quota_names": [
+        "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2) ≤1.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11474,
+      "bill_text": "普通插座安装 单相 暗插座电流(A) ≤15 名称:安全型单相五孔暗插座 规格型号:250V 10A E86Z13A10",
+      "bill_name": "普通插座安装 单相 暗插座电流(A) ≤15",
+      "quota_ids": [
+        "4-452"
+      ],
+      "quota_names": [
+        "普通插座安装 单相 暗插座电流(A) ≤15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11468,
+      "bill_text": "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120 6KV YJV3x120",
+      "bill_name": "室内敷设电力电缆",
+      "quota_ids": [
+        "4-727"
+      ],
+      "quota_names": [
+        "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤120"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11507,
+      "bill_text": "吊式蜡烛灯 灯体直径(mm)≤300 灯体垂吊长度(mm)≤500 名称：树枝造型吊灯 规格：220V LED50W 3300K",
+      "bill_name": "吊式蜡烛灯 灯体直径(mm)≤300 灯体垂吊长度(mm)≤500 名称：树枝造型吊灯",
+      "quota_ids": [
+        "4-1745"
+      ],
+      "quota_names": [
+        "吊式蜡烛灯 灯体直径(mm)≤300 灯体垂吊长度(mm)≤500"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11453,
+      "bill_text": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤2.5 BV2.5mm²",
+      "bill_name": "管内穿线",
+      "quota_ids": [
+        "4-1539"
+      ],
+      "quota_names": [
+        "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤2.5"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11506,
+      "bill_text": "普通插座安装 单相带接地 暗插座电流(A) ≤15 名称:安全型单相三孔暗插座 规格型号:250V 16A E86Z13A16I",
+      "bill_name": "普通插座安装 单相带接地 暗插座电流(A) ≤15",
+      "quota_ids": [
+        "4-454"
+      ],
+      "quota_names": [
+        "普通插座安装 单相带接地 暗插座电流(A) ≤15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11487,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤20 名称:配管 材质：SC 规格：20 配置形式:吊顶内敷设",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤20",
+      "quota_ids": [
+        "4-1365"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构明配 公称直径(DN) ≤20"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11471,
+      "bill_text": "跷板暗开关 单控≤3联 名称:单极开关 规格型号:250V10AE86K",
+      "bill_name": "跷板暗开关 单控≤3联",
+      "quota_ids": [
+        "4-431"
+      ],
+      "quota_names": [
+        "跷板暗开关 单控≤3联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11469,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32 DN32",
+      "bill_name": "镀锌钢管敷设",
+      "quota_ids": [
+        "4-1378"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤32"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11462,
+      "bill_text": "墙饰面 龙骨基层 轻钢龙骨 封堵窗口 一层led墙体 轻钢龙骨",
+      "bill_name": "墙饰面",
+      "quota_ids": [
+        "12-146"
+      ],
+      "quota_names": [
+        "墙饰面 龙骨基层 轻钢龙骨 中距(mm以内) 竖603 横1500"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 11490,
+      "bill_text": "暗装开关(插座)盒 名称:接线盒",
+      "bill_name": "暗装开关(插座)盒",
+      "quota_ids": [
+        "4-1698"
+      ],
+      "quota_names": [
+        "暗装开关(插座)盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11500,
+      "bill_text": "双绞线缆 管内穿放 ≤4对 名称：管内穿线 规格：UTP 敷设方式、部位:管道内敷设",
+      "bill_name": "双绞线缆 管内穿放 ≤4对 名称：管内穿线",
+      "quota_ids": [
+        "5-150"
+      ],
+      "quota_names": [
+        "双绞线缆 管内穿放 ≤4对"
+      ],
+      "specialty": "C5",
+      "layer": "authority"
+    },
+    {
+      "id": 11504,
+      "bill_text": "跷板暗开关 单控≤3联 名称:二极开关 规格型号:250V10AE86K",
+      "bill_name": "跷板暗开关 单控≤3联",
+      "quota_ids": [
+        "4-431"
+      ],
+      "quota_names": [
+        "跷板暗开关 单控≤3联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11458,
+      "bill_text": "跷板暗开关 单控≤3联",
+      "bill_name": "跷板暗开关 单控≤3联",
+      "quota_ids": [
+        "4-431"
+      ],
+      "quota_names": [
+        "跷板暗开关 单控≤3联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11486,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20 名称:配管 材质：SC 规格：20 配置形式:暗敷",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20",
+      "quota_ids": [
+        "4-1376",
+        "Z00141@3"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20",
+        "SC20"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11444,
+      "bill_text": "一层墙面护墙板制作 细木工板基层",
+      "bill_name": "一层墙面护墙板制作 细木工板基层",
+      "quota_ids": [
+        "12-153"
+      ],
+      "quota_names": [
+        "墙饰面 夹板、卷材基层 细木工板基层"
+      ],
+      "specialty": "C12",
+      "layer": "authority"
+    },
+    {
+      "id": 11456,
+      "bill_text": "其他普通灯具安装软线吊灯 树枝造型吊灯",
+      "bill_name": "其他普通灯具安装软线吊灯 树枝造型吊灯",
+      "quota_ids": [
+        "4-1706"
+      ],
+      "quota_names": [
+        "其他普通灯具安装 软线吊灯"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11494,
+      "bill_text": "暗装接线盒 名称:地面接线盒",
+      "bill_name": "暗装接线盒",
+      "quota_ids": [
+        "4-1699"
+      ],
+      "quota_names": [
+        "暗装接线盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11505,
+      "bill_text": "跷板暗开关 双控≤3联 名称:双控开关 规格型号:250V10AE86K",
+      "bill_name": "跷板暗开关 双控≤3联",
+      "quota_ids": [
+        "4-433"
+      ],
+      "quota_names": [
+        "跷板暗开关 双控≤3联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11481,
+      "bill_text": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤1 名称：管内穿线 规格：RVVP-4*1.0 敷设方式、部位:管道内敷设",
+      "bill_name": "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤1 名称：管内穿线",
+      "quota_ids": [
+        "4-1559"
+      ],
+      "quota_names": [
+        "管内穿线 穿多芯软导线 四芯 单芯导线截面(mm2) ≤1"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11498,
+      "bill_text": "空调凝结水塑料管(热熔连接) 外径(mm内) 20 名称:冷凝管 UPVCDN20",
+      "bill_name": "空调凝结水塑料管(热熔连接) 外径(mm内) 20",
+      "quota_ids": [
+        "10-632"
+      ],
+      "quota_names": [
+        "空调凝结水塑料管(热熔连接) 外径(mm内) 20"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    },
+    {
+      "id": 11472,
+      "bill_text": "跷板暗开关 单控≤3联 名称:三极开关 规格型号:250V10AE86K",
+      "bill_name": "跷板暗开关 单控≤3联",
+      "quota_ids": [
+        "4-431"
+      ],
+      "quota_names": [
+        "跷板暗开关 单控≤3联"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11477,
+      "bill_text": "吸顶灯具安装 灯罩周长(mm) ≤800 名称:吸顶灯 规格型号:220V LED 24W3300K",
+      "bill_name": "吸顶灯具安装 灯罩周长(mm) ≤800",
+      "quota_ids": [
+        "4-1703"
+      ],
+      "quota_names": [
+        "吸顶灯具安装 灯罩周长(mm) ≤800"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11454,
+      "bill_text": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4 BV4mm²",
+      "bill_name": "管内穿线",
+      "quota_ids": [
+        "4-1540"
+      ],
+      "quota_names": [
+        "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11451,
+      "bill_text": "电箱拆除 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "bill_name": "电箱拆除 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "quota_ids": [
+        "4-340"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.0m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11509,
+      "bill_text": "塑料线槽敷设 线槽断面周长(mm) ≤120 名称：线槽 材质：PVC塑料线槽 规格：39*19",
+      "bill_name": "塑料线槽敷设 线槽断面周长(mm) ≤120 名称：线槽",
+      "quota_ids": [
+        "4-1519"
+      ],
+      "quota_names": [
+        "塑料线槽敷设 线槽断面周长(mm) ≤120"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11491,
+      "bill_text": "暗装开关(插座)盒 名称:开关盒",
+      "bill_name": "暗装开关(插座)盒",
+      "quota_ids": [
+        "4-1698"
+      ],
+      "quota_names": [
+        "暗装开关(插座)盒"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11465,
+      "bill_text": "强弱电电箱拆除 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "bill_name": "强弱电电箱拆除 成套配电箱安装 悬挂、嵌入式 半周长1.0m",
+      "quota_ids": [
+        "4-340"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂、嵌入式 半周长1.0m"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11484,
+      "bill_text": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤15 名称:配管 材质：SC 规格：15 配置形式:暗敷",
+      "bill_name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤15",
+      "quota_ids": [
+        "4-1375",
+        "Z00141@2"
+      ],
+      "quota_names": [
+        "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤15",
+        "SC15"
+      ],
+      "specialty": "C4",
+      "layer": "authority"
+    },
+    {
+      "id": 11493,
+      "bill_text": "机械钻孔 混凝土楼板钻孔 钻孔直径(mm以内) 63 名称：楼板钻孔",
+      "bill_name": "机械钻孔 混凝土楼板钻孔 钻孔直径(mm以内) 63",
+      "quota_ids": [
+        "10-1017"
+      ],
+      "quota_names": [
+        "机械钻孔 混凝土楼板钻孔 钻孔直径(mm以内) 63"
+      ],
+      "specialty": "C10",
+      "layer": "authority"
+    }
+  ]
+}
