@@ -32,8 +32,8 @@ python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024" --no-sto
 python tools/jarvis_pipeline.py "<Excel路径>" --province "北京2024" --no-experience  # 不用经验库
 
 # 经验库查看
-python tools/experience_view.py stats            # 统计
-python tools/experience_view.py search "镀锌钢管"  # 搜索
+python tools/experience_manager.py stats            # 统计
+python tools/experience_manager.py search "镀锌钢管"  # 搜索
 ```
 
 ## Jarvis 自动炮（全流程说明）
@@ -72,8 +72,8 @@ Jarvis 流水线是系统的核心功能，一键完成"匹配→审核→纠正
 
 ```bash
 # 查看经验库
-python tools/experience_view.py stats            # 统计
-python tools/experience_view.py search "镀锌钢管"  # 搜索
+python tools/experience_manager.py stats            # 统计
+python tools/experience_manager.py search "镀锌钢管"  # 搜索
 
 # 学习已确认的匹配结果（把人工确认的结果导入经验库权威层）
 python tools/jarvis_learn.py "<已确认Excel>"

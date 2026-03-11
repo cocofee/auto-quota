@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-import tools.experience_promote as experience_promote
+import tools.experience_manager as experience_promote
 import tools.import_reference as import_reference
 import tools.jarvis_auto_review as auto_review_mod
 
@@ -104,9 +104,8 @@ def test_interactive_review_closes_connection_when_delete_fails():
     conn = _FailingPromoteConn()
     fake_db = _FakePromoteDB(conn)
 
-    with patch.object(experience_promote, "ExperienceDB", return_value=fake_db):
-        with patch("builtins.input", side_effect=["d"]):
-            experience_promote.interactive_review()
+    with patch("builtins.input", side_effect=["d"]):
+        experience_promote._promote_interactive(fake_db, None, None, 50)
 
     assert conn.closed is True
 

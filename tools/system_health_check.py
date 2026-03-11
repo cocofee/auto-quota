@@ -239,7 +239,7 @@ def _build_checks(mode: str) -> list[tuple[str, callable]]:
             "experience_health",
             lambda: run_command_check(
                 "Experience health (dry-run)",
-                [py, "tools/experience_health.py", "--limit", "100"],
+                [py, "tools/experience_manager.py", "health", "--limit", "100"],
                 required=False,
                 timeout_sec=600,
             ),
