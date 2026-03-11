@@ -1,0 +1,149 @@
+{
+  "province": "广东省通用安装工程综合定额(2018)",
+  "source": "dirty_data_from_experience_db",
+  "generated_at": "2026-03-12",
+  "description": "从广东省通用安装工程综合定额(2018)经验库数据中筛选的格式异常记录，测试容错能力",
+  "is_dirty_test": true,
+  "dirty_types": {
+    "超短名称": 4,
+    "多余空格": 1,
+    "缺字段极简": 5
+  },
+  "total_items": 10,
+  "items": [
+    {
+      "bill_text": "信息插座",
+      "bill_name": "信息插座",
+      "quota_ids": [
+        "C5-2-94"
+      ],
+      "quota_names": [
+        "安装8位模块式信息插座 单口"
+      ],
+      "specialty": "C5",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "热水泵组",
+      "bill_name": "热水泵组",
+      "quota_ids": [
+        "C10-6-28"
+      ],
+      "quota_names": [
+        "地源(水源、气源)热泵机组 设备重量(t以内) 3"
+      ],
+      "specialty": "C10",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "集水槽",
+      "bill_name": "集水槽",
+      "quota_ids": [
+        "C1-9-403",
+        "C1-9-409"
+      ],
+      "quota_names": [
+        "直线集水槽制作 不锈钢(厚度mm以内) 4 换为【不锈钢板4】",
+        "直线集水槽安装 不锈钢(厚度mm以内) 4 在有外围护的施工条件下施工 人工*1.15,机械*1.15"
+      ],
+      "specialty": "C1",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "防水罩",
+      "bill_name": "防水罩",
+      "quota_ids": [
+        "C5-6-96"
+      ],
+      "quota_names": [
+        "防护罩 普通防护罩"
+      ],
+      "specialty": "C5",
+      "layer": "dirty_test",
+      "dirty_type": "超短名称"
+    },
+    {
+      "bill_text": "离心式通风机 风量：5300m3/h 全压：650Pa  2.2KW,380V",
+      "bill_name": "离心式通风机",
+      "quota_ids": [
+        "C1-5-1",
+        "C7-4-4"
+      ],
+      "quota_names": [
+        "离心式通(引)风机安装 设备重量(t以内) 0.3",
+        "不锈钢吊托支架制作安装 换为【不锈钢圆钢φ12】"
+      ],
+      "specialty": "C1",
+      "layer": "dirty_test",
+      "dirty_type": "多余空格"
+    },
+    {
+      "bill_text": "报警联锁回路模拟试验",
+      "bill_name": "报警联锁回路模拟试验",
+      "quota_ids": [
+        "C6-6-13"
+      ],
+      "quota_names": [
+        "连锁报警回路单点"
+      ],
+      "specialty": "C6",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "洗涤盆 材质:陶瓷",
+      "bill_name": "洗涤盆",
+      "quota_ids": [
+        "C10-4-24"
+      ],
+      "quota_names": [
+        "洗涤盆安装 双嘴"
+      ],
+      "specialty": "C10",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "镀锌钢管 SC25",
+      "bill_name": "镀锌钢管 SC25",
+      "quota_ids": [
+        "C4-11-3"
+      ],
+      "quota_names": [
+        "镀锌电线管砖、混凝土结构明配 公称直径(mm以内) 25"
+      ],
+      "specialty": "C4",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "接地装置 调试",
+      "bill_name": "接地装置 调试",
+      "quota_ids": [
+        "C4-14-46"
+      ],
+      "quota_names": [
+        "接地装置调试 独立接地装置(根以内) 1"
+      ],
+      "specialty": "C4",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    },
+    {
+      "bill_text": "配电箱 MX3",
+      "bill_name": "配电箱 MX3",
+      "quota_ids": [
+        "C4-4-32"
+      ],
+      "quota_names": [
+        "成套配电箱安装 悬挂式(半周长m以内) 1.5"
+      ],
+      "specialty": "C4",
+      "layer": "dirty_test",
+      "dirty_type": "缺字段极简"
+    }
+  ]
+}
