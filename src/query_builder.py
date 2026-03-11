@@ -909,7 +909,7 @@ def build_quota_query(parser, name: str, description: str = "",
             model_match = re.search(
                 r'(?:型号|规格)[：:,]*\s*'
                 r'((?:WDZ[A-Z0-9]*-|ZR[A-Z]?-|NH-|ZB[N]?-)?'
-                r'(?:YJV|YJY|VV|BTTRZ|YTTW|BBTRZ|KYJY|KVV|KVVP)'
+                r'(?:YJV|YJY|VV|BTTRZ|BTLY|BTTZ|YTTW|BBTRZ|KYJY|KVV|KVVP)'
                 r'[A-Z0-9.*×xX/\-]*)',
                 full_text.upper())
             if model_match:
@@ -950,9 +950,9 @@ def build_quota_query(parser, name: str, description: str = "",
                 if core_match:
                     core_count = int(core_match.group(1))
                     query_parts.append(f"电缆芯数 {core_count}")
-            # 矿物绝缘电缆：BTTRZ/YTTW/BBTRZ
+            # 矿物绝缘电缆：BTTRZ/BTLY/BTTZ/YTTW/BBTRZ
             elif cable_model and any(m in cable_model.upper()
-                                     for m in ("BTTRZ", "YTTW", "BBTRZ")):
+                                     for m in ("BTTRZ", "BTLY", "BTTZ", "YTTW", "BBTRZ")):
                 query_parts[0] = "矿物绝缘电缆"
             # 普通电力电缆按敷设方式
             elif "桥架" in laying_raw or "线槽" in laying_raw:
