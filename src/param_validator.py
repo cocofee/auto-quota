@@ -315,6 +315,10 @@ class ParamValidator:
 
         if self._ltr_model is not None:
             try:
+                # 计算v4同族排名特征（共享函数，训练/推理一致）
+                from src.ltr_features import compute_within_tier_features
+                compute_within_tier_features(candidates)
+
                 features = self._extract_ltr_features(
                     candidates, query_text, search_books=search_books)
                 scores = self._ltr_model.predict(features)
@@ -348,23 +352,24 @@ class ParamValidator:
         v1: 16维（兼容旧模型）
         v2: 21维（+5个参数距离特征）
         v3: 23维（+book_match, token_overlap）
+        v4: 28维（+5个同族排名特征）
 
         Args:
             search_books: 清单分类的搜索册号列表（用于book_match特征）
         """
         n = len(candidates)
-        # 检查模型期望的特征数（兼容旧16/21维模型）
-        n_features = 23  # v3默认23维
+        # 版本检测：用特征名校验（Codex P0修复，不再靠维度数硬判断）
+        has_v2, has_v3, has_v4 = False, False, False
+        n_features = 16  # v1基线
         if self._ltr_model is not None:
             try:
-                model_n_features = self._ltr_model.num_feature()
-                if model_n_features == 16:
-                    n_features = 16  # v1旧模型
-                elif model_n_features == 21:
-                    n_features = 21  # v2模型
-                # 23维模型直接用默认值
+                model_feature_names = set(self._ltr_model.feature_name())
+                has_v2 = "param_main_exact" in model_feature_names
+                has_v3 = "book_match" in model_feature_names
+                has_v4 = "param_tier_rank" in model_feature_names
+                n_features = self._ltr_model.num_feature()
             except Exception:
-                pass
+                n_features = 16
         # 提取清单名称（取query_text的第一段）
         bill_name = query_text.split()[0] if query_text else ""
 
@@ -426,7 +431,7 @@ class ParamValidator:
             ]
 
             # v2新增：5个参数距离特征
-            if n_features >= 21:
+            if has_v2:
                 ltr_param = c.get("_ltr_param", {})
                 row.extend([
                     ltr_param.get("param_main_exact", 0),       # 17
@@ -437,10 +442,20 @@ class ParamValidator:
                 ])
 
             # v3新增：册号匹配+词级重叠
-            if n_features >= 23:
+            if has_v3:
                 row.extend([
                     self._compute_book_match(c, search_books or []),  # 22
                     self._compute_token_overlap(bill_name, cand_name),  # 23
+                ])
+
+            # v4新增：同族排名特征（从共享函数计算结果读取）
+            if has_v4:
+                row.extend([
+                    c.get("_v4_param_tier_rank", 0.5),       # 24
+                    c.get("_v4_family_size", 0.0),            # 25
+                    c.get("_v4_param_score_rank", 0.5),       # 26
+                    c.get("_v4_rerank_within_tier", 0.5),     # 27
+                    c.get("_v4_dist_to_tier_best", 0.0),      # 28
                 ])
 
             features[i] = row

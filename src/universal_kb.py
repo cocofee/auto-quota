@@ -707,7 +707,8 @@ class UniversalKB:
 
     def batch_import(self, records: list[dict],
                      source_province: str = None,
-                     source_project: str = None) -> dict:
+                     source_project: str = None,
+                     skip_vector_dedup: bool = False) -> dict:
         """
         批量导入知识（人工验证过的预算数据，直接进权威层）
 
@@ -721,6 +722,8 @@ class UniversalKB:
                 }
             source_province: 来源省份
             source_project: 来源项目
+            skip_vector_dedup: 跳过向量语义去重（大批量导入时用，只做精确文本去重，
+                              导入完后统一rebuild_vector_index再处理语义去重）
 
         返回:
             {"total": 总数, "added": 新增数, "merged": 合并数(精确+语义去重), "skipped": 跳过数}
@@ -735,48 +738,110 @@ class UniversalKB:
                 stats["skipped"] += 1
                 continue
 
-            # 统一走 add_knowledge()，内部会做精确匹配 + 语义去重
-            # 先记录当前总数，看add_knowledge是更新了还是新增了
-            conn = self._connect()
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM knowledge")
-                count_before = cursor.fetchone()[0]
-            finally:
-                conn.close()
-
-            self.add_knowledge(
-                bill_pattern=bill_pattern,
-                quota_patterns=quota_patterns,
-                associated_patterns=record.get("associated_patterns"),
-                param_hints=record.get("param_hints"),
-                specialty=record.get("specialty"),
-                layer="authority",   # 人工验证过的预算数据，直接进权威层
-                confidence=80,      # 项目导入给80分（比人工修正的95低，比自动匹配的50高）
-                source_province=source_province,
-                source_project=source_project,
-            )
-
-            conn = self._connect()
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM knowledge")
-                count_after = cursor.fetchone()[0]
-            finally:
-                conn.close()
-
-            if count_after > count_before:
-                stats["added"] += 1
+            if skip_vector_dedup:
+                # 快速模式：只做精确文本去重，跳过向量语义去重和逐条向量写入
+                self._batch_import_fast(
+                    bill_pattern, quota_patterns, record,
+                    source_province, source_project, stats
+                )
             else:
-                stats["merged"] += 1
+                # 原有模式：精确+语义去重
+                conn = self._connect()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM knowledge")
+                    count_before = cursor.fetchone()[0]
+                finally:
+                    conn.close()
 
-            # 每100条打印进度
-            if (i + 1) % 100 == 0:
-                logger.info(f"  导入进度: {i+1}/{len(records)}")
+                self.add_knowledge(
+                    bill_pattern=bill_pattern,
+                    quota_patterns=quota_patterns,
+                    associated_patterns=record.get("associated_patterns"),
+                    param_hints=record.get("param_hints"),
+                    specialty=record.get("specialty"),
+                    layer="authority",
+                    confidence=80,
+                    source_province=source_province,
+                    source_project=source_project,
+                )
+
+                conn = self._connect()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM knowledge")
+                    count_after = cursor.fetchone()[0]
+                finally:
+                    conn.close()
+
+                if count_after > count_before:
+                    stats["added"] += 1
+                else:
+                    stats["merged"] += 1
+
+            # 每500条打印进度
+            if (i + 1) % 500 == 0:
+                logger.info(f"  知识库导入进度: {i+1}/{len(records)}")
 
         logger.info(f"通用知识库批量导入: 总{stats['total']}条, "
                     f"新增{stats['added']}, 合并{stats['merged']}(去重), 跳过{stats['skipped']}")
         return stats
+
+    def _batch_import_fast(self, bill_pattern: str, quota_patterns: list[str],
+                           record: dict, source_province: str,
+                           source_project: str, stats: dict):
+        """快速导入：只做精确文本去重，跳过向量语义去重"""
+        import json as _json
+        now = time.time()
+
+        # 精确匹配
+        existing = self._find_exact(bill_pattern)
+        if existing:
+            # 合并定额模式
+            merged_quotas = self._merge_patterns(
+                self._safe_json_list(existing.get("quota_patterns")),
+                quota_patterns
+            )
+            self._update_knowledge(
+                existing["id"], merged_quotas,
+                record.get("associated_patterns"),
+                record.get("param_hints"),
+                "authority", 80, source_province
+            )
+            stats["merged"] += 1
+            return
+
+        # 新建（不做向量去重，不写向量索引）
+        province_list = [source_province] if source_province else []
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO knowledge
+                (bill_pattern, bill_keywords, quota_patterns, associated_patterns,
+                 param_hints, layer, confidence, confirm_count, province_list,
+                 source_province, source_project, specialty, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                bill_pattern,
+                _json.dumps([], ensure_ascii=False),
+                _json.dumps(quota_patterns, ensure_ascii=False),
+                _json.dumps(record.get("associated_patterns") or [], ensure_ascii=False),
+                _json.dumps(record.get("param_hints") or {}, ensure_ascii=False),
+                "authority", 80, 1,
+                _json.dumps(province_list, ensure_ascii=False),
+                source_province, source_project,
+                record.get("specialty"),
+                now, now,
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        stats["added"] += 1
 
     # ================================================================
     # 向量索引重建
