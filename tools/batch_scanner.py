@@ -44,8 +44,65 @@ DB_PATH = Path(__file__).resolve().parent.parent / "output" / "batch" / "batch.d
 # 数据库 schema 版本（升级字段时自增）
 SCHEMA_VERSION = 2
 
-# 当前算法版本（和 benchmark 对齐，版本变化时可触发重跑）
-ALGORITHM_VERSION = "L10+"
+# 算法版本：自动根据关键文件的内容指纹计算
+# 任何模型文件或核心匹配代码发生变化，版本号自动改变，批量匹配会自动检测到需要重跑
+# 不再需要手动修改版本号
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# 参与版本指纹计算的关键文件（模型+核心匹配代码）
+_VERSION_FILES = [
+    # 模型文件
+    "data/ltr_model.txt",                   # LTR排序模型
+    # 核心匹配代码（改了任何一个都可能影响匹配结果）
+    "src/query_builder.py",                 # 搜索词构建
+    "src/rule_validator.py",                # 规则匹配（参数提取+档位验证）
+    "src/param_validator.py",               # 参数验证
+    "src/bill_reader.py",                   # 清单读取（影响哪些行被识别为清单项）
+    "src/bill_cleaner.py",                  # 清单清洗（名称修正+参数提取）
+    "src/match_pipeline.py",               # 匹配流水线
+]
+
+
+def _compute_algorithm_version() -> str:
+    """根据关键文件的内容计算算法版本指纹。
+
+    把所有关键文件的内容拼在一起算MD5，取前8位作为版本号。
+    任何文件有变化（哪怕改了一行代码），版本号就会变，
+    批量扫描时会自动发现版本不匹配，标记文件需要重跑。
+
+    如果某个文件不存在（比如模型还没训好），跳过不影响其他文件。
+    """
+    h = hashlib.md5()
+    for rel_path in _VERSION_FILES:
+        full_path = _PROJECT_ROOT / rel_path
+        if not full_path.exists():
+            continue
+        try:
+            # 代码文件读文本（忽略行尾空白差异），模型文件读二进制前1MB
+            if rel_path.endswith(".py"):
+                content = full_path.read_text(encoding="utf-8")
+                h.update(content.encode("utf-8"))
+            else:
+                with open(full_path, "rb") as f:
+                    h.update(f.read(1024 * 1024))  # 模型文件只读前1MB（够区分版本）
+        except Exception:
+            continue
+
+    # 检查向量模型目录是否存在（目录名本身就包含版本信息）
+    # 用 config.json 的内容作为向量模型的指纹
+    vector_config = _PROJECT_ROOT / "models" / "qwen3-embedding-quota-v3" / "config.json"
+    if vector_config.exists():
+        try:
+            h.update(vector_config.read_bytes())
+        except Exception:
+            pass
+
+    fingerprint = h.hexdigest()[:8]
+    return f"auto-{fingerprint}"
+
+
+# 自动计算的算法版本（启动时算一次，整个进程内不变）
+ALGORITHM_VERSION = _compute_algorithm_version()
 
 # 支持的Excel后缀
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
