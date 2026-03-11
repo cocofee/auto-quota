@@ -19,13 +19,13 @@ goto day
 :day
 echo.
 echo 白天模式：只跑安装类标准清单
-python tools\batch_loop.py --mode day
+python tools\batch_runner.py --format standard_bill
 goto end
 
 :night
 echo.
 echo 晚上模式：全部都跑，放着过夜
-python tools\batch_loop.py --mode night
+python tools\batch_runner.py
 goto end
 
 :end
