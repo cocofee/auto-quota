@@ -655,6 +655,12 @@ class BillReader:
         if not has_code and not has_quantity and not has_unit:
             return None  # 分部/小节标题行，不是清单项
 
+        # 过滤分部分项小节行：编码是 C.x.x 格式的分类编码（如C.4.3），
+        # 没有工程量、没有单位、没有特征描述，只是章节标题不需要套定额
+        if (code and re.match(r'^[A-Z]\.\d', code)
+                and not has_quantity and not has_unit and not description):
+            return None  # 分部分项章节标题行，不是清单项
+
         # 过滤定额行：编码为定额格式（如C4-4-31、5-325、D00003等），不是清单项
         # 广联达导出的预算文件中，清单行和定额行交替排列：
         #   清单行编码为12位数字（如030402011001），定额行编码为 X-XXX 格式（如C4-4-31）
