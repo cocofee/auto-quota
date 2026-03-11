@@ -30,6 +30,10 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# 批量跑时抑制详细日志，只让进度输出显示
+from loguru import logger
+logger.remove()  # 去掉所有handler，完全静音
+
 from tools.batch_scanner import DB_PATH, get_db, init_db, _upsert_file, ALGORITHM_VERSION
 from src.bill_reader import BillReader
 from src.match_engine import init_search_components, init_experience_db, match_search_only
@@ -268,7 +272,7 @@ def run_batch(format_filter: str = None, province_filter: str = None,
         print("没有可处理的文件（都已matched或无scanned状态的文件）。")
         return
 
-    print(f"待处理文件: {len(files)} 个")
+    print(f"待处理: {len(files)}个文件")
 
     # 第2步：按省份+定额库类型分组
     # 同一省份不同专业可能需要不同定额库（如广东电气→安装库，广东土建→建筑库）
@@ -282,26 +286,17 @@ def run_batch(format_filter: str = None, province_filter: str = None,
             by_library[group_key] = []
         by_library[group_key].append(f)
 
-    provinces = sorted(set(k[0] for k in by_library.keys()))
-    print(f"涉及省份: {provinces}")
-    print(f"分组数: {len(by_library)} (按省份+定额库类型)")
-
     # 第3步：逐组处理
     total_success = 0
     total_errors = 0
     total_items = 0
 
     for (prov, lib_type), prov_files in by_library.items():
-        print(f"\n{'='*50}")
-        print(f"处理: {prov} [{lib_type}] ({len(prov_files)} 个文件)")
-        print(f"{'='*50}")
-
         # 初始化该组的搜索引擎（按省份+专业选择正确的定额库）
         specialty_hint = (prov_files[0]["specialty"] or "") if prov_files else ""
         resolved_province = _resolve_province(prov, specialty=specialty_hint)
         if not resolved_province:
-            print(f"  ⚠ 省份「{prov}」没有对应的定额库，跳过")
-            # 标记为error
+            print(f"  ⚠ {prov} 没有定额库，跳过{len(prov_files)}个文件")
             _mark_files_error(prov_files, f"省份「{prov}」没有定额库")
             total_errors += len(prov_files)
             continue
@@ -310,7 +305,7 @@ def run_batch(format_filter: str = None, province_filter: str = None,
             searcher, validator = init_search_components(resolved_province)
             experience_db = init_experience_db(no_experience=False, province=resolved_province)
         except Exception as e:
-            print(f"  ⚠ 搜索引擎初始化失败: {e}")
+            print(f"  ⚠ {prov} 初始化失败，跳过")
             _mark_files_error(prov_files, f"搜索引擎初始化失败: {e}")
             total_errors += len(prov_files)
             continue
@@ -329,63 +324,71 @@ def run_batch(format_filter: str = None, province_filter: str = None,
                     progress_callback(current=global_idx, total=len(files),
                                       file_name=file_name)
                 except Exception:
-                    pass  # 回调失败不影响匹配
+                    pass
 
-            print(f"  [{i+1}/{len(prov_files)}] {file_name}...", end=" ", flush=True)
+            # 短文件名（最多30字符）
+            short_name = file_name if len(file_name) <= 30 else file_name[:27] + '...'
+            # 固定前缀宽度，让后面的数据对齐
+            prefix = f"  [{prov}] [{i+1}/{len(prov_files)}] {short_name}"
+            prefix_padded = prefix.ljust(55)  # 前缀固定55字符宽，不够补空格
             start_time = time.time()
 
             try:
-                # 解析sheet_info
                 sheet_info = json.loads(sheet_info_str) if sheet_info_str else []
-
-                # 读取清单项
                 items = read_file_items(file_path, fmt, sheet_info)
                 if not items:
-                    print(f"无清单项，跳过")
+                    print(f"{prefix_padded} 跳过")
                     _mark_file_matched(f, [], 0)
                     total_success += 1
                     continue
 
-                # 执行匹配
-                results = match_search_only(
-                    bill_items=items,
-                    searcher=searcher,
-                    validator=validator,
-                    experience_db=experience_db,
-                    province=resolved_province,
-                )
+                total_in_file = len(items)
+
+                # 逐条匹配并显示进度
+                results = []
+                for item_idx, item in enumerate(items):
+                    single_results = match_search_only(
+                        bill_items=[item],
+                        searcher=searcher,
+                        validator=validator,
+                        experience_db=experience_db,
+                        province=resolved_province,
+                    )
+                    results.extend(single_results)
+
+                    done = item_idx + 1
+                    if done % 10 == 0 or done == total_in_file:
+                        pct = done * 100 // total_in_file
+                        elapsed_so_far = time.time() - start_time
+                        print(f"\r{prefix_padded} {total_in_file:>4d}条 {elapsed_so_far:>4.0f}s  {pct:>3d}%", end="", flush=True)
 
                 elapsed = time.time() - start_time
-
-                # 先保存JSON结果，成功后才更新DB状态
-                # （避免JSON保存失败但DB已标记matched导致数据丢失）
                 _save_results(f, results, elapsed)
-                _mark_file_matched(f, results, elapsed)  # JSON成功才标记
+                _mark_file_matched(f, results, elapsed)
 
-                # 统计
                 total_items += len(results)
                 total_success += 1
 
-                # 置信度统计
                 confs = [r.get("confidence", 0) for r in results]
                 avg_conf = sum(confs) / len(confs) if confs else 0
-                high = sum(1 for c in confs if c >= 85)
-                low = sum(1 for c in confs if c < 60)
 
-                print(f"{len(items)}条 | {elapsed:.1f}s | 绿{high} 红{low} 均{avg_conf:.0f}%")
+                if avg_conf >= 70:
+                    conf_str = f"\033[32m均{avg_conf:.0f}%\033[0m"
+                elif avg_conf >= 50:
+                    conf_str = f"\033[33m均{avg_conf:.0f}%\033[0m"
+                else:
+                    conf_str = f"\033[31m均{avg_conf:.0f}%\033[0m"
+
+                print(f"\r{prefix_padded} {total_in_file:>4d}条 {elapsed:>4.0f}s  {conf_str}     ")
 
             except Exception as e:
-                elapsed = time.time() - start_time
-                print(f"错误: {e}")
+                print(f"\r{prefix_padded} \033[31m错误\033[0m                ")
                 _mark_file_error(f, str(e))
                 total_errors += 1
 
     # 汇总
-    print(f"\n{'='*50}")
-    print(f"批量匹配完成")
-    print(f"  成功: {total_success} 文件 | 错误: {total_errors} 文件")
-    print(f"  清单总条数: {total_items}")
-    print(f"{'='*50}")
+    print(f"\n  完成: {total_success}个文件 {total_items}条清单" +
+          (f" 错误{total_errors}个" if total_errors else ""))
 
     # 返回统计结果（供Web端/调用方使用）
     return {
