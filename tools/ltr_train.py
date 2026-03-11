@@ -39,7 +39,15 @@ FEATURE_COLUMNS_V3_NEW = [
     "book_match",       # 22. 册号匹配度(1=主专业/0.5=借用/0=不匹配)
     "token_overlap",    # 23. 同义词归一化后词级Jaccard重叠度
 ]
-FEATURE_COLUMNS = FEATURE_COLUMNS_V2 + FEATURE_COLUMNS_V3_NEW
+# v4新增特征：同族排名+幅度（Codex 5.4审核确认）
+FEATURE_COLUMNS_V4_NEW = [
+    "param_tier_rank",       # 24. 同tier内参数距离排名(0=最近, 1=最远)
+    "family_size",           # 25. log1p(同tier候选数)/log1p(20)
+    "param_score_rank",      # 26. 同tier内param_score排名(0=最高, 1=最低)
+    "rerank_within_tier",    # 27. 同tier内rerank_score排名(0=最高, 1=最低)
+    "dist_to_tier_best",     # 28. 与同tier最优param_score的差距[0,1]
+]
+FEATURE_COLUMNS = FEATURE_COLUMNS_V2 + FEATURE_COLUMNS_V3_NEW + FEATURE_COLUMNS_V4_NEW
 
 
 def eval_hit_at_1(df: pd.DataFrame, score_col: str) -> float:

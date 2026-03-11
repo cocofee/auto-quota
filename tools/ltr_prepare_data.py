@@ -28,10 +28,10 @@ import jieba
 
 sys.path.insert(0, ".")
 
-# 23维特征列名
+# 23维基础特征列名
 # v2: 原16维 + 5个参数距离特征
 # v3: +2个新特征（book_match, token_overlap）
-FEATURE_COLUMNS = [
+FEATURE_COLUMNS_BASE = [
     "bm25_score",          # 1. BM25文本匹配分
     "vector_score",        # 2. 向量语义相似度
     "hybrid_score",        # 3. 混合搜索分
@@ -58,6 +58,13 @@ FEATURE_COLUMNS = [
     "book_match",          # 22. 候选册号vs清单分类目标册号匹配度(1/0.5/0)
     "token_overlap",       # 23. 同义词归一化后的词级Jaccard重叠度
 ]
+
+# v4新增：同族排名+幅度特征（Codex 5.4审核确认）
+from src.ltr_features import V4_FEATURE_NAMES
+FEATURE_COLUMNS_V4 = V4_FEATURE_NAMES  # 5个: param_tier_rank, family_size, param_score_rank, rerank_within_tier, dist_to_tier_best
+
+# 完整特征列（28维）
+FEATURE_COLUMNS = FEATURE_COLUMNS_BASE + FEATURE_COLUMNS_V4
 
 # CSV列：query_id + province + 特征 + label
 CSV_COLUMNS = ["query_id", "province"] + FEATURE_COLUMNS + ["label"]
@@ -381,6 +388,10 @@ def process_province(province: str, items: list[dict],
         rows = []
         # 从classification中提取搜索册号（用于book_match特征）
         search_books = classification.get("search_books", [])
+
+        # 先提取基础特征（前23维）并标注
+        candidate_features = []
+        labels = []
         for c in candidates:
             label = label_candidate(c, correct_ids, correct_names)
             if label >= 1:
@@ -389,9 +400,26 @@ def process_province(province: str, items: list[dict],
                 c, bill_name, n_candidates, top1_composite,
                 bm25_ranks, vector_ranks, bm25_ids, vector_ids,
                 search_books=search_books)
+            candidate_features.append(features)
+            labels.append(label)
+
+        # 计算v4同族排名特征（共享函数，训练/推理一致）
+        from src.ltr_features import compute_within_tier_features
+        compute_within_tier_features(candidates)
+
+        # 组装CSV行：基础特征 + v4特征 + label
+        for i, c in enumerate(candidates):
+            features = candidate_features[i]
+            # 补充v4特征到features字典
+            features["param_tier_rank"] = c.get("_v4_param_tier_rank", 0.5)
+            features["family_size"] = c.get("_v4_family_size", 0.0)
+            features["param_score_rank"] = c.get("_v4_param_score_rank", 0.5)
+            features["rerank_within_tier"] = c.get("_v4_rerank_within_tier", 0.5)
+            features["dist_to_tier_best"] = c.get("_v4_dist_to_tier_best", 0.0)
+
             row = [query_id, province]
             row.extend(features[col] for col in FEATURE_COLUMNS)
-            row.append(label)
+            row.append(labels[i])
             rows.append(row)
 
         # 无正样本的query跳过（Codex建议）
