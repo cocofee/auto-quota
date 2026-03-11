@@ -115,7 +115,7 @@ class TestDiffAndLearn:
 
     @patch("src.experience_db.ExperienceDB")
     def test_same_quotas_counted_as_confirmed(self, MockDB):
-        """定额相同 → confirmed +1，写入 user_confirmed"""
+        """定额相同 → confirmed +1，默认存候选层(auto_review)"""
         mock_db = MagicMock()
         mock_db.add_experience.return_value = 1
         MockDB.return_value = mock_db
@@ -140,13 +140,14 @@ class TestDiffAndLearn:
         }]
 
         self._mock_read_mapping(learner, original, corrected)
+        # 默认 all_authority=False → 未修改的存候选层(auto_review)
         result = learner.diff_and_learn("fake_orig.xlsx", "fake_corr.xlsx")
 
         assert result["confirmed"] == 1
         assert result["corrected"] == 0
-        # 确认类型应为 user_confirmed
+        # 默认行为：未修改的存候选层(auto_review)，不再是权威层
         call_args = mock_db.add_experience.call_args
-        assert call_args[1]["source"] == "user_confirmed"
+        assert call_args[1]["source"] == "auto_review"
 
     @patch("src.experience_db.ExperienceDB")
     def test_different_quotas_counted_as_corrected(self, MockDB):
