@@ -1,20 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Jarvis 诊断工具 - 分析人工审核项的根因，可选自动修复
+Jarvis 诊断工具统一入口 — 同义词管理、错题分析、跨省验证
 
-跑完Jarvis流水线后，自动分析"待人工"条目为什么匹配失败：
-  - 同义词缺口：清单叫"凿槽"，定额库叫"刨沟"
-  - 排序偏差：正确定额在候选里但没排第一
-  - 需人工：定额库确实没有对应项
-
---fix 模式下会自动：
-  1. 跨省验证同义词候选（>=2省能搜到才通过）
-  2. 写入 engineering_synonyms.json
-  3. 跑 benchmark 回归检查（退化则自动回滚）
+子命令：
+  excel           诊断已审核Excel的人工项根因（原有功能）
+  benchmark-fix   从benchmark错题提取同义词缺口并修复
+  verify          跨省搜索验证一个关键词
+  audit-coverage  同义词跨省覆盖率审计
+  audit-static    同义词表静态分析
+  ranking-report  排序错误深度分析
 
 用法：
+    # 诊断Excel（向后兼容，可省略excel子命令）
     python tools/jarvis_diagnose.py "output/xxx_已审核.xlsx" --province "上海建筑"
     python tools/jarvis_diagnose.py "output/xxx_已审核.xlsx" --province "上海建筑" --fix
+
+    # 错题精补（从benchmark错题提取同义词缺口）
+    python tools/jarvis_diagnose.py benchmark-fix
+    python tools/jarvis_diagnose.py benchmark-fix --fix
+    python tools/jarvis_diagnose.py benchmark-fix --min-freq 3 --fix
+
+    # 跨省验证
+    python tools/jarvis_diagnose.py verify "镀锌钢管"
+
+    # 同义词审计
+    python tools/jarvis_diagnose.py audit-coverage --quick
+    python tools/jarvis_diagnose.py audit-static --fix
+
+    # 排序分析
+    python tools/jarvis_diagnose.py ranking-report
 """
 
 import sys
@@ -299,6 +313,251 @@ def _rollback_synonyms() -> bool:
         shutil.copy2(bak_path, syn_path)
         return True
     return False
+
+
+# ---- benchmark-fix：从错题提取同义词缺口 ----
+
+# 通用词黑名单（太泛的词不能单独做同义词key，必须带修饰词）
+_GENERIC_WORDS = {
+    "钢管", "阀门", "套管", "管道", "电缆", "灯", "开关",
+    "配电箱", "桥架", "风管", "水管", "线管", "管件", "弯头",
+    "三通", "接头", "插座", "喷头", "水表", "电表",
+}
+
+
+def _diagnose_cause_from_detail(d: dict) -> str:
+    """从benchmark详情条目重新推导错误根因（复用run_benchmark的判定逻辑）
+
+    与run_benchmark._diagnose_cause一致：
+    - 无结果 → no_result
+    - 专业册不同 → wrong_book
+    - 关键词有交集 → wrong_tier（同族不同档位）
+    - 其余 → synonym_gap
+    """
+    import re as _re
+
+    algo_name = d.get('algo_name', '')
+    if not algo_name:
+        return 'no_result'
+
+    stored_first = d['stored_names'][0] if d.get('stored_names') else ''
+    stored_keywords = set(stored_first.replace('(', ' ').replace(')', ' ').split())
+    algo_keywords = set(algo_name.replace('(', ' ').replace(')', ' ').split())
+    ignore = {'安装', '制作', '周长', 'mm', 'm2', '以内', '≤'}
+    stored_keywords -= ignore
+    algo_keywords -= ignore
+
+    # 检查专业册是否一致
+    def get_book(qid):
+        if len(qid) >= 2 and qid[0] == 'C' and qid[1].isalpha():
+            letter_map = {'A': 'C1', 'B': 'C2', 'C': 'C3', 'D': 'C4',
+                          'E': 'C5', 'F': 'C6', 'G': 'C7', 'H': 'C8',
+                          'I': 'C9', 'J': 'C10', 'K': 'C11', 'L': 'C12'}
+            return letter_map.get(qid[1], '')
+        m = _re.match(r'(C\d+)-', qid)
+        if m:
+            return m.group(1)
+        m = _re.match(r'(\d+)-', qid)
+        if m:
+            return f'C{m.group(1)}'
+        return ''
+
+    stored_id = d['stored_ids'][0] if d.get('stored_ids') else ''
+    algo_id = d.get('algo_id', '')
+    if stored_id and algo_id:
+        if get_book(stored_id) and get_book(algo_id) and get_book(stored_id) != get_book(algo_id):
+            return 'wrong_book'
+
+    # 同族判断（关键词有交集 → 同类不同档位）
+    family_overlap = stored_keywords & algo_keywords
+    if len(family_overlap) > 0:
+        return 'wrong_tier'
+
+    return 'synonym_gap'
+
+
+def benchmark_fix(result_path: str = None, min_freq: int = 2,
+                  do_fix: bool = False, skip_benchmark: bool = False,
+                  oracle_filter: str = "not_in") -> dict:
+    """从benchmark错题中提取同义词缺口并修复
+
+    流程：读错题 → 筛synonym_gap → 提取核心名词对 → 频次排序 → 跨省验证 → 写入
+
+    参数:
+        result_path: _latest_result.json路径（默认自动查找最新）
+        min_freq: 最小频次阈值（影响几道题才值得加）
+        do_fix: 是否写入同义词表
+        skip_benchmark: 跳过benchmark回归检查
+        oracle_filter: "not_in"=仅召回缺口(P0), "all"=含排序问题(P0+P1)
+    """
+    from tools.synonym_miner import extract_core_nouns
+
+    # 1. 读取最新benchmark结果
+    if result_path is None:
+        result_path = str(PROJECT_ROOT / "tests" / "benchmark_papers" / "_latest_result.json")
+    rp = Path(result_path)
+    if not rp.exists():
+        print(f"错误：找不到 {rp}，请先跑 python tools/run_benchmark.py")
+        return {"error": "file_not_found"}
+    data = json.loads(rp.read_text(encoding='utf-8'))
+    print(f"读取: {rp.name} ({data.get('run_time', '?')})")
+
+    # 2. 加载现有同义词（用于排除已有的）
+    syn_path = PROJECT_ROOT / "data" / "engineering_synonyms.json"
+    existing_syns = json.loads(syn_path.read_text(encoding='utf-8'))
+
+    # 3. 遍历所有错题，筛选synonym_gap
+    gap_items = []
+    total_wrong = 0
+    for result in data['results']:
+        province = result['province']
+        for d in result['details']:
+            if d['is_match']:
+                continue
+            total_wrong += 1
+
+            # oracle过滤：P0只看召回缺口，all看全部
+            if oracle_filter == "not_in" and d.get('oracle_in_candidates', True):
+                continue
+
+            # 重新推导错误根因
+            cause = _diagnose_cause_from_detail(d)
+            if cause != 'synonym_gap':
+                continue
+
+            gap_items.append({
+                'province': province[:10],
+                'bill_name': d['bill_name'],
+                'stored_names': d.get('stored_names', []),
+                'algo_name': d.get('algo_name', ''),
+            })
+
+    # 4. 提取核心名词对并计数
+    pair_counter = Counter()  # (bill_core, quota_core) → count
+    pair_examples = {}  # (bill_core, quota_core) → [examples]
+
+    for item in gap_items:
+        bill_core = extract_core_nouns(item['bill_name'])
+        if not item['stored_names']:
+            continue
+        quota_core = extract_core_nouns(item['stored_names'][0])
+
+        if not bill_core or not quota_core or bill_core == quota_core:
+            continue
+        if len(bill_core) < 3:  # key最少3字（防过泛化）
+            continue
+        if bill_core in _GENERIC_WORDS:  # 通用词黑名单
+            continue
+        if bill_core in existing_syns:  # 已有同义词
+            continue
+
+        pair = (bill_core, quota_core)
+        pair_counter[pair] += 1
+        pair_examples.setdefault(pair, []).append(item)
+
+    # 5. 按频次排序输出
+    candidates = []
+    for pair, count in pair_counter.most_common():
+        if count < min_freq:
+            continue
+        candidates.append({
+            'bill_core': pair[0],
+            'quota_core': pair[1],
+            'count': count,
+            'examples': pair_examples[pair][:3],
+        })
+
+    # 打印分析结果
+    filter_label = "仅召回缺口(P0)" if oracle_filter == "not_in" else "全部错题"
+    print(f"\n{'='*60}")
+    print(f"Benchmark错题同义词分析 [{filter_label}]")
+    print(f"{'='*60}")
+    print(f"  总错题: {total_wrong}条")
+    print(f"  筛选后synonym_gap: {len(gap_items)}条")
+    print(f"  提取候选词对: {len(candidates)}对 (频次>={min_freq})")
+
+    if not candidates:
+        print("  无候选词对（可能需要降低 --min-freq 或用 --oracle all）")
+        return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+                "candidates": 0, "verified": 0, "written": 0}
+
+    print(f"\n候选同义词（按影响题数排序）：")
+    for i, c in enumerate(candidates, 1):
+        examples = [e['bill_name'][:15] for e in c['examples'][:2]]
+        provinces = list(set(e['province'][:4] for e in c['examples']))
+        print(f"  {i}. {c['bill_core']} → {c['quota_core']}  "
+              f"({c['count']}题, {'+'.join(provinces[:3])}) "
+              f"例: {', '.join(examples)}")
+
+    if not do_fix:
+        print(f"\n提示: 加 --fix 参数可跨省验证后写入同义词表")
+        return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+                "candidates": len(candidates)}
+
+    # 6. 跨省验证
+    print(f"\n{'='*60}")
+    print(f"跨省验证（{len(candidates)}对候选）")
+    print(f"{'='*60}")
+
+    verified_pairs = []
+    for c in candidates:
+        hit_count, hit_details = _cross_province_verify(c['quota_core'])
+        status = "✓通过" if hit_count >= 2 else "✗跳过"
+        detail_str = ", ".join(hit_details[:3]) if hit_details else "无命中"
+        print(f"  {c['bill_core']}→{c['quota_core']}: "
+              f"{hit_count}省命中 [{detail_str}] → {status}")
+        if hit_count >= 2:
+            verified_pairs.append((c['bill_core'], c['quota_core']))
+
+    if not verified_pairs:
+        print("\n  无候选通过跨省验证")
+        return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+                "candidates": len(candidates), "verified": 0, "written": 0}
+
+    # 7. 写入同义词表
+    print(f"\n{'='*60}")
+    print(f"写入同义词表（{len(verified_pairs)}对通过验证）")
+    print(f"{'='*60}")
+
+    written = _write_synonyms(verified_pairs)
+    if written > 0:
+        print(f"  已写入 {written} 对同义词到 engineering_synonyms.json")
+        # 清除同义词缓存
+        try:
+            import src.query_builder as qb
+            qb._SYNONYMS_CACHE = None
+        except Exception:
+            pass
+    else:
+        print("  所有同义词已存在，无需写入")
+        return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+                "candidates": len(candidates), "verified": len(verified_pairs),
+                "written": 0, "benchmark_ok": True}
+
+    # 8. Benchmark回归检查
+    if skip_benchmark:
+        print("\n  跳过benchmark检查（--skip-benchmark）")
+        return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+                "candidates": len(candidates), "verified": len(verified_pairs),
+                "written": written, "benchmark_ok": True}
+
+    print(f"\n{'='*60}")
+    print("Benchmark回归检查")
+    print(f"{'='*60}")
+
+    benchmark_ok, benchmark_summary = _run_benchmark_check()
+    print(f"  {benchmark_summary}")
+
+    if not benchmark_ok:
+        print("  命中率退化，回滚同义词表...")
+        if _rollback_synonyms():
+            print("  已回滚到修改前的同义词表")
+        else:
+            print("  警告：回滚失败，请手动检查")
+
+    return {"total_wrong": total_wrong, "gap_items": len(gap_items),
+            "candidates": len(candidates), "verified": len(verified_pairs),
+            "written": written, "benchmark_ok": benchmark_ok}
 
 
 def auto_fix_synonyms(synonym_gap_items: list[dict], skip_benchmark: bool = False) -> dict:
@@ -688,38 +947,145 @@ def _print_report(items, synonym_gap, ranking_miss, needs_manual, excel_path):
 
 
 def main():
+    # 已知子命令列表
+    SUBCOMMANDS = {"excel", "benchmark-fix", "verify",
+                   "audit-coverage", "audit-static", "ranking-report"}
+
+    # 向后兼容：如果第一个参数不是子命令，当作excel模式（旧用法）
+    if len(sys.argv) > 1 and sys.argv[1] not in SUBCOMMANDS and not sys.argv[1].startswith('-'):
+        sys.argv.insert(1, "excel")
+
     parser = argparse.ArgumentParser(
-        description="Jarvis 诊断工具：分析人工审核项的根因，可选自动修复",
+        description="Jarvis 诊断工具统一入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-用法示例:
-  python tools/jarvis_diagnose.py "output/xxx_已审核.xlsx" --province "上海建筑"
-  python tools/jarvis_diagnose.py "output/xxx_已审核.xlsx" --province "上海建筑" --fix
-  python tools/jarvis_diagnose.py "output/xxx_已审核.xlsx" --province "上海建筑" --fix --skip-benchmark
-""",
     )
-    parser.add_argument("excel_path", help="已审核Excel文件路径")
-    parser.add_argument("--province", required=True, help="主定额库名称")
-    parser.add_argument("--fix", action="store_true",
-                        help="自动修复：跨省验证同义词→写入→benchmark回归检查")
-    parser.add_argument("--skip-benchmark", action="store_true",
-                        help="跳过benchmark回归检查（调试用）")
+    subparsers = parser.add_subparsers(dest="command", help="子命令")
+
+    # ---- 子命令: excel（原有功能）----
+    p_excel = subparsers.add_parser("excel", help="诊断已审核Excel的人工项根因")
+    p_excel.add_argument("excel_path", help="已审核Excel文件路径")
+    p_excel.add_argument("--province", required=True, help="主定额库名称")
+    p_excel.add_argument("--fix", action="store_true",
+                         help="自动修复：跨省验证→写入→benchmark回归")
+    p_excel.add_argument("--skip-benchmark", action="store_true",
+                         help="跳过benchmark回归检查")
+
+    # ---- 子命令: benchmark-fix（错题精补）----
+    p_bench = subparsers.add_parser("benchmark-fix",
+                                    help="从benchmark错题提取同义词缺口并修复")
+    p_bench.add_argument("--input", default=None,
+                         help="结果JSON路径（默认最新 _latest_result.json）")
+    p_bench.add_argument("--min-freq", type=int, default=2,
+                         help="最小频次阈值，影响几道题才入候选（默认2）")
+    p_bench.add_argument("--oracle", choices=["not_in", "all"], default="not_in",
+                         help="P0仅召回缺口(not_in) / 含排序问题(all)")
+    p_bench.add_argument("--fix", action="store_true",
+                         help="跨省验证通过后写入同义词表")
+    p_bench.add_argument("--skip-benchmark", action="store_true",
+                         help="跳过benchmark回归检查")
+
+    # ---- 子命令: verify（跨省搜索验证）----
+    p_verify = subparsers.add_parser("verify", help="跨省搜索验证一个关键词")
+    p_verify.add_argument("keyword", help="要验证的关键词")
+
+    # ---- 子命令: audit-coverage（同义词覆盖率审计）----
+    p_acov = subparsers.add_parser("audit-coverage", help="同义词跨省覆盖率审计")
+    p_acov.add_argument("--fix", action="store_true", help="自动修复低覆盖率")
+    p_acov.add_argument("--quick", action="store_true", help="只用8个代表省快速筛选")
+    p_acov.add_argument("--keyword", type=str, help="只审计含指定关键词的同义词")
+    p_acov.add_argument("--min-coverage", type=int, default=8,
+                        help="覆盖率低于此值标记为需修复（默认8/24省）")
+
+    # ---- 子命令: audit-static（同义词静态分析）----
+    p_ast = subparsers.add_parser("audit-static", help="同义词表静态分析（自映射/冲突等）")
+    p_ast.add_argument("--fix", action="store_true", help="生成修复建议JSON")
+
+    # ---- 子命令: ranking-report（排序错误分析）----
+    p_rank = subparsers.add_parser("ranking-report", help="排序错误深度分析报告")
+    p_rank.add_argument("--input", default=None, help="结果JSON路径（默认最新）")
+
     args = parser.parse_args()
 
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+
+    # ---- 分发到各子命令 ----
+    if args.command == "excel":
+        _cmd_excel(args)
+    elif args.command == "benchmark-fix":
+        _cmd_benchmark_fix(args)
+    elif args.command == "verify":
+        _cmd_verify(args)
+    elif args.command == "audit-coverage":
+        _cmd_audit_coverage(args)
+    elif args.command == "audit-static":
+        _cmd_audit_static(args)
+    elif args.command == "ranking-report":
+        _cmd_ranking_report(args)
+
+
+def _cmd_excel(args):
+    """excel子命令：诊断已审核Excel（原有功能）"""
     if not os.path.exists(args.excel_path):
         print(f"错误：文件不存在 {args.excel_path}")
         sys.exit(1)
-
-    # 解析省份
     from config import resolve_province
     try:
         province = resolve_province(args.province)
     except Exception as e:
         print(f"错误：省份解析失败 - {e}")
         sys.exit(1)
-
     diagnose(args.excel_path, province, auto_fix=args.fix,
              skip_benchmark=args.skip_benchmark)
+
+
+def _cmd_benchmark_fix(args):
+    """benchmark-fix子命令：从错题提取同义词缺口"""
+    benchmark_fix(
+        result_path=args.input,
+        min_freq=args.min_freq,
+        do_fix=args.fix,
+        skip_benchmark=args.skip_benchmark,
+        oracle_filter=args.oracle,
+    )
+
+
+def _cmd_verify(args):
+    """verify子命令：跨省搜索验证（替代 cross_province_search.py）"""
+    subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "tools" / "cross_province_search.py"),
+         args.keyword],
+        cwd=str(PROJECT_ROOT),
+    )
+
+
+def _cmd_audit_coverage(args):
+    """audit-coverage子命令：同义词跨省覆盖率审计（替代 audit_synonym_coverage.py）"""
+    cmd = [sys.executable, str(PROJECT_ROOT / "tools" / "audit_synonym_coverage.py")]
+    if args.fix:
+        cmd.append("--fix")
+    if args.quick:
+        cmd.append("--quick")
+    if args.keyword:
+        cmd.extend(["--keyword", args.keyword])
+    if args.min_coverage != 8:
+        cmd.extend(["--min-coverage", str(args.min_coverage)])
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+
+
+def _cmd_audit_static(args):
+    """audit-static子命令：同义词静态分析（替代 analyze_synonyms.py）"""
+    cmd = [sys.executable, str(PROJECT_ROOT / "tools" / "analyze_synonyms.py")]
+    if args.fix:
+        cmd.append("--fix")
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+
+
+def _cmd_ranking_report(args):
+    """ranking-report子命令：排序错误分析（替代 m1_ranking_analysis.py）"""
+    cmd = [sys.executable, str(PROJECT_ROOT / "tools" / "m1_ranking_analysis.py")]
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT))
 
 
 if __name__ == "__main__":
