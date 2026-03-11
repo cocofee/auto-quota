@@ -21,18 +21,25 @@ import pandas as pd
 
 sys.path.insert(0, ".")
 
-# 特征列（和 ltr_prepare_data.py 一致，v2: 21维）
-FEATURE_COLUMNS = [
+# 特征列（和 ltr_prepare_data.py 一致）
+# v2: 21维（原16维+5参数距离）
+# v3: 23维（+book_match, token_overlap）
+FEATURE_COLUMNS_V2 = [
     "bm25_score", "vector_score", "hybrid_score", "rerank_score",
     "param_score", "param_match",
     "param_tier_0", "param_tier_1", "param_tier_2",
     "name_bonus", "candidates_count",
     "bm25_rank_score", "vector_rank_score",
     "name_edit_dist", "score_gap_to_top1", "dual_recall",
-    # v2新增：参数距离特征
     "param_main_exact", "param_main_rel_dist", "param_main_direction",
     "param_material_match", "param_n_checks",
 ]
+# v3新增特征
+FEATURE_COLUMNS_V3_NEW = [
+    "book_match",       # 22. 册号匹配度(1=主专业/0.5=借用/0=不匹配)
+    "token_overlap",    # 23. 同义词归一化后词级Jaccard重叠度
+]
+FEATURE_COLUMNS = FEATURE_COLUMNS_V2 + FEATURE_COLUMNS_V3_NEW
 
 
 def eval_hit_at_1(df: pd.DataFrame, score_col: str) -> float:
@@ -131,16 +138,30 @@ def coordinate_ascent(df: pd.DataFrame, feats: list[str],
 # ============================================================
 
 def train_lambdarank(df_train: pd.DataFrame, df_val: pd.DataFrame = None,
+                     feature_cols: list[str] = None,
+                     extra_params: dict = None,
+                     num_boost_round: int = 200,
                      ) -> "lightgbm.Booster":
-    """训练LightGBM LambdaRank模型"""
+    """训练LightGBM LambdaRank模型
+
+    Args:
+        feature_cols: 特征列名列表（默认用全局FEATURE_COLUMNS，自动过滤CSV中不存在的列）
+        extra_params: 额外LightGBM参数（覆盖默认值，如label_gain/objective等）
+        num_boost_round: 最大迭代次数
+    """
     import lightgbm as lgb
 
-    X_train = df_train[FEATURE_COLUMNS].values
+    if feature_cols is None:
+        # 自动检测CSV中存在的特征列（兼容v2/v3训练数据）
+        available = [c for c in FEATURE_COLUMNS if c in df_train.columns]
+        feature_cols = available
+
+    X_train = df_train[feature_cols].values
     y_train = df_train["label"].values
     groups_train = df_train.groupby("query_id").size().values
 
     train_data = lgb.Dataset(X_train, label=y_train, group=groups_train,
-                             feature_name=FEATURE_COLUMNS)
+                             feature_name=feature_cols)
 
     params = {
         "objective": "lambdarank",
@@ -149,20 +170,24 @@ def train_lambdarank(df_train: pd.DataFrame, df_val: pd.DataFrame = None,
         "num_leaves": 15,           # 保守，防过拟合（Codex建议）
         "min_data_in_leaf": 10,     # 保守（Codex建议）
         "learning_rate": 0.05,
+        "seed": 42,                 # 固定seed，结果可复现
         "verbose": -1,
     }
+    # 外部参数覆盖（用于label_gain/objective/超参网格搜索）
+    if extra_params:
+        params.update(extra_params)
 
     callbacks = [lgb.log_evaluation(period=50)]
     valid_sets = [train_data]
     valid_names = ["train"]
 
     if df_val is not None and len(df_val) > 0:
-        X_val = df_val[FEATURE_COLUMNS].values
+        X_val = df_val[feature_cols].values
         y_val = df_val["label"].values
         groups_val = df_val.groupby("query_id").size().values
         if len(groups_val) > 0:
             val_data = lgb.Dataset(X_val, label=y_val, group=groups_val,
-                                  feature_name=FEATURE_COLUMNS, reference=train_data)
+                                  feature_name=feature_cols, reference=train_data)
             valid_sets.append(val_data)
             valid_names.append("valid")
             callbacks.append(lgb.early_stopping(stopping_rounds=20, verbose=True))
@@ -170,7 +195,7 @@ def train_lambdarank(df_train: pd.DataFrame, df_val: pd.DataFrame = None,
     model = lgb.train(
         params,
         train_data,
-        num_boost_round=200,
+        num_boost_round=num_boost_round,
         valid_sets=valid_sets,
         valid_names=valid_names,
         callbacks=callbacks,
@@ -194,11 +219,21 @@ def print_feature_importance(model, top_n: int = 16):
 # 省级交叉验证（LOPO: Leave-One-Province-Out）
 # ============================================================
 
-def run_lopo_cv(df: pd.DataFrame):
-    """按省份做留一法交叉验证，对比3种方法"""
+def run_lopo_cv(df: pd.DataFrame, extra_params: dict = None,
+                num_boost_round: int = 200):
+    """按省份做留一法交叉验证，对比3种方法
+
+    Args:
+        extra_params: 额外LightGBM参数（覆盖默认值）
+        num_boost_round: 最大迭代次数
+    """
+    # 自动检测CSV中存在的特征列（兼容v2/v3训练数据）
+    feature_cols = [c for c in FEATURE_COLUMNS if c in df.columns]
     provinces = df["province"].unique()
     print(f"\n{'='*60}")
-    print(f"省级交叉验证（LOPO, {len(provinces)}省）")
+    print(f"省级交叉验证（LOPO, {len(provinces)}省, {len(feature_cols)}维特征）")
+    if extra_params:
+        print(f"额外参数: {extra_params}")
     print(f"{'='*60}")
 
     results = []
@@ -221,15 +256,18 @@ def run_lopo_cv(df: pd.DataFrame):
         hit1_hand_strict = eval_hit_at_1_strict(df_val, "handcraft_score")
 
         # 2. 坐标上升
-        w, _ = coordinate_ascent(df_train, FEATURE_COLUMNS)
-        X_val = df_val[FEATURE_COLUMNS].to_numpy()
+        w, _ = coordinate_ascent(df_train, feature_cols)
+        X_val = df_val[feature_cols].to_numpy()
         df_val["coord_score"] = X_val @ w
         hit1_coord = eval_hit_at_1(df_val, "coord_score")
         hit1_coord_strict = eval_hit_at_1_strict(df_val, "coord_score")
 
         # 3. LambdaRank
-        model = train_lambdarank(df_train, df_val)
-        df_val["ltr_score"] = model.predict(df_val[FEATURE_COLUMNS].values)
+        model = train_lambdarank(df_train, df_val,
+                                 feature_cols=feature_cols,
+                                 extra_params=extra_params,
+                                 num_boost_round=num_boost_round)
+        df_val["ltr_score"] = model.predict(df_val[feature_cols].values)
         hit1_ltr = eval_hit_at_1(df_val, "ltr_score")
         hit1_ltr_strict = eval_hit_at_1_strict(df_val, "ltr_score")
 
@@ -286,14 +324,21 @@ def run_lopo_cv(df: pd.DataFrame):
 # 全量训练 + 保存模型
 # ============================================================
 
-def train_final_model(df: pd.DataFrame, output_path: str = "data/ltr_model.txt"):
+def train_final_model(df: pd.DataFrame, output_path: str = "data/ltr_model.txt",
+                      extra_params: dict = None, num_boost_round: int = 200):
     """全量训练最终模型并保存"""
+    # 自动检测CSV中存在的特征列
+    feature_cols = [c for c in FEATURE_COLUMNS if c in df.columns]
     print(f"\n{'='*60}")
-    print("全量训练最终模型")
+    print(f"全量训练最终模型（{len(feature_cols)}维特征）")
+    if extra_params:
+        print(f"额外参数: {extra_params}")
     print(f"{'='*60}")
 
     # 全量训练（不留验证集）
-    model = train_lambdarank(df)
+    model = train_lambdarank(df, feature_cols=feature_cols,
+                             extra_params=extra_params,
+                             num_boost_round=num_boost_round)
 
     # 保存模型
     model.save_model(output_path)
@@ -303,7 +348,7 @@ def train_final_model(df: pd.DataFrame, output_path: str = "data/ltr_model.txt")
     print_feature_importance(model)
 
     # 全量评估
-    df["ltr_score"] = model.predict(df[FEATURE_COLUMNS].values)
+    df["ltr_score"] = model.predict(df[feature_cols].values)
     df["handcraft_score"] = compute_handcraft_score(df)
 
     hit1_hand = eval_hit_at_1(df, "handcraft_score")
@@ -317,8 +362,8 @@ def train_final_model(df: pd.DataFrame, output_path: str = "data/ltr_model.txt")
 
     # 坐标上升权重
     print(f"\n坐标上升最优权重:")
-    w, best = coordinate_ascent(df, FEATURE_COLUMNS)
-    for feat, weight in zip(FEATURE_COLUMNS, w):
+    w, best = coordinate_ascent(df, feature_cols)
+    for feat, weight in zip(feature_cols, w):
         if weight > 0.01:
             print(f"  {feat:<25s} {weight:.4f}")
     print(f"  Hit@1 = {best:.4f}")
@@ -334,7 +379,38 @@ def main():
                         help="模型输出路径")
     parser.add_argument("--no-cv", action="store_true",
                         help="跳过交叉验证，直接全量训练")
+    # 第1步实验：label_gain网格搜索
+    parser.add_argument("--label-gain", type=str, default=None,
+                        help="label_gain参数，如 '0,1,5'（逗号分隔）")
+    # 第1步实验：目标函数切换
+    parser.add_argument("--objective", type=str, default=None,
+                        choices=["lambdarank", "rank_xendcg"],
+                        help="目标函数（默认lambdarank，可选rank_xendcg）")
+    # 第3步实验：超参优化
+    parser.add_argument("--num-leaves", type=int, default=None,
+                        help="叶子数（默认15，可调31/63）")
+    parser.add_argument("--num-round", type=int, default=200,
+                        help="最大迭代次数（默认200）")
+    parser.add_argument("--lambda-l1", type=float, default=None,
+                        help="L1正则化系数")
+    parser.add_argument("--lambda-l2", type=float, default=None,
+                        help="L2正则化系数")
     args = parser.parse_args()
+
+    # 构建extra_params（用户指定的参数覆盖默认值）
+    extra_params = {}
+    if args.label_gain:
+        gains = [float(x) for x in args.label_gain.split(",")]
+        extra_params["label_gain"] = gains
+    if args.objective:
+        extra_params["objective"] = args.objective
+    if args.num_leaves:
+        extra_params["num_leaves"] = args.num_leaves
+    if args.lambda_l1 is not None:
+        extra_params["lambda_l1"] = args.lambda_l1
+    if args.lambda_l2 is not None:
+        extra_params["lambda_l2"] = args.lambda_l2
+    extra_params = extra_params or None  # 没有额外参数时传None
 
     # 读取训练数据
     input_path = Path(args.input)
@@ -349,10 +425,12 @@ def main():
 
     # 交叉验证
     if not args.no_cv:
-        run_lopo_cv(df)
+        run_lopo_cv(df, extra_params=extra_params,
+                    num_boost_round=args.num_round)
 
     # 全量训练
-    train_final_model(df, args.output)
+    train_final_model(df, args.output, extra_params=extra_params,
+                      num_boost_round=args.num_round)
 
     print(f"\n{'='*60}")
     print("训练完毕！")

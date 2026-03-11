@@ -97,12 +97,19 @@ def rebuild_quota_indices():
             fail_count += 1
         finally:
             # 释放Chroma client缓存，避免211个省份句柄累积（Codex H1）
+            # 必须先 clear_system_cache() 让HNSW索引flush到磁盘，
+            # 否则只有SQLite数据没有header.bin等文件，查询会报"Cannot open header file"
             if engine is not None:
+                import gc
                 from src.model_cache import ModelCache
                 chroma_path = str(engine.chroma_dir)
                 if chroma_path in ModelCache._chroma_clients:
                     try:
+                        client = ModelCache._chroma_clients[chroma_path]
+                        client.clear_system_cache()  # flush HNSW到磁盘
                         del ModelCache._chroma_clients[chroma_path]
+                        del client
+                        gc.collect()  # 触发析构，确保文件写入
                     except Exception:
                         pass
 

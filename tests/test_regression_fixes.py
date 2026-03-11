@@ -430,7 +430,8 @@ def test_dedup_preserves_same_quota_id_from_different_sources(monkeypatch):
             return cands
 
     class FakeValidator:
-        def validate_candidates(self, query, cands, supplement_query=None, bill_params=None):
+        def validate_candidates(self, query, cands, supplement_query=None,
+                                bill_params=None, search_books=None):
             return cands
 
     # 用 monkeypatch 替换 cascade_search，测试结束自动恢复

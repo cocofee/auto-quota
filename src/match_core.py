@@ -758,9 +758,11 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
     if candidates and len(candidates) > 1:
         candidates = reranker.rerank(search_query, candidates)
     if candidates:
+        # 从classification中提取search_books（用于v3 LTR特征book_match）
+        search_books = classification.get("search_books", []) if classification else []
         candidates = validator.validate_candidates(
             full_query, candidates, supplement_query=search_query,
-            bill_params=bill_params)
+            bill_params=bill_params, search_books=search_books)
     return candidates
 
 
