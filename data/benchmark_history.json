@@ -6141,5 +6141,207 @@
       }
     },
     "excel_datasets": {}
+  },
+  {
+    "version": "unified_v1",
+    "date": "2026-03-12 17:51:04",
+    "note": "阶段一 1.1 试卷硬错误纠偏后",
+    "json_papers": {
+      "北京市建设工程施工消耗量标准(2024)": {
+        "total": 298,
+        "correct": 145,
+        "hit_rate": 48.7,
+        "diagnosis": {
+          "wrong_tier": 114,
+          "synonym_gap": 28,
+          "wrong_book": 11
+        }
+      },
+      "宁夏安装工程计价定额(2019)": {
+        "total": 90,
+        "correct": 50,
+        "hit_rate": 55.6,
+        "diagnosis": {
+          "synonym_gap": 12,
+          "wrong_tier": 28
+        }
+      },
+      "宁夏房屋建筑装饰工程计价定额(2019)": {
+        "total": 29,
+        "correct": 22,
+        "hit_rate": 75.9,
+        "diagnosis": {
+          "wrong_tier": 5,
+          "synonym_gap": 2
+        }
+      },
+      "广东省房屋建筑与装饰工程综合定额(2018)": {
+        "total": 106,
+        "correct": 55,
+        "hit_rate": 51.9,
+        "diagnosis": {
+          "wrong_tier": 20,
+          "synonym_gap": 31
+        }
+      },
+      "广东省通用安装工程综合定额(2018)": {
+        "total": 544,
+        "correct": 254,
+        "hit_rate": 46.7,
+        "diagnosis": {
+          "wrong_book": 3,
+          "synonym_gap": 58,
+          "wrong_tier": 229
+        }
+      },
+      "江苏省安装工程计价定额(2014)": {
+        "total": 200,
+        "correct": 47,
+        "hit_rate": 23.5,
+        "diagnosis": {
+          "synonym_gap": 144,
+          "wrong_tier": 9
+        }
+      },
+      "江苏省建筑与装饰工程计价定额(2014)": {
+        "total": 111,
+        "correct": 30,
+        "hit_rate": 27.0,
+        "diagnosis": {
+          "synonym_gap": 73,
+          "wrong_tier": 8
+        }
+      },
+      "江西省园林绿化工程消耗量定额及统一基价表（2023)": {
+        "total": 19,
+        "correct": 0,
+        "hit_rate": 0.0,
+        "diagnosis": {
+          "synonym_gap": 18,
+          "wrong_tier": 1
+        }
+      },
+      "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": {
+        "total": 22,
+        "correct": 17,
+        "hit_rate": 77.3,
+        "diagnosis": {
+          "wrong_tier": 1,
+          "synonym_gap": 4
+        }
+      },
+      "江西省通用安装工程消耗量定额及统一基价表(2017)": {
+        "total": 468,
+        "correct": 231,
+        "hit_rate": 49.4,
+        "diagnosis": {
+          "wrong_tier": 187,
+          "synonym_gap": 50
+        }
+      },
+      "河南省通用安装工程预算定额(2016)": {
+        "total": 114,
+        "correct": 62,
+        "hit_rate": 54.4,
+        "diagnosis": {
+          "wrong_tier": 20,
+          "synonym_gap": 32
+        }
+      },
+      "浙江省园林绿化及仿古建筑工程预算定额(2018)": {
+        "total": 601,
+        "correct": 40,
+        "hit_rate": 6.7,
+        "diagnosis": {
+          "synonym_gap": 521,
+          "wrong_tier": 35,
+          "wrong_book": 5
+        }
+      },
+      "浙江省市政工程预算定额(2018)": {
+        "total": 541,
+        "correct": 76,
+        "hit_rate": 14.0,
+        "diagnosis": {
+          "synonym_gap": 388,
+          "wrong_tier": 77
+        }
+      },
+      "浙江省通用安装工程预算定额(2018)": {
+        "total": 596,
+        "correct": 272,
+        "hit_rate": 45.6,
+        "diagnosis": {
+          "synonym_gap": 208,
+          "wrong_tier": 114,
+          "wrong_book": 2
+        }
+      },
+      "湖北省通用安装工程消耗量定额及全费用基价表(2024)": {
+        "total": 35,
+        "correct": 19,
+        "hit_rate": 54.3,
+        "diagnosis": {
+          "wrong_tier": 8,
+          "synonym_gap": 8
+        }
+      },
+      "福建省园林绿化工程预算定额(2017)": {
+        "total": 224,
+        "correct": 82,
+        "hit_rate": 36.6,
+        "diagnosis": {
+          "synonym_gap": 120,
+          "wrong_tier": 22
+        }
+      },
+      "福建省市政工程预算定额(2017)": {
+        "total": 263,
+        "correct": 61,
+        "hit_rate": 23.2,
+        "diagnosis": {
+          "wrong_tier": 45,
+          "synonym_gap": 157
+        }
+      },
+      "福建省房屋建筑与装饰工程预算定额(2017)": {
+        "total": 353,
+        "correct": 133,
+        "hit_rate": 37.7,
+        "diagnosis": {
+          "wrong_tier": 66,
+          "synonym_gap": 154
+        }
+      },
+      "福建省通用安装工程预算定额(2017)": {
+        "total": 335,
+        "correct": 69,
+        "hit_rate": 20.6,
+        "diagnosis": {
+          "synonym_gap": 217,
+          "wrong_tier": 49
+        }
+      },
+      "辽宁省通用安装工程定额(2024)": {
+        "total": 58,
+        "correct": 36,
+        "hit_rate": 62.1,
+        "diagnosis": {
+          "synonym_gap": 9,
+          "wrong_tier": 13
+        }
+      },
+      "重庆市通用安装工程计价定额(2018)": {
+        "total": 200,
+        "correct": 59,
+        "hit_rate": 29.5,
+        "diagnosis": {
+          "wrong_tier": 113,
+          "wrong_book": 21,
+          "synonym_gap": 7
+        }
+      }
+    },
+    "excel_datasets": {}
   }
 ]

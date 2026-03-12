@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-12 20:00:19",
+  "source": "tools/check_benchmark_integrity.py",
+  "skip_policy": {
+    "skip_hard_item_rate": 0.5,
+    "skip_hard_items": 10,
+    "skip_hard_pair_rate": 0.5,
+    "name_mismatch_threshold": 0.45,
+    "hard_similarity_threshold": 0.2
+  },
+  "disabled_papers": {
+    "江西省园林绿化工程消耗量定额及统一基价表（2023).json": {
+      "reason": "integrity_hard_mismatch",
+      "province": "江西省园林绿化工程消耗量定额及统一基价表（2023)",
+      "total_items": 21,
+      "total_pairs": 28,
+      "issues": 28,
+      "hard_items": 21,
+      "hard_pairs": 28,
+      "hard_item_rate": 1.0,
+      "hard_pair_rate": 1.0,
+      "medium_items": 0,
+      "medium_pairs": 0
+    },
+    "浙江省园林绿化及仿古建筑工程预算定额(2018)_脏数据.json": {
+      "reason": "integrity_hard_mismatch",
+      "province": "浙江省园林绿化及仿古建筑工程预算定额(2018)",
+      "total_items": 101,
+      "total_pairs": 175,
+      "issues": 160,
+      "hard_items": 86,
+      "hard_pairs": 153,
+      "hard_item_rate": 0.8515,
+      "hard_pair_rate": 0.8743,
+      "medium_items": 7,
+      "medium_pairs": 7
+    },
+    "浙江省园林绿化及仿古建筑工程预算定额(2018).json": {
+      "reason": "integrity_hard_mismatch",
+      "province": "浙江省园林绿化及仿古建筑工程预算定额(2018)",
+      "total_items": 500,
+      "total_pairs": 772,
+      "issues": 562,
+      "hard_items": 359,
+      "hard_pairs": 523,
+      "hard_item_rate": 0.718,
+      "hard_pair_rate": 0.6775,
+      "medium_items": 39,
+      "medium_pairs": 39
+    }
+  }
+}
