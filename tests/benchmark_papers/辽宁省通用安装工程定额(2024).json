@@ -1,7 +1,7 @@
 {
   "province": "辽宁省通用安装工程定额(2024)",
-  "total_items": 58,
-  "authority_count": 58,
+  "total_items": 53,
+  "authority_count": 53,
   "candidate_count": 0,
   "content_hash": "76f25d7f",
   "created": "2026-03-11",
@@ -43,19 +43,6 @@
         "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤10"
       ],
       "specialty": "C4",
-      "layer": "authority"
-    },
-    {
-      "id": 11447,
-      "bill_text": "条形实木地板(成品) 铺在水泥地面上 三层实木",
-      "bill_name": "条形实木地板(成品) 铺在水泥地面上 三层实木",
-      "quota_ids": [
-        "11-60"
-      ],
-      "quota_names": [
-        "条形实木地板(成品) 铺在水泥地面上"
-      ],
-      "specialty": "C11",
       "layer": "authority"
     },
     {
@@ -319,19 +306,6 @@
       "layer": "authority"
     },
     {
-      "id": 11463,
-      "bill_text": "一层墙面护墙板制作 细木工板基层δ15",
-      "bill_name": "一层墙面护墙板制作 细木工板基层δ15",
-      "quota_ids": [
-        "12-153"
-      ],
-      "quota_names": [
-        "墙饰面 夹板、卷材基层 细木工板基层"
-      ],
-      "specialty": "C12",
-      "layer": "authority"
-    },
-    {
       "id": 11483,
       "bill_text": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4 名称：管内穿线 规格：BV4 敷设方式、部位:管道内敷设",
       "bill_name": "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4 名称：管内穿线",
@@ -342,19 +316,6 @@
         "管内穿线 穿单芯导线 铜芯 导线截面(mm2) ≤4"
       ],
       "specialty": "C4",
-      "layer": "authority"
-    },
-    {
-      "id": 11445,
-      "bill_text": "一层墙面护墙板制作 竹木纤维墙板面层",
-      "bill_name": "一层墙面护墙板制作 竹木纤维墙板面层",
-      "quota_ids": [
-        "12-174"
-      ],
-      "quota_names": [
-        "墙饰面 面层 纤维板"
-      ],
-      "specialty": "C12",
       "layer": "authority"
     },
     {
@@ -488,19 +449,6 @@
       "layer": "authority"
     },
     {
-      "id": 11462,
-      "bill_text": "墙饰面 龙骨基层 轻钢龙骨 封堵窗口 一层led墙体 轻钢龙骨",
-      "bill_name": "墙饰面",
-      "quota_ids": [
-        "12-146"
-      ],
-      "quota_names": [
-        "墙饰面 龙骨基层 轻钢龙骨 中距(mm以内) 竖603 横1500"
-      ],
-      "specialty": "C12",
-      "layer": "authority"
-    },
-    {
       "id": 11490,
       "bill_text": "暗装开关(插座)盒 名称:接线盒",
       "bill_name": "暗装开关(插座)盒",
@@ -563,19 +511,6 @@
         "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20"
       ],
       "specialty": "C4",
-      "layer": "authority"
-    },
-    {
-      "id": 11444,
-      "bill_text": "一层墙面护墙板制作 细木工板基层",
-      "bill_name": "一层墙面护墙板制作 细木工板基层",
-      "quota_ids": [
-        "12-153"
-      ],
-      "quota_names": [
-        "墙饰面 夹板、卷材基层 细木工板基层"
-      ],
-      "specialty": "C12",
       "layer": "authority"
     },
     {
