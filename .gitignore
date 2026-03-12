@@ -75,3 +75,30 @@ tools/.pull_history.json
 
 # Benchmark运行结果快照（本地生成，不该commit）
 tests/benchmark_papers/_latest_result.json
+
+# 向量模型目录（12GB，不上传）
+models/
+
+# PDF信息价数据（1.1GB，本地导入）
+data/pdf_info_price/
+
+# 训练数据和临时模型（大文件）
+data/qwen3_training_triplets_v3.jsonl
+data/bill_library_all.json
+data/ltr_training_data.csv
+data/ltr_model_v4_new.txt
+
+# 自动生成的同义词 / 备份文件
+data/auto_synonyms_*.json
+data/*.bak
+
+# 造价PDF源文件（体积大）
+data/*.pdf
+
+# Trae IDE / agent-browser 本地配置
+.trae/
+.agents/
+skills-lock.json
+
+# 根目录空数据库
+experience.db
