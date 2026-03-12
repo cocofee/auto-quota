@@ -1,7 +1,7 @@
 {
   "version": "unified_v1",
-  "date": "2026-03-12 05:49:27",
-  "note": "阶段零基线：21省5207题（含脏数据+新增浙江园林市政+江苏建筑）",
+  "date": "2026-03-12 17:51:04",
+  "note": "阶段一 1.1 试卷硬错误纠偏后",
   "json_papers": {
     "北京市建设工程施工消耗量标准(2024)": {
       "total": 298,
@@ -88,11 +88,11 @@
     },
     "江西省通用安装工程消耗量定额及统一基价表(2017)": {
       "total": 468,
-      "correct": 223,
-      "hit_rate": 47.6,
+      "correct": 231,
+      "hit_rate": 49.4,
       "diagnosis": {
-        "wrong_tier": 188,
-        "synonym_gap": 57
+        "wrong_tier": 187,
+        "synonym_gap": 50
       }
     },
     "河南省通用安装工程预算定额(2016)": {
@@ -109,8 +109,9 @@
       "correct": 40,
       "hit_rate": 6.7,
       "diagnosis": {
-        "synonym_gap": 526,
-        "wrong_tier": 35
+        "synonym_gap": 521,
+        "wrong_tier": 35,
+        "wrong_book": 5
       }
     },
     "浙江省市政工程预算定额(2018)": {
@@ -143,11 +144,11 @@
     },
     "福建省园林绿化工程预算定额(2017)": {
       "total": 224,
-      "correct": 80,
-      "hit_rate": 35.7,
+      "correct": 82,
+      "hit_rate": 36.6,
       "diagnosis": {
-        "synonym_gap": 119,
-        "wrong_tier": 25
+        "synonym_gap": 120,
+        "wrong_tier": 22
       }
     },
     "福建省市政工程预算定额(2017)": {

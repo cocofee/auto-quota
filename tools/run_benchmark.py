@@ -32,6 +32,7 @@ PAPERS_DIR = PROJECT_ROOT / "tests" / "benchmark_papers"  # JSON试卷目录
 CONFIG_PATH = PROJECT_ROOT / "tests" / "benchmark_config.json"  # Excel数据集配置
 BASELINE_PATH = PROJECT_ROOT / "tests" / "benchmark_baseline.json"
 HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"
+PAPER_OVERRIDES_PATH = PAPERS_DIR / "_paper_overrides.json"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -40,17 +41,40 @@ if str(PROJECT_ROOT) not in sys.path:
 # 第一部分：JSON试卷模式（答案对比，算命中率）
 # ============================================================
 
-def load_json_papers(province_filter: str = None) -> dict:
+def load_paper_overrides() -> dict:
+    """Load per-paper disable rules produced by integrity audit."""
+    if not PAPER_OVERRIDES_PATH.exists():
+        return {}
+    try:
+        data = json.loads(PAPER_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    disabled = data.get("disabled_papers", {})
+    return disabled if isinstance(disabled, dict) else {}
+
+
+def load_json_papers(province_filter: str = None,
+                     include_disabled: bool = False) -> tuple[dict, list[dict]]:
     """加载JSON固定试卷
 
-    返回: {省份名: {province, items, ...}, ...}
+    返回: ({省份名: {province, items, ...}, ...}, skipped_papers)
     """
     papers = {}
+    skipped_papers = []
     if not PAPERS_DIR.exists():
-        return papers
+        return papers, skipped_papers
+
+    disabled_papers = {} if include_disabled else load_paper_overrides()
 
     for fpath in sorted(PAPERS_DIR.glob("*.json")):
         if fpath.name.startswith('_'):
+            continue
+        if fpath.name in disabled_papers:
+            skipped_papers.append({
+                "paper": fpath.name,
+                "province": disabled_papers[fpath.name].get("province", ""),
+                "reason": disabled_papers[fpath.name].get("reason", "disabled"),
+            })
             continue
         data = json.loads(fpath.read_text(encoding="utf-8"))
         prov = data.get('province')
@@ -63,7 +87,7 @@ def load_json_papers(province_filter: str = None) -> dict:
             papers[prov]['items'].extend(data.get('items', []))
         else:
             papers[prov] = data
-    return papers
+    return papers, skipped_papers
 
 
 def run_json_paper(province: str, items: list[dict]) -> dict:
@@ -555,10 +579,12 @@ def main():
     # ---- JSON试卷 ----
     json_results = []
     if not args.excel_only:
-        papers = load_json_papers(province_filter=args.province)
+        papers, skipped_papers = load_json_papers(province_filter=args.province)
         if papers:
             total_items = sum(len(d.get('items', [])) for d in papers.values())
             print(f"JSON试卷: {len(papers)}个省份, {total_items}条题目")
+            if skipped_papers:
+                print(f"已跳过 {len(skipped_papers)} 份禁用试卷")
             print("-" * 60)
 
             for province, data in papers.items():
