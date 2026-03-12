@@ -13,7 +13,7 @@
     "模糊描述": 10,
     "缺字段极简": 25
   },
-  "total_items": 155,
+  "total_items": 152,
   "items": [
     {
       "bill_text": "栏板",
@@ -77,19 +77,6 @@
       ],
       "quota_names": [
         "调和漆、真石漆、氟碳漆、裂纹漆(滴水线、分格线油漆(底油一遍、调和漆两遍)30mm以内)"
-      ],
-      "specialty": "",
-      "layer": "dirty_test",
-      "dirty_type": "超短名称"
-    },
-    {
-      "bill_text": "金属方通",
-      "bill_name": "金属方通",
-      "quota_ids": [
-        "10108083"
-      ],
-      "quota_names": [
-        "金属方通"
       ],
       "specialty": "",
       "layer": "dirty_test",
@@ -1205,7 +1192,7 @@
         "10105126"
       ],
       "quota_names": [
-        "30mm宽不锈钢分割线",
+        "楼地面嵌金属分隔条 (块料地面铜分隔条)",
         "铁件、螺栓(预埋铁件安装)"
       ],
       "specialty": "",
@@ -1476,21 +1463,6 @@
       "dirty_type": "含分隔符"
     },
     {
-      "bill_text": "套管 规格:SC20//名称、类型:密闭套管",
-      "bill_name": "套管",
-      "quota_ids": [
-        "RF-756",
-        "RF-757"
-      ],
-      "quota_names": [
-        "密闭盒",
-        "密闭盒安装费"
-      ],
-      "specialty": "",
-      "layer": "dirty_test",
-      "dirty_type": "含分隔符"
-    },
-    {
       "bill_text": "木质门 M0821//镶嵌玻璃品种、厚度:木质平开夹板门//成品木门框安装",
       "bill_name": "木质门",
       "quota_ids": [
@@ -1544,7 +1516,7 @@
       ],
       "quota_names": [
         "镀锌钢骨架",
-        "25mm米黄色花岗岩干挂"
+        "带骨架幕墙 干挂石材幕墙"
       ],
       "specialty": "",
       "layer": "dirty_test",
@@ -2279,21 +2251,6 @@
       "dirty_type": "缺字段极简"
     },
     {
-      "bill_text": "按钮 名称:抗爆按钮",
-      "bill_name": "按钮",
-      "quota_ids": [
-        "RF-721",
-        "RF-722"
-      ],
-      "quota_names": [
-        "抗爆按钮",
-        "呼唤按钮安装费"
-      ],
-      "specialty": "",
-      "layer": "dirty_test",
-      "dirty_type": "缺字段极简"
-    },
-    {
       "bill_text": "木门框 成品复合门框",
       "bill_name": "木门框",
       "quota_ids": [
@@ -2306,5 +2263,6 @@
       "layer": "dirty_test",
       "dirty_type": "缺字段极简"
     }
-  ]
+  ],
+  "authority_count": 152
 }

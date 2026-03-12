@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.15';
+export const APP_VERSION = '0.2.16';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,32 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.16',
+    date: '2026-03-12',
+    changes: [
+      { type: 'admin', text: '阶段零完成（全量出卷21省5207题，基线33.6%）' },
+      { type: 'admin', text: '实战工具三件套 + jarvis_learn分层存储' },
+      { type: 'admin', text: 'Autoresearch方案（program.md）+ 脏数据试卷（9份666题）' },
+      { type: 'admin', text: 'Benchmark试卷扩充（7省→10省，2177→3431题）' },
+      { type: 'admin', text: '更新批量匹配bat脚本' },
+      { type: 'admin', text: 'V4训练准备（LTR特征扩展+OSS批量导入+知识库快速模式）' },
+      { type: 'admin', text: 'PDF信息价导入工具（8省6个profile+上海API，77万条信息价）' },
+      { type: 'admin', text: '离线诊断分桶（bucket子命令，5维深度分析）' },
+      { type: 'admin', text: '合并4个经验库工具为experience_manager.py统一入口' },
+      { type: 'admin', text: '清理4个冗余工具脚本' },
+      { type: 'admin', text: '同义词错题精补（+7对，benchmark未退化）' },
+      { type: 'admin', text: 'jarvis_diagnose统一入口（benchmark-fix+4工具合并）' },
+      { type: 'admin', text: '添加批量扫描bat脚本' },
+      { type: 'admin', text: '批量匹配优化（省份轮转+白天/晚上模式+进度显示）' },
+      { type: 'admin', text: '同义词自动挖掘扩展（25→39条，+14条全局词）' },
+      { type: 'admin', text: '算法版本自动计算（替代手动写死的版本号）' },
+      { type: 'admin', text: '过滤分部分项小节行（C.4.3等章节标题不套定额）' },
+      { type: 'admin', text: 'LTR排序优化v3（21→23维特征+超参优化，48.6%→51.8%）' },
+      { type: 'admin', text: '电缆截面规则匹配+BTLY矿物电缆路由修复' },
+      { type: 'admin', text: 'V3部署准备（模型路径切换+安装方式兼容修正+全流程bat）' },
+    ],
+  },
   {
     version: '0.2.15',
     date: '2026-03-09',
