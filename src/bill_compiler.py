@@ -12,6 +12,7 @@
 """
 
 from loguru import logger
+from src.bill_code_matcher import match_bill_codes
 
 # 确定无歧义的单位映射（造价行业里"只"和"个"可能不通用，第一版不转）
 UNIT_MAP = {
@@ -56,6 +57,9 @@ def compile_items(items: list[dict]) -> list[dict]:
     if compiled > 0:
         logger.info(f"  编清单编译: {compiled}条非标项已处理, "
                     f"{len(items) - compiled}条标准项跳过")
+
+    # 自动补全清单编码+项目特征（没有9位编码的清单项尝试匹配）
+    match_bill_codes(items)
 
     return items
 

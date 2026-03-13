@@ -246,7 +246,8 @@ def match_bill_code(name: str, description: str = "",
     返回:
         匹配结果dict，包含:
         {
-            "code": "031001002",          # 9位编码
+            "code": "031001002",          # 9位国标编码（前9位，标准规定不能自编）
+            "code_12": "031001002001",    # 完整12位编码（批量匹配时自动编后3位序号）
             "name": "镀锌钢管",            # 标准名称
             "features": [...],            # 项目特征模板
             "unit": "m",                  # 计量单位
@@ -320,6 +321,8 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
 
     对每条清单item，如果没有编码或编码不完整，尝试自动匹配。
     匹配结果写入 item["bill_match"] 字段。
+    同一个9位国标编码下的多条清单项，自动编后3位序号（001、002…），
+    组成完整12位清单编码。
 
     参数:
         items: 清单项列表（bill_reader输出的dict列表）
@@ -341,8 +344,12 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         name = item.get("name", "").strip()
         desc = item.get("description", "").strip()
 
-        # 已有完整9位编码 → 跳过（尊重用户输入）
-        if code and re.match(r"^03\d{7}", code):
+        # 已有完整12位编码 → 跳过（尊重用户输入）
+        if code and re.match(r"^0[1-9]\d{10}$", code):
+            skipped += 1
+            continue
+        # 已有完整9位编码（用户只填了前9位）→ 也跳过
+        if code and re.match(r"^0[1-9]\d{7}$", code):
             skipped += 1
             continue
 
@@ -355,6 +362,18 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         if result:
             item["bill_match"] = result
             matched += 1
+
+    # 给匹配结果编后3位序号，组成完整12位编码
+    # 规则：同一个9位编码按出现顺序编001、002、003…
+    code_counter = {}  # 9位编码 → 当前序号
+    for item in items:
+        bm = item.get("bill_match")
+        if not bm:
+            continue
+        code9 = bm["code"]
+        seq = code_counter.get(code9, 0) + 1
+        code_counter[code9] = seq
+        bm["code_12"] = f"{code9}{seq:03d}"  # 完整12位编码
 
     if matched > 0 or skipped > 0:
         logger.info(f"  清单编码匹配: {matched}条匹配成功, "
