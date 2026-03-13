@@ -12,6 +12,8 @@
 依赖 match_core 的工具函数和核心搜索，不依赖 match_engine。
 """
 
+import re
+
 from loguru import logger
 
 from src.text_parser import parser as text_parser, normalize_bill_text
@@ -141,6 +143,7 @@ def _check_rule_subtype_conflict(rule_result: dict, bill_text: str) -> dict:
     return rule_result
 
 
+
 def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     """在候选列表中优先选类别匹配的（规则审核前置）
 
@@ -158,6 +161,18 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     bill_text = f"{bill_name} {desc}"
     desc_lines = extract_description_lines(desc)
 
+    cable_candidate = _pick_explicit_cable_family_candidate(bill_text, candidates)
+    if cable_candidate is not None:
+        return cable_candidate
+
+    sleeve_candidate = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
+    if sleeve_candidate is not None:
+        return sleeve_candidate
+
+    conduit_candidate = _pick_explicit_conduit_family_candidate(bill_text, candidates)
+    if conduit_candidate is not None:
+        return conduit_candidate
+
     for cand in candidates[:5]:
         quota_name = cand.get("name", "")
         # 反向排斥：定额含特定场景词但清单不含时跳过
@@ -174,6 +189,192 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     # 全部不通过，回退到第一个
     return candidates[0]
+
+
+def _pick_explicit_cable_family_candidate(bill_text: str,
+                                          candidates: list[dict]) -> dict | None:
+    """对明确电缆样本，优先按家族与芯数/终端头类型重选候选。"""
+    text = bill_text or ""
+    upper_text = text.upper()
+    if "电缆" not in text:
+        return None
+
+    is_terminal = any(keyword in text for keyword in ("终端头", "电缆头"))
+    is_control = "控制" in text or any(keyword in upper_text for keyword in ("KVV", "KVVP", "KVVR", "RVVSP", "RVSP"))
+    is_power = not is_control
+
+    expected_words: list[str] = []
+    forbidden_words: list[str] = []
+    core_words: list[str] = []
+
+    if is_control:
+        expected_words.append("控制电缆")
+        forbidden_words.append("电力电缆")
+    elif is_power:
+        expected_words.append("电力电缆")
+        forbidden_words.append("控制电缆")
+
+    if is_terminal:
+        expected_words.extend(["终端头", "电缆头"])
+    else:
+        forbidden_words.extend(["终端头", "电缆头"])
+
+    if "单芯" in text:
+        core_words.append("单芯")
+    if "四芯" in text or re.search(r'4\s*[×xX*]', text):
+        core_words.append("四芯")
+    if "五芯" in text or re.search(r'5\s*[×xX*]', text):
+        core_words.append("五芯")
+
+    core_count_match = re.search(r'(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?', text)
+    if core_count_match:
+        core_count = int(core_count_match.group(1))
+        if is_control or is_terminal:
+            core_words.extend([f"≤{core_count}", f"{core_count}芯", f"{core_count}"])
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        score = 0
+        score += sum(8 for word in expected_words if word and word in quota_name)
+        score -= sum(8 for word in forbidden_words if word and word in quota_name)
+        score += sum(4 for word in core_words if word and word in quota_name)
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_plastic_sleeve_candidate(bill_text: str,
+                                            candidates: list[dict]) -> dict | None:
+    """对明确的 PVC/塑料套管样本，优先选择塑料套管家族。"""
+    text = bill_text or ""
+    if "套管" not in text or not any(keyword in text for keyword in ("PVC", "塑料", "管套")):
+        return None
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        score = 0
+        if "塑料套管" in quota_name:
+            score += 10
+        if "钢套管" in quota_name:
+            score -= 8
+        if "制作安装" in quota_name:
+            score += 2
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_conduit_family_candidate(bill_text: str,
+                                            candidates: list[dict]) -> dict | None:
+    """对“明确电气配管语义”的清单，优先在前几名里选对家族。
+
+    只处理非常明确的场景：`电气配管 SC20`、`JDG穿线管`、`电气配管 PC25`、
+    `金属软管`、`可挠金属套管` 等，避免把给排水的 `SC32` 全局误判成电气配管。
+    """
+    if not candidates:
+        return None
+
+    text = bill_text or ""
+    upper_text = text.upper()
+    code_match = re.search(r'(?<![A-Z0-9])(JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G)\s*\d+\b', upper_text)
+    explicit_electrical = any(keyword in text for keyword in (
+        "电气配管", "穿线管", "导管", "金属软管", "可挠金属套管",
+    ))
+    if not explicit_electrical and not (code_match and "配管" in text):
+        return None
+
+    expected_words: list[str] = []
+    forbidden_words: list[str] = []
+    layout_words: list[str] = []
+    size_tokens: list[str] = []
+
+    if "暗配" in text:
+        layout_words.append("暗配")
+    if "明配" in text:
+        layout_words.append("明配")
+
+    if "金属软管" in text:
+        expected_words = ["金属软管"]
+    elif "可挠" in text:
+        expected_words = ["可挠金属套管"]
+    else:
+        conduit_code = code_match.group(1) if code_match else ""
+        if conduit_code in {"JDG", "KBG"}:
+            expected_words = ["JDG", "紧定式", "钢导管"]
+            forbidden_words = ["防爆钢管", "电缆保护"]
+        elif conduit_code in {"PC", "PVC"}:
+            expected_words = ["刚性阻燃管", "PVC阻燃塑料管"]
+            forbidden_words = ["电缆保护", "防爆钢管"]
+        elif conduit_code == "FPC":
+            expected_words = ["半硬质阻燃管", "半硬质塑料管"]
+            forbidden_words = ["电缆保护", "防爆钢管"]
+        elif conduit_code in {"SC", "G", "DG", "RC", "MT"}:
+            expected_words = ["镀锌钢管", "镀锌电线管", "钢管敷设"]
+            forbidden_words = ["防爆钢管", "电缆保护"]
+
+    size_match = re.search(r'(?<![A-Z0-9])(?:JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G|DN|Φ|φ)\s*(\d+)\b', upper_text)
+    if size_match:
+        size = size_match.group(1)
+        size_tokens = [f"{size}", f"≤{size}"]
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        family_hits = sum(1 for word in expected_words if word and word in quota_name)
+        family_penalty = sum(1 for word in forbidden_words if word and word in quota_name)
+        layout_hits = sum(1 for word in layout_words if word and word in quota_name)
+        size_hits = sum(1 for token in size_tokens if token and token in quota_name)
+        score = family_hits * 10 + layout_hits * 4 + size_hits * 2 - family_penalty * 8
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best = scored[0][1]
+    logger.debug(
+        "显式电气配管候选重选: bill={} -> quota={}",
+        bill_text[:80],
+        best.get("name", "")[:80],
+    )
+    return best
 
 
 # ============================================================
@@ -667,8 +868,9 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             _append_trace_step(rule_direct, "rule_direct_review_rejected",
                                error_type=review_error.get("type"),
                                error_reason=review_error.get("reason"))
-            # 降级为规则备选（不直通，让搜索来决策）
-            rule_backup = rule_direct
+            # 已被审核规则判错的规则直通结果不能再回流为备选，
+            # 否则后续可能反向覆盖掉更安全的搜索结果。
+            rule_backup = None
             rule_direct = None
         else:
             _append_trace_step(rule_direct, "rule_direct_return")

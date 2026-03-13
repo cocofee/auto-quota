@@ -13,6 +13,7 @@ import os
 import pytest
 
 from src.param_validator import ParamValidator
+from src.review_checkers import check_category_mismatch
 
 
 class TestCategoryHardRejects:
@@ -202,3 +203,34 @@ class TestReviewRulesCoverage:
         rejects = self.rules["category_reject_keywords"]
         assert "喷头" in rejects
         assert "泵" in rejects["喷头"], "'喷头' 应排斥 '泵'"
+class TestReviewCategoryMismatch:
+    def test_cable_terminal_heads_exist_in_review_rules(self):
+        rules_path = os.path.join(
+            os.path.dirname(__file__), "..", "data", "review_rules.json")
+        with open(rules_path, "r", encoding="utf-8") as f:
+            rules = json.load(f)
+
+        keywords = rules["category_keywords"]
+        rejects = rules["category_reject_keywords"]
+
+        assert "电缆终端头" in keywords
+        assert "电缆头" in keywords["电缆终端头"]
+        assert "控制电缆头" in keywords
+
+        assert "电缆终端头" in rejects
+        assert "导线" in rejects["电缆终端头"]
+        assert "敷设" in rejects["电缆终端头"]
+
+    def test_cable_terminal_head_rejects_soft_bus_candidate(self):
+        item = {"name": "电缆终端头", "description": "名称:电力电缆头 规格型号:3*2.5"}
+        error = check_category_mismatch(item, "软母线安装 导线截面(mm2以内) 150", [])
+
+        assert error is not None
+        assert error["type"] == "category_mismatch"
+
+    def test_cable_terminal_head_rejects_laying_candidate(self):
+        item = {"name": "控制电缆头", "description": "名称:控制电缆头 规格:14芯内"}
+        error = check_category_mismatch(item, "塑料控制电缆敷设 电缆(芯以下) 14", [])
+
+        assert error is not None
+        assert error["type"] == "category_mismatch"

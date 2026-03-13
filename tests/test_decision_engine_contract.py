@@ -74,6 +74,35 @@ class TestPrepareItemContract:
         if "early_result" not in prepared:
             assert "search_query" in prepared or "ctx" in prepared
 
+    def test_review_rejected_rule_direct_does_not_fall_back_to_rule_backup(self):
+        """已被审核规则拦截的 rule_direct 不能再降级成 rule_backup 回流覆盖搜索结果"""
+        rule_validator = MagicMock()
+        rule_validator.rules = True
+        rule_validator.match_by_rules.return_value = {
+            "quotas": [{"quota_id": "C4-3-1", "name": "软母线安装 导线截面(mm2以内) 150"}],
+            "confidence": 95,
+            "match_source": "rule",
+        }
+
+        item = {
+            "name": "电缆终端头",
+            "description": "名称:电力电缆头 规格型号:3*2.5",
+            "unit": "个",
+            "quantity": 1,
+        }
+
+        with patch("src.match_pipeline._review_check_match_result") as mock_review:
+            mock_review.return_value = {
+                "type": "category_mismatch",
+                "reason": "类别不匹配: 清单是「电缆终端头」，定额含错误词「导线」",
+            }
+            prepared = _prepare_item_for_matching(
+                item, experience_db=None, rule_validator=rule_validator,
+            )
+
+        assert prepared.get("early_result") is None
+        assert prepared.get("rule_backup") is None
+
 
 class TestResolveSearchResult:
     """_resolve_search_mode_result 契约测试"""
