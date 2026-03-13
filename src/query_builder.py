@@ -503,6 +503,112 @@ def _build_garden_plant_query(name: str, full_text: str, specialty: str = "") ->
     return _apply_synonyms(normalized_name, specialty)
 
 
+def _build_valve_query(name: str, full_text: str, params: dict,
+                       specialty: str = "") -> str | None:
+    """阀门族对象模板：拦截需要特殊路由的阀门类清单。
+
+    处理的对象类型：
+    1. 通风类阀门（防火阀/调节阀/排烟阀）→ 周长路由（不走管道DN路由）
+    2. 特殊设备（倒流防止器/自动排气阀/减压孔板）→ 专用搜索词
+    3. 过滤器 → 螺纹阀门（定额按螺纹阀门计）
+    4. 软接头 → 按连接方式分流（法兰/螺纹）
+    5. 电热熔法兰套件 → 塑料法兰
+    6. 管道阀门（闸阀/蝶阀/球阀等泛称）→ 按连接方式+DN分流
+
+    为什么需要模板：
+    - "碳钢阀门 名称：280℃防火阀"不拦截会被管道路由误改为"法兰阀门安装"
+    - 闸阀/蝶阀等泛称在定额库中搜不到，必须规范化为法兰/螺纹阀门
+    - 过滤器/软接头/倒流防止器等有独立的定额体系
+    """
+    # --- 前置检查：是否含阀门相关关键词 ---
+    if not any(kw in name for kw in ("阀门", "阀", "过滤器", "软接头", "倒流防止")):
+        return None
+
+    # --- 提取真实设备名（清单常在"名称："或"类型："后给具体设备名） ---
+    # 例如 "碳钢阀门 名称：280℃防火阀" → real_type = "280℃防火阀"
+    # 例如 "螺纹阀门 类型:截止阀 规格:DN32" → real_type = "截止阀"
+    real_type = ""
+    rt_match = re.search(
+        r'(?:名称[、,]?类型|名称|类型)[：:]\s*(.+?)(?:\s+(?:规格|压力|名称|类型)|$)',
+        full_text)
+    if rt_match:
+        real_type = rt_match.group(1).strip()
+        real_type = re.sub(r'-超高$', '', real_type).strip()  # 去掉超高后缀
+
+    dn = params.get("dn")
+    connection = params.get("connection", "")
+
+    # 清单名的基础部分（去掉"名称：xxx"/"类型：xxx"后缀）
+    # "碳钢阀门 名称：280℃防火阀" → "碳钢阀门"
+    _name_base = re.split(r'\s+(?:名称|类型|规格)', name)[0].strip()
+
+    # === 1. 通风类阀门拦截（防火阀/调节阀/排烟阀） ===
+    # 这些走周长分档（WxH→周长），不走DN分档
+    # 不拦截会被管道路由覆盖成"法兰阀门安装"，导致搜索完全偏离
+    _vent_kw = ("防火阀", "排烟阀", "调节阀", "排烟口", "排烟防火")
+    _vent_check = real_type if real_type else _name_base
+    if any(kw in _vent_check for kw in _vent_kw):
+        # 清理真实设备名：去温度（280℃）、去型号前缀（MEE-、FVD-）
+        vent_name = real_type or _name_base
+        vent_name = re.sub(r'\d+℃', '', vent_name)
+        vent_name = re.sub(r'^[A-Za-z]+-', '', vent_name).strip()
+        if "多叶" in vent_name or "对开" in vent_name:
+            return _apply_synonyms("多叶调节阀安装 周长", specialty)
+        return _apply_synonyms("防火调节阀安装 周长", specialty)
+
+    # C7通风空调的"碳钢阀门"/"阀门"无具体名称时，通常是防火阀/调节阀
+    if specialty == "C7" and _name_base in ("碳钢阀门", "阀门", "金属阀门"):
+        return _apply_synonyms("防火调节阀安装 周长", specialty)
+
+    # === 2. 特殊设备（有专用定额，不走通用阀门路由） ===
+    _check = real_type or _name_base
+
+    # 倒流防止器 → "倒流防止器组成与安装(连接方式)"
+    if "倒流防止" in _check:
+        _dn_val = int(dn) if dn else 50
+        if "螺纹" in connection:
+            conn = "螺纹连接"
+        elif "法兰" in connection:
+            conn = "法兰连接"
+        else:
+            conn = "螺纹连接" if _dn_val < 50 else "法兰连接"
+        return _apply_synonyms(f"倒流防止器组成与安装({conn})", specialty)
+
+    # 自动排气阀/快速排气阀 → "自动排气阀"
+    if "排气阀" in _check:
+        return _apply_synonyms("自动排气阀", specialty)
+
+    # 减压孔板 → "减压孔板"
+    if "减压孔板" in _check:
+        return _apply_synonyms("减压孔板", specialty)
+
+    # === 3. 过滤器 → 螺纹阀门（定额按螺纹阀门计） ===
+    if "过滤器" in _check:
+        return _apply_synonyms("螺纹阀门", specialty)
+
+    # === 4. 软接头 → 按连接方式分流 ===
+    if "软接头" in name:
+        _dn_val = int(dn) if dn else 50
+        if "法兰" in connection:
+            conn_type = "法兰连接"
+        elif "螺纹" in connection:
+            conn_type = "螺纹连接"
+        else:
+            conn_type = "法兰连接" if _dn_val >= 50 else "螺纹连接"
+        return _apply_synonyms(f"软接头({conn_type})", specialty)
+
+    # === 5. 电热熔法兰套件 → 塑料法兰 ===
+    if "法兰套件" in _check or "电热熔法兰" in _check:
+        return _apply_synonyms("塑料法兰(带短管)安装(热熔连接)", specialty)
+
+    # === 6. 管道阀门 → 不在模板中处理，交给后续管道路由 ===
+    # 管道路由会保留 location/usage/connection 等上下文（如"室内消防法兰阀门安装"），
+    # 模板直接返回会丢失这些修饰词导致搜索不够精准。
+    # 管道阀门（闸阀/蝶阀/碳钢阀门等）的规范化由 build_quota_query 中
+    # 原有的管道路由代码（lines 925+）处理。
+    return None
+
+
 def _normalize_bill_name(name: str) -> str:
     """
     清单名称 → 定额搜索名称的规范化
@@ -767,6 +873,11 @@ def build_quota_query(parser, name: str, description: str = "",
     garden_plant_query = _build_garden_plant_query(name, full_text, specialty)
     if garden_plant_query:
         return garden_plant_query
+
+    # 阀门族对象模板：在管道路由之前拦截，避免被管道路由误覆盖
+    valve_query = _build_valve_query(name, full_text, params, specialty)
+    if valve_query:
+        return valve_query
 
     is_electrical = any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
     is_lamp = "灯" in name  # 灯具类走专用的_normalize_bill_name处理
