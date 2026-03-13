@@ -644,10 +644,10 @@ class BillReader:
 
                 norm = self._normalize_header_text(text)
 
-                # 识别工程量列（从表头关键词提取单位）
-                for kw, unit in self._GQI_QTY_KEYWORDS:
+                # 识别工程量列（从表头关键词提取单位，记录优先级）
+                for priority_idx, (kw, unit) in enumerate(self._GQI_QTY_KEYWORDS):
                     if kw in text:
-                        qty_cols.append((col_idx, unit))
+                        qty_cols.append((col_idx, unit, priority_idx))
                         found_in_row = True
                         break
 
@@ -694,10 +694,10 @@ class BillReader:
         if not has_name or not qty_cols:
             return None
 
-        # 去重（同一列可能被多个关键词匹配）
+        # 去重并按优先级排序（priority_idx越小越优先）
         seen = set()
         unique_qty = []
-        for col_idx, unit in qty_cols:
+        for col_idx, unit, priority in sorted(qty_cols, key=lambda x: x[2]):
             if col_idx not in seen:
                 seen.add(col_idx)
                 unique_qty.append((col_idx, unit))

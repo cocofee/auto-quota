@@ -243,13 +243,15 @@ def get_authority_records(self, province: str = None,
 
 
 def get_candidate_records(self, province: str = None,
-                           limit: int = 50) -> list[dict]:
+                           limit: int = 50,
+                           exclude_demoted: bool = False) -> list[dict]:
     """
     获取候选层的记录（供审核晋升工具使用）。
 
     参数:
         province: 可选，只获取指定省份的记录
         limit: 返回数量（默认50条）
+        exclude_demoted: 排除被体检降级的记录（notes含"体检降级"的不返回）
 
     返回:
         记录列表，每条含 id, bill_text, bill_name, quota_ids, quota_names, source 等字段
@@ -267,6 +269,8 @@ def get_candidate_records(self, province: str = None,
         if province:
             sql += " AND province = ?"
             params.append(province)
+        if exclude_demoted:
+            sql += " AND (notes IS NULL OR notes NOT LIKE '%体检降级%')"
         sql += " ORDER BY id DESC"
         if limit > 0:
             sql += f" LIMIT {limit}"
