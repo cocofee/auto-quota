@@ -43,6 +43,7 @@ logger.add(
 
 import config
 from src.bill_reader import BillReader
+from src.bill_compiler import compile_items
 from src.output_writer import OutputWriter
 from src.bill_cleaner import clean_bill_items
 from src.match_engine import (
@@ -99,10 +100,13 @@ def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None,
     """读取并清洗清单数据，按需截断数量。"""
     logger.info("第1步：读取清单文件...")
     reader = BillReader()
-    bill_items = reader.read_excel(str(input_path), sheet_name=sheet)
+    bill_items = reader.read_file(str(input_path), sheet_name=sheet)
 
     if not bill_items:
         raise RuntimeError("未读取到任何清单项目，请检查文件格式")
+
+    # 编清单编译（非标格式标准化，标准清单直接跳过）
+    bill_items = compile_items(bill_items)
 
     # 清单数据清洗（名称修正+专业分类+参数提取）
     bill_items = clean_bill_items(bill_items, province=province)
