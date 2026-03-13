@@ -630,9 +630,9 @@ def _clean_fix(scan_result, dry_run=True):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     row["id"], row["bill_text"], row["quota_ids"],
-                    row["province"], row.get("layer"), row.get("source"),
+                    row["province"], row["layer"], row["source"],
                     reasons.get(row_id, ""), now,
-                    json.dumps(dict(row), ensure_ascii=False, default=str),
+                    json.dumps({k: row[k] for k in row.keys()}, ensure_ascii=False, default=str),
                 ))
                 conn.execute("DELETE FROM experiences WHERE id = ?", (row_id,))
                 deleted += 1
