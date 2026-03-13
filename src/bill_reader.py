@@ -78,6 +78,7 @@ class BillReader:
             "设备名称",
             "项目内容",
             "子目名称",
+            "分包项目名称",
         ],
         "description": [
             "项目特征",
@@ -129,7 +130,29 @@ class BillReader:
         "工程量汇总表",
         "工程量表",
         "汇总表",
+        "工程量计算",
+        "控制值",
     ]
+
+    # GQI算量导出格式：工程量列关键词 → 单位映射（按优先级排列）
+    _GQI_QTY_KEYWORDS = [
+        ("线/缆合计", "m"),
+        ("导管长度合计", "m"),
+        ("总长度", "m"),
+        ("数量(台)", "台"),
+        ("数量(套)", "套"),
+        ("数量(个)", "个"),
+        ("数量(组)", "组"),
+        ("数量(根)", "根"),
+        ("数量(座)", "座"),
+        ("数量(处)", "处"),
+        ("长度(m)", "m"),
+        ("外表面积", "m2"),
+        ("表面积(m2)", "m2"),
+    ]
+
+    # GQI格式标志关键词（出现任一即可能是GQI导出）
+    _GQI_INDICATORS = ["计算项目", "分类条件", "线/缆合计", "导管长度合计"]
 
     @staticmethod
     def _normalize_header_text(text: str) -> str:
@@ -202,6 +225,28 @@ class BillReader:
         logger.info(f"清单读取完成: 共 {len(all_items)} 条项目")
         return all_items
 
+    def read_file(self, file_path: str, sheet_name: str = None) -> list[dict]:
+        """统一入口：自动判断文件类型，读取清单数据。
+
+        目前支持 Excel (.xlsx/.xls)，将来扩展 Word/PDF/图片。
+        输出格式和 read_excel() 完全一致，后面链路零改动。
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"文件不存在: {file_path}")
+
+        ext = file_path.suffix.lower()
+        if ext in (".xlsx", ".xls"):
+            return self.read_excel(str(file_path), sheet_name=sheet_name)
+        elif ext == ".docx":
+            raise ValueError(f"Word格式暂不支持，敬请期待: {file_path}")
+        elif ext == ".pdf":
+            raise ValueError(f"PDF格式暂不支持，敬请期待: {file_path}")
+        elif ext in (".jpg", ".jpeg", ".png", ".bmp"):
+            raise ValueError(f"图片格式暂不支持，敬请期待: {file_path}")
+        else:
+            raise ValueError(f"不支持的文件格式 '{ext}': {file_path}")
+
     def _convert_xls_to_xlsx(self, xls_path: Path) -> str:
         """把 xls 转成临时 xlsx。"""
         import xlrd
@@ -239,24 +284,28 @@ class BillReader:
         return temp_path
 
     def _filter_bill_sheets(self, sheet_names: list[str]) -> list[str]:
-        """过滤明显非业务 sheet。"""
+        """过滤明显非业务 sheet。优先读清单/汇总表sheet，其余非跳过sheet也保留。"""
         preferred = [
             sn
             for sn in sheet_names
             if any(kw in sn for kw in self.BILL_SHEET_KEYWORDS)
             and not any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS)
         ]
+
+        # 其他非跳过sheet也保留（GQI导出可能有"配电箱"等非标sheet名）
+        other = [
+            sn
+            for sn in sheet_names
+            if sn not in preferred
+            and not any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS)
+        ]
+
+        result = preferred + other
         if preferred:
             logger.info(f"  识别到候选 Sheet: {preferred}")
-            return preferred
-
-        filtered = []
-        for sn in sheet_names:
-            if any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS):
-                logger.debug(f"  跳过非清单 Sheet: '{sn}'")
-                continue
-            filtered.append(sn)
-        return filtered if filtered else sheet_names
+        if other:
+            logger.debug(f"  其他非跳过 Sheet: {other}")
+        return result if result else sheet_names
 
     def get_sheet_info(self, file_path: str) -> list[dict]:
         """获取每个 sheet 的可读性信息。"""
@@ -314,6 +363,12 @@ class BillReader:
         summary_col_map, summary_header_row_idx = self._detect_summary_columns(header_rows)
         if summary_col_map:
             return self._read_summary_sheet(all_rows, summary_col_map, summary_header_row_idx, sheet_name)
+
+        # GQI算量导出格式（计算项目/分类条件表头）
+        gqi_config = self._detect_gqi_format(header_rows)
+        if gqi_config:
+            logger.debug(f"  Sheet '{sheet_name}': 识别为GQI导出格式")
+            return self._read_gqi_sheet(all_rows, gqi_config, sheet_name)
 
         col_map, header_row_idx = self._detect_columns(header_rows)
         if not col_map:
@@ -547,6 +602,264 @@ class BillReader:
 
         return items
 
+    def _detect_gqi_format(self, header_rows: list) -> dict | None:
+        """检测GQI算量软件导出格式。
+
+        GQI导出有两种子格式：
+        1. 管线计算表：有"计算项目"列 + "规格型号"列 + 工程量列(线/缆合计/长度等)
+        2. 设备统计表：有"分类条件"分组头 + R2有"类型"/"名称"列 + "数量(个/台)"
+
+        返回: gqi_config dict 或 None
+        """
+        # 第1步：检查是否包含GQI标志关键词
+        has_indicator = False
+        for row in header_rows[:5]:
+            if not row:
+                continue
+            for cell in row:
+                if cell and any(ind in str(cell) for ind in self._GQI_INDICATORS):
+                    has_indicator = True
+                    break
+            if has_indicator:
+                break
+        if not has_indicator:
+            return None
+
+        # 第2步：扫描前5行，识别各列角色
+        col_map = {}
+        qty_cols = []  # [(列索引, 单位)]
+        header_row_idx = 0
+
+        for row_idx, row in enumerate(header_rows[:5]):
+            if not row:
+                continue
+            found_in_row = False
+
+            for col_idx, cell in enumerate(row):
+                if cell is None:
+                    continue
+                text = str(cell).strip()
+                if not text or len(text) > 30:
+                    continue
+
+                norm = self._normalize_header_text(text)
+
+                # 识别工程量列（从表头关键词提取单位）
+                for kw, unit in self._GQI_QTY_KEYWORDS:
+                    if kw in text:
+                        qty_cols.append((col_idx, unit))
+                        found_in_row = True
+                        break
+
+                # 识别各类列
+                if norm == "计算项目":
+                    col_map["calc_item"] = col_idx
+                    found_in_row = True
+                elif norm in ("系统类型", "系统", "系统名称"):
+                    col_map["system"] = col_idx
+                    found_in_row = True
+                elif norm == "安装方式":
+                    col_map["install_method"] = col_idx
+                    found_in_row = True
+                elif norm == "材质":
+                    col_map["material"] = col_idx
+                    found_in_row = True
+                elif norm == "单位":
+                    col_map["unit_col"] = col_idx
+                    found_in_row = True
+                elif norm in ("规格型号", "材质-规格型号"):
+                    col_map["spec"] = col_idx
+                    found_in_row = True
+                elif norm == "类型":
+                    # "类型"列作为名称列，但不覆盖已有的name
+                    col_map.setdefault("name", col_idx)
+                    found_in_row = True
+                elif norm == "名称":
+                    # 如果已有name（如"类型"列），把"名称"存为extra_name
+                    if "name" in col_map and col_map["name"] != col_idx:
+                        col_map["extra_name"] = col_idx
+                    else:
+                        col_map["name"] = col_idx
+                    found_in_row = True
+                elif norm == "分包项目名称":
+                    col_map["name"] = col_idx
+                    found_in_row = True
+
+            if found_in_row:
+                header_row_idx = row_idx
+
+        # 第3步：验证最低要求（至少有名称列 + 工程量列）
+        has_name = ("name" in col_map or "calc_item" in col_map
+                    or "spec" in col_map)
+        if not has_name or not qty_cols:
+            return None
+
+        # 去重（同一列可能被多个关键词匹配）
+        seen = set()
+        unique_qty = []
+        for col_idx, unit in qty_cols:
+            if col_idx not in seen:
+                seen.add(col_idx)
+                unique_qty.append((col_idx, unit))
+
+        return {
+            "col_map": col_map,
+            "qty_cols": unique_qty,
+            "header_row_idx": header_row_idx,
+        }
+
+    def _read_gqi_sheet(self, all_rows: list, gqi_config: dict,
+                        sheet_name: str) -> list[dict]:
+        """读取GQI算量导出格式，输出标准 bill item。
+
+        处理要点：
+        - 前向填充：计算项目/系统/类型/材质 列空时继承上一行的值
+        - 智能选量：按优先级取第一个非零的工程量列
+        - 合计行跳过
+        """
+        col_map = gqi_config["col_map"]
+        qty_cols = gqi_config["qty_cols"]
+        header_row_idx = gqi_config["header_row_idx"]
+
+        items = []
+        seen_keys = set()
+
+        # 前向填充：这些列为空时继承上一行
+        # 注意：只有当 name 和 spec/extra_name 同时存在时，name 才前向填充
+        # 否则 name 是主标识，不应该前向填充
+        carry_fields = {"calc_item", "system", "material"}
+        has_separate_spec = "spec" in col_map or "extra_name" in col_map
+        if has_separate_spec:
+            carry_fields.add("name")
+
+        carry = {}  # field -> 上一行的值
+
+        def get_cell(row, field):
+            """取单元格值，支持前向填充。"""
+            idx = col_map.get(field)
+            if idx is None or idx >= len(row):
+                return carry.get(field, "") if field in carry_fields else ""
+            val = row[idx]
+            if val is not None:
+                text = str(val).strip()
+                if text:
+                    if field in carry_fields:
+                        carry[field] = text
+                    return text
+            return carry.get(field, "") if field in carry_fields else ""
+
+        for i, row in enumerate(all_rows):
+            if i <= header_row_idx or not row:
+                continue
+
+            # 跳过合计行
+            row_text = " ".join(str(c or "") for c in row)
+            if "合计" in row_text:
+                continue
+
+            # 找最佳工程量列（按优先级，取第一个非零值）
+            quantity = None
+            unit = ""
+            for qty_col_idx, qty_unit in qty_cols:
+                if qty_col_idx >= len(row) or row[qty_col_idx] is None:
+                    continue
+                try:
+                    v = float(str(row[qty_col_idx]).replace(",", "").strip())
+                    if v > 0:
+                        quantity = v
+                        unit = qty_unit
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+            if quantity is None:
+                continue
+
+            # 如果有独立单位列，优先用它
+            if "unit_col" in col_map:
+                uc = col_map["unit_col"]
+                if uc < len(row) and row[uc]:
+                    unit_val = str(row[uc]).strip()
+                    if unit_val:
+                        unit = unit_val
+
+            # 组装名称
+            calc_item = get_cell(row, "calc_item")
+            name_val = get_cell(row, "name")
+            spec_val = get_cell(row, "spec")
+            extra_name = ""
+            if "extra_name" in col_map:
+                idx = col_map["extra_name"]
+                if idx < len(row) and row[idx]:
+                    extra_name = str(row[idx]).strip()
+
+            # 组合名称逻辑：
+            # - 有类型+额外名称（如配电箱）："照明配电箱 1AA-KT1"
+            # - 有计算项目+规格（如管线）："电缆 WDZB-YJY-5*6"
+            # - 只有名称/类型："安全出口标志灯"
+            if name_val and extra_name:
+                name = f"{name_val} {extra_name}"
+            elif spec_val:
+                prefix = calc_item if calc_item else ""
+                name = f"{prefix} {spec_val}".strip() if prefix else spec_val
+            elif name_val:
+                name = name_val
+            elif calc_item:
+                name = calc_item
+            else:
+                continue
+
+            if not name or len(name) > 100:
+                continue
+
+            # 跳过标题/合计类文本
+            if any(kw in name for kw in ["合计", "小计", "总计"]):
+                continue
+
+            # 组装描述（补充上下文信息）
+            desc_parts = []
+            system = get_cell(row, "system")
+            material = get_cell(row, "material")
+            install = get_cell(row, "install_method")
+            if system:
+                desc_parts.append(f"系统:{system}")
+            if calc_item and calc_item not in name:
+                desc_parts.append(f"计算项目:{calc_item}")
+            if material and material not in name:
+                desc_parts.append(f"材质:{material}")
+            if spec_val and spec_val not in name:
+                desc_parts.append(f"规格:{spec_val}")
+            if install:
+                desc_parts.append(f"安装方式:{install}")
+            description = " / ".join(desc_parts)
+
+            # 去重
+            dedupe_key = (sheet_name, name, unit, quantity)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+
+            search_text = text_parser.build_search_text(name, description)
+            params = text_parser.parse(f"{name} {description}")
+
+            items.append({
+                "index": "",
+                "code": "",
+                "name": name,
+                "description": description,
+                "unit": unit,
+                "quantity": quantity,
+                "search_text": search_text,
+                "params": params,
+                "sheet_name": sheet_name,
+                "section": system or calc_item or "",
+                "source_row": i + 1,
+                "source_type": "gqi_export",
+                "compile_action": "compiled",
+            })
+
+        return items
+
     def _try_simple_format(self, header_rows: list) -> tuple[dict, int]:
         """识别没有标准表头的简单表格。"""
         for row_idx, row in enumerate(header_rows):
@@ -725,7 +1038,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     reader = BillReader()
-    items = reader.read_excel(args.input)
+    items = reader.read_file(args.input)
 
     logger.info(f"\n前 {min(len(items), args.limit)} 条清单项:")
     for item in items[: args.limit]:
