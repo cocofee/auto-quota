@@ -80,7 +80,7 @@ def test_pressure_orifice():
 # === 3. 过滤器 ===
 
 def test_y_filter():
-    """Y型过滤器 → 螺纹阀门"""
+    """Y型过滤器（小口径）→ 螺纹阀门"""
     query = build_quota_query(parser, "Y型过滤器")
     assert "螺纹阀门" in query
 
@@ -89,6 +89,24 @@ def test_y_filter_with_type():
     """Y型过滤器 类型：Y型过滤器 → 螺纹阀门"""
     query = build_quota_query(parser, "Y型过滤器 类型：Y型过滤器")
     assert "螺纹阀门" in query
+
+
+def test_y_filter_large_dn():
+    """Y形过滤器 DN125 → 大口径走法兰阀门"""
+    query = build_quota_query(parser, "Y形过滤器", "规格:DN125")
+    assert "法兰" in query
+
+
+def test_air_filter_not_intercepted():
+    """空气过滤器 → 不应被模板拦截（有专用定额）"""
+    query = build_quota_query(parser, "空气过滤器")
+    assert "螺纹阀门" not in query
+
+
+def test_water_regulating_valve_not_ventilation():
+    """动态平衡电动调节阀 → 不应走通风路由"""
+    query = build_quota_query(parser, "动态平衡电动调节阀")
+    assert "防火" not in query
 
 
 # === 4. 软接头 ===

@@ -141,10 +141,12 @@ def filter_json_papers(papers: dict,
     return filtered
 
 
-def run_json_paper(province: str, items: list[dict]) -> dict:
+def run_json_paper(province: str, items: list[dict],
+                   with_experience: bool = False) -> dict:
     """对一个省份的JSON试卷运行搜索匹配，对比标准答案
 
     返回: {province, total, correct, wrong, hit_rate, diagnosis, elapsed, details}
+    with_experience: 为True时启用经验库直通匹配（默认关闭）
     """
     from src.match_engine import init_search_components, match_search_only
     from src.text_parser import TextParser
@@ -152,6 +154,15 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
     # 初始化搜索引擎
     searcher, validator = init_search_components(resolved_province=province)
     parser = TextParser()  # noqa: F841 — 保留供后续扩展
+
+    # 经验库（默认关闭，--with-experience 打开）
+    experience_db = None
+    if with_experience:
+        try:
+            from src.experience_db import ExperienceDB
+            experience_db = ExperienceDB(province=province)
+        except Exception:
+            pass  # 加载失败则跳过
 
     # 构建bill_items
     bill_items = []
@@ -184,7 +195,7 @@ def run_json_paper(province: str, items: list[dict]) -> dict:
     start = time.time()
     results = match_search_only(
         bill_items, searcher, validator,
-        experience_db=None, province=province)
+        experience_db=experience_db, province=province)
     elapsed = time.time() - start
 
     # 逐条对比标准答案
@@ -697,6 +708,8 @@ def main():
     parser.add_argument("--show-baseline", action="store_true", help="显示基线")
     parser.add_argument("--excel-only", action="store_true", help="只跑Excel数据集")
     parser.add_argument("--json-only", action="store_true", help="只跑JSON试卷")
+    parser.add_argument("--with-experience", action="store_true",
+                        help="启用经验库直通（默认关闭，打开后看经验库对分数的影响）")
     parser.add_argument("--note", default="", help="跑分备注")
     parser.add_argument("--summary-json-out", default="",
                         help="把机器可读摘要写到指定 JSON 文件，供 loop runner 使用")
@@ -748,7 +761,8 @@ def main():
                 prov_short = province.split('(')[0].split('（')[0][:16]
                 print(f"  测试 {prov_short}（{len(items)}题）...", end='', flush=True)
 
-                result = run_json_paper(province, items)
+                result = run_json_paper(province, items,
+                                        with_experience=args.with_experience)
                 json_results.append(result)
 
                 mark = '[OK]' if result['hit_rate'] >= 50 else '[FAIL]'
