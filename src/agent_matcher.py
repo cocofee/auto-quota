@@ -352,27 +352,39 @@ class AgentMatcher:
         # 提取JSON
         json_str = self._extract_json(response_text)
         if not json_str:
-            logger.warning(f"批量审核无法提取JSON，降级为fallback: {response_text[:200]}")
-            return [
-                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核解析失败")
-                for bi in batch_items
-            ]
+            # 整体提取失败，尝试逐条抢救
+            salvaged = self._salvage_batch_json(response_text)
+            if salvaged:
+                logger.warning(f"批量审核整体提取失败，逐条抢救成功{len(salvaged)}条")
+                data = salvaged
+            else:
+                logger.warning(f"批量审核无法提取JSON，降级为fallback: {response_text[:200]}")
+                return [
+                    self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核解析失败")
+                    for bi in batch_items
+                ]
+        else:
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                # 整体解析失败，尝试逐条抢救
+                salvaged = self._salvage_batch_json(json_str)
+                if salvaged:
+                    logger.warning(f"批量审核JSON整体解析失败，逐条抢救成功{len(salvaged)}条")
+                    data = salvaged
+                else:
+                    logger.warning(f"批量审核JSON解析失败且抢救失败: {e}")
+                    return [
+                        self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核JSON失败")
+                        for bi in batch_items
+                    ]
 
-        try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.warning(f"批量审核JSON解析失败: {e}")
-            return [
-                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核JSON失败")
-                for bi in batch_items
-            ]
-
-        if not isinstance(data, list):
-            logger.warning(f"批量审核返回不是数组: {type(data).__name__}")
-            return [
-                self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核格式错误")
-                for bi in batch_items
-            ]
+            if not isinstance(data, list):
+                logger.warning(f"批量审核返回不是数组: {type(data).__name__}")
+                return [
+                    self._fallback_result(bi["bill_item"], bi["candidates"], "批量审核格式错误")
+                    for bi in batch_items
+                ]
 
         # 按 seq 映射审核结果
         review_map = {}
@@ -1111,3 +1123,24 @@ class AgentMatcher:
             return text[first_bracket:last_bracket + 1]
 
         return None
+
+    def _salvage_batch_json(self, text: str) -> list[dict] | None:
+        """逐条抢救批量审核的JSON（整体解析失败时的兜底）
+
+        大模型有时返回格式不完美的JSON（比如尾部多余逗号、缺少闭合括号），
+        整体json.loads会失败。这个方法用正则逐个提取 {"seq":N, ...} 对象，
+        能救几条算几条，减少不必要的整批降级。
+        """
+        import re
+
+        results = []
+        # 找所有包含 "seq" 的 {...} 块
+        for match in re.finditer(r'\{[^{}]*"seq"[^{}]*\}', text):
+            try:
+                obj = json.loads(match.group())
+                if isinstance(obj, dict) and "seq" in obj:
+                    results.append(obj)
+            except json.JSONDecodeError:
+                continue
+
+        return results if results else None
