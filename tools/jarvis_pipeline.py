@@ -415,6 +415,12 @@ def main():
   python tools/jarvis_pipeline.py "清单.xlsx" --province "广东安装" --aux-province "广东土建,广东市政"
   python tools/jarvis_pipeline.py "清单.xlsx" --no-experience  # 关闭经验库
   python tools/jarvis_pipeline.py "清单.xlsx" --no-store  # 不存经验库
+  python tools/jarvis_pipeline.py "清单.xlsx" --diagnose  # 跑完后自动诊断
+  python tools/jarvis_pipeline.py "清单.xlsx" --diagnose --fix  # 诊断后自动修复
+
+参数关系:
+  --fix 必须配合 --diagnose
+  --skip-benchmark 必须配合 --fix
 """,
     )
     parser.add_argument("excel_path", help="清单Excel文件路径")
@@ -430,10 +436,15 @@ def main():
     parser.add_argument("--diagnose", action="store_true",
                         help="跑完后自动诊断人工审核项的根因")
     parser.add_argument("--fix", action="store_true",
-                        help="诊断后自动修复同义词缺口（需配合--diagnose使用）")
+                        help="诊断后自动修复同义词缺口（必须配合--diagnose使用）")
     parser.add_argument("--skip-benchmark", action="store_true",
-                        help="自动修复时跳过benchmark回归检查（调试用）")
+                        help="自动修复时跳过benchmark回归检查（调试用，必须配合--fix使用）")
     args = parser.parse_args()
+
+    if args.fix and not args.diagnose:
+        parser.error("--fix 必须和 --diagnose 一起使用")
+    if args.skip_benchmark and not args.fix:
+        parser.error("--skip-benchmark 必须和 --fix 一起使用")
 
     if not os.path.exists(args.excel_path):
         print(f"错误：文件不存在 {args.excel_path}")

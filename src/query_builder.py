@@ -298,6 +298,211 @@ def extract_description_fields(description: str) -> dict:
     return fields
 
 
+def _extract_distribution_box_fields(description: str) -> dict:
+    """提取配电箱/配电柜描述中的关键标签，兼容 // 风格。"""
+    if not description:
+        return {}
+
+    fields = {}
+    for label, value in re.findall(
+        r'(名称|型号规格|规格型号|型号|规格|安装方式)[：:]\s*(.*?)(?=(?://|//|；|;|\n|$))',
+        description,
+    ):
+        cleaned = value.strip().strip("/；;，,")
+        if cleaned and cleaned != "详见图纸" and not cleaned.startswith("详见"):
+            fields.setdefault(label, cleaned)
+    return fields
+
+
+def _clean_distribution_box_text(value: str) -> str:
+    if not value:
+        return ""
+
+    cleaned = value.strip().strip("/；;，,")
+    cleaned = re.sub(r'[（(][^)）]*(只计安装|详见|图纸|自带)[^)）]*[)）]', '', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if cleaned in {"详见图纸", "详见设计图纸", "根据设计图纸综合考虑", "综合考虑", "非标"}:
+        return ""
+    return cleaned
+
+
+def _extract_distribution_box_model(value: str) -> str:
+    cleaned = _clean_distribution_box_text(value)
+    if not cleaned:
+        return ""
+
+    candidates = re.findall(r'[A-Za-z0-9#/_\-.]{2,}', cleaned)
+    for token in candidates:
+        upper = token.upper()
+        if upper.startswith("IP") and any(ch.isdigit() for ch in upper[2:]):
+            continue
+        return token
+    return ""
+
+
+def _normalize_distribution_box_name(value: str) -> str:
+    cleaned = _clean_distribution_box_text(value)
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r'^成套配电箱(?!安装)', '成套配电箱安装 ', cleaned)
+    cleaned = re.sub(r'^成套配电柜(?!安装)', '成套配电柜安装 ', cleaned)
+    cleaned = re.sub(
+        r'((?:配电箱|配电柜|控制箱|电表箱))([A-Za-z0-9#/_\-.]{2,})$',
+        r'\1 \2',
+        cleaned,
+    )
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+def _extract_distribution_box_half_perimeter_mm(full_text: str,
+                                                spec_text: str,
+                                                params: dict) -> float | None:
+    """配电箱半周长只在显式半周长或规格尺寸存在时使用，避免误吃安装高度。"""
+    if "半周长" in full_text:
+        value = params.get("half_perimeter")
+        if value:
+            return float(value)
+
+    spec_source = spec_text or full_text
+    size_match = re.search(r'(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)', spec_source)
+    if size_match:
+        width = float(size_match.group(1))
+        height = float(size_match.group(2))
+        return width + height
+
+    return None
+
+
+def _bucket_distribution_box_half_perimeter(half_perimeter_mm: float | None) -> str:
+    if not half_perimeter_mm:
+        return ""
+
+    buckets = (
+        (500, "0.5m"),
+        (1000, "1.0m"),
+        (1500, "1.5m"),
+        (2500, "2.5m"),
+        (3000, "3.0m"),
+    )
+    for upper, label in buckets:
+        if half_perimeter_mm <= upper:
+            return label
+    return buckets[-1][1]
+
+
+def _build_distribution_box_query(name: str,
+                                  description: str,
+                                  full_text: str,
+                                  fields: dict,
+                                  params: dict,
+                                  specialty: str = "") -> str | None:
+    """配电箱/配电柜对象模板：优先具体箱名/型号，其次安装方式+半周长模板。"""
+    is_box_item = (
+        ("配电箱" in name and "杆上" not in name)
+        or name.strip() in {"配电柜", "成套配电柜", "成套配电柜安装"}
+    )
+    if not is_box_item:
+        return None
+
+    box_fields = dict(fields)
+    box_fields.update(_extract_distribution_box_fields(description))
+
+    explicit_family = re.search(r'((?:高压|低压)?成套配电[箱柜](?:安装)?)\s*([A-Za-z0-9#/_\-.]{2,})?', description)
+    if explicit_family:
+        family = explicit_family.group(1)
+        if not family.endswith("安装"):
+            family += "安装"
+        model = _extract_distribution_box_model(explicit_family.group(2) or "")
+        if model or "配电柜" in family or family.startswith(("高压", "低压")):
+            return f"{family} {model}".strip()
+
+    box_name = _normalize_distribution_box_name(
+        box_fields.get("名称", "") or box_fields.get("规格型号", "") or box_fields.get("型号规格", "")
+    )
+    model = _extract_distribution_box_model(box_fields.get("型号", ""))
+    spec_text = _clean_distribution_box_text(box_fields.get("规格", ""))
+
+    if not model:
+        loose_model_match = re.search(
+            r'^(?:配电箱|配电柜|成套配电箱安装|成套配电柜安装)\s+([A-Za-z0-9#/_\-.]{2,})\b',
+            description,
+        )
+        if loose_model_match:
+            model = loose_model_match.group(1)
+
+    generic_names = {
+        "配电箱",
+        "配电柜",
+        "成套配电箱",
+        "成套配电箱安装",
+        "成套配电柜",
+        "成套配电柜安装",
+    }
+    if box_name:
+        query = box_name
+        if model and model not in query:
+            query = f"{query} {model}"
+        if query not in generic_names:
+            return query
+
+    if model:
+        base = "配电柜" if "配电柜" in name else "配电箱"
+        return f"{base} {model}"
+
+    install_text = _clean_distribution_box_text(box_fields.get("安装方式", ""))
+    if not install_text:
+        for candidate in ("明装", "暗装", "落地", "落地式", "嵌入", "嵌入式", "壁挂", "挂墙", "悬挂"):
+            if candidate in full_text:
+                install_text = candidate
+                break
+
+    if "落地" in install_text:
+        return "成套配电箱安装 落地式"
+
+    half_perimeter_mm = _extract_distribution_box_half_perimeter_mm(full_text, spec_text, params)
+    bucket = _bucket_distribution_box_half_perimeter(half_perimeter_mm)
+    if bucket:
+        return f"成套配电箱安装 悬挂、嵌入式 半周长{bucket}"
+
+    if any(keyword in install_text for keyword in ("明装", "暗装", "嵌入", "悬挂", "壁挂", "挂墙")):
+        return "成套配电箱安装 悬挂、嵌入式"
+
+    return "成套配电箱安装"
+
+
+
+def _build_garden_plant_query(name: str, full_text: str, specialty: str = "") -> str | None:
+    """园林苗木类 query 构建：优先用土球/裸根等分档特征，避免误走 DN 管道路由。"""
+    if not any(keyword in name for keyword in ("栽植乔木", "起挖乔木", "栽植灌木", "起挖灌木")):
+        return None
+
+    normalized_name = _normalize_bill_name(name)
+
+    soil_ball_match = re.search(r'土球(?:直径)?[^\d]{0,4}(\d+)', full_text)
+    if soil_ball_match:
+        size = soil_ball_match.group(1)
+        return _apply_synonyms(f"{normalized_name} 土球直径{size}cm以内", specialty)
+
+    if "裸根" in full_text:
+        if "乔木" in name:
+            diameter_match = re.search(r'(?:米径|胸径|干径)[^\d]{0,4}(\d+)', full_text)
+            if diameter_match:
+                size = diameter_match.group(1)
+                return _apply_synonyms(f"{normalized_name} 裸根 米径{size}cm以内", specialty)
+            return _apply_synonyms(f"{normalized_name} 裸根", specialty)
+
+        if "灌木" in name:
+            crown_match = re.search(r'冠丛高[^\d]{0,4}(\d+)', full_text)
+            if crown_match:
+                size = crown_match.group(1)
+                return _apply_synonyms(f"{normalized_name} 裸根 冠丛高{size}cm以内", specialty)
+            return _apply_synonyms(f"{normalized_name} 裸根", specialty)
+
+    return _apply_synonyms(normalized_name, specialty)
+
+
 def _normalize_bill_name(name: str) -> str:
     """
     清单名称 → 定额搜索名称的规范化
@@ -559,11 +764,16 @@ def build_quota_query(parser, name: str, description: str = "",
     # ===== 管道类：有材质或DN参数，且不是电气类（电缆/配管/穿线） =====
     # 电气类即使有material/dn也应走下面的电气专用query构建
     # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
+    garden_plant_query = _build_garden_plant_query(name, full_text, specialty)
+    if garden_plant_query:
+        return garden_plant_query
+
     is_electrical = any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
     is_lamp = "灯" in name  # 灯具类走专用的_normalize_bill_name处理
     # 风口/喷口/散流器的φ值是开口直径，不是管道DN，不走管道路由
     is_wind_outlet = any(kw in name for kw in ("风口", "喷口", "散流器"))
-    if (material or dn) and not is_electrical and not is_lamp and not is_wind_outlet:
+    is_window_item = "窗" in name or "百叶" in name
+    if (material or dn) and not is_electrical and not is_lamp and not is_wind_outlet and not is_window_item:
         # 阀门类清单名称规范化：清单常写"碳钢阀门"/"不锈钢阀门"等材质+阀门泛称，
         # 但定额名统一叫"法兰阀门安装"/"螺纹阀门安装"。直接在路由中替换，
         # 避免依赖_apply_synonyms（可能被其他同义词抢先匹配导致失效）
@@ -694,11 +904,54 @@ def build_quota_query(parser, name: str, description: str = "",
     # ===== 非管道类：从描述中提取关键信息构建query =====
     # 电气设备、灯具、电缆、配管、配线等
 
+    distribution_box_query = _build_distribution_box_query(
+        name=name,
+        description=description,
+        full_text=full_text,
+        fields=fields,
+        params=params,
+        specialty=specialty,
+    )
+    if distribution_box_query:
+        return distribution_box_query
+
     # 清单名称 → 定额搜索名称的规范化映射
     # 清单用的名称和定额用的名称经常不一样
     normalized_name = _normalize_bill_name(name)
     query_parts = [normalized_name]
 
+    # --- 门窗类：将“金属（塑钢、断桥）窗/门”归一到定额常用的铝合金/塑钢窗门名称 ---
+    # 典型题面只给泛称，具体材质与开启方式藏在描述里；不归一时 BM25 容易误打到“塑钢固定窗”。
+    if ("金属（塑钢" in name or "金属(塑钢" in name) and ("窗" in name or "门" in name):
+        material_text = f"{name} {description}"
+        if "铝合金" in material_text or "断桥" in material_text:
+            frame_material = "铝合金"
+        elif "塑钢" in material_text:
+            frame_material = "塑钢"
+        else:
+            frame_material = ""
+
+        opening_type = ""
+        if "窗" in name:
+            for candidate in ("平开窗", "推拉窗", "固定窗", "百叶窗"):
+                if candidate in material_text:
+                    opening_type = candidate
+                    break
+            if not opening_type and frame_material:
+                opening_type = "窗"
+        elif "门" in name:
+            for candidate in ("平开门", "推拉门", "地弹门"):
+                if candidate in material_text:
+                    opening_type = candidate
+                    break
+            if not opening_type and frame_material:
+                opening_type = "门"
+
+        if frame_material and opening_type:
+            query_parts[0] = f"{frame_material}{opening_type}"
+            if "附框" in material_text:
+                query_parts.append("有附框")
+            return _apply_synonyms(" ".join(query_parts), specialty)
     # --- 桥架类：清理尺寸噪声，构建桥架安装搜索词 ---
     # 清单写"热镀锌桥架100*50"，定额叫"钢制槽式桥架(宽+高)(mm以下) 200"
     # 100*50 的数字噪声会让 BM25 匹配到含"100×140"的混凝土结构定额
@@ -737,24 +990,32 @@ def build_quota_query(parser, name: str, description: str = "",
         # --- 配管材质+配置形式+管径：fields.get经常失败，统一用正则从全文提取 ---
         if is_conduit:
             full_text = f"{name} {description}"
+            normalized_conduit_text = full_text.upper().replace("KJG", "KBG")
 
             # 1. 材质型号：从全文提取SC/JDG/KBG/PC等代号
             conduit_code = None
             # 匹配配管材质代号（按长度降序，避免短代号抢先匹配）
             # G/RC/MT 是单/双字母代号，用\b边界防止从JDG/DG中误提取
             mat_match = re.search(
-                r'(JDG|KBG|FPC|PVC|SC|PC|DG|RC|MT|G)\b\s*\d*',
-                full_text.upper())
+                r'(JDG|KBG|FPC|PVC|SC|PC|DG|RC|MT|G)(?:管)?\s*\d*',
+                normalized_conduit_text)
             if mat_match:
                 conduit_code = mat_match.group(1)
 
+            if "金属软管" in full_text:
+                query_parts[0] = "金属软管敷设"
+            elif "可挠金属套管" in full_text:
+                query_parts[0] = "可挠金属套管"
             # JDG/KBG是紧定式钢导管，和普通镀锌钢管是不同定额子目
             # 替换query_parts[0]让BM25能匹配"套接紧定式镀锌钢导管(JDG)"
             # 加"套接"关键词提升JDG条目的BM25分数（区别于普通镀锌钢管）
-            if conduit_code in ("JDG", "KBG"):
-                query_parts[0] = "套接紧定式钢导管JDG 敷设"
-            elif conduit_code in ("PC", "PVC", "FPC"):
+            elif conduit_code in ("JDG", "KBG"):
+                guide_code = conduit_code
+                query_parts[0] = f"套接紧定式钢导管{guide_code} 镀锌电线管 敷设"
+            elif conduit_code in ("PC", "PVC"):
                 query_parts[0] = "PVC阻燃塑料管敷设"
+            elif conduit_code == "FPC":
+                query_parts[0] = "半硬质阻燃管敷设"
             else:
                 # SC=焊接钢管, G/DG=镀锌钢管, 分开写让BM25能精准命中
                 if conduit_code == "SC":
@@ -783,8 +1044,8 @@ def build_quota_query(parser, name: str, description: str = "",
             if "公称直径" not in query_str and "外径" not in query_str:
                 # 先匹配材质代号后直接跟数字（SC25, JDG32, RC20, MT16, G20）或DN前缀（DN100）
                 size_match = re.search(
-                    r'(?:SC|JDG|KBG|PC|RC|MT|G|Φ|φ|DN)\s*(\d+)',
-                    full_text, re.IGNORECASE)
+                    r'(?:SC|JDG|KJG|KBG|PC|RC|MT|G|Φ|φ|DN|D)\s*(\d+)',
+                    normalized_conduit_text, re.IGNORECASE)
                 # 再匹配规格字段中的数字（规格:25, 规格:Φ20, 规格:DN25）
                 if not size_match:
                     size_match = re.search(
