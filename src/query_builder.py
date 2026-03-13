@@ -547,7 +547,9 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     # 不拦截会被管道路由覆盖成"法兰阀门安装"，导致搜索完全偏离
     _vent_kw = ("防火阀", "排烟阀", "调节阀", "排烟口", "排烟防火")
     _vent_check = real_type if real_type else _name_base
-    if any(kw in _vent_check for kw in _vent_kw):
+    # 排除水系统调节阀（动态平衡阀/电动调节阀等），这些按管道阀门处理
+    _not_vent = ("动态平衡", "静态平衡", "压差", "温控", "恒温", "比例")
+    if any(kw in _vent_check for kw in _vent_kw) and not any(ex in _vent_check for ex in _not_vent):
         # 清理真实设备名：去温度（280℃）、去型号前缀（MEE-、FVD-）
         vent_name = real_type or _name_base
         vent_name = re.sub(r'\d+℃', '', vent_name)
@@ -582,8 +584,15 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     if "减压孔板" in _check:
         return _apply_synonyms("减压孔板", specialty)
 
-    # === 3. 过滤器 → 螺纹阀门（定额按螺纹阀门计） ===
+    # === 3. 过滤器 → 按类型和DN分流 ===
     if "过滤器" in _check:
+        # 空气过滤器/油过滤器等设备类有专用定额，不按阀门处理
+        if any(prefix in _check for prefix in ("空气", "油", "活性炭", "初效", "中效", "高效")):
+            return None  # 交给后续逻辑保留原名搜索
+        # Y形/管道过滤器：小口径按螺纹阀门，大口径按法兰阀门
+        _dn_val = int(dn) if dn else 25  # 过滤器默认小口径
+        if _dn_val >= 50:
+            return _apply_synonyms("法兰阀门安装", specialty)
         return _apply_synonyms("螺纹阀门", specialty)
 
     # === 4. 软接头 → 按连接方式分流 ===
