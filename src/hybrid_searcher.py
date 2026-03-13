@@ -492,12 +492,18 @@ class HybridSearcher:
         # V1: 原始query
         _add(query, "raw")
 
-        # V2: 规范化query（去噪、统一分隔符）
+        # V2: 纯知识提示变体
+        # 当 universal_kb 已经给出明确方向时，直接用定额族名检索，
+        # 避免“原始短清单名+噪声词”继续主导排序。
+        if kb_hints and len(variants) < max_variants:
+            _add(kb_hints[0], "kb_hint_only")
+
+        # V3: 规范化query（去噪、统一分隔符）
         normalized = re.sub(r"[，,。；;、|/\\]+", " ", query)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         _add(normalized, "normalized")
 
-        # V3: 参数强化query（把关键规格参数显式再强调一遍）
+        # V4: 参数强化query（把关键规格参数显式再强调一遍）
         param_tokens = []
         normalized_lower = normalized.lower()
         for p in [
@@ -513,14 +519,14 @@ class HybridSearcher:
         if param_tokens:
             _add(f"{normalized} {' '.join(param_tokens[:4])}", "param_boost")
 
-        # V4: 核心名词变体（去掉动作词/修饰词，只保留核心实体+参数）
+        # V5: 核心名词变体（去掉动作词/修饰词，只保留核心实体+参数）
         # 目的：BM25对长query中的噪声词敏感，精简后匹配更精准
         # 例如："管道安装 焊接钢管 镀锌 DN25" → "焊接钢管 镀锌 DN25"
         core_noun = self._extract_core_noun_query(normalized)
         if core_noun:
             _add(core_noun, "core_noun")
 
-        # V5（L7新增）: 同义词反向替换变体
+        # V6（L7新增）: 同义词反向替换变体
         # query_builder已做"清单名→定额名"替换（如"白铁管"→"镀锌钢管"），
         # 这里做反向替换生成额外变体，覆盖定额库中可能存在的清单原始写法。
         if getattr(config, "BM25_SYNONYM_EXPANSION_ENABLED", False) and len(variants) < max_variants:
@@ -528,7 +534,7 @@ class HybridSearcher:
             if syn_variant:
                 _add(syn_variant, "synonym_expand")
 
-        # 额外兜底：若仍不够且有知识库提示，拼接一个知识变体
+        # 额外兜底：若仍不够且有知识库提示，再补“原query + hint”拼接变体
         if kb_hints and len(variants) < max_variants:
             _add(f"{query} {kb_hints[0]}", "kb_hint")
 

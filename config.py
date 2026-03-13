@@ -492,13 +492,17 @@ VECTOR_ENABLED = os.getenv("VECTOR_ENABLED", "true").lower() == "true"  # 环境
 VECTOR_MODEL_KEY = os.getenv("VECTOR_MODEL_KEY", "bge").lower()  # 模型标识：bge 或 qwen3
 # 验证key合法性：必须与model_profile注册表一致，避免路径和模型不匹配
 _VALID_MODEL_KEYS = {"bge", "qwen3"}
+_DEFAULT_VECTOR_MODEL_NAMES = {
+    "bge": "BAAI/bge-large-zh-v1.5",
+    "qwen3": "models/qwen3-embedding-quota-v3",
+}
 if VECTOR_MODEL_KEY not in _VALID_MODEL_KEYS:
     import logging as _logging
     _logging.getLogger(__name__).warning(
         f"VECTOR_MODEL_KEY={VECTOR_MODEL_KEY!r} 不在支持列表{_VALID_MODEL_KEYS}中，回退到bge"
     )
     VECTOR_MODEL_KEY = "bge"
-VECTOR_MODEL_NAME = os.getenv("VECTOR_MODEL_NAME", "BAAI/bge-large-zh-v1.5")  # 可被VECTOR_MODEL_KEY覆盖
+VECTOR_MODEL_NAME = os.getenv("VECTOR_MODEL_NAME") or _DEFAULT_VECTOR_MODEL_NAMES[VECTOR_MODEL_KEY]
 VECTOR_TOP_K = 20                               # 向量搜索返回Top K
 VECTOR_WEIGHT = 0.7                             # 混合搜索中向量的权重（参考OpenClaw的70/30配比）
 

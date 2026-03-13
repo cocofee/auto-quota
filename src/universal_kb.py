@@ -171,18 +171,26 @@ class UniversalKB:
                     raise
             # 校验向量模型版本一致性（模型变更后旧索引不可信）
             try:
-                current_model = getattr(config, "VECTOR_MODEL_NAME", "unknown")
+                from src.model_profile import get_active_profile
+                active_profile = get_active_profile()
+                current_model_key = active_profile.key
+                current_model_name = active_profile.model_name
                 meta = self._collection.metadata or {}
                 stored_model = meta.get("vector_model")
-                if stored_model and stored_model != current_model:
+                current_aliases = {
+                    current_model_key,
+                    current_model_name,
+                    getattr(config, "VECTOR_MODEL_NAME", current_model_name),
+                }
+                if stored_model and stored_model not in current_aliases:
                     logger.warning(
                         f"[universal_kb] 向量模型版本不一致！"
-                        f"索引使用: {stored_model}, 当前配置: {current_model}。"
+                        f"索引使用: {stored_model}, 当前激活: {current_model_key} ({current_model_name})。"
                         f"搜索质量可能下降，建议重建索引。"
                     )
                 elif not stored_model and self._collection.count() > 0:
                     logger.info(
-                        f"[universal_kb] 索引未记录模型版本，当前使用: {current_model}"
+                        f"[universal_kb] 索引未记录模型版本，当前使用: {current_model_key} ({current_model_name})"
                     )
             except Exception:
                 pass  # metadata 读取失败不影响正常使用

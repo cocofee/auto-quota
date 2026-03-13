@@ -90,6 +90,57 @@ def load_json_papers(province_filter: str = None,
     return papers, skipped_papers
 
 
+INSTALL_PROVINCE_KEYWORDS = ("安装工程", "通用安装", "安装定额")
+
+
+def _is_install_province(province: str) -> bool:
+    return any(keyword in (province or "") for keyword in INSTALL_PROVINCE_KEYWORDS)
+
+
+def _item_search_text(item: dict) -> str:
+    quota_names = " ".join(item.get("quota_names") or [])
+    return " ".join(
+        part for part in (
+            item.get("bill_name", ""),
+            item.get("bill_text", ""),
+            quota_names,
+        ) if part
+    )
+
+
+def filter_json_papers(papers: dict,
+                       install_only: bool = False,
+                       item_keywords: list[str] | None = None,
+                       max_items_per_province: int | None = None) -> dict:
+    """对 JSON 试卷做轻量快筛，支持安装卷/题族关键词/每省限量。"""
+    filtered = {}
+    normalized_keywords = [kw.strip() for kw in (item_keywords or []) if kw and kw.strip()]
+
+    for province, data in papers.items():
+        if install_only and not _is_install_province(province):
+            continue
+
+        items = list(data.get("items", []))
+        if normalized_keywords:
+            items = [
+                item for item in items
+                if any(keyword in _item_search_text(item) for keyword in normalized_keywords)
+            ]
+
+        if max_items_per_province is not None and max_items_per_province >= 0:
+            items = items[:max_items_per_province]
+
+        if not items:
+            continue
+
+        filtered[province] = {
+            **data,
+            "items": items,
+        }
+
+    return filtered
+
+
 def run_json_paper(province: str, items: list[dict]) -> dict:
     """对一个省份的JSON试卷运行搜索匹配，对比标准答案
 
@@ -363,8 +414,8 @@ def print_json_summary(results: list[dict], baseline: dict = None):
 
         line = f"{prov_short:<20} {r['total']:>5} {r['hit_rate']:>7.1f}%"
 
-        if baseline and r['province'] in baseline.get('json_papers', {}):
-            base_rate = baseline['json_papers'][r['province']]['hit_rate']
+        base_rate = _get_baseline_json_hit_rate(baseline, r['province']) if baseline else None
+        if base_rate is not None:
             delta = r['hit_rate'] - base_rate
             sign = '+' if delta > 0 else ''
             line += f" {base_rate:>7.1f}% {sign}{delta:>6.1f}%"
@@ -450,13 +501,81 @@ def load_baseline() -> dict | None:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
+def _build_json_overall(json_results: list[dict]) -> dict:
+    total_items = sum(r.get('total', 0) for r in json_results)
+    total_correct = sum(r.get('correct', 0) for r in json_results)
+    hit_rate = round(total_correct / max(total_items, 1) * 100, 1)
+    return {
+        "total": total_items,
+        "correct": total_correct,
+        "hit_rate": hit_rate,
+    }
+
+
+def build_benchmark_summary(json_results: list[dict], excel_metrics: dict,
+                            baseline: dict | None = None) -> dict:
+    """构建机器可读的 benchmark 摘要，供 loop runner 判定 keep/discard。"""
+    return {
+        "json_overall": _build_json_overall(json_results),
+        "json_results": json_results,
+        "excel_metrics": excel_metrics,
+        "by_province": _build_by_province_summary(json_results, baseline),
+    }
+
+
+def _build_by_province_summary(json_results: list[dict],
+                               previous_baseline: dict | None = None) -> dict:
+    previous = (previous_baseline or {}).get("by_province", {})
+    summary = {}
+    for result in json_results:
+        province = result['province']
+        previous_status = ""
+        if isinstance(previous.get(province), dict):
+            previous_status = previous[province].get("status", "")
+        summary[province] = {
+            "score": round(result['hit_rate'] / 100, 4),
+            "hit_rate": result['hit_rate'],
+            "total": result['total'],
+            "correct": result['correct'],
+            "status": previous_status,
+        }
+    return summary
+
+
+def _get_baseline_json_hit_rate(baseline: dict | None, province: str) -> float | None:
+    if not baseline:
+        return None
+    by_province = baseline.get("by_province", {})
+    if isinstance(by_province.get(province), dict):
+        hit_rate = by_province[province].get("hit_rate")
+        if isinstance(hit_rate, (int, float)):
+            return float(hit_rate)
+        score = by_province[province].get("score")
+        if isinstance(score, (int, float)):
+            return float(score) * 100.0
+    json_papers = baseline.get("json_papers", {})
+    if isinstance(json_papers.get(province), dict):
+        hit_rate = json_papers[province].get("hit_rate")
+        if isinstance(hit_rate, (int, float)):
+            return float(hit_rate)
+    return None
+
+
 def save_baseline(json_results: list[dict], excel_metrics: dict,
                   note: str = ""):
     """保存统一基线"""
+    previous_baseline = load_baseline()
+    overall_json = _build_json_overall(json_results)
     baseline = {
         "version": "unified_v1",
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "note": note,
+        "overall": {
+            "json_total": overall_json["total"],
+            "json_correct": overall_json["correct"],
+            "json_hit_rate": overall_json["hit_rate"],
+        },
+        "by_province": _build_by_province_summary(json_results, previous_baseline),
         # JSON试卷的结果
         "json_papers": {},
         # Excel数据集的结果
@@ -508,6 +627,11 @@ def show_baseline():
     print(f"日期: {baseline.get('date', '未知')}")
     print(f"备注: {baseline.get('note', '')}")
 
+    overall = baseline.get('overall', {})
+    if overall:
+        print(f"总览: JSON {overall.get('json_correct', 0)}/{overall.get('json_total', 0)} "
+              f"= {overall.get('json_hit_rate', 0):.1f}%")
+
     # JSON试卷
     jp = baseline.get('json_papers', {})
     if jp:
@@ -515,9 +639,18 @@ def show_baseline():
         total_correct = sum(v['correct'] for v in jp.values())
         overall = total_correct / max(total_items, 1) * 100
         print(f"\nJSON试卷: {len(jp)}个省份, {total_items}条, 总命中率{overall:.1f}%")
-        for prov, m in sorted(jp.items()):
+        province_view = baseline.get('by_province', {}) or jp
+        for prov, m in sorted(province_view.items()):
             prov_short = prov.split('(')[0][:16]
-            print(f"  {prov_short}: {m['total']}条, 命中率{m['hit_rate']:.1f}%")
+            total = m.get('total', 0)
+            hit_rate = m.get('hit_rate')
+            if hit_rate is None and isinstance(m.get('score'), (int, float)):
+                hit_rate = m['score'] * 100
+            if hit_rate is None:
+                hit_rate = 0.0
+            status = m.get('status', '') if isinstance(m, dict) else ''
+            suffix = f" [{status}]" if status else ''
+            print(f"  {prov_short}: {total}条, 命中率{hit_rate:.1f}%{suffix}")
 
     # Excel数据集（兼容旧格式）
     ed = baseline.get('excel_datasets', baseline.get('datasets', {}))
@@ -552,6 +685,12 @@ def main():
     parser.add_argument("--province", help="只跑包含此关键词的省份（模糊匹配）")
     parser.add_argument("--mode", choices=["search", "agent"], default="search",
                         help="匹配模式（默认search）")
+    parser.add_argument("--install-only", action="store_true",
+                        help="只跑安装类 JSON 试卷（用于阶段二快筛）")
+    parser.add_argument("--item-keyword", action="append",
+                        help="只跑包含该关键词的题目，可重复传入（匹配 bill_name/bill_text/答案）")
+    parser.add_argument("--max-items-per-province", type=int,
+                        help="每省最多取前 N 题，配合 --item-keyword 用于快速试错")
     parser.add_argument("--save", action="store_true", help="保存为基线")
     parser.add_argument("--compare", action="store_true", help="与基线对比")
     parser.add_argument("--detail", action="store_true", help="打印每题详情")
@@ -559,6 +698,8 @@ def main():
     parser.add_argument("--excel-only", action="store_true", help="只跑Excel数据集")
     parser.add_argument("--json-only", action="store_true", help="只跑JSON试卷")
     parser.add_argument("--note", default="", help="跑分备注")
+    parser.add_argument("--summary-json-out", default="",
+                        help="把机器可读摘要写到指定 JSON 文件，供 loop runner 使用")
     args = parser.parse_args()
 
     if args.show_baseline:
@@ -580,11 +721,26 @@ def main():
     json_results = []
     if not args.excel_only:
         papers, skipped_papers = load_json_papers(province_filter=args.province)
+        papers = filter_json_papers(
+            papers,
+            install_only=args.install_only,
+            item_keywords=args.item_keyword,
+            max_items_per_province=args.max_items_per_province,
+        )
         if papers:
             total_items = sum(len(d.get('items', [])) for d in papers.values())
             print(f"JSON试卷: {len(papers)}个省份, {total_items}条题目")
             if skipped_papers:
                 print(f"已跳过 {len(skipped_papers)} 份禁用试卷")
+            if args.install_only or args.item_keyword or args.max_items_per_province is not None:
+                active_filters = []
+                if args.install_only:
+                    active_filters.append("install_only")
+                if args.item_keyword:
+                    active_filters.append(f"item_keywords={','.join(args.item_keyword)}")
+                if args.max_items_per_province is not None:
+                    active_filters.append(f"max_items_per_province={args.max_items_per_province}")
+                print(f"筛选条件: {'; '.join(active_filters)}")
             print("-" * 60)
 
             for province, data in papers.items():
@@ -647,18 +803,18 @@ def main():
         has_regression = False
 
         # JSON对比
-        if json_results and baseline.get('json_papers'):
+        if json_results and (baseline.get('json_papers') or baseline.get('by_province')):
             for r in json_results:
-                bp = baseline['json_papers'].get(r['province'])
-                if not bp:
+                base_rate = _get_baseline_json_hit_rate(baseline, r['province'])
+                if base_rate is None:
                     continue
-                delta = r['hit_rate'] - bp['hit_rate']
+                delta = r['hit_rate'] - base_rate
                 prov_short = r['province'].split('(')[0][:14]
                 sign = '+' if delta > 0 else ''
                 status = '退化!' if delta < -2 else '正常'
                 if delta < -2:
                     has_regression = True
-                print(f"  {prov_short}: {bp['hit_rate']:.1f}% → {r['hit_rate']:.1f}% ({sign}{delta:.1f}%) [{status}]")
+                print(f"  {prov_short}: {base_rate:.1f}% → {r['hit_rate']:.1f}% ({sign}{delta:.1f}%) [{status}]")
 
         if has_regression:
             print("\n[WARN] 检测到退化！")
@@ -669,6 +825,15 @@ def main():
     # ---- 保存基线 ----
     if args.save:
         save_baseline(json_results, excel_metrics, note=args.note)
+
+    if args.summary_json_out:
+        summary = build_benchmark_summary(json_results, excel_metrics, baseline)
+        summary_path = Path(args.summary_json_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     # 保存详细结果（每次都存）
     if json_results:
