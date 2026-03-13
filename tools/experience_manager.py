@@ -356,8 +356,9 @@ def _promote_interactive(db, province, source, limit):
 
 
 def _promote_all(db, province, source, limit):
-    """批量晋升所有候选层数据"""
-    records = db.get_candidate_records(province=province, limit=limit)
+    """批量晋升所有候选层数据（自动排除被体检降级的记录）"""
+    records = db.get_candidate_records(province=province, limit=limit,
+                                       exclude_demoted=True)
     if source:
         records = [r for r in records if r["source"] == source]
 
