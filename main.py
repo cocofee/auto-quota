@@ -203,7 +203,7 @@ def run(input_file, mode="agent", output=None,
         limit=None, province=None, aux_provinces=None,
         no_experience=False, sheet=None,
         json_output=None, agent_llm=None, verify_llm=None,
-        interactive=None, progress_callback=None):
+        interactive=None, progress_callback=None, original_file=None):
     """执行匹配的核心逻辑（供命令行和其他模块直接调用）
 
     参数:
@@ -217,6 +217,7 @@ def run(input_file, mode="agent", output=None,
         sheet: 指定只读取的Sheet名称
         json_output: JSON结果输出路径（可选）
         agent_llm: Agent模式使用的大模型
+        original_file: 原始上传文件路径（可选，读取用规范化文件时用于保留输出结构）
         interactive: 是否允许交互式提示（如省份选择）。
                      默认None=自动判断（命令行调用时True，程序调用建议传False）
         progress_callback: 进度回调函数（可选），签名: callback(percent, current_idx, message)
@@ -229,11 +230,14 @@ def run(input_file, mode="agent", output=None,
     input_path = Path(input_file)
     if not input_path.exists():
         raise FileNotFoundError(f"文件不存在: {input_path}")
+    original_input_path = Path(original_file) if original_file else input_path
+    if not original_input_path.exists():
+        raise FileNotFoundError(f"文件不存在: {original_input_path}")
 
     # 解析省份（支持简称模糊匹配）
     resolved_province = _resolve_run_province(
         province, interactive=interactive, json_output=json_output)
-    _log_run_banner(input_path, mode, resolved_province, no_experience)
+    _log_run_banner(original_input_path, mode, resolved_province, no_experience)
 
     start_time = time.time()
 
@@ -336,7 +340,7 @@ def run(input_file, mode="agent", output=None,
     logger.info("第4步：生成结果Excel...")
     writer = OutputWriter()
     output_path = writer.write_results(
-        results, output, original_file=str(input_path))
+        results, output, original_file=str(original_input_path))
     logger.info(f"  输出文件: {output_path}")
     _notify(95, len(results), "结果已生成")
 
@@ -352,7 +356,7 @@ def run(input_file, mode="agent", output=None,
     try:
         from src.accuracy_tracker import AccuracyTracker
         AccuracyTracker().record_run(
-            stats, input_file=str(input_path),
+            stats, input_file=str(original_input_path),
             mode=mode, province=resolved_province)
     except Exception as e:
         logger.error(f"准确率追踪记录失败: {e}")

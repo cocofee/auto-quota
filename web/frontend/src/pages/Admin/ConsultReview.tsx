@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Card, Table, Button, Tag, Space, App, Modal, Input, Image,
+  Card, Table, Button, Tag, Space, App, Modal, Input,
   Typography, Descriptions, Row, Col,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -274,21 +274,6 @@ export default function ConsultReviewPage() {
                 </Descriptions.Item>
               )}
             </Descriptions>
-
-            {/* 用户上传的图片预览 */}
-            {currentRecord.image_path && (
-              <div style={{ marginTop: 16 }}>
-                <Text strong>用户上传的图片：</Text>
-                <div style={{ marginTop: 8 }}>
-                  <Image
-                    src={`/api/consult/admin/image?path=${encodeURIComponent(currentRecord.image_path)}`}
-                    alt="咨询截图"
-                    style={{ maxWidth: '100%', maxHeight: 400 }}
-                    fallback="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iI2Y1ZjVmNSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjYmZiZmJmIiBmb250LXNpemU9IjE0Ij7lm77niYfliqDovb3lpLHotKU8L3RleHQ+PC9zdmc+"
-                  />
-                </div>
-              </div>
-            )}
 
             {/* 提交的清单→定额列表 */}
             <div style={{ marginTop: 16 }}>

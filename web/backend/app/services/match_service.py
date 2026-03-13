@@ -11,18 +11,15 @@ from pathlib import Path
 from fastapi import UploadFile
 from loguru import logger
 
+from src.excel_compat import detect_excel_format_from_header, validate_excel_upload
+
 from app.config import UPLOAD_DIR, UPLOAD_MAX_MB, TASK_OUTPUT_DIR
 
 
 def _is_valid_excel_signature(suffix: str, header: bytes) -> bool:
     """校验Excel文件魔数，避免仅靠扩展名绕过。"""
-    if suffix == ".xlsx":
-        # XLSX本质是ZIP包，常见头为 PK\x03\x04
-        return header.startswith(b"PK")
-    if suffix == ".xls":
-        # XLS老格式是OLE复合文档，固定魔数
-        return header.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
-    return False
+    info = detect_excel_format_from_header(header, f"dummy{suffix}")
+    return info.actual_format in {"xls", "xlsx"}
 
 
 def save_upload_file(file: UploadFile, task_id: uuid.UUID) -> Path:
@@ -44,15 +41,19 @@ def save_upload_file(file: UploadFile, task_id: uuid.UUID) -> Path:
     file.file.seek(0)
     header = file.file.read(8)
     file.file.seek(0)
-    if not _is_valid_excel_signature(suffix, header):
-        raise ValueError("文件内容与扩展名不匹配，请上传真实Excel文件")
+    info = validate_excel_upload(filename, header)
+    if info.is_mislabeled:
+        logger.warning(
+            f"上传Excel后缀与内容不一致: filename={filename}; "
+            f"declared={info.declared_suffix}; actual={info.normalized_suffix}"
+        )
 
     # 创建任务专属目录
     task_dir = UPLOAD_DIR / str(task_id)
     task_dir.mkdir(parents=True, exist_ok=True)
 
     # 保存文件（统一命名为 input.xlsx/.xls，避免中文文件名问题）
-    safe_name = f"input{suffix}"
+    safe_name = f"input{info.normalized_suffix}"
     save_path = task_dir / safe_name
 
     # 写入文件并检查大小

@@ -28,7 +28,7 @@ def test_save_upload_file_rejects_xlsx_with_invalid_signature(monkeypatch):
     try:
         monkeypatch.setattr(match_service, "UPLOAD_DIR", tmp_dir)
         upload = UploadFile(filename="bad.xlsx", file=io.BytesIO(b"NOTAZIPDATA"))
-        with pytest.raises(ValueError, match="内容与扩展名不匹配"):
+        with pytest.raises(ValueError, match="Excel"):
             match_service.save_upload_file(upload, uuid.uuid4())
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -46,5 +46,21 @@ def test_save_upload_file_accepts_valid_xlsx_signature(monkeypatch):
         assert saved_path.exists()
         assert saved_path.read_bytes() == data
         assert saved_path.suffix == ".xlsx"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_save_upload_file_accepts_mislabeled_xls_content(monkeypatch):
+    tmp_dir = _new_tmp_dir()
+    try:
+        monkeypatch.setattr(match_service, "UPLOAD_DIR", tmp_dir)
+        data = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1rest-of-xls"
+        upload = UploadFile(filename="fake.xlsx", file=io.BytesIO(data))
+        task_id = uuid.uuid4()
+        saved_path = match_service.save_upload_file(upload, task_id)
+
+        assert saved_path.exists()
+        assert saved_path.read_bytes() == data
+        assert saved_path.suffix == ".xls"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

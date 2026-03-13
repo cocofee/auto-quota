@@ -689,7 +689,13 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 # 第2阶段: 60% ~ 90%
                 pt = phase_total or 1
                 pct = 60 + int(30 * current_idx / max(pt, 1))
-                progress_callback(pct, current_idx, f"AI分析中 {current_idx}/{pt}")
+                base_completed = max(total - pt, 0)
+                overall_completed = min(total, base_completed + current_idx)
+                if pt < total:
+                    message = f"AI分析中 {overall_completed}/{total} (AI阶段 {current_idx}/{pt})"
+                else:
+                    message = f"AI分析中 {overall_completed}/{total}"
+                progress_callback(pct, overall_completed, message)
         except Exception:
             pass
 

@@ -29,6 +29,7 @@ from loguru import logger
 
 import config
 from src.bill_reader import _is_material_code
+from src.excel_compat import convert_excel_to_xlsx
 
 
 # 颜色定义
@@ -267,26 +268,17 @@ class OutputWriter:
     @staticmethod
     def _convert_xls_for_output(xls_path: str, output_xlsx_path: str):
         """将 .xls 文件转换为 .xlsx 格式（用于输出保留结构）"""
-        import xlrd
-        xls_wb = xlrd.open_workbook(str(xls_path))
-        xlsx_wb = openpyxl.Workbook()
-        xlsx_wb.remove(xlsx_wb.active)
-        for sheet_idx in range(xls_wb.nsheets):
-            xls_sheet = xls_wb.sheet_by_index(sheet_idx)
-            xlsx_sheet = xlsx_wb.create_sheet(title=xls_sheet.name)
-            for row_idx in range(xls_sheet.nrows):
-                for col_idx in range(xls_sheet.ncols):
-                    cell = xls_sheet.cell(row_idx, col_idx)
-                    value = cell.value
-                    if cell.ctype == 3:  # 日期类型
-                        try:
-                            value = xlrd.xldate_as_datetime(value, xls_wb.datemode)
-                        except Exception:
-                            pass
-                    if value is not None and value != "":
-                        xlsx_sheet.cell(row=row_idx + 1, column=col_idx + 1, value=value)
-        xlsx_wb.save(str(output_xlsx_path))
-        xls_wb.release_resources()
+        result = convert_excel_to_xlsx(
+            xls_path,
+            output_xlsx_path,
+            prefer_preserve_format=True,
+        )
+        if not result.preserved_formatting:
+            logger.warning(
+                f".xls 转换已降级为值写入模式: method={result.method}; "
+                f"warning={result.warning or 'n/a'}"
+            )
+        return result
 
     @staticmethod
     def _save_workbook_atomic(wb, output_path: str):

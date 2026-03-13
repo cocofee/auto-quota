@@ -6,13 +6,13 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  Card, Button, Input, Select, Space, Tag, Upload, App,
+  Card, Button, Input, Select, Space, Tag, App,
   Typography, Divider, Table, Popconfirm, Empty, Spin,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   SendOutlined, DeleteOutlined, PlusOutlined,
-  ReloadOutlined, PictureOutlined, CheckCircleOutlined,
+  ReloadOutlined, CheckCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useProvinceStore } from '../../stores/province';
@@ -25,9 +25,6 @@ const { TextArea } = Input;
 interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
-  image_base64?: string;
-  image_type?: string;
-  image_preview?: string;  // 本地预览用的 data URL
 }
 
 // 解析出的对应关系
@@ -125,11 +122,6 @@ export default function ConsultPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
-  const [pendingImage, setPendingImage] = useState<{
-    base64: string; type: string; preview: string; path: string;
-  } | null>(null);
-  // 收集对话中上传的图片路径（提交时传给后端，管理员审核可溯源）
-  const [uploadedImagePaths, setUploadedImagePaths] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // 提取结果
@@ -175,34 +167,24 @@ export default function ConsultPage() {
   // 发送消息
   const handleSend = async () => {
     const text = inputText.trim();
-    if (!text && !pendingImage) return;
+    if (!text) return;
 
-    // 构造用户消息
+    // ??????????
     const userMsg: ChatMsg = {
       role: 'user',
-      content: text || '请看这张图片',
-      image_base64: pendingImage?.base64,
-      image_type: pendingImage?.type,
-      image_preview: pendingImage?.preview,
+      content: text,
     };
 
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInputText('');
-    // 记录图片路径（submit 时传给后端）
-    if (pendingImage?.path) {
-      setUploadedImagePaths((prev) => [...prev, pendingImage.path]);
-    }
-    setPendingImage(null);
     setSending(true);
 
     try {
-      // 发送完整对话历史（不含前端专用字段）
+      // ????????????????????????????
       const apiMessages = newMessages.map((m) => ({
         role: m.role,
         content: m.content,
-        image_base64: m.image_base64 || '',
-        image_type: m.image_type || '',
       }));
 
       const res = await api.post('/consult/chat', { messages: apiMessages }, {
@@ -223,35 +205,6 @@ export default function ConsultPage() {
     }
   };
 
-  // 上传图片
-  const handleImageUpload = async (file: File) => {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await api.post('/consult/upload-image', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 30000,
-      });
-
-      // 本地预览
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setPendingImage({
-          base64: res.data.image_base64,
-          type: res.data.image_type,
-          preview: e.target?.result as string,
-          path: res.data.image_path,
-        });
-      };
-      reader.readAsDataURL(file);
-
-      message.success('图片已准备好，输入文字后一起发送');
-    } catch (err: unknown) {
-      message.error(getErrorMessage(err, '图片上传失败'));
-    }
-    return false;
-  };
-
   // 提取结果
   const handleExtract = async () => {
     if (messages.length < 2) {
@@ -264,8 +217,6 @@ export default function ConsultPage() {
       const apiMessages = messages.map((m) => ({
         role: m.role,
         content: m.content,
-        image_base64: m.image_base64 || '',
-        image_type: m.image_type || '',
       }));
 
       const res = await api.post('/consult/extract', { messages: apiMessages }, {
@@ -314,13 +265,11 @@ export default function ConsultPage() {
       await api.post('/consult/submit', {
         items: validItems,
         province: selectedProvince,
-        image_path: uploadedImagePaths.length > 0 ? uploadedImagePaths[uploadedImagePaths.length - 1] : '',
       });
       message.success('提交成功，等待管理员审核');
       // 清空
       setMessages([]);
       setExtractedItems([]);
-      setUploadedImagePaths([]);
       loadHistory();
     } catch (err: unknown) {
       message.error(getErrorMessage(err, '提交失败'));
@@ -333,8 +282,6 @@ export default function ConsultPage() {
   const handleClear = () => {
     setMessages([]);
     setExtractedItems([]);
-    setPendingImage(null);
-    setUploadedImagePaths([]);
   };
 
   // 提取结果表格列
@@ -491,14 +438,6 @@ export default function ConsultPage() {
                 background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
                 color: msg.role === 'user' ? '#fff' : '#000',
               }}>
-                {/* 图片预览 */}
-                {msg.image_preview && (
-                  <div style={{ marginBottom: 8 }}>
-                    <img src={msg.image_preview} alt="截图" style={{
-                      maxWidth: 300, maxHeight: 200, borderRadius: 4,
-                    }} />
-                  </div>
-                )}
                 <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                   {msg.content}
                 </div>
@@ -517,30 +456,12 @@ export default function ConsultPage() {
           <div ref={chatEndRef} />
         </div>
 
-        {/* 待发送的图片预览 */}
-        {pendingImage && (
-          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src={pendingImage.preview} alt="待发送" style={{
-              height: 60, borderRadius: 4, border: '1px solid #d9d9d9',
-            }} />
-            <Button size="small" danger onClick={() => setPendingImage(null)}>移除</Button>
-          </div>
-        )}
-
-        {/* 输入区域 */}
-        <Space.Compact style={{ width: '100%' }}>
-          <Upload
-            accept=".png,.jpg,.jpeg,.webp,.bmp"
-            showUploadList={false}
-            beforeUpload={handleImageUpload}
-            disabled={sending}
-          >
-            <Button icon={<PictureOutlined />} disabled={sending} />
-          </Upload>
+        {/* Input */}
+        <Space.Compact style={{ width: "100%" }}>
           <TextArea
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="输入清单描述，如：给水管道DN25 PPR 该套什么定额？"
+            placeholder="Describe the bill item, e.g. DN25 PPR water pipe, which quota applies?"
             autoSize={{ minRows: 1, maxRows: 3 }}
             onPressEnter={(e) => {
               if (!e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -553,13 +474,13 @@ export default function ConsultPage() {
             icon={<SendOutlined />}
             onClick={handleSend}
             loading={sending}
-            disabled={!inputText.trim() && !pendingImage}
+            disabled={!inputText.trim()}
           >
-            发送
+            Send
           </Button>
         </Space.Compact>
 
-        {/* 提取按钮 */}
+        {/* Extract */}
         {messages.length >= 2 && (
           <div style={{ marginTop: 12 }}>
             <Button
@@ -567,7 +488,7 @@ export default function ConsultPage() {
               onClick={handleExtract}
               loading={extracting}
             >
-              提取对话中的定额结果
+              Extract quota result from chat
             </Button>
           </div>
         )}
