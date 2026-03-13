@@ -503,6 +503,139 @@ def _build_garden_plant_query(name: str, full_text: str, specialty: str = "") ->
     return _apply_synonyms(normalized_name, specialty)
 
 
+def _build_cable_head_query(name: str, full_text: str, params: dict,
+                            specialty: str = "") -> str | None:
+    """电缆头对象模板：拦截电缆终端头/中间头类清单，构建精确搜索词。
+
+    处理的对象类型：
+    1. 压铜接线端子（清单名"电力电缆头"但描述含"压铜接线端子"）
+    2. 矿物绝缘电缆头（BTLY/YTTW/BTTRZ/BTTZ/BBTRZ型号）
+    3. 控制电缆终端头（按芯数分档 ≤6/14/24/37/48）
+    4. 电力电缆终端头（默认1kV干包式铜芯，按截面分档）
+    5. 中间头（电力电缆中间头，按截面分档）
+
+    为什么需要模板：
+    - "电力电缆头"被_normalize_bill_name转成"电缆终端头"后直接搜索，
+      缺少电压等级/工艺/材质等关键限定词，BM25容易匹配到10kV或热缩式
+    - 控制电缆头需要按芯数分档，和电力电缆按截面分档完全不同
+    - 矿物绝缘电缆头有专用定额，不能走普通电缆头路由
+
+    注意：直接返回query，不经过_apply_synonyms。
+    原因：同义词表有"电缆终端头→电力电缆终端头制作安装"，会给控制电缆头
+    追加"电力电缆"关键词导致BM25偏向电力电缆定额。模板已构建精确搜索词，
+    不需要同义词扩展。
+    """
+    # 触发条件：清单名含"电缆头"或"终端头"或"中间头"
+    is_cable_head = any(kw in name for kw in ("电缆头", "终端头", "中间头"))
+    if not is_cable_head:
+        return None
+
+    upper_text = full_text.upper()
+
+    # --- 步骤1：压铜接线端子（浙江特例） ---
+    # 清单名"电力电缆头"但描述里明确写"压铜接线端子"
+    if "压铜接线端子" in full_text:
+        # 提取截面：从"规格:16mm2"或"NxN"格式
+        section = params.get("cable_section")
+        if section:
+            section_str = _format_number_for_query(section)
+            return f"压铜接线端子 导线截面 {section_str}"
+        return "压铜接线端子"
+
+    # --- 步骤2：矿物绝缘电缆头 ---
+    # 型号含BTLY/BTTRZ/BTTZ/YTTW/BBTRZ/NG-A → 矿物绝缘电缆专用定额
+    _MINERAL_MODELS = ("BTTRZ", "BTLY", "BTTZ", "YTTW", "BBTRZ", "NG-A")
+    is_mineral = any(m in upper_text for m in _MINERAL_MODELS)
+    if is_mineral:
+        # 矿物绝缘分控制/电力两种
+        if "控制" in full_text:
+            # 提取芯数
+            core_match = re.search(r'(\d+)\s*[×xX*]\s*\d+', full_text)
+            core_count = int(core_match.group(1)) if core_match else None
+            query = "矿物绝缘控制电缆终端头"
+            if core_count:
+                query += f" 芯数 {core_count}"
+            return query
+        else:
+            # 矿物绝缘电力电缆头
+            section = params.get("cable_section")
+            query = "矿物绝缘电力电缆终端头"
+            if section:
+                section_str = _format_number_for_query(section)
+                query += f" 截面 {section_str}"
+            return query
+
+    # --- 步骤3：控制电缆头 ---
+    # 清单名含"控制"，或描述中含"控制电缆"
+    is_control = "控制" in name or "控制" in full_text
+    # 信号电缆也按控制电缆计
+    if not is_control:
+        is_control = "信号" in name
+    if is_control:
+        # 提取芯数：从"规格:6芯以下"、"14芯内"、"4*1.5"等格式
+        core_count = None
+        # 格式1：直接写"N芯"
+        core_direct = re.search(r'(\d+)\s*芯', full_text)
+        if core_direct:
+            core_count = int(core_direct.group(1))
+        else:
+            # 格式2：从"NxN"提取（第一个数字是芯数）
+            core_match = re.search(r'(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?', full_text)
+            if core_match:
+                core_count = int(core_match.group(1))
+
+        # 中间头 vs 终端头
+        if "中间" in full_text:
+            query = "控制电缆中间头"
+        else:
+            query = "控制电缆终端头"
+        if core_count:
+            query += f" 芯数 {core_count}"
+        return query
+
+    # --- 步骤4/5：电力电缆终端头/中间头 ---
+    # 提取电压等级（默认1kV）
+    voltage = "1kV"
+    if any(kw in full_text for kw in ("10kV", "10KV", "10kv")):
+        voltage = "10kV"
+    elif any(kw in full_text for kw in ("35kV", "35KV", "35kv")):
+        voltage = "35kV"
+    # "0.6/1KV"、"1KV以下"、"1kv"都是1kV
+
+    # 提取工艺类型（干包/热缩/浇注）
+    if "热缩" in full_text or "冷缩" in full_text or "热(冷)缩" in full_text or "热（冷）缩" in full_text:
+        craft = "热(冷)缩式"
+    elif "浇注" in full_text:
+        craft = "浇注式"
+    else:
+        # 1kV默认干包式（最常见），10kV默认热缩式
+        craft = "干包式" if voltage == "1kV" else "热(冷)缩式"
+
+    # 提取室内/室外（默认室内）
+    location = "室内"
+    if "室外" in full_text or "户外" in full_text:
+        location = "室外"
+
+    # 提取截面
+    section = params.get("cable_section")
+
+    # 中间头 vs 终端头
+    if "中间" in name or "中间" in full_text:
+        query = f"{voltage}以下{location}电力电缆中间头"
+        if section:
+            section_str = _format_number_for_query(section)
+            query += f" 截面 {section_str}"
+        return query
+
+    # 电力电缆终端头（最常见的case）
+    # 搜索词格式："1kV以下室内干包式铜芯电力电缆终端头 截面 N"
+    query = f"{voltage}以下{location}{craft}铜芯电力电缆终端头"
+    if section:
+        section_str = _format_number_for_query(section)
+        query += f" 截面 {section_str}"
+    return query
+
+
 def _build_valve_query(name: str, full_text: str, params: dict,
                        specialty: str = "") -> str | None:
     """阀门族对象模板：拦截需要特殊路由的阀门类清单。
@@ -1034,6 +1167,17 @@ def build_quota_query(parser, name: str, description: str = "",
     )
     if distribution_box_query:
         return distribution_box_query
+
+    # 电缆头模板：在_normalize_bill_name之前拦截，
+    # 因为normalize会把"电缆头"→"电缆终端头"丢失原始信息
+    cable_head_query = _build_cable_head_query(
+        name=name,
+        full_text=full_text,
+        params=params,
+        specialty=specialty,
+    )
+    if cable_head_query:
+        return cable_head_query
 
     # 清单名称 → 定额搜索名称的规范化映射
     # 清单用的名称和定额用的名称经常不一样
