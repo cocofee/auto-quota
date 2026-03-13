@@ -1,15 +1,13 @@
 """
-工程量清单读取模块
-功能：
-1. 读取清单Excel文件，支持多种格式
-2. 自动识别列映射（项目编码、名称、特征描述、单位、工程量）
-3. 提取清单项目列表，每个项目包含完整信息
+工程量清单读取模块。
 
-支持的清单格式：
-- 标准12位编码格式（通用）
-- 流水号格式（部分小型项目）
-- 自动编清单输出格式
+目标：
+1. 兼容标准清单 Excel。
+2. 兼容手工/非标清单 Excel。
+3. 兼容工程量汇总表这类“半结构化输入”，把它压成可进入套定额的标准 bill item。
 """
+
+from __future__ import annotations
 
 import os
 import re
@@ -19,153 +17,160 @@ from pathlib import Path
 import openpyxl
 from loguru import logger
 
-
-def is_xls_format(file_path) -> bool:
-    """检测文件是否为旧版.xls格式（OLE2/CDFV2）
-
-    有些文件后缀是.xlsx但实际内容是.xls格式（从某些系统导出时会出现）。
-    通过检查文件头 magic bytes（D0 CF 11 E0）来判断真实格式。
-
-    返回True表示需要用xlrd转换后才能被openpyxl加载。
-    """
-    from pathlib import Path
-    p = Path(file_path)
-    if p.suffix.lower() == ".xls":
-        return True
-    try:
-        with open(p, "rb") as f:
-            magic = f.read(4)
-        return magic == b'\xd0\xcf\x11\xe0'
-    except Exception:
-        return False
-
-import config
+from src.excel_compat import detect_excel_file_format
 from src.text_parser import parser as text_parser
 
 
+def is_xls_format(file_path) -> bool:
+    """检测文件实际是否为旧版 xls。"""
+    try:
+        return detect_excel_file_format(file_path).actual_format == "xls"
+    except Exception:
+        return False
+
+
 def _is_quota_code(code: str) -> bool:
-    """判断是否是定额编号（支持 X-XXX / D00003 / AD0003 / 带'换'后缀）。"""
+    """判断是否为定额编号。"""
     if not isinstance(code, str):
         return False
     c = code.strip()
     if not c:
         return False
     core = c[:-1] if c.endswith("换") else c
-    return bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core)) or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+    return bool(re.match(r"^[A-Za-z]?\d{1,2}-\d+", core)) or bool(
+        re.match(r"^[A-Za-z]{1,2}\d{4,}$", core)
+    )
 
 
 def _is_material_code(code: str) -> bool:
-    """判断是否是主材/材料编码（广联达导出的材料行编码格式）。
-
-    "带定额"的清单Excel中，每条清单下面有定额行和材料行。
-    定额行已由 _is_quota_code 过滤，这里过滤材料行。
-
-    常见材料编码格式：
-    - CL17067060@2（CL前缀，广联达材料编码）
-    - ZCGL170460@5（ZCGL前缀，广联达主材编码）
-    - 26010101Z@2（含Z@，广联达材料变量编码）
-    - 补充主材006@33（"补充主材"前缀，广联达补充主材）
-    - AZ04ZC005@1（含@，广联达材料变体编号）
-    """
+    """判断是否为材料/主材编码。"""
     if not isinstance(code, str):
         return False
     c = code.strip()
     if not c:
         return False
-    # CL开头（如CL17067060@2）
-    if re.match(r'^CL\d', c, re.IGNORECASE):
+    if re.match(r"^CL\d", c, re.IGNORECASE):
         return True
-    # ZCGL开头（如ZCGL170460@5）
-    if re.match(r'^ZCGL\d', c, re.IGNORECASE):
+    if re.match(r"^ZCGL\d", c, re.IGNORECASE):
         return True
-    # 含Z@（如26010101Z@2、28110000Z@121）
-    if 'Z@' in c:
+    if "Z@" in c:
         return True
-    # "补充主材"开头（如补充主材006@33、补充主材011）
-    if c.startswith('补充主材'):
+    if c.startswith("补充主材"):
         return True
-    # 含@且不是标准清单编码（广联达材料变体都用@标记，清单编码不含@）
-    if '@' in c:
+    if "@" in c:
         return True
-    # 7-8位纯数字（如13030795醇酸防锈漆、20010360钢板平焊法兰）
-    # 清单编码是12位数字，定额编号有字母或连字符，不会冲突
-    if re.fullmatch(r'\d{7,8}', c):
+    if re.fullmatch(r"\d{7,8}", c):
         return True
     return False
 
 
 class BillReader:
-    """工程量清单读取器"""
+    """工程量清单读取器。"""
 
-    # 标准列名匹配规则（用于自动识别列映射）
-    # 包含标准清单格式 + 手填清单常见变体
     COLUMN_PATTERNS = {
         "index": ["序号"],
-        "code": [
-            "项目编码", "编码", "清单编码",
-            "子目编码",          # 手填清单变体
-        ],
+        "code": ["项目编码", "编码", "清单编码", "子目编码"],
         "name": [
-            "项目名称", "名称", "清单名称",
-            "项目内容",          # 手填清单变体（如"分部分项工程项目清单"格式）
-            "子目名称",          # 手填清单变体（广联达造价HOME导出）
+            "项目名称",
+            "名称",
+            "清单名称",
+            "货物名称",
+            "设备名称",
+            "项目内容",
+            "子目名称",
         ],
         "description": [
-            "项目特征", "特征描述", "项目特征描述", "特征",
-            "子目特征描述",      # 手填清单变体
-            "子目特征",          # 手填清单变体
-            "工作内容及范围",    # 劳务分包采购清单格式
-            "工作内容",          # 简写变体
+            "项目特征",
+            "特征描述",
+            "项目特征描述",
+            "特征",
+            "子目特征描述",
+            "子目特征",
+            "工作内容及范围",
+            "工作内容",
+            "规格",
+            "规格型号",
+            "技术参数",
         ],
         "unit": ["计量单位", "单位", "计量\n单位"],
-        # 常见变体：
-        # - 工程量
-        # - 工程数量（暂定）
-        # - 工程数量(暂定)
-        "quantity": ["工程量", "工程数量"],
+        "quantity": ["工程量", "工程数量", "暂估数量", "数量"],
     }
 
+    SUMMARY_COLUMN_PATTERNS = {
+        "calc_item": ["计算项目"],
+        "system_type": ["系统类型"],
+        "type": ["类型"],
+        "name": ["名称"],
+        "material": ["材质"],
+        "material_conn": ["材质-连接方式", "刷油/保温材质-厚度/保护层"],
+        "spec": ["规格型号-类型", "规格型号", "规格"],
+        "laying": ["敷设方式", "连接方式"],
+        "qty_name": ["工程量名称"],
+        "unit": ["单位"],
+        "quantity": ["工程量"],
+    }
+
+    SKIP_SHEET_KEYWORDS = [
+        "报告",
+        "成果",
+        "统计",
+        "封面",
+        "目录",
+        "说明",
+        "分析",
+        "对比",
+        "审核",
+        "签章",
+    ]
+
+    BILL_SHEET_KEYWORDS = [
+        "分部分项",
+        "清单",
+        "工程量汇总表",
+        "工程量表",
+        "汇总表",
+    ]
+
+    @staticmethod
+    def _normalize_header_text(text: str) -> str:
+        if text is None:
+            return ""
+        normalized = str(text).strip().replace("\n", "").replace("\r", "")
+        normalized = normalized.replace("（", "(").replace("）", ")")
+        normalized = re.sub(r"\s+", "", normalized)
+        return normalized
+
+    @classmethod
+    def _match_header_pattern(cls, cell_text: str, pattern: str) -> int:
+        norm_cell = cls._normalize_header_text(cell_text)
+        norm_pattern = cls._normalize_header_text(pattern)
+        if not norm_cell or not norm_pattern:
+            return 0
+        # 短词必须精确匹配，避免“名称”误命中“工程量名称”。
+        if len(norm_pattern) <= 2:
+            return len(norm_pattern) if norm_cell == norm_pattern else 0
+        if norm_cell == norm_pattern:
+            return len(norm_pattern) + 100
+        if norm_pattern in norm_cell:
+            return len(norm_pattern)
+        return 0
+
     def read_excel(self, file_path: str, sheet_name: str = None) -> list[dict]:
-        """
-        读取清单Excel文件
-
-        参数:
-            file_path: Excel文件路径
-            sheet_name: 指定只读取某个Sheet（为None时读取所有Sheet）
-
-        返回:
-            清单项目列表，每项包含:
-            {
-                index: 序号,
-                code: 项目编码,
-                name: 项目名称,
-                description: 特征描述,
-                unit: 计量单位,
-                quantity: 工程量,
-                search_text: 搜索文本（名称+特征合并清洗后的）,
-                params: 提取的结构化参数,
-                sheet_name: 所在Sheet名,
-                section: 所属分部工程,
-            }
-        """
+        """读取清单 Excel。"""
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"清单文件不存在: {file_path}")
 
         logger.info(f"读取清单文件: {file_path}")
 
-        # .xls 文件自动转换为临时 .xlsx（openpyxl 不支持旧版 .xls 格式）
-        # 有些文件后缀是.xlsx但实际内容是.xls格式，通过文件头判断
         temp_xlsx_path = None
         actual_path = file_path
-
         if is_xls_format(file_path):
             if file_path.suffix.lower() != ".xls":
-                logger.info(f"  文件后缀是.xlsx但实际是.xls格式，自动转换")
+                logger.info("  文件后缀是 xlsx 但实际是 xls，自动转换")
             try:
                 temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
                 actual_path = Path(temp_xlsx_path)
-                logger.info(f"  已将 .xls 转换为临时 .xlsx")
             except Exception as e:
                 logger.error(f"  .xls 转换失败: {e}")
                 raise ValueError(f"无法读取 .xls 文件: {file_path}。转换失败: {e}")
@@ -173,12 +178,7 @@ class BillReader:
         wb = openpyxl.load_workbook(str(actual_path), read_only=True, data_only=True)
         all_items = []
         try:
-            # 确定要读取的Sheet列表
-            if sheet_name:
-                sheets_to_read = [sheet_name]
-            else:
-                sheets_to_read = self._filter_bill_sheets(wb.sheetnames)
-
+            sheets_to_read = [sheet_name] if sheet_name else self._filter_bill_sheets(wb.sheetnames)
             for sn in sheets_to_read:
                 if sn not in wb.sheetnames:
                     logger.warning(f"Sheet '{sn}' 不存在，跳过")
@@ -190,7 +190,6 @@ class BillReader:
                     logger.info(f"  Sheet '{sn}': 读取 {len(items)} 条清单项")
         finally:
             wb.close()
-            # 清理 .xls 转换产生的临时文件
             if temp_xlsx_path:
                 try:
                     Path(temp_xlsx_path).unlink(missing_ok=True)
@@ -201,23 +200,13 @@ class BillReader:
             logger.warning("未读取到任何清单项目，请检查文件格式")
 
         logger.info(f"清单读取完成: 共 {len(all_items)} 条项目")
-
         return all_items
 
     def _convert_xls_to_xlsx(self, xls_path: Path) -> str:
-        """
-        将 .xls 文件转换为临时 .xlsx 文件
-
-        用 xlrd 读取 .xls 数据，openpyxl 写入临时 .xlsx。
-        只转数据，不转格式（后续只需要数据值）。
-
-        返回: 临时 .xlsx 文件路径
-        """
-        import xlrd  # 延迟导入，仅 .xls 场景需要
+        """把 xls 转成临时 xlsx。"""
+        import xlrd
 
         xls_wb = xlrd.open_workbook(str(xls_path))
-
-        # 临时文件放在 output/temp 目录
         temp_dir = Path(__file__).parent.parent / "output" / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
         fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix="xls_convert_", dir=str(temp_dir))
@@ -225,17 +214,14 @@ class BillReader:
 
         try:
             xlsx_wb = openpyxl.Workbook()
-            xlsx_wb.remove(xlsx_wb.active)  # 删除默认空Sheet
-
+            xlsx_wb.remove(xlsx_wb.active)
             for sheet_idx in range(xls_wb.nsheets):
                 xls_sheet = xls_wb.sheet_by_index(sheet_idx)
                 xlsx_sheet = xlsx_wb.create_sheet(title=xls_sheet.name)
-
                 for row_idx in range(xls_sheet.nrows):
                     for col_idx in range(xls_sheet.ncols):
                         cell = xls_sheet.cell(row_idx, col_idx)
                         value = cell.value
-                        # xlrd 日期类型需特殊处理（ctype=3）
                         if cell.ctype == 3:
                             try:
                                 value = xlrd.xldate_as_datetime(value, xls_wb.datemode)
@@ -243,9 +229,7 @@ class BillReader:
                                 pass
                         if value is not None and value != "":
                             xlsx_sheet.cell(row=row_idx + 1, column=col_idx + 1, value=value)
-
             xlsx_wb.save(temp_path)
-            logger.debug(f"  .xls → .xlsx 转换完成: {xls_wb.nsheets} 个Sheet")
         except Exception:
             Path(temp_path).unlink(missing_ok=True)
             raise
@@ -254,105 +238,61 @@ class BillReader:
 
         return temp_path
 
-    # 非清单Sheet的名称关键词（包含这些词的Sheet直接跳过）
-    SKIP_SHEET_KEYWORDS = [
-        "汇总", "报告", "成果", "统计", "封面", "目录", "说明",
-        "合计", "总表", "分析", "对比", "审核", "签章",
-    ]
+    def _filter_bill_sheets(self, sheet_names: list[str]) -> list[str]:
+        """过滤明显非业务 sheet。"""
+        preferred = [
+            sn
+            for sn in sheet_names
+            if any(kw in sn for kw in self.BILL_SHEET_KEYWORDS)
+            and not any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS)
+        ]
+        if preferred:
+            logger.info(f"  识别到候选 Sheet: {preferred}")
+            return preferred
 
-    def _filter_bill_sheets(self, sheet_names: list) -> list:
-        """
-        过滤Sheet列表，只保留可能是清单的Sheet
-
-        规则：
-        1. 优先选名称含"分部分项"或"清单"的Sheet（最可靠的标志）
-        2. 跳过名称含"汇总"/"报告"/"成果"/"统计"等的Sheet
-        3. 剩余的都尝试读取（让_detect_columns再判断）
-        """
-        # 正向识别关键词（含这些词的Sheet大概率是真正的清单）
-        BILL_SHEET_KEYWORDS = ["分部分项", "清单"]
-
-        # 第1步：找名称含"分部分项"或"清单"的Sheet（排除同时含跳过关键词的）
-        bill_sheets = []
-        for sn in sheet_names:
-            has_bill_kw = any(kw in sn for kw in BILL_SHEET_KEYWORDS)
-            if not has_bill_kw:
-                continue
-            # 含正向关键词但同时含"汇总"/"报告"/"成果"/"统计"的不算
-            has_skip = any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS)
-            if not has_skip:
-                bill_sheets.append(sn)
-        if bill_sheets:
-            logger.info(f"  识别到清单Sheet: {bill_sheets}")
-            return bill_sheets
-
-        # 第2步：过滤掉明显不是清单的Sheet
         filtered = []
         for sn in sheet_names:
-            skip = False
-            for kw in self.SKIP_SHEET_KEYWORDS:
-                if kw in sn:
-                    logger.debug(f"  跳过非清单Sheet: '{sn}'（含'{kw}'）")
-                    skip = True
-                    break
-            if not skip:
-                filtered.append(sn)
-
-        return filtered if filtered else sheet_names  # 全过滤了就兜底读全部
+            if any(kw in sn for kw in self.SKIP_SHEET_KEYWORDS):
+                logger.debug(f"  跳过非清单 Sheet: '{sn}'")
+                continue
+            filtered.append(sn)
+        return filtered if filtered else sheet_names
 
     def get_sheet_info(self, file_path: str) -> list[dict]:
-        """
-        获取Excel中所有Sheet的信息，并检测哪些是分部分项工程量表
-
-        返回:
-            Sheet信息列表，每项包含:
-            {
-                "name": Sheet名,
-                "is_bill": 是否检测到分部分项表头（True/False）,
-                "matched_headers": 匹配到的表头关键词数量,
-            }
-        """
+        """获取每个 sheet 的可读性信息。"""
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
 
-        # 假.xlsx（实际是.xls）也要能正确检测Sheet
         actual_path = file_path
         temp_xlsx_path = None
         if is_xls_format(file_path):
-            try:
-                temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
-                actual_path = Path(temp_xlsx_path)
-            except Exception as e:
-                logger.warning(f"get_sheet_info: .xls转换失败: {e}")
-                raise
+            temp_xlsx_path = self._convert_xls_to_xlsx(file_path)
+            actual_path = Path(temp_xlsx_path)
 
         wb = openpyxl.load_workbook(str(actual_path), read_only=True, data_only=True)
         result = []
         try:
             for sn in wb.sheetnames:
                 ws = wb[sn]
-                # 读取前20行检测表头
                 header_rows = []
                 for i, row in enumerate(ws.iter_rows(values_only=True)):
                     if i >= 20:
                         break
                     header_rows.append(row)
-
-                # 检测是否有分部分项的标准表头
                 col_map, _ = self._detect_columns(header_rows)
-                # 至少要有"名称"列才算有效
-                is_bill = "name" in col_map and len(col_map) >= 2
-                matched_count = len(col_map)
-
-                result.append({
-                    "name": sn,
-                    "is_bill": is_bill,
-                    "matched_headers": matched_count,
-                })
+                summary_map, _ = self._detect_summary_columns(header_rows)
+                matched_count = max(len(col_map), len(summary_map))
+                is_bill = bool(summary_map) or ("name" in col_map and len(col_map) >= 2)
+                result.append(
+                    {
+                        "name": sn,
+                        "is_bill": is_bill,
+                        "matched_headers": matched_count,
+                    }
+                )
         finally:
             wb.close()
-            # 清理临时转换文件
             if temp_xlsx_path:
                 try:
                     Path(temp_xlsx_path).unlink(missing_ok=True)
@@ -361,15 +301,6 @@ class BillReader:
         return result
 
     def _read_sheet(self, ws, sheet_name: str) -> list[dict]:
-        """
-        读取单个Sheet的清单数据
-
-        自动识别逻辑：
-        1. 扫描前20行，找到包含"项目编码"或"项目名称"等关键词的表头行
-        2. 确定各列的映射关系
-        3. 从表头下一行开始读取数据
-        """
-        # 读取前20行用于检测表头
         header_rows = []
         all_rows = []
         for i, row in enumerate(ws.iter_rows(values_only=True)):
@@ -380,11 +311,12 @@ class BillReader:
         if not all_rows:
             return []
 
-        # 自动检测表头行和列映射
-        col_map, header_row_idx = self._detect_columns(header_rows)
+        summary_col_map, summary_header_row_idx = self._detect_summary_columns(header_rows)
+        if summary_col_map:
+            return self._read_summary_sheet(all_rows, summary_col_map, summary_header_row_idx, sheet_name)
 
+        col_map, header_row_idx = self._detect_columns(header_rows)
         if not col_map:
-            # 未检测到标准格式，尝试简单格式
             col_map, header_row_idx = self._try_simple_format(header_rows)
 
         if not col_map or "name" not in col_map:
@@ -393,21 +325,16 @@ class BillReader:
 
         logger.debug(f"  列映射: {col_map}, 表头行: {header_row_idx}")
 
-        # 从表头下一行开始读取数据
         items = []
-        current_section = ""  # 当前分部工程名
-
+        current_section = ""
         sheet_bill_seq = 0
+
         for i, row in enumerate(all_rows):
             if i <= header_row_idx:
-                continue  # 跳过表头及之前的行
+                continue
 
-            item = self._parse_bill_row(
-                row, col_map, sheet_name, current_section, source_row=i + 1
-            )
-
+            item = self._parse_bill_row(row, col_map, sheet_name, current_section, source_row=i + 1)
             if item is None:
-                # 检查是否是分部工程标题行（如"土方工程"、"给排水工程"）
                 section = self._detect_section_header(row, col_map)
                 if section:
                     current_section = section
@@ -417,51 +344,28 @@ class BillReader:
             item["sheet_bill_seq"] = sheet_bill_seq
             items.append(item)
 
-        # 后处理：从原始行中提取主材信息，挂到对应清单上
         self._extract_materials_from_rows(items, all_rows, col_map, header_row_idx)
-
         return items
 
-    def _extract_materials_from_rows(self, items: list[dict],
-                                     all_rows: list, col_map: dict,
-                                     header_row_idx: int):
-        """从原始行数据中提取主材行，挂到对应清单项的 source_materials 上
-
-        状态机扫描：
-        - 遇到清单行 → 记住当前清单（通过 source_row 匹配 items 中的项）
-        - 遇到定额行 → 跳过（不是主材）
-        - 遇到主材行 → 提取信息挂到当前清单
-
-        主材行判定（上下文+词法双判定）：
-        - A列为空，且在某个清单块内
-        - B列不是定额编码
-        - B列符合材料编码格式（_is_material_code 或 8位纯数字）
-        - C列有名称
-        """
+    def _extract_materials_from_rows(self, items: list[dict], all_rows: list,
+                                     col_map: dict, header_row_idx: int):
+        """从原始行中提取主材行，挂到对应清单项。"""
         if not items:
             return
 
-        # 建立 source_row → item 的映射，用于快速查找当前清单
         row_to_item = {item["source_row"]: item for item in items if item.get("source_row")}
-
-        # 获取列索引
-        idx_col = col_map.get("index", 0)  # 序号列（A列）
-        code_col = col_map.get("code", 1)  # 编码列（B列）
-        name_col = col_map.get("name", 2)  # 名称列（C列）
-        unit_col = col_map.get("unit")      # 单位列
-        qty_col = col_map.get("quantity")   # 工程量列
-
-        current_item = None  # 当前所属的清单项
+        idx_col = col_map.get("index", 0)
+        code_col = col_map.get("code", 1)
+        name_col = col_map.get("name", 2)
+        unit_col = col_map.get("unit")
+        qty_col = col_map.get("quantity")
+        current_item = None
 
         for i, row in enumerate(all_rows):
-            if i <= header_row_idx:
+            if i <= header_row_idx or not row:
                 continue
-            if not row:
-                continue
+            source_row = i + 1
 
-            source_row = i + 1  # Excel行号从1开始
-
-            # 获取各列值
             def _get(col_idx):
                 if col_idx is not None and col_idx < len(row):
                     v = row[col_idx]
@@ -472,36 +376,24 @@ class BillReader:
             b_val = _get(code_col)
             c_val = _get(name_col)
 
-            # 判断是否是清单行（A列有序号或source_row在items中）
             if source_row in row_to_item:
                 current_item = row_to_item[source_row]
-                if "source_materials" not in current_item:
-                    current_item["source_materials"] = []
+                current_item.setdefault("source_materials", [])
                 continue
 
-            # 没有当前清单 → 跳过（还没遇到第一条清单）
             if current_item is None:
                 continue
 
-            # A列有值（序号）→ 说明是新的清单行但不在items里（可能被过滤了），重置
             if a_val and (a_val.isdigit() or re.fullmatch(r"\d+\.0+", a_val)):
                 current_item = None
                 continue
 
-            # A列为空，B列有值 → 可能是定额行或主材行
-            if (not a_val) and b_val:
-                # 定额行 → 跳过
+            if not a_val and b_val:
                 if _is_quota_code(b_val):
                     continue
 
-                # 主材行判定：B列符合材料编码格式 或 8位纯数字
-                is_material = _is_material_code(b_val)
-                if not is_material:
-                    # 补充判定：8位纯数字（如13030795）
-                    is_material = bool(re.fullmatch(r'\d{7,8}', b_val))
-
+                is_material = _is_material_code(b_val) or bool(re.fullmatch(r"\d{7,8}", b_val))
                 if is_material and c_val:
-                    # 提取单位和工程量
                     mat_unit = _get(unit_col) if unit_col is not None else ""
                     mat_qty_str = _get(qty_col) if qty_col is not None else ""
                     mat_qty = None
@@ -510,104 +402,183 @@ class BillReader:
                             mat_qty = float(mat_qty_str.replace(",", ""))
                         except (ValueError, TypeError):
                             pass
-
-                    current_item["source_materials"].append({
-                        "code": b_val,
-                        "name": c_val,
-                        "unit": mat_unit,
-                        "qty": mat_qty,
-                    })
+                    current_item["source_materials"].append(
+                        {"code": b_val, "name": c_val, "unit": mat_unit, "qty": mat_qty}
+                    )
 
     def _detect_columns(self, header_rows: list) -> tuple[dict, int]:
-        """
-        自动检测列映射
-
-        返回:
-            (col_map, header_row_idx)
-            col_map: {"name": 4, "code": 1, "unit": 17, ...} 列名→列索引
-            header_row_idx: 表头行索引
-
-        识别逻辑：
-        - 表头单元格通常很短（<15个字符），不是长句子
-        - 至少要同时匹配"名称"和另一个列（编码/单位/工程量）才算有效
-        - 避免误把"工程名称：xxx项目"这样的标题行当成表头
-        """
+        """检测标准/非标清单表头。"""
         for row_idx, row in enumerate(header_rows):
             if not row:
                 continue
 
             col_map = {}
-            # 检查这一行的每个单元格
+            field_scores = {}
             for col_idx, cell_value in enumerate(row):
                 if cell_value is None:
                     continue
-                cell_text = str(cell_value).strip().replace("\n", "")
-
-                # 表头单元格通常很短，超过15个字符的不当作表头处理
-                if len(cell_text) > 15:
+                cell_text = str(cell_value)
+                if len(self._normalize_header_text(cell_text)) > 20:
                     continue
 
-                # 尝试匹配已知列名
                 for field, patterns in self.COLUMN_PATTERNS.items():
                     for pattern in patterns:
-                        if pattern in cell_text:
+                        score = self._match_header_pattern(cell_text, pattern)
+                        if score > field_scores.get(field, 0):
                             col_map[field] = col_idx
-                            break
+                            field_scores[field] = score
 
-            # 至少要有"项目名称"和另一个列（编码/单位/工程量之一）才算有效表头
             if "name" in col_map and len(col_map) >= 2:
                 return col_map, row_idx
 
         return {}, -1
 
-    def _try_simple_format(self, header_rows: list) -> tuple[dict, int]:
-        """
-        尝试识别简单格式（没有标准表头，直接就是数据行）
+    def _detect_summary_columns(self, header_rows: list) -> tuple[dict, int]:
+        """识别工程量汇总表这类半结构化输入。"""
+        for row_idx, row in enumerate(header_rows):
+            if not row:
+                continue
 
-        简单格式特征：
-        - 第一列是序号或编码
-        - 第二列是名称
-        - 可能有单位和工程量列
-        """
+            col_map = {}
+            field_scores = {}
+            for col_idx, cell_value in enumerate(row):
+                if cell_value is None:
+                    continue
+                cell_text = str(cell_value)
+                for field, patterns in self.SUMMARY_COLUMN_PATTERNS.items():
+                    for pattern in patterns:
+                        score = self._match_header_pattern(cell_text, pattern)
+                        if score > field_scores.get(field, 0):
+                            col_map[field] = col_idx
+                            field_scores[field] = score
+
+            if (
+                "quantity" in col_map
+                and "unit" in col_map
+                and "qty_name" in col_map
+                and ("name" in col_map or "type" in col_map or "calc_item" in col_map)
+            ):
+                return col_map, row_idx
+
+        return {}, -1
+
+    def _read_summary_sheet(self, all_rows: list, col_map: dict,
+                            header_row_idx: int, sheet_name: str) -> list[dict]:
+        """把工程量汇总表压成标准 bill item。"""
+        items = []
+        seen_keys = set()
+
+        def get_val(row, field):
+            idx = col_map.get(field)
+            if idx is None or idx >= len(row) or row[idx] is None:
+                return ""
+            return str(row[idx]).strip()
+
+        for i, row in enumerate(all_rows):
+            if i <= header_row_idx or not row:
+                continue
+
+            qty_name = get_val(row, "qty_name")
+            unit = get_val(row, "unit")
+            quantity_str = get_val(row, "quantity")
+            if not unit or not quantity_str:
+                continue
+
+            # 汇总表通常是一条明细 + 一条合计，先保留非合计行。
+            if "合计" in qty_name:
+                continue
+
+            try:
+                quantity = float(quantity_str.replace(",", ""))
+            except (ValueError, TypeError):
+                continue
+
+            calc_item = get_val(row, "calc_item")
+            item_type = get_val(row, "type")
+            item_name = get_val(row, "name")
+            system_type = get_val(row, "system_type")
+            material = get_val(row, "material")
+            material_conn = get_val(row, "material_conn")
+            spec = get_val(row, "spec")
+            laying = get_val(row, "laying")
+
+            name = item_name or item_type or calc_item
+            if not name:
+                continue
+
+            desc_parts = []
+            for label, value in [
+                ("系统", system_type),
+                ("计算项目", calc_item if calc_item and calc_item != name else ""),
+                ("类型", item_type if item_type and item_type != name else ""),
+                ("材质", material),
+                ("材质/连接", material_conn),
+                ("规格", spec),
+                ("敷设/连接", laying),
+                ("工程量名称", qty_name),
+            ]:
+                clean_value = (value or "").strip()
+                if clean_value and clean_value != "<空>":
+                    desc_parts.append(f"{label}:{clean_value}")
+            description = " / ".join(desc_parts)
+
+            dedupe_key = (sheet_name, name, description, unit, quantity)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+
+            search_text = text_parser.build_search_text(name, description)
+            params = text_parser.parse(f"{name} {description}")
+            items.append(
+                {
+                    "index": "",
+                    "code": "",
+                    "name": name,
+                    "description": description,
+                    "unit": unit,
+                    "quantity": quantity,
+                    "search_text": search_text,
+                    "params": params,
+                    "sheet_name": sheet_name,
+                    "section": system_type or "",
+                    "source_row": i + 1,
+                }
+            )
+
+        return items
+
+    def _try_simple_format(self, header_rows: list) -> tuple[dict, int]:
+        """识别没有标准表头的简单表格。"""
         for row_idx, row in enumerate(header_rows):
             if not row or len(row) < 2:
                 continue
 
             first_val = str(row[0] or "").strip()
             second_val = str(row[1] or "").strip()
-
-            # 检查第一列是否像编码（数字开头或字母+数字）
-            if re.match(r'^[A-Za-z]?\d', first_val) and len(second_val) > 2:
-                # 看起来是简单数据格式
+            if re.match(r"^[A-Za-z]?\d", first_val) and len(second_val) > 1:
                 col_map = {"code": 0, "name": 1}
                 if len(row) > 2 and row[2]:
                     col_map["unit"] = 2
                 if len(row) > 3 and row[3]:
                     try:
-                        float(str(row[3]))
+                        float(str(row[3]).replace(",", ""))
                         col_map["quantity"] = 3
                     except (ValueError, TypeError):
                         pass
-                return col_map, row_idx - 1  # 没有表头行
+                return col_map, row_idx - 1
 
         return {}, -1
 
     def _parse_bill_row(self, row, col_map: dict, sheet_name: str,
                         section: str, source_row: int = None) -> dict | None:
-        """
-        解析一行清单数据
-
-        返回:
-            清单项目字典，或None（无效行）
-        """
+        """解析单行清单。"""
         if not row:
             return None
 
         def get_val(field):
-            if field in col_map:
-                idx = col_map[field]
-                if idx < len(row) and row[idx] is not None:
-                    return str(row[idx]).strip()
+            idx = col_map.get(field)
+            if idx is not None and idx < len(row) and row[idx] is not None:
+                return str(row[idx]).strip()
             return ""
 
         name = get_val("name")
@@ -616,69 +587,63 @@ class BillReader:
         unit = get_val("unit")
         quantity_str = get_val("quantity")
 
-        # 名称为空则跳过
         if not name:
             return None
 
-        # 过滤表头行、合计行、概况说明等
-        skip_keywords = ["合计", "小计", "序号", "项目名称", "总计", "分部分项",
-                         "措施项目", "工程概况", "工程名称", "总 说 明", "说明",
-                         "人工小计", "材料小计", "机械小计",
-                         "管理费", "利润", "税金", "规费", "安全文明"]
+        skip_keywords = [
+            "合计",
+            "小计",
+            "序号",
+            "项目名称",
+            "总计",
+            "分部分项",
+            "措施项目",
+            "工程概况",
+            "工程名称",
+            "总说明",
+            "说明",
+            "人工小计",
+            "材料小计",
+            "机械小计",
+            "管理费",
+            "利润",
+            "税金",
+            "规费",
+            "安全文明",
+        ]
         if any(kw in name for kw in skip_keywords):
             return None
 
-        # 过滤辅助信息行：如"长度(m)"、"数量(个)"、"重量(kg)"等
-        # 这些是自动编清单中配管/灯具等主清单项下面的属性行，不是独立清单项
-        if re.match(r'^(长度|数量|重量|面积|体积|周长|高度|宽度|厚度)\s*[\(（]', name):
+        if re.match(r"^(长度|数量|重量|面积|体积|周长|高度|宽度|厚度)\s*[\(（]", name):
             return None
 
-        # 过滤过长的描述行（超过100字符的通常是工程概况等说明文字，不是清单项）
         if len(name) > 100:
             return None
 
-        # 解析工程量
         quantity = None
         if quantity_str:
             try:
-                q = quantity_str.replace(",", "").strip()
-                quantity = float(q)
+                quantity = float(quantity_str.replace(",", "").strip())
             except (ValueError, TypeError):
                 pass
 
-        # 硬过滤：没有编码、没有工程量、没有单位的行 → 不是清单项
-        # 真正的清单项至少有以下之一：项目编码、工程量、计量单位
-        # 分部/小节标题（如"给排水工程"、"管道安装"）这三项全为空
-        has_code = bool(code and re.search(r'\d', code))  # 编码非空且含数字
-        has_quantity = quantity is not None                 # 有工程量
-        has_unit = bool(unit)                               # 有计量单位
+        has_code = bool(code and re.search(r"\d", code))
+        has_quantity = quantity is not None
+        has_unit = bool(unit)
         if not has_code and not has_quantity and not has_unit:
-            return None  # 分部/小节标题行，不是清单项
+            return None
 
-        # 过滤分部分项小节行：编码是 C.x.x 格式的分类编码（如C.4.3），
-        # 没有工程量、没有单位、没有特征描述，只是章节标题不需要套定额
-        if (code and re.match(r'^[A-Z]\.\d', code)
-                and not has_quantity and not has_unit and not description):
-            return None  # 分部分项章节标题行，不是清单项
+        if code and re.match(r"^[A-Z]\.\d", code) and not has_quantity and not has_unit and not description:
+            return None
 
-        # 过滤定额行：编码为定额格式（如C4-4-31、5-325、D00003等），不是清单项
-        # 广联达导出的预算文件中，清单行和定额行交替排列：
-        #   清单行编码为12位数字（如030402011001），定额行编码为 X-XXX 格式（如C4-4-31）
         if _is_quota_code(code):
-            return None  # 定额编号格式，跳过
+            return None
 
-        # 过滤材料行：编码为材料格式（如CL17067060@2、ZCGL170460@5、26010101Z@2），不是清单项
-        # "带定额"的广联达文件中，每条清单下面有定额行+材料行，材料行也要跳过
         if _is_material_code(code):
-            return None  # 材料编码格式，跳过
+            return None
 
-        # 构建搜索文本（合并名称+特征描述，去除无用信息）
         search_text = text_parser.build_search_text(name, description)
-
-        # 提取结构化参数
         params = text_parser.parse(f"{name} {description}")
-
-        # 获取序号
         index_str = get_val("index")
 
         return {
@@ -696,26 +661,16 @@ class BillReader:
         }
 
     def _detect_section_header(self, row, col_map: dict) -> str | None:
-        """
-        检测是否是分部工程标题行
-
-        特征：
-        - 序号列为空（标准清单）
-        - 或序号列有值但名称像分节标题（手填清单，如"二、一层照明"）
-        - 编码列或名称列有文字
-        - 文字不是数据行（不含编码格式的数字）
-        """
+        """检测分部/章节标题行。"""
         if not row:
             return None
 
-        # 获取名称列文本（后面多处用到）
         name_text = ""
         if "name" in col_map:
             name_idx = col_map["name"]
             if name_idx < len(row) and row[name_idx]:
                 name_text = str(row[name_idx]).strip()
 
-        # 检查序号列
         has_index = False
         if "index" in col_map:
             idx_val = row[col_map["index"]] if col_map["index"] < len(row) else None
@@ -723,18 +678,13 @@ class BillReader:
                 has_index = True
 
         if not has_index:
-            # 情况1：序号为空（标准清单的分部标题，原有逻辑）
             for field in ["code", "name"]:
-                if field in col_map:
-                    idx = col_map[field]
-                    if idx < len(row) and row[idx]:
-                        text = str(row[idx]).strip()
-                        # 分部工程标题通常是纯中文（如"给排水工程"、"电气工程"）
-                        if len(text) >= 2 and not re.match(r'^\d', text):
-                            return text
+                idx = col_map.get(field)
+                if idx is not None and idx < len(row) and row[idx]:
+                    text = str(row[idx]).strip()
+                    if len(text) >= 2 and not re.match(r"^\d", text):
+                        return text
         else:
-            # 情况2：有序号但名称像分节标题（手填清单场景）
-            # 条件：名称以中文数字序号开头 + 该行没有单位和工程量
             if name_text and self._looks_like_section_title(name_text):
                 has_unit = False
                 has_qty = False
@@ -750,7 +700,6 @@ class BillReader:
                             has_qty = True
                         except (ValueError, TypeError):
                             pass
-                # 三重条件：标题格式 + 无单位 + 无工程量
                 if not has_unit and not has_qty:
                     return name_text
 
@@ -758,48 +707,34 @@ class BillReader:
 
     @staticmethod
     def _looks_like_section_title(text: str) -> bool:
-        """判断文本是否像分节标题（而非清单数据行）
-
-        手填清单中，分节标题混在数据行里，格式如：
-        - "一、一层照明、网球羽毛球场地"
-        - "二、一层羽毛球网球夹层照明"
-        - "第三部分 消防系统"
-        """
         if len(text) < 2:
             return False
-        # 以中文数字序号开头（如"一、""二、""十二、"）
-        if re.match(r'^[一二三四五六七八九十]+[、.\s]', text):
+        if re.match(r"^[一二三四五六七八九十百]+[、\s]", text):
             return True
-        # 以"第X部分/章/节"开头
-        if re.match(r'^第[一二三四五六七八九十\d]+[部章节]', text):
+        if re.match(r"^第[一二三四五六七八九十百\d]+[部章节]", text):
             return True
         return False
 
 
-# ================================================================
-# 命令行入口：测试清单读取
-# ================================================================
-
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="读取清单Excel并预览前N条解析结果")
-    parser.add_argument("input", help="清单Excel路径")
-    parser.add_argument("--limit", type=int, default=20, help="预览条数，默认20")
+    parser = argparse.ArgumentParser(description="读取清单 Excel 并预览前 N 条结果")
+    parser.add_argument("input", help="清单 Excel 路径")
+    parser.add_argument("--limit", type=int, default=20, help="预览条数，默认 20")
     args = parser.parse_args()
 
     reader = BillReader()
     items = reader.read_excel(args.input)
 
-    logger.info(f"\n前{min(len(items), args.limit)}条清单项:")
-    for item in items[:args.limit]:
+    logger.info(f"\n前 {min(len(items), args.limit)} 条清单项:")
+    for item in items[: args.limit]:
         section = (item.get("section") or "")[:10]
         logger.info(
             f"  [{item.get('index', '')}] {item.get('code', '')} | {item.get('name', '')[:30]} | "
             f"{item.get('unit', '')} | {item.get('quantity', '')} | 分部:{section}"
         )
         if item.get("description"):
-            # 只打印第一行特征描述
             desc_line1 = item["description"].split("\n")[0][:50]
             logger.info(f"    特征: {desc_line1}")
         if item.get("params"):

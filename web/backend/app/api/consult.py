@@ -14,14 +14,11 @@
 """
 
 import asyncio
-import base64
 import json
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +28,6 @@ from app.models.consult import ConsultSubmission
 from app.models.user import User
 from app.auth.deps import get_current_user
 from app.auth.permissions import require_admin
-from app.config import UPLOAD_DIR, UPLOAD_MAX_MB
 from app.schemas.consult import (
     ConsultSubmitRequest, ConsultReviewRequest,
     ChatRequest, ChatMessage, ParsedItem,
@@ -169,21 +165,6 @@ def _parse_extract_response(raw_text: str) -> list[dict]:
         return []
 
 
-def _save_chat_image(content: bytes, user_id: uuid.UUID, filename: str) -> str:
-    """保存对话中的图片，返回相对于 UPLOAD_DIR 的路径（不暴露服务器绝对路径）"""
-    consult_dir = UPLOAD_DIR / "consult" / str(user_id)
-    consult_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    # 加 uuid4 短码避免同一秒上传同名文件时覆盖
-    unique_suffix = uuid.uuid4().hex[:8]
-    safe_name = f"{timestamp}_{unique_suffix}_{Path(filename).name}"
-    save_path = consult_dir / safe_name
-    with open(save_path, "wb") as f:
-        f.write(content)
-    # 返回相对路径（如 consult/{user_id}/20260225_abc12345_xxx.png）
-    return str(save_path.relative_to(UPLOAD_DIR))
-
-
 # ============================================================
 # 端点1：多轮对话
 # ============================================================
@@ -219,25 +200,7 @@ async def chat(
             api_messages.append({"role": "assistant", "content": msg.content})
         else:
             # 用户消息：可能包含文字+图片
-            if msg.image_base64 and msg.image_type:
-                # 图文混合消息
-                api_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": msg.image_type,
-                                "data": msg.image_base64,
-                            },
-                        },
-                        {"type": "text", "text": msg.content},
-                    ],
-                })
-            else:
-                # 纯文字消息
-                api_messages.append({"role": "user", "content": msg.content})
+            api_messages.append({"role": "user", "content": msg.content})
 
     try:
         reply = await asyncio.to_thread(
@@ -252,58 +215,6 @@ async def chat(
 
 # ============================================================
 # 端点2：上传对话中的图片
-# ============================================================
-
-@router.post("/upload-image")
-async def upload_chat_image(
-    file: UploadFile = File(description="对话中的图片"),
-    user: User = Depends(get_current_user),
-):
-    """上传对话中的图片
-
-    返回 base64 编码和 MIME 类型，前端存入消息历史中。
-    同时保存原图到服务器（审核时可查看）。
-    """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="文件名不能为空")
-
-    allowed_ext = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
-    ext = Path(file.filename).suffix.lower()
-    if ext not in allowed_ext:
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的图片格式 {ext}，请上传 {', '.join(allowed_ext)}"
-        )
-
-    content = await file.read()
-    # 图片限制 10MB（比通用 UPLOAD_MAX_MB 更严格，避免 base64 膨胀后过大）
-    image_max_size = min(UPLOAD_MAX_MB, 10) * 1024 * 1024
-    if len(content) > image_max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"图片过大（{len(content) / 1024 / 1024:.1f}MB），最大允许{min(UPLOAD_MAX_MB, 10)}MB"
-        )
-
-    # 保存原图
-    save_path = _save_chat_image(content, user.id, file.filename)
-
-    # 返回 base64
-    mime_map = {
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
-    }
-    media_type = mime_map.get(ext, "image/png")
-    image_base64 = base64.b64encode(content).decode("utf-8")
-
-    return {
-        "image_base64": image_base64,
-        "image_type": media_type,
-        "image_path": save_path,
-    }
-
-
-# ============================================================
-# 端点3：从对话中提取结果
 # ============================================================
 
 @router.post("/extract")
@@ -324,23 +235,7 @@ async def extract_results(
         if msg.role == "assistant":
             api_messages.append({"role": "assistant", "content": msg.content})
         elif msg.role == "user":
-            if msg.image_base64 and msg.image_type:
-                api_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": msg.image_type,
-                                "data": msg.image_base64,
-                            },
-                        },
-                        {"type": "text", "text": msg.content},
-                    ],
-                })
-            else:
-                api_messages.append({"role": "user", "content": msg.content})
+            api_messages.append({"role": "user", "content": msg.content})
 
     # 加提取指令
     extract_prompt = (
@@ -396,36 +291,9 @@ async def submit_consult(
     if not req.province or not req.province.strip():
         raise HTTPException(status_code=400, detail="省份不能为空")
 
-    # image_path 可选（对话模式可能没有图片）
-    # 前端传的是相对路径（相对于 UPLOAD_DIR），后端拼接后校验
-    image_path = ""
-    if req.image_path:
-        try:
-            # 防止路径穿越：不允许 .. 或绝对路径
-            rel = req.image_path.replace("\\", "/")
-            if ".." in rel or rel.startswith("/"):
-                raise HTTPException(status_code=400, detail="图片路径非法")
-            image_resolved = (UPLOAD_DIR / rel).resolve()
-            upload_resolved = UPLOAD_DIR.resolve()
-            # 校验拼接后仍在 UPLOAD_DIR 内
-            if not image_resolved.is_relative_to(upload_resolved):
-                raise HTTPException(status_code=400, detail="图片路径非法")
-            # 校验图片路径属于当前用户（路径格式: UPLOAD_DIR/consult/{user_id}/...）
-            user_dir = upload_resolved / "consult" / str(user.id)
-            if not image_resolved.is_relative_to(user_dir):
-                raise HTTPException(status_code=400, detail="图片路径非法（不属于当前用户）")
-            # 校验文件确实存在
-            if not image_resolved.is_file():
-                raise HTTPException(status_code=400, detail="图片文件不存在")
-            image_path = str(image_resolved)
-        except HTTPException:
-            raise
-        except (ValueError, OSError):
-            raise HTTPException(status_code=400, detail="图片路径非法")
-
     submission = ConsultSubmission(
         user_id=user.id,
-        image_path=image_path,
+        image_path="",
         parsed_items=[item.model_dump() for item in req.items],
         submitted_items=[item.model_dump() for item in req.items],
         province=req.province,
@@ -647,36 +515,3 @@ async def review_submission(
 # 端点8：管理员查看咨询图片
 # ============================================================
 
-@router.get("/admin/image")
-async def admin_view_image(
-    path: str,
-    admin: User = Depends(require_admin),
-):
-    """管理员查看咨询上传的图片
-
-    参数 path 为相对于 UPLOAD_DIR 的路径（如 consult/{user_id}/xxx.png）。
-    安全校验：只允许访问 consult/ 子目录下的文件，防止路径穿越攻击。
-    """
-    # 安全校验：路径必须以 consult/ 开头，不允许 .. 穿越
-    if not path or ".." in path or not path.startswith("consult/"):
-        raise HTTPException(status_code=400, detail="非法路径")
-
-    file_path = UPLOAD_DIR / path
-    # 确保 resolve 后的路径仍在 UPLOAD_DIR 下（防止符号链接穿越）
-    try:
-        resolved = file_path.resolve()
-        upload_resolved = UPLOAD_DIR.resolve()
-        if not str(resolved).startswith(str(upload_resolved)):
-            raise HTTPException(status_code=400, detail="非法路径")
-    except Exception:
-        raise HTTPException(status_code=400, detail="非法路径")
-
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="图片不存在")
-
-    # 校验扩展名
-    allowed_ext = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
-    if file_path.suffix.lower() not in allowed_ext:
-        raise HTTPException(status_code=400, detail="不支持的文件类型")
-
-    return FileResponse(str(file_path))

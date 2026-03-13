@@ -301,9 +301,21 @@ def _execute_local_match(session, task, task_id, file_path, params,
 
     # 创建进度回调（匹配过程中实时更新数据库进度）
     progress_cb = _make_progress_callback(session, task, output_dir)
+    from src.excel_compat import ensure_openpyxl_input
+
+    original_input = Path(file_path)
+    processing_input, normalize_result = ensure_openpyxl_input(
+        original_input,
+        Path(output_dir) / "input_importable.xlsx",
+    )
+    if normalize_result:
+        logger.info(
+            f"任务 {task_id}: 已自动转换为可导入的 .xlsx "
+            f"(method={normalize_result.method}, preserved={normalize_result.preserved_formatting})"
+        )
 
     result = auto_quota_main.run(
-        input_file=file_path,
+        input_file=str(processing_input),
         mode=params.get("mode", "search"),
         output=excel_output,
         province=params.get("province"),
@@ -315,6 +327,7 @@ def _execute_local_match(session, task, task_id, file_path, params,
         no_experience=params.get("no_experience", False),
         interactive=False,
         progress_callback=progress_cb,
+        original_file=str(original_input),
     )
 
     return result

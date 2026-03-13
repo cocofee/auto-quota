@@ -24,6 +24,8 @@ from fastapi import FastAPI, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 
+from src.excel_compat import ensure_openpyxl_input, validate_excel_upload
+
 # 加载项目 .env
 load_dotenv()
 
@@ -141,9 +143,19 @@ async def create_match(
         work_dir = TEMP_DIR / match_id
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        # 保存上传的Excel文件
-        input_path = work_dir / "input.xlsx"
         content = await file.read()
+        filename = file.filename or "input.xlsx"
+        try:
+            info = validate_excel_upload(filename, content[:8])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if info.is_mislabeled:
+            input_name = f"input{info.normalized_suffix}"
+        else:
+            input_name = f"input{Path(filename).suffix.lower()}"
+
+        # 保存上传的Excel文件
+        input_path = work_dir / input_name
         input_path.write_bytes(content)
 
         # 初始化任务状态
@@ -271,10 +283,16 @@ def _run_match(match_id: str, params: dict):
         # 输出路径
         excel_output = str(work_dir / "output.xlsx")
         json_output = str(work_dir / "results.json")
+        processing_input, normalize_result = ensure_openpyxl_input(
+            params["input_file"],
+            work_dir / "input_importable.xlsx",
+        )
+        if normalize_result:
+            _tasks[match_id]["message"] = "已自动转换为可导入的 .xlsx，开始匹配..."
 
         # 调用核心匹配函数
         result = auto_quota_main.run(
-            input_file=params["input_file"],
+            input_file=str(processing_input),
             mode=params["mode"],
             output=excel_output,
             province=params["province"],
@@ -285,6 +303,7 @@ def _run_match(match_id: str, params: dict):
             json_output=json_output,
             interactive=False,  # API调用不能交互
             progress_callback=progress_cb,
+            original_file=params["input_file"],
         )
 
         # 标记完成
