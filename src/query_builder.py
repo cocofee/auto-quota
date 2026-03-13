@@ -797,6 +797,10 @@ def _normalize_bill_name(name: str) -> str:
 
         # ===== 按灯具类型映射到定额搜索名称 =====
 
+        # 格栅灯 → 嵌入式灯具安装（不是荧光灯！"五头格栅灯"的"头"是光源数不是管数）
+        if "格栅灯" in cleaned:
+            return "嵌入式灯具安装"
+
         # 吸顶灯 → 普通灯具安装 吸顶灯（含防水式吸顶灯）
         if "吸顶灯" in cleaned:
             if "防水" in cleaned or "防尘" in cleaned:
@@ -809,12 +813,31 @@ def _normalize_bill_name(name: str) -> str:
                 return "防水防尘灯安装 壁灯"
             return "壁灯安装 小型壁灯"
 
-        # 防爆灯 → 密闭灯安装 防爆灯
+        # 防爆灯 → 仅"防爆密闭"走密闭灯，其他防爆灯走荧光灯安装
+        # 原因：很多省份"防爆荧光灯"走荧光灯定额，不走密闭灯定额
         if "防爆" in cleaned and "灯" in cleaned:
-            return "密闭灯安装 防爆灯"
+            if "密闭" in cleaned or "密封" in cleaned:
+                return "密闭灯安装 防爆灯"
+            # 防爆荧光灯 → 荧光灯具安装（带防爆修饰词帮BM25区分）
+            return "荧光灯具安装 防爆"
 
-        # 防水防尘灯（非壁灯、非吸顶灯的其他防水灯）
+        # 防水防尘灯：当同时有管数信息时，管数优先走荧光灯安装
+        # 原因："防水型单管灯(管吊)"的正确定额是"荧光灯具安装 吊管式 单管"
+        # 防水只是附加属性，安装工艺和普通荧光灯一样
         if ("防水" in cleaned or "防尘" in cleaned or "防潮" in cleaned) and "灯" in cleaned:
+            tube_match = re.search(r'(单管|双管|三管)', cleaned)
+            if tube_match:
+                # 有管数 → 走荧光灯安装（管数优先于防水属性）
+                install = "吸顶式"  # 默认
+                if "吊链" in cleaned:
+                    install = "吊链式"
+                elif "吊管" in cleaned or "吊杆" in cleaned or "管吊" in cleaned or "吊装" in cleaned:
+                    install = "吊管式"
+                elif "嵌入" in cleaned:
+                    install = "嵌入式"
+                elif "壁装" in cleaned:
+                    install = "壁装式"
+                return f"荧光灯具安装 {install} {tube_match.group(1)}"
             return "防水防尘灯安装"
 
         # 线槽灯 → LED灯带 灯管式（线槽灯安装在线槽内，安装工艺接近LED灯带）
@@ -872,10 +895,11 @@ def _normalize_bill_name(name: str) -> str:
 
         # 集中电源灯 → 智能应急灯具安装（需在疏散/标志灯之前判断）
         if "集中电源" in cleaned:
-            if "疏散照明" in cleaned:
-                return "智能应急灯具及标志灯具安装 应急灯"
             if "指示" in cleaned or "标志" in cleaned:
                 return "智能应急灯具及标志灯具安装 标志灯"
+            # 集中电源疏散照明灯 → 吸顶式应急灯（不是嵌入式）
+            if "疏散照明" in cleaned or "照明" in cleaned:
+                return "智能应急灯具及标志灯具安装 应急灯 吸顶"
             return "智能应急灯具及标志灯具安装"
 
         # 应急灯/应急照明灯
@@ -883,18 +907,22 @@ def _normalize_bill_name(name: str) -> str:
             # 消防应急照明灯 → 标志/诱导灯安装（不是荧光灯！）
             # 消防应急照明灯是消防系统的一部分，套标志灯定额
             if "消防" in cleaned:
-                if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
+                if "双面" in cleaned or "吊杆" in cleaned:
+                    return "标志、诱导灯安装 吊杆式"
+                if "壁" in cleaned or "单面" in cleaned:
                     return "标志、诱导灯安装 壁式"
                 return "标志、诱导灯安装"
             # 应急+指示灯 → 标志灯（不是荧光灯）
             # 例如"应急疏散指示灯"是标志灯，不是照明灯
             if "指示" in cleaned:
-                if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
-                    return "标志、诱导灯安装 壁式"
                 if "嵌入" in cleaned or "地面" in cleaned:
                     return "标志、诱导灯安装 地面嵌入式"
                 if "吸顶" in cleaned:
                     return "标志、诱导灯安装 吸顶式"
+                if "双面" in cleaned or "吊杆" in cleaned:
+                    return "标志、诱导灯安装 吊杆式"
+                if "壁" in cleaned or "单面" in cleaned:
+                    return "标志、诱导灯安装 壁式"
                 return "标志、诱导灯安装"
             if "吸顶" in cleaned:
                 return "普通灯具安装 吸顶灯"
@@ -905,12 +933,15 @@ def _normalize_bill_name(name: str) -> str:
 
         # 疏散指示灯/标志灯/出口指示灯 → 标志、诱导灯安装
         if re.search(r'疏散|指示灯|标志灯|诱导灯|出口.*灯|楼层.*灯', cleaned):
-            if "壁" in cleaned or "单面" in cleaned or "双面" in cleaned:
-                return "标志、诱导灯安装 壁式"
             if "嵌入" in cleaned or "地面" in cleaned:
                 return "标志、诱导灯安装 地面嵌入式"
             if "吸顶" in cleaned:
                 return "标志、诱导灯安装 吸顶式"
+            # 双面灯物理上必须悬挂展示，走吊杆式
+            if "双面" in cleaned or "吊杆" in cleaned or "吊装" in cleaned:
+                return "标志、诱导灯安装 吊杆式"
+            if "壁" in cleaned or "单面" in cleaned:
+                return "标志、诱导灯安装 壁式"
             return "标志、诱导灯安装 壁式"
 
         # 单管灯/双管灯/三管灯（不含"荧光"字样的简称）→ 荧光灯具安装

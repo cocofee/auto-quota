@@ -204,10 +204,10 @@ class TestLongTailLamps:
         assert "轨道" in result
 
     def test_explosion_proof_lamp(self):
-        """防爆灯 → 密闭灯安装 防爆灯"""
+        """防爆灯 → 荧光灯具安装 防爆（仅防爆密闭才走密闭灯）"""
         result = _normalize_bill_name("防爆灯")
         assert "防爆" in result
-        assert "密闭灯安装" in result
+        assert "荧光灯" in result
 
     def test_well_shaft_lamp(self):
         """井道灯 → 密闭灯安装"""
