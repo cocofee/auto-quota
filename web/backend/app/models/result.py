@@ -52,8 +52,8 @@ class MatchResult(Base):
     # 清单项描述/特征（如 "镀锌钢管DN25 沟槽连接"）
     bill_description: Mapped[str] = mapped_column(Text, default="")
 
-    # 单位（如 "m", "个", "组"）
-    bill_unit: Mapped[str] = mapped_column(String(20), default="")
+    # 单位（如 "m", "个", "组"，脏数据可能很长所以放宽到50）
+    bill_unit: Mapped[str] = mapped_column(String(50), default="")
 
     # 工程量
     bill_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
