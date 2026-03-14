@@ -331,6 +331,129 @@ def run_route_test(detail: bool = False) -> dict:
     return result
 
 
+def run_neighbor_test(detail: bool = False) -> dict:
+    """测试邻居投票对路由准确率的提升。
+
+    思路：按专业分组（模拟真实Excel每个sheet一个专业），
+    每组用match_bill_codes做批量匹配（含邻居投票），对比逐条匹配结果。
+    """
+    from collections import defaultdict
+
+    papers_dir = PROJECT_ROOT / "tests" / "benchmark_papers"
+    if not papers_dir.exists():
+        return {"total": 0, "correct": 0, "accuracy": 0}
+
+    total = 0
+    correct_single = 0  # 逐条匹配正确数（无邻居）
+    correct_batch = 0   # 批量匹配正确数（有邻居投票）
+    corrected_items = []  # 被邻居投票修正的项目
+
+    for fpath in sorted(papers_dir.glob("*.json")):
+        if fpath.name.startswith("_"):
+            continue
+        if "脏数据" in fpath.name:
+            continue
+
+        data = json.loads(fpath.read_text(encoding="utf-8"))
+        items = data.get("items", [])
+        paper_name = data.get("province", fpath.stem)
+        expected_major = _get_expected_major(fpath.stem)
+        is_install_paper = (expected_major == "03")
+
+        if not is_install_paper:
+            continue  # 非安装试卷邻居投票意义不大（都是同大类）
+
+        # 按专业分组（模拟真实Excel每个sheet一个专业）
+        # 真实Excel里，给排水项目在"给排水"sheet，电气项目在"电气"sheet
+        groups = defaultdict(list)  # specialty -> [(bill_item, expected_appendix)]
+        for item in items:
+            bill_name = item.get("bill_name", "").strip()
+            specialty = item.get("specialty", "").strip()
+            bill_text = item.get("bill_text", "")
+
+            if not bill_name or not specialty or not specialty.startswith("C"):
+                continue
+
+            expected_app = QUOTA_TO_APPENDIX.get(specialty, "")
+            if not expected_app:
+                continue
+
+            desc = bill_text.replace(bill_name, "").strip()
+            groups[specialty].append(({
+                "name": bill_name,
+                "description": desc,
+            }, expected_app))
+
+        # 逐组处理
+        for specialty, group_items in groups.items():
+            if len(group_items) < 2:
+                # 单条没有邻居效果
+                for bi, exp_app in group_items:
+                    result = match_bill_code(bi["name"], bi["description"])
+                    total += 1
+                    if result and result.get("appendix") == exp_app:
+                        correct_single += 1
+                        correct_batch += 1
+                continue
+
+            # 逐条匹配（无邻居上下文）
+            for bi, exp_app in group_items:
+                result = match_bill_code(bi["name"], bi["description"])
+                total += 1
+                if result and result.get("appendix") == exp_app:
+                    correct_single += 1
+
+            # 批量匹配（有邻居投票）— 同专业的项目共享section
+            batch_items = []
+            expected_labels = []
+            for bi, exp_app in group_items:
+                batch_items.append({
+                    "name": bi["name"],
+                    "description": bi["description"],
+                    # 同专业共享section（模拟同一sheet内的分部）
+                    "section": f"{paper_name}_{specialty}",
+                    "sheet_name": "",
+                })
+                expected_labels.append(exp_app)
+
+            match_bill_codes(batch_items)
+
+            for bi, exp_app in zip(batch_items, expected_labels):
+                bm = bi.get("bill_match")
+                got_app = bm.get("appendix", "") if bm else ""
+                if got_app == exp_app:
+                    correct_batch += 1
+
+                # 记录被邻居投票修正的项目
+                if bm and "_neighbor" in bm.get("match_method", ""):
+                    corrected_items.append({
+                        "name": bi["name"],
+                        "paper": paper_name[:10],
+                        "got": got_app,
+                        "expected": exp_app,
+                        "ok": got_app == exp_app,
+                    })
+
+    if detail and corrected_items:
+        print(f"\n  邻居投票修正了{len(corrected_items)}条:")
+        for c in corrected_items[:20]:
+            status = "[OK]" if c["ok"] else "[NG]"
+            print(f"    {status} {c['name']:15s} → {c['got']}  "
+                  f"期望:{c['expected']}  [{c['paper']}]")
+
+    result = {
+        "total": total,
+        "correct_single": correct_single,
+        "accuracy_single": round(correct_single / max(total, 1) * 100, 1),
+        "correct_batch": correct_batch,
+        "accuracy_batch": round(correct_batch / max(total, 1) * 100, 1),
+        "corrected": len(corrected_items),
+        "corrected_ok": sum(1 for c in corrected_items if c["ok"]),
+        "corrected_wrong": sum(1 for c in corrected_items if not c["ok"]),
+    }
+    return result
+
+
 # ============================================================
 # 第三部分：12位编码编序测试
 # ============================================================
@@ -405,7 +528,8 @@ def run_seq_test(detail: bool = False) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="编清单评测工具")
     parser.add_argument("--detail", action="store_true", help="打印每条详情")
-    parser.add_argument("--only", choices=["code", "route", "seq"], help="只跑指定测试")
+    parser.add_argument("--only", choices=["code", "route", "seq", "neighbor"],
+                        help="只跑指定测试")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -435,9 +559,25 @@ def main():
         if r["error_count"] > 0:
             print(f"  无hint错误: {r['error_count']}条")
 
-    # 测试3：12位编码编序
+    # 测试3：邻居投票效果
+    if not args.only or args.only == "neighbor":
+        print(f"\n[测试3] 邻居投票（batch匹配 vs 单条匹配）")
+        print("-" * 40)
+        r = run_neighbor_test(detail=args.detail)
+        results["neighbor"] = r
+        print(f"\n  安装试卷（{r['total']}条）:")
+        print(f"    单条匹配: {r['correct_single']}/{r['total']} ({r['accuracy_single']}%)")
+        print(f"    批量匹配: {r['correct_batch']}/{r['total']} ({r['accuracy_batch']}%)")
+        delta = r['accuracy_batch'] - r['accuracy_single']
+        sign = "+" if delta >= 0 else ""
+        print(f"    邻居投票: 修正{r['corrected']}条 "
+              f"(正确{r['corrected_ok']}+错误{r['corrected_wrong']})")
+        print(f"    净效果: {sign}{delta:.1f}%")
+
+    # 测试4：12位编码编序
+    # 测试4：12位编码编序
     if not args.only or args.only == "seq":
-        print(f"\n[测试3] 12位编码编序")
+        print(f"\n[测试4] 12位编码编序")
         print("-" * 40)
         r = run_seq_test(detail=args.detail)
         results["seq"] = r
@@ -461,6 +601,11 @@ def main():
     if "seq" in results:
         r = results["seq"]
         print(f"  编序测试: {'通过' if r['failed']==0 else '失败'}")
+    if "neighbor" in results:
+        r = results["neighbor"]
+        delta = r['accuracy_batch'] - r['accuracy_single']
+        sign = "+" if delta >= 0 else ""
+        print(f"  邻居投票: 单条{r['accuracy_single']}% → 批量{r['accuracy_batch']}% ({sign}{delta:.1f}%)")
 
     print()
 

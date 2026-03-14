@@ -107,6 +107,39 @@ def _extract_core_name(name: str) -> str:
     return core.strip()
 
 
+def _strip_model_prefix(name: str) -> str:
+    """去掉名称中的型号前缀和后缀，提取纯中文部分。
+
+    很多清单名称前面带型号编号（如"LT04四头格栅灯"、"LED灯带LT11"），
+    这些型号在清单库索引中不存在，导致匹配失败。
+    去掉型号后（"四头格栅灯"、"灯带"），更容易在索引中找到。
+
+    例如：
+      "LT04四头格栅灯" → "四头格栅灯"
+      "LED灯带LT11" → "灯带"
+      "LED防水灯带LT12" → "防水灯带"
+      "信号线RVV2*0.5" → "信号线"
+      "布线管cat6-4UTP" → "布线管"
+      "不锈钢水箱溢流DN50" → "不锈钢水箱溢流"
+      "镀锌钢管" → "镀锌钢管"（没有型号，不变）
+    """
+    # 去掉开头的英文+数字前缀（如"LT04"、"LED"、"PVC"等）
+    cleaned = re.sub(r'^[A-Za-z0-9\-]+', '', name)
+
+    # 去掉尾部的英文+数字后缀（如"LT11"、"DN50"、"RVV2*0.5"等）
+    cleaned = re.sub(r'[A-Za-z][A-Za-z0-9\-\*/\.]*$', '', cleaned)
+    # 也去掉尾部纯数字（如"DN50"去掉字母后剩"50"）
+    cleaned = re.sub(r'[\d\*\/\.]+$', '', cleaned)
+
+    cleaned = cleaned.strip()
+
+    # 清洗后太短（<2字）则不用清洗结果
+    if len(cleaned) < 2:
+        return name
+
+    return cleaned
+
+
 def _load_bill_library_index() -> dict:
     """从清单库构建名称→编码索引。
 
@@ -316,14 +349,70 @@ def _predict_route(name: str) -> str:
         return ""
 
 
+# 描述文本中的专业暗示词 → 索引标签
+# 这些词出现在描述中时，几乎100%说明属于对应专业
+# （关键词, 对应附录/大类标签）
+_DESC_SPECIALTY_HINTS = [
+    # 消防(J)
+    ("消防", "J"), ("喷淋", "J"), ("灭火", "J"), ("火灾", "J"),
+    ("烟感", "J"), ("温感", "J"),
+    # 给排水(K)
+    ("给水", "K"), ("排水", "K"), ("热水", "K"), ("采暖", "K"),
+    ("暖气", "K"),
+    # 通风空调(G)
+    ("通风", "G"), ("空调", "G"), ("新风", "G"),
+    # 电气(D)
+    ("灯具", "D"), ("配电", "D"), ("电缆", "D"), ("桥架", "D"),
+    # 智能化(E)
+    ("智能", "E"), ("弱电", "E"), ("监控", "E"), ("网络", "E"),
+    # 刷油防腐(M)
+    ("保温", "M"), ("防腐", "M"), ("刷油", "M"), ("绝热", "M"),
+    # 仪表(F)
+    ("仪表", "F"),
+]
+
+
+def _desc_specialty_hint(description: str, candidates: list = None) -> str:
+    """从描述文本中提取专业暗示词，辅助消歧。
+
+    只看描述（不看名称），如果描述中出现了明确的专业关键词
+    （如"消防"、"给水"、"灯具"），就返回对应专业标签。
+    有候选列表时只返回匹配候选的标签，无候选时直接返回。
+
+    参数:
+        description: 项目特征描述
+        candidates: 候选列表（可选）
+
+    返回:
+        匹配的索引标签，无匹配返回空字符串
+    """
+    if not description:
+        return ""
+
+    # 候选中有哪些专业标签（没有候选时不做过滤）
+    candidate_labels = None
+    if candidates:
+        candidate_labels = set(
+            c["appendix"] or c["major"] for c in candidates
+        )
+
+    for keyword, label in _DESC_SPECIALTY_HINTS:
+        if keyword in description:
+            if candidate_labels is None or label in candidate_labels:
+                return label
+
+    return ""
+
+
 def _disambiguate(name: str, description: str = "",
                   section_title: str = "",
                   candidates: list = None) -> str:
     """用规则+模型做同名多义消歧。
 
-    分工策略：
-    - 跨大类消歧（安装 vs 房建 vs 市政）→ 用路由模型（无安装偏差）
-    - 同大类消歧（安装内K vs J vs D）→ 用规则分类器（利用描述上下文）
+    分工策略（按优先级）：
+    1. 描述文本暗示词（如描述含"消防"→J）
+    2. 跨大类消歧（安装 vs 房建 vs 市政）→ 用路由模型
+    3. 同大类消歧（安装内K vs J vs D）→ 用规则分类器
 
     参数:
         name: 清单名称
@@ -342,7 +431,14 @@ def _disambiguate(name: str, description: str = "",
         is_cross_major = False
         all_non_install = False
 
-    # 跨大类 且 候选中有非安装：用路由模型
+    # 第1优先级：描述文本中的专业暗示词
+    # 描述里明确写了"消防"、"灯具"等词的，几乎不会错
+    if description:
+        desc_hint = _desc_specialty_hint(description, candidates)
+        if desc_hint:
+            return desc_hint
+
+    # 第2优先级：跨大类 且 候选中有非安装：用路由模型
     # （模型对非安装分类更准确，安装内部用规则更好）
     if is_cross_major and all_non_install:
         # 纯非安装跨大类（如房建01 vs 市政04 vs 园林05）：用模型
@@ -354,7 +450,7 @@ def _disambiguate(name: str, description: str = "",
             if model_label in candidate_labels:
                 return model_label
 
-    # 同大类 或 模型失败：用规则分类器
+    # 第3优先级：用规则分类器
     try:
         result = classify_specialty(
             bill_name=name,
@@ -498,6 +594,20 @@ def _route_appendix(name: str, description: str = "",
     if expanded != core and expanded in index:
         return _pick_best(index[expanded])
 
+    # 去掉型号后重试精确+同义词
+    stripped = _strip_model_prefix(core)
+    if stripped != core:
+        if stripped in index:
+            return _pick_best(index[stripped])
+        # 同义词展开
+        expanded2 = stripped
+        for alias, standard in _load_bill_synonyms():
+            if alias in stripped:
+                expanded2 = stripped.replace(alias, standard)
+                break
+        if expanded2 != stripped and expanded2 in index:
+            return _pick_best(index[expanded2])
+
     # 模糊：检查输入名称是否包含在某个索引名称中，或反过来
     text = f"{name} {description}"
     best_result = ""
@@ -509,7 +619,16 @@ def _route_appendix(name: str, description: str = "",
             best_result = _pick_best(candidates)
             best_len = len(idx_name)
 
-    return best_result
+    if best_result:
+        return best_result
+
+    # 兜底：所有索引搜索都没找到时，用分类器给出路由
+    # 分类器用的是品类词路由表+TF-IDF+关键词，不依赖清单库索引
+    fallback_label = _disambiguate(name, description, section_title)
+    if fallback_label:
+        return fallback_label
+
+    return ""
 
 
 def match_bill_code(name: str, description: str = "",
@@ -569,6 +688,30 @@ def match_bill_code(name: str, description: str = "",
         match = _fuzzy_search(index, name, text, hint_appendix,
                               bill_desc=description,
                               section_title=section_title)
+
+    # ---- 第4步：去掉型号后重试 ----
+    # 名称带型号前缀（如"LT04四头格栅灯"），去掉后用纯中文部分重试
+    # 放在模糊搜索之后，只在前3步全部失败时才用
+    if not match:
+        stripped = _strip_model_prefix(core)
+        if stripped != core:
+            match = _find_in_index(index, stripped, text, hint_appendix,
+                                   bill_name=name, bill_desc=description,
+                                   section_title=section_title)
+            if not match:
+                expanded2 = stripped
+                for alias, standard in _load_bill_synonyms():
+                    if alias in stripped:
+                        expanded2 = stripped.replace(alias, standard)
+                        break
+                if expanded2 != stripped:
+                    match = _find_in_index(index, expanded2, text, hint_appendix,
+                                           bill_name=name, bill_desc=description,
+                                           section_title=section_title)
+            if not match:
+                match = _fuzzy_search(index, stripped, text, hint_appendix,
+                                      bill_desc=description,
+                                      section_title=section_title)
 
     if not match:
         return None
@@ -671,8 +814,12 @@ def _fuzzy_search(index: dict, name: str, text: str,
     # 注意：这里不传candidates，因为每次循环的candidates不同
     # 在循环内使用时会检查当前candidates是否同大类内
     disambig_label = ""
+    # 单独提取描述暗示词（比规则消歧更可靠，可跨大类使用）
+    desc_hint_label = ""
     if not hint_appendix:
         disambig_label = _disambiguate(name, bill_desc, section_title)
+        if bill_desc:
+            desc_hint_label = _desc_specialty_hint(bill_desc)
 
     for idx_name, candidates in index.items():
         if len(idx_name) < 2:
@@ -693,7 +840,7 @@ def _fuzzy_search(index: dict, name: str, text: str,
         if score <= best_score:
             continue
 
-        # 选候选：优先附录提示，其次消歧结果，最后默认
+        # 选候选：优先附录提示，其次描述暗示词，再次规则消歧，最后默认
         pick = candidates[0]
         if hint_appendix:
             for c in candidates:
@@ -701,16 +848,24 @@ def _fuzzy_search(index: dict, name: str, text: str,
                     pick = c
                     score += 10
                     break
+        elif desc_hint_label and len(candidates) > 1:
+            # 描述暗示词比规则消歧更可靠，不受同大类限制
+            for c in candidates:
+                label = c["appendix"] or c["major"]
+                if label == desc_hint_label:
+                    pick = c
+                    score += 7  # 比规则消歧高，比hint_appendix低
+                    break
         elif disambig_label and len(candidates) > 1:
-            # 只有同大类内才用消歧（跨大类让频次决定）
+            # 规则消歧：同大类和跨大类都尝试，但跨大类加分更低
             majors = set(c["major"] for c in candidates)
-            if len(majors) == 1:
-                for c in candidates:
-                    label = c["appendix"] or c["major"]
-                    if label == disambig_label:
-                        pick = c
-                        score += 5  # 消歧加分比hint低（消歧没有hint可靠）
-                        break
+            bonus = 5 if len(majors) == 1 else 3  # 跨大类加分低（不太确定）
+            for c in candidates:
+                label = c["appendix"] or c["major"]
+                if label == disambig_label:
+                    pick = c
+                    score += bonus
+                    break
 
         best_score = score
         best = {"code9": pick["code9"], "appendix": pick["appendix"],
@@ -721,6 +876,95 @@ def _fuzzy_search(index: dict, name: str, text: str,
         return None
 
     return best
+
+
+# ============================================================
+# 邻居投票（batch匹配的第二遍扫描）
+# ============================================================
+
+def _neighbor_vote_pass(items: list[dict]):
+    """邻居投票校正：用同section/sheet内邻居的匹配结果，校验消歧项。
+
+    逻辑：
+    - 第一遍匹配后，有些项目是通过"消歧"选出来的（method含"disambig"）
+    - 这些项目的名称在多个专业都有，消歧可能选错
+    - 看前后各5条邻居（同section或同sheet）匹配到了什么专业
+    - 如果邻居大多数是同一个专业，且和当前不一致，就用邻居的专业重新匹配
+    - 类似于"旁边都是给排水的，这个钢管大概率也是给排水"
+    """
+    corrected = 0
+
+    for i, item in enumerate(items):
+        bm = item.get("bill_match")
+        if not bm:
+            continue
+
+        # 只对消歧结果做校验（精确匹配/模糊匹配的不动）
+        method = bm.get("match_method", "")
+        if "disambig" not in method:
+            continue
+
+        current_appendix = bm.get("appendix", "")
+        if not current_appendix:
+            continue
+
+        section = item.get("section", "")
+        sheet = item.get("sheet_name", "")
+
+        # 收集邻居的专业投票（前后各5条）
+        votes = {}  # appendix → 投票数
+        for offset in range(-5, 6):
+            if offset == 0:
+                continue
+            j = i + offset
+            if j < 0 or j >= len(items):
+                continue
+            neighbor = items[j]
+            n_bm = neighbor.get("bill_match")
+            if not n_bm:
+                continue
+
+            # 同section/sheet检查（不同分部的邻居不参考）
+            n_section = neighbor.get("section", "")
+            n_sheet = neighbor.get("sheet_name", "")
+            if section and n_section != section:
+                continue
+            if not section and sheet and n_sheet != sheet:
+                continue
+
+            # 只统计非消歧结果的投票（这些结果更可靠）
+            n_method = n_bm.get("match_method", "")
+            if "disambig" in n_method:
+                continue
+
+            n_app = n_bm.get("appendix", "")
+            if n_app:
+                votes[n_app] = votes.get(n_app, 0) + 1
+
+        if not votes:
+            continue
+
+        # 投票最多的专业
+        dominant = max(votes, key=votes.get)
+        dominant_count = votes[dominant]
+        total_votes = sum(votes.values())
+
+        # 当前结果和邻居多数不一致，且邻居投票够强（>=3票 且 占比>=70%）
+        if (dominant != current_appendix
+                and dominant_count >= 3
+                and dominant_count / total_votes >= 0.7):
+            # 用邻居的专业作为hint重新匹配
+            name = item.get("name", "").strip()
+            desc = item.get("description", "").strip()
+            new_result = match_bill_code(name, desc, hint_appendix=dominant)
+            if new_result:
+                new_result["match_method"] += "_neighbor"  # 标记来源
+                item["bill_match"] = new_result
+                corrected += 1
+                logger.debug(f"邻居投票校正: {name} {current_appendix}→{dominant}")
+
+    if corrected:
+        logger.info(f"  邻居投票校正: {corrected}条消歧结果被邻居投票修正")
 
 
 # ============================================================
@@ -774,7 +1018,8 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         hint = _sheet_name_to_appendix(sheet_name)
 
         # 分部标题（从Excel结构来的，用于消歧）
-        section = item.get("section_title", "")
+        # 注意：bill_reader存的字段名是"section"，不是"section_title"
+        section = item.get("section", "") or item.get("section_title", "")
 
         # 匹配（传入分部标题，用于多义名称消歧）
         result = match_bill_code(name, desc, hint_appendix=hint,
@@ -782,6 +1027,10 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         if result:
             item["bill_match"] = result
             matched += 1
+
+    # ---- 邻居投票校正（第二遍扫描） ----
+    # 对消歧决定的匹配结果，用邻居的匹配结果做投票校验
+    _neighbor_vote_pass(items)
 
     # 给匹配结果编后3位序号，组成完整12位编码
     # 规则：同一个9位编码按出现顺序编001、002、003…
