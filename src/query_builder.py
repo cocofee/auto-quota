@@ -654,6 +654,9 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     - 过滤器/软接头/倒流防止器等有独立的定额体系
     """
     # --- 前置检查：是否含阀门相关关键词 ---
+    # 消声百叶有独立定额"消声百叶安装"，不走阀门路由
+    if "消声百叶" in name:
+        return None
     if not any(kw in name for kw in ("阀门", "阀", "过滤器", "软接头", "倒流防止")):
         return None
 
@@ -678,7 +681,7 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     # === 1. 通风类阀门拦截（防火阀/调节阀/排烟阀） ===
     # 这些走周长分档（WxH→周长），不走DN分档
     # 不拦截会被管道路由覆盖成"法兰阀门安装"，导致搜索完全偏离
-    _vent_kw = ("防火阀", "排烟阀", "调节阀", "排烟口", "排烟防火")
+    _vent_kw = ("防火阀", "排烟阀", "调节阀", "排烟口", "排烟防火", "风量调节")
     _vent_check = real_type if real_type else _name_base
     # 排除水系统调节阀（动态平衡阀/电动调节阀等），这些按管道阀门处理
     _not_vent = ("动态平衡", "静态平衡", "压差", "温控", "恒温", "比例")
@@ -687,9 +690,18 @@ def _build_valve_query(name: str, full_text: str, params: dict,
         vent_name = real_type or _name_base
         vent_name = re.sub(r'\d+℃', '', vent_name)
         vent_name = re.sub(r'^[A-Za-z]+-', '', vent_name).strip()
-        if "多叶" in vent_name or "对开" in vent_name:
+        # 风量调节阀/多叶调节阀 → 多叶调节阀安装
+        if "多叶" in vent_name or "对开" in vent_name or "风量调节" in vent_name:
             return _apply_synonyms("多叶调节阀安装 周长", specialty)
         return _apply_synonyms("防火调节阀安装 周长", specialty)
+
+    # 通风止回阀（有周长参数的止回阀→风管止回阀，与管道止回阀用DN的不同）
+    _stop_check = real_type if real_type else _name_base
+    if "止回阀" in _stop_check:
+        perimeter = params.get("perimeter")
+        if perimeter or specialty == "C7":
+            return _apply_synonyms("风管止回阀安装 周长", specialty)
+        # 无周长且不是C7专业 → 不拦截，走后续管道阀门路由
 
     # C7通风空调的"碳钢阀门"/"阀门"无具体名称时，通常是防火阀/调节阀
     if specialty == "C7" and _name_base in ("碳钢阀门", "阀门", "金属阀门"):
@@ -954,6 +966,21 @@ def _normalize_bill_name(name: str) -> str:
             return "普通灯具安装 吸顶灯"
 
         # 通用灯具兜底：保留cleaned（已去除LED/瓦数/电压噪声）
+        return cleaned
+
+    # 风口类归一化：防止"防雨百叶"被BM25搜到建筑"钢百叶窗"
+    # "防雨百叶风口"/"单层百叶"/"格栅风口"→"百叶风口"
+    if any(kw in name for kw in ("风口", "散流器", "喷口")):
+        cleaned = name
+        # 去掉尺寸噪声（如"800*150"、"φ200"）
+        cleaned = re.sub(r'\d+\s*[*×xX]\s*\d+', '', cleaned).strip()
+        cleaned = re.sub(r'[φΦ]\d+', '', cleaned).strip()
+        # 防雨百叶/单层百叶/双层百叶 → 百叶风口
+        if re.search(r'防雨.*百叶|百叶.*风口|单层.*百叶|双层.*百叶', cleaned):
+            return "百叶风口"
+        # 格栅风口 → 百叶风口（定额中按同一类计）
+        if "格栅" in cleaned and "风口" in cleaned:
+            return "百叶风口"
         return cleaned
 
     # 开关盒/插座盒 → 暗装开关(插座)盒（BM25容易把"开关盒"拆词搜到"刀型开关"）
