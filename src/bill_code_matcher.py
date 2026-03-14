@@ -14,6 +14,9 @@ import re
 from pathlib import Path
 from loguru import logger
 
+# 套定额的专业分类器（共享消歧逻辑，编清单和套定额用同一套规则）
+from src.specialty_classifier import classify as classify_specialty
+
 
 # ============================================================
 # 常量：分部编码前4位 → 附录字母
@@ -38,6 +41,20 @@ MAJOR_CATEGORY = {
     "07": "修缮",    # 修缮工程
     "08": "轨道",    # 城市轨道交通工程
     "09": "仿古",    # 仿古建筑工程
+}
+
+# 册号 → 清单库的附录字母/大类编码
+# specialty_classifier 返回 "C10"，清单库索引用的是 "K"（附录字母）或 "01"（大类编码）
+# 这个表做转换，让两边能对上
+BOOK_TO_INDEX_LABEL = {
+    # 安装12册 → 附录字母（和 CODE_PREFIX_TO_APPENDIX 反过来）
+    "C1": "A", "C2": "B", "C3": "C", "C4": "D", "C5": "E",
+    "C6": "F", "C7": "G", "C8": "H", "C9": "J", "C10": "K",
+    "C11": "L", "C12": "M", "C13": "N",
+    # 非安装专业 → 大类编码
+    "A": "01",   # 房建（specialty_classifier用A，清单库索引用01）
+    "D": "04",   # 市政
+    "E": "05",   # 园林
 }
 
 
@@ -200,6 +217,158 @@ SYNONYMS = {
 # 同义词按key长度降序排列（长的先匹配，避免"PPR"先于"PPR管"匹配）
 _SYNONYMS_SORTED = sorted(SYNONYMS.items(), key=lambda x: -len(x[0]))
 
+# 从清单库自动挖掘的同义词（bill_synonyms.json），懒加载
+_bill_synonyms_cache = None
+
+
+def _load_bill_synonyms() -> list:
+    """加载清单库自动挖掘的同义词，和硬编码同义词合并。
+
+    硬编码优先：如果 SYNONYMS 里已有某个key，不会被 bill_synonyms 覆盖。
+    返回合并后的 (key, value) 列表，按key长度降序排列。
+    """
+    global _bill_synonyms_cache
+    if _bill_synonyms_cache is not None:
+        return _bill_synonyms_cache
+
+    # 先放硬编码的（优先级高）
+    merged = dict(SYNONYMS)
+
+    # 加载自动挖掘的同义词
+    syn_path = Path(__file__).resolve().parent.parent / "data" / "bill_synonyms.json"
+    if syn_path.exists():
+        try:
+            with open(syn_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            auto_syns = data.get("synonyms", {})
+            added = 0
+            for key, value in auto_syns.items():
+                # 跳过太长的名称（超过10个字的key通常是带参数的，不适合做同义词替换）
+                if len(key) > 10:
+                    continue
+                # 硬编码优先，不覆盖
+                if key not in merged:
+                    merged[key] = value
+                    added += 1
+            logger.info(f"清单同义词已加载: 硬编码{len(SYNONYMS)}条 + "
+                        f"自动挖掘{added}条 = 共{len(merged)}条")
+        except Exception as e:
+            logger.warning(f"清单同义词加载失败: {e}")
+
+    # 按key长度降序排列（长词先匹配）
+    _bill_synonyms_cache = sorted(merged.items(), key=lambda x: -len(x[0]))
+    return _bill_synonyms_cache
+
+
+# ============================================================
+# 消歧函数（调用共享的专业分类器）
+# ============================================================
+
+# 路由模型缓存（轻量文本分类器，从清单库训练）
+_route_model_cache = None
+_route_model_loaded = False  # 区分"没加载"和"加载失败"
+
+
+def _load_route_model():
+    """加载路由分类模型（TF-IDF + LinearSVC）。
+
+    从清单库41.6万条数据训练的轻量分类器，
+    用于消歧时替代/补充规则路由，特别是非安装专业路由更准确。
+    """
+    global _route_model_cache, _route_model_loaded
+    if _route_model_loaded:
+        return _route_model_cache
+
+    _route_model_loaded = True
+    model_path = Path(__file__).resolve().parent.parent / "data" / "route_model.pkl"
+    if not model_path.exists():
+        return None
+
+    try:
+        import pickle
+        with open(model_path, "rb") as f:
+            _route_model_cache = pickle.load(f)
+        logger.info("路由模型已加载")
+        return _route_model_cache
+    except Exception as e:
+        logger.warning(f"路由模型加载失败: {e}")
+        return None
+
+
+def _predict_route(name: str) -> str:
+    """用路由模型预测专业标签。
+
+    返回索引标签（如"K"、"D"、"01"等），失败返回空字符串。
+    """
+    model = _load_route_model()
+    if not model:
+        return ""
+
+    try:
+        core = _extract_core_name(name)
+        if not core or len(core) < 2:
+            return ""
+        vectorizer = model["vectorizer"]
+        clf = model["classifier"]
+        X = vectorizer.transform([core])
+        return clf.predict(X)[0]
+    except Exception:
+        return ""
+
+
+def _disambiguate(name: str, description: str = "",
+                  section_title: str = "",
+                  candidates: list = None) -> str:
+    """用规则+模型做同名多义消歧。
+
+    分工策略：
+    - 跨大类消歧（安装 vs 房建 vs 市政）→ 用路由模型（无安装偏差）
+    - 同大类消歧（安装内K vs J vs D）→ 用规则分类器（利用描述上下文）
+
+    参数:
+        name: 清单名称
+        description: 项目特征描述
+        section_title: 分部标题
+        candidates: 候选列表
+
+    返回:
+        索引标签（如"K"、"D"、"01"等），无法判断返回空字符串
+    """
+    if candidates:
+        majors = set(c["major"] for c in candidates)
+        is_cross_major = len(majors) > 1
+        all_non_install = "03" not in majors  # 全部是非安装候选
+    else:
+        is_cross_major = False
+        all_non_install = False
+
+    # 跨大类 且 候选中有非安装：用路由模型
+    # （模型对非安装分类更准确，安装内部用规则更好）
+    if is_cross_major and all_non_install:
+        # 纯非安装跨大类（如房建01 vs 市政04 vs 园林05）：用模型
+        model_label = _predict_route(name)
+        if model_label and candidates:
+            candidate_labels = set(
+                c["appendix"] or c["major"] for c in candidates
+            )
+            if model_label in candidate_labels:
+                return model_label
+
+    # 同大类 或 模型失败：用规则分类器
+    try:
+        result = classify_specialty(
+            bill_name=name,
+            bill_desc=description,
+            section_title=section_title,
+        )
+        book = result.get("primary")
+        if not book:
+            return ""
+        return BOOK_TO_INDEX_LABEL.get(book, "")
+    except Exception as e:
+        logger.debug(f"消歧失败: {e}")
+        return ""
+
 
 # ============================================================
 # Sheet名 → 附录字母映射（从Excel的sheet名推断专业）
@@ -266,13 +435,15 @@ def _lookup_features(code9: str) -> dict | None:
 # ============================================================
 
 def _route_appendix(name: str, description: str = "",
-                    hint_major: str = "") -> str:
+                    hint_major: str = "",
+                    section_title: str = "") -> str:
     """根据名称和描述判断所属附录/专业大类。
 
     参数:
         name: 清单名称
         description: 描述
         hint_major: 专业大类提示（"01"房建/"03"安装/"04"市政/"05"园林）
+        section_title: 分部标题提示（如"给排水工程"）
 
     返回值:
       - 安装工程: 附录字母 A-N（如 "K"=给排水、"D"=电气）
@@ -283,13 +454,34 @@ def _route_appendix(name: str, description: str = "",
     core = _extract_core_name(name)
 
     def _pick_best(candidates: list) -> str:
-        """从候选列表中选最佳结果，考虑hint_major。"""
+        """从候选列表中选最佳结果。
+
+        消歧优先级：
+        1. hint_major（来自sheet名）
+        2. specialty_classifier（共享的专业分类器，看名称+描述的上下文）
+        3. 默认取第一个（安装优先排序）
+        """
+        # 只有1个候选，不需要消歧
+        if len(candidates) == 1:
+            return candidates[0]["appendix"] or candidates[0]["major"]
+
+        # 有大类提示（来自sheet名）：优先匹配对应大类
         if hint_major:
-            # 有大类提示：优先匹配对应大类
             for c in candidates:
                 if c["major"] == hint_major:
                     return c["appendix"] or c["major"]
-        # 无提示或提示无匹配：取第一个（安装优先排序）
+
+        # 多个候选且无提示 → 调用共享专业分类器消歧
+        # 用清单的名称+描述做上下文判断，和套定额用同一套规则
+        disambig_label = _disambiguate(name, description, section_title,
+                                       candidates=candidates)
+        if disambig_label:
+            for c in candidates:
+                label = c["appendix"] or c["major"]
+                if label == disambig_label:
+                    return label
+
+        # 兜底：取第一个（安装优先排序）
         best = candidates[0]
         return best["appendix"] or best["major"]
 
@@ -299,7 +491,7 @@ def _route_appendix(name: str, description: str = "",
 
     # 同义词展开
     expanded = core
-    for alias, standard in _SYNONYMS_SORTED:
+    for alias, standard in _load_bill_synonyms():
         if alias in core:
             expanded = core.replace(alias, standard)
             break
@@ -321,13 +513,15 @@ def _route_appendix(name: str, description: str = "",
 
 
 def match_bill_code(name: str, description: str = "",
-                    hint_appendix: str = "") -> dict | None:
+                    hint_appendix: str = "",
+                    section_title: str = "") -> dict | None:
     """匹配清单编码。
 
     参数:
         name: 项目名称（如"镀锌钢管"、"消火栓钢管"）
         description: 项目特征描述（如"DN100 螺纹连接 室内"）
         hint_appendix: 提示附录字母（可选，如已知专业可直接指定）
+        section_title: 分部标题（可选，用于消歧）
 
     返回:
         匹配结果dict，包含:
@@ -354,21 +548,27 @@ def match_bill_code(name: str, description: str = "",
     text = f"{name} {description}"
 
     # ---- 第1步：精确匹配 ----
-    match = _find_in_index(index, core, text, hint_appendix)
+    match = _find_in_index(index, core, text, hint_appendix,
+                           bill_name=name, bill_desc=description,
+                           section_title=section_title)
 
     # ---- 第2步：同义词展开后匹配 ----
     if not match:
         expanded = core
-        for alias, standard in _SYNONYMS_SORTED:
+        for alias, standard in _load_bill_synonyms():
             if alias in core:
                 expanded = core.replace(alias, standard)
                 break
         if expanded != core:
-            match = _find_in_index(index, expanded, text, hint_appendix)
+            match = _find_in_index(index, expanded, text, hint_appendix,
+                                   bill_name=name, bill_desc=description,
+                                   section_title=section_title)
 
     # ---- 第3步：模糊匹配（子串搜索） ----
     if not match:
-        match = _fuzzy_search(index, name, text, hint_appendix)
+        match = _fuzzy_search(index, name, text, hint_appendix,
+                              bill_desc=description,
+                              section_title=section_title)
 
     if not match:
         return None
@@ -417,7 +617,9 @@ def match_bill_code(name: str, description: str = "",
 
 
 def _find_in_index(index: dict, core: str, text: str,
-                   hint_appendix: str = "") -> dict | None:
+                   hint_appendix: str = "",
+                   bill_name: str = "", bill_desc: str = "",
+                   section_title: str = "") -> dict | None:
     """在清单库索引中查找核心名称。
 
     返回: {"code9": ..., "appendix": ..., "major": ..., "score": ..., "method": ...} 或 None
@@ -433,14 +635,29 @@ def _find_in_index(index: dict, core: str, text: str,
             if c["appendix"] == hint_appendix:
                 return {"code9": c["code9"], "appendix": c["appendix"],
                         "major": c["major"], "score": 100.0, "method": "library_exact"}
-    # 无提示 → 取出现次数最多的
+
+    # 多候选时用专业分类器消歧（和套定额共享同一套规则）
+    if len(candidates) > 1:
+        disambig_label = _disambiguate(bill_name or core, bill_desc,
+                                       section_title, candidates=candidates)
+        if disambig_label:
+            for c in candidates:
+                label = c["appendix"] or c["major"]
+                if label == disambig_label:
+                    return {"code9": c["code9"], "appendix": c["appendix"],
+                            "major": c["major"], "score": 98.0,
+                            "method": "library_exact_disambig"}
+
+    # 兜底：取出现次数最多的
     best = candidates[0]
     return {"code9": best["code9"], "appendix": best["appendix"],
             "major": best["major"], "score": 95.0, "method": "library_exact"}
 
 
 def _fuzzy_search(index: dict, name: str, text: str,
-                  hint_appendix: str = "") -> dict | None:
+                  hint_appendix: str = "",
+                  bill_desc: str = "",
+                  section_title: str = "") -> dict | None:
     """模糊搜索：用子串包含关系在索引中查找。
 
     策略：
@@ -449,6 +666,13 @@ def _fuzzy_search(index: dict, name: str, text: str,
     """
     best = None
     best_score = 0
+
+    # 预先算一次消歧结果（避免在循环内反复调用）
+    # 注意：这里不传candidates，因为每次循环的candidates不同
+    # 在循环内使用时会检查当前candidates是否同大类内
+    disambig_label = ""
+    if not hint_appendix:
+        disambig_label = _disambiguate(name, bill_desc, section_title)
 
     for idx_name, candidates in index.items():
         if len(idx_name) < 2:
@@ -469,7 +693,7 @@ def _fuzzy_search(index: dict, name: str, text: str,
         if score <= best_score:
             continue
 
-        # 如果有附录提示，匹配对应附录的候选加分
+        # 选候选：优先附录提示，其次消歧结果，最后默认
         pick = candidates[0]
         if hint_appendix:
             for c in candidates:
@@ -477,6 +701,16 @@ def _fuzzy_search(index: dict, name: str, text: str,
                     pick = c
                     score += 10
                     break
+        elif disambig_label and len(candidates) > 1:
+            # 只有同大类内才用消歧（跨大类让频次决定）
+            majors = set(c["major"] for c in candidates)
+            if len(majors) == 1:
+                for c in candidates:
+                    label = c["appendix"] or c["major"]
+                    if label == disambig_label:
+                        pick = c
+                        score += 5  # 消歧加分比hint低（消歧没有hint可靠）
+                        break
 
         best_score = score
         best = {"code9": pick["code9"], "appendix": pick["appendix"],
@@ -539,8 +773,12 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         sheet_name = item.get("sheet_name", "")
         hint = _sheet_name_to_appendix(sheet_name)
 
-        # 匹配
-        result = match_bill_code(name, desc, hint_appendix=hint)
+        # 分部标题（从Excel结构来的，用于消歧）
+        section = item.get("section_title", "")
+
+        # 匹配（传入分部标题，用于多义名称消歧）
+        result = match_bill_code(name, desc, hint_appendix=hint,
+                                 section_title=section)
         if result:
             item["bill_match"] = result
             matched += 1
