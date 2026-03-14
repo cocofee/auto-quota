@@ -12,7 +12,7 @@ import {
   Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
   Checkbox, Tag, Tooltip, Input, Radio,
 } from 'antd';
-import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { read, utils as xlsxUtils } from 'xlsx';
 import api from '../../services/api';
@@ -90,6 +90,7 @@ export default function TaskCreatePage() {
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
   const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined); // 新疆地区选择
   const selectedProvince = Form.useWatch('province', form); // 监听选中的定额库
+  const selectedMode = Form.useWatch('mode', form); // 监听匹配模式
 
   // 计算同批兄弟库（同省份+同年份，自动挂载为辅助库）
   const siblingDbs = useMemo(() => {
@@ -215,6 +216,9 @@ export default function TaskCreatePage() {
       const file = fileList[0].originFileObj as Blob;
       formData.append('file', file);
       formData.append('province', values.province);
+
+      // 匹配模式（search=快速搜索 / agent=大模型精准）
+      formData.append('mode', values.mode || 'agent');
 
       // 管理员设置的高级参数；客户用默认值
       formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));
@@ -452,6 +456,7 @@ export default function TaskCreatePage() {
         layout="vertical"
         initialValues={{
           use_experience: true,
+          mode: 'agent',
         }}
       >
         {/* 步骤1：上传文件 + 选省份 */}
@@ -664,6 +669,27 @@ export default function TaskCreatePage() {
               </div>
             )}
 
+            {/* 匹配模式选择 */}
+            <Form.Item
+              name="mode"
+              label="匹配模式"
+            >
+              <Radio.Group optionType="button" buttonStyle="solid" size="large" style={{ width: '100%', display: 'flex' }}>
+                <Radio.Button value="search" style={{ flex: 1, textAlign: 'center' }}>
+                  <ThunderboltOutlined /> 快速匹配
+                </Radio.Button>
+                <Radio.Button value="agent" style={{ flex: 1, textAlign: 'center' }}>
+                  <RocketOutlined /> 精准匹配
+                </Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+            <div style={{ marginTop: -20, marginBottom: 16, fontSize: 13, color: '#888' }}>
+              {selectedMode === 'search'
+                ? '纯搜索引擎匹配，速度快（几秒出结果），不调用大模型'
+                : '大模型智能分析，准确率更高，但速度较慢（每条约1~2秒）'
+              }
+            </div>
+
             <Button
               type="primary"
               block
@@ -708,6 +734,11 @@ export default function TaskCreatePage() {
             <Card type="inner" title="任务配置确认" style={{ marginBottom: 24 }}>
               <p><strong>文件：</strong>{fileList[0]?.name || '-'}</p>
               <p><strong>定额库：</strong>{form.getFieldValue('province')}</p>
+              <p><strong>匹配模式：</strong>
+                <Tag color={form.getFieldValue('mode') === 'agent' ? 'purple' : 'blue'}>
+                  {form.getFieldValue('mode') === 'agent' ? '精准匹配（大模型）' : '快速匹配（纯搜索）'}
+                </Tag>
+              </p>
               {siblingDbs.length > 0 && (
                 <div>
                   <strong>辅助库：</strong>同批 {siblingDbs.length} 个库自动挂载

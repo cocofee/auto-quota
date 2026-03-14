@@ -627,7 +627,8 @@ AGENT_FASTPATH_REQUIRE_PARAM_MATCH = True
 
 # 低置信度重试：Agent返回confidence低于此值时，自动用AI建议的搜索词重试
 # 或当AI推荐的定额不在候选列表中时也触发重试
-LOW_CONFIDENCE_RETRY_THRESHOLD = 70
+# 设为0关闭重试（减少LLM调用次数，提升速度）
+LOW_CONFIDENCE_RETRY_THRESHOLD = int(os.getenv("LOW_CONFIDENCE_RETRY_THRESHOLD", "0"))
 
 # ============================================================
 # L3 一致性反思（同类清单定额一致性检查）
@@ -681,7 +682,8 @@ AGENT_METHOD_CARDS_IN_PROMPT = False
 # ============================================================
 
 # 是否启用LLM后验证（启用后每条匹配结果都会经过LLM审核）
-LLM_VERIFY_ENABLED = os.getenv("LLM_VERIFY_ENABLED", "1").strip().lower() not in (
+# 默认关闭：只用1次大模型匹配，不再额外验证，大幅提升速度
+LLM_VERIFY_ENABLED = os.getenv("LLM_VERIFY_ENABLED", "0").strip().lower() not in (
     "0", "false", "no", "off", ""
 )
 

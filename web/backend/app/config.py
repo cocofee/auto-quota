@@ -128,7 +128,7 @@ if MATCH_MODE not in ("search", "agent"):
 
 # Agent 模式使用的大模型（claude / deepseek / kimi / qwen）
 # 当前固定 claude，后续可在 .env 中切换
-MATCH_LLM = os.getenv("MATCH_LLM", "claude")
+MATCH_LLM = os.getenv("MATCH_LLM", "deepseek")
 if MATCH_LLM not in ("claude", "deepseek", "kimi", "qwen", "openai"):
     raise ValueError(f"MATCH_LLM 值不合法: {MATCH_LLM}，可选: claude/deepseek/kimi/qwen/openai")
 

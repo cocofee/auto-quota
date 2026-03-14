@@ -65,6 +65,7 @@ def _normalize_create_task_inputs(
 async def create_task(
     file: UploadFile = File(description="清单Excel文件（.xlsx/.xls）"),
     province: str = Form(description="省份定额库名称"),
+    mode: str | None = Form(default=None, description="匹配模式: search（快速）或 agent（精准）"),
     sheet: str | None = Form(default=None, description="指定Sheet名称"),
     limit_count: int | None = Form(default=None, description="限制处理条数"),
     use_experience: bool = Form(default=True, description="是否使用经验库"),
@@ -75,12 +76,21 @@ async def create_task(
 
     上传清单Excel文件 + 配置匹配参数 → 任务进入Celery队列等待执行。
     立即返回任务信息，前端可通过 /progress 端点跟踪进度。
-    匹配模式和大模型由后端配置统一控制（MATCH_MODE / MATCH_LLM）。
+    匹配模式由前端传入（search/agent），未传时使用后端默认配置。
     """
     # 1. 校验参数
     if limit_count is not None and (limit_count < 1 or limit_count > 10000):
         raise HTTPException(status_code=400, detail="limit_count 必须在 1~10000 之间")
     province, sheet, _ = _normalize_create_task_inputs(province, sheet, None)
+
+    # 匹配模式：前端传入优先，未传则用后端默认配置
+    from app.config import MATCH_MODE
+    if mode and mode.strip():
+        mode = mode.strip()
+        if mode not in ("search", "agent"):
+            raise HTTPException(status_code=400, detail="mode 必须是 search 或 agent")
+    else:
+        mode = MATCH_MODE
 
     # 额度预检查：余额为0时拦截（创建时不知道实际条数，只做基本检查）
     # 如果指定了 limit_count，可以做更精确的预检
@@ -91,10 +101,6 @@ async def create_task(
             detail=f"额度不足，请先购买额度。当前余额: {user.quota_balance}条"
                    + (f"，本次任务至少需要{limit_count}条" if limit_count else ""),
         )
-
-    # 匹配模式和大模型：优先从数据库读（管理员可在设置页面修改），没有则用环境变量
-    from app.config import MATCH_MODE
-    mode = MATCH_MODE
     try:
         from app.services.llm_config_service import get_llm_config
         llm_cfg = await get_llm_config(db)
