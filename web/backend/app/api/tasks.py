@@ -49,8 +49,8 @@ def _normalize_create_task_inputs(
     sheet_norm = sheet.strip() if isinstance(sheet, str) else None
     if sheet_norm == "":
         sheet_norm = None
-    if sheet_norm and len(sheet_norm) > 100:
-        raise HTTPException(status_code=400, detail="sheet 长度不能超过 100")
+    if sheet_norm and len(sheet_norm) > 2000:
+        raise HTTPException(status_code=400, detail="sheet 长度不能超过 2000")
 
     llm_norm = agent_llm.strip() if isinstance(agent_llm, str) else None
     if llm_norm == "":

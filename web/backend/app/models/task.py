@@ -48,8 +48,8 @@ class Task(Base):
     # 省份定额库名称（如 "北京市建设工程施工消耗量标准(2024)"）
     province: Mapped[str] = mapped_column(String(255))
 
-    # 指定Sheet名称（None=全部Sheet）
-    sheet: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 指定Sheet名称，多个用逗号分隔（None=全部Sheet）
+    sheet: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
     # 限制处理条数（None=全部）
     limit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

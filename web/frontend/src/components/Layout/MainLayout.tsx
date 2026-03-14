@@ -90,6 +90,11 @@ export default function MainLayout() {
         label: '工具',
         children: [
           {
+            key: '/tools/bill-compiler',
+            icon: <FileTextOutlined />,
+            label: '编清单',
+          },
+          {
             key: '/tools/price-backfill',
             icon: <DollarOutlined />,
             label: '智能填价',

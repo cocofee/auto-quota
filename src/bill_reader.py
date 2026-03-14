@@ -201,7 +201,11 @@ class BillReader:
         wb = openpyxl.load_workbook(str(actual_path), read_only=True, data_only=True)
         all_items = []
         try:
-            sheets_to_read = [sheet_name] if sheet_name else self._filter_bill_sheets(wb.sheetnames)
+            # 支持逗号分隔的多个Sheet名（前端多选时传 "给排水,电气,消防"）
+            if sheet_name:
+                sheets_to_read = [s.strip() for s in sheet_name.split(",") if s.strip()]
+            else:
+                sheets_to_read = self._filter_bill_sheets(wb.sheetnames)
             for sn in sheets_to_read:
                 if sn not in wb.sheetnames:
                     logger.warning(f"Sheet '{sn}' 不存在，跳过")

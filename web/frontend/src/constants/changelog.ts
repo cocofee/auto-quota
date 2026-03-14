@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.17';
+export const APP_VERSION = '0.2.23';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.23',
+    date: '2026-03-14',
+    changes: [
+      { type: 'user', text: '修复Sheet选择不生效的bug（选了特定Sheet但后端仍跑全部）' },
+      { type: 'user', text: '新建任务页面大改版：紧凑布局+左右分栏（Sheet列表+预览表格）' },
+      { type: 'user', text: '智能Sheet识别：按内容检测清单表（含"分部分项"），自动跳过汇总/措施/规费表' },
+      { type: 'user', text: '每个Sheet显示预估清单条数，勾选时自动预览内容' },
+    ],
+  },
   {
     version: '0.2.17',
     date: '2026-03-14',
