@@ -139,7 +139,7 @@ def run_code_match_test(detail: bool = False) -> dict:
 # 第二部分：专业路由测试（从现有benchmark试卷提取）
 # ============================================================
 
-# 定额册号（C4/C9/C10...）→ 对应的清单附录字母
+# 定额册号（C4/C9/C10...）→ 对应的清单附录字母（安装工程专用）
 QUOTA_TO_APPENDIX = {
     "C1": "A",   # 机械设备
     "C2": "B",   # 热力设备
@@ -157,16 +157,65 @@ QUOTA_TO_APPENDIX = {
 }
 
 
+def _detect_paper_type(data: dict) -> str:
+    """判断试卷是安装还是非安装。
+
+    看定额编号：C开头的是安装（如C4-3-12），纯数字开头是非安装（如1-8-123）。
+    非安装试卷的specialty字段（C1/C2...）只代表章节号，不代表安装册号。
+    """
+    items = data.get("items", [])
+    c_prefix = 0
+    non_c = 0
+    for item in items[:50]:  # 看前50条够了
+        qids = item.get("quota_ids", [])
+        if qids and qids[0].startswith("C"):
+            c_prefix += 1
+        elif qids:
+            non_c += 1
+    return "install" if c_prefix > non_c else "non_install"
+
+
+def _get_expected_major(paper_name: str) -> str:
+    """从试卷名称推断期望的专业大类编码。
+
+    例如:
+      "宁夏房屋建筑装饰工程计价定额(2019)" → "01"
+      "浙江省市政工程预算定额(2018)" → "04"
+      "江西省园林绿化工程消耗量定额" → "05"
+      "广东省通用安装工程综合定额(2018)" → "03"
+    """
+    if "园林" in paper_name or "绿化" in paper_name:
+        return "05"
+    if "市政" in paper_name:
+        return "04"
+    if "房屋建筑" in paper_name or "装饰" in paper_name:
+        return "01"
+    if "安装" in paper_name:
+        return "03"
+    if "仿古" in paper_name:
+        return "09"
+    if "修缮" in paper_name:
+        return "07"
+    return "03"  # 默认安装
+
+
 def run_route_test(detail: bool = False) -> dict:
-    """从benchmark试卷提取清单名称，测试专业路由准确率。"""
+    """从benchmark试卷提取清单名称，测试专业路由准确率。
+
+    安装试卷：比较附录字母（A-N），和之前一样。
+    非安装试卷：比较专业大类编码（01/04/05），不比较章节细分。
+    """
     papers_dir = PROJECT_ROOT / "tests" / "benchmark_papers"
     if not papers_dir.exists():
         return {"total": 0, "correct": 0, "accuracy": 0, "note": "试卷目录不存在"}
 
     total = 0
     correct = 0       # 无hint路由正确
-    correct_hint = 0  # 有hint路由正确（模拟知道sheet专业）
+    correct_hint = 0  # 有hint路由正确（安装用appendix hint，非安装用major hint）
     errors = []
+    # 分类统计
+    install_total = install_correct = install_hint = 0
+    noninst_total = noninst_correct = noninst_hint = 0
 
     for fpath in sorted(papers_dir.glob("*.json")):
         if fpath.name.startswith("_"):
@@ -177,6 +226,13 @@ def run_route_test(detail: bool = False) -> dict:
 
         data = json.loads(fpath.read_text(encoding="utf-8"))
         items = data.get("items", [])
+        paper_type = _detect_paper_type(data)
+        paper_name = data.get("province", fpath.stem)
+        expected_major = _get_expected_major(fpath.stem)
+
+        # 用expected_major判断是否安装（比用code格式更准确）
+        # 宁夏/浙江/江西等省安装试卷的定额编号不带C前缀，但确实是安装工程
+        is_install_paper = (expected_major == "03")
 
         for item in items:
             bill_name = item.get("bill_name", "").strip()
@@ -185,41 +241,73 @@ def run_route_test(detail: bool = False) -> dict:
 
             if not bill_name or not specialty:
                 continue
-            # 只测安装工程（C1~C13）
             if not specialty.startswith("C"):
-                continue
-
-            expected_appendix = QUOTA_TO_APPENDIX.get(specialty)
-            if not expected_appendix:
                 continue
 
             # 用bill_text作为description（去掉名称部分）
             desc = bill_text.replace(bill_name, "").strip()
 
-            # 无hint路由
-            got_appendix = _route_appendix(bill_name, desc)
-
-            # 有hint路由（模拟从sheet名获取专业信息）
-            result_hint = match_bill_code(bill_name, desc, hint_appendix=expected_appendix)
-            got_hint = result_hint["appendix"] if result_hint else ""
+            # 路由
+            got = _route_appendix(bill_name, desc)
 
             total += 1
-            if got_appendix == expected_appendix:
-                correct += 1
+
+            if is_install_paper:
+                # 安装试卷：比较附录字母
+                expected_appendix = QUOTA_TO_APPENDIX.get(specialty, "")
+                if not expected_appendix:
+                    continue
+                is_correct = (got == expected_appendix)
+                install_total += 1
+                if is_correct:
+                    install_correct += 1
+
+                # 有hint路由
+                result_hint = match_bill_code(bill_name, desc, hint_appendix=expected_appendix)
+                got_hint = result_hint["appendix"] if result_hint else ""
+                if got_hint == expected_appendix:
+                    correct_hint += 1
+                    install_hint += 1
+
+                if is_correct:
+                    correct += 1
+                else:
+                    errors.append({
+                        "bill_name": bill_name,
+                        "expected": f"{specialty}→{expected_appendix}",
+                        "got": got or "(空)",
+                        "type": "安装",
+                    })
             else:
-                errors.append({
-                    "bill_name": bill_name,
-                    "expected": f"{specialty}→{expected_appendix}",
-                    "got": got_appendix or "(空)",
-                })
-            if got_hint == expected_appendix:
-                correct_hint += 1
+                # 非安装试卷：比较专业大类
+                is_correct = (got == expected_major)
+                noninst_total += 1
+                if is_correct:
+                    noninst_correct += 1
+
+                # 有major hint路由
+                got_with_hint = _route_appendix(bill_name, desc,
+                                                hint_major=expected_major)
+                is_hint_correct = (got_with_hint == expected_major)
+                if is_hint_correct:
+                    correct_hint += 1
+                    noninst_hint += 1
+
+                if is_correct:
+                    correct += 1
+                else:
+                    errors.append({
+                        "bill_name": bill_name,
+                        "expected": f"大类{expected_major}",
+                        "got": got or "(空)",
+                        "type": paper_name,
+                    })
 
     # 打印错误样本（最多20条）
     if detail and errors:
         print(f"\n  路由错误样本（共{len(errors)}条，显示前20条）：")
         for e in errors[:20]:
-            print(f"    [NG] {e['bill_name']:20s}  期望:{e['expected']}  实际:{e['got']}")
+            print(f"    [NG] {e['bill_name']:20s}  期望:{e['expected']}  实际:{e['got']}  [{e['type']}]")
 
     result = {
         "total": total,
@@ -229,6 +317,16 @@ def run_route_test(detail: bool = False) -> dict:
         "accuracy_hint": round(correct_hint / max(total, 1) * 100, 1),
         "error_count": len(errors),
         "error_samples": errors[:20],
+        "install_total": install_total,
+        "install_correct": install_correct,
+        "install_accuracy": round(install_correct / max(install_total, 1) * 100, 1),
+        "install_hint": install_hint,
+        "install_hint_accuracy": round(install_hint / max(install_total, 1) * 100, 1),
+        "noninst_total": noninst_total,
+        "noninst_correct": noninst_correct,
+        "noninst_accuracy": round(noninst_correct / max(noninst_total, 1) * 100, 1),
+        "noninst_hint": noninst_hint,
+        "noninst_hint_accuracy": round(noninst_hint / max(noninst_total, 1) * 100, 1),
     }
     return result
 
@@ -356,6 +454,10 @@ def main():
     if "route" in results:
         r = results["route"]
         print(f"  试卷路由: 无hint {r['accuracy']}% | 有hint {r['accuracy_hint']}%")
+        if r.get("install_total"):
+            print(f"    安装({r['install_total']}条): 无hint {r['install_accuracy']}% | 有hint {r['install_hint_accuracy']}%")
+        if r.get("noninst_total"):
+            print(f"    非安装({r['noninst_total']}条): 无hint {r['noninst_accuracy']}% | 有hint {r['noninst_hint_accuracy']}%")
     if "seq" in results:
         r = results["seq"]
         print(f"  编序测试: {'通过' if r['failed']==0 else '失败'}")
