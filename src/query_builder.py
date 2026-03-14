@@ -1119,14 +1119,38 @@ def build_quota_query(parser, name: str, description: str = "",
         # 大口径(DN≥50)通常法兰连接，小口径(DN<50)通常螺纹连接
         # "闸阀""蝶阀"在定额库中完全搜不到，必须替换
         _generic_valves = ("闸阀", "蝶阀", "止回阀", "球阀", "截止阀",
-                           "防护闸阀", "涡流蝶阀")
+                           "防护闸阀", "涡流蝶阀", "浮球阀", "电磁阀",
+                           "信号蝶阀", "减压阀", "安全阀", "平衡阀",
+                           "排气阀", "放气阀", "放空阀")
         if any(v in name for v in _generic_valves) and "法兰" not in name and "螺纹" not in name:
-            _dn_val = int(dn) if dn else 50
-            if _dn_val >= 50:
+            # 优先从描述中提取连接方式（覆盖清单名中的隐含连接方式）
+            _conn = params.get("connection", "")
+            if "法兰" in _conn:
                 name = "法兰阀门安装"
-            else:
+            elif "螺纹" in _conn or "丝扣" in _conn:
                 name = "螺纹阀门安装"
+            elif "焊接" in _conn:
+                name = "焊接法兰阀安装"
+            elif "卡箍" in _conn or "沟槽" in _conn:
+                name = "法兰阀门安装"  # 卡箍/沟槽连接按法兰计
+            else:
+                # 无明确连接方式时，按DN分流
+                _dn_val = int(dn) if dn else 50
+                if _dn_val >= 50:
+                    name = "法兰阀门安装"
+                else:
+                    name = "螺纹阀门安装"
             material = ""
+
+        # 连接方式矛盾修复：清单名写"螺纹阀门"但描述中实际是"法兰连接"
+        # 例如："螺纹阀门 类型:蝶阀 连接方式:法兰" → 应走法兰阀门
+        if "阀门" in name:
+            _conn = params.get("connection", "")
+            if "螺纹" in name and "法兰" in _conn:
+                name = name.replace("螺纹阀门", "法兰阀门")
+                name = name.replace("螺纹阀", "法兰阀门")
+            elif "法兰" in name and ("螺纹" in _conn or "丝扣" in _conn):
+                name = name.replace("法兰阀门", "螺纹阀门")
 
         # PPR/PP-R管 → 定额标准名称：
         # 清单写"PPR冷水管"/"PP-R管"，定额叫"室内塑料给水管(热熔连接)"或"采暖管道 室内塑料管(热熔连接)"
