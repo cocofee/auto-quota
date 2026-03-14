@@ -19,11 +19,25 @@ from loguru import logger
 # 常量：分部编码前4位 → 附录字母
 # ============================================================
 
+# 安装工程（03xx）的分部→附录字母
 CODE_PREFIX_TO_APPENDIX = {
     "0301": "A", "0302": "B", "0303": "C", "0304": "D",
     "0305": "E", "0306": "F", "0307": "G", "0308": "H",
     "0309": "J", "0310": "K", "0311": "L", "0312": "M",
     "0313": "N", "0314": "P",
+}
+
+# 编码前2位 → 专业大类名称（GB/T 50500 体系）
+MAJOR_CATEGORY = {
+    "01": "房建",    # 房屋建筑与装饰工程
+    "02": "装饰",    # 装饰装修工程（部分标准合并到01）
+    "03": "安装",    # 通用安装工程
+    "04": "市政",    # 市政工程
+    "05": "园林",    # 园林绿化工程
+    "06": "矿山",    # 矿山工程
+    "07": "修缮",    # 修缮工程
+    "08": "轨道",    # 城市轨道交通工程
+    "09": "仿古",    # 仿古建筑工程
 }
 
 
@@ -32,7 +46,7 @@ CODE_PREFIX_TO_APPENDIX = {
 # ============================================================
 
 _features_db = None    # 项目特征数据库缓存（1182条，有features/unit/work_content）
-_bill_lib_index = None  # 清单库名称索引（从14.3万条安装清单构建）
+_bill_lib_index = None  # 清单库名称索引（从41.6万条全专业清单构建）
 
 
 def _load_features_db() -> dict:
@@ -79,13 +93,13 @@ def _extract_core_name(name: str) -> str:
 def _load_bill_library_index() -> dict:
     """从清单库构建名称→编码索引。
 
-    从41.6万条清单中提取所有安装工程(03开头)的清单项，
-    按核心名称分组，同名不同编码取出现次数最多的。
+    从41.6万条全专业清单中按核心名称分组，同名不同编码取出现次数最多的。
+    支持安装(03)、房建(01)、装饰(02)、市政(04)、园林(05)等全部专业。
 
     返回:
         {
-            "镀锌钢管": [{"code9": "031001002", "appendix": "K", "count": 58}, ...],
-            "配电箱": [{"code9": "030402011", "appendix": "D", "count": 42}, ...],
+            "镀锌钢管": [{"code9": "031001002", "appendix": "K", "major": "03", "count": 58}, ...],
+            "瓷砖地面": [{"code9": "010401xxx", "appendix": "", "major": "01", "count": 30}, ...],
             ...
         }
         每个名称对应一个候选列表（按count降序排列），通常只有1~3个候选。
@@ -114,7 +128,10 @@ def _load_bill_library_index() -> dict:
         for item in lib_data.get("items", []):
             code = item.get("code", "")
             name = item.get("name", "")
-            if not code.startswith("03") or len(code) < 9 or not name:
+            if len(code) < 9 or not name:
+                continue
+            # 只收标准编码（0开头的9位数字编码，如01/02/03/04/05...）
+            if not re.match(r"^0[1-9]\d{7}", code):
                 continue
 
             code9 = code[:9]
@@ -124,10 +141,12 @@ def _load_bill_library_index() -> dict:
 
             name_code_counter[(core, code9)] += weight
 
-    # 构建索引：核心名称 → [{code9, appendix, count}, ...]
+    # 构建索引：核心名称 → [{code9, appendix, major, count}, ...]
     index = {}
     for (core_name, code9), count in name_code_counter.items():
+        major = code9[:2]  # 专业大类：01房建/03安装/04市政...
         prefix4 = code9[:4]
+        # 安装工程(03)有附录字母A-N，其他专业暂不细分
         appendix = CODE_PREFIX_TO_APPENDIX.get(prefix4, "")
 
         if core_name not in index:
@@ -135,12 +154,14 @@ def _load_bill_library_index() -> dict:
         index[core_name].append({
             "code9": code9,
             "appendix": appendix,
+            "major": major,
             "count": count,
         })
 
-    # 每个名称的候选按出现次数降序排列
+    # 每个名称的候选按优先级排列：安装(03)优先，同专业内按出现次数降序
+    # 原因：系统主业务是安装工程，同名时安装条目应排在前面
     for name in index:
-        index[name].sort(key=lambda x: -x["count"])
+        index[name].sort(key=lambda x: (0 if x["major"] == "03" else 1, -x["count"]))
 
     _bill_lib_index = index
     logger.info(f"清单库索引已构建: {len(index)}个不同名称, "
@@ -244,18 +265,37 @@ def _lookup_features(code9: str) -> dict | None:
 # 匹配核心逻辑
 # ============================================================
 
-def _route_appendix(name: str, description: str = "") -> str:
-    """根据名称和描述判断所属附录（向后兼容，评测工具在用）。
+def _route_appendix(name: str, description: str = "",
+                    hint_major: str = "") -> str:
+    """根据名称和描述判断所属附录/专业大类。
 
-    新版匹配不依赖这个函数了（编码自带分部信息），
-    但评测工具的route测试还在调用，所以保留。
+    参数:
+        name: 清单名称
+        description: 描述
+        hint_major: 专业大类提示（"01"房建/"03"安装/"04"市政/"05"园林）
+
+    返回值:
+      - 安装工程: 附录字母 A-N（如 "K"=给排水、"D"=电气）
+      - 非安装工程: 2位大类编码（如 "01"=房建、"04"=市政）
+      - 未匹配: 空字符串
     """
-    # 先尝试从清单库索引精确匹配
     index = _load_bill_library_index()
     core = _extract_core_name(name)
 
+    def _pick_best(candidates: list) -> str:
+        """从候选列表中选最佳结果，考虑hint_major。"""
+        if hint_major:
+            # 有大类提示：优先匹配对应大类
+            for c in candidates:
+                if c["major"] == hint_major:
+                    return c["appendix"] or c["major"]
+        # 无提示或提示无匹配：取第一个（安装优先排序）
+        best = candidates[0]
+        return best["appendix"] or best["major"]
+
+    # 精确匹配
     if core in index:
-        return index[core][0]["appendix"]
+        return _pick_best(index[core])
 
     # 同义词展开
     expanded = core
@@ -264,20 +304,20 @@ def _route_appendix(name: str, description: str = "") -> str:
             expanded = core.replace(alias, standard)
             break
     if expanded != core and expanded in index:
-        return index[expanded][0]["appendix"]
+        return _pick_best(index[expanded])
 
     # 模糊：检查输入名称是否包含在某个索引名称中，或反过来
     text = f"{name} {description}"
-    best_app = ""
+    best_result = ""
     best_len = 0
     for idx_name, candidates in index.items():
         if len(idx_name) < 2:
             continue
         if idx_name in text and len(idx_name) > best_len:
-            best_app = candidates[0]["appendix"]
+            best_result = _pick_best(candidates)
             best_len = len(idx_name)
 
-    return best_app
+    return best_result
 
 
 def match_bill_code(name: str, description: str = "",
@@ -335,6 +375,7 @@ def match_bill_code(name: str, description: str = "",
 
     code9 = match["code9"]
     appendix = match["appendix"]
+    major = match.get("major", code9[:2])
     score = match["score"]
     method = match["method"]
 
@@ -352,11 +393,12 @@ def match_bill_code(name: str, description: str = "",
             "appendix_name": feat.get("appendix_name", ""),
             "section": feat.get("section", ""),
             "section_name": feat.get("section_name", ""),
+            "major": major,
             "match_score": round(score, 1),
             "match_method": method,
         }
     else:
-        # 清单库有但项目特征库没有（2013版编码或非标编码）
+        # 清单库有但项目特征库没有（非安装编码、2013版编码等）
         return {
             "code": code9,
             "name": name,
@@ -368,6 +410,7 @@ def match_bill_code(name: str, description: str = "",
             "appendix_name": "",
             "section": "",
             "section_name": "",
+            "major": major,
             "match_score": round(score, 1),
             "match_method": method,
         }
@@ -377,7 +420,7 @@ def _find_in_index(index: dict, core: str, text: str,
                    hint_appendix: str = "") -> dict | None:
     """在清单库索引中查找核心名称。
 
-    返回: {"code9": ..., "appendix": ..., "score": ..., "method": ...} 或 None
+    返回: {"code9": ..., "appendix": ..., "major": ..., "score": ..., "method": ...} 或 None
     """
     if core not in index:
         return None
@@ -389,11 +432,11 @@ def _find_in_index(index: dict, core: str, text: str,
         for c in candidates:
             if c["appendix"] == hint_appendix:
                 return {"code9": c["code9"], "appendix": c["appendix"],
-                        "score": 100.0, "method": "library_exact"}
+                        "major": c["major"], "score": 100.0, "method": "library_exact"}
     # 无提示 → 取出现次数最多的
     best = candidates[0]
     return {"code9": best["code9"], "appendix": best["appendix"],
-            "score": 95.0, "method": "library_exact"}
+            "major": best["major"], "score": 95.0, "method": "library_exact"}
 
 
 def _fuzzy_search(index: dict, name: str, text: str,
@@ -437,7 +480,7 @@ def _fuzzy_search(index: dict, name: str, text: str,
 
         best_score = score
         best = {"code9": pick["code9"], "appendix": pick["appendix"],
-                "score": score, "method": "library_fuzzy"}
+                "major": pick["major"], "score": score, "method": "library_fuzzy"}
 
     # 分数太低的不返回（避免乱匹配）
     if best and best_score < 40:
