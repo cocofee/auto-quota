@@ -262,6 +262,167 @@ def download_excel(match_id: str, x_api_key: str = Header(default="")):
 
 
 # ============================================================
+# 编清单接口（本地有清单库数据，直接执行）
+# ============================================================
+
+@app.post("/compile-bill/preview")
+async def compile_bill_preview(
+    file: UploadFile,
+    bill_version: str = Form(default="2024"),
+    x_api_key: str = Header(default=""),
+):
+    """编清单预览 — 上传Excel，自动匹配12位清单编码，返回结果"""
+    _verify_api_key(x_api_key)
+
+    content = await file.read()
+    filename = file.filename or "input.xlsx"
+
+    # 保存临时文件
+    work_dir = TEMP_DIR / f"compile_{uuid.uuid4().hex[:8]}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    input_path = work_dir / filename
+    input_path.write_bytes(content)
+
+    try:
+        from src.bill_reader import BillReader
+        from src.bill_compiler import compile_items
+
+        reader = BillReader()
+        items = reader.read_file(str(input_path))
+
+        if not items:
+            raise HTTPException(status_code=400, detail="未从Excel中读取到清单项，请检查文件格式。")
+
+        compiled = compile_items(items)
+
+        # 构建返回数据
+        result_items = []
+        matched_count = 0
+        for i, item in enumerate(compiled):
+            original_code = item.get("code", "").strip()
+            bill_match = item.get("bill_match")
+
+            if bill_match and bill_match.get("code_12"):
+                code = bill_match["code_12"]
+                code_source = "matched"
+                matched_count += 1
+            elif original_code and len(original_code) >= 9:
+                code = original_code
+                code_source = "original"
+                matched_count += 1
+            else:
+                code = original_code
+                code_source = "unmatched"
+
+            result_items.append({
+                "index": i + 1,
+                "name": item.get("name", ""),
+                "description": item.get("description", ""),
+                "unit": item.get("unit", ""),
+                "quantity": item.get("quantity", None),
+                "bill_code": code,
+                "bill_code_source": code_source,
+                "matched_name": bill_match.get("name", "") if bill_match else "",
+                "sheet_name": item.get("sheet_name", ""),
+                "section": item.get("section", ""),
+            })
+
+        return {
+            "total": len(result_items),
+            "matched": matched_count,
+            "unmatched": len(result_items) - matched_count,
+            "bill_version": bill_version,
+            "items": result_items,
+        }
+
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@app.post("/compile-bill/execute")
+async def compile_bill_execute(
+    file: UploadFile,
+    bill_version: str = Form(default="2024"),
+    x_api_key: str = Header(default=""),
+):
+    """编清单导出 — 上传Excel，返回编好的工程量清单Excel文件"""
+    _verify_api_key(x_api_key)
+
+    content = await file.read()
+    filename = file.filename or "input.xlsx"
+
+    work_dir = TEMP_DIR / f"compile_{uuid.uuid4().hex[:8]}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    input_path = work_dir / filename
+    input_path.write_bytes(content)
+
+    try:
+        import openpyxl
+        from src.bill_reader import BillReader
+        from src.bill_compiler import compile_items
+
+        reader = BillReader()
+        items = reader.read_file(str(input_path))
+        if not items:
+            raise HTTPException(status_code=400, detail="未从Excel中读取到清单项，请检查文件格式。")
+
+        compiled = compile_items(items)
+
+        # 生成结果Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "工程量清单"
+
+        headers = ["序号", "项目编码", "项目名称", "项目特征", "计量单位", "工程量", "编码来源"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = openpyxl.styles.Font(bold=True)
+
+        for i, item in enumerate(compiled):
+            original_code = item.get("code", "").strip()
+            bill_match = item.get("bill_match")
+
+            if bill_match and bill_match.get("code_12"):
+                code = bill_match["code_12"]
+                source = "自动匹配"
+            elif original_code and len(original_code) >= 9:
+                code = original_code
+                source = "原始编码"
+            else:
+                code = original_code
+                source = "未匹配"
+
+            row = i + 2
+            ws.cell(row=row, column=1, value=i + 1)
+            ws.cell(row=row, column=2, value=code)
+            ws.cell(row=row, column=3, value=item.get("name", ""))
+            ws.cell(row=row, column=4, value=item.get("description", ""))
+            ws.cell(row=row, column=5, value=item.get("unit", ""))
+            ws.cell(row=row, column=6, value=item.get("quantity", ""))
+            ws.cell(row=row, column=7, value=source)
+
+        col_widths = [8, 18, 30, 50, 10, 12, 12]
+        for col, width in enumerate(col_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
+
+        out_path = work_dir / "output.xlsx"
+        wb.save(str(out_path))
+        wb.close()
+
+        return FileResponse(
+            path=str(out_path),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"{Path(filename).stem}_工程量清单.xlsx",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"编清单失败: {e}")
+
+
+# ============================================================
 # 后台匹配执行
 # ============================================================
 
