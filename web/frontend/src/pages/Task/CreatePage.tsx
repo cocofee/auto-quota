@@ -109,6 +109,20 @@ function estimateBillRowCount(rows: unknown[][]): number {
   return count;
 }
 
+/** 检测是否为噪音行（小计/合计/注释/分页标记等，不是真正的清单数据） */
+const NOISE_KEYWORDS = [
+  '本页小计', '本页合计', '小计', '合计', '合价',
+  '注：', '注:', '备注：', '备注:',
+  '第 ', '第　', '共 页', '共　页',
+  '为计取规费', '定额人工费',
+];
+function isNoiseRow(row: unknown[]): boolean {
+  if (!Array.isArray(row)) return false;
+  const text = row.map(c => c != null ? String(c).trim() : '').join(' ').trim();
+  if (!text) return false;
+  return NOISE_KEYWORDS.some(kw => text.includes(kw));
+}
+
 /** Excel风格列名：A..Z, AA..AZ, BA..BZ... */
 function colName(i: number): string {
   let name = '';
@@ -246,11 +260,23 @@ export default function TaskCreatePage() {
     });
   }, [sheetInfos, sheetSearch]);
 
-  // 预览表格数据
-  const previewRows = previewSheet ? (sheetData[previewSheet] || []) : [];
+  // 预览表格数据——跳过开头的空白行，过滤中间的纯空行
+  const rawPreviewRows = previewSheet ? (sheetData[previewSheet] || []) : [];
+  // 带原始行号的预览数据（过滤纯空行，保留原始Excel行号）
+  const previewIndexedRows = useMemo(() => {
+    const result: { row: unknown[]; excelRow: number }[] = [];
+    for (let i = 0; i < rawPreviewRows.length; i++) {
+      const row = rawPreviewRows[i];
+      if (!Array.isArray(row)) continue;
+      const nonEmpty = row.filter(c => c != null && String(c).trim() !== '').length;
+      if (nonEmpty === 0) continue; // 跳过纯空行
+      result.push({ row, excelRow: i + 1 });
+    }
+    return result;
+  }, [rawPreviewRows]);
   const previewMaxCols = useMemo(() => {
-    return previewRows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
-  }, [previewRows]);
+    return previewIndexedRows.reduce((max, { row }) => Math.max(max, row.length), 0);
+  }, [previewIndexedRows]);
 
   /** 处理文件上传 */
   const handleFileUpload = (file: File) => {
@@ -279,9 +305,12 @@ export default function TaskCreatePage() {
           const recommend = isRecommendSheet(sn);
           const rowCount = estimateBillRowCount(rows);
 
-          // 跳过优先：有跳过信号就跳过，不管有没有清单信号
-          const shouldSkip = (skipByName || skipByContent) && !billByContent && !recommend;
-          const isBill = (billByContent || recommend) && !shouldSkip;
+          // 名称明确是非清单（汇总/措施/规费等）→ 直接跳过，不管内容
+          // 除非名称本身包含"分部分项"（如"分部分项工程清单与计价表"）
+          const shouldSkip = skipByName
+            ? !recommend  // 名称说跳过，但名称含"分部分项"就不跳
+            : (skipByContent && !billByContent);  // 名称不说跳过，按内容判断
+          const isBill = !shouldSkip && (billByContent || recommend);
 
           infos.push({
             name: sn,
@@ -296,8 +325,8 @@ export default function TaskCreatePage() {
         setSheetData(dataMap);
         setSheetInfos(infos);
 
-        // 智能选中：只选清单Sheet
-        const autoSelected = infos.filter(i => !i.isSkip).map(i => i.name);
+        // 智能选中：只选清单Sheet（不是"非跳过"，而是"确认是清单"）
+        const autoSelected = infos.filter(i => i.isBill).map(i => i.name);
         setSelectedSheets(autoSelected);
 
         // 默认预览第一个清单Sheet
@@ -371,33 +400,31 @@ export default function TaskCreatePage() {
   };
 
   // 统计
-  const billCount = sheetInfos.filter(i => !i.isSkip).length;
+  const billCount = sheetInfos.filter(i => i.isBill).length;
   const skipCount = sheetInfos.filter(i => i.isSkip).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: 'calc(100vh - 80px)', padding: '0 16px' }}>
 
       {/* ========== 顶部：紧凑表单 ========== */}
-      <Card styles={{ body: { padding: '16px 20px' } }}>
-        <Form form={form} layout="inline" initialValues={{ use_experience: true, mode: 'agent' }}
-          style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', alignItems: 'flex-end' }}
-        >
+      <Card styles={{ body: { padding: '12px 20px' } }}>
+        {/* 主行：文件 + 省份 + 定额库 + 模式 + 按钮 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {/* 文件上传 */}
           {fileList.length > 0 ? (
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              border: '1px solid #91caff', borderRadius: 6, padding: '6px 14px', background: '#e6f4ff',
+              display: 'flex', alignItems: 'center', gap: 8, height: 32,
+              border: '1px solid #91caff', borderRadius: 6, padding: '0 12px', background: '#e6f4ff',
             }}>
-              <FileExcelOutlined style={{ fontSize: 22, color: '#52c41a' }} />
-              <div>
-                <div style={{ fontWeight: 500, fontSize: 13, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {fileList[0].name}
-                </div>
-                <div style={{ color: '#888', fontSize: 12 }}>
-                  {((fileList[0].size || 0) / 1024).toFixed(0)} KB · {sheetNames.length} 个工作表
-                </div>
-              </div>
-              <Button type="text" danger size="small" icon={<DeleteOutlined />}
+              <FileExcelOutlined style={{ fontSize: 16, color: '#52c41a' }} />
+              <span style={{ fontSize: 13, fontWeight: 500, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {fileList[0].name}
+              </span>
+              <span style={{ fontSize: 11, color: '#888' }}>
+                {((fileList[0].size || 0) / 1024).toFixed(0)} KB · {sheetNames.length} 表
+              </span>
+              <DeleteOutlined
+                style={{ fontSize: 12, color: '#ff4d4f', cursor: 'pointer', marginLeft: 2 }}
                 onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); setSheetData({}); setSheetInfos([]); setPreviewSheet(''); }}
               />
             </div>
@@ -412,70 +439,96 @@ export default function TaskCreatePage() {
                 return false;
               }}
             >
-              <Button icon={<InboxOutlined />}>上传清单文件</Button>
+              <Button icon={<InboxOutlined />} size="middle">上传清单</Button>
             </Upload>
           )}
 
-          {/* 省份 */}
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Select
-              options={regionOptions} loading={provincesLoading}
-              placeholder="选择省份" value={selectedRegion} onChange={onRegionChange}
-              showSearch style={{ width: 160 }}
-              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-            />
-          </Form.Item>
+          {/* 分隔线 */}
+          <div style={{ width: 1, height: 20, background: '#e8e8e8' }} />
 
-          {/* 新疆子地区 */}
-          {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
+          {/* 省份+定额库 */}
+          <Form form={form} layout="inline" initialValues={{ use_experience: true, mode: 'agent' }}
+            style={{ display: 'contents' }}
+          >
             <Form.Item style={{ marginBottom: 0 }}>
               <Select
-                options={subRegionOptions} placeholder="选择地区"
-                value={selectedSubRegion} onChange={onSubRegionChange}
-                showSearch style={{ width: 140 }}
+                options={regionOptions} loading={provincesLoading}
+                placeholder="选择省份" value={selectedRegion} onChange={onRegionChange}
+                showSearch style={{ width: 150 }}
                 filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
               />
             </Form.Item>
-          )}
 
-          {/* 定额库 */}
-          <Form.Item name="province" style={{ marginBottom: 0 }}>
-            <Select
-              options={dbOptions} loading={provincesLoading}
-              placeholder={selectedRegion ? '选择定额库' : '请先选省份'}
-              disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
-              showSearch style={{ width: 260 }}
-              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-            />
-          </Form.Item>
+            {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
+              <Form.Item style={{ marginBottom: 0 }}>
+                <Select
+                  options={subRegionOptions} placeholder="选择地区"
+                  value={selectedSubRegion} onChange={onSubRegionChange}
+                  showSearch style={{ width: 130 }}
+                  filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+                />
+              </Form.Item>
+            )}
 
-          {/* 匹配模式 */}
-          <Form.Item name="mode" style={{ marginBottom: 0 }}>
-            <Radio.Group optionType="button" buttonStyle="solid">
-              <Radio.Button value="search"><ThunderboltOutlined /> 快速</Radio.Button>
-              <Radio.Button value="agent"><RocketOutlined /> 精准</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
+            <Form.Item name="province" style={{ marginBottom: 0 }}>
+              <Select
+                options={dbOptions} loading={provincesLoading}
+                placeholder={selectedRegion ? '选择定额库' : '请先选省份'}
+                disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
+                showSearch style={{ width: 320 }}
+                filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
 
-          {/* 管理员高级设置 */}
+            {/* 分隔线 */}
+            <div style={{ width: 1, height: 20, background: '#e8e8e8' }} />
+
+            {/* 匹配模式 */}
+            <Form.Item name="mode" style={{ marginBottom: 0 }}>
+              <Radio.Group optionType="button" buttonStyle="solid" size="middle">
+                <Radio.Button value="search"><ThunderboltOutlined /> 快速</Radio.Button>
+                <Radio.Button value="agent"><RocketOutlined /> 精准</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+          </Form>
+
+          {/* 管理员设置齿轮 */}
           {isAdmin && (
-            <Button type="text" size="small" icon={<SettingOutlined />}
+            <SettingOutlined
+              style={{ fontSize: 14, color: showAdvanced ? '#1890ff' : '#bbb', cursor: 'pointer' }}
               onClick={() => setShowAdvanced(!showAdvanced)}
-              style={{ color: showAdvanced ? '#1890ff' : '#999' }}
             />
           )}
 
           {/* 开始按钮 */}
           <Button type="primary" icon={<RocketOutlined />} onClick={onSubmit}
             loading={loading} disabled={fileList.length === 0 || !form.getFieldValue('province')}
+            size="middle"
           >
             开始匹配
           </Button>
-        </Form>
+
+          {/* 右侧推到最右：模式提示 + 已选工作表 */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+            <span style={{
+              padding: '2px 8px', borderRadius: 3,
+              background: selectedMode === 'search' ? '#fff7e6' : '#f6ffed',
+              color: selectedMode === 'search' ? '#d46b08' : '#389e0d',
+              whiteSpace: 'nowrap',
+            }}>
+              {selectedMode === 'search' ? '⚡ 不调大模型' : '🚀 大模型逐条分析'}
+            </span>
+            {selectedSheets.length > 0 && sheetNames.length > 0 && (
+              <span style={{ color: '#999', whiteSpace: 'nowrap' }}>
+                已选 {selectedSheets.length}/{sheetNames.length} 个工作表
+              </span>
+            )}
+          </div>
+        </div>
 
         {/* 管理员高级设置（折叠） */}
         {isAdmin && showAdvanced && (
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0', display: 'flex', gap: 16, alignItems: 'center' }}>
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #f0f0f0', display: 'flex', gap: 16, alignItems: 'center' }}>
             <Form form={form} layout="inline">
               <Form.Item name="limit_count" label="限制条数" style={{ marginBottom: 0 }}>
                 <InputNumber min={1} max={10000} placeholder="不限" style={{ width: 100 }} />
@@ -500,19 +553,6 @@ export default function TaskCreatePage() {
             style={{ marginTop: 8 }}
           />
         )}
-
-        {/* 模式说明 */}
-        <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>
-          {selectedMode === 'search'
-            ? '纯搜索引擎匹配，速度快（几秒出结果），不调用大模型'
-            : '大模型智能分析，准确率更高，但速度较慢（每条约1~2秒）'
-          }
-          {selectedSheets.length > 0 && sheetNames.length > 0 && (
-            <span style={{ marginLeft: 12 }}>
-              已选 <strong>{selectedSheets.length}</strong>/{sheetNames.length} 个工作表
-            </span>
-          )}
-        </div>
       </Card>
 
       {/* ========== 未上传文件时：显示拖拽上传区 ========== */}
@@ -643,13 +683,13 @@ export default function TaskCreatePage() {
                 </span>
               ) : '选择工作表预览'
             }
-            extra={previewRows.length > 0 && (
-              <span style={{ fontSize: 12, color: '#888' }}>{previewRows.length} 行 / {previewMaxCols} 列</span>
+            extra={previewIndexedRows.length > 0 && (
+              <span style={{ fontSize: 12, color: '#888' }}>{previewIndexedRows.length} 行 / {previewMaxCols} 列</span>
             )}
             style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}
             styles={{ body: { padding: 0, flex: 1, overflow: 'auto' } }}
           >
-            {previewSheet && previewRows.length > 0 ? (
+            {previewSheet && previewIndexedRows.length > 0 ? (
               <table style={{ borderCollapse: 'collapse', fontSize: 13, whiteSpace: 'nowrap', width: '100%' }}>
                 <thead>
                   <tr style={{ background: '#fafafa', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -669,25 +709,31 @@ export default function TaskCreatePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {previewRows.map((row, ri) => (
-                    <tr key={ri} style={{ background: ri % 2 === 0 ? '#fff' : '#fafafa' }}>
+                  {previewIndexedRows.map(({ row, excelRow }, ri) => {
+                    const noise = isNoiseRow(row);
+                    const bgNormal = ri % 2 === 0 ? '#fff' : '#fafafa';
+                    const bg = noise ? '#f5f5f5' : bgNormal;
+                    return (
+                    <tr key={ri} style={{ background: bg, opacity: noise ? 0.5 : 1 }}>
                       <td style={{
                         padding: '5px 10px', borderBottom: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0',
                         color: '#bbb', textAlign: 'center', position: 'sticky', left: 0,
-                        background: ri % 2 === 0 ? '#fff' : '#fafafa', zIndex: 1, fontWeight: 500,
-                      }}>{ri + 1}</td>
+                        background: bg, zIndex: 1, fontWeight: 500,
+                      }}>{excelRow}</td>
                       {Array.from({ length: previewMaxCols }, (_, ci) => (
                         <td key={ci} style={{
                           padding: '5px 10px', borderBottom: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0',
-                          maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis',
+                          maxWidth: 600, overflow: 'hidden', textOverflow: 'ellipsis',
+                          color: noise ? '#bbb' : undefined,
                         }}
-                          title={Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
+                          title={row[ci] != null ? String(row[ci]) : ''}
                         >
-                          {Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
+                          {row[ci] != null ? String(row[ci]) : ''}
                         </td>
                       ))}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
