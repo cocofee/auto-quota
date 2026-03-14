@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.bill_code_matcher import match_bill_code, match_bill_codes, _route_appendix
+from src.bill_code_matcher import match_bill_code, match_bill_codes, _route_appendix, _sheet_name_to_appendix
 
 
 # ============================================================
@@ -164,7 +164,8 @@ def run_route_test(detail: bool = False) -> dict:
         return {"total": 0, "correct": 0, "accuracy": 0, "note": "试卷目录不存在"}
 
     total = 0
-    correct = 0
+    correct = 0       # 无hint路由正确
+    correct_hint = 0  # 有hint路由正确（模拟知道sheet专业）
     errors = []
 
     for fpath in sorted(papers_dir.glob("*.json")):
@@ -195,7 +196,12 @@ def run_route_test(detail: bool = False) -> dict:
             # 用bill_text作为description（去掉名称部分）
             desc = bill_text.replace(bill_name, "").strip()
 
+            # 无hint路由
             got_appendix = _route_appendix(bill_name, desc)
+
+            # 有hint路由（模拟从sheet名获取专业信息）
+            result_hint = match_bill_code(bill_name, desc, hint_appendix=expected_appendix)
+            got_hint = result_hint["appendix"] if result_hint else ""
 
             total += 1
             if got_appendix == expected_appendix:
@@ -206,6 +212,8 @@ def run_route_test(detail: bool = False) -> dict:
                     "expected": f"{specialty}→{expected_appendix}",
                     "got": got_appendix or "(空)",
                 })
+            if got_hint == expected_appendix:
+                correct_hint += 1
 
     # 打印错误样本（最多20条）
     if detail and errors:
@@ -217,6 +225,8 @@ def run_route_test(detail: bool = False) -> dict:
         "total": total,
         "correct": correct,
         "accuracy": round(correct / max(total, 1) * 100, 1),
+        "correct_hint": correct_hint,
+        "accuracy_hint": round(correct_hint / max(total, 1) * 100, 1),
         "error_count": len(errors),
         "error_samples": errors[:20],
     }
@@ -322,9 +332,10 @@ def main():
         print("-" * 40)
         r = run_route_test(detail=args.detail)
         results["route"] = r
-        print(f"\n  路由准确率: {r['correct']}/{r['total']} ({r['accuracy']}%)")
+        print(f"\n  无hint路由: {r['correct']}/{r['total']} ({r['accuracy']}%)")
+        print(f"  有hint路由: {r['correct_hint']}/{r['total']} ({r['accuracy_hint']}%)")
         if r["error_count"] > 0:
-            print(f"  路由错误: {r['error_count']}条")
+            print(f"  无hint错误: {r['error_count']}条")
 
     # 测试3：12位编码编序
     if not args.only or args.only == "seq":
@@ -344,7 +355,7 @@ def main():
         print(f"  编码匹配: 路由{r['route_accuracy']}% | 编码{r['code_accuracy']}%")
     if "route" in results:
         r = results["route"]
-        print(f"  试卷路由: {r['accuracy']}% ({r['correct']}/{r['total']})")
+        print(f"  试卷路由: 无hint {r['accuracy']}% | 有hint {r['accuracy_hint']}%")
     if "seq" in results:
         r = results["seq"]
         print(f"  编序测试: {'通过' if r['failed']==0 else '失败'}")

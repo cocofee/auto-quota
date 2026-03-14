@@ -181,6 +181,38 @@ _SYNONYMS_SORTED = sorted(SYNONYMS.items(), key=lambda x: -len(x[0]))
 
 
 # ============================================================
+# Sheet名 → 附录字母映射（从Excel的sheet名推断专业）
+# ============================================================
+
+# (关键词, 附录字母) — 按优先级排列，先匹配更具体的
+_SHEET_NAME_ROUTES = [
+    ("消防", "J"), ("消火栓", "J"), ("喷淋", "J"), ("报警", "J"),
+    ("通风", "G"), ("空调", "G"), ("暖通", "G"), ("新风", "G"),
+    ("电气", "D"), ("强电", "D"), ("照明", "D"), ("配电", "D"), ("动力", "D"),
+    ("弱电", "E"), ("智能", "E"), ("监控", "E"), ("综合布线", "E"),
+    ("给排水", "K"), ("给水", "K"), ("排水", "K"), ("水暖", "K"),
+    ("采暖", "K"), ("燃气", "K"),
+    ("工业管道", "H"), ("工艺管道", "H"),
+    ("仪表", "F"),
+    ("通信", "L"),
+    ("刷油", "M"), ("防腐", "M"), ("保温", "M"), ("绝热", "M"),
+    ("机械", "A"), ("设备", "A"),
+    ("热力", "B"),
+]
+
+
+def _sheet_name_to_appendix(sheet_name: str) -> str:
+    """从sheet名推断所属附录。"""
+    if not sheet_name:
+        return ""
+    text = sheet_name.lower()
+    for keyword, appendix in _SHEET_NAME_ROUTES:
+        if keyword in text:
+            return appendix
+    return ""
+
+
+# ============================================================
 # 项目特征库索引（按9位编码查找特征模板）
 # ============================================================
 
@@ -460,8 +492,12 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
         if not name:
             continue
 
+        # 从sheet名提取专业提示（如"电气"→D，"给排水"→K）
+        sheet_name = item.get("sheet_name", "")
+        hint = _sheet_name_to_appendix(sheet_name)
+
         # 匹配
-        result = match_bill_code(name, desc)
+        result = match_bill_code(name, desc, hint_appendix=hint)
         if result:
             item["bill_match"] = result
             matched += 1
