@@ -34,6 +34,6 @@ def test_normalize_create_task_inputs_rejects_overlong_fields():
     with pytest.raises(HTTPException):
         _normalize_create_task_inputs("p" * 256, None, None)
     with pytest.raises(HTTPException):
-        _normalize_create_task_inputs("ok", "s" * 101, None)
+        _normalize_create_task_inputs("ok", "s" * 2001, None)
     with pytest.raises(HTTPException):
         _normalize_create_task_inputs("ok", None, "m" * 51)

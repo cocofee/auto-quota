@@ -1,18 +1,17 @@
 /**
  * 新建任务页
  *
- * 客户（普通用户）：上传Excel + 选省份 → 直接开始匹配（2步流程）
- * 管理员：额外显示 Sheet指定、限制条数、经验库开关（3步流程）
- * 匹配模式和大模型由后端配置统一控制，用户不需要选择。
+ * 布局：顶部紧凑表单 + 下方 Sheet列表(左) / 预览表格(右) 并排
+ * 智能识别清单Sheet：按内容（而非Sheet名）判断是否为工程量清单
  */
 
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Steps, Progress,
-  Checkbox, Tag, Tooltip, Input, Radio,
+  Card, Form, Button, Select, Switch, Upload, InputNumber, App, Progress,
+  Checkbox, Tag, Input, Radio,
 } from 'antd';
-import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { InboxOutlined, RocketOutlined, FileExcelOutlined, DeleteOutlined, SearchOutlined, ThunderboltOutlined, SettingOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import { read, utils as xlsxUtils } from 'xlsx';
 import api from '../../services/api';
@@ -24,7 +23,7 @@ import { getErrorMessage } from '../../utils/error';
 
 const { Dragger } = Upload;
 
-/** 非清单Sheet的关键词（这些Sheet通常不包含需要匹配的清单数据） */
+/** 非清单Sheet的关键词（用于Sheet名匹配） */
 const SKIP_KEYWORDS = [
   '汇总', '造价汇总', '规费', '税金', '措施', '人材机', '人工', '材料',
   '机械', '主材', '甲供', '暂估', '暂列金额', '签证', '索赔', '封面', '目录',
@@ -32,21 +31,103 @@ const SKIP_KEYWORDS = [
   '投标报价', '报价汇总', '待审核',
 ];
 
-/** 推荐关键词（优先级高于跳过关键词，含这些词的Sheet不会被跳过） */
+/** 非清单内容关键词（用于Sheet内容匹配） */
+const SKIP_CONTENT_KEYWORDS = [
+  '汇总表', '费用汇总', '报价表', '措施项目', '总价措施',
+  '规费', '税金', '其他项目清单', '其他项目费',
+  '人材机汇总', '主材汇总', '甲供材料', '暂估价', '暂列金额',
+  '签证', '索赔', '编制说明', '取费表', '费率表',
+  '招标控制价', '投标总价',
+];
+
+/** 清单内容关键词（只有"分部分项"才是真正要匹配的清单） */
+const BILL_CONTENT_KEYWORDS = ['分部分项'];
+
+/** 推荐关键词 */
 const RECOMMEND_KEYWORDS = ['分部分项', '工程量清单'];
 
-/** 判断Sheet名称是否为非清单Sheet（汇总表、措施费等） */
-function isSkipSheet(name: string): boolean {
+/** 判断Sheet名称是否为非清单Sheet */
+function isSkipByName(name: string): boolean {
   const n = name.replace(/\s+/g, '');
-  // 推荐优先：含"分部分项"等关键词的Sheet永远不跳过
   if (RECOMMEND_KEYWORDS.some(kw => n.includes(kw))) return false;
   return SKIP_KEYWORDS.some(kw => n.includes(kw));
 }
 
-/** 判断Sheet名称是否为推荐的清单Sheet（只推荐"分部分项清单"这类核心Sheet） */
+/** 判断Sheet名称是否为推荐的清单Sheet */
 function isRecommendSheet(name: string): boolean {
   const n = name.replace(/\s+/g, '');
   return RECOMMEND_KEYWORDS.some(kw => n.includes(kw));
+}
+
+/** 从Sheet的前几行内容中提取摘要标题（第一个非空有意义的文本） */
+function extractSheetTitle(rows: unknown[][]): string {
+  for (const row of rows.slice(0, 8)) {
+    if (!Array.isArray(row)) continue;
+    for (const cell of row) {
+      const text = cell != null ? String(cell).trim() : '';
+      if (text.length >= 3 && text.length <= 50) return text;
+    }
+  }
+  return '';
+}
+
+/** 按内容判断Sheet是否为清单（必须含"分部分项"） */
+function isBillByContent(rows: unknown[][]): boolean {
+  const allText = rows.slice(0, 15).flat().map(c => c != null ? String(c).trim() : '').join(' ');
+  return BILL_CONTENT_KEYWORDS.some(kw => allText.includes(kw));
+}
+
+/** 按内容判断Sheet是否为非清单 */
+function isSkipByContent(rows: unknown[][]): boolean {
+  const allText = rows.slice(0, 10).flat().map(c => c != null ? String(c).trim() : '').join(' ');
+  return SKIP_CONTENT_KEYWORDS.some(kw => allText.includes(kw));
+}
+
+/** 估算Sheet中的清单数据行数（跳过表头和空行） */
+function estimateBillRowCount(rows: unknown[][]): number {
+  // 找到"项目编码"所在行作为表头，之后的非空行就是数据行
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+    const text = row.map(c => c != null ? String(c).trim() : '').join(' ');
+    if (text.includes('项目编码') || text.includes('清单编码')) {
+      headerRow = i;
+      break;
+    }
+  }
+  if (headerRow < 0) return 0;
+  // 统计表头之后有内容的行数
+  let count = 0;
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+    // 有至少2个非空单元格的行算数据行
+    const nonEmpty = row.filter(c => c != null && String(c).trim() !== '').length;
+    if (nonEmpty >= 2) count++;
+  }
+  return count;
+}
+
+/** Excel风格列名：A..Z, AA..AZ, BA..BZ... */
+function colName(i: number): string {
+  let name = '';
+  let n = i;
+  while (n >= 0) {
+    name = String.fromCharCode(65 + (n % 26)) + name;
+    n = Math.floor(n / 26) - 1;
+  }
+  return name;
+}
+
+/** Sheet信息（名称+摘要+是否清单） */
+interface SheetInfo {
+  name: string;       // Sheet名称
+  title: string;      // 内容摘要标题
+  isBill: boolean;    // 是否清单Sheet
+  isSkip: boolean;    // 是否应跳过
+  isRecommend: boolean;
+  rowCount: number;   // 估算的清单数据行数
 }
 
 export default function TaskCreatePage() {
@@ -57,53 +138,29 @@ export default function TaskCreatePage() {
 
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [uploadPercent, setUploadPercent] = useState(0); // 上传进度百分比
+  const [uploadPercent, setUploadPercent] = useState(0);
   const [fileList, setFileList] = useState<UploadFile[]>([]);
-  const [sheetNames, setSheetNames] = useState<string[]>([]); // 从上传的Excel中读取的工作表名列表
-  const [selectedSheets, setSelectedSheets] = useState<string[]>([]); // 用户勾选的工作表
-  const [sheetFilter, setSheetFilter] = useState<'all' | 'selected' | 'skipped'>('all'); // Sheet筛选模式
-  const [sheetSearch, setSheetSearch] = useState(''); // Sheet搜索关键词
-  const [sheetData, setSheetData] = useState<Record<string, unknown[][]>>({}); // 每个Sheet的前30行原始数据
-  const [previewSheet, setPreviewSheet] = useState(''); // 当前预览的Sheet名（与勾选分开）
+  const [sheetInfos, setSheetInfos] = useState<SheetInfo[]>([]);  // Sheet信息列表
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [selectedSheets, setSelectedSheets] = useState<string[]>([]);
+  const [sheetSearch, setSheetSearch] = useState('');
+  const [sheetData, setSheetData] = useState<Record<string, unknown[][]>>({});
+  const [previewSheet, setPreviewSheet] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false); // 管理员高级设置展开
 
-  // 根据筛选条件过滤Sheet列表
-  const filteredSheets = useMemo(() => {
-    return sheetNames.filter((name) => {
-      // 搜索过滤
-      if (sheetSearch && !name.includes(sheetSearch)) return false;
-      // 分类过滤
-      if (sheetFilter === 'selected') return selectedSheets.includes(name);
-      if (sheetFilter === 'skipped') return isSkipSheet(name);
-      return true;
-    });
-  }, [sheetNames, sheetSearch, sheetFilter, selectedSheets]);
+  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup, getSubgroup } = useProvinceStore();
+  const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
+  const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined);
+  const selectedProvince = Form.useWatch('province', form);
+  const selectedMode = Form.useWatch('mode', form);
 
-  // 筛选结果变化时，如果当前预览项不在列表中，自动切到第一个
-  useEffect(() => {
-    if (previewSheet && filteredSheets.length > 0 && !filteredSheets.includes(previewSheet)) {
-      setPreviewSheet(filteredSheets[0]);
-    }
-  }, [filteredSheets, previewSheet]);
-
-  const [currentStep, setCurrentStep] = useState(0);
-  const { provinces: allProvinces, loading: provincesLoading, fetchProvinces, getGroup, getSubgroup } = useProvinceStore(); // 全局缓存的定额库列表
-  const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined); // 用户选的省份（地区）
-  const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined); // 新疆地区选择
-  const selectedProvince = Form.useWatch('province', form); // 监听选中的定额库
-  const selectedMode = Form.useWatch('mode', form); // 监听匹配模式
-
-  // 计算同批兄弟库（同省份+同年份，自动挂载为辅助库）
+  // 计算同批兄弟库
   const siblingDbs = useMemo(() => {
     if (!selectedProvince) return [];
     return getSiblingProvinces(selectedProvince, allProvinces);
   }, [selectedProvince, allProvinces]);
 
-  // 客户2步流程，管理员3步流程
-  const steps = isAdmin
-    ? [{ title: '上传文件' }, { title: '配置参数' }, { title: '开始匹配' }]
-    : [{ title: '上传文件' }, { title: '开始匹配' }];
-
-  // 按分组（来自后端文件夹结构）：{ "北京": ["北京市建设工程...(2024)", ...], "石油": [...] }
+  // 按分组
   const regionMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const name of allProvinces) {
@@ -114,7 +171,6 @@ export default function TaskCreatePage() {
     return map;
   }, [allProvinces, getGroup]);
 
-  // 省份（地区）下拉选项
   const regionOptions = useMemo(() => {
     return Array.from(regionMap.entries()).map(([region, items]) => ({
       label: `${region}（${items.length} 个定额库）`,
@@ -122,7 +178,6 @@ export default function TaskCreatePage() {
     }));
   }, [regionMap]);
 
-  // 新疆子地区列表（仅当选了"新疆"时有值）
   const subRegionOptions = useMemo(() => {
     if (selectedRegion !== '新疆') return [];
     const items = regionMap.get('新疆') || [];
@@ -134,11 +189,9 @@ export default function TaskCreatePage() {
     return Array.from(regions).map((r) => ({ label: r, value: r }));
   }, [selectedRegion, regionMap, getSubgroup]);
 
-  // 当前省份下的定额库下拉选项（新疆按子地区过滤）
   const dbOptions = useMemo(() => {
     if (!selectedRegion) return [];
     const items = regionMap.get(selectedRegion) || [];
-    // 新疆：按选中的子地区过滤
     if (selectedRegion === '新疆' && selectedSubRegion) {
       return items
         .filter((name) => getSubgroup(name) === selectedSubRegion)
@@ -147,27 +200,22 @@ export default function TaskCreatePage() {
     return items.map((name) => ({ label: name, value: name }));
   }, [selectedRegion, selectedSubRegion, regionMap, getSubgroup]);
 
-  // 从全局 store 加载定额库列表（有缓存则跳过请求）
   useEffect(() => {
     fetchProvinces().then((list) => {
       if (list.length > 0 && !form.getFieldValue('province')) {
         const firstRegion = getGroup(list[0]);
         setSelectedRegion(firstRegion);
         const firstDb = list.find((p) => getGroup(p) === firstRegion);
-        if (firstDb) {
-          form.setFieldValue('province', firstDb);
-        }
+        if (firstDb) form.setFieldValue('province', firstDb);
       }
     });
   }, [fetchProvinces, form]);
 
-  // 切换省份时：自动选中该省份下的第一个定额库
   const onRegionChange = (region: string) => {
     setSelectedRegion(region);
-    setSelectedSubRegion(undefined); // 重置子地区
+    setSelectedSubRegion(undefined);
     const items = regionMap.get(region) || [];
     if (region === '新疆') {
-      // 新疆：不自动选定额库，等用户选子地区
       form.setFieldValue('province', undefined);
     } else if (items.length > 0) {
       form.setFieldValue('province', items[0]);
@@ -176,7 +224,6 @@ export default function TaskCreatePage() {
     }
   };
 
-  // 切换新疆子地区时：自动选中该地区的第一个定额库
   const onSubRegionChange = (subRegion: string) => {
     setSelectedSubRegion(subRegion);
     const items = regionMap.get('新疆') || [];
@@ -188,24 +235,99 @@ export default function TaskCreatePage() {
     }
   };
 
+  // 根据搜索过滤Sheet
+  const filteredSheets = useMemo(() => {
+    return sheetInfos.filter((info) => {
+      if (sheetSearch) {
+        const q = sheetSearch.toLowerCase();
+        return info.name.toLowerCase().includes(q) || info.title.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [sheetInfos, sheetSearch]);
+
+  // 预览表格数据
+  const previewRows = previewSheet ? (sheetData[previewSheet] || []) : [];
+  const previewMaxCols = useMemo(() => {
+    return previewRows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
+  }, [previewRows]);
+
+  /** 处理文件上传 */
+  const handleFileUpload = (file: File) => {
+    setFileList([{ uid: Date.now().toString(), name: file.name, size: file.size, originFileObj: file } as UploadFile]);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = read(e.target?.result, { type: 'array', sheetRows: 30 });
+        setSheetNames(wb.SheetNames || []);
+
+        // 读取每个Sheet的前30行
+        const dataMap: Record<string, unknown[][]> = {};
+        const infos: SheetInfo[] = [];
+
+        for (const sn of wb.SheetNames) {
+          const ws = wb.Sheets[sn];
+          if (!ws) continue;
+          const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1, defval: '' });
+          dataMap[sn] = rows;
+
+          const title = extractSheetTitle(rows);
+          const billByContent = isBillByContent(rows);
+          const skipByContent = isSkipByContent(rows);
+          const skipByName = isSkipByName(sn);
+          const recommend = isRecommendSheet(sn);
+          const rowCount = estimateBillRowCount(rows);
+
+          // 跳过优先：有跳过信号就跳过，不管有没有清单信号
+          const shouldSkip = (skipByName || skipByContent) && !billByContent && !recommend;
+          const isBill = (billByContent || recommend) && !shouldSkip;
+
+          infos.push({
+            name: sn,
+            title,
+            isBill,
+            isSkip: shouldSkip,
+            isRecommend: isBill,
+            rowCount,
+          });
+        }
+
+        setSheetData(dataMap);
+        setSheetInfos(infos);
+
+        // 智能选中：只选清单Sheet
+        const autoSelected = infos.filter(i => !i.isSkip).map(i => i.name);
+        setSelectedSheets(autoSelected);
+
+        // 默认预览第一个清单Sheet
+        const firstBill = infos.find(i => i.isBill) || infos.find(i => !i.isSkip) || infos[0];
+        setPreviewSheet(firstBill?.name || '');
+
+      } catch {
+        setSheetNames([]);
+        setSheetData({});
+        setSheetInfos([]);
+        setPreviewSheet('');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   /** 提交任务 */
   const onSubmit = async () => {
     try {
-      // 用 getFieldsValue(true) 获取所有字段值（包括被条件渲染隐藏的字段）
-      // 注意：不能用 validateFields()，因为它只返回当前页面上可见的字段，
-      // 省份字段在步骤0，到确认步骤时已不在页面上，会返回 undefined
       const values = form.getFieldsValue(true);
-
-      // 手动验证关键字段（因为 validateFields 无法验证未渲染的字段）
       if (!values.province) {
         message.warning('请先选择定额库');
-        setCurrentStep(0);
         return;
       }
-
       if (fileList.length === 0) {
         message.warning('请先上传清单文件');
-        setCurrentStep(0);
+        return;
+      }
+      if (selectedSheets.length === 0) {
+        message.warning('请至少选择一个工作表');
         return;
       }
 
@@ -216,24 +338,18 @@ export default function TaskCreatePage() {
       const file = fileList[0].originFileObj as Blob;
       formData.append('file', file);
       formData.append('province', values.province);
-
-      // 匹配模式（search=快速搜索 / agent=大模型精准）
       formData.append('mode', values.mode || 'agent');
 
-      // 管理员设置的高级参数；客户用默认值
-      formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));
-
-      if (isAdmin) {
-        // 传选中的sheets（如果不是全选，才传，全选时后端默认处理全部）
-        if (selectedSheets.length > 0 && selectedSheets.length < sheetNames.length) {
-          formData.append('sheets', selectedSheets.join(','));
-        }
-        if (values.limit_count) {
-          formData.append('limit_count', String(values.limit_count));
-        }
+      // 传选中的sheets（不全选时才传）
+      if (selectedSheets.length > 0 && selectedSheets.length < sheetNames.length) {
+        formData.append('sheet', selectedSheets.join(','));
       }
 
-      // 根据文件大小动态计算超时（至少 60s，每 MB 加 10s）
+      formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));
+      if (isAdmin && values.limit_count) {
+        formData.append('limit_count', String(values.limit_count));
+      }
+
       const fileSizeMB = file.size / 1024 / 1024;
       const timeout = Math.max(60000, Math.ceil(fileSizeMB * 10000) + 30000);
 
@@ -241,9 +357,7 @@ export default function TaskCreatePage() {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout,
         onUploadProgress: (e) => {
-          if (e.total) {
-            setUploadPercent(Math.round((e.loaded / e.total) * 100));
-          }
+          if (e.total) setUploadPercent(Math.round((e.loaded / e.total) * 100));
         },
       });
 
@@ -256,553 +370,334 @@ export default function TaskCreatePage() {
     }
   };
 
-  /** 客户模式：步骤0上传 → 步骤1确认提交 */
-  /** 管理员模式：步骤0上传 → 步骤1参数 → 步骤2确认提交 */
-  const isConfirmStep = isAdmin ? currentStep === 2 : currentStep === 1;
-  const isParamStep = isAdmin && currentStep === 1;
+  // 统计
+  const billCount = sheetInfos.filter(i => !i.isSkip).length;
+  const skipCount = sheetInfos.filter(i => i.isSkip).length;
 
   return (
-    <div style={{ display: 'flex', gap: 16, justifyContent: 'center', alignItems: 'flex-start' }}>
-      {/* 左侧：Sheet选择面板（上传文件后显示） */}
-      {sheetNames.length > 0 && (
-        <Card
-          title={
-            <span>
-              工作表
-              <span style={{ color: '#888', fontWeight: 'normal', marginLeft: 8, fontSize: 13 }}>
-                已选 {selectedSheets.length}/{sheetNames.length}
-              </span>
-            </span>
-          }
-          style={{ width: 520, flexShrink: 0 }}
-          styles={{ body: { padding: 0 } }}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: 'calc(100vh - 80px)', padding: '0 16px' }}>
+
+      {/* ========== 顶部：紧凑表单 ========== */}
+      <Card styles={{ body: { padding: '16px 20px' } }}>
+        <Form form={form} layout="inline" initialValues={{ use_experience: true, mode: 'agent' }}
+          style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', alignItems: 'flex-end' }}
         >
-          {/* 搜索框 */}
-          <div style={{ padding: '12px 16px 8px' }}>
-            <Input
-              placeholder="搜索工作表名称"
-              prefix={<SearchOutlined style={{ color: '#bbb' }} />}
-              allowClear
-              value={sheetSearch}
-              onChange={(e) => setSheetSearch(e.target.value)}
-            />
-          </div>
-
-          {/* 筛选按钮 */}
-          <div style={{ padding: '0 16px 8px' }}>
-            <Radio.Group
-              size="small"
-              value={sheetFilter}
-              onChange={(e) => setSheetFilter(e.target.value)}
-              optionType="button"
-              buttonStyle="solid"
-            >
-              <Radio.Button value="all">全部 {sheetNames.length}</Radio.Button>
-              <Radio.Button value="selected">已选 {selectedSheets.length}</Radio.Button>
-              <Radio.Button value="skipped">已跳过 {sheetNames.filter(n => isSkipSheet(n)).length}</Radio.Button>
-            </Radio.Group>
-          </div>
-
-          {/* 全选/取消全选 */}
-          <div style={{
-            padding: '4px 16px 8px',
-            borderTop: '1px solid #f0f0f0',
-            borderBottom: '1px solid #f0f0f0',
-            marginBottom: 4,
-          }}>
-            <Checkbox
-              checked={selectedSheets.length === sheetNames.length}
-              indeterminate={selectedSheets.length > 0 && selectedSheets.length < sheetNames.length}
-              onChange={(e) => {
-                setSelectedSheets(e.target.checked ? [...sheetNames] : []);
+          {/* 文件上传 */}
+          {fileList.length > 0 ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              border: '1px solid #91caff', borderRadius: 6, padding: '6px 14px', background: '#e6f4ff',
+            }}>
+              <FileExcelOutlined style={{ fontSize: 22, color: '#52c41a' }} />
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {fileList[0].name}
+                </div>
+                <div style={{ color: '#888', fontSize: 12 }}>
+                  {((fileList[0].size || 0) / 1024).toFixed(0)} KB · {sheetNames.length} 个工作表
+                </div>
+              </div>
+              <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); setSheetData({}); setSheetInfos([]); setPreviewSheet(''); }}
+              />
+            </div>
+          ) : (
+            <Upload
+              maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+              beforeUpload={(file) => {
+                const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+                if (!isExcel) { message.error('只支持 Excel 文件'); return Upload.LIST_IGNORE; }
+                if (file.size / 1024 / 1024 >= 30) { message.error('文件不能超过 30MB'); return Upload.LIST_IGNORE; }
+                handleFileUpload(file);
+                return false;
               }}
             >
-              全选
-            </Checkbox>
-          </div>
+              <Button icon={<InboxOutlined />}>上传清单文件</Button>
+            </Upload>
+          )}
 
-          {/* Sheet列表 */}
-          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-            {filteredSheets.length > 0 ? filteredSheets.map((name) => {
-              const skip = isSkipSheet(name);
-              const recommend = isRecommendSheet(name);
-              const isPreviewing = previewSheet === name;
-              return (
-                <div
-                  key={name}
-                  onClick={() => setPreviewSheet(name)}
-                  style={{
-                    padding: '6px 16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    opacity: skip && !selectedSheets.includes(name) ? 0.5 : 1,
-                    background: selectedSheets.includes(name) ? '#f6ffed' : 'transparent',
-                    borderLeft: isPreviewing ? '3px solid #1890ff' : '3px solid transparent',
-                  }}
-                >
-                  {/* 勾选区域阻止冒泡，避免勾选时触发预览切换 */}
-                  <span onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    checked={selectedSheets.includes(name)}
-                    onChange={(e) => {
-                      setSelectedSheets(prev =>
-                        e.target.checked
-                          ? [...prev, name]
-                          : prev.filter(s => s !== name)
-                      );
-                    }}
-                  >
-                    <span style={{ color: skip ? '#999' : undefined, fontSize: 15 }}>
-                      {name}
-                    </span>
-                  </Checkbox>
-                  </span>
-                  {recommend && (
-                    <Tooltip title="系统识别为清单Sheet，推荐处理">
-                      <Tag color="green" style={{ marginLeft: 'auto', cursor: 'help', fontSize: 13 }}>
-                        推荐
-                      </Tag>
-                    </Tooltip>
-                  )}
-                  {skip && !selectedSheets.includes(name) && (
-                    <Tooltip title="汇总/措施/规费等非清单Sheet，已自动跳过">
-                      <Tag color="default" style={{ marginLeft: 'auto', cursor: 'help', fontSize: 13 }}>
-                        跳过
-                      </Tag>
-                    </Tooltip>
-                  )}
-                </div>
-              );
-            }) : (
-              <div style={{ padding: '16px', textAlign: 'center', color: '#999' }}>
-                无匹配结果
-              </div>
+          {/* 省份 */}
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Select
+              options={regionOptions} loading={provincesLoading}
+              placeholder="选择省份" value={selectedRegion} onChange={onRegionChange}
+              showSearch style={{ width: 160 }}
+              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+
+          {/* 新疆子地区 */}
+          {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Select
+                options={subRegionOptions} placeholder="选择地区"
+                value={selectedSubRegion} onChange={onSubRegionChange}
+                showSearch style={{ width: 140 }}
+                filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
+
+          {/* 定额库 */}
+          <Form.Item name="province" style={{ marginBottom: 0 }}>
+            <Select
+              options={dbOptions} loading={provincesLoading}
+              placeholder={selectedRegion ? '选择定额库' : '请先选省份'}
+              disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
+              showSearch style={{ width: 260 }}
+              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+
+          {/* 匹配模式 */}
+          <Form.Item name="mode" style={{ marginBottom: 0 }}>
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="search"><ThunderboltOutlined /> 快速</Radio.Button>
+              <Radio.Button value="agent"><RocketOutlined /> 精准</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+
+          {/* 管理员高级设置 */}
+          {isAdmin && (
+            <Button type="text" size="small" icon={<SettingOutlined />}
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              style={{ color: showAdvanced ? '#1890ff' : '#999' }}
+            />
+          )}
+
+          {/* 开始按钮 */}
+          <Button type="primary" icon={<RocketOutlined />} onClick={onSubmit}
+            loading={loading} disabled={fileList.length === 0 || !form.getFieldValue('province')}
+          >
+            开始匹配
+          </Button>
+        </Form>
+
+        {/* 管理员高级设置（折叠） */}
+        {isAdmin && showAdvanced && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0', display: 'flex', gap: 16, alignItems: 'center' }}>
+            <Form form={form} layout="inline">
+              <Form.Item name="limit_count" label="限制条数" style={{ marginBottom: 0 }}>
+                <InputNumber min={1} max={10000} placeholder="不限" style={{ width: 100 }} />
+              </Form.Item>
+              <Form.Item name="use_experience" label="经验库" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Form>
+            {siblingDbs.length > 0 && (
+              <span style={{ fontSize: 12, color: '#52c41a' }}>
+                辅助库: {siblingDbs.length} 个自动挂载
+              </span>
             )}
           </div>
+        )}
 
-          {/* Sheet内容预览表格 */}
-          {previewSheet && sheetData[previewSheet] && (
-            <div style={{ borderTop: '1px solid #f0f0f0', padding: '12px 16px' }}>
-              <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-                预览：<strong>{previewSheet}</strong>（前30行）
-              </div>
-              <div style={{ overflow: 'auto', maxHeight: 300, border: '1px solid #f0f0f0', borderRadius: 4 }}>
-                <table style={{ borderCollapse: 'collapse', fontSize: 12, whiteSpace: 'nowrap' }}>
-                  <thead>
-                    <tr style={{ background: '#fafafa', position: 'sticky', top: 0, zIndex: 1 }}>
-                      <th style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', color: '#999', fontWeight: 500 }}>#</th>
-                      {(() => {
-                        // 计算最大列数，用Excel风格列名（A~Z, AA~AZ...）
-                        const rows = sheetData[previewSheet] || [];
-                        const maxCols = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0);
-                        // Excel风格列名：A..Z, AA..AZ, BA..BZ...
-                        const colName = (i: number) => {
-                          let name = '';
-                          let n = i;
-                          while (n >= 0) {
-                            name = String.fromCharCode(65 + (n % 26)) + name;
-                            n = Math.floor(n / 26) - 1;
-                          }
-                          return name;
-                        };
-                        return Array.from({ length: maxCols }, (_, i) => (
-                          <th key={i} style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', color: '#999', fontWeight: 500 }}>
-                            {colName(i)}
-                          </th>
-                        ));
-                      })()}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(sheetData[previewSheet] || []).map((row, ri) => (
-                      <tr key={ri} style={{ background: ri % 2 === 0 ? '#fff' : '#fafafa' }}>
-                        <td style={{ padding: '3px 8px', borderBottom: '1px solid #f5f5f5', color: '#bbb', textAlign: 'center' }}>{ri + 1}</td>
-                        {(() => {
-                          const rows = sheetData[previewSheet] || [];
-                          const maxCols = rows.reduce((max, r) => Math.max(max, Array.isArray(r) ? r.length : 0), 0);
-                          return Array.from({ length: maxCols }, (_, ci) => (
-                            <td key={ci} style={{ padding: '3px 8px', borderBottom: '1px solid #f5f5f5', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
-                            </td>
-                          ));
-                        })()}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {(sheetData[previewSheet] || []).length === 0 && (
-                <div style={{ textAlign: 'center', color: '#999', padding: 16 }}>此工作表为空</div>
-              )}
-            </div>
+        {/* 上传进度 */}
+        {loading && (
+          <Progress
+            percent={uploadPercent} status="active"
+            format={(p) => uploadPercent >= 100 ? '正在创建任务...' : `上传中 ${p}%`}
+            style={{ marginTop: 8 }}
+          />
+        )}
+
+        {/* 模式说明 */}
+        <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>
+          {selectedMode === 'search'
+            ? '纯搜索引擎匹配，速度快（几秒出结果），不调用大模型'
+            : '大模型智能分析，准确率更高，但速度较慢（每条约1~2秒）'
+          }
+          {selectedSheets.length > 0 && sheetNames.length > 0 && (
+            <span style={{ marginLeft: 12 }}>
+              已选 <strong>{selectedSheets.length}</strong>/{sheetNames.length} 个工作表
+            </span>
           )}
+        </div>
+      </Card>
+
+      {/* ========== 未上传文件时：显示拖拽上传区 ========== */}
+      {fileList.length === 0 && (
+        <Card style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Dragger
+            fileList={[]} maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+            style={{ padding: '40px 80px' }}
+            beforeUpload={(file) => {
+              const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+              if (!isExcel) { message.error('只支持 Excel 文件'); return Upload.LIST_IGNORE; }
+              if (file.size / 1024 / 1024 >= 30) { message.error('文件不能超过 30MB'); return Upload.LIST_IGNORE; }
+              handleFileUpload(file);
+              return false;
+            }}
+          >
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">拖拽清单文件到此处，或点击选择</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB</p>
+          </Dragger>
         </Card>
       )}
 
-      {/* 右侧：原来的步骤卡片 */}
-      <Card title="新建匹配任务" style={{ maxWidth: 720, flex: 1 }}>
-      {/* 提示信息移到上传区域的hint中 */}
-      <Steps
-        current={currentStep}
-        size="small"
-        style={{ marginBottom: 32 }}
-        items={steps}
-      />
+      {/* ========== 上传文件后：Sheet列表(左) + 预览表格(右) 并排 ========== */}
+      {sheetInfos.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
 
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{
-          use_experience: true,
-          mode: 'agent',
-        }}
-      >
-        {/* 步骤1：上传文件 + 选省份 */}
-        {currentStep === 0 && (
-          <>
-            <Form.Item
-              label="上传清单文件"
-              required
-              help="支持 .xlsx / .xls 格式的工程量清单"
-            >
-              {/* 已选文件：显示文件信息卡片 */}
-              {fileList.length > 0 ? (
-                <div style={{
-                  border: '1px solid #91caff',
-                  borderRadius: 8,
-                  padding: '16px 20px',
-                  background: '#e6f4ff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <FileExcelOutlined style={{ fontSize: 32, color: '#52c41a' }} />
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: 15 }}>{fileList[0].name}</div>
-                      <div style={{ color: '#888', fontSize: 13 }}>
-                        {((fileList[0].size || 0) / 1024).toFixed(0)} KB
-                        {sheetNames.length > 0 && `  ·  ${sheetNames.length} 个工作表`}
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => { setFileList([]); setSheetNames([]); setSelectedSheets([]); setSheetData({}); setPreviewSheet(''); }}
+          {/* 左侧：Sheet列表 */}
+          <Card
+            title={<span style={{ fontSize: 14 }}>工作表</span>}
+            extra={<span style={{ fontSize: 12, color: '#888' }}>清单 {billCount} / 跳过 {skipCount}</span>}
+            style={{ width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column' }}
+            styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } }}
+          >
+            {/* 搜索 */}
+            <div style={{ padding: '8px 10px 4px' }}>
+              <Input
+                placeholder="搜索" prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+                allowClear size="small" value={sheetSearch}
+                onChange={(e) => setSheetSearch(e.target.value)}
+              />
+            </div>
+
+            {/* 全选 */}
+            <div style={{ padding: '4px 10px 6px', borderBottom: '1px solid #f0f0f0' }}>
+              <Checkbox
+                checked={selectedSheets.length === sheetNames.length}
+                indeterminate={selectedSheets.length > 0 && selectedSheets.length < sheetNames.length}
+                onChange={(e) => setSelectedSheets(e.target.checked ? [...sheetNames] : [])}
+              >
+                <span style={{ fontSize: 12 }}>全选</span>
+              </Checkbox>
+            </div>
+
+            {/* Sheet列表 */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {filteredSheets.map((info) => {
+                const isSelected = selectedSheets.includes(info.name);
+                const isPreviewing = previewSheet === info.name;
+                return (
+                  <div
+                    key={info.name}
+                    onClick={() => setPreviewSheet(info.name)}
+                    style={{
+                      padding: '4px 10px',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      cursor: 'pointer',
+                      opacity: info.isSkip && !isSelected ? 0.5 : 1,
+                      background: isPreviewing ? '#e6f7ff' : isSelected ? '#f6ffed' : 'transparent',
+                      borderLeft: isPreviewing ? '3px solid #1890ff' : '3px solid transparent',
+                    }}
                   >
-                    移除
-                  </Button>
-                </div>
-              ) : (
-                /* 未选文件：显示拖拽上传区域 */
-                <Dragger
-                  fileList={[]}
-                  maxCount={1}
-                  accept=".xlsx,.xls"
-                  showUploadList={false}
-                  beforeUpload={(file) => {
-                    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-                    if (!isExcel) {
-                      message.error('只支持 Excel 文件（.xlsx / .xls）');
-                      return Upload.LIST_IGNORE;
-                    }
-                    const isLt30M = file.size / 1024 / 1024 < 30;
-                    if (!isLt30M) {
-                      message.error('文件不能超过 30MB');
-                      return Upload.LIST_IGNORE;
-                    }
-                    setFileList([{ uid: file.uid || Date.now().toString(), name: file.name, size: file.size, originFileObj: file } as UploadFile]);
-
-                    // 读取Excel中的工作表（Sheet）名列表 + 校验必备列
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                      try {
-                        // sheetRows:30 读前30行用于预览（性能和预览体验的平衡）
-                        const wb = read(e.target?.result, { type: 'array', sheetRows: 30 });
-                        setSheetNames(wb.SheetNames || []);
-
-                        // 读取每个Sheet的前30行原始数据（用于预览）
-                        const dataMap: Record<string, unknown[][]> = {};
-                        for (const sn of wb.SheetNames) {
-                          const ws = wb.Sheets[sn];
-                          if (!ws) continue;
-                          const rows: unknown[][] = xlsxUtils.sheet_to_json(ws, { header: 1, defval: '' });
-                          dataMap[sn] = rows;
-                        }
-                        setSheetData(dataMap);
-
-                        // 智能选中：非清单Sheet（汇总、措施费等）默认不勾选
-                        const autoSelected = (wb.SheetNames || []).filter(
-                          (name: string) => !isSkipSheet(name)
-                        );
-                        setSelectedSheets(autoSelected);
-
-                        // 默认预览第一个推荐Sheet（或第一个Sheet）
-                        const firstRecommend = (wb.SheetNames || []).find((n: string) => isRecommendSheet(n));
-                        setPreviewSheet(firstRecommend || (wb.SheetNames || [])[0] || '');
-
-                        // 校验必备列：从所有Sheet的前几行中查找列名
-                        const requiredCols: { name: string; aliases: string[] }[] = [
-                          { name: '项目编码', aliases: ['项目编码', '清单编码', '编码', '编号'] },
-                          { name: '项目名称', aliases: ['项目名称', '清单名称', '名称'] },
-                          { name: '项目特征', aliases: ['项目特征', '项目特征描述', '特征描述', '特征', '工程内容'] },
-                          { name: '单位', aliases: ['计量单位', '单位'] },
-                        ];
-
-                        // 从所有Sheet中收集表头（复用已解析的dataMap，不重复调sheet_to_json）
-                        const allHeaders = new Set<string>();
-                        for (const sheetName of wb.SheetNames) {
-                          const rows = dataMap[sheetName] || [];
-                          for (const row of rows) {
-                            if (!Array.isArray(row)) continue;
-                            for (const cell of row) {
-                              if (cell != null && String(cell).trim()) {
-                                allHeaders.add(String(cell).trim());
-                              }
-                            }
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedSheets(prev => [...prev, info.name]);
+                            setPreviewSheet(info.name);
+                          } else {
+                            setSelectedSheets(prev => prev.filter(s => s !== info.name));
                           }
-                        }
+                        }}
+                      />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 13, color: info.isSkip && !isSelected ? '#999' : '#333',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {info.name}
+                      </div>
+                      {/* 内容摘要（Sheet名是数字或很短时特别有用） */}
+                      {info.title && info.title !== info.name && (
+                        <div style={{
+                          fontSize: 11, color: '#999', marginTop: 1,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {info.title}
+                        </div>
+                      )}
+                    </div>
+                    {info.isRecommend && !info.isSkip && (
+                      <Tag color="green" style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
+                        {info.rowCount > 0 ? `${info.rowCount}条` : '清单'}
+                      </Tag>
+                    )}
+                    {info.isSkip && !isSelected && (
+                      <Tag color="default" style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px', margin: 0 }}>跳过</Tag>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
 
-                        // 检查每个必备列是否在表头中找到
-                        const missing = requiredCols.filter(
-                          col => !col.aliases.some(alias => allHeaders.has(alias))
-                        );
-
-                        if (missing.length > 0) {
-                          const names = missing.map(c => `「${c.name}」`).join('、');
-                          message.warning({
-                            content: `提醒：未在前几行中找到 ${names} 列。如果这些列在更下方，可忽略此提醒。`,
-                            duration: 6,
-                          });
-                        }
-                      } catch {
-                        setSheetNames([]);
-                        setSheetData({});
-                        setPreviewSheet('');
-                      }
-                    };
-                    reader.readAsArrayBuffer(file);
-
-                    return false;
-                  }}
-                >
-                  <p className="ant-upload-drag-icon">
-                    <InboxOutlined />
-                  </p>
-                  <p className="ant-upload-text">拖拽文件到此处，或点击选择</p>
-                  <p className="ant-upload-hint">支持 .xlsx / .xls，最大 30MB，安装工程匹配效果最佳</p>
-                </Dragger>
-              )}
-            </Form.Item>
-
-            <Form.Item
-              label="选择省份"
-              required
-            >
-              <Select
-                options={regionOptions}
-                loading={provincesLoading}
-                placeholder="先选择省份"
-                value={selectedRegion}
-                onChange={onRegionChange}
-                showSearch
-                filterOption={(input, option) =>
-                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                }
-              />
-            </Form.Item>
-
-            {/* 新疆子地区选择（仅新疆显示） */}
-            {selectedRegion === '新疆' && subRegionOptions.length > 0 && (
-              <Form.Item label="选择地区" required>
-                <Select
-                  options={subRegionOptions}
-                  placeholder="选择新疆地区"
-                  value={selectedSubRegion}
-                  onChange={onSubRegionChange}
-                  showSearch
-                  filterOption={(input, option) =>
-                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
-                />
-              </Form.Item>
+          {/* 右侧：预览表格 */}
+          <Card
+            title={
+              previewSheet ? (
+                <span style={{ fontSize: 14 }}>
+                  {previewSheet}
+                  {sheetInfos.find(i => i.name === previewSheet)?.title && (
+                    <span style={{ color: '#888', fontWeight: 'normal', marginLeft: 8, fontSize: 12 }}>
+                      {sheetInfos.find(i => i.name === previewSheet)?.title}
+                    </span>
+                  )}
+                </span>
+              ) : '选择工作表预览'
+            }
+            extra={previewRows.length > 0 && (
+              <span style={{ fontSize: 12, color: '#888' }}>{previewRows.length} 行 / {previewMaxCols} 列</span>
             )}
-
-            <Form.Item
-              name="province"
-              label="选择定额库"
-              rules={[{ required: true, message: '请选择定额库' }]}
-            >
-              <Select
-                options={dbOptions}
-                loading={provincesLoading}
-                placeholder={
-                  selectedRegion === '新疆' && !selectedSubRegion
-                    ? '请先选择地区'
-                    : selectedRegion
-                      ? '选择该省份的定额库'
-                      : '请先选择省份'
-                }
-                disabled={!selectedRegion || (selectedRegion === '新疆' && !selectedSubRegion)}
-                showSearch
-                filterOption={(input, option) =>
-                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                }
-              />
-            </Form.Item>
-
-            {/* 同批兄弟库提示：告知用户自动挂载了哪些辅助库 */}
-            {siblingDbs.length > 0 && (
-              <div style={{ marginTop: -16, marginBottom: 16, fontSize: 13 }}>
-                <div style={{ color: '#52c41a', marginBottom: 4 }}>
-                  同时使用同批辅助库（共 {siblingDbs.length} 个）：
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 20, color: '#666' }}>
-                  {siblingDbs.map((name) => (
-                    <li key={name}>{name}</li>
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}
+            styles={{ body: { padding: 0, flex: 1, overflow: 'auto' } }}
+          >
+            {previewSheet && previewRows.length > 0 ? (
+              <table style={{ borderCollapse: 'collapse', fontSize: 13, whiteSpace: 'nowrap', width: '100%' }}>
+                <thead>
+                  <tr style={{ background: '#fafafa', position: 'sticky', top: 0, zIndex: 1 }}>
+                    <th style={{
+                      padding: '6px 10px', borderBottom: '2px solid #e8e8e8', borderRight: '1px solid #f0f0f0',
+                      color: '#999', fontWeight: 500, position: 'sticky', left: 0, background: '#fafafa', zIndex: 2,
+                      minWidth: 40,
+                    }}>#</th>
+                    {Array.from({ length: previewMaxCols }, (_, i) => (
+                      <th key={i} style={{
+                        padding: '6px 10px', borderBottom: '2px solid #e8e8e8', borderRight: '1px solid #f0f0f0',
+                        color: '#999', fontWeight: 500, minWidth: 80,
+                      }}>
+                        {colName(i)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((row, ri) => (
+                    <tr key={ri} style={{ background: ri % 2 === 0 ? '#fff' : '#fafafa' }}>
+                      <td style={{
+                        padding: '5px 10px', borderBottom: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0',
+                        color: '#bbb', textAlign: 'center', position: 'sticky', left: 0,
+                        background: ri % 2 === 0 ? '#fff' : '#fafafa', zIndex: 1, fontWeight: 500,
+                      }}>{ri + 1}</td>
+                      {Array.from({ length: previewMaxCols }, (_, ci) => (
+                        <td key={ci} style={{
+                          padding: '5px 10px', borderBottom: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0',
+                          maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}
+                          title={Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
+                        >
+                          {Array.isArray(row) && row[ci] != null ? String(row[ci]) : ''}
+                        </td>
+                      ))}
+                    </tr>
                   ))}
-                </ul>
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                {previewSheet ? '此工作表为空' : '点击左侧工作表预览内容'}
               </div>
             )}
-
-            {/* 匹配模式选择 */}
-            <Form.Item
-              name="mode"
-              label="匹配模式"
-            >
-              <Radio.Group optionType="button" buttonStyle="solid" size="large" style={{ width: '100%', display: 'flex' }}>
-                <Radio.Button value="search" style={{ flex: 1, textAlign: 'center' }}>
-                  <ThunderboltOutlined /> 快速匹配
-                </Radio.Button>
-                <Radio.Button value="agent" style={{ flex: 1, textAlign: 'center' }}>
-                  <RocketOutlined /> 精准匹配
-                </Radio.Button>
-              </Radio.Group>
-            </Form.Item>
-            <div style={{ marginTop: -20, marginBottom: 16, fontSize: 13, color: '#888' }}>
-              {selectedMode === 'search'
-                ? '纯搜索引擎匹配，速度快（几秒出结果），不调用大模型'
-                : '大模型智能分析，准确率更高，但速度较慢（每条约1~2秒）'
-              }
-            </div>
-
-            <Button
-              type="primary"
-              block
-              disabled={fileList.length === 0}
-              onClick={() => setCurrentStep(1)}
-            >
-              {isAdmin ? '下一步：配置参数' : '下一步：确认'}
-            </Button>
-          </>
-        )}
-
-        {/* 步骤2（仅管理员）：参数配置 */}
-        {isParamStep && (
-          <>
-            <Form.Item name="limit_count" label="限制条数（调试用）">
-              <InputNumber
-                min={1}
-                max={10000}
-                placeholder="不限"
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-
-            <Form.Item name="use_experience" label="使用经验库" valuePropName="checked">
-              <Switch checkedChildren="开" unCheckedChildren="关" />
-            </Form.Item>
-
-            <div style={{ display: 'flex', gap: 12 }}>
-              <Button block onClick={() => setCurrentStep(0)}>
-                上一步
-              </Button>
-              <Button type="primary" block onClick={() => setCurrentStep(2)}>
-                下一步：确认
-              </Button>
-            </div>
-          </>
-        )}
-
-        {/* 确认并开始匹配 */}
-        {isConfirmStep && (
-          <>
-            <Card type="inner" title="任务配置确认" style={{ marginBottom: 24 }}>
-              <p><strong>文件：</strong>{fileList[0]?.name || '-'}</p>
-              <p><strong>定额库：</strong>{form.getFieldValue('province')}</p>
-              <p><strong>匹配模式：</strong>
-                <Tag color={form.getFieldValue('mode') === 'agent' ? 'purple' : 'blue'}>
-                  {form.getFieldValue('mode') === 'agent' ? '精准匹配（大模型）' : '快速匹配（纯搜索）'}
-                </Tag>
-              </p>
-              {siblingDbs.length > 0 && (
-                <div>
-                  <strong>辅助库：</strong>同批 {siblingDbs.length} 个库自动挂载
-                  <ul style={{ margin: '4px 0 0', paddingLeft: 20, color: '#666', fontSize: 13 }}>
-                    {siblingDbs.map((name) => (
-                      <li key={name}>{name}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {isAdmin && (
-                <>
-                  {sheetNames.length > 0 && (
-                    <p><strong>工作表：</strong>
-                      {selectedSheets.length === sheetNames.length
-                        ? `全部 ${sheetNames.length} 个`
-                        : `已选 ${selectedSheets.length}/${sheetNames.length} 个`
-                      }
-                    </p>
-                  )}
-                  {form.getFieldValue('limit_count') && (
-                    <p><strong>限制条数：</strong>{form.getFieldValue('limit_count')}</p>
-                  )}
-                  <p><strong>经验库：</strong>{form.getFieldValue('use_experience') ? '使用' : '不使用'}</p>
-                </>
-              )}
-            </Card>
-
-            {/* 上传进度条（上传中显示） */}
-            {loading && uploadPercent < 100 && (
-              <Progress
-                percent={uploadPercent}
-                status="active"
-                format={(p) => `上传中 ${p}%`}
-                style={{ marginBottom: 12 }}
-              />
-            )}
-            {loading && uploadPercent >= 100 && (
-              <Progress
-                percent={100}
-                status="active"
-                format={() => '正在创建任务...'}
-                style={{ marginBottom: 12 }}
-              />
-            )}
-
-            <div style={{ display: 'flex', gap: 12 }}>
-              <Button block onClick={() => setCurrentStep(isAdmin ? 1 : 0)} disabled={loading}>
-                上一步
-              </Button>
-              <Button
-                type="primary"
-                block
-                icon={<RocketOutlined />}
-                loading={loading}
-                onClick={onSubmit}
-              >
-                开始匹配
-              </Button>
-            </div>
-          </>
-        )}
-      </Form>
-    </Card>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

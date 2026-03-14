@@ -33,6 +33,7 @@ import ErrorAnalysis from '../pages/Admin/ErrorAnalysis';
 import DataManage from '../pages/Admin/DataManage';
 // 工具页面
 import PriceBackfill from '../pages/Tools/PriceBackfill';
+import BillCompiler from '../pages/Tools/BillCompiler';
 
 const router = createBrowserRouter([
   // 登录页（不需要布局和登录状态）
@@ -66,6 +67,7 @@ const router = createBrowserRouter([
 
       // === 工具 ===
       { path: 'tools/price-backfill', element: <PriceBackfill /> },
+      { path: 'tools/bill-compiler', element: <BillCompiler /> },
 
       // === 管理员专属页面（RequireAdmin 包裹） ===
       { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
