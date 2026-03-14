@@ -613,17 +613,26 @@ class UniversalKB:
             finally:
                 conn.close()
 
-            # 组装结果（按相似度排序，去掉已有的精确匹配）
+            # 组装结果（按质量加权排序，去掉已有的精确匹配）
             existing_ids = {r.get("id") for r in results}
             for db_id, sim in zip(matched_ids, similarities):
                 if db_id in rows and db_id not in existing_ids:
-                    # 相似度太低的不要（<0.7基本没参考价值）
-                    if sim < 0.7:
+                    # 相似度太低的不要（<0.8基本没参考价值，扩大索引后提高门槛防噪声）
+                    if sim < 0.8:
                         continue
                     results.append(self._format_result(rows[db_id], similarity=sim))
 
-            # 按相似度降序
-            results.sort(key=lambda x: x["similarity"], reverse=True)
+            # 质量加权排序：相似度 × 置信度因子 × 确认次数因子
+            # 让高频、多省验证的记录优先，防止低质量记录抢占top-1
+            import math
+            def _quality_score(r):
+                sim = r.get("similarity", 0)
+                conf = r.get("confidence", 50) / 100.0  # 归一化到0~1
+                cc = r.get("confirm_count", 0)
+                cc_factor = min(math.log2(cc + 2) / 5.0, 1.0)  # confirm_count越高越好，上限1.0
+                return sim * conf * cc_factor
+
+            results.sort(key=_quality_score, reverse=True)
 
         except Exception as e:
             logger.warning(f"通用知识库向量搜索失败: {e}")
