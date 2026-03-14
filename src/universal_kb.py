@@ -617,8 +617,8 @@ class UniversalKB:
             existing_ids = {r.get("id") for r in results}
             for db_id, sim in zip(matched_ids, similarities):
                 if db_id in rows and db_id not in existing_ids:
-                    # 相似度太低的不要（<0.8基本没参考价值，扩大索引后提高门槛防噪声）
-                    if sim < 0.8:
+                    # 相似度太低的不要（<0.7基本没参考价值）
+                    if sim < 0.7:
                         continue
                     results.append(self._format_result(rows[db_id], similarity=sim))
 
