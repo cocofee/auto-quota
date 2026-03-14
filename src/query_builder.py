@@ -956,6 +956,17 @@ def _normalize_bill_name(name: str) -> str:
         # 通用灯具兜底：保留cleaned（已去除LED/瓦数/电压噪声）
         return cleaned
 
+    # 开关盒/插座盒 → 暗装开关(插座)盒（BM25容易把"开关盒"拆词搜到"刀型开关"）
+    if re.search(r'开关盒|插座盒', name):
+        if "连体" in name:
+            return "暗装开关(插座)盒 连体"
+        return "暗装开关(插座)盒"
+
+    # N连体智能面板 → 多联组合开关插座 暗装
+    # 广东清单格式："智能插座面板N连体：xx+xx+xx"
+    if "连体" in name and ("插座" in name or "开关" in name or "面板" in name):
+        return "多联组合开关插座 暗装"
+
     # 接线盒（86mm的小接线盒，不是通信用的大接线箱）
     if name == "接线盒":
         return "接线盒安装"
@@ -1600,5 +1611,13 @@ def build_quota_query(parser, name: str, description: str = "",
         _weak_current_outlet = ("信息", "电视", "网络", "电话", "光纤", "智能")
         if not any(kw in name for kw in _weak_current_outlet):
             query_parts.append("单相")
+
+    # 开关/插座默认暗装（建筑工程中90%+是暗装，明装会在清单中明确标注）
+    # 条件：名称含"开关"或"插座"，且没有已提取的安装方式，且没有"明装"关键词
+    if ("开关" in name or "插座" in name) and "连体" not in name:
+        has_install = any(kw in " ".join(query_parts) for kw in
+                         ("明装", "暗装", "嵌入", "落地", "吸顶", "挂墙"))
+        if not has_install and "明装" not in full_text and "明配" not in full_text:
+            query_parts.append("暗装")
 
     return _apply_synonyms(" ".join(query_parts), specialty)
