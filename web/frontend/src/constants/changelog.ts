@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.16';
+export const APP_VERSION = '0.2.17';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.17',
+    date: '2026-03-14',
+    changes: [
+      { type: 'user', text: '新增匹配模式选择：快速匹配（纯搜索秒出）/ 精准匹配（大模型分析）' },
+      { type: 'admin', text: 'Agent精简为1次LLM调用（关闭重试+后验证），切换DeepSeek模型' },
+    ],
+  },
   {
     version: '0.2.16',
     date: '2026-03-12',
