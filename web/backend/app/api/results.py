@@ -8,9 +8,11 @@
     GET    /api/tasks/{id}/results/{result_id}  — 单条结果详情
     PUT    /api/tasks/{id}/results/{result_id}  — 纠正结果
     POST   /api/tasks/{id}/results/confirm      — 批量确认
-    GET    /api/tasks/{id}/export               — 导出Excel
+    GET    /api/tasks/{id}/export               — 导出Excel（原始匹配结果）
+    GET    /api/tasks/{id}/export-final         — 导出Excel（含纠正，实时生成）
 """
 
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -253,6 +255,100 @@ async def export_results(
 
     return FileResponse(
         path=task.output_path,
+        filename=download_name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@router.get("/tasks/{task_id}/export-final")
+async def export_final(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """导出含纠正结果的Excel（实时从数据库生成）
+
+    和 /export 的区别：
+    - /export 返回匹配时生成的静态文件，不含后续纠正
+    - /export-final 从数据库读最新结果（含纠正），重新生成Excel
+
+    OpenClaw 确认+纠正完后调这个接口下载最终版。
+    """
+    task = await get_user_task(task_id, user, db)
+
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="任务尚未完成，无法导出")
+
+    # 从数据库读取所有结果
+    result = await db.execute(
+        select(MatchResult)
+        .where(MatchResult.task_id == task_id)
+        .order_by(MatchResult.index)
+    )
+    items = result.scalars().all()
+
+    if not items:
+        raise HTTPException(status_code=404, detail="没有匹配结果")
+
+    # 检查是否有纠正——没有纠正直接返回原始文件（快速路径）
+    has_corrections = any(r.corrected_quotas for r in items)
+    if not has_corrections and task.output_path and Path(task.output_path).exists():
+        download_name = Path(task.original_filename).stem + "_定额匹配结果.xlsx"
+        return FileResponse(
+            path=task.output_path,
+            filename=download_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    # 有纠正，从数据库结果重新生成Excel
+    # 构建 OutputWriter 需要的 result 字典列表
+    rebuilt_results = []
+    for item in items:
+        # 优先用纠正后的定额，没有纠正就用原始匹配
+        quotas = item.corrected_quotas or item.quotas or []
+
+        rebuilt_results.append({
+            "bill_item": {
+                "code": item.bill_code or "",
+                "name": item.bill_name or "",
+                "description": item.bill_description or "",
+                "unit": item.bill_unit or "",
+                "quantity": item.bill_quantity,
+                "sheet_name": item.sheet_name or "",
+                "section": item.section or "",
+                "specialty": item.specialty or "",
+            },
+            "quotas": quotas,
+            "confidence": 95 if item.corrected_quotas else item.confidence,
+            "explanation": item.explanation or "",
+            "match_source": "corrected" if item.corrected_quotas else (item.match_source or ""),
+        })
+
+    # 确定原始文件路径（OutputWriter 用来保留原始格式）
+    original_file = None
+    if task.file_path and Path(task.file_path).exists():
+        original_file = task.file_path
+
+    # 输出到临时文件
+    from app.services.match_service import get_task_output_dir
+    output_dir = get_task_output_dir(uuid.UUID(str(task_id)))
+    final_path = str(output_dir / "output_final.xlsx")
+
+    # OutputWriter 是同步的，放到线程里跑
+    def _generate():
+        from src.output_writer import OutputWriter
+        writer = OutputWriter()
+        writer.write_results(rebuilt_results, final_path, original_file=original_file)
+
+    try:
+        await asyncio.to_thread(_generate)
+    except Exception as e:
+        logger.error(f"生成纠正后Excel失败: {e}")
+        raise HTTPException(status_code=500, detail=f"生成Excel失败: {e}")
+
+    download_name = Path(task.original_filename).stem + "_最终结果.xlsx"
+    return FileResponse(
+        path=final_path,
         filename=download_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
