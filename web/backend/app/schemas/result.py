@@ -51,11 +51,17 @@ class ResultListResponse(BaseModel):
 
 
 class CorrectResultRequest(BaseModel):
-    """纠正匹配结果"""
-    corrected_quotas: list[QuotaItem] = Field(
-        min_length=1, description="纠正后的定额列表（至少1条）"
+    """纠正或确认匹配结果
+
+    纠正：传 corrected_quotas（替换定额）
+    确认：传 review_status="confirmed"（不传 corrected_quotas）
+    兼容 OpenClaw 等外部工具直接调 PUT 接口确认的场景。
+    """
+    corrected_quotas: list[QuotaItem] | None = Field(
+        default=None, description="纠正后的定额列表（纠正时必填，确认时可不填）"
     )
     review_note: str = Field(default="", max_length=500, description="审核备注")
+    review_status: str | None = Field(default=None, description="直接设置状态（confirmed/corrected）")
 
 
 class ConfirmResultsRequest(BaseModel):

@@ -109,10 +109,12 @@ async def correct_result(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """纠正匹配结果
+    """纠正或确认匹配结果
 
-    用户手动选择正确的定额，替换系统匹配的结果。
-    纠正后 review_status 变为 "corrected"。
+    两种用法：
+    1. 纠正：传 corrected_quotas → review_status 变为 "corrected"
+    2. 确认：传 review_status="confirmed"（不传 corrected_quotas）→ 直接确认
+    兼容 OpenClaw 等外部工具直接调 PUT 接口的场景。
     """
     task = await get_user_task(task_id, user, db)
 
@@ -126,13 +128,34 @@ async def correct_result(
     if not match_result:
         raise HTTPException(status_code=404, detail="结果不存在")
 
-    # 保存纠正后的定额列表
+    # 场景1：只是确认（没传 corrected_quotas）
+    if not req.corrected_quotas:
+        match_result.review_status = req.review_status or "confirmed"
+        match_result.review_note = req.review_note
+        await db.flush()
+
+        # 确认数据回流经验库权威层
+        quotas_data = match_result.quotas
+        if quotas_data and match_result.review_status == "confirmed":
+            await store_experience(
+                name=match_result.bill_name,
+                desc=match_result.bill_description or "",
+                quota_ids=[q["quota_id"] for q in quotas_data if q.get("quota_id")],
+                quota_names=[q.get("name", "") for q in quotas_data],
+                reason=f"API确认: {req.review_note or ''}",
+                specialty=match_result.specialty or "",
+                province=task.province,
+                confirmed=True,  # 确认 → 权威层
+            )
+        return match_result
+
+    # 场景2：纠正（传了 corrected_quotas）
     match_result.corrected_quotas = [q.model_dump() for q in req.corrected_quotas]
     match_result.review_status = "corrected"
     match_result.review_note = req.review_note
     await db.flush()
 
-    # 纠正数据回流经验库（候选层，待管理员审核后晋升权威层）
+    # 纠正数据回流经验库候选层
     await store_experience(
         name=match_result.bill_name,
         desc=match_result.bill_description or "",

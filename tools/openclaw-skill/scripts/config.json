@@ -1,0 +1,28 @@
+{
+    "_说明": "Auto Quota OpenClaw Skill 配置文件",
+
+    "api": {
+        "_说明": "Auto Quota API 地址（懒猫外网域名）",
+        "base_url": "https://autoquota.microfeicat2025.heiyu.space",
+        "email": "41024847@qq.com",
+        "password": "COCOfee2012"
+    },
+
+    "match": {
+        "_说明": "匹配参数默认值",
+        "default_province": "北京2024",
+        "mode": "search",
+        "use_experience": true
+    },
+
+    "wechat": {
+        "_说明": "微信文件监控目录（远程微信容器内的文件接收路径）",
+        "watch_dir": "/lzcapp/data/cloud.lazycat.catlink.wechat/xwechat_files/summerfly2008_9de8/msg/file",
+        "scan_interval_seconds": 30
+    },
+
+    "processed": {
+        "_说明": "已处理文件记录（自动维护，不要手动编辑）",
+        "history_file": "/home/node/.openclaw/workspace/skills/auto-quota-watcher/scripts/processed.json"
+    }
+}
