@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.33';
+export const APP_VERSION = '0.2.38';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,43 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.38',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'useState初始值补充审核字段（修复TS编译错误）' },
+      { type: 'admin', text: '准确率统计加入审核状态 + 经验库远程写入' },
+    ],
+  },
+  {
+    version: '0.2.37',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'useState初始值补充审核字段（修复TS编译错误）' },
+      { type: 'admin', text: '准确率统计加入审核状态 + 经验库远程写入' },
+    ],
+  },
+  {
+    version: '0.2.36',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: '准确率统计加入审核状态 + 经验库远程写入' },
+    ],
+  },
+  {
+    version: '0.2.35',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'v0.2.35 更新' },
+    ],
+  },
+  {
+    version: '0.2.34',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'v0.2.34 更新' },
+    ],
+  },
   {
     version: '0.2.33',
     date: '2026-03-15',
