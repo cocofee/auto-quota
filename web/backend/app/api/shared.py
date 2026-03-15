@@ -59,7 +59,7 @@ async def _remote_store(path: str, payload: dict) -> dict:
         logger.warning(f"远程经验库写入返回 {resp.status_code}: {resp.text[:200]}")
         return {}
     except Exception as e:
-        logger.warning(f"远程经验库写入失败: {e}")
+        logger.warning(f"远程经验库写入失败: [{type(e).__name__}] {e} | url={url}")
         return {}
 
 
