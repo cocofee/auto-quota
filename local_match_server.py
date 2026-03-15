@@ -499,6 +499,29 @@ def list_search_provinces(x_api_key: str = Header(default="")):
     return {"items": provinces}
 
 
+def _find_sibling_libs(province: str) -> list[str]:
+    """找同省的其他定额库（用于跨库搜索）
+
+    例如传入"河南省通用安装工程预算定额(2016)"，
+    返回["河南省房屋建筑与装饰工程预算定额(2016)", "河南省市政工程预算定额(2016)"]
+
+    匹配逻辑：提取省份前缀（如"河南省"），找所有同前缀的库，排除自己。
+    """
+    import re
+    # 提取省份前缀：匹配"XX省"或"XX市"或"XX自治区"
+    m = re.match(r'^(.{2,6}(?:省|市|自治区))', province)
+    if not m:
+        return []
+    prefix = m.group(1)
+
+    all_libs = config.list_db_provinces()
+    siblings = [
+        lib for lib in all_libs
+        if lib.startswith(prefix) and lib != province
+    ]
+    return siblings
+
+
 @app.get("/quota-search/smart")
 def smart_search(
     name: str,
@@ -560,6 +583,27 @@ def smart_search(
                     seen.add(c.get("quota_id"))
             candidates = candidates[:limit]
 
+        # 第4步：同省跨库搜索
+        # 安装项目里经常有土建相关清单（拆除/开槽/封堵/支墩/防水等），
+        # 这些定额在建筑装饰库里，不在安装库里。
+        # 当主库结果不够时，自动搜同省的其他定额库。
+        if len(candidates) < 3:
+            sibling_libs = _find_sibling_libs(province)
+            for sib_lib in sibling_libs:
+                try:
+                    sib_searcher = HybridSearcher(sib_lib)
+                    sib_results = sib_searcher.search(search_query, top_k=limit, books=None)
+                    seen = {c.get("quota_id") for c in candidates}
+                    for c in sib_results:
+                        if c.get("quota_id") not in seen:
+                            # 标记来源库，方便调试
+                            c["cross_lib"] = sib_lib
+                            candidates.append(c)
+                            seen.add(c.get("quota_id"))
+                except Exception as e:
+                    logger.warning(f"跨库搜索 {sib_lib} 失败（跳过）: {e}")
+            candidates = candidates[:limit]
+
         # 构建返回结果
         items = [
             {
@@ -569,6 +613,7 @@ def smart_search(
                 "chapter": c.get("chapter", ""),
                 "book": c.get("book", ""),
                 "score": round(c.get("hybrid_score", 0), 4),
+                "cross_lib": c.get("cross_lib", ""),  # 跨库来源（空=主库）
             }
             for c in candidates
         ]

@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.40';
+export const APP_VERSION = '0.2.41';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.41',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: '经验库争议标记——纠正经验库直通结果时自动标记权威记录' },
+    ],
+  },
   {
     version: '0.2.40',
     date: '2026-03-15',
