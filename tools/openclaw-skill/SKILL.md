@@ -37,32 +37,83 @@ python3 $SCRIPT confirm <task_id>                         # 确认绿灯+黄灯
 python3 $SCRIPT correct <task_id> <result_id> "C10-1-10" "管道安装" --note "原因"
 ```
 
+## API 接口速查（重要！必须用完整URL）
+
+BASE_URL = `https://autoquota.microfeicat2025.heiyu.space`
+
+### 查看结果
+```
+GET {BASE_URL}/api/tasks/{task_id}/results
+```
+返回所有匹配结果列表，含 summary（统计）和 items（每条结果含 id、bill_name、confidence、quotas 等）。
+
+### 批量确认（绿灯+黄灯）
+```
+POST {BASE_URL}/api/tasks/{task_id}/results/confirm
+Content-Type: application/json
+
+{"result_ids": ["result_id_1", "result_id_2", ...]}
+```
+注意：result_ids 是结果ID（不是task_id），从 GET results 返回的每条 item.id 获取。
+
+### 单条纠正（红灯）
+```
+PUT {BASE_URL}/api/tasks/{task_id}/results/{result_id}
+Content-Type: application/json
+
+{
+  "corrected_quotas": [{"quota_id": "C10-1-10", "name": "管道安装"}],
+  "review_note": "纠正原因"
+}
+```
+
+### 单条确认（也用PUT）
+```
+PUT {BASE_URL}/api/tasks/{task_id}/results/{result_id}
+Content-Type: application/json
+
+{"review_status": "confirmed"}
+```
+
+### 智能搜索（红灯纠正时找正确定额）
+```
+GET {BASE_URL}/api/quota-search/smart?name=清单名称&description=特征描述&province=省份
+```
+智能搜索会自动把"JDG20"转成"紧定式钢导管"、"PPR"转成"塑料给水管"等。
+返回结果里有 `search_query` 字段，可以看到系统构建的搜索词。
+
+### 关键词搜索（智能搜索没结果时备用）
+```
+GET {BASE_URL}/api/quota-search?keyword=关键词&province=省份
+```
+
+### 下载最终Excel（含纠正结果）
+```
+GET {BASE_URL}/api/tasks/{task_id}/export-final
+```
+
+### 查看可用省份
+```
+GET {BASE_URL}/api/quota-search/provinces
+```
+
 ## 自动处理规则（重要！）
 
 ### 绿灯（≥85%）→ 自动确认，不用问
-直接跑 confirm，经验库权威层学习。
+先 GET results 拿到所有结果，筛出 confidence >= 70 的 result_id，调 POST confirm 批量确认。
 
 ### 黄灯（70-84%）→ 自动确认，不用问
-70%以上已经够靠谱了，直接确认。
+和绿灯一起批量确认。
 
 ### 红灯（<70%）→ 分两种情况
 
 **情况A：搜定额库能找到正确答案 → 自动纠正**
 
 操作步骤：
-1. **优先用智能搜索**（直接传清单原文，系统自动转换术语）：
-   ```
-   GET https://autoquota.microfeicat2025.heiyu.space/api/quota-search/smart?name=清单名称&description=特征描述&province=省份
-   ```
-   智能搜索会自动把"JDG20"转成"紧定式钢导管"、"PPR"转成"塑料给水管"等。
-   返回结果里有 `search_query` 字段，可以看到系统构建的搜索词。
-
-2. 智能搜索没结果时，再用**关键词搜索**（需要自己转换术语）：
-   ```
-   GET https://autoquota.microfeicat2025.heiyu.space/api/quota-search?keyword=关键词&province=省份
-   ```
+1. **优先用智能搜索**（直接传清单原文）
+2. 智能搜索没结果时，再用**关键词搜索**
 3. 从搜索结果中选最合适的定额
-4. 调用 correct API 纠正
+4. 调用 PUT results/{result_id} 纠正
 5. 纠正备注写清楚理由
 
 判断标准：
@@ -225,7 +276,8 @@ GET https://autoquota.microfeicat2025.heiyu.space/api/tasks/{task_id}/export-fin
 
 处理完一个文件的完整流程：
 1. 提交匹配 → 等待完成
-2. 确认绿灯+黄灯（POST /results/confirm）
-3. 纠正红灯（PUT /results/{id} + 搜索API找正确定额）
-4. 下载最终Excel（GET /export-final）
-5. 发飞书审核报告
+2. GET /api/tasks/{task_id}/results → 拿所有结果
+3. POST /api/tasks/{task_id}/results/confirm → 批量确认绿灯+黄灯
+4. PUT /api/tasks/{task_id}/results/{result_id} → 纠正红灯（先搜索找正确定额）
+5. GET /api/tasks/{task_id}/export-final → 下载最终Excel
+6. 发飞书审核报告
