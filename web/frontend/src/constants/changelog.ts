@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.23';
+export const APP_VERSION = '0.2.29';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,22 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.29',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: '清单扫描器工具（GUI+CLI，快速摸底清单数量/专业/去重）' },
+      { type: 'admin', text: '新建任务页UI优化——工具栏整齐对齐+空行过滤+模式提醒精简' },
+      { type: 'admin', text: '编清单支持API模式（懒猫转发到本地匹配服务）' },
+      { type: 'admin', text: '编清单Web页面（上传Excel→自动匹配12位清单编码→下载工程量清单）' },
+      { type: 'admin', text: '新建任务页重构——Sheet选择修复+智能识别+紧凑布局' },
+      { type: 'admin', text: '编清单路由二轮优化（邻居投票+描述暗示+分类器兜底+名称清洗），56.1%(+0.1%)' },
+      { type: 'admin', text: 'LTR重训+通用知识库质量加权排序，benchmark 38.8%→41.8%(+3.0%)' },
+      { type: 'admin', text: '通用知识库排序改质量加权+match_service防None崩溃' },
+      { type: 'admin', text: '编清单路由三连优化（消歧+同义词+路由模型），56.0%(+2.1%)' },
+      { type: 'admin', text: '数据库bill_unit字段长度不足导致大清单保存失败' },
+    ],
+  },
   {
     version: '0.2.23',
     date: '2026-03-14',
