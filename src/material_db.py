@@ -17,10 +17,81 @@
 """
 
 import sqlite3
+import re
 import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+
+# ======== 镀锌钢管理论重量表（GB/T 3091，每米公斤数）========
+# 来源：国标焊接钢管（镀锌），含镀锌系数1.06
+# 用于把吨价换算成米价：米价 = 吨价 × 每米重量(kg) ÷ 1000
+_PIPE_WEIGHT_PER_METER = {
+    "DN15": 1.357, "DN20": 1.764, "DN25": 2.554,
+    "DN32": 3.306, "DN40": 3.84,  "DN50": 5.33,
+    "DN65": 7.09,  "DN70": 7.09,  "DN80": 8.47,
+    "DN100": 12.15, "DN125": 15.04, "DN150": 19.26,
+    "DN200": 30.97, "DN250": 42.56, "DN300": 54.90,
+}
+
+
+def _extract_dn(text: str) -> Optional[str]:
+    """从材料名称或规格中提取DN规格（如'DN25'、'DN 20×2.75'→'DN20'）"""
+    if not text:
+        return None
+    # 匹配 DN15、DN 20、dn25 等
+    m = re.search(r'[Dd][Nn]\s*(\d+)', text)
+    if m:
+        return f"DN{m.group(1)}"
+    return None
+
+
+def _convert_ton_to_meter(ton_price: float, name: str, spec: str) -> Optional[float]:
+    """把吨价换算成米价（钢管类），查不到DN规格就返回None"""
+    dn = _extract_dn(spec) or _extract_dn(name)
+    if not dn:
+        return None
+    weight = _PIPE_WEIGHT_PER_METER.get(dn)
+    if not weight:
+        return None
+    # 米价 = 吨价 × 每米重量(kg) ÷ 1000
+    return round(ton_price * weight / 1000, 2)
+
+
+def _try_convert_price(price: float, from_unit: str, to_unit: str,
+                       name: str = "", spec: str = "") -> Optional[float]:
+    """尝试单位换算，不支持的返回None
+
+    支持的换算：
+    - t → m：钢管按DN规格查理论重量
+    - t → kg：÷1000
+    - 百米 → m：÷100
+    - 千米/km → m：÷1000
+    """
+    fu = (from_unit or "").strip().lower()
+    tu = (to_unit or "").strip().lower()
+
+    if fu == tu:
+        return price  # 单位相同，不需要换算
+
+    # 吨 → 米（钢管类）
+    if fu == "t" and tu == "m":
+        return _convert_ton_to_meter(price, name, spec)
+
+    # 吨 → 公斤
+    if fu == "t" and tu == "kg":
+        return round(price / 1000, 2)
+
+    # 百米 → 米
+    if fu == "百米" and tu == "m":
+        return round(price / 100, 2)
+
+    # 千米/km → 米
+    if fu in ("千米", "km", "条公里") and tu == "m":
+        return round(price / 1000, 2)
+
+    return None  # 不支持的换算，返回None（空着不填）
 
 
 # 数据库路径
@@ -291,6 +362,152 @@ class MaterialDB:
             return [dict(r) for r in rows]
         finally:
             conn.close()
+
+    def search_price_by_name(self, name: str, province: str = "",
+                             spec: str = "",
+                             target_unit: str = "") -> Optional[dict]:
+        """按材料名查信息价（给输出Excel主材行填单价用）
+
+        匹配策略（由精到粗，命中即返回）：
+        1. name+spec 精确匹配 material_master → 查该省最新信息价
+        2. name 精确匹配（忽略spec）→ 查价格
+        3. name 模糊匹配（LIKE）→ 取第一个有价格的
+
+        target_unit: 主材行期望的单位（如'm'），用于单位换算。
+                     如果价格库单位和target_unit不一致，会尝试换算。
+
+        返回：{"price": 含税单价, "unit": 单位, "source": 来源说明} 或 None
+        """
+        if not name or not name.strip():
+            return None
+
+        name = name.strip()
+        spec = spec.strip() if spec else ""
+        target_unit = target_unit.strip() if target_unit else ""
+        conn = self._conn()
+        try:
+            # 策略1：name+spec精确匹配
+            if spec:
+                mid = self._find_material_id(conn, name, spec)
+                if mid:
+                    price = self._get_price(conn, mid, province,
+                                            target_unit, name, spec)
+                    if price:
+                        return price
+
+            # 策略2：只用name匹配（spec为空或策略1没找到价格）
+            mid = self._find_material_id(conn, name, "")
+            if mid:
+                # 查材料的spec（用于DN提取）
+                mat_spec = self._get_material_spec(conn, mid)
+                price = self._get_price(conn, mid, province,
+                                        target_unit, name, mat_spec or spec)
+                if price:
+                    return price
+
+            # 策略3：模糊匹配（name LIKE '%keyword%'），取第一个有价格的
+            rows = conn.execute(
+                """SELECT id, name, spec FROM material_master
+                   WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                (f"%{name}%",)
+            ).fetchall()
+            for row in rows:
+                price = self._get_price(
+                    conn, row["id"], province,
+                    target_unit, row["name"], row["spec"] or spec)
+                if price:
+                    return price
+
+            return None
+        finally:
+            conn.close()
+
+    def _find_material_id(self, conn, name: str, spec: str) -> Optional[int]:
+        """在material_master中查找材料ID"""
+        if spec:
+            row = conn.execute(
+                "SELECT id FROM material_master WHERE name=? AND spec=?",
+                (name, spec)
+            ).fetchone()
+            if row:
+                return row["id"]
+        # 不带spec查
+        row = conn.execute(
+            "SELECT id FROM material_master WHERE name=? ORDER BY id LIMIT 1",
+            (name,)
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _get_material_spec(self, conn, material_id: int) -> Optional[str]:
+        """获取材料的spec字段"""
+        row = conn.execute(
+            "SELECT spec FROM material_master WHERE id=?",
+            (material_id,)
+        ).fetchone()
+        return row["spec"] if row else None
+
+    def _get_price(self, conn, material_id: int, province: str,
+                   target_unit: str = "", name: str = "",
+                   spec: str = "") -> Optional[dict]:
+        """查材料最新信息价，优先本省，其次任意省
+
+        如果价格单位和target_unit不一致，会尝试换算（如吨→米）。
+        换算失败则返回None（主材行单价留空）。
+        """
+        # 按优先级依次查：本省信息价 → 任意省信息价 → 任意价格
+        queries = []
+        if province:
+            queries.append((
+                """SELECT price_incl_tax, unit, province, period_end
+                   FROM price_fact
+                   WHERE material_id=? AND province=?
+                     AND source_type='official_info' AND usable_for_quote=1
+                   ORDER BY period_end DESC LIMIT 1""",
+                (material_id, province),
+                lambda r: f"{r['province']}信息价",
+            ))
+        queries.append((
+            """SELECT price_incl_tax, unit, province, period_end
+               FROM price_fact
+               WHERE material_id=? AND source_type='official_info'
+                 AND usable_for_quote=1
+               ORDER BY period_end DESC LIMIT 1""",
+            (material_id,),
+            lambda r: f"{r['province']}信息价",
+        ))
+        queries.append((
+            """SELECT price_incl_tax, unit, province, source_type
+               FROM price_fact
+               WHERE material_id=? AND usable_for_quote=1
+               ORDER BY created_at DESC LIMIT 1""",
+            (material_id,),
+            lambda r: f"{r['province'] or ''}市场价",
+        ))
+
+        for sql, params, source_fn in queries:
+            row = conn.execute(sql, params).fetchone()
+            if not row:
+                continue
+
+            raw_price = row["price_incl_tax"]
+            price_unit = (row["unit"] or "").strip()
+            source = source_fn(row)
+
+            # 单位一致，直接返回
+            if not target_unit or price_unit == target_unit:
+                return {"price": raw_price, "unit": price_unit, "source": source}
+
+            # 尝试单位换算
+            converted = _try_convert_price(
+                raw_price, price_unit, target_unit, name, spec)
+            if converted is not None:
+                return {
+                    "price": converted,
+                    "unit": target_unit,
+                    "source": f"{source}({price_unit}→{target_unit})",
+                }
+
+        return None
 
     # ======== 别名操作 ========
 
