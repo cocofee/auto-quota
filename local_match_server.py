@@ -586,8 +586,20 @@ def smart_search(
         # 第4步：同省跨库搜索
         # 安装项目里经常有土建相关清单（拆除/开槽/封堵/支墩/防水等），
         # 这些定额在建筑装饰库里，不在安装库里。
-        # 当主库结果不够时，自动搜同省的其他定额库。
-        if len(candidates) < 3:
+        # 触发条件：主库结果不够 OR 清单含跨库关键词（即使主库有结果也要搜）
+        _CROSS_LIB_KEYWORDS = (
+            "拆除", "拆卸",           # 拆除定额基本都在建筑装饰库
+            "抹灰", "粉刷",           # 装饰工程
+            "砌筑", "砌墙", "拆墙",   # 土建工程
+            "支墩", "基础",           # 混凝土基础
+        )
+        need_cross = len(candidates) < 3  # 结果太少，必须跨库
+        if not need_cross:
+            # 结果够了，但如果清单含跨库关键词，也要搜（防止语义偏离）
+            combined_text = name + " " + description
+            need_cross = any(kw in combined_text for kw in _CROSS_LIB_KEYWORDS)
+
+        if need_cross:
             sibling_libs = _find_sibling_libs(province)
             for sib_lib in sibling_libs:
                 try:
