@@ -54,8 +54,12 @@ def _load_synonyms() -> dict:
     if auto_enabled:
         auto = _load_synonym_file(base_path / "auto_synonyms.json")
 
-    # 3. 合并：自动的先放，手工的覆盖（手工优先）
+    # 3. 加载清单库挖掘的同义词（优先级最低，由 mine_bill_synonyms.py 生成）
+    bill = _load_synonym_file(base_path / "bill_synonyms.json")
+
+    # 4. 合并：清单库先放 → 自动表覆盖 → 手工表最终覆盖（手工优先级最高）
     merged = {}
+    merged.update(bill)
     merged.update(auto)
     merged.update(manual)
 
@@ -67,11 +71,21 @@ def _load_synonyms() -> dict:
 
 
 def _load_synonym_file(path: Path) -> dict:
-    """从单个JSON文件加载同义词映射（内部工具函数）"""
+    """从单个JSON文件加载同义词映射（内部工具函数）
+
+    支持两种格式：
+    1. engineering/auto格式：{"key": ["value", ...], ...}
+    2. bill_synonyms格式：{"_meta": {...}, "synonyms": {"key": "value", ...}}
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        # 过滤掉说明字段和空值，只保留有效的同义词映射
+
+        # 格式2：bill_synonyms.json（嵌套在 "synonyms" 字段里，值是字符串不是列表）
+        if "synonyms" in raw and isinstance(raw["synonyms"], dict):
+            return {k: v for k, v in raw["synonyms"].items() if k and v}
+
+        # 格式1：engineering/auto（值是列表，取第一个元素）
         return {
             k: v[0] for k, v in raw.items()
             if not k.startswith("_") and isinstance(v, list) and v
