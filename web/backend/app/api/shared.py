@@ -5,6 +5,8 @@ API 共享辅助函数
 - get_user_task(): 获取用户的任务（普通用户只能查自己的，管理员可查所有）
 - store_experience(): 单条数据回流经验库
 - store_experience_batch(): 批量数据回流经验库
+
+远程模式（MATCH_BACKEND=remote）下，经验库写入转发到本地匹配服务。
 """
 
 import asyncio
@@ -17,6 +19,12 @@ from loguru import logger
 
 from app.models.task import Task
 from app.models.user import User
+from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+
+
+def _is_remote() -> bool:
+    """是否使用远程模式"""
+    return MATCH_BACKEND == "remote" and LOCAL_MATCH_URL
 
 
 async def get_user_task(
@@ -36,6 +44,25 @@ async def get_user_task(
     return task
 
 
+async def _remote_store(path: str, payload: dict) -> dict:
+    """转发经验库写入请求到本地匹配服务"""
+    import httpx
+
+    url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
+    headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+        if resp.status_code == 200:
+            return resp.json()
+        logger.warning(f"远程经验库写入返回 {resp.status_code}: {resp.text[:200]}")
+        return {}
+    except Exception as e:
+        logger.warning(f"远程经验库写入失败: {e}")
+        return {}
+
+
 async def store_experience(
     name: str,
     desc: str,
@@ -46,15 +73,32 @@ async def store_experience(
     province: str,
     confirmed: bool,
 ) -> bool:
-    """将单条数据回流经验库（在线程池中执行同步操作）
+    """将单条数据回流经验库
 
     confirmed=True → 权威层（用户确认的数据）
     confirmed=False → 候选层（系统推荐或纠正的数据）
 
+    远程模式下转发到本地匹配服务。
     返回是否写入成功。失败不抛异常（经验库是增值功能）。
     """
     if not quota_ids:
         return False
+
+    # 远程模式：转发到本地匹配服务
+    if _is_remote():
+        result = await _remote_store("/experience/store", {
+            "name": name,
+            "desc": desc,
+            "quota_ids": quota_ids,
+            "quota_names": quota_names,
+            "reason": reason,
+            "specialty": specialty,
+            "province": province,
+            "confirmed": confirmed,
+        })
+        return result.get("success", False)
+
+    # 本地模式：直接调用
     try:
         from tools.jarvis_store import store_one
 
@@ -89,6 +133,18 @@ async def store_experience_batch(
     """
     if not records:
         return 0
+
+    # 远程模式：转发到本地匹配服务
+    if _is_remote():
+        result = await _remote_store("/experience/store-batch", {
+            "records": records,
+            "province": province,
+            "reason": reason,
+            "confirmed": confirmed,
+        })
+        return result.get("count", 0)
+
+    # 本地模式：直接调用
     try:
         from tools.jarvis_store import store_one
 

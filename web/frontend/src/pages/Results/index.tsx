@@ -723,7 +723,8 @@ export default function ResultsPage() {
   // ============================================================
 
   const renderSummary = () => {
-    const { total, high_confidence, mid_confidence, low_confidence, no_match } = summary;
+    const { total, high_confidence, mid_confidence, low_confidence, no_match,
+            confirmed = 0, corrected = 0 } = summary;
     const pill = (bg: string, color: string): React.CSSProperties => ({
       padding: '2px 12px',
       borderRadius: 12,
@@ -733,6 +734,11 @@ export default function ResultsPage() {
       fontWeight: 500,
       display: 'inline-block',
     });
+    // 准确率 = (已确认 + 已纠正) / 总数；无审核时回退到绿灯/总数
+    const reviewed = confirmed + corrected;
+    const accuracy = total > 0
+      ? Math.round((reviewed > 0 ? reviewed : (high_confidence ?? 0)) / total * 100)
+      : 0;
     return (
       <Space size="small" wrap>
         <span style={pill('#f0f0f0', '#333')}>共 <b>{total}</b> 条</span>
@@ -742,7 +748,13 @@ export default function ResultsPage() {
         {no_match > 0 && <span style={pill('#f5f5f5', '#999')}>未匹配 <b>{no_match}</b></span>}
         {total > 0 && (
           <span style={pill('#E3F2FD', '#1565C0')}>
-            准确率 <b>{Math.round((high_confidence ?? 0) / total * 100)}%</b>
+            准确率 <b>{accuracy}%</b>
+          </span>
+        )}
+        {reviewed > 0 && (
+          <span style={pill('#E8F5E9', '#2E7D32')}>
+            已审核 <b>{reviewed}</b>/{total}
+            {corrected > 0 && <span>（纠正{corrected}条）</span>}
           </span>
         )}
       </Space>

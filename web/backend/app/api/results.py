@@ -60,12 +60,16 @@ async def list_results(
     )
     items = result.scalars().all()
 
-    # 统计置信度分布
+    # 统计置信度分布 + 审核状态
     total = len(items)
     high_conf = sum(1 for r in items if r.confidence >= _GREEN_THRESHOLD)
     mid_conf = sum(1 for r in items if _YELLOW_THRESHOLD <= r.confidence < _GREEN_THRESHOLD)
     low_conf = sum(1 for r in items if r.confidence < _YELLOW_THRESHOLD)
     no_match = sum(1 for r in items if not r.quotas)
+    # 审核维度：已确认/已纠正/待审核
+    confirmed = sum(1 for r in items if r.review_status == "confirmed")
+    corrected = sum(1 for r in items if r.review_status == "corrected")
+    pending = total - confirmed - corrected
 
     summary = {
         "total": total,
@@ -73,6 +77,9 @@ async def list_results(
         "mid_confidence": mid_conf,
         "low_confidence": low_conf,
         "no_match": no_match,
+        "confirmed": confirmed,    # 已确认条数
+        "corrected": corrected,    # 已纠正条数
+        "pending": pending,        # 待审核条数
     }
 
     return ResultListResponse(items=items, total=total, summary=summary)
