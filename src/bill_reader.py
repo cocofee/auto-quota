@@ -95,6 +95,8 @@ class BillReader:
         ],
         "unit": ["计量单位", "单位", "计量\n单位"],
         "quantity": ["工程量", "工程数量", "暂估数量", "数量"],
+        "unit_price": ["综合单价", "单价", "合同单价", "投标单价"],
+        "amount": ["合价", "金额", "合同金额", "工程造价"],
     }
 
     SUMMARY_COLUMN_PATTERNS = {
@@ -903,6 +905,8 @@ class BillReader:
         description = get_val("description")
         unit = get_val("unit")
         quantity_str = get_val("quantity")
+        unit_price_str = get_val("unit_price")
+        amount_str = get_val("amount")
 
         if not name:
             return None
@@ -944,6 +948,20 @@ class BillReader:
             except (ValueError, TypeError):
                 pass
 
+        # 解析单价和金额（有就读，没有就None）
+        unit_price = None
+        if unit_price_str:
+            try:
+                unit_price = float(unit_price_str.replace(",", "").strip())
+            except (ValueError, TypeError):
+                pass
+        amount = None
+        if amount_str:
+            try:
+                amount = float(amount_str.replace(",", "").strip())
+            except (ValueError, TypeError):
+                pass
+
         has_code = bool(code and re.search(r"\d", code))
         has_quantity = quantity is not None
         has_unit = bool(unit)
@@ -970,6 +988,8 @@ class BillReader:
             "description": description,
             "unit": unit,
             "quantity": quantity,
+            "unit_price": unit_price,
+            "amount": amount,
             "search_text": search_text,
             "params": params,
             "sheet_name": sheet_name,

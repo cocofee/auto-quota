@@ -26,14 +26,18 @@ class MatchResultResponse(BaseModel):
     bill_description: str
     bill_unit: str
     bill_quantity: float | None
+    bill_unit_price: float | None = None
+    bill_amount: float | None = None
     specialty: str
     sheet_name: str = ""
     section: str = ""
     quotas: list[QuotaItem] | None
+    alternatives: list[dict] | None = None
     confidence: int
     match_source: str
     explanation: str
     candidates_count: int
+    is_measure_item: bool = False
     review_status: str
     corrected_quotas: list[QuotaItem] | None
     review_note: str

@@ -136,6 +136,11 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_balance INTEGER DEFAULT 1000",
             # 2026-02-27: system settings table
             "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(100) PRIMARY KEY, value TEXT NOT NULL)",
+            # 2026-03-15: match_results 表新增字段（OpenClaw增强）
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_unit_price FLOAT",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_amount FLOAT",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS alternatives JSON",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS is_measure_item BOOLEAN DEFAULT FALSE",
         ]
         from sqlalchemy import text
         for sql in migrations:

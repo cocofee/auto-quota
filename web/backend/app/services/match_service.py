@@ -105,6 +105,10 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
                 "source": q.get("source", ""),
             })
 
+        # 提取备选定额（供OpenClaw纠正时直接选用）
+        alternatives_raw = result.get("alternatives", [])
+        alternatives = alternatives_raw if alternatives_raw else None
+
         # 提取 trace 的简化版本（只保留 path 和 final_source）
         trace_raw = result.get("trace", {})
         trace_simplified = None
@@ -115,6 +119,20 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
                 "final_confidence": trace_raw.get("final_confidence"),
             }
 
+        # 判断是否措施项（match_source为skip表示匹配时已跳过）
+        is_measure = result.get("match_source") == "skip"
+
+        # 读取单价和金额（清单Excel里可能有也可能没有）
+        unit_price = bill_item.get("unit_price")
+        amount = bill_item.get("amount")
+        # 如果有工程量和单价但没金额，自动计算
+        qty = bill_item.get("quantity")
+        if unit_price and qty and not amount:
+            try:
+                amount = float(unit_price) * float(qty)
+            except (ValueError, TypeError):
+                pass
+
         match_result = MatchResult(
             task_id=task_id,
             index=idx,
@@ -122,15 +140,19 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
             bill_name=(bill_item.get("name") or "")[:500],
             bill_description=bill_item.get("spec") or bill_item.get("description") or "",
             bill_unit=(bill_item.get("unit") or "")[:50],
-            bill_quantity=bill_item.get("quantity"),
+            bill_quantity=qty,
+            bill_unit_price=unit_price,
+            bill_amount=amount,
             specialty=(bill_item.get("specialty") or "")[:20],
             sheet_name=(bill_item.get("sheet_name") or "")[:100],
             section=(bill_item.get("section") or "")[:200],
             quotas=quotas if quotas else None,
+            alternatives=alternatives,
             confidence=result.get("confidence", 0),
             match_source=result.get("match_source", ""),
             explanation=result.get("explanation", ""),
             candidates_count=result.get("candidates_count", 0),
+            is_measure_item=is_measure,
             trace=trace_simplified,
         )
         session.add(match_result)
