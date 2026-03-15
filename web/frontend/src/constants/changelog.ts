@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.38';
+export const APP_VERSION = '0.2.39';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.39',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'httpx加入后端依赖 + 经验库写入错误日志增强' },
+      { type: 'admin', text: '同义词扩充——80万清单数据挖掘 + benchmark缺口补充' },
+    ],
+  },
   {
     version: '0.2.38',
     date: '2026-03-15',
