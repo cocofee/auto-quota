@@ -423,6 +423,83 @@ async def compile_bill_execute(
 
 
 # ============================================================
+# 定额搜索接口（供懒猫远程模式转发）
+# ============================================================
+
+@app.get("/quota-search")
+def search_quotas(
+    keyword: str,
+    province: str,
+    book: str = None,
+    chapter: str = None,
+    limit: int = 20,
+    x_api_key: str = Header(default=""),
+):
+    """按关键词搜索定额"""
+    _verify_api_key(x_api_key)
+    from src.quota_db import QuotaDB
+
+    try:
+        db = QuotaDB(province)
+        results = db.search_by_keywords(keyword, chapter=chapter, book=book, limit=limit)
+        items = [
+            {
+                "quota_id": r.get("quota_id", ""),
+                "name": r.get("name", ""),
+                "unit": r.get("unit", ""),
+                "chapter": r.get("chapter", ""),
+                "book": r.get("book", ""),
+            }
+            for r in results
+        ]
+        return {"items": items, "total": len(items), "keyword": keyword, "province": province}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"省份 '{province}' 的定额库不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
+
+
+@app.get("/quota-search/by-id")
+def get_quota_by_id(
+    quota_id: str,
+    province: str,
+    x_api_key: str = Header(default=""),
+):
+    """按定额编号精确查询"""
+    _verify_api_key(x_api_key)
+    from src.quota_db import QuotaDB
+
+    try:
+        db = QuotaDB(province)
+        results = db.get_quota_by_id(quota_id)
+        if not results:
+            return {"items": [], "total": 0}
+        items = [
+            {
+                "quota_id": r.get("quota_id", ""),
+                "name": r.get("name", ""),
+                "unit": r.get("unit", ""),
+                "chapter": r.get("chapter", ""),
+                "book": r.get("book", ""),
+            }
+            for r in results
+        ]
+        return {"items": items, "total": len(items)}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"省份 '{province}' 的定额库不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {e}")
+
+
+@app.get("/quota-search/provinces")
+def list_search_provinces(x_api_key: str = Header(default="")):
+    """获取可用的省份定额库列表"""
+    _verify_api_key(x_api_key)
+    provinces = config.list_db_provinces()
+    return {"items": provinces}
+
+
+# ============================================================
 # 后台匹配执行
 # ============================================================
 

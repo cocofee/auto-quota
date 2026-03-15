@@ -515,7 +515,7 @@ echo.
 
 echo [GIT] Auto commit...
 
-git add lzc-manifest.yml CHANGELOG.md scripts/
+git add lzc-manifest.yml web/frontend/src/constants/changelog.ts scripts/
 
 git commit -m "deploy: v!NEW!"
 
