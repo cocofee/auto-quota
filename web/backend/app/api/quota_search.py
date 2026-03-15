@@ -208,3 +208,84 @@ async def list_search_provinces(
     except Exception as e:
         logger.error(f"获取省份列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取省份列表失败: {e}")
+
+
+@router.get("/smart")
+async def smart_search(
+    name: str = Query(description="清单项目名称（如'JDG20暗配'、'PPR给水管DN25'）"),
+    province: str = Query(description="省份定额库名称"),
+    description: str = Query(default="", description="清单特征描述（可选）"),
+    specialty: str = Query(default="", description="专业册号（可选，如'C10'，不传则自动识别）"),
+    limit: int = Query(default=10, ge=1, le=50, description="最大返回条数"),
+    user: User = Depends(get_current_user),
+):
+    """智能搜索定额（清单原文 → 自动清洗+同义词+级联搜索）
+
+    和普通 /quota-search 的区别：
+    - 普通搜索需要调用方自己把"JDG20"转成"紧定式钢导管"
+    - 智能搜索直接传清单原文，系统自动做术语转换和级联搜索
+
+    用法:
+        /api/quota-search/smart?name=JDG20暗配&province=北京2024
+        /api/quota-search/smart?name=PPR给水管&description=DN25沟槽连接&province=北京2024
+    """
+    province = _validate_province(province)
+
+    # 远程模式
+    if _is_remote():
+        params = {"name": name, "province": province, "limit": limit}
+        if description:
+            params["description"] = description
+        if specialty:
+            params["specialty"] = specialty
+        return await _remote_get("/quota-search/smart", params)
+
+    # 本地模式
+    try:
+        def _search():
+            from src.text_parser import TextParser
+            from src.hybrid_searcher import HybridSearcher
+            from src.specialty_classifier import classify as classify_specialty
+
+            parser = TextParser()
+
+            spec = specialty
+            if not spec:
+                spec_result = classify_specialty(name, description)
+                spec = spec_result.get("primary", "") if isinstance(spec_result, dict) else ""
+
+            search_query = parser.build_quota_query(name, description, specialty=spec)
+
+            searcher = HybridSearcher(province)
+            books = [spec] if spec else None
+            candidates = searcher.search(search_query, top_k=limit, books=books)
+
+            if len(candidates) < 3 and books:
+                candidates_all = searcher.search(search_query, top_k=limit, books=None)
+                seen = {c.get("quota_id") for c in candidates}
+                for c in candidates_all:
+                    if c.get("quota_id") not in seen:
+                        candidates.append(c)
+                        seen.add(c.get("quota_id"))
+                candidates = candidates[:limit]
+
+            items = [
+                {
+                    "quota_id": c.get("quota_id", ""),
+                    "name": c.get("name", ""),
+                    "unit": c.get("unit", ""),
+                    "chapter": c.get("chapter", ""),
+                    "book": c.get("book", ""),
+                    "score": round(c.get("hybrid_score", 0), 4),
+                }
+                for c in candidates
+            ]
+            return {"items": items, "total": len(items), "search_query": search_query, "specialty": spec, "province": province}
+
+        return await asyncio.to_thread(_search)
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"省份 '{province}' 的定额库不存在")
+    except Exception as e:
+        logger.error(f"智能搜索失败: {e}")
+        raise HTTPException(status_code=500, detail=f"智能搜索失败: {e}")

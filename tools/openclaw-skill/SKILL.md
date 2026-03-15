@@ -50,8 +50,14 @@ python3 $SCRIPT correct <task_id> <result_id> "C10-1-10" "管道安装" --note "
 **情况A：搜定额库能找到正确答案 → 自动纠正**
 
 操作步骤：
-1. 从清单名称提取核心关键词（去掉规格参数）
-2. 调用定额搜索 API 搜索：
+1. **优先用智能搜索**（直接传清单原文，系统自动转换术语）：
+   ```
+   GET https://autoquota.microfeicat2025.heiyu.space/api/quota-search/smart?name=清单名称&description=特征描述&province=省份
+   ```
+   智能搜索会自动把"JDG20"转成"紧定式钢导管"、"PPR"转成"塑料给水管"等。
+   返回结果里有 `search_query` 字段，可以看到系统构建的搜索词。
+
+2. 智能搜索没结果时，再用**关键词搜索**（需要自己转换术语）：
    ```
    GET https://autoquota.microfeicat2025.heiyu.space/api/quota-search?keyword=关键词&province=省份
    ```
@@ -204,3 +210,22 @@ python3 $SCRIPT correct <task_id> <result_id> "C10-1-10" "管道安装" --note "
 6. 纠正时必须先搜定额库确认，不能凭空猜编号
 7. 用中文、专业但易懂的语气
 8. 同一文件不重复处理
+9. **确认+纠正完后，用 export-final 下载最终Excel**（含纠正结果）
+
+## 下载最终Excel（含纠正结果）
+
+确认+纠正全部完成后，调用此接口下载含纠正的最终版Excel：
+```
+GET https://autoquota.microfeicat2025.heiyu.space/api/tasks/{task_id}/export-final
+```
+
+和普通 `/export` 的区别：
+- `/export` — 返回匹配时生成的静态文件，**不含纠正**
+- `/export-final` — 从数据库实时生成，**包含所有纠正结果**
+
+处理完一个文件的完整流程：
+1. 提交匹配 → 等待完成
+2. 确认绿灯+黄灯（POST /results/confirm）
+3. 纠正红灯（PUT /results/{id} + 搜索API找正确定额）
+4. 下载最终Excel（GET /export-final）
+5. 发飞书审核报告

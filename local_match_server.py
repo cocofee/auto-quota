@@ -499,6 +499,96 @@ def list_search_provinces(x_api_key: str = Header(default="")):
     return {"items": provinces}
 
 
+@app.get("/quota-search/smart")
+def smart_search(
+    name: str,
+    province: str,
+    description: str = "",
+    specialty: str = "",
+    limit: int = 10,
+    x_api_key: str = Header(default=""),
+):
+    """智能搜索定额（清单原文 → 自动清洗+同义词+级联搜索）
+
+    和 /quota-search 的区别：
+    - /quota-search 需要调用方自己把"JDG20"转成"紧定式钢导管"
+    - /quota-search/smart 直接传清单原文，系统自动做术语转换和级联搜索
+
+    参数:
+        name: 清单项目名称（如"JDG20暗配"、"PPR给水管DN25"）
+        province: 省份定额库名称（如"北京2024"）
+        description: 清单特征描述（可选，如"沟槽连接 镀锌钢管"）
+        specialty: 专业册号（可选，如"C10"，不传则自动识别）
+        limit: 最大返回条数
+
+    返回:
+        items: 候选定额列表（按匹配度排序）
+        search_query: 系统构建的搜索词（方便调试）
+    """
+    _verify_api_key(x_api_key)
+
+    try:
+        from src.text_parser import TextParser
+        from src.hybrid_searcher import HybridSearcher
+        from src.specialty_classifier import classify as classify_specialty
+
+        parser = TextParser()
+
+        # 第1步：自动识别专业（如果没传）
+        if not specialty:
+            spec_result = classify_specialty(name, description)
+            specialty = spec_result.get("primary", "") if isinstance(spec_result, dict) else ""
+
+        # 第2步：构建搜索query（清洗+同义词+规范化）
+        search_query = parser.build_quota_query(
+            name, description, specialty=specialty
+        )
+
+        # 第3步：级联搜索（BM25 + 向量，主专业 → 全库）
+        searcher = HybridSearcher(province)
+        books = [specialty] if specialty else None
+        candidates = searcher.search(search_query, top_k=limit, books=books)
+
+        # 如果主专业搜不到足够结果，扩到全库
+        if len(candidates) < 3 and books:
+            candidates_all = searcher.search(search_query, top_k=limit, books=None)
+            # 合并去重
+            seen = {c.get("quota_id") for c in candidates}
+            for c in candidates_all:
+                if c.get("quota_id") not in seen:
+                    candidates.append(c)
+                    seen.add(c.get("quota_id"))
+            candidates = candidates[:limit]
+
+        # 构建返回结果
+        items = [
+            {
+                "quota_id": c.get("quota_id", ""),
+                "name": c.get("name", ""),
+                "unit": c.get("unit", ""),
+                "chapter": c.get("chapter", ""),
+                "book": c.get("book", ""),
+                "score": round(c.get("hybrid_score", 0), 4),
+            }
+            for c in candidates
+        ]
+
+        return {
+            "items": items,
+            "total": len(items),
+            "search_query": search_query,
+            "specialty": specialty,
+            "province": province,
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"省份 '{province}' 的定额库不存在")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"智能搜索失败: {e}")
+
+
 # ============================================================
 # 后台匹配执行
 # ============================================================
