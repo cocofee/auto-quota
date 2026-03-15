@@ -558,17 +558,11 @@ export default function ResultsPage() {
         if (filtered.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
 
         return (
-          <Tooltip title={filtered.join('\n')} placement="topLeft" overlayStyle={{ maxWidth: 400 }}>
-            <div style={{
-              fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap',
-              maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              {filtered.slice(0, 3).map((line: string, idx: number) => (
+            <div style={{ fontSize: 12, lineHeight: '1.6' }}>
+              {filtered.map((line: string, idx: number) => (
                 <div key={idx}>{line}</div>
               ))}
-              {filtered.length > 3 && <span style={{ color: '#999' }}>...共{filtered.length}行</span>}
             </div>
-          </Tooltip>
         );
       },
     },
