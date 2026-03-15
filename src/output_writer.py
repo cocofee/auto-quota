@@ -20,6 +20,7 @@ import uuid
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
@@ -30,6 +31,61 @@ from loguru import logger
 import config
 from src.bill_reader import _is_material_code
 from src.excel_compat import convert_excel_to_xlsx
+
+
+# ======== 主材查价（懒加载，整个输出过程只初始化一次）========
+
+_material_db_instance = None  # 缓存MaterialDB实例，避免每行都新建
+
+
+def _get_material_price(name: str, spec: str = "",
+                        unit: str = "") -> Optional[float]:
+    """查主材单价（从价格库）
+
+    返回含税单价（已按目标单位换算），查不到返回None。
+    省份自动从当前运行省份提取。
+    unit: 主材行的单位（如'm'），用于单位换算（价格库可能是吨价）。
+    """
+    global _material_db_instance
+    if _material_db_instance is None:
+        try:
+            from src.material_db import MaterialDB
+            _material_db_instance = MaterialDB()
+        except Exception:
+            return None
+
+    # 从定额库长名称提取短省份名（如"北京市建设工程..."→"北京"）
+    province_short = _extract_short_province(config.get_current_province())
+
+    result = _material_db_instance.search_price_by_name(
+        name, province=province_short, spec=spec, target_unit=unit)
+    if result:
+        return result.get("price")
+    return None
+
+
+def _extract_short_province(full_name: str) -> str:
+    """从定额库全名提取短省份名（用于匹配价格库的province字段）
+
+    例：'北京市建设工程施工消耗量标准(2024)' → '北京'
+        '湖北省房屋建筑与装饰工程...' → '湖北'
+        '上海市建筑和装饰工程...' → '上海'
+    """
+    if not full_name:
+        return ""
+    # 常见省份名（2-3字），取全名开头匹配
+    provinces = [
+        "黑龙江", "内蒙古",
+        "北京", "上海", "天津", "重庆",
+        "河北", "山西", "辽宁", "吉林", "江苏", "浙江", "安徽",
+        "福建", "江西", "山东", "河南", "湖北", "湖南", "广东",
+        "广西", "海南", "四川", "贵州", "云南", "西藏", "陕西",
+        "甘肃", "青海", "宁夏", "新疆",
+    ]
+    for p in provinces:
+        if full_name.startswith(p):
+            return p
+    return ""
 
 
 # 颜色定义
@@ -1213,6 +1269,17 @@ class OutputWriter:
         cell_f.font = GLD_FONT
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
+
+        # G列(qty_col+1)：单价 — 从价格库查询填入（自动单位换算）
+        price_col = qty_col + 1
+        mat_name = material.get("name", "")
+        mat_price = _get_material_price(
+            mat_name, spec=material.get("spec", ""), unit=mat_unit)
+        if mat_price is not None:
+            cell_price = ws.cell(row=m_row, column=price_col, value=round(mat_price, 2))
+            cell_price.font = GLD_FONT
+            cell_price.alignment = Alignment(horizontal="right", vertical="center")
+            cell_price.number_format = '0.00'
 
         # 所有列统一 thin 边框 + 宋体9号（覆盖到额外列末尾）
         for col in range(1, extra_start + 6):  # A列到主材列
