@@ -52,7 +52,7 @@ async def _remote_store(path: str, payload: dict) -> dict:
     headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code == 200:
             return resp.json()

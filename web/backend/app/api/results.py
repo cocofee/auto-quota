@@ -212,11 +212,17 @@ async def confirm_results(
 
     updated = 0
     skipped = 0
+    skipped_low_conf = 0  # 低置信度被拦截的条数
     confirmed_records = []  # 收集需要回流经验库的记录
     for r in results:
         # 已纠正的结果不能被批量确认覆盖（保留人工纠正状态）
         if r.review_status == "corrected":
             skipped += 1
+            continue
+        # 低置信度不允许批量确认（防止错误数据污染权威层）
+        # 置信度<70%的结果准确率太低，必须逐条确认（PUT接口），不能批量过
+        if r.confidence < 70:
+            skipped_low_conf += 1
             continue
         if r.review_status != "confirmed":
             r.review_status = "confirmed"
@@ -244,7 +250,12 @@ async def confirm_results(
             confirmed=True,  # 确认 → 权威层
         )
 
-    return {"confirmed": updated, "skipped_corrected": skipped, "total": len(results)}
+    return {
+        "confirmed": updated,
+        "skipped_corrected": skipped,
+        "skipped_low_confidence": skipped_low_conf,
+        "total": len(results),
+    }
 
 
 @router.get("/tasks/{task_id}/export")
