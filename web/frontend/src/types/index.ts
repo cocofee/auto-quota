@@ -125,14 +125,18 @@ export interface MatchResult {
   bill_description: string;
   bill_unit: string;
   bill_quantity: number | null;
+  bill_unit_price: number | null;  // 综合单价
+  bill_amount: number | null;      // 金额
   specialty: string;
   sheet_name: string;   // 所属Sheet页名（如"给排水"、"电气"）
   section: string;      // 所属分部工程名（如"给水工程"、"强电系统"）
   quotas: QuotaItem[] | null;
+  alternatives: Record<string, unknown>[] | null;  // 备选定额（top-N）
   confidence: number;
   match_source: string;
   explanation: string;
   candidates_count: number;
+  is_measure_item: boolean;  // 是否措施项
   review_status: ReviewStatus;
   corrected_quotas: QuotaItem[] | null;
   review_note: string;

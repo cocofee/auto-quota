@@ -58,6 +58,12 @@ class MatchResult(Base):
     # 工程量
     bill_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # 综合单价（从清单Excel读取，可能为空）
+    bill_unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # 金额（工程量×综合单价，从清单Excel读取，可能为空）
+    bill_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # 所属专业册号（如 "C10"）
     specialty: Mapped[str] = mapped_column(String(20), default="")
 
@@ -86,6 +92,12 @@ class MatchResult(Base):
 
     # 候选定额数量（搜索到多少个候选）
     candidates_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # 备选定额列表（JSON数组，top-N候选，供OpenClaw纠正时直接选用）
+    alternatives: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
+    # 是否为措施项（脚手架/增加费等非实体项，不需要套定额）
+    is_measure_item: Mapped[bool] = mapped_column(default=False)
 
     # 匹配追踪信息（JSON，记录匹配路径和最终来源，调试用）
     trace: Mapped[dict | None] = mapped_column(JSON, nullable=True)
