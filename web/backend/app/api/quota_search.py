@@ -7,6 +7,10 @@
     GET  /api/quota-search          — 按关键词搜索定额
     GET  /api/quota-search/by-id    — 按定额编号精确查询
     GET  /api/quota-search/provinces — 获取可用省份列表
+
+远程模式（MATCH_BACKEND=remote）：
+    转发请求到本地电脑的匹配API（local_match_server.py），
+    懒猫容器内不需要定额库数据文件。
 """
 
 import asyncio
@@ -16,8 +20,14 @@ from loguru import logger
 
 from app.models.user import User
 from app.auth.deps import get_current_user
+from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
 
 router = APIRouter()
+
+
+def _is_remote() -> bool:
+    """是否使用远程模式"""
+    return MATCH_BACKEND == "remote" and LOCAL_MATCH_URL
 
 
 def _validate_province(province: str) -> str:
@@ -29,6 +39,43 @@ def _validate_province(province: str) -> str:
         if ch in province:
             raise HTTPException(status_code=400, detail=f"省份名称包含非法字符")
     return province
+
+
+async def _remote_get(path: str, params: dict) -> dict:
+    """转发GET请求到本地匹配服务"""
+    import httpx
+
+    url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
+    headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers, params=params)
+
+        if resp.status_code == 200:
+            return resp.json()
+
+        # 转发错误
+        detail = ""
+        try:
+            detail = resp.json().get("detail", resp.text[:200])
+        except Exception:
+            detail = resp.text[:200]
+
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="无法连接本地匹配服务，请确认电脑上的匹配服务已启动"
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="本地匹配服务响应超时")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"远程定额搜索失败: {e}")
+        raise HTTPException(status_code=500, detail=f"远程搜索失败: {e}")
 
 
 @router.get("")
@@ -51,6 +98,16 @@ async def search_quotas(
     """
     province = _validate_province(province)
 
+    # 远程模式：转发到本地电脑
+    if _is_remote():
+        params = {"keyword": keyword, "province": province, "limit": limit}
+        if book:
+            params["book"] = book
+        if chapter:
+            params["chapter"] = chapter
+        return await _remote_get("/quota-search", params)
+
+    # 本地模式：直接查询
     try:
         def _search():
             from src.quota_db import QuotaDB
@@ -62,7 +119,6 @@ async def search_quotas(
                 book=book,
                 limit=limit,
             )
-            # 只返回关键字段（不暴露内部字段如 search_text）
             return [
                 {
                     "quota_id": r.get("quota_id", ""),
@@ -96,6 +152,11 @@ async def get_quota_by_id(
     """
     province = _validate_province(province)
 
+    # 远程模式
+    if _is_remote():
+        return await _remote_get("/quota-search/by-id", {"quota_id": quota_id, "province": province})
+
+    # 本地模式
     try:
         def _query():
             from src.quota_db import QuotaDB
@@ -130,6 +191,12 @@ async def list_search_provinces(
     user: User = Depends(get_current_user),
 ):
     """获取可用的省份定额库列表（不需要管理员权限）"""
+
+    # 远程模式
+    if _is_remote():
+        return await _remote_get("/quota-search/provinces", {})
+
+    # 本地模式
     try:
         def _query():
             import config as quota_config
