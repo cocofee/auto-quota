@@ -146,6 +146,9 @@ app.include_router(price_backfill_router, prefix="/api/tools", tags=["工具-智
 from app.api.bill_library import router as bill_library_router
 app.include_router(bill_library_router, prefix="/api/tools", tags=["工具-编清单"])
 
+from app.api.quota_search import router as quota_search_router
+app.include_router(quota_search_router, prefix="/api/quota-search", tags=["定额搜索"])
+
 
 # ============================================================
 # 基础端点（健康检查）
