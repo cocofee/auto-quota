@@ -64,6 +64,7 @@ BOOK_TO_INDEX_LABEL = {
 
 _features_db = None    # 项目特征数据库缓存（1182条，有features/unit/work_content）
 _bill_lib_index = None  # 清单库名称索引（从41.6万条全专业清单构建）
+_desc_db_conn = None    # 清单描述库连接（bill_library.db，11.2万条真实描述）
 
 
 def _load_features_db() -> dict:
@@ -82,6 +83,172 @@ def _load_features_db() -> dict:
         _features_db = json.load(f)
     logger.info(f"项目特征库已加载: {_features_db['total_items']}条")
     return _features_db
+
+
+def _get_desc_db():
+    """获取清单描述库的数据库连接（懒加载，从80万条历史清单挖掘的11.2万条描述）"""
+    global _desc_db_conn
+    if _desc_db_conn is not None:
+        return _desc_db_conn
+
+    db_path = Path(__file__).resolve().parent.parent / "data" / "bill_library.db"
+    if not db_path.exists():
+        return None
+
+    import sqlite3
+    _desc_db_conn = sqlite3.connect(str(db_path))
+    # 检查表是否存在（可能只跑了第1步没跑第2步）
+    tables = {r[0] for r in _desc_db_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "bill_descriptions" not in tables:
+        _desc_db_conn.close()
+        _desc_db_conn = None
+        return None
+
+    logger.info("清单描述库已连接（bill_library.db）")
+    return _desc_db_conn
+
+
+def _suggest_descriptions(bill_name: str, user_desc: str = "",
+                          top_n: int = 3) -> list[str]:
+    """从80万条历史清单中查询最匹配的项目特征描述
+
+    核心逻辑：用用户已有的参数（DN/材质/连接方式等）去筛选历史描述，
+    而不是盲选最热门的。没有用户参数时才降级为按频次排序。
+
+    参数:
+        bill_name: 清单名称（如"塑料管"、"配电箱"）
+        user_desc: 用户已填的描述/参数（如"DN50 PPR 热熔连接"）
+        top_n: 返回前N条最匹配描述
+
+    返回:
+        描述文本列表，按匹配度降序，空列表表示没查到
+    """
+    conn = _get_desc_db()
+    if conn is None:
+        return []
+
+    try:
+        # 从用户描述中提取关键参数词（DN/De/材质/连接方式等）
+        keywords = _extract_filter_keywords(bill_name, user_desc)
+
+        if keywords:
+            # 有参数 → 按参数筛选（AND条件，全部匹配）
+            where_clauses = ["bill_name = ?"]
+            params = [bill_name]
+            for kw in keywords:
+                where_clauses.append("description LIKE ?")
+                params.append(f"%{kw}%")
+            params.append(top_n)
+
+            sql = f"""
+                SELECT description, frequency
+                FROM bill_descriptions
+                WHERE {' AND '.join(where_clauses)}
+                ORDER BY frequency DESC
+                LIMIT ?
+            """
+            rows = conn.execute(sql, params).fetchall()
+
+            # 如果AND太严格没结果，退化为至少匹配一个关键词
+            if not rows and len(keywords) > 1:
+                or_clauses = " OR ".join(["description LIKE ?" for _ in keywords])
+                params2 = [bill_name] + [f"%{kw}%" for kw in keywords] + [top_n]
+                sql2 = f"""
+                    SELECT description, frequency
+                    FROM bill_descriptions
+                    WHERE bill_name = ? AND ({or_clauses})
+                    ORDER BY frequency DESC
+                    LIMIT ?
+                """
+                rows = conn.execute(sql2, params2).fetchall()
+        else:
+            # 无参数 → 按频次排序（兜底）
+            rows = conn.execute("""
+                SELECT description, frequency
+                FROM bill_descriptions
+                WHERE bill_name = ?
+                ORDER BY frequency DESC
+                LIMIT ?
+            """, (bill_name, top_n)).fetchall()
+
+        if not rows:
+            # 名称精确匹配失败，尝试模糊
+            rows = conn.execute("""
+                SELECT description, frequency
+                FROM bill_descriptions
+                WHERE bill_name LIKE ?
+                ORDER BY frequency DESC
+                LIMIT ?
+            """, (f"%{bill_name}%", top_n)).fetchall()
+
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+# 参数提取正则（从用户描述中找关键参数）
+_RE_DN = re.compile(r'[Dd][Nn]\s*(\d+)')
+_RE_DE = re.compile(r'[Dd][Ee]\s*(\d+)')
+_RE_SPEC = re.compile(r'(\d+)\s*[x×*]\s*(\d+)')
+
+# 常见材质关键词（用于从用户描述中提取）
+_MATERIAL_KEYWORDS = [
+    "PPR", "PE", "PVC", "HDPE", "CPVC", "ABS", "UPVC", "FRPP",
+    "镀锌", "不锈钢", "铸铁", "碳钢", "铜管", "钢塑", "衬塑", "涂塑",
+    "钢丝网骨架", "铝塑", "无缝钢管", "焊接钢管",
+]
+
+# 常见连接方式关键词
+_CONNECTION_KEYWORDS = [
+    "沟槽", "螺纹", "焊接", "法兰", "热熔", "卡压", "承插", "粘接",
+    "卡箍", "环压", "电熔",
+]
+
+
+def _extract_filter_keywords(bill_name: str, user_desc: str) -> list[str]:
+    """从用户的清单名称+描述中提取可用于筛选的关键参数
+
+    只提取"确定性高"的参数，避免误筛：
+    - DN/De管径
+    - 材质（PPR/镀锌/不锈钢等）
+    - 连接方式（螺纹/热熔/沟槽等）
+    - 尺寸规格（如 500*400）
+    """
+    text = f"{bill_name} {user_desc}".upper()
+    text_lower = f"{bill_name} {user_desc}"
+    keywords = []
+
+    # DN管径
+    m = _RE_DN.search(text_lower)
+    if m:
+        keywords.append(f"DN{m.group(1)}")
+
+    # De管径
+    if not m:
+        m = _RE_DE.search(text_lower)
+        if m:
+            keywords.append(f"De{m.group(1)}")
+
+    # 材质
+    for mat in _MATERIAL_KEYWORDS:
+        if mat.upper() in text or mat in text_lower:
+            keywords.append(mat)
+            break  # 只取第一个匹配的材质
+
+    # 连接方式
+    for conn_kw in _CONNECTION_KEYWORDS:
+        if conn_kw in text_lower:
+            keywords.append(conn_kw)
+            break  # 只取第一个
+
+    # 尺寸规格（如 500*400，常见于风口/配电箱）
+    m = _RE_SPEC.search(text_lower)
+    if m:
+        keywords.append(f"{m.group(1)}")  # 只用第一个数字筛选，避免格式差异
+
+    return keywords
 
 
 def _extract_core_name(name: str) -> str:
@@ -724,6 +891,12 @@ def match_bill_code(name: str, description: str = "",
 
     # ---- 从项目特征库补全特征模板 ----
     feat = _lookup_features(code9)
+
+    # ---- 从历史清单库查询真实描述建议（80万条数据挖掘） ----
+    # 用标准名称+用户描述中的参数去筛选，返回最匹配的历史描述
+    lookup_name = feat.get("name", "") if feat else name
+    desc_suggestions = _suggest_descriptions(lookup_name, description)
+
     if feat:
         return {
             "code": code9,
@@ -739,6 +912,7 @@ def match_bill_code(name: str, description: str = "",
             "major": major,
             "match_score": round(score, 1),
             "match_method": method,
+            "description_suggestions": desc_suggestions,
         }
     else:
         # 清单库有但项目特征库没有（非安装编码、2013版编码等）
@@ -756,6 +930,7 @@ def match_bill_code(name: str, description: str = "",
             "major": major,
             "match_score": round(score, 1),
             "match_method": method,
+            "description_suggestions": desc_suggestions,
         }
 
 
