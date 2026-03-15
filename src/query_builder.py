@@ -354,7 +354,20 @@ def _extract_distribution_box_model(value: str) -> str:
     return ""
 
 
+# 已知的有定额价值的配电箱型号前缀（国标产品系列）
+# 当box_name是通用名（配电箱/配电柜）时，只有这些前缀的型号才值得搜索
+_KNOWN_BOX_MODEL_PREFIXES = (
+    "XL", "XRM", "GGD", "GCK", "GCS", "MNS", "PGL",
+    "JXF", "PZ", "BXM", "BSM", "ATS", "PDX",
+)
+
+
 def _normalize_distribution_box_name(value: str) -> str:
+    """从描述字段中提取配电箱名称。
+
+    如果提取结果不含箱/柜关键词（如"600*500*300"纯尺寸），返回空——
+    让调用方跳过box_name，走安装方式+半周长路由。
+    """
     cleaned = _clean_distribution_box_text(value)
     if not cleaned:
         return ""
@@ -367,6 +380,9 @@ def _normalize_distribution_box_name(value: str) -> str:
         cleaned,
     )
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # 如果结果不含箱/柜关键词，说明拿到的是尺寸/数字等垃圾值
+    if not any(kw in cleaned for kw in ("箱", "柜")):
+        return ""
     return cleaned
 
 
@@ -454,14 +470,23 @@ def _build_distribution_box_query(name: str,
         "成套配电柜",
         "成套配电柜安装",
     }
+
+    def _is_known_product_model(m: str) -> bool:
+        """判断型号是否是已知产品系列（而非项目内部编号）"""
+        upper = m.upper()
+        return any(upper.startswith(p) for p in _KNOWN_BOX_MODEL_PREFIXES)
+
     if box_name:
         query = box_name
         if model and model not in query:
-            query = f"{query} {model}"
+            # box_name是通用名时，只保留已知产品型号，过滤项目编号（ALE/SGAT等）
+            if box_name not in generic_names or _is_known_product_model(model):
+                query = f"{query} {model}"
         if query not in generic_names:
             return query
 
-    if model:
+    if model and _is_known_product_model(model):
+        # 只有已知产品型号才值得独立搜索（如"配电箱 XL-21"）
         base = "配电柜" if "配电柜" in name else "配电箱"
         return f"{base} {model}"
 
