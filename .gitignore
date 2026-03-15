@@ -84,7 +84,10 @@ data/pdf_info_price/
 
 # 训练数据和临时模型（大文件）
 data/qwen3_training_triplets_v3.jsonl
+data/qwen3_training_triplets_v4.jsonl
+data/qwen3_exp_triplets_v4.jsonl
 data/bill_library_all.json
+data/bill_library.db
 data/ltr_training_data.csv
 data/ltr_model_v4_new.txt
 
