@@ -590,6 +590,91 @@ def smart_search(
 
 
 # ============================================================
+# 经验库写入（远程模式下懒猫转发到这里）
+# ============================================================
+
+from pydantic import BaseModel as _BaseModel
+from typing import Optional as _Optional
+
+
+class _StoreExperienceRequest(_BaseModel):
+    """经验库写入请求"""
+    name: str
+    desc: str = ""
+    quota_ids: list[str]
+    quota_names: list[str] = []
+    reason: str = ""
+    specialty: str = ""
+    province: str = ""
+    confirmed: bool = False
+
+
+@app.post("/experience/store")
+def store_experience_api(
+    req: _StoreExperienceRequest,
+    x_api_key: str = Header(default=""),
+):
+    """单条经验库写入"""
+    _verify_api_key(x_api_key)
+    try:
+        from tools.jarvis_store import store_one
+        result = store_one(
+            name=req.name,
+            desc=req.desc,
+            quota_ids=req.quota_ids,
+            quota_names=req.quota_names,
+            reason=req.reason,
+            specialty=req.specialty,
+            province=req.province or None,
+            confirmed=req.confirmed,
+        )
+        return {"success": bool(result), "record_id": result if isinstance(result, int) else 0}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"经验库写入失败: {e}")
+
+
+class _StoreExperienceBatchRequest(_BaseModel):
+    """批量经验库写入请求"""
+    records: list[dict]
+    province: str
+    reason: str = ""
+    confirmed: bool = False
+
+
+@app.post("/experience/store-batch")
+def store_experience_batch_api(
+    req: _StoreExperienceBatchRequest,
+    x_api_key: str = Header(default=""),
+):
+    """批量经验库写入"""
+    _verify_api_key(x_api_key)
+    try:
+        from tools.jarvis_store import store_one
+        count = 0
+        for rec in req.records:
+            if rec.get("quota_ids"):
+                ok = store_one(
+                    name=rec["name"],
+                    desc=rec.get("desc", ""),
+                    quota_ids=rec["quota_ids"],
+                    quota_names=rec.get("quota_names", []),
+                    reason=req.reason,
+                    specialty=rec.get("specialty", ""),
+                    province=req.province or None,
+                    confirmed=req.confirmed,
+                )
+                if ok:
+                    count += 1
+        return {"success": True, "count": count}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"批量经验库写入失败: {e}")
+
+
+# ============================================================
 # 后台匹配执行
 # ============================================================
 
