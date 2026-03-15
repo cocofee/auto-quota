@@ -115,15 +115,37 @@ def is_similar(a, b):
     return ratio >= 0.8 and common >= 2
 
 
+def is_real_synonym(key, val):
+    """过滤假同义词（型号前缀/后缀产生的噪声）
+
+    例如"ALBM配电箱"→"配电箱"不是同义词，只是去型号。
+    真正的同义词应该是中文核心部分有实质差异。
+    """
+    # 1. key和val的中文部分至少2个字
+    cn_key = re.sub(r'[a-zA-Z0-9]', '', key)
+    cn_val = re.sub(r'[a-zA-Z0-9]', '', val)
+    if len(cn_key) < 2 or len(cn_val) < 2:
+        return False
+    # 2. 如果key只是val加了英文前缀/后缀，不算同义词
+    key_stripped = re.sub(r'^[a-zA-Z0-9]+', '', key)
+    key_stripped = re.sub(r'[a-zA-Z0-9]+$', '', key_stripped)
+    if key_stripped == val:
+        return False
+    # 3. 中文部分完全相同，不算同义词
+    if cn_key == cn_val:
+        return False
+    return True
+
+
 # ============================================================
 # 挖掘逻辑
 # ============================================================
 
-def mine_from_db(conn, min_freq=5):
+def mine_from_db(conn, min_freq=2):
     """从 bill_library.db 挖掘同义词
 
     参数:
-        min_freq: 名称至少出现多少次才参与（去噪）
+        min_freq: 名称至少出现多少次才参与（去噪，降到2以覆盖更多长尾名称）
 
     返回:
         (synonyms_dict, stats_dict)
@@ -191,7 +213,7 @@ def mine_from_db(conn, min_freq=5):
             else:
                 key, val = standard_core, alt_core
 
-            if key not in synonyms:
+            if key not in synonyms and is_real_synonym(key, val):
                 synonyms[key] = val
                 stats["synonym_pairs"] += 1
 
