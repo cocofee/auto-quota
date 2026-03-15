@@ -197,6 +197,7 @@ export default function ResultsPage() {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [summary, setSummary] = useState({
     total: 0, high_confidence: 0, mid_confidence: 0, low_confidence: 0, no_match: 0,
+    confirmed: 0, corrected: 0, pending: 0,
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [confirmLoading, setConfirmLoading] = useState(false);
