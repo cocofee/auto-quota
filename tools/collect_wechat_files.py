@@ -113,6 +113,9 @@ SOFTWARE_EXTENSIONS = {
 EXCEL_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 
+# 12位标准清单编码正则：0开头，12位数字（如031001008004）
+BILL_CODE_PATTERN = re.compile(r'^0[1-9]\d{10}$')
+
 # 非造价关键词（文件名包含这些的直接排除）
 EXCLUDE_KEYWORDS = [
     "田径", "竞走", "越野赛", "越野跑", "马拉松", "激光跑", "接力",
@@ -370,6 +373,64 @@ def _analyze_xls(filepath):
         wb.release_resources()
 
     return is_cost, content_spec, sheet_specs
+
+
+def has_standard_bill_codes(filepath):
+    """检查Excel是否包含标准12位清单编码
+
+    遍历所有Sheet，检查每行前5列，找到至少1个12位编码就算标准清单。
+    只检查前200行（清单通常在前面，避免大文件太慢）。
+    """
+    ext = Path(filepath).suffix.lower()
+    try:
+        if ext == ".xls":
+            return _check_bill_codes_xls(filepath)
+        else:
+            return _check_bill_codes_xlsx(filepath)
+    except Exception:
+        return False
+
+
+def _check_bill_codes_xlsx(filepath):
+    """检查xlsx文件中是否有12位清单编码"""
+    import openpyxl
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+    try:
+        for ws in wb.worksheets:
+            row_count = 0
+            try:
+                for row in ws.iter_rows(values_only=True):
+                    row_count += 1
+                    if row_count > 200:
+                        break
+                    for cell in row[:5]:
+                        if cell is None:
+                            continue
+                        val = str(cell).strip()
+                        if BILL_CODE_PATTERN.match(val):
+                            return True
+            except Exception:
+                continue
+    finally:
+        wb.close()
+    return False
+
+
+def _check_bill_codes_xls(filepath):
+    """检查xls文件中是否有12位清单编码"""
+    import xlrd
+    wb = xlrd.open_workbook(filepath, on_demand=True)
+    try:
+        for sheet_name in wb.sheet_names():
+            ws = wb.sheet_by_name(sheet_name)
+            for row_idx in range(min(200, ws.nrows)):
+                for col_idx in range(min(5, ws.ncols)):
+                    val = str(ws.cell_value(row_idx, col_idx)).strip()
+                    if BILL_CODE_PATTERN.match(val):
+                        return True
+    finally:
+        wb.release_resources()
+    return False
 
 
 def detect_specialty_for_software(filepath):
@@ -661,9 +722,14 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False,
             except Exception:
                 pass
 
-    # ==== 第3步：分析Excel文件（判断是否造价+识别专业） ====
+    # ==== 第3步：分析Excel文件（判断是否造价+识别专业+标准/非标分流） ====
     total = len(all_excel)
     print(f"\n[筛选] 分析 {total} 个Excel文件...")
+
+    # 非标文件单独收集
+    non_standard_collected = []
+    standard_count = 0
+    non_standard_count = 0
 
     for idx, (filepath, tag) in enumerate(all_excel):
         if (idx + 1) % 200 == 0:
@@ -671,10 +737,20 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False,
 
         is_cost, specialty = detect_specialty_from_excel(filepath)
         if is_cost:
-            collected.append((filepath, specialty, tag))
-            stats[specialty]["excel"] += 1
+            # 进一步检查：有12位清单编码 → 标准清单，没有 → 非标文件
+            if has_standard_bill_codes(filepath):
+                collected.append((filepath, specialty, tag))
+                stats[specialty]["excel"] += 1
+                standard_count += 1
+            else:
+                non_standard_collected.append((filepath, specialty, tag))
+                stats[specialty]["non_standard"] += 1
+                non_standard_count += 1
         else:
             excluded_count += 1
+
+    print(f"  标准清单（有12位编码）: {standard_count}")
+    print(f"  非标文件（无12位编码）: {non_standard_count}")
 
     # ==== 第4步：处理软件文件（只从文件名判断专业） ====
     for filepath, tag in all_software:
@@ -696,17 +772,19 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False,
     total_excel = 0
     total_software = 0
 
-    print(f"\n{'专业':<12} {'Excel':>8} {'软件文件':>10} {'合计':>8}")
-    print("-" * 42)
+    print(f"\n{'专业':<12} {'标准清单':>8} {'非标文件':>8} {'软件文件':>10} {'合计':>8}")
+    print("-" * 50)
     for spec in spec_order:
         if spec in stats:
             e = stats[spec].get("excel", 0)
+            ns = stats[spec].get("non_standard", 0)
             s = stats[spec].get("software", 0)
             total_excel += e
             total_software += s
-            print(f"{spec:<12} {e:>8} {s:>10} {e+s:>8}")
-    print("-" * 42)
-    print(f"{'合计':<12} {total_excel:>8} {total_software:>10} {total_excel+total_software:>8}")
+            print(f"{spec:<12} {e:>8} {ns:>8} {s:>10} {e+ns+s:>8}")
+    print("-" * 50)
+    total_ns = sum(stats[sp].get("non_standard", 0) for sp in stats)
+    print(f"{'合计':<12} {total_excel:>8} {total_ns:>8} {total_software:>10} {total_excel+total_ns+total_software:>8}")
     print(f"\n排除: {excluded_count} 个非造价文件")
     print(f"增量跳过: {skipped_count} 个已处理文件")
 
@@ -718,23 +796,41 @@ def collect_files(output_dir, sources_to_scan, preview=False, full=False,
             shutil.rmtree(td, ignore_errors=True)
         return stats
 
-    # ==== 第6步：复制文件 ====
+    # ==== 第6步：复制文件（标准清单 → jarvis/专业，非标 → jarvis/_非标文件/专业） ====
     print(f"\n[复制] 复制到 {output_dir} ...")
     copied = 0
+    copied_ns = 0
 
+    # 复制标准清单
     for filepath, specialty, tag in collected:
         dst_dir = os.path.join(output_dir, specialty)
         result = safe_copy(filepath, dst_dir, tag, seen_md5s)
         if result:
             copied += 1
 
-    print(f"\n[完成] 收集 {copied} 个文件（去重后）")
+    # 复制非标文件到 _非标文件 目录
+    non_standard_dir = os.path.join(output_dir, "_非标文件")
+    for filepath, specialty, tag in non_standard_collected:
+        dst_dir = os.path.join(non_standard_dir, specialty)
+        result = safe_copy(filepath, dst_dir, tag, seen_md5s)
+        if result:
+            copied_ns += 1
+
+    print(f"\n[完成] 收集 {copied} 个标准清单 + {copied_ns} 个非标文件（去重后）")
     print(f"  输出目录: {output_dir}")
+    print(f"  标准清单:")
     for spec in spec_order:
         spec_dir = os.path.join(output_dir, spec)
         if os.path.exists(spec_dir):
             count = len(os.listdir(spec_dir))
             print(f"    {spec}: {count} 个文件")
+    if copied_ns > 0:
+        print(f"  非标文件: {non_standard_dir}")
+        for spec in spec_order:
+            ns_dir = os.path.join(non_standard_dir, spec)
+            if os.path.exists(ns_dir):
+                count = len(os.listdir(ns_dir))
+                print(f"    {spec}: {count} 个文件")
 
     # ==== 第7步：生成报告 ====
     try:
