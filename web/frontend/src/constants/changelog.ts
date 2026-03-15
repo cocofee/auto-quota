@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.39';
+export const APP_VERSION = '0.2.40';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.40',
+    date: '2026-03-15',
+    changes: [
+      { type: 'admin', text: 'OpenClaw增强——备选定额+金额字段+措施项标记' },
+      { type: 'admin', text: '同义词+6条（龙虾审核报告缺口：穿墙套管/成品支架/脚手架/凿槽/开孔封堵）' },
+      { type: 'admin', text: '配电箱型号过滤——只保留已知产品系列，过滤项目内部编号' },
+      { type: 'admin', text: 'OpenClaw SKILL.md API路径规范化（补齐完整URL+请求格式）' },
+    ],
+  },
   {
     version: '0.2.39',
     date: '2026-03-15',
