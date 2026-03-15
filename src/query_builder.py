@@ -157,10 +157,8 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
       "镀锌钢管 DN25" → "镀锌钢管 焊接钢管 镀锌 DN25"（原词保留）
       "PPR管 热熔连接" → "PPR管 PP-R管 热熔连接"（原词保留）
 
-    多词扩展：query中包含多个可扩展概念时（如"PE管 热熔连接"），
-    允许最多扩展3次，而非只做一次就退出。
-    自映射（key==value）仍作为"保护伞"阻止短key误匹配子串，
-    但不再阻断整个循环，其他不相关概念仍可继续扩展。
+    特殊情况（自映射）：key==value的条目不追加（无意义），
+    但仍通过break阻止更短的key误匹配长词子串（"保护伞"机制）。
 
     参数:
         query: 搜索query字符串
@@ -175,35 +173,23 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
     scope = _load_specialty_scope()
 
     # 按key长度从长到短排序，确保"水泵接合器"优先于"水泵"匹配
+    # 避免短key误匹配长词的子串（如"水泵"匹配"水泵接合器"中的子串）
     sorted_items = sorted(synonyms.items(), key=lambda x: len(x[0]), reverse=True)
-
-    matched_keys = []  # 已命中的key列表（用于保护短key不误匹配子串）
-    expansion_count = 0  # 已扩展次数
-    max_expansions = 3  # 最多扩展3次，避免query过长
 
     for key, replacement in sorted_items:
         if key in query:
-            # 被更长的已匹配key覆盖 → 跳过（保护伞机制）
-            # 例如："水泵接合器"已匹配，"水泵"是其子串 → 跳过
-            if any(key in mk for mk in matched_keys):
-                continue
-
-            # 专业范围不适用 → 跳过（不记录保护，与旧逻辑一致）
-            if not _is_synonym_applicable(key, specialty, scope):
-                continue
-
-            # 记录已匹配key（为后续短key提供保护）
-            matched_keys.append(key)
-
-            # 自映射 或 扩展目标已在query中 → 只记录保护，不扩展
-            if key == replacement or replacement in query:
-                continue
-
-            # 追加扩展词到query末尾
-            query = f"{query} {replacement}"
-            expansion_count += 1
-            if expansion_count >= max_expansions:
+            # 防止重复：如果扩展目标已经出现在query中，停止搜索
+            # 例如：query="消防水泵接合器"，key="水泵接合器"→已包含，跳过
+            # 用break而非continue：继续搜索可能命中更短的key（如"水泵"→"离心泵"），
+            # 误替换长词的子串（已排序保证长key优先，此处命中说明概念已被覆盖）
+            if replacement in query:
                 break
+            if _is_synonym_applicable(key, specialty, scope):
+                # 自映射（key==value）是"保护伞"，不追加内容，只通过break阻断
+                if key != replacement:
+                    # 追加扩展词到query末尾，保留原词不丢信息
+                    query = f"{query} {replacement}"
+                break  # 只做一次扩展，避免连锁追加导致query过长
 
     return query
 _SPECIAL_LAMP_PATTERN = r"紫外|杀菌|消毒|舞台|投光|泛光|景观|水下|地埋|航空障碍|手术|无影|植物|补光|洗墙|轨道"
