@@ -257,6 +257,17 @@ def run(input_file, mode="agent", output=None,
     bill_items = _load_bill_items_for_run(
         input_path, sheet=sheet, limit=limit, province=resolved_province
     )
+
+    # 清单为空直接返回（汇总表/审核表等非清单文件，不浪费匹配时间）
+    if not bill_items:
+        logger.warning(f"文件中未找到有效清单项，跳过匹配: {original_input_path.name}")
+        _notify(100, 0, "未找到有效清单项")
+        return {
+            "results": [],
+            "stats": {"total": 0, "matched": 0, "high_conf": 0, "mid_conf": 0,
+                      "low_conf": 0, "exp_hits": 0, "elapsed": 0},
+        }
+
     _notify(15, 0, f"清单读取完成，共{len(bill_items)}条")
 
     # 1.1 保存清单预览文件（供前端实时展示每条清单的匹配进度）
