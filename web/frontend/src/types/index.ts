@@ -149,9 +149,9 @@ export interface ResultListResponse {
     mid_confidence: number;
     low_confidence: number;
     no_match: number;
-    confirmed?: number;   // 已确认条数（审核后）
-    corrected?: number;   // 已纠正条数（审核后）
-    pending?: number;     // 待审核条数
+    confirmed: number;   // 已确认条数（审核后）
+    corrected: number;   // 已纠正条数（审核后）
+    pending: number;     // 待审核条数
   };
 }
 
