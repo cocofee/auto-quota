@@ -30,7 +30,7 @@ from app.schemas.result import (
     MatchResultResponse, ResultListResponse,
     CorrectResultRequest, ConfirmResultsRequest,
 )
-from app.api.shared import get_user_task, store_experience, store_experience_batch
+from app.api.shared import get_user_task, store_experience, store_experience_batch, flag_disputed_experience
 
 router = APIRouter()
 
@@ -175,6 +175,14 @@ async def correct_result(
         province=task.province,
         confirmed=False,  # 纠正 → 候选层
     )
+
+    # 如果纠正的是经验库直通的结果，标记原权威记录为"有争议"
+    if match_result.match_source and "experience" in match_result.match_source:
+        await flag_disputed_experience(
+            bill_name=match_result.bill_name,
+            province=task.province,
+            reason=f"被纠正为 {[q.quota_id for q in req.corrected_quotas]}; {req.review_note or ''}",
+        )
 
     return match_result
 

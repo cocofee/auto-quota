@@ -674,6 +674,35 @@ def store_experience_batch_api(
         raise HTTPException(status_code=500, detail=f"批量经验库写入失败: {e}")
 
 
+class _FlagDisputedRequest(_BaseModel):
+    """争议标记请求"""
+    bill_name: str
+    province: str
+    reason: str = ""
+
+
+@app.post("/experience/flag-disputed")
+def flag_disputed_api(
+    req: _FlagDisputedRequest,
+    x_api_key: str = Header(default=""),
+):
+    """标记权威层记录为有争议（纠正经验库直通结果时调用）"""
+    _verify_api_key(x_api_key)
+    try:
+        from src.experience_db import ExperienceDB
+        db = ExperienceDB(province=req.province)
+        affected = db.flag_disputed(
+            bill_name=req.bill_name,
+            province=req.province,
+            reason=req.reason,
+        )
+        return {"success": True, "affected": affected}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"争议标记失败: {e}")
+
+
 # ============================================================
 # 后台匹配执行
 # ============================================================

@@ -170,3 +170,39 @@ async def store_experience_batch(
     except Exception as e:
         logger.warning(f"批量经验库写入失败（不影响主操作）: {e}")
         return 0
+
+
+async def flag_disputed_experience(
+    bill_name: str,
+    province: str,
+    reason: str,
+) -> int:
+    """标记经验库权威层记录为有争议
+
+    当用户纠正了一条经验库直通命中的结果时调用。
+    返回被标记的记录数。失败不抛异常。
+    """
+    if not bill_name or not province:
+        return 0
+
+    # 远程模式：转发到本地匹配服务
+    if _is_remote():
+        result = await _remote_store("/experience/flag-disputed", {
+            "bill_name": bill_name,
+            "province": province,
+            "reason": reason,
+        })
+        return result.get("affected", 0)
+
+    # 本地模式：直接调用
+    try:
+        from src.experience_db import ExperienceDB
+
+        def _flag():
+            db = ExperienceDB(province=province)
+            return db.flag_disputed(bill_name, province, reason)
+
+        return await asyncio.to_thread(_flag)
+    except Exception as e:
+        logger.warning(f"经验库争议标记失败（不影响主操作）: {e}")
+        return 0
