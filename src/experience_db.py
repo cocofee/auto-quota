@@ -123,6 +123,13 @@ class ExperienceDB:
                 cursor.execute("ALTER TABLE experiences ADD COLUMN normalized_text TEXT DEFAULT ''")
                 logger.info("经验库已升级：新增 normalized_text 字段（模糊匹配支持）")
 
+            # 争议标记：纠正经验库直通结果时自动标记，供定期审核用
+            try:
+                cursor.execute("SELECT disputed FROM experiences LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE experiences ADD COLUMN disputed INTEGER DEFAULT 0")
+                logger.info("经验库已升级：新增 disputed 字段（争议标记）")
+
             # 全文搜索索引（加速精确文本查找）
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_bill_text
@@ -1376,6 +1383,50 @@ class ExperienceDB:
     # ================================================================
     # 统计信息
     # ================================================================
+
+    def flag_disputed(self, bill_name: str, province: str, reason: str = "") -> int:
+        """标记权威层中匹配的记录为"有争议"
+
+        当用户纠正了一条经验库直通的结果时调用。
+        按省份+清单名称模糊匹配权威层记录，将 disputed 字段+1。
+
+        参数:
+            bill_name: 清单项名称
+            province: 省份
+            reason: 争议原因（写入notes）
+        返回:
+            被标记的记录数
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            # 用 bill_name 模糊匹配权威层记录（清单名称可能包含在 bill_text 中）
+            cursor.execute("""
+                UPDATE experiences
+                SET disputed = COALESCE(disputed, 0) + 1,
+                    notes = CASE
+                        WHEN notes IS NULL OR notes = '' THEN ?
+                        ELSE notes || '\n' || ?
+                    END,
+                    updated_at = ?
+                WHERE layer = 'authority'
+                  AND province = ?
+                  AND (bill_name = ? OR bill_text LIKE ?)
+            """, (
+                f"[争议] {reason}",
+                f"[争议] {reason}",
+                time.time(),
+                province,
+                bill_name,
+                f"%{bill_name}%",
+            ))
+            conn.commit()
+            affected = cursor.rowcount
+            if affected > 0:
+                logger.info(f"经验库争议标记: '{bill_name}' ({province}) → {affected}条权威记录被标记")
+            return affected
+        finally:
+            conn.close()
 
     def get_stats(self) -> dict:
         """获取经验库统计信息"""
