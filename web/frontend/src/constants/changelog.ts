@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.41';
+export const APP_VERSION = '0.2.42';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,27 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.42',
+    date: '2026-03-16',
+    changes: [
+      { type: 'admin', text: '导出Excel主材开关——管理员设置页全局控制，默认不带主材' },
+      { type: 'admin', text: '修复主材库省份/城市字段缺失——导入链路补传province参数+海南重导' },
+      { type: 'admin', text: '专业标题行(电气工程/给排水工程等)强过滤，不再依赖单位/工程量判断' },
+      { type: 'admin', text: '新增17条电力技改同义词（配电装置/五防/远动/电容器等）' },
+      { type: 'admin', text: '主材名称拼接规格——"电磁阀"→"电磁阀 DN15"，解决不同规格查到同一价格的问题' },
+      { type: 'admin', text: 'CLAUDE.md添加压缩优先级 + batch_runner采样逻辑优化' },
+      { type: 'admin', text: 'OpenClaw策略调整——禁止自动纠正，只出诊断报告' },
+      { type: 'admin', text: 'batch_runner新增--sample均匀采样和--review审核模式' },
+      { type: 'admin', text: '新增同义词映射（机械进出场/人孔井/镁合金阳极/事故风机/墙纸等）' },
+      { type: 'admin', text: '主材查价自动拆分规格——"不锈钢管 DN100"拆为name+spec分别查询' },
+      { type: 'admin', text: '主材行改进——去掉清单旁无用主材列 + 自动从描述提取主材' },
+      { type: 'admin', text: '同义词扩展回滚为单次匹配（多次扩展实验失败-0.4%）' },
+      { type: 'admin', text: '批量确认置信度<70%硬拦截 + 空清单快速返回 + 超时60秒' },
+      { type: 'admin', text: '主材行自动查价——从价格库查单价填入Excel，支持吨→米等单位换算' },
+      { type: 'admin', text: '/smart跨库搜索改用关键词触发，不只看结果数量' },
+    ],
+  },
   {
     version: '0.2.41',
     date: '2026-03-15',
