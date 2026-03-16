@@ -221,7 +221,10 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   /** 下载Excel结果 */
   const downloadExcel = async (taskId: string, filename: string) => {
     try {
-      const response = await api.get(`/tasks/${taskId}/export`, {
+      // 管理员视图从全局设置读取是否带主材
+      const materials = adminView && localStorage.getItem('admin_include_materials') === 'true';
+      const params = materials ? '?materials=true' : '';
+      const response = await api.get(`/tasks/${taskId}/export${params}`, {
         responseType: 'blob',
       });
       // 创建下载链接
