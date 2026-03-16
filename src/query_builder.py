@@ -1071,6 +1071,10 @@ def build_quota_query(parser, name: str, description: str = "",
     返回:
         构建好的搜索query
     """
+    # 拆除项标记：清单含"拆除"时，最终query需要去掉"安装"、保留"拆除"
+    # 避免同义词追加"安装"导致BM25偏向安装定额而非拆除定额
+    _is_demolition = "拆除" in (name or "")
+
     # 过滤清单编码（如 WMSGCS001001、HJBHCS001001、050402001001 等）
     # 这些编码混在特征描述中会污染搜索词，导致BM25搜不到正确定额
     original_name = name
@@ -1739,4 +1743,14 @@ def build_quota_query(parser, name: str, description: str = "",
         if not has_install and "明装" not in full_text and "明配" not in full_text:
             query_parts.append("暗装")
 
-    return _apply_synonyms(" ".join(query_parts), specialty)
+    query = _apply_synonyms(" ".join(query_parts), specialty)
+
+    # 拆除项后处理：去掉同义词追加的"安装"，确保"拆除"在query中
+    # 例如 "拆除马桶 坐式大便器安装" → "拆除马桶 坐式大便器 拆除"
+    if _is_demolition:
+        query = query.replace("安装", "").strip()
+        query = re.sub(r'\s+', ' ', query)
+        if "拆除" not in query:
+            query = f"{query} 拆除"
+
+    return query
