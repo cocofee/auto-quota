@@ -730,7 +730,7 @@ def _build_valve_query(name: str, full_text: str, params: dict,
         vent_name = re.sub(r'\d+℃', '', vent_name)
         vent_name = re.sub(r'^[A-Za-z]+-', '', vent_name).strip()
         # 风量调节阀/多叶调节阀 → 多叶调节阀安装
-        if "多叶" in vent_name or "对开" in vent_name or "风量调节" in vent_name:
+        if any(kw in vent_name for kw in ("多叶", "对开", "风量调节", "手动调节")):
             return _apply_synonyms("多叶调节阀安装 周长", specialty)
         return _apply_synonyms("防火调节阀安装 周长", specialty)
 
