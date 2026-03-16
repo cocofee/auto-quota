@@ -713,12 +713,19 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
     # 章节分隔行（如"其他"空行）
     if name.strip() == "其他" and not unit and not quantity and not desc.strip():
         return True
-    # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，无实体工程量
-    # 条件：换行和空格清理后短名称 + 以"工程"结尾 + 无单位无工程量
-    # 注意：有些Excel里"电气\n工程"或"电气 工程"被拆成两行/带空格
+    # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，不是实体清单
+    # 有些Excel给标题行也填了"项"和"1"作为单位/工程量，所以不能要求无单位无工程量
+    # 用明确的专业标题名单做强过滤，避免误伤真实清单（如"钢结构工程"子项）
     clean_name = name.replace("\n", "").replace("\r", "").replace(" ", "").strip()
-    if (clean_name.endswith("工程") and len(clean_name) <= 8
-            and not unit and not quantity):
+    _SECTION_TITLES = {
+        "电气工程", "给排水工程", "通风空调工程", "消防工程", "智能化工程",
+        "建筑工程", "装饰工程", "装饰装修工程", "建筑装饰工程",
+        "市政工程", "园林工程", "园林景观工程", "绿化工程",
+        "土建工程", "安装工程", "机电工程", "机电安装工程",
+        "弱电工程", "强电工程", "照明工程", "动力工程",
+        "排水工程", "给水工程", "采暖工程", "通风工程", "空调工程",
+    }
+    if clean_name in _SECTION_TITLES:
         return True
     return False
 
