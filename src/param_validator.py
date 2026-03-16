@@ -233,7 +233,132 @@ class ParamValidator:
         # 有参数分支：用LTR模型或三项融合排序
         self._ltr_sort(validated, query_text, search_books=search_books)
 
+        # M1档位纠偏：LTR排完序后，如果同家族内有参数更匹配的候选，强制提升
+        self._tier_rectify(validated, bill_params)
+
         return validated
+
+    # ── M1 档位纠偏器 ──────────────────────────────────────────
+
+    _FAMILY_TAIL_RE = re.compile(
+        r'[\s≤≥<>]*[\d.]+\s*(mm2?|kVA?|kW|A|t)?\s*(以[内上下])?\s*$'
+    )
+
+    @classmethod
+    def _get_family_base(cls, name: str) -> str:
+        """
+        提取定额名称的家族基础名（去掉末尾的档位数值）
+        例: "给水塑料管(粘接) 公称直径(mm以内) 25" → "给水塑料管(粘接) 公称直径(mm以内)"
+        同家族不同档位会得到相同的基础名。
+        """
+        if not name:
+            return ""
+        return cls._FAMILY_TAIL_RE.sub('', name).strip()
+
+    def _tier_rectify(self, candidates: list[dict], bill_params: dict):
+        """
+        M1档位纠偏器：在LTR排序后做最后一步硬规则修正。
+
+        触发条件（全部满足才纠偏）：
+        1. 清单有明确的数值型取档参数（DN/截面/容量等）
+        2. top1所在家族内，有其他候选的参数匹配度更高
+        3. 更高的候选在前10名内（太靠后的不可信）
+
+        做法：把参数最匹配的同家族候选提升到top1。
+        """
+        if not candidates or len(candidates) < 2:
+            return
+
+        # 找清单主参数
+        main_param = None
+        main_value = None
+        for p in self.TIER_PARAMS:
+            if p in bill_params:
+                try:
+                    main_value = float(bill_params[p])
+                except (TypeError, ValueError):
+                    continue
+                main_param = p
+                break
+
+        if main_param is None or main_value is None:
+            return  # 清单没有数值参数，不纠偏
+
+        # 取top1的家族基础名
+        top1_base = self._get_family_base(candidates[0].get("name", ""))
+        if not top1_base:
+            return
+
+        # 在前10名里找同家族候选，计算每个的参数匹配分
+        scan_range = min(len(candidates), 10)
+        best_idx = -1
+        best_tier_score = -1.0
+
+        for i in range(scan_range):
+            c = candidates[i]
+            c_base = self._get_family_base(c.get("name", ""))
+            if c_base != top1_base:
+                continue  # 不是同家族，跳过
+
+            # 提取这个候选的参数值
+            quota_params = text_parser.parse(c.get("name", ""))
+            db_params = self._get_db_params(c)
+            merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+
+            if main_param in merged:
+                try:
+                    quota_val = float(merged[main_param])
+                except (TypeError, ValueError):
+                    continue
+                if quota_val == main_value:
+                    tier_score = 1.0  # 精确匹配，最好
+                elif quota_val > main_value:
+                    tier_score = self._tier_up_score(main_value, quota_val)
+                else:
+                    tier_score = 0.0  # 向下取档，不行
+            else:
+                tier_score = 0.3  # 通用定额（无此参数），不优先
+
+            if tier_score > best_tier_score:
+                best_tier_score = tier_score
+                best_idx = i
+
+        # 纠偏：如果最佳不是top1，且确实比top1好很多，才交换
+        if best_idx > 0:
+            top1_tier_score = self._get_candidate_tier_score(
+                candidates[0], main_param, main_value)
+            # 只有当改善显著时才纠偏（避免误伤）
+            if best_tier_score - top1_tier_score >= 0.05:
+                better = candidates[best_idx]
+                logger.debug(
+                    f"M1纠偏: [{candidates[0].get('name','')}] "
+                    f"→ [{better.get('name','')}] "
+                    f"({main_param}={main_value}, "
+                    f"分差{best_tier_score - top1_tier_score:.2f})")
+                # 把最佳候选提升到top1（其余顺序不变）
+                candidates.insert(0, candidates.pop(best_idx))
+
+    def _get_candidate_tier_score(self, candidate: dict,
+                                   main_param: str, main_value: float) -> float:
+        """计算单个候选对指定参数的档位匹配分"""
+        quota_params = text_parser.parse(candidate.get("name", ""))
+        db_params = self._get_db_params(candidate)
+        merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+
+        if main_param in merged:
+            try:
+                quota_val = float(merged[main_param])
+            except (TypeError, ValueError):
+                return 0.3
+            if quota_val == main_value:
+                return 1.0
+            elif quota_val > main_value:
+                return self._tier_up_score(main_value, quota_val)
+            else:
+                return 0.0
+        return 0.3
+
+    # ── M1 结束 ──────────────────────────────────────────────
 
     def _compute_param_ltr_features(self, bill_params: dict,
                                      quota_params: dict) -> dict:
