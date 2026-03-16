@@ -560,10 +560,10 @@ def _resolve_province(province_name: str, specialty: str = None) -> str:
 # ============================================================
 
 def _sample_files(files: list, n: int) -> list:
-    """均匀采样：每个省份×专业组合各取n个文件。
+    """均匀采样：每个省份各取n个文件。
 
     目的：快速铺满所有省份，而不是死磕一个省跑完再换下一个。
-    例如 --sample 3：广东电气3个、广东消防3个、浙江电气3个……
+    优先选清单数量在50-200之间的文件（适中大小），跳过超大文件。
     """
     import random
     groups = defaultdict(list)
@@ -572,22 +572,44 @@ def _sample_files(files: list, n: int) -> list:
         # 跳过未识别省份的文件（没有定额库，跑了也白跑）
         if prov == "未识别":
             continue
-        spec = f["specialty"] or "未分类"
-        groups[(prov, spec)].append(f)
+        # 跳过清单数量超过200的文件（太大太慢）
+        try:
+            est = f["estimated_items"] or 0
+        except (KeyError, IndexError):
+            est = 0
+        if est > 200:
+            continue
+        groups[prov].append(f)
 
     sampled = []
-    for (prov, spec), group_files in sorted(groups.items()):
-        # 每组随机取n个（不够n个就全取）
-        pick = random.sample(group_files, min(n, len(group_files)))
+    for prov, group_files in sorted(groups.items()):
+        # 优先选50-200条的文件（适中大小）
+        ideal = []
+        for gf in group_files:
+            try:
+                e = gf["estimated_items"] or 0
+            except (KeyError, IndexError):
+                e = 0
+            if 50 <= e <= 200:
+                ideal.append(gf)
+        if not ideal:
+            # 没有适中的，就从所有文件里选
+            ideal = group_files
+        pick = random.sample(ideal, min(n, len(ideal)))
         sampled.extend(pick)
 
     # 打印采样计划
-    print(f"\n采样计划（每组{n}个）:")
-    sample_groups = defaultdict(int)
+    print(f"\n采样计划（每省{n}个，跳过>200条的大文件）:")
     for f in sampled:
-        sample_groups[(f["province"] or "未识别", f["specialty"] or "未分类")] += 1
-    for (prov, spec), cnt in sorted(sample_groups.items()):
-        print(f"  {prov:10s} × {spec:10s} → {cnt}个")
+        prov = f["province"] or "?"
+        spec = f["specialty"] or "?"
+        try:
+            est = f["estimated_items"] or 0
+        except (KeyError, IndexError):
+            est = 0
+        fname = f["file_name"]
+        name = fname[:30] if len(fname) <= 30 else fname[:27] + "..."
+        print(f"  {prov:8s} | {spec:8s} | ~{est:>3d}条 | {name}")
     print(f"  合计: {len(sampled)}个文件\n")
 
     return sampled
