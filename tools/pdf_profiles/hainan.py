@@ -173,6 +173,8 @@ class HainanProfile(BasePDFProfile):
             # 附加区域信息到spec（方便区分同名材料不同区域价格）
             if region:
                 record["region"] = region
+                # 区域映射为城市，写入city字段
+                record["city"] = REGION_MAP.get(region, "")
 
             records.append(record)
 
