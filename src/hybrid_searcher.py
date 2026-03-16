@@ -139,14 +139,15 @@ class HybridSearcher:
             vector_weight=base_vector_weight,
         )
 
-        # 非标准编号定额库（甘肃/河北/深圳等地方定额）：跳过book过滤
-        # 这些省份的book字段是"4","10"等纯数字，但各省册号顺序不同
-        # （甘肃book"4"=给排水，但标准C4=智能化），简单翻译会映射到错误的册
-        # 安全做法：不做book过滤，依靠BM25评分自然排序
+        # 非标准编号定额库（甘肃/河北/深圳等地方定额）：book翻译
+        # API层传来的books带C前缀（如["C10"]），但这些省份的book是纯数字
+        # match_core.py已有翻译逻辑，翻译后的books是纯数字（如["10"]），不需要再处理
+        # 只在books仍带C前缀时介入（说明是API直接调的，没经过match_core翻译）
         if books and not self.uses_standard_books:
-            # 尝试用词频统计推断正确的book（如果BM25引擎支持）
-            inferred = self.bm25_engine.classify_to_books(query, top_k=3)
-            books = inferred  # 可能为None（统计不足时），此时搜全库
+            has_c_prefix = any(b.startswith("C") and b[1:].isdigit() for b in books if b)
+            if has_c_prefix:
+                inferred = self.bm25_engine.classify_to_books(query, top_k=3)
+                books = inferred  # 可能为None（统计不足时），此时搜全库
 
         # 会话缓存检查：相同query+books组合复用搜索结果
         books_key = ",".join(sorted(books)) if books else ""
