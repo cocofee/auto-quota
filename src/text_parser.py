@@ -766,6 +766,11 @@ class TextParser:
         if result is not None:
             return result
 
+        # 清单格式：直接写"周长2000mm"或"周长:2000"（无括号）
+        direct_match = re.search(r'周长[：:]*\s*(\d{3,5})\s*(?:mm)?', text)
+        if direct_match:
+            return float(direct_match.group(1))
+
         # 矩形没提到，检查有没有圆形直径（φ/Φ），有就算周长 = π × 直径
         diameter_match = re.search(r'[ΦφΦ]\s*(\d+)', text)
         if diameter_match:
@@ -777,7 +782,7 @@ class TextParser:
         # 适用于"防火阀1600x400"、"止回阀-1250*1250"、"风口500*300"等
         # 清单名称中直接嵌入尺寸，没有"规格："前缀，上面的_extract_spec_wh()提取不到
         # 仅在文本含通风空调设备关键词时启用，避免误提取电缆/桥架的WxH
-        _PERIMETER_KW = ("阀", "风口", "喷口", "散流器", "消声器", "消声", "出风口")
+        _PERIMETER_KW = ("阀", "风口", "喷口", "散流器", "消声器", "消声", "出风口", "风管")
         if any(kw in text for kw in _PERIMETER_KW):
             wh_match = re.search(r'(\d{2,4})\s*[*×xX]\s*(\d{2,4})', text)
             if wh_match:
