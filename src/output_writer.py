@@ -57,10 +57,25 @@ def _get_material_price(name: str, spec: str = "",
     # 从定额库长名称提取短省份名（如"北京市建设工程..."→"北京"）
     province_short = _extract_short_province(config.get_current_province())
 
+    # 先用原始name+spec查
     result = _material_db_instance.search_price_by_name(
         name, province=province_short, spec=spec, target_unit=unit)
     if result:
         return result.get("price")
+
+    # 查不到时，尝试从name里拆出规格（如"不锈钢管 DN100"→name="不锈钢管", spec="DN100"）
+    if not spec:
+        m = re.search(r'[Dd][Nn]\s*\d+', name)
+        if m:
+            extracted_spec = m.group(0).replace(" ", "")
+            short_name = name[:m.start()].strip()
+            if short_name:
+                result2 = _material_db_instance.search_price_by_name(
+                    short_name, province=province_short, spec=extracted_spec,
+                    target_unit=unit)
+                if result2:
+                    return result2.get("price")
+
     return None
 
 
