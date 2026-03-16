@@ -381,6 +381,24 @@ def _pick_explicit_conduit_family_candidate(bill_text: str,
 # 前置构建
 # ============================================================
 
+def _extract_usage_from_section(section: str) -> str:
+    """从分项标题/Sheet名中提取用途关键词（给水/采暖/消防/排水等）。
+    返回空字符串表示无法判断。"""
+    if not section:
+        return ""
+    # 优先级：消防 > 采暖 > 给水 > 排水（从具体到宽泛）
+    if "消防" in section:
+        return "消防"
+    if "采暖" in section or "供暖" in section or "暖通" in section:
+        return "采暖"
+    if "给水" in section:
+        return "给水"
+    if "排水" in section or "雨水" in section or "污水" in section:
+        return "排水"
+    if "工业管道" in section:
+        return "工业管道"
+    return ""
+
 def _build_item_context(item: dict) -> dict:
     """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
     name = item.get("name", "")
@@ -389,18 +407,30 @@ def _build_item_context(item: dict) -> dict:
     original_name = item.get("original_name", name)
     search_query = text_parser.build_quota_query(name, desc,
                                                   specialty=item.get("specialty", ""),
-                                                  bill_params=item.get("params"))
+                                                  bill_params=item.get("params"),
+                                                  section_title=section)
     # 线缆类型标签：追加到搜索词，帮助BM25区分电线/电缆/光缆定额
     cable_type = item.get("cable_type", "")
     if cable_type:
         search_query = f"{search_query} {cable_type}"
+
+    full_query = f"{name} {desc}".strip()
+
+    # 从分项标题/Sheet名推断用途关键词，注入到full_query中
+    # 这样param_validator的介质冲突检查能利用section的方向信息
+    # 只在清单文本本身不含这些关键词时才注入，避免重复
+    if section:
+        _usage_hint = _extract_usage_from_section(section)
+        if _usage_hint and _usage_hint not in full_query:
+            full_query = f"{full_query} {_usage_hint}"
+
     return {
         "name": name,
         "desc": desc,
         "section": section,
         "unit": item.get("unit"),
         "quantity": item.get("quantity"),
-        "full_query": f"{name} {desc}".strip(),
+        "full_query": full_query,
         "normalized_query": normalize_bill_text(original_name, desc),
         "search_query": search_query,
         "item": item,  # L5：供跨省预热读取 _cross_province_hints

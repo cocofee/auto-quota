@@ -164,6 +164,12 @@ class ParamValidator:
                     if neg_penalty >= 0.3:
                         c["param_match"] = False
                         c["param_tier"] = 0  # 负向关键词降为硬失败层
+                # 介质冲突检查（给水≠采暖≠排水≠消防）
+                usage_penalty, usage_detail = self._check_usage_conflict(
+                    query_text, c.get("name", ""))
+                if usage_penalty > 0:
+                    c["param_score"] = max(0.0, c["param_score"] - usage_penalty)
+                    c["param_detail"] += f"; {usage_detail}"
                 # 无参数分支：LTR参数特征设为默认值（无参数可比较）
                 c["_ltr_param"] = {
                     "param_main_exact": 0,
@@ -214,6 +220,13 @@ class ParamValidator:
                 detail += f"; {cat_detail}"
                 if cat_penalty >= 0.3:
                     is_match = False
+
+            # 介质冲突检查（给水≠采暖≠排水≠消防）
+            usage_penalty, usage_detail = self._check_usage_conflict(
+                query_text, candidate.get("name", ""))
+            if usage_penalty > 0:
+                score = max(0.0, score - usage_penalty)
+                detail += f"; {usage_detail}"
 
             candidate["param_score"] = score
             candidate["param_detail"] = detail
@@ -786,6 +799,9 @@ class ParamValidator:
             {"keyword": "保温", "penalty": 0.3, "exempt": [], "alt_keywords": ["绝热"]},
             # 清单没说人防，定额是人防类 → 重罚（普通套管≠人防密闭套管）
             {"keyword": "人防", "penalty": 0.3, "exempt": [], "alt_keywords": ["密闭"]},
+            # 清单没说拆除/拆卸，定额是拆除类 → 重罚
+            # 典型场景：清单"感烟探测器"搜到"拆除点型探测器"，因为共享"探测器"关键词
+            {"keyword": "拆除", "penalty": 0.4, "exempt": [], "alt_keywords": ["拆卸", "拆装"]},
         ]
 
         max_penalty = 0.0
@@ -818,6 +834,64 @@ class ParamValidator:
                 details = [f"清单无'{kw}'但定额含'{kw}' 罚分-{penalty}"]
 
         return max_penalty, "; ".join(details)
+
+    # ── 介质/用途冲突检查 ──────────────────────────────────────
+    # 互斥组：同组内的用途互相冲突
+    # 例如清单说"给水"，定额名含"采暖" → 应该降分
+    _USAGE_CONFLICT_GROUPS = [
+        # 给水 vs 采暖（河南等省份分开计定额）
+        {"给水", "采暖"},
+        # 给水 vs 排水（不同管道体系）
+        {"给水", "排水"},
+        # 消防 vs 给水/采暖/排水（消防是独立体系）
+        {"消防", "给水"},
+        {"消防", "采暖"},
+        {"消防", "排水"},
+    ]
+
+    @classmethod
+    def _check_usage_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
+        """
+        介质/用途冲突检查：清单指定的介质与定额名称中的用途冲突时降分。
+
+        典型场景：
+          - 清单"介质:给水 PPR管" → 定额"采暖管道 室内塑料管" → 冲突，降分
+          - 清单"消防管" → 定额"给水管道" → 冲突，降分
+
+        返回: (惩罚分数, 说明文本)
+        """
+        bill_lower = bill_text.lower()
+        quota_lower = quota_name.lower()
+
+        # 从清单文本提取介质/用途
+        bill_usages = set()
+        for usage_kw in ("给水", "采暖", "排水", "消防"):
+            if usage_kw in bill_lower:
+                bill_usages.add(usage_kw)
+
+        if not bill_usages:
+            return 0.0, ""  # 清单没指定介质，不检查
+
+        # 从定额名称提取用途
+        quota_usages = set()
+        for usage_kw in ("给水", "采暖", "排水", "消防"):
+            if usage_kw in quota_lower:
+                quota_usages.add(usage_kw)
+
+        if not quota_usages:
+            return 0.0, ""  # 定额没指定用途（通用定额），不惩罚
+
+        # 检查互斥组
+        for group in cls._USAGE_CONFLICT_GROUPS:
+            # 清单介质在组内，且定额用途也在组内，但两者不同
+            bill_in = bill_usages & group
+            quota_in = quota_usages & group
+            if bill_in and quota_in and not (bill_in & quota_in):
+                conflict_bill = "/".join(bill_in)
+                conflict_quota = "/".join(quota_in)
+                return 0.25, f"介质冲突: 清单'{conflict_bill}'≠定额'{conflict_quota}'"
+
+        return 0.0, ""
 
     @classmethod
     def _check_category_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:

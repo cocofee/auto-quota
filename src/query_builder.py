@@ -1049,7 +1049,8 @@ def _normalize_bill_name(name: str) -> str:
 
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
-                      bill_params: dict = None) -> str:
+                      bill_params: dict = None,
+                      section_title: str = "") -> str:
     """
     构建定额搜索query（模仿定额命名风格）
 
@@ -1093,10 +1094,34 @@ def build_quota_query(parser, name: str, description: str = "",
         location = location.replace("户内", "室内").replace("户外", "室外")
 
     # 提取用途/介质（给水/排水/热水/消防/采暖等）
+    # 优先从清单文本提取，找不到再从分项标题/Sheet名推断
     usage = ""
     usage_match = re.search(r'介质[：:]\s*(给水|排水|热水|冷水|消防|蒸汽|采暖|通风|空调)', full_text)
     if usage_match:
         usage = usage_match.group(1)
+
+    # 从清单名称/描述中直接出现的用途关键词补充
+    if not usage:
+        for _kw in ("消防", "采暖", "给水", "排水", "热水", "冷水"):
+            if _kw in full_text:
+                usage = _kw
+                break
+
+    # 清单文本没有介质信息时，从分项标题/Sheet名推断
+    # 例如分项"给水系统"下的PPR管 → 给水方向；"采暖系统"下 → 采暖方向
+    if not usage and section_title:
+        _sec = section_title
+        # 用途关键词优先级：消防 > 采暖 > 给水 > 排水（从具体到宽泛）
+        if "消防" in _sec:
+            usage = "消防"
+        elif "采暖" in _sec or "供暖" in _sec or "暖通" in _sec:
+            usage = "采暖"
+        elif "给水" in _sec:
+            usage = "给水"
+        elif "排水" in _sec or "雨水" in _sec or "污水" in _sec:
+            usage = "排水"
+        elif "燃气" in _sec or "天然气" in _sec:
+            usage = "燃气"
 
     # 材质和连接方式从已提取的参数获取
     material = params.get("material", "")
@@ -1197,10 +1222,14 @@ def build_quota_query(parser, name: str, description: str = "",
         _mat_upper = material.upper() if material else ""
         if "PPR" in _mat_upper or "PP-R" in _mat_upper:
             _full = f"{name} {description}".upper()
-            if "采暖" in _full or "热水" in _full or "暖" in _full:
+            # 判断采暖方向：清单文本含"采暖/热水/暖"，或section_title已推断为采暖
+            if "采暖" in _full or "热水" in _full or "暖" in _full or usage == "采暖":
                 material = "室内塑料管(热熔连接)"
                 if not usage:
                     usage = "采暖管道"
+            elif usage == "消防":
+                # 消防PPR管 → 走消防方向
+                material = "室内塑料管(热熔连接)"
             else:
                 # 冷水/给水/未指定用途 → 默认给水（PPR最常见用途）
                 material = "室内塑料给水管(热熔连接)"
