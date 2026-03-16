@@ -17,6 +17,8 @@
     python tools/batch_runner.py --province 广东           # 只跑某省
     python tools/batch_runner.py --specialty 消防          # 只跑某专业
     python tools/batch_runner.py --limit 100               # 只跑前100个文件
+    python tools/batch_runner.py --sample 3                # 每个省份x专业各采样3个（均匀铺开）
+    python tools/batch_runner.py --sample 3 --review       # 采样+Jarvis审核出诊断报告
 """
 
 import os
@@ -27,6 +29,7 @@ import hashlib
 import argparse
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -226,6 +229,7 @@ def _read_sheet_with_mapping(ws, sheet_name: str, mapping: dict) -> list[dict]:
 
 def run_batch(format_filter: str = None, province_filter: str = None,
               specialty_filter: str = None, limit: int = None,
+              sample: int = None, review: bool = False,
               progress_callback=None):
     """批量匹配主函数。
 
@@ -260,7 +264,8 @@ def run_batch(format_filter: str = None, province_filter: str = None,
 
         query += " ORDER BY province, specialty"
 
-        if limit:
+        # sample模式下不在SQL层limit，采样后再截断
+        if limit and not sample:
             query += " LIMIT ?"
             params.append(limit)
 
@@ -271,6 +276,17 @@ def run_batch(format_filter: str = None, province_filter: str = None,
     if not files:
         print("没有可处理的文件（都已matched或无scanned状态的文件）。")
         return
+
+    # 均匀采样（--sample N：每个省份×专业各取N个）
+    if sample:
+        files = _sample_files(files, sample)
+        if not files:
+            print("采样后无文件可处理。")
+            return
+        # sample模式下的limit：截断采样总数
+        if limit and len(files) > limit:
+            files = files[:limit]
+            print(f"截断到前{limit}个文件")
 
     print(f"待处理: {len(files)}个文件")
 
@@ -363,7 +379,13 @@ def run_batch(format_filter: str = None, province_filter: str = None,
                         print(f"\r{prefix_padded} {total_in_file:>4d}条 {elapsed_so_far:>4.0f}s  {pct:>3d}%", end="", flush=True)
 
                 elapsed = time.time() - start_time
-                _save_results(f, results, elapsed)
+
+                # Jarvis审核（--review模式）
+                review_data = None
+                if review and results:
+                    review_data = _review_results(results, resolved_province)
+
+                _save_results(f, results, elapsed, review_data=review_data)
                 _mark_file_matched(f, results, elapsed)
 
                 total_items += len(results)
@@ -537,7 +559,121 @@ def _resolve_province(province_name: str, specialty: str = None) -> str:
 # 结果保存和状态更新
 # ============================================================
 
-def _save_results(file_info, results: list, elapsed: float):
+def _sample_files(files: list, n: int) -> list:
+    """均匀采样：每个省份×专业组合各取n个文件。
+
+    目的：快速铺满所有省份，而不是死磕一个省跑完再换下一个。
+    例如 --sample 3：广东电气3个、广东消防3个、浙江电气3个……
+    """
+    import random
+    groups = defaultdict(list)
+    for f in files:
+        prov = f["province"] or "未识别"
+        # 跳过未识别省份的文件（没有定额库，跑了也白跑）
+        if prov == "未识别":
+            continue
+        spec = f["specialty"] or "未分类"
+        groups[(prov, spec)].append(f)
+
+    sampled = []
+    for (prov, spec), group_files in sorted(groups.items()):
+        # 每组随机取n个（不够n个就全取）
+        pick = random.sample(group_files, min(n, len(group_files)))
+        sampled.extend(pick)
+
+    # 打印采样计划
+    print(f"\n采样计划（每组{n}个）:")
+    sample_groups = defaultdict(int)
+    for f in sampled:
+        sample_groups[(f["province"] or "未识别", f["specialty"] or "未分类")] += 1
+    for (prov, spec), cnt in sorted(sample_groups.items()):
+        print(f"  {prov:10s} × {spec:10s} → {cnt}个")
+    print(f"  合计: {len(sampled)}个文件\n")
+
+    return sampled
+
+
+def _review_results(results: list, province: str, sibling_provinces: list = None) -> dict:
+    """对匹配结果做Jarvis审核，返回诊断信息。
+
+    复用 jarvis_auto_review 的检测逻辑（纯规则，不查大模型），
+    给每条结果标注错误分类：[词][跨][档][冷][非][脏]。
+    """
+    try:
+        from tools.jarvis_auto_review import _detect_phase
+    except ImportError:
+        # 审核模块不可用，返回空诊断
+        return {"reviewed": False, "reason": "jarvis_auto_review不可用"}
+
+    # _detect_phase 需要和 jarvis_pipeline 一样格式的 results
+    # batch_runner 的 results 是 match_search_only 返回的原始格式，可以直接用
+    try:
+        detected_errors, measure_items, no_match_items, correct_count = _detect_phase(results)
+    except Exception as e:
+        return {"reviewed": False, "reason": f"审核异常: {e}"}
+
+    # 统计错误分类
+    error_types = defaultdict(int)
+    error_details = []
+    for err in detected_errors:
+        # 猜测错误分类
+        error_type = _classify_error(err, results)
+        error_types[error_type] += 1
+        error_details.append({
+            "seq": err.get("seq", 0),
+            "bill_name": err.get("bill_item", {}).get("name", "") if isinstance(err.get("bill_item"), dict) else str(err.get("bill_item", "")),
+            "quota_id": err.get("quota_id", ""),
+            "quota_name": err.get("quota_name", ""),
+            "error": err.get("error", ""),
+            "error_type": error_type,
+            "confidence": err.get("confidence", 0),
+        })
+
+    return {
+        "reviewed": True,
+        "correct_count": correct_count,
+        "error_count": len(detected_errors),
+        "measure_count": len(measure_items),
+        "no_match_count": len(no_match_items),
+        "error_types": dict(error_types),
+        "error_details": error_details[:50],  # 最多存50条细节（防文件太大）
+    }
+
+
+def _classify_error(err: dict, results: list) -> str:
+    """根据错误信息猜测错误分类代号。
+
+    返回: 词/跨/档/冷/非/脏
+    """
+    error_msg = str(err.get("error", "")).lower()
+    bill_name = ""
+    if isinstance(err.get("bill_item"), dict):
+        bill_name = err["bill_item"].get("name", "")
+
+    # 类别不匹配 → 跨库
+    if "类别不匹配" in error_msg or "category" in error_msg:
+        return "跨"
+    # 参数偏差 → 档位
+    if "参数" in error_msg or "dn" in error_msg or "规格" in error_msg:
+        return "档"
+    # 材质不匹配 → 同义词
+    if "材质" in error_msg or "material" in error_msg:
+        return "词"
+    # 管道用途 → 同义词
+    if "用途" in error_msg:
+        return "词"
+    # 连接方式 → 档位
+    if "连接" in error_msg:
+        return "档"
+    # 措施项 → 非定额
+    if "措施" in error_msg:
+        return "非"
+    # 默认归为同义词缺口（最常见的错误类型）
+    return "词"
+
+
+def _save_results(file_info, results: list, elapsed: float,
+                   review_data: dict = None):
     """保存匹配结果到 JSON 文件。"""
     prov = file_info["province"] or "未知省份"
     prov_dir = RESULTS_DIR / prov
@@ -593,6 +729,7 @@ def _save_results(file_info, results: list, elapsed: float):
         "elapsed_seconds": round(elapsed, 1),
         "match_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "algo_version": ALGORITHM_VERSION,
+        "review": review_data,  # Jarvis审核诊断（--review模式才有）
         "results": simplified,
     }
 
@@ -664,6 +801,10 @@ def main():
     parser.add_argument("--province", help="只跑某省（如 广东）")
     parser.add_argument("--specialty", help="只跑某专业（如 消防）")
     parser.add_argument("--limit", type=int, help="只跑前N个文件")
+    parser.add_argument("--sample", type=int,
+                        help="均匀采样：每个省份x专业各取N个文件")
+    parser.add_argument("--review", action="store_true",
+                        help="匹配后加Jarvis审核，生成诊断报告")
 
     args = parser.parse_args()
 
@@ -672,6 +813,8 @@ def main():
         province_filter=args.province,
         specialty_filter=args.specialty,
         limit=args.limit,
+        sample=args.sample,
+        review=args.review,
     )
 
 
