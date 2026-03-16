@@ -94,15 +94,16 @@ def normalize_spec(spec: str) -> str:
 # ======== 公共导入骨架 ========
 
 def create_import_batch(db, source_file: str, source_type: str,
-                        parser_template: str, notes: str = "") -> int:
+                        parser_template: str, notes: str = "",
+                        province: str = "") -> int:
     """创建导入批次记录，返回batch_id"""
     conn = db._conn()
     try:
         cursor = conn.execute(
             """INSERT INTO import_batch
-               (source_type, source_file, parser_template, notes)
-               VALUES (?, ?, ?, ?)""",
-            (source_type, source_file, parser_template, notes)
+               (source_type, source_file, parser_template, notes, province)
+               VALUES (?, ?, ?, ?, ?)""",
+            (source_type, source_file, parser_template, notes, province)
         )
         conn.commit()
         return cursor.lastrowid
@@ -124,7 +125,7 @@ def update_batch_count(db, batch_id: int, count: int):
 
 
 def import_records(db, records: list, batch_id: int,
-                   source_doc: str = "") -> dict:
+                   source_doc: str = "", province: str = "") -> dict:
     """
     批量导入解析好的记录到主材库
 
@@ -176,6 +177,7 @@ def import_records(db, records: list, batch_id: int,
                     material_id=material_id,
                     price_incl_tax=float(price),
                     source_type="enterprise_price_lib",
+                    province=province,
                     tax_rate=tax_rate,
                     unit=price_unit,
                     source_doc=source_doc,
@@ -894,7 +896,8 @@ TEMPLATES = {
 
 # ======== 命令行入口 ========
 
-def cmd_import_file(filepath: str, template: str, dry_run: bool = False):
+def cmd_import_file(filepath: str, template: str, dry_run: bool = False,
+                    province: str = ""):
     """导入单个文件"""
     if template not in TEMPLATES:
         print(f"未知模板: {template}，可选: {list(TEMPLATES.keys())}")
@@ -930,10 +933,12 @@ def cmd_import_file(filepath: str, template: str, dry_run: bool = False):
         db, source_file=str(filepath),
         source_type="enterprise_price_lib",
         parser_template=template,
-        notes=f"品类: {tmpl['name']}"
+        notes=f"品类: {tmpl['name']}" + (f" | 省份:{province}" if province else ""),
+        province=province,
     )
 
-    stats = import_records(db, records, batch_id, source_doc=Path(filepath).name)
+    stats = import_records(db, records, batch_id, source_doc=Path(filepath).name,
+                           province=province)
     update_batch_count(db, batch_id, stats["imported"])
 
     print(f"\n导入完成 (batch #{batch_id}):")
@@ -976,6 +981,7 @@ def main():
     parser.add_argument("--file", help="导入单个Excel文件")
     parser.add_argument("--template", "-t", help="解析模板(pipe/cable/light)")
     parser.add_argument("--dry-run", action="store_true", help="试运行，不写库")
+    parser.add_argument("--province", help="省份名称（如'全国'、'北京'），写入价格记录的province字段")
     parser.add_argument("--stats", action="store_true", help="查看导入统计")
     parser.add_argument("--list-templates", action="store_true", help="列出可用模板")
 
@@ -990,7 +996,8 @@ def main():
     elif args.file:
         if not args.template:
             parser.error("--file 需要指定 --template")
-        cmd_import_file(args.file, args.template, dry_run=args.dry_run)
+        cmd_import_file(args.file, args.template, dry_run=args.dry_run,
+                        province=args.province or "")
     else:
         parser.print_help()
 
