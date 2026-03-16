@@ -1098,11 +1098,12 @@ class TextParser:
 
     def build_quota_query(self, name: str, description: str = "",
                           specialty: str = "",
-                          bill_params: dict = None) -> str:
+                          bill_params: dict = None,
+                          section_title: str = "") -> str:
         """构建定额搜索query（实际实现在 query_builder.py）"""
         from src.query_builder import build_quota_query as _build
         return _build(self, name, description, specialty=specialty,
-                      bill_params=bill_params)
+                      bill_params=bill_params, section_title=section_title)
 
     def params_match(self, bill_params: dict, quota_params: dict) -> tuple[bool, float]:
         """
