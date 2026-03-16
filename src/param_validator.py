@@ -302,8 +302,8 @@ class ParamValidator:
         if not top1_base:
             return
 
-        # 在前10名里找同家族候选，计算每个的参数匹配分
-        scan_range = min(len(candidates), 10)
+        # 在前20名里找同家族候选，计算每个的参数匹配分
+        scan_range = min(len(candidates), 20)
         best_idx = -1
         best_tier_score = -1.0
 
