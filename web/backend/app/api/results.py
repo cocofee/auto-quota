@@ -13,6 +13,7 @@
 """
 
 import asyncio
+import re
 import uuid
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from app.schemas.result import (
     CorrectResultRequest, ConfirmResultsRequest,
 )
 from app.api.shared import get_user_task, store_experience, store_experience_batch, flag_disputed_experience
+from app.services.match_service import get_task_output_dir
 
 router = APIRouter()
 
@@ -38,6 +40,62 @@ router = APIRouter()
 # 修改时三处同步：config.py:585-586 / experience.ts:12-13 / 此处
 _GREEN_THRESHOLD = 85
 _YELLOW_THRESHOLD = 70
+
+
+def _strip_material_rows(source_path: str, task_id: str) -> str:
+    """去掉Excel中的主材行，返回处理后的文件路径
+
+    主材行特征：A列为空，B列是材料编码格式（CL/ZCGL/含@/补充主材/纯数字7-8位/单字"主"）。
+    """
+    import openpyxl
+
+    output_dir = get_task_output_dir(uuid.UUID(task_id))
+    stripped_path = str(output_dir / "output_no_material.xlsx")
+
+    # 如果已经生成过，直接返回（同一个任务的Excel不会变）
+    if Path(stripped_path).exists():
+        return stripped_path
+
+    wb = openpyxl.load_workbook(source_path)
+    for ws in wb.worksheets:
+        # 从下往上删，避免行号偏移
+        rows_to_delete = []
+        for row_idx in range(1, ws.max_row + 1):
+            a_val = ws.cell(row=row_idx, column=1).value
+            b_val = ws.cell(row=row_idx, column=2).value
+            # A列为空、B列有值 → 可能是主材行
+            if (a_val is None or str(a_val).strip() == "") and b_val:
+                b_str = str(b_val).strip()
+                if _is_material_code_simple(b_str):
+                    rows_to_delete.append(row_idx)
+
+        for row_idx in reversed(rows_to_delete):
+            ws.delete_rows(row_idx)
+
+    wb.save(stripped_path)
+    wb.close()
+    return stripped_path
+
+
+def _is_material_code_simple(code: str) -> bool:
+    """判断是否为材料/主材编码（简化版，和 bill_reader._is_material_code 逻辑一致）"""
+    if not code:
+        return False
+    # "主" 单字（兜底提取的主材行用这个标记）
+    if code == "主":
+        return True
+    if re.match(r"^CL\d", code, re.IGNORECASE):
+        return True
+    if re.match(r"^ZCGL\d", code, re.IGNORECASE):
+        return True
+    if "Z@" in code or "@" in code:
+        return True
+    if code.startswith("补充主材"):
+        return True
+    # 纯数字7-8位（广联达材料编码）
+    if re.fullmatch(r"\d{7,8}", code):
+        return True
+    return False
 
 
 @router.get("/tasks/{task_id}/results", response_model=ResultListResponse)
@@ -261,12 +319,13 @@ async def confirm_results(
 @router.get("/tasks/{task_id}/export")
 async def export_results(
     task_id: uuid.UUID,
+    materials: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """导出匹配结果Excel
 
-    下载匹配完成后生成的广联达格式Excel文件。
+    参数 materials：是否带主材行（默认不带，管理员可在前端勾选）。
     """
     task = await get_user_task(task_id, user, db)
 
@@ -279,8 +338,20 @@ async def export_results(
     # 构造下载文件名（原始文件名 + _定额匹配结果）
     download_name = Path(task.original_filename).stem + "_定额匹配结果.xlsx"
 
+    # 带主材：直接返回完整文件
+    if materials:
+        return FileResponse(
+            path=task.output_path,
+            filename=download_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    # 不带主材：去掉主材行后返回
+    stripped_path = await asyncio.to_thread(
+        _strip_material_rows, task.output_path, str(task_id)
+    )
     return FileResponse(
-        path=task.output_path,
+        path=stripped_path,
         filename=download_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
@@ -289,6 +360,7 @@ async def export_results(
 @router.get("/tasks/{task_id}/export-final")
 async def export_final(
     task_id: uuid.UUID,
+    materials: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -320,8 +392,14 @@ async def export_final(
     has_corrections = any(r.corrected_quotas for r in items)
     if not has_corrections and task.output_path and Path(task.output_path).exists():
         download_name = Path(task.original_filename).stem + "_定额匹配结果.xlsx"
+        export_path = task.output_path
+        # 不带主材时去掉主材行
+        if not materials:
+            export_path = await asyncio.to_thread(
+                _strip_material_rows, task.output_path, str(task_id)
+            )
         return FileResponse(
-            path=task.output_path,
+            path=export_path,
             filename=download_name,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
@@ -356,7 +434,6 @@ async def export_final(
         original_file = task.file_path
 
     # 输出到临时文件
-    from app.services.match_service import get_task_output_dir
     output_dir = get_task_output_dir(uuid.UUID(str(task_id)))
     final_path = str(output_dir / "output_final.xlsx")
 
@@ -373,8 +450,14 @@ async def export_final(
         raise HTTPException(status_code=500, detail=f"生成Excel失败: {e}")
 
     download_name = Path(task.original_filename).stem + "_最终结果.xlsx"
+    export_path = final_path
+    # 不带主材时去掉主材行
+    if not materials:
+        export_path = await asyncio.to_thread(
+            _strip_material_rows, final_path, str(task_id) + "_final"
+        )
     return FileResponse(
-        path=final_path,
+        path=export_path,
         filename=download_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )

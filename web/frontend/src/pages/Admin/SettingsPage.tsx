@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import {
   Card, Space, App, Tag, Descriptions, Row, Col, Statistic, Badge,
-  Input, Button, Select, Form, Alert,
+  Input, Button, Select, Form, Alert, Switch,
 } from 'antd';
 import {
   CheckCircleOutlined, CloseCircleOutlined,
@@ -62,6 +62,16 @@ export default function SettingsPage() {
   const [verifyConfig, setVerifyConfig] = useState<LlmConfig | null>(null);
   const [verifyForm] = Form.useForm();
   const [verifySaving, setVerifySaving] = useState(false);
+
+  // 导出设置：是否带主材
+  const [includeMaterials, setIncludeMaterials] = useState(() => {
+    return localStorage.getItem('admin_include_materials') === 'true';
+  });
+  const toggleMaterials = (checked: boolean) => {
+    setIncludeMaterials(checked);
+    localStorage.setItem('admin_include_materials', String(checked));
+    message.success(checked ? '导出将带主材行' : '导出将不带主材行');
+  };
 
   useEffect(() => {
     loadData();
@@ -370,6 +380,28 @@ export default function SettingsPage() {
             </Button>
           </Form.Item>
         </Form>
+      </Card>
+
+      {/* 导出设置 */}
+      <Card title="导出设置">
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Switch
+              checked={includeMaterials}
+              onChange={toggleMaterials}
+              checkedChildren="带主材"
+              unCheckedChildren="无主材"
+            />
+            <span style={{ color: '#666', fontSize: 13 }}>
+              {includeMaterials
+                ? '下载Excel时会包含主材行（材料名称、单位、数量）'
+                : '下载Excel时不包含主材行，只有定额行'}
+            </span>
+          </div>
+          <div style={{ color: '#999', fontSize: 12 }}>
+            此设置仅对管理员生效，普通用户下载的Excel默认不含主材。
+          </div>
+        </Space>
       </Card>
 
       {/* 系统参数 */}

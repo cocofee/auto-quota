@@ -552,10 +552,13 @@ class OutputWriter:
             if any(noise in val for noise in OutputWriter._MATERIAL_NOISE_WORDS):
                 continue
 
-            # 纯型号过滤（中文字符不到一半→大概率是型号如"APE-Z"、"XZP100"）
-            chinese_count = sum(1 for c in val if '\u4e00' <= c <= '\u9fff')
-            if chinese_count < len(val.strip()) / 3:
-                continue
+            # 纯型号过滤（中文字符不到1/3→大概率是型号如"APE-Z"、"XZP100"）
+            # 但"材质、规格"/"材质"等强信号字段跳过此检查——
+            # PPR冷水管DN15、PVC排水管等中英混合名称是有效主材，不能误杀
+            if field_key not in ("材质、规格", "材质,规格", "材质"):
+                chinese_count = sum(1 for c in val if '\u4e00' <= c <= '\u9fff')
+                if chinese_count < len(val.strip()) / 3:
+                    continue
 
             # 名称/主材/设备名称等字段，尝试拼上规格（规格类型/规格型号/规格）
             if field_key in ("名称", "主材", "设备名称", "材质"):
