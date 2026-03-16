@@ -24,6 +24,7 @@ import os
 import sys
 import re
 import json
+import random
 import argparse
 import hashlib
 from pathlib import Path
@@ -297,6 +298,40 @@ def extract_province(file_path: str) -> str:
             return p
 
     return None
+
+
+def auto_assign_province(file_path: str) -> tuple:
+    """给没有省份标签的Excel文件随机分配一个省份，重命名文件。
+
+    返回:
+        (新文件路径, 省份名) — 成功时
+        (原路径, None) — 非Excel或重命名失败时不动
+    """
+    fp = Path(file_path)
+    # 只处理Excel文件
+    if fp.suffix.lower() not in ('.xlsx', '.xls', '.xlsm'):
+        return str(fp), None
+
+    province = random.choice(PROVINCE_NAMES)
+    # 去掉可能存在的[未知]前缀
+    clean_name = re.sub(r'^\[未知\]', '', fp.name)
+    new_name = f"[{province}]{clean_name}"
+    new_path = fp.parent / new_name
+
+    # 重名时加序号
+    if new_path.exists() and new_path != fp:
+        base, ext = os.path.splitext(new_name)
+        seq = 2
+        while (fp.parent / f"{base}({seq}){ext}").exists():
+            seq += 1
+        new_name = f"{base}({seq}){ext}"
+        new_path = fp.parent / new_name
+
+    try:
+        os.rename(str(fp), str(new_path))
+        return str(new_path), province
+    except OSError:
+        return str(fp), None
 
 
 def extract_specialty(file_path: str) -> str:
@@ -652,6 +687,13 @@ def scan_directory(root_dir: str, specialty_filter: str = None,
         # Codex P1: 所有文件操作包在try内
         try:
             province = extract_province(fp)
+            # 没有省份标签的Excel文件，随机分配一个省份并重命名
+            if province is None:
+                fp_new, province = auto_assign_province(fp)
+                if fp_new != fp:
+                    fp = fp_new
+                    fp_normalized = fp.replace("\\", "/")
+                    file_name = Path(fp).name
             specialty = extract_specialty(fp)
             file_size = os.path.getsize(fp)
             file_name = Path(fp).name
