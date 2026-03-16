@@ -557,11 +557,13 @@ class OutputWriter:
             if chinese_count < len(val.strip()) / 3:
                 continue
 
-            # "材质"和"规格"分开时，尝试组合
-            if field_key == "材质":
-                spec = _find_field("规格")
-                if spec and spec not in val:
-                    val = f"{val} {spec}"
+            # 名称/主材/设备名称等字段，尝试拼上规格（规格类型/规格型号/规格）
+            if field_key in ("名称", "主材", "设备名称", "材质"):
+                for spec_key in ("规格类型", "规格型号", "规格"):
+                    spec_val = _find_field(spec_key)
+                    if spec_val and spec_val not in val:
+                        val = f"{val} {spec_val}"
+                        break
 
             result_text = val.strip()
             break
