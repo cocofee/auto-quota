@@ -206,14 +206,31 @@ def _is_bill_serial(a_val) -> bool:
 def _resolve_output_materials(result: dict) -> list[dict]:
     """获取要输出的主材行列表
 
-    只用输入文件中提取的主材（source_materials），不从经验库凭空加。
-    原则：定额下面是主材，原文件有才带，不平白无故加。
+    优先用输入文件中提取的主材（source_materials）；
+    没有时从清单特征描述里提取主材名称（兜底），让广联达导入时能带上主材。
     返回: [{code, name, unit, qty}, ...]
     """
     bill_item = result.get("bill_item", {})
+    # 优先用原文件里已有的主材
     source_mats = bill_item.get("source_materials")
     if isinstance(source_mats, list) and source_mats:
         return source_mats
+
+    # 措施项不加主材
+    if result.get("match_source") == "skip_measure":
+        return []
+
+    # 没有匹配定额的也不加主材
+    quotas = result.get("quotas")
+    if not quotas:
+        return []
+
+    # 兜底：从清单特征描述里提取主材名称
+    material_name = OutputWriter._extract_material_from_description(bill_item)
+    if material_name:
+        return [{"code": "", "name": material_name,
+                 "unit": bill_item.get("unit", ""),
+                 "qty": bill_item.get("quantity")}]
     return []
 
 
@@ -1145,13 +1162,7 @@ class OutputWriter:
             ws, row_idx, start_col=extra_start + 2, alternatives=result.get("alternatives", [])
         )
 
-        # 主材列（extra_start+5）：优先经验库，否则从清单描述提取
-        material_text = self._get_material_text(result)
-        cell_o = _safe_write_cell(ws, row_idx, extra_start + 5, material_text)
-        if cell_o:
-            cell_o.font = BILL_FONT
-            cell_o.border = THIN_BORDER
-            cell_o.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        # 主材列已移除（主材跟着定额子目走，清单行旁边显示没有意义）
 
     def _write_quota_rows(self, ws, current_row: int, result: dict,
                           bill_unit: str, bill_qty, max_col: int) -> int:
@@ -1242,9 +1253,10 @@ class OutputWriter:
 
         主材行特征：A列空，B列=材料编码，C列=材料名称，E列=单位，F列=数量
         """
-        # B列：材料编码（居中）
+        # B列：材料编码，无编码时写"主"标识（广联达识别用）
+        mat_code = material.get("code", "") or "主"
         cell_b = ws.cell(row=m_row, column=2,
-                         value=safe_excel_text(material.get("code", "")))
+                         value=safe_excel_text(mat_code))
         cell_b.font = GLD_FONT
         cell_b.alignment = Alignment(horizontal="center", vertical="center",
                                      wrap_text=True)
@@ -1298,13 +1310,12 @@ class OutputWriter:
             extra_start + 2: ("备选1", LIGHT_BLUE_FILL),
             extra_start + 3: ("备选2", LIGHT_BLUE_FILL),
             extra_start + 4: ("备选3", LIGHT_BLUE_FILL),
-            extra_start + 5: ("主材", LIGHT_BLUE_FILL),
         }
         for col, (title, fill) in extra_headers.items():
             self._set_header_cell(ws, header_row, col, title, fill)
 
         # 设置额外列宽（用动态列号转字母）
-        col_widths = [14, 40, 30, 30, 30, 36]  # 推荐度/匹配说明/备选1/备选2/备选3/主材
+        col_widths = [14, 40, 30, 30, 30]  # 推荐度/匹配说明/备选1/备选2/备选3
         for i, width in enumerate(col_widths):
             col_letter = get_column_letter(extra_start + i)
             ws.column_dimensions[col_letter].width = width
@@ -1326,8 +1337,8 @@ class OutputWriter:
                 ws.column_dimensions[col].width = width
 
         # 2. 只格式化清单行、定额行和主材行，跳过分部/合计等原始行
-        # 额外列的列号集合（匹配说明/备选1/备选2/备选3/主材 = extra_start+1 到 extra_start+5）
-        extra_left_align_cols = set(range(extra_start + 1, extra_start + 6))
+        # 额外列的列号集合（匹配说明/备选1/备选2/备选3 = extra_start+1 到 extra_start+4）
+        extra_left_align_cols = set(range(extra_start + 1, extra_start + 5))
         for row_idx in range(header_row + 1, ws.max_row + 1):
             a_val = ws.cell(row=row_idx, column=1).value
             b_val = ws.cell(row=row_idx, column=2).value
@@ -1348,7 +1359,7 @@ class OutputWriter:
             if not is_bill and not is_quota and not is_material:
                 continue  # 分部/合计/空行等，保留原始格式不动
 
-            for col_idx in range(1, extra_start + 6):  # A列到主材列
+            for col_idx in range(1, extra_start + 5):  # A列到备选3列
                 cell = ws.cell(row=row_idx, column=col_idx)
                 if isinstance(cell, MergedCell):
                     continue  # 合并单元格跳过，避免写样式崩溃
@@ -1404,7 +1415,7 @@ class OutputWriter:
         # 行1表头
         headers = {1: "序号", 2: "项目编码", 3: "项目名称", 4: "项目特征描述",
                    5: "计量单位", 6: "工程量", 7: "金额（元）", 10: "推荐度",
-                   11: "匹配说明", 12: "备选1", 13: "备选2", 14: "备选3", 15: "主材"}
+                   11: "匹配说明", 12: "备选1", 13: "备选2", 14: "备选3"}
         for col_idx, header in headers.items():
             fill = LIGHT_BLUE_FILL if col_idx >= 12 else HEADER_FILL
             self._set_header_cell(ws, 1, col_idx, header, fill)
@@ -1476,13 +1487,13 @@ class OutputWriter:
         """
         # 列宽（加了项目特征列，整体后移一列）
         col_widths = {"A": 8, "B": 30, "C": 40, "D": 20, "E": 30, "F": 14,
-                      "G": 24, "H": 18, "I": 18, "J": 18, "K": 20}
+                      "G": 24, "H": 18, "I": 18, "J": 18}
         for col, width in col_widths.items():
             ws.column_dimensions[col].width = width
 
         # 表头
         headers = ["清单序号", "清单名称", "项目特征", "当前定额编号", "当前定额名称",
-                   "推荐度", "问题说明", "备选1", "备选2", "备选3", "主材"]
+                   "推荐度", "问题说明", "备选1", "备选2", "备选3"]
         for col_idx, header in enumerate(headers, start=1):
             self._set_header_cell(ws, 1, col_idx, header, HEADER_FILL)
 
@@ -1548,10 +1559,9 @@ class OutputWriter:
             self._write_alternative_cells(
                 ws, current_row, start_col=8, alternatives=alternatives
             )
-            ws.cell(row=current_row, column=11, value=self._get_material_text(result))
 
-            # 格式（项目特征、定额名称、问题说明、主材列自动换行）
-            self._apply_row_style(ws, current_row, 1, 11, {2, 3, 5, 7, 11})
+            # 格式（项目特征、定额名称、问题说明列自动换行）
+            self._apply_row_style(ws, current_row, 1, 10, {2, 3, 5, 7})
 
             current_row += 1
             review_count += 1
