@@ -40,6 +40,9 @@ class TextParser:
             "PPR冷水管", "PPR热水管",  # PPR细分（出现在清单描述中）
             "PPR管", "PE管", "PVC管", "UPVC管", "HDPE管",
             "PP管", "ABS管", "CPVC管",
+            "PP-R",  # 带连字符形式（清单常写"PP-R给水管"）
+            "PPR",   # 不带"管"字形式（清单常写"材质PPR"、"材质:PPR"）
+            "PE-RT", # PE-RT管材（铝合金衬塑PE-RT复合管等）
             "塑料管",  # 泛称
             "复合管",  # 泛称
             # 简称（兜底）

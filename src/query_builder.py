@@ -1236,8 +1236,8 @@ def build_quota_query(parser, name: str, description: str = "",
         _mat_upper = material.upper() if material else ""
         if "PPR" in _mat_upper or "PP-R" in _mat_upper:
             _full = f"{name} {description}".upper()
-            # 判断采暖方向：清单文本含"采暖/热水/暖"，或section_title已推断为采暖
-            if "采暖" in _full or "热水" in _full or "暖" in _full or usage == "采暖":
+            # 采暖方向：只看"采暖/供暖"关键词（"热水"属于给水方向，不是采暖）
+            if "采暖" in _full or "供暖" in _full or usage == "采暖":
                 material = "室内塑料管(热熔连接)"
                 if not usage:
                     usage = "采暖管道"
@@ -1245,8 +1245,10 @@ def build_quota_query(parser, name: str, description: str = "",
                 # 消防PPR管 → 走消防方向
                 material = "室内塑料管(热熔连接)"
             else:
-                # 冷水/给水/未指定用途 → 默认给水（PPR最常见用途）
+                # 给水/热水/冷水/未指定 → 给水方向（PPR最常见用途）
                 material = "室内塑料给水管(热熔连接)"
+            # 连接方式已包含在材质替换中，清空避免重复拼接
+            connection = ""
 
         # 给水不锈钢管（卡压/环压连接）→ C10定额标准名称：
         # 清单写"304薄壁不锈钢管"/"不锈钢管"，定额叫"给排水管道 室内薄壁不锈钢管(卡压连接)"
