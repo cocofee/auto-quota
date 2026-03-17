@@ -189,12 +189,18 @@ def _do_parse(excel_path: str) -> list[dict]:
 
 
 def _parse_sheet(ws) -> list[dict]:
-    """解析单个sheet中的主材行"""
+    """解析单个sheet中的主材行
+
+    自动识别两种表格类型：
+    1. 纯材料表（广联达导出的材料汇总表）→ 所有行都是主材，不用逐行判断
+    2. 混合表（套完定额的清单）→ 需要逐行识别主材行
+    """
     materials = []
 
-    # 找表头行（包含"名称"或"项目名称"的行）
+    # 找表头行（包含"名称"或"材料名称"的行）
     header_row = None
     col_map = {}
+    is_pure_material_table = False  # 是否为纯材料表
     for row_idx in range(1, min(20, ws.max_row + 1)):
         for col_idx in range(1, min(15, ws.max_column + 1)):
             val = str(ws.cell(row=row_idx, column=col_idx).value or "").strip()
@@ -207,10 +213,10 @@ def _parse_sheet(ws) -> list[dict]:
     if not header_row:
         return materials
 
-    # 建立列映射
+    # 建立列映射，同时判断是否为纯材料表
     for col_idx in range(1, min(15, ws.max_column + 1)):
         val = str(ws.cell(row=header_row, column=col_idx).value or "").strip()
-        if val in ("编码", "编号", "序号"):
+        if val in ("编码", "编号", "序号", "材料编码"):
             col_map["code"] = col_idx
         elif val in ("名称", "项目名称", "材料名称"):
             col_map["name"] = col_idx
@@ -218,15 +224,25 @@ def _parse_sheet(ws) -> list[dict]:
             col_map["spec"] = col_idx
         elif val in ("单位",):
             col_map["unit"] = col_idx
-        elif val in ("数量", "工程量"):
+        elif val in ("数量", "工程量", "消耗量", "用量"):
             col_map["qty"] = col_idx
-        elif val in ("单价", "综合单价", "不含税单价", "含税单价"):
+        elif val in ("单价", "综合单价", "不含税单价", "含税单价",
+                      "市场价", "信息价", "除税单价", "除税信息价"):
             col_map["price"] = col_idx
+        # 纯材料表特征：表头含"材料名称"/"材料编码"/"市场价"/"信息价"等
+        if val in ("材料名称", "材料编码", "市场价", "信息价",
+                    "除税单价", "除税信息价", "消耗量"):
+            is_pure_material_table = True
+
+    # sheet名包含"材料"/"主材"也视为纯材料表
+    sheet_name = ws.title or ""
+    if any(kw in sheet_name for kw in ("材料", "主材", "材价", "物资")):
+        is_pure_material_table = True
 
     if "name" not in col_map:
         return materials
 
-    # 遍历数据行，识别主材行
+    # 遍历数据行
     for row_idx in range(header_row + 1, ws.max_row + 1):
         code_val = ""
         if "code" in col_map:
@@ -262,8 +278,8 @@ def _parse_sheet(ws) -> list[dict]:
                 except (ValueError, TypeError):
                     pass
 
-        # 判断是否为主材行
-        is_material = _is_material_row(code_val, name_val)
+        # 判断是否为主材行：纯材料表全部当主材，混合表逐行识别
+        is_material = is_pure_material_table or _is_material_row(code_val, name_val)
         if is_material:
             materials.append({
                 "row": row_idx,
