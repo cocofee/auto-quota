@@ -202,6 +202,9 @@ export default function ResultsPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
+  // 红灯行展开候选定额的状态（key = result.id）
+  const [expandedAlts, setExpandedAlts] = useState<Set<string>>(new Set());
+
   // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
   const [confFilter, setConfFilter] = useState<'all' | 'green' | 'yellow' | 'red'>('all');
 
@@ -661,6 +664,7 @@ export default function ResultsPage() {
       },
     },
     // 匹配说明（只在清单行显示，自动换行；AI纠正/存疑结果高亮）
+    // 低置信度行可展开Top3候选定额
     {
       title: '匹配说明',
       key: 'explanation',
@@ -668,42 +672,119 @@ export default function ResultsPage() {
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
-        const text = row._result.explanation;
-        const matchSource = row._result.match_source;
+        const r = row._result;
+        const text = r.explanation;
+        const matchSource = r.match_source;
 
-        // AI纠正：橙色标签 + 纠正详情
+        // 匹配说明内容
+        let explanationNode: React.ReactNode;
         if (matchSource === 'llm_corrected' || (text && text.startsWith('[AI纠正]'))) {
           const detail = text ? text.replace(/^\[AI纠正\]\s*/, '') : '';
-          return (
+          explanationNode = (
             <div style={{ fontSize: 12, lineHeight: '1.5' }}>
               <Tag color="orange" style={{ marginBottom: 4 }}>AI纠正</Tag>
               <div style={{ color: '#666', whiteSpace: 'pre-wrap' }}>{detail}</div>
             </div>
           );
-        }
-
-        // AI存疑：红色标签 + 存疑说明
-        if (text && text.startsWith('[AI存疑]')) {
+        } else if (text && text.startsWith('[AI存疑]')) {
           const detail = text.replace(/^\[AI存疑\]\s*/, '');
-          return (
+          explanationNode = (
             <div style={{ fontSize: 12, lineHeight: '1.5' }}>
               <Tag color="red" style={{ marginBottom: 4 }}>AI存疑</Tag>
               <div style={{ color: '#666', whiteSpace: 'pre-wrap' }}>{detail}</div>
             </div>
           );
+        } else {
+          explanationNode = text ? (
+            <Tooltip title={text} placement="topLeft" overlayStyle={{ maxWidth: 400 }}>
+              <div style={{
+                fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5',
+                maxHeight: 60, overflow: 'hidden',
+              }}>
+                {text}
+              </div>
+            </Tooltip>
+          ) : <span style={{ color: '#ccc' }}>-</span>;
         }
 
-        // 普通匹配说明
-        return text ? (
-          <Tooltip title={text} placement="topLeft" overlayStyle={{ maxWidth: 400 }}>
-            <div style={{
-              fontSize: 12, color: '#666', whiteSpace: 'pre-wrap', lineHeight: '1.5',
-              maxHeight: 60, overflow: 'hidden',
-            }}>
-              {text}
-            </div>
-          </Tooltip>
-        ) : <span style={{ color: '#ccc' }}>-</span>;
+        // 低置信度行：展开Top3候选
+        const alts = r.alternatives as { quota_id: string; name: string; unit: string; confidence: number; reason?: string }[] | null;
+        const isLow = r.confidence < YELLOW_THRESHOLD;
+        const isExpanded = expandedAlts.has(r.id);
+        const hasAlts = alts && alts.length > 0;
+
+        return (
+          <div>
+            {explanationNode}
+            {/* 低置信度且有候选时，显示展开按钮 */}
+            {isAdmin && isLow && hasAlts && (
+              <div style={{ marginTop: 4 }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, fontSize: 12, color: COLORS.redSolid }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedAlts(prev => {
+                      const next = new Set(prev);
+                      if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
+                      return next;
+                    });
+                  }}
+                >
+                  {isExpanded ? '收起候选' : `查看${alts!.length}个候选 ▼`}
+                </Button>
+                {isExpanded && (
+                  <div style={{
+                    marginTop: 6, padding: 8, background: '#fef2f2',
+                    borderRadius: 6, border: '1px solid #fecaca',
+                  }}>
+                    {alts!.map((alt, idx) => (
+                      <div key={idx} style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '4px 0',
+                        borderBottom: idx < alts!.length - 1 ? '1px dashed #fecaca' : 'none',
+                      }}>
+                        <Tag color="blue" style={{ margin: 0, flexShrink: 0 }}>{alt.quota_id}</Tag>
+                        <span style={{ flex: 1, fontSize: 12 }}>{alt.name}</span>
+                        <span style={{ fontSize: 11, color: '#999', flexShrink: 0 }}>{alt.unit}</span>
+                        <Button
+                          type="primary"
+                          size="small"
+                          style={{ fontSize: 11, height: 22 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // 纠正为该候选定额
+                            (async () => {
+                              try {
+                                await api.put(`/tasks/${taskId}/results/${r.id}`, {
+                                  corrected_quotas: [{
+                                    quota_id: alt.quota_id,
+                                    name: alt.name,
+                                    unit: alt.unit,
+                                    source: 'manual_correction',
+                                  }],
+                                  review_note: `从候选中选择: ${alt.quota_id}`,
+                                });
+                                message.success(`已纠正为 ${alt.quota_id}`);
+                                setExpandedAlts(prev => { const n = new Set(prev); n.delete(r.id); return n; });
+                                loadData();
+                              } catch {
+                                message.error('纠正失败');
+                              }
+                            })();
+                          }}
+                        >
+                          选用
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
       },
     },
     // 管理员审核操作列
@@ -1033,6 +1114,51 @@ export default function ResultsPage() {
           </div>
         )}
       </Card>
+
+      {/* 固定底部操作栏（文档04章 P2） */}
+      {isAdmin && results.length > 0 && (
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 10,
+          background: '#fff',
+          borderTop: '1px solid #e8e8e8',
+          padding: '10px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
+          borderRadius: '0 0 8px 8px',
+        }}>
+          <span style={{ fontSize: 13, color: '#666' }}>
+            已选 <b>{selectedRowKeys.length}</b> 条
+          </span>
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={downloadExcel} size="small">
+              导出Excel
+            </Button>
+            {selectedRowKeys.length > 0 && (
+              <Button
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                onClick={confirmSelected}
+                loading={confirmLoading}
+                size="small"
+              >
+                批量确认({selectedRowKeys.length})
+              </Button>
+            )}
+            <Button
+              type="primary"
+              style={{ background: '#ea580c', borderColor: '#ea580c' }}
+              size="small"
+              onClick={() => navigate('/tools/material-price')}
+            >
+              继续填主材 →
+            </Button>
+          </Space>
+        </div>
+      )}
     </Space>
   );
 }
