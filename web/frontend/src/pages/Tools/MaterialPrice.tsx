@@ -79,7 +79,6 @@ export default function MaterialPrice() {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>('');
   const [taskLoading, setTaskLoading] = useState(false);
-  const [taskSourceName, setTaskSourceName] = useState<string>('');
 
   // 主材数据
   const [materials, setMaterials] = useState<MaterialRow[]>([]);
@@ -187,7 +186,6 @@ export default function MaterialPrice() {
         user_price: null,
       }));
       setMaterials(mats);
-      setTaskSourceName(res.data.task_name || '');
       setFileKey(res.data.file_key || '');
       message.success(`从任务中拉取到 ${mats.length} 条主材`);
     } catch (err) {
