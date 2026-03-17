@@ -94,6 +94,97 @@ def _try_convert_price(price: float, from_unit: str, to_unit: str,
     return None  # 不支持的换算，返回None（空着不填）
 
 
+# ======== 材料名清洗与同义词（提升查价命中率）========
+
+# 修饰词表（清洗时去掉，只保留核心品名）
+_NOISE_WORDS = [
+    "热浸锌", "热浸镀锌", "热镀锌", "冷镀锌", "电镀锌",
+    "给水室外", "给水室内", "排水室外", "排水室内", "室外", "室内",
+    "国标", "非标", "加厚", "普通", "优质", "标准",
+    "焊接", "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔",
+    "涂塑", "衬塑", "内衬",
+    "柔性", "刚性", "单壁", "双壁", "薄壁", "厚壁",
+    "无缝", "有缝", "直缝",
+    "阻燃", "耐火", "低烟无卤",
+]
+
+# 材料别名表（清单常见写法 → 价格库里收录的名称）
+_MATERIAL_ALIAS = {
+    "衬塑PP-R钢管": "PPR管", "PP-R管": "PPR管", "PP-R给水管": "PPR给水管",
+    "镀锌焊接钢管": "镀锌钢管", "镀锌无缝钢管": "镀锌钢管",
+    "排水铸铁管": "铸铁排水管", "柔性铸铁管": "柔性铸铁排水管",
+    "HDPE双壁波纹管": "HDPE波纹管", "HDPE排水管": "HDPE管",
+    "UPVC排水管": "PVC排水管", "U-PVC排水管": "PVC排水管",
+    "PE给水管": "PE管", "铝塑复合管": "铝塑管",
+    "薄壁不锈钢管": "不锈钢管",
+    "异径管": "大小头", "变径": "大小头",
+    "BV电线": "BV线", "镀锌线管": "镀锌线管",
+    "电缆桥架": "桥架", "消防喷淋头": "喷淋头",
+    "烟感探测器": "烟感", "温感探测器": "温感",
+    "镀锌钢板风管": "镀锌风管",
+}
+
+# 工程同义词缓存（懒加载）
+_eng_synonyms: Optional[dict] = None
+
+
+def _load_eng_synonyms() -> dict:
+    """加载Jarvis工程同义词表"""
+    global _eng_synonyms
+    if _eng_synonyms is not None:
+        return _eng_synonyms
+    syn_path = Path(__file__).parent.parent / "data" / "engineering_synonyms.json"
+    if syn_path.exists():
+        try:
+            _eng_synonyms = json.load(open(syn_path, encoding="utf-8"))
+        except Exception:
+            _eng_synonyms = {}
+    else:
+        _eng_synonyms = {}
+    return _eng_synonyms
+
+
+def _clean_material_name(name: str) -> str:
+    """清洗材料名称：去修饰词+去规格，保留核心品名
+
+    "热浸锌镀锌钢管 DN70" → "镀锌钢管"
+    "衬塑PP-R钢管 De25" → "PP-R钢管"
+    """
+    clean = name.strip()
+    # 去规格
+    clean = re.sub(r'[Dd][Nn]\s*\d+', '', clean)
+    clean = re.sub(r'[Dd]e\s*\d+', '', clean)
+    clean = re.sub(r'Φ\s*\d+(?:mm)?', '', clean)
+    clean = re.sub(r'\d+[×xX\*]\d+', '', clean)
+    clean = re.sub(r'\d+(?:\.\d+)?mm²?', '', clean)
+    clean = re.sub(r'\d+kV[A]?', '', clean, flags=re.IGNORECASE)
+    # 去修饰词
+    for noise in _NOISE_WORDS:
+        clean = clean.replace(noise, "")
+    # 清理残留
+    clean = re.sub(r'[\s\-\.()（）]+', '', clean).strip()
+    return clean if len(clean) >= 2 else name.strip()
+
+
+def _get_material_alias(name: str) -> Optional[str]:
+    """查材料别名：先查别名表，再查工程同义词"""
+    # 别名表精确匹配
+    if name in _MATERIAL_ALIAS:
+        return _MATERIAL_ALIAS[name]
+    # 别名表包含匹配
+    for key, val in _MATERIAL_ALIAS.items():
+        if key in name:
+            return val
+    # 工程同义词
+    syns = _load_eng_synonyms()
+    if name in syns and syns[name]:
+        return syns[name][0]
+    for key, vals in syns.items():
+        if len(key) >= 3 and key in name and vals:
+            return vals[0]
+    return None
+
+
 # 数据库路径
 DB_PATH = Path(__file__).parent.parent / "db" / "common" / "material.db"
 
@@ -373,6 +464,8 @@ class MaterialDB:
         1. name+spec 精确匹配 material_master → 查该省最新价格
         2. name 精确匹配（忽略spec）→ 查价格
         3. name 模糊匹配（LIKE）→ 取第一个有价格的
+        4. 清洗后品名匹配（去修饰词+去规格）→ 模糊查
+        5. 同义词/别名匹配 → 用映射名再查一轮
 
         target_unit: 主材行期望的单位（如'm'），用于单位换算。
         source_type: 价格类型过滤，空=不限, 'government'=信息价, 'market'=市场价
@@ -400,7 +493,6 @@ class MaterialDB:
             # 策略2：只用name匹配（spec为空或策略1没找到价格）
             mid = self._find_material_id(conn, name, "")
             if mid:
-                # 查材料的spec（用于DN提取）
                 mat_spec = self._get_material_spec(conn, mid)
                 price = self._get_price(conn, mid, province,
                                         target_unit, name, mat_spec or spec,
@@ -421,6 +513,57 @@ class MaterialDB:
                     source_type=source_type)
                 if price:
                     return price
+
+            # 策略4：清洗品名后再查（去修饰词+去规格）
+            clean = _clean_material_name(name)
+            if clean and clean != name:
+                # 精确匹配清洗后的名称
+                mid = self._find_material_id(conn, clean, "")
+                if mid:
+                    mat_spec = self._get_material_spec(conn, mid)
+                    price = self._get_price(conn, mid, province,
+                                            target_unit, clean, mat_spec or spec,
+                                            source_type=source_type)
+                    if price:
+                        return price
+                # 模糊匹配清洗后的名称
+                rows = conn.execute(
+                    """SELECT id, name, spec FROM material_master
+                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                    (f"%{clean}%",)
+                ).fetchall()
+                for row in rows:
+                    price = self._get_price(
+                        conn, row["id"], province,
+                        target_unit, row["name"], row["spec"] or spec,
+                        source_type=source_type)
+                    if price:
+                        return price
+
+            # 策略5：同义词/别名匹配
+            alias = _get_material_alias(clean or name)
+            if alias and alias != name and alias != clean:
+                mid = self._find_material_id(conn, alias, "")
+                if mid:
+                    mat_spec = self._get_material_spec(conn, mid)
+                    price = self._get_price(conn, mid, province,
+                                            target_unit, alias, mat_spec or spec,
+                                            source_type=source_type)
+                    if price:
+                        return price
+                # 模糊
+                rows = conn.execute(
+                    """SELECT id, name, spec FROM material_master
+                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                    (f"%{alias}%",)
+                ).fetchall()
+                for row in rows:
+                    price = self._get_price(
+                        conn, row["id"], province,
+                        target_unit, row["name"], row["spec"] or spec,
+                        source_type=source_type)
+                    if price:
+                        return price
 
             return None
         finally:
