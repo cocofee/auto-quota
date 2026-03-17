@@ -130,6 +130,17 @@ class RuleValidator:
         for chapter_name, chapter_data in self.rules.get("chapters", {}).items():
             for family in chapter_data.get("families", []):
                 if family.get("type") == "family":
+                    # 补全：compound家族缺tiers时，从values的第一个数字自动解析
+                    if not family.get("tiers") and family.get("value_type") == "compound":
+                        auto_tiers = []
+                        for val in family.get("values", []):
+                            try:
+                                auto_tiers.append(float(str(val).split("/")[0]))
+                            except (ValueError, TypeError):
+                                pass
+                        if auto_tiers:
+                            family["tiers"] = sorted(auto_tiers)
+
                     # 索引1：quota_id → 家族
                     for quota in family.get("quotas", []):
                         qid = quota.get("id")
@@ -555,7 +566,11 @@ class RuleValidator:
         """
         for quota in family.get("quotas", []):
             try:
-                quota_val = float(quota.get("value", ""))
+                raw_val = str(quota.get("value", ""))
+                # 支持compound格式（如"15/20"公称直径/管外径），取第一个数字
+                if "/" in raw_val:
+                    raw_val = raw_val.split("/")[0]
+                quota_val = float(raw_val)
                 if abs(quota_val - tier_value) < 0.01:
                     return quota.get("id")
             except (ValueError, TypeError):
