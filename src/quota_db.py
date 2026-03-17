@@ -456,8 +456,9 @@ class QuotaDB:
 
         # 上海等省份的编号格式特殊：03-10-1-240（大类03-册号10-章-序）
         # 所有定额的第一段都是同一个大类代号（如"03"），无法区分册号
-        # 此时从chapter字段提取册号（如"10_第十册..."→"10"）
-        if book and book.isdigit() and chapter:
+        # 只有chapter包含"册"时才从chapter提取（如"10_第十册..."→"10"）
+        # 包含"章"的省份（宁夏/江西等）chapter前缀是章号不是册号，不能用
+        if book and book.isdigit() and chapter and "册" in chapter:
             ch_prefix = chapter.split("_")[0] if "_" in chapter else ""
             if ch_prefix.isdigit():
                 derived_book = str(int(ch_prefix))  # 去前导0：04→4, 10→10
