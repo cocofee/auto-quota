@@ -230,9 +230,12 @@ async def parse_materials(file: UploadFile = File(...)):
 
     # 在线程池中解析（CPU密集型）
     try:
-        materials = await asyncio.to_thread(_do_parse, tmp_path)
+        result = await asyncio.to_thread(_do_parse, tmp_path)
+        materials = result["materials"]
         return {
             "materials": materials,
+            "all_rows": result["all_rows"],
+            "is_mixed": result["is_mixed"],
             "count": len(materials),
             "file_key": file_key,  # 前端保存，export时回传
         }
@@ -244,41 +247,52 @@ async def parse_materials(file: UploadFile = File(...)):
         raise HTTPException(500, f"解析失败: {e}")
 
 
-def _do_parse(excel_path: str) -> list[dict]:
-    """解析Excel，提取主材行
+def _do_parse(excel_path: str) -> dict:
+    """解析Excel，返回主材行 + 所有行（用于层级预览）
 
-    支持两种格式：
-    1. 本系统输出的Excel（主材行有特定编码标记）
-    2. 广联达导出的Excel（通过列名识别）
+    返回:
+    {
+        "materials": [...],   # 只含主材行（查价/导出用）
+        "all_rows": [...],    # 所有行含类型标记（前端层级展示用）
+        "is_mixed": bool,     # 是否混合表（分部分项格式）
+    }
     """
     import openpyxl
 
     wb = openpyxl.load_workbook(excel_path, data_only=True)
     materials = []
+    all_rows = []
+    is_mixed = False
 
     for ws in wb.worksheets:
-        sheet_materials = _parse_sheet(ws)
-        materials.extend(sheet_materials)
+        result = _parse_sheet(ws)
+        materials.extend(result["materials"])
+        all_rows.extend(result["all_rows"])
+        if result["is_mixed"]:
+            is_mixed = True
 
     wb.close()
-    return materials
+    return {"materials": materials, "all_rows": all_rows, "is_mixed": is_mixed}
 
 
-def _parse_sheet(ws) -> list[dict]:
-    """解析单个sheet中的主材行
+def _parse_sheet(ws) -> dict:
+    """解析单个sheet，返回主材行 + 所有行（带类型标记）
 
-    自动识别两种表格类型：
-    1. 纯材料表（广联达导出的材料汇总表）→ 所有行都是主材，不用逐行判断
-    2. 混合表（套完定额的清单）→ 需要逐行识别主材行
+    行类型：
+    - "section": 分部标题行（如"给水工程"、"新风系统"）
+    - "bill": 清单行（有项目编码，如030701003005）
+    - "quota": 定额行（编码像C7-1-20）
+    - "material": 主材行（编码为"主"等）
 
-    同时自动检测价格列位置（数量列后面那一列），用于export时写回。
+    对于纯材料表，all_rows == materials（没有层级）。
     """
     materials = []
+    all_rows = []
 
-    # 找表头行（包含"名称"或"材料名称"的行）
+    # 找表头行
     header_row = None
     col_map = {}
-    is_pure_material_table = False  # 是否为纯材料表
+    is_pure_material_table = False
     for row_idx in range(1, min(20, ws.max_row + 1)):
         for col_idx in range(1, min(15, ws.max_column + 1)):
             val = str(ws.cell(row=row_idx, column=col_idx).value or "").strip()
@@ -289,11 +303,13 @@ def _parse_sheet(ws) -> list[dict]:
             break
 
     if not header_row:
-        return materials
+        return {"materials": [], "all_rows": [], "is_mixed": False}
 
-    # 建立列映射——扫描表头行及下一行（处理双行表头，如分部分项的"金额(元)"/"综合单价"）
+    # 建立列映射——扫描表头行及下一行（处理双行表头）
     _PRICE_KEYWORDS = ("单价", "综合单价", "不含税单价", "含税单价",
                        "市场价", "信息价", "除税单价", "除税信息价")
+    # 也检测"序号"列（用于判断清单行，但不作为code列）
+    seq_col = None
     for scan_row in range(header_row, min(header_row + 2, ws.max_row + 1)):
         for col_idx in range(1, min(15, ws.max_column + 1)):
             val = str(ws.cell(row=scan_row, column=col_idx).value or "").strip()
@@ -311,23 +327,32 @@ def _parse_sheet(ws) -> list[dict]:
                 col_map.setdefault("qty", col_idx)
             elif val in _PRICE_KEYWORDS:
                 col_map.setdefault("price", col_idx)
+            if val in ("序号",):
+                seq_col = col_idx
             # 纯材料表特征
             if val in ("材料名称", "材料编码", "市场价", "信息价",
                         "除税单价", "除税信息价", "消耗量"):
                 is_pure_material_table = True
 
-    # sheet名包含"材料"/"主材"也视为纯材料表
     sheet_name = ws.title or ""
     if any(kw in sheet_name for kw in ("材料", "主材", "材价", "物资")):
         is_pure_material_table = True
 
     if "name" not in col_map:
-        return materials
+        return {"materials": [], "all_rows": [], "is_mixed": False}
 
-    # 确定价格列位置：优先用检测到的"单价"列，否则用数量列+1
+    # 确定价格列位置
     price_col = col_map.get("price")
     if price_col is None and "qty" in col_map:
         price_col = col_map["qty"] + 1
+
+    # 也检测"项目特征描述"列（用于清单行展示）
+    desc_col = None
+    for col_idx in range(1, min(15, ws.max_column + 1)):
+        val = str(ws.cell(row=header_row, column=col_idx).value or "").strip()
+        if val in ("项目特征描述", "项目特征", "特征描述"):
+            desc_col = col_idx
+            break
 
     # 遍历数据行
     for row_idx in range(header_row + 1, ws.max_row + 1):
@@ -338,10 +363,6 @@ def _parse_sheet(ws) -> list[dict]:
         name_val = str(ws.cell(row=row_idx, column=col_map["name"]).value or "").strip()
         if not name_val:
             continue
-
-        spec_val = ""
-        if "spec" in col_map:
-            spec_val = str(ws.cell(row=row_idx, column=col_map["spec"]).value or "").strip()
 
         unit_val = ""
         if "unit" in col_map:
@@ -356,6 +377,10 @@ def _parse_sheet(ws) -> list[dict]:
                 except (ValueError, TypeError):
                     pass
 
+        spec_val = ""
+        if "spec" in col_map:
+            spec_val = str(ws.cell(row=row_idx, column=col_map["spec"]).value or "").strip()
+
         price_val = None
         if price_col is not None:
             raw = ws.cell(row=row_idx, column=price_col).value
@@ -365,10 +390,10 @@ def _parse_sheet(ws) -> list[dict]:
                 except (ValueError, TypeError):
                     pass
 
-        # 判断是否为主材行：纯材料表全部当主材，混合表逐行识别
-        is_material = is_pure_material_table or _is_material_row(code_val, name_val)
-        if is_material:
-            materials.append({
+        # 纯材料表：所有行都当主材
+        if is_pure_material_table:
+            mat = {
+                "type": "material",
                 "row": row_idx,
                 "sheet": ws.title,
                 "code": code_val,
@@ -376,13 +401,104 @@ def _parse_sheet(ws) -> list[dict]:
                 "spec": spec_val,
                 "unit": unit_val,
                 "qty": qty_val,
-                "existing_price": price_val,  # Excel中已有的价格
-                "price_col": price_col,       # 价格列位置（export写回用）
-                "lookup_price": None,         # 系统查到的价格（后续填充）
-                "lookup_source": None,        # 价格来源说明
+                "existing_price": price_val,
+                "price_col": price_col,
+                "lookup_price": None,
+                "lookup_source": None,
+            }
+            materials.append(mat)
+            all_rows.append(mat)
+            continue
+
+        # 混合表：判断行类型
+        seq_val = ""
+        if seq_col is not None:
+            seq_val = str(ws.cell(row=row_idx, column=seq_col).value or "").strip()
+
+        row_type = _classify_row(code_val, name_val, seq_val)
+
+        if row_type == "material":
+            mat = {
+                "type": "material",
+                "row": row_idx,
+                "sheet": ws.title,
+                "code": code_val,
+                "name": name_val,
+                "spec": spec_val,
+                "unit": unit_val,
+                "qty": qty_val,
+                "existing_price": price_val,
+                "price_col": price_col,
+                "lookup_price": None,
+                "lookup_source": None,
+            }
+            materials.append(mat)
+            all_rows.append(mat)
+        elif row_type == "bill":
+            # 清单行：读取项目特征描述
+            desc_val = ""
+            if desc_col is not None:
+                desc_val = str(ws.cell(row=row_idx, column=desc_col).value or "").strip()
+            all_rows.append({
+                "type": "bill",
+                "row": row_idx,
+                "sheet": ws.title,
+                "code": code_val,
+                "name": name_val,
+                "desc": desc_val,
+                "unit": unit_val,
+                "qty": qty_val,
+            })
+        elif row_type == "quota":
+            all_rows.append({
+                "type": "quota",
+                "row": row_idx,
+                "sheet": ws.title,
+                "code": code_val,
+                "name": name_val,
+                "unit": unit_val,
+                "qty": qty_val,
+            })
+        elif row_type == "section":
+            all_rows.append({
+                "type": "section",
+                "row": row_idx,
+                "sheet": ws.title,
+                "name": name_val,
             })
 
-    return materials
+    return {
+        "materials": materials,
+        "all_rows": all_rows,
+        "is_mixed": not is_pure_material_table,
+    }
+
+
+def _classify_row(code: str, name: str, seq: str) -> str:
+    """判断分部分项混合表中一行的类型
+
+    返回: "bill"(清单行) / "quota"(定额行) / "material"(主材行) / "section"(分部标题)
+    """
+    c = code.strip() if code else ""
+
+    # 主材行判断（优先，因为B列="主"最明确）
+    if _is_material_row(c, name):
+        return "material"
+
+    # 清单行：有序号（A列有数字）且编码像项目编码（9-12位数字）
+    if seq and re.fullmatch(r"\d+", seq):
+        if re.fullmatch(r"\d{9,15}", c):
+            return "bill"
+
+    # 定额行：编码像定额编号（如C10-2-123、A-9-63、SC20）
+    if c and re.match(r"^[A-Za-z]{1,4}\d", c):
+        return "quota"
+
+    # 分部标题行：没有编码、没有序号、没有单位，只有名称
+    if not c and not seq:
+        return "section"
+
+    return "section"  # 无法识别的行当标题处理
 
 
 def _is_material_row(code: str, name: str) -> bool:
@@ -465,12 +581,15 @@ async def parse_from_task(task_id: str):
 
     # 解析output Excel中的主材行
     try:
-        materials = await asyncio.to_thread(_do_parse, task.output_path)
+        result = await asyncio.to_thread(_do_parse, task.output_path)
+        materials = result["materials"]
         # 用任务的output_path作为file_key（不需要复制，直接指向）
         file_key = f"task-{task_id}"
         _uploaded_files[file_key] = task.output_path
         return {
             "materials": materials,
+            "all_rows": result["all_rows"],
+            "is_mixed": result["is_mixed"],
             "count": len(materials),
             "task_name": task.original_filename or "",
             "file_key": file_key,
