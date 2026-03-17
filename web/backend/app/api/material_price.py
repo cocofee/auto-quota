@@ -34,8 +34,8 @@ router = APIRouter()
 _MATERIAL_DB_PATH = Path(__file__).parent.parent.parent.parent.parent / "db" / "common" / "material.db"
 
 # 上传文件缓存（parse后保留，export时用）
-# key=file_key(uuid), value=文件路径
-_uploaded_files: dict[str, str] = {}
+# key=file_key(uuid), value={"path": 文件路径, "name": 原始文件名}
+_uploaded_files: dict[str, dict] = {}
 
 
 def _is_remote() -> bool:
@@ -225,8 +225,8 @@ async def parse_materials(file: UploadFile = File(...)):
         tmp.write(content)
         tmp_path = tmp.name
 
-    # 记录文件路径
-    _uploaded_files[file_key] = tmp_path
+    # 记录文件路径和原始文件名
+    _uploaded_files[file_key] = {"path": tmp_path, "name": Path(filename).stem}
 
     # 在线程池中解析（CPU密集型）
     try:
@@ -585,7 +585,10 @@ async def parse_from_task(task_id: str):
         materials = result["materials"]
         # 用任务的output_path作为file_key（不需要复制，直接指向）
         file_key = f"task-{task_id}"
-        _uploaded_files[file_key] = task.output_path
+        _uploaded_files[file_key] = {
+            "path": task.output_path,
+            "name": Path(task.original_filename or "").stem or f"task_{task_id[:8]}",
+        }
         return {
             "materials": materials,
             "all_rows": result["all_rows"],
@@ -611,14 +614,16 @@ async def lookup_prices(body: dict):
     {
         "materials": [{"name": "镀锌钢管", "spec": "DN25", "unit": "m"}, ...],
         "province": "湖北",
-        "city": "武汉",        // 可选
-        "period_end": "2026-02-28"  // 可选，指定期次
+        "city": "武汉",           // 可选
+        "period_end": "2026-02-28",  // 可选，指定期次
+        "price_type": "all"       // 可选：all=不限, info=信息价, market=市场价
     }
     """
     materials = body.get("materials", [])
     province = body.get("province", "")
     city = body.get("city", "")
     period_end = body.get("period_end", "")
+    price_type = body.get("price_type", "all")
 
     if not materials:
         raise HTTPException(400, "materials 不能为空")
@@ -632,13 +637,13 @@ async def lookup_prices(body: dict):
             "province": province,
             "city": city,
             "period_end": period_end,
+            "price_type": price_type,
         })
         return result or {"results": [], "stats": {"total": 0, "found": 0, "not_found": 0}}
 
     # 本地模式：直接查价
-    # 在线程池中批量查价
     results = await asyncio.to_thread(
-        _do_lookup, materials, province, city, period_end
+        _do_lookup, materials, province, city, period_end, price_type
     )
     # 统计
     found = sum(1 for r in results if r.get("lookup_price") is not None)
@@ -653,13 +658,23 @@ async def lookup_prices(body: dict):
 
 
 def _do_lookup(materials: list[dict], province: str, city: str,
-               period_end: str) -> list[dict]:
-    """批量查价核心逻辑"""
+               period_end: str, price_type: str = "all") -> list[dict]:
+    """批量查价核心逻辑
+
+    price_type: all=不限, info=只查信息价, market=只查市场价
+    """
     import sqlite3
 
     db = _get_db()
     conn = sqlite3.connect(str(db.db_path))
     conn.row_factory = sqlite3.Row
+
+    # 价格类型映射到 source_type 过滤条件
+    source_filter = None
+    if price_type == "info":
+        source_filter = "government"  # 信息价
+    elif price_type == "market":
+        source_filter = "market"      # 市场价
 
     results = []
     for mat in materials:
@@ -672,9 +687,10 @@ def _do_lookup(materials: list[dict], province: str, city: str,
             continue
 
         # 用 MaterialDB 的查价方法
-        price_info = db.search_price_by_name(
-            name, province=province, spec=spec, target_unit=unit
-        )
+        kwargs = dict(province=province, spec=spec, target_unit=unit)
+        if source_filter:
+            kwargs["source_type"] = source_filter
+        price_info = db.search_price_by_name(name, **kwargs)
 
         if price_info:
             results.append({
@@ -689,10 +705,10 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                 extracted_spec = m.group(0).replace(" ", "")
                 short_name = name[:m.start()].strip()
                 if short_name:
-                    price_info2 = db.search_price_by_name(
-                        short_name, province=province,
-                        spec=extracted_spec, target_unit=unit
-                    )
+                    kwargs2 = dict(province=province, spec=extracted_spec, target_unit=unit)
+                    if source_filter:
+                        kwargs2["source_type"] = source_filter
+                    price_info2 = db.search_price_by_name(short_name, **kwargs2)
                     if price_info2:
                         results.append({
                             **mat,
@@ -819,9 +835,12 @@ async def export_with_prices(body: dict):
         raise HTTPException(400, "file_key 不能为空")
 
     # 找到原文件
-    source_path = _uploaded_files.get(file_key)
-    if not source_path or not Path(source_path).exists():
+    file_info = _uploaded_files.get(file_key)
+    if not file_info or not Path(file_info["path"]).exists():
         raise HTTPException(404, "原始文件不存在或已过期，请重新上传")
+
+    source_path = file_info["path"]
+    original_name = file_info.get("name", "output")  # 原始文件名（不含后缀）
 
     # 复制一份到临时文件（不改原文件）
     import shutil
@@ -837,8 +856,7 @@ async def export_with_prices(body: dict):
         written = await asyncio.to_thread(_do_write_prices, tmp_path, materials)
         logger.info(f"智能填主材导出：写入 {written} 个价格")
 
-        # 生成下载文件名
-        original_name = Path(source_path).stem
+        # 生成下载文件名（用原始文件名，不是临时文件名）
         download_name = f"{original_name}_已填价{suffix}"
 
         return FileResponse(
