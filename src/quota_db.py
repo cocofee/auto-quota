@@ -454,6 +454,16 @@ class QuotaDB:
             book_match = re.match(r'^(\d{1,4})-', quota_id)
         book = book_match.group(1).upper() if book_match else ""
 
+        # 上海等省份的编号格式特殊：03-10-1-240（大类03-册号10-章-序）
+        # 所有定额的第一段都是同一个大类代号（如"03"），无法区分册号
+        # 此时从chapter字段提取册号（如"10_第十册..."→"10"）
+        if book and book.isdigit() and chapter:
+            ch_prefix = chapter.split("_")[0] if "_" in chapter else ""
+            if ch_prefix.isdigit():
+                derived_book = str(int(ch_prefix))  # 去前导0：04→4, 10→10
+                if derived_book != book:
+                    book = derived_book
+
         return {
             "quota_id": quota_id,
             "name": name,
