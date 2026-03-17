@@ -257,7 +257,10 @@ def _is_quota_code(code: str) -> bool:
     if not c:
         return False
     core = c[:-1] if c.endswith("换") else c
-    return bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core)) or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+    # 标准定额编号（C10-1-296）、字母前缀+数字（D00003）、措施费纯数字（991305009）
+    return (bool(re.match(r'^[A-Za-z]?\d{1,2}-\d+', core))
+            or bool(re.match(r'^[A-Za-z]{1,2}\d{4,}$', core))
+            or bool(re.fullmatch(r'\d{9,}', core)))
 
 
 def convert_quantity(bill_qty, bill_unit: str, quota_unit: str):

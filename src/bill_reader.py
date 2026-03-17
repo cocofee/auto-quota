@@ -61,6 +61,9 @@ def _is_material_code(code: str) -> bool:
         return True
     if re.fullmatch(r"\d{7,8}", c):
         return True
+    # 兜底提取的主材行用"主"单字标记
+    if c == "主":
+        return True
     return False
 
 
