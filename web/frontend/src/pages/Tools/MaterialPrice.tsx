@@ -1,25 +1,24 @@
 /**
  * 智能填主材页面
  *
+ * 布局参考新建任务页：顶部紧凑操作栏 + 下方全宽层级预览表
+ *
  * 两种输入方式：
  * 1. 上传Excel（广联达材料表等）
  * 2. 从"我的任务"拉取（套完定额的结果，已含主材）
  *
- * → 选地区自动查价 → 手填补充 → 导出结果
- * 用户手填的价格会贡献到价格库候选层（众包收集）。
- *
- * 预览界面参考套定额结果页：分部标题→清单行→定额行→主材行（层级展示）
+ * → 选地区+价格类型 → 自动查价 → 手填补充 → 导出结果
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Card, Upload, Button, Table, Select, Space, App, Statistic, Row, Col,
-  InputNumber, Tag, Tooltip, Switch, Segmented,
+  InputNumber, Tag, Tooltip, Switch, Segmented, Radio,
 } from 'antd';
 import {
-  InboxOutlined, SearchOutlined, DownloadOutlined, GoldOutlined,
+  InboxOutlined, SearchOutlined, DownloadOutlined,
   QuestionCircleOutlined, UploadOutlined, UnorderedListOutlined,
-  RightOutlined, DownOutlined,
+  RightOutlined, DownOutlined, FileExcelOutlined, DeleteOutlined,
 } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import api from '../../services/api';
@@ -48,7 +47,7 @@ interface RawRow {
   lookup_source?: string | null;
 }
 
-// 前端展示用的扁平行（类似Results页的DisplayRow）
+// 前端展示行
 interface SectionDisplayRow {
   _rowType: 'section';
   _rowKey: string;
@@ -59,7 +58,7 @@ interface BillDisplayRow {
   _rowType: 'bill';
   _rowKey: string;
   _raw: RawRow;
-  _sectionKey: string;  // 所属分部标题的key（折叠用）
+  _sectionKey: string;
 }
 
 interface QuotaDisplayRow {
@@ -74,38 +73,16 @@ interface MaterialDisplayRow {
   _rowKey: string;
   _raw: RawRow;
   _sectionKey: string;
-  // 查价结果（会被 lookup 覆盖）
   lookup_price: number | null;
   lookup_source: string | null;
-  // 用户手填价格
   user_price: number | null;
 }
 
 type DisplayRow = SectionDisplayRow | BillDisplayRow | QuotaDisplayRow | MaterialDisplayRow;
 
-// 省份/城市数据
-interface AreaItem {
-  name: string;
-  count: number;
-}
-
-// 期次数据
-interface PeriodItem {
-  start: string;
-  end: string;
-  count: number;
-  label: string;
-}
-
-// 任务数据
-interface TaskItem {
-  id: string;
-  original_filename: string;
-  province: string;
-  status: string;
-  created_at: string;
-  total_items: number;
-}
+interface AreaItem { name: string; count: number; }
+interface PeriodItem { start: string; end: string; count: number; label: string; }
+interface TaskItem { id: string; original_filename: string; province: string; status: string; created_at: string; total_items: number; }
 
 // ============================================================
 // 工具函数
@@ -116,9 +93,7 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
   const rows: DisplayRow[] = [];
 
   if (!isMixed) {
-    // 纯材料表：直接平铺
-    for (let i = 0; i < allRows.length; i++) {
-      const r = allRows[i];
+    for (const r of allRows) {
       rows.push({
         _rowType: 'material',
         _rowKey: `${r.sheet}-${r.row}`,
@@ -132,48 +107,33 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
     return rows;
   }
 
-  // 混合表（分部分项格式）：按 section→bill→quota→material 层级展示
   let currentSectionKey = '';
-
-  for (let i = 0; i < allRows.length; i++) {
-    const r = allRows[i];
+  for (const r of allRows) {
     const key = `${r.sheet}-${r.row}`;
-
     if (r.type === 'section') {
       currentSectionKey = key;
-      rows.push({
-        _rowType: 'section',
-        _rowKey: key,
-        _title: r.name,
-      });
+      rows.push({ _rowType: 'section', _rowKey: key, _title: r.name });
     } else if (r.type === 'bill') {
-      rows.push({
-        _rowType: 'bill',
-        _rowKey: key,
-        _raw: r,
-        _sectionKey: currentSectionKey,
-      });
+      rows.push({ _rowType: 'bill', _rowKey: key, _raw: r, _sectionKey: currentSectionKey });
     } else if (r.type === 'quota') {
-      rows.push({
-        _rowType: 'quota',
-        _rowKey: key,
-        _raw: r,
-        _sectionKey: currentSectionKey,
-      });
+      rows.push({ _rowType: 'quota', _rowKey: key, _raw: r, _sectionKey: currentSectionKey });
     } else if (r.type === 'material') {
       rows.push({
-        _rowType: 'material',
-        _rowKey: key,
-        _raw: r,
-        _sectionKey: currentSectionKey,
-        lookup_price: r.lookup_price ?? null,
-        lookup_source: r.lookup_source ?? null,
-        user_price: null,
+        _rowType: 'material', _rowKey: key, _raw: r, _sectionKey: currentSectionKey,
+        lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null, user_price: null,
       });
     }
   }
-
   return rows;
+}
+
+/** 从 lookup_source 提取价格类型标签 */
+function priceSourceTag(source: string | null): React.ReactNode {
+  if (!source) return null;
+  if (source.includes('信息价')) return <Tag color="blue" style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>信息价</Tag>;
+  if (source.includes('市场价')) return <Tag color="orange" style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>市场价</Tag>;
+  if (source.includes('用户')) return <Tag color="green" style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>用户</Tag>;
+  return <Tag style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>{source.slice(0, 4)}</Tag>;
 }
 
 // ============================================================
@@ -183,11 +143,11 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
 export default function MaterialPrice() {
   const { message } = App.useApp();
 
-  // 输入模式："upload" 或 "task"
+  // 输入模式
   const [inputMode, setInputMode] = useState<'upload' | 'task'>('upload');
 
   // 文件上传
-  const [file, setFile] = useState<UploadFile[]>([]);
+  const [file, setFile] = useState<UploadFile | null>(null);
   const [parseLoading, setParseLoading] = useState(false);
   const [fileKey, setFileKey] = useState<string>('');
 
@@ -207,6 +167,9 @@ export default function MaterialPrice() {
   const [selectedProvince, setSelectedProvince] = useState<string>('');
   const [selectedCity, setSelectedCity] = useState<string>('');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
+
+  // 价格类型：all=不限, info=信息价, market=市场价
+  const [priceType, setPriceType] = useState<string>('all');
 
   // 查价状态
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -234,26 +197,17 @@ export default function MaterialPrice() {
     }).catch(() => {});
   }, []);
 
-  // 省份变化 → 加载城市
+  // 省份变化 → 加载城市+期次
   useEffect(() => {
-    if (!selectedProvince) {
-      setCities([]);
-      setPeriods([]);
-      return;
-    }
-    setCities([]);
-    setPeriods([]);
-    setSelectedCity('');
-    setSelectedPeriod('');
+    if (!selectedProvince) { setCities([]); setPeriods([]); return; }
+    setCities([]); setPeriods([]); setSelectedCity(''); setSelectedPeriod('');
     api.get('/tools/material-price/cities', { params: { province: selectedProvince } })
-      .then(res => setCities(res.data.cities || []))
-      .catch(() => {});
+      .then(res => setCities(res.data.cities || [])).catch(() => {});
     api.get('/tools/material-price/periods', { params: { province: selectedProvince } })
-      .then(res => setPeriods(res.data.periods || []))
-      .catch(() => {});
+      .then(res => setPeriods(res.data.periods || [])).catch(() => {});
   }, [selectedProvince]);
 
-  // 城市变化 → 加载期次
+  // 城市变化 → 刷新期次
   useEffect(() => {
     if (!selectedProvince || !selectedCity) return;
     api.get('/tools/material-price/periods', {
@@ -264,7 +218,7 @@ export default function MaterialPrice() {
     }).catch(() => {});
   }, [selectedCity, selectedProvince]);
 
-  // 从 displayRows 中提取所有主材行
+  // 主材行
   const materialRows = useMemo(() =>
     displayRows.filter((r): r is MaterialDisplayRow => r._rowType === 'material'),
     [displayRows],
@@ -272,13 +226,9 @@ export default function MaterialPrice() {
 
   // 上传解析Excel
   const handleParse = async () => {
-    if (!file.length) {
-      message.warning('请先上传Excel文件');
-      return;
-    }
+    if (!file) { message.warning('请先上传Excel文件'); return; }
     const formData = new FormData();
-    formData.append('file', file[0].originFileObj as File);
-
+    formData.append('file', file.originFileObj as File);
     setParseLoading(true);
     try {
       const res = await api.post('/tools/material-price/parse', formData, {
@@ -299,12 +249,9 @@ export default function MaterialPrice() {
     }
   };
 
-  // 从任务拉取主材
+  // 从任务拉取
   const handleTaskPull = async () => {
-    if (!selectedTaskId) {
-      message.warning('请先选择一个任务');
-      return;
-    }
+    if (!selectedTaskId) { message.warning('请先选择一个任务'); return; }
     setTaskLoading(true);
     try {
       const res = await api.get(`/tools/material-price/from-task/${selectedTaskId}`);
@@ -325,40 +272,27 @@ export default function MaterialPrice() {
 
   // 批量查价
   const handleLookup = async () => {
-    if (!materialRows.length) {
-      message.warning('请先获取主材数据');
-      return;
-    }
-    if (!selectedProvince) {
-      message.warning('请先选择省份');
-      return;
-    }
-
+    if (!materialRows.length) { message.warning('请先获取主材数据'); return; }
+    if (!selectedProvince) { message.warning('请先选择省份'); return; }
     setLookupLoading(true);
     try {
       const res = await api.post('/tools/material-price/lookup', {
         materials: materialRows.map(m => ({
-          name: m._raw.name,
-          spec: m._raw.spec || '',
-          unit: m._raw.unit || '',
+          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
         })),
         province: selectedProvince,
         city: selectedCity,
         period_end: selectedPeriod,
+        price_type: priceType,
       });
       const results = res.data.results || [];
-      // 把查价结果更新到 displayRows 中的主材行
       setDisplayRows(prev => {
         let matIdx = 0;
         return prev.map(row => {
           if (row._rowType === 'material') {
             const r = results[matIdx] || {};
             matIdx++;
-            return {
-              ...row,
-              lookup_price: r.lookup_price ?? null,
-              lookup_source: r.lookup_source ?? null,
-            };
+            return { ...row, lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null };
           }
           return row;
         });
@@ -376,89 +310,58 @@ export default function MaterialPrice() {
   const handleUserPrice = useCallback((rowKey: string, price: number | null) => {
     setDisplayRows(prev =>
       prev.map(r =>
-        r._rowType === 'material' && r._rowKey === rowKey
-          ? { ...r, user_price: price }
-          : r
+        r._rowType === 'material' && r._rowKey === rowKey ? { ...r, user_price: price } : r
       ),
     );
   }, []);
 
-  // 提交用户贡献 + 导出
+  // 导出
   const handleExport = async () => {
-    // 先贡献用户手填的价格
     if (contributeEnabled) {
       const userItems = materialRows
         .filter(m => m.user_price != null && m.user_price > 0)
         .map(m => ({
-          name: m._raw.name,
-          spec: m._raw.spec || '',
-          unit: m._raw.unit || '',
-          price: m.user_price,
-          province: selectedProvince,
-          city: selectedCity,
+          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
+          price: m.user_price, province: selectedProvince, city: selectedCity,
         }));
-
       if (userItems.length > 0) {
         try {
           await api.post('/tools/material-price/contribute', { items: userItems });
           message.success(`已贡献 ${userItems.length} 条价格数据`);
-        } catch {
-          // 贡献失败不影响导出
-        }
+        } catch { /* 贡献失败不影响导出 */ }
       }
     }
-
-    // 写回原Excel
     if (fileKey) {
-      await _exportWriteBack();
+      const exportMaterials = materialRows
+        .map(m => {
+          const finalPrice = m.user_price ?? m.lookup_price ?? null;
+          if (finalPrice == null || m._raw.price_col == null) return null;
+          return { row: m._raw.row, sheet: m._raw.sheet, price_col: m._raw.price_col, final_price: finalPrice };
+        }).filter(Boolean);
+      try {
+        const res = await api.post('/tools/material-price/export', {
+          file_key: fileKey, materials: exportMaterials,
+        }, { responseType: 'blob' });
+        const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const disposition = res.headers['content-disposition'] || '';
+        const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+        const filename = match ? decodeURIComponent(match[1]) : '已填价.xlsx';
+        a.href = url;
+        a.download = filename;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        message.success(`导出成功，已写入 ${exportMaterials.length} 个主材价格`);
+      } catch (err) {
+        message.error(getErrorMessage(err, '导出失败'));
+      }
     } else {
       message.error('文件丢失，请重新上传或拉取');
     }
   };
 
-  // 把价格写回原Excel的主材行单价列
-  const _exportWriteBack = async () => {
-    const exportMaterials = materialRows
-      .map(m => {
-        const finalPrice = m.user_price ?? m.lookup_price ?? null;
-        if (finalPrice == null || m._raw.price_col == null) return null;
-        return {
-          row: m._raw.row,
-          sheet: m._raw.sheet,
-          price_col: m._raw.price_col,
-          final_price: finalPrice,
-        };
-      })
-      .filter(Boolean);
-
-    try {
-      const res = await api.post('/tools/material-price/export', {
-        file_key: fileKey,
-        materials: exportMaterials,
-      }, {
-        responseType: 'blob',
-      });
-
-      // 下载文件
-      const blob = new Blob([res.data], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const disposition = res.headers['content-disposition'] || '';
-      const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-      const filename = match ? decodeURIComponent(match[1]) : '已填价.xlsx';
-      a.href = url;
-      a.download = filename;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      message.success(`导出成功，已写入 ${exportMaterials.length} 个主材价格`);
-    } catch (err) {
-      message.error(getErrorMessage(err, '导出失败'));
-    }
-  };
-
-  // 折叠/展开分部
+  // 折叠/展开
   const toggleSection = useCallback((sectionKey: string) => {
     setCollapsedSections(prev => {
       const next = new Set(prev);
@@ -468,12 +371,10 @@ export default function MaterialPrice() {
     });
   }, []);
 
-  // 根据折叠状态过滤可见行
   const visibleRows = useMemo(() => {
-    if (!isMixed) return displayRows;  // 纯材料表不折叠
+    if (!isMixed) return displayRows;
     return displayRows.filter(row => {
       if (row._rowType === 'section') return true;
-      // 非标题行：所属分部未折叠时才显示
       const secKey = (row as BillDisplayRow | QuotaDisplayRow | MaterialDisplayRow)._sectionKey;
       return !secKey || !collapsedSections.has(secKey);
     });
@@ -485,7 +386,6 @@ export default function MaterialPrice() {
   const userFilledCount = materialRows.filter(m => m.user_price != null).length;
   const emptyCount = totalMaterials - foundCount - userFilledCount;
 
-  // 每个分部的主材条数（折叠时显示）
   const sectionMatCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const row of displayRows) {
@@ -496,19 +396,30 @@ export default function MaterialPrice() {
     return counts;
   }, [displayRows]);
 
+  // 当前选中的任务名称
+  const selectedTaskName = useMemo(() => {
+    const t = tasks.find(t => t.id === selectedTaskId);
+    return t ? t.original_filename : '';
+  }, [tasks, selectedTaskId]);
+
+  // 文件信息展示
+  const hasData = displayRows.length > 0;
+  const dataSourceName = inputMode === 'upload'
+    ? (file?.name || '')
+    : (selectedTaskName || '');
+
   // ============================================================
   // 表格列定义
   // ============================================================
 
   const columns = [
-    // 第一列：状态/标题
     {
       title: '状态',
       key: 'status',
       width: 80,
       onCell: (row: DisplayRow) => {
         if (row._rowType === 'section') {
-          return { colSpan: 7, style: { textAlign: 'left' as const, paddingLeft: 12 } };
+          return { colSpan: 9, style: { textAlign: 'left' as const, paddingLeft: 12 } };
         }
         return {};
       },
@@ -517,12 +428,7 @@ export default function MaterialPrice() {
           const isCollapsed = collapsedSections.has(row._rowKey);
           const matCount = sectionMatCounts[row._rowKey] || 0;
           return (
-            <span style={{
-              fontWeight: 'bold',
-              fontSize: 13,
-              color: '#1565C0',
-              userSelect: 'none',
-            }}>
+            <span style={{ fontWeight: 'bold', fontSize: 13, color: '#1565C0', userSelect: 'none' }}>
               {isCollapsed
                 ? <RightOutlined style={{ fontSize: 10, marginRight: 6 }} />
                 : <DownOutlined style={{ fontSize: 10, marginRight: 6 }} />}
@@ -546,7 +452,6 @@ export default function MaterialPrice() {
         return null;
       },
     },
-    // 编码列
     {
       title: '编码',
       key: 'code',
@@ -554,53 +459,69 @@ export default function MaterialPrice() {
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') return null;
-        if (row._rowType === 'bill') {
-          return <span style={{ fontSize: 12 }}>{row._raw.code || ''}</span>;
-        }
-        if (row._rowType === 'quota') {
-          return <Tag color="blue" style={{ margin: 0 }}>{row._raw.code || ''}</Tag>;
-        }
-        // 主材行
+        if (row._rowType === 'bill') return <span style={{ fontSize: 12 }}>{row._raw.code || ''}</span>;
+        if (row._rowType === 'quota') return <Tag color="blue" style={{ margin: 0 }}>{row._raw.code || ''}</Tag>;
         const code = row._raw.code || '';
         return code === '主' ? <Tag color="gold">主</Tag> : <span style={{ fontSize: 12, color: '#999' }}>{code}</span>;
       },
     },
-    // 名称列
     {
       title: '名称',
       key: 'name',
+      width: 200,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') return null;
-        if (row._rowType === 'bill') {
-          return <span style={{ fontWeight: 500 }}>{row._raw.name}</span>;
-        }
+        if (row._rowType === 'bill') return <span style={{ fontWeight: 500 }}>{row._raw.name}</span>;
         if (row._rowType === 'quota') {
-          return (
-            <span style={{ fontSize: 13, color: '#555', paddingLeft: 8 }}>
-              {row._raw.name}
-            </span>
-          );
+          return <span style={{ fontSize: 13, color: '#555', paddingLeft: 8 }}>{row._raw.name}</span>;
         }
-        // 主材行：加缩进+金色标记
         return (
           <span style={{ paddingLeft: 16 }}>
             <span style={{ color: '#d97706', marginRight: 4 }}>◆</span>
             {row._raw.name}
             {row._raw.spec && (
-              <span style={{ color: '#94a3b8', marginLeft: 6, fontSize: 12 }}>
-                {row._raw.spec}
-              </span>
+              <span style={{ color: '#94a3b8', marginLeft: 6, fontSize: 12 }}>{row._raw.spec}</span>
             )}
           </span>
         );
       },
     },
-    // 单位
+    // 项目特征（只在清单行显示）
+    {
+      title: '项目特征',
+      key: 'desc',
+      width: 240,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+      render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType !== 'bill') return null;
+        const desc = row._raw.desc;
+        if (!desc) return <span style={{ color: '#ccc' }}>-</span>;
+        let lines = desc.split(/[\r\n]+/).map((s: string) => s.trim()).filter(Boolean);
+        if (lines.length <= 1 && /\d+[.、．]/.test(desc)) {
+          lines = desc.split(/(?=\d+[.、．])/).map((s: string) => s.trim()).filter(Boolean);
+        }
+        const filtered = lines.filter((line: string) => {
+          const clean = line.replace(/^\d+[.、．]\s*/, '');
+          if (!clean.trim()) return false;
+          if (/详见图纸|详见设计|按图施工|按规范/.test(clean)) return false;
+          if (/^其他[：:]\s*(详见|见|按|\/|无|—|-)\s*/.test(clean)) return false;
+          return true;
+        });
+        if (filtered.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+        return (
+          <Tooltip title={filtered.join('\n')}>
+            <div style={{ fontSize: 12, lineHeight: '1.5', maxHeight: 60, overflow: 'hidden' }}>
+              {filtered.map((line: string, idx: number) => <div key={idx}>{line}</div>)}
+            </div>
+          </Tooltip>
+        );
+      },
+    },
     {
       title: '单位',
       key: 'unit',
-      width: 60,
+      width: 55,
       align: 'center' as const,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
@@ -608,7 +529,6 @@ export default function MaterialPrice() {
         return (row as BillDisplayRow | QuotaDisplayRow | MaterialDisplayRow)._raw?.unit || '';
       },
     },
-    // 数量
     {
       title: '数量',
       key: 'qty',
@@ -621,11 +541,11 @@ export default function MaterialPrice() {
         return qty != null ? qty : '—';
       },
     },
-    // 系统查价（只在主材行显示）
+    // 系统查价（带信息价/市场价标识）
     {
       title: '系统查价',
       key: 'lookup_price',
-      width: 110,
+      width: 140,
       align: 'right' as const,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
@@ -633,17 +553,16 @@ export default function MaterialPrice() {
         const v = row.lookup_price;
         if (v != null) {
           return (
-            <Tooltip title={row.lookup_source || ''}>
-              <span style={{ color: '#2563eb', fontWeight: 500 }}>
-                {v.toFixed(2)}
-              </span>
-            </Tooltip>
+            <Space size={4}>
+              {priceSourceTag(row.lookup_source)}
+              <span style={{ color: '#2563eb', fontWeight: 500 }}>{v.toFixed(2)}</span>
+            </Space>
           );
         }
         return <span style={{ color: '#ccc' }}>—</span>;
       },
     },
-    // 手填价格（只在主材行显示）
+    // 手填价格
     {
       title: (
         <span>
@@ -659,10 +578,7 @@ export default function MaterialPrice() {
         if (row._rowType !== 'material') return null;
         return (
           <InputNumber
-            size="small"
-            min={0}
-            step={0.01}
-            placeholder="手填"
+            size="small" min={0} step={0.01} placeholder="手填"
             value={row.user_price}
             onChange={(val) => handleUserPrice(row._rowKey, val)}
             style={{ width: '100%' }}
@@ -677,224 +593,214 @@ export default function MaterialPrice() {
   // ============================================================
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-      {/* 页面标题 */}
-      <Card style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <GoldOutlined style={{ fontSize: 24, color: '#d97706' }} />
-          <div>
-            <h2 style={{ margin: 0 }}>智能填主材</h2>
-            <span style={{ color: '#64748b' }}>
-              上传材料表或从已有任务拉取 → 选地区自动查价 → 手动补充 → 导出结果
-            </span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: 'calc(100vh - 80px)', padding: '0 16px' }}>
+
+      {/* ========== 顶部：紧凑操作栏 ========== */}
+      <Card styles={{ body: { padding: '12px 20px' } }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+
+          {/* 数据来源切换 */}
+          <Segmented
+            value={inputMode}
+            onChange={v => {
+              setInputMode(v as 'upload' | 'task');
+              setDisplayRows([]);
+              setFile(null);
+              setSelectedTaskId('');
+            }}
+            options={[
+              { value: 'upload', label: '上传文件', icon: <UploadOutlined /> },
+              { value: 'task', label: '从任务拉取', icon: <UnorderedListOutlined /> },
+            ]}
+            size="small"
+          />
+
+          {/* 文件/任务选择 */}
+          {inputMode === 'upload' ? (
+            <>
+              {file ? (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, height: 32,
+                  border: '1px solid #91caff', borderRadius: 6, padding: '0 12px', background: '#e6f4ff',
+                }}>
+                  <FileExcelOutlined style={{ fontSize: 16, color: '#52c41a' }} />
+                  <span style={{ fontSize: 13, fontWeight: 500, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {file.name}
+                  </span>
+                  <span style={{ fontSize: 11, color: '#888' }}>
+                    {((file.size || 0) / 1024).toFixed(0)} KB
+                  </span>
+                  <DeleteOutlined
+                    style={{ fontSize: 12, color: '#ff4d4f', cursor: 'pointer' }}
+                    onClick={() => { setFile(null); setDisplayRows([]); }}
+                  />
+                </div>
+              ) : (
+                <Upload
+                  maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+                  beforeUpload={(f) => {
+                    if (!f.name.endsWith('.xlsx') && !f.name.endsWith('.xls')) {
+                      message.error('只支持Excel文件');
+                      return Upload.LIST_IGNORE;
+                    }
+                    setFile({ uid: Date.now().toString(), name: f.name, size: f.size, originFileObj: f } as UploadFile);
+                    setDisplayRows([]);
+                    return false;
+                  }}
+                >
+                  <Button icon={<InboxOutlined />} size="middle">选择文件</Button>
+                </Upload>
+              )}
+              <Button
+                type="primary" size="middle"
+                loading={parseLoading} disabled={!file}
+                onClick={handleParse}
+              >
+                识别主材
+              </Button>
+            </>
+          ) : (
+            <>
+              <Select
+                style={{ width: 360 }}
+                placeholder="选择已完成的套定额任务"
+                value={selectedTaskId || undefined}
+                onChange={v => setSelectedTaskId(v)}
+                showSearch optionFilterProp="label" size="middle"
+                options={tasks.map(t => ({
+                  value: t.id,
+                  label: `${t.original_filename}（${t.province || ''}，${t.total_items || 0}条）`,
+                }))}
+              />
+              <Button
+                type="primary" size="middle"
+                loading={taskLoading} disabled={!selectedTaskId}
+                onClick={handleTaskPull}
+              >
+                拉取主材
+              </Button>
+            </>
+          )}
+
+          {/* 分隔线 */}
+          <div style={{ width: 1, height: 20, background: '#e8e8e8' }} />
+
+          {/* 地区选择 */}
+          <Select
+            style={{ width: 120 }}
+            placeholder="省份" size="middle"
+            value={selectedProvince || undefined}
+            onChange={v => setSelectedProvince(v)}
+            showSearch optionFilterProp="label"
+            options={provinces.map(p => ({ value: p.name, label: p.name }))}
+          />
+          <Select
+            style={{ width: 100 }}
+            placeholder="城市" size="middle" allowClear
+            value={selectedCity || undefined}
+            onChange={v => setSelectedCity(v || '')}
+            disabled={!selectedProvince}
+            showSearch optionFilterProp="label"
+            options={cities.map(c => ({ value: c.name, label: c.name }))}
+          />
+          <Select
+            style={{ width: 140 }}
+            placeholder="期次" size="middle" allowClear
+            value={selectedPeriod || undefined}
+            onChange={v => setSelectedPeriod(v || '')}
+            disabled={!selectedProvince}
+            options={periods.map(p => ({ value: p.end, label: p.label }))}
+          />
+
+          {/* 价格类型 */}
+          <Radio.Group
+            value={priceType}
+            onChange={e => setPriceType(e.target.value)}
+            optionType="button" buttonStyle="solid" size="middle"
+          >
+            <Radio.Button value="all">不限</Radio.Button>
+            <Radio.Button value="info">信息价</Radio.Button>
+            <Radio.Button value="market">市场价</Radio.Button>
+          </Radio.Group>
+
+          {/* 查价按钮 */}
+          <Button
+            type="primary" icon={<SearchOutlined />} size="middle"
+            loading={lookupLoading}
+            disabled={!materialRows.length || !selectedProvince}
+            onClick={handleLookup}
+          >
+            开始查价
+          </Button>
+
+          {/* 右侧统计 + 操作 */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            {hasData && (
+              <span style={{ fontSize: 12, color: '#666' }}>
+                主材 <b>{totalMaterials}</b>条
+                {foundCount > 0 && <span style={{ color: '#2563eb' }}> · 查到 {foundCount}</span>}
+                {userFilledCount > 0 && <span style={{ color: '#16a34a' }}> · 手填 {userFilledCount}</span>}
+                {emptyCount > 0 && <span style={{ color: '#dc2626' }}> · 待填 {emptyCount}</span>}
+              </span>
+            )}
+            {hasData && (
+              <>
+                <Tooltip title="开启后，你手填的价格会贡献到系统价格库">
+                  <Switch
+                    checked={contributeEnabled}
+                    onChange={setContributeEnabled}
+                    checkedChildren="贡献" unCheckedChildren="不贡献"
+                    size="small"
+                  />
+                </Tooltip>
+                <Button type="primary" icon={<DownloadOutlined />} size="middle" onClick={handleExport}>
+                  导出Excel
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </Card>
 
-      {/* 数据来源 + 地区选择 */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={10}>
-          <Card
-            size="small"
-            title={
-              <Segmented
-                value={inputMode}
-                onChange={v => {
-                  setInputMode(v as 'upload' | 'task');
-                  setDisplayRows([]);
-                }}
-                options={[
-                  { value: 'upload', label: '上传文件', icon: <UploadOutlined /> },
-                  { value: 'task', label: '从任务拉取', icon: <UnorderedListOutlined /> },
-                ]}
-                size="small"
-              />
-            }
+      {/* ========== 未加载数据时：拖拽上传区 ========== */}
+      {!hasData && inputMode === 'upload' && !file && (
+        <Card style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Dragger
+            fileList={[]} maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+            style={{ padding: '40px 80px' }}
+            beforeUpload={(f) => {
+              if (!f.name.endsWith('.xlsx') && !f.name.endsWith('.xls')) {
+                message.error('只支持Excel文件');
+                return Upload.LIST_IGNORE;
+              }
+              setFile({ uid: Date.now().toString(), name: f.name, size: f.size, originFileObj: f } as UploadFile);
+              return false;
+            }}
           >
-            {inputMode === 'upload' ? (
-              <>
-                <Dragger
-                  fileList={file}
-                  maxCount={1}
-                  accept=".xlsx,.xls"
-                  beforeUpload={() => false}
-                  onChange={({ fileList }) => {
-                    setFile(fileList.slice(-1));
-                    setDisplayRows([]);
-                  }}
-                  style={{ padding: '12px 0' }}
-                >
-                  <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                  <p className="ant-upload-text">上传材料表或套完定额的Excel</p>
-                </Dragger>
-                <Button
-                  block
-                  type="primary"
-                  style={{ marginTop: 12 }}
-                  loading={parseLoading}
-                  disabled={!file.length}
-                  onClick={handleParse}
-                >
-                  识别主材
-                </Button>
-              </>
-            ) : (
-              <>
-                <div style={{ marginBottom: 8, color: '#475569', fontSize: 13 }}>
-                  选择已完成的套定额任务
-                </div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择任务"
-                  value={selectedTaskId || undefined}
-                  onChange={v => setSelectedTaskId(v)}
-                  showSearch
-                  optionFilterProp="label"
-                  options={tasks.map(t => ({
-                    value: t.id,
-                    label: `${t.original_filename}（${t.province || ''}，${t.total_items || 0}条）`,
-                  }))}
-                />
-                <Button
-                  block
-                  type="primary"
-                  style={{ marginTop: 12 }}
-                  loading={taskLoading}
-                  disabled={!selectedTaskId}
-                  onClick={handleTaskPull}
-                >
-                  拉取主材
-                </Button>
-              </>
-            )}
-          </Card>
-        </Col>
-        <Col span={14}>
-          <Card title="选择地区" size="small">
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <div>
-                <div style={{ marginBottom: 4, color: '#475569', fontSize: 13 }}>省份</div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择省份"
-                  value={selectedProvince || undefined}
-                  onChange={v => setSelectedProvince(v)}
-                  showSearch
-                  optionFilterProp="label"
-                  options={provinces.map(p => ({
-                    value: p.name,
-                    label: `${p.name}（${p.count}条）`,
-                  }))}
-                />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, color: '#475569', fontSize: 13 }}>
-                  城市 <span style={{ color: '#94a3b8' }}>（可选）</span>
-                </div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择城市（不选则查全省）"
-                  value={selectedCity || undefined}
-                  onChange={v => setSelectedCity(v || '')}
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  disabled={!selectedProvince}
-                  options={cities.map(c => ({
-                    value: c.name,
-                    label: `${c.name}（${c.count}条）`,
-                  }))}
-                />
-              </div>
-              <div>
-                <div style={{ marginBottom: 4, color: '#475569', fontSize: 13 }}>
-                  期次 <span style={{ color: '#94a3b8' }}>（不选则用最新价格）</span>
-                </div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择期次"
-                  value={selectedPeriod || undefined}
-                  onChange={v => setSelectedPeriod(v || '')}
-                  allowClear
-                  disabled={!selectedProvince}
-                  options={periods.map(p => ({
-                    value: p.end,
-                    label: `${p.label}（${p.count}条）`,
-                  }))}
-                />
-              </div>
-              <Button
-                type="primary"
-                icon={<SearchOutlined />}
-                block
-                loading={lookupLoading}
-                disabled={!materialRows.length || !selectedProvince}
-                onClick={handleLookup}
-              >
-                开始查价
-              </Button>
-            </Space>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 统计 */}
-      {totalMaterials > 0 && (
-        <Card style={{ marginBottom: 16 }}>
-          <Row gutter={24}>
-            <Col flex="1">
-              <Statistic title="主材总数" value={totalMaterials} suffix="条" />
-            </Col>
-            <Col flex="1">
-              <Statistic
-                title="系统查到"
-                value={foundCount}
-                valueStyle={{ color: '#2563eb' }}
-              />
-            </Col>
-            <Col flex="1">
-              <Statistic
-                title="用户手填"
-                value={userFilledCount}
-                valueStyle={{ color: '#16a34a' }}
-              />
-            </Col>
-            <Col flex="1">
-              <Statistic
-                title="待填写"
-                value={emptyCount > 0 ? emptyCount : 0}
-                valueStyle={{ color: emptyCount > 0 ? '#dc2626' : '#16a34a' }}
-              />
-            </Col>
-          </Row>
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">拖拽材料表或套完定额的Excel到此处</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls</p>
+          </Dragger>
         </Card>
       )}
 
-      {/* 层级预览表格 */}
-      {displayRows.length > 0 && (
+      {/* ========== 数据表格 ========== */}
+      {hasData && (
         <Card
-          title={`主材列表（${totalMaterials}条主材，共${displayRows.length}行）`}
-          style={{ marginBottom: 16 }}
-          extra={
-            <Space>
-              <Tooltip title="开启后，你手填的价格会贡献到系统价格库，帮助其他用户">
-                <Switch
-                  checked={contributeEnabled}
-                  onChange={setContributeEnabled}
-                  checkedChildren="贡献价格"
-                  unCheckedChildren="不贡献"
-                />
-              </Tooltip>
-              <Tooltip title="把价格写回原Excel的主材行单价列">
-                <Button
-                  type="primary"
-                  icon={<DownloadOutlined />}
-                  onClick={handleExport}
-                >
-                  导出Excel
-                </Button>
-              </Tooltip>
-            </Space>
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+          styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' } }}
+          title={
+            <span style={{ fontSize: 14 }}>
+              {dataSourceName && (
+                <span style={{ marginRight: 8 }}>
+                  <FileExcelOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                  {dataSourceName}
+                </span>
+              )}
+              <span style={{ color: '#888', fontWeight: 'normal' }}>
+                {totalMaterials}条主材 · 共{displayRows.length}行
+              </span>
+            </span>
           }
         >
           {/* 视觉样式 */}
@@ -940,36 +846,22 @@ export default function MaterialPrice() {
             columns={columns}
             size="small"
             pagination={{ pageSize: 100, showSizeChanger: true, pageSizeOptions: ['50', '100', '200'] }}
-            scroll={{ y: 600 }}
+            scroll={{ x: 1300 }}
             onRow={(row: DisplayRow) => {
               if (row._rowType === 'section') {
                 return {
                   className: 'section-row',
-                  style: {
-                    backgroundColor: '#BBDEFB',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                  },
+                  style: { backgroundColor: '#BBDEFB', fontWeight: 'bold', cursor: 'pointer' },
                   onClick: () => toggleSection(row._rowKey),
                 };
               }
               if (row._rowType === 'bill') {
-                return {
-                  className: 'bill-row',
-                  style: { backgroundColor: '#F5F5F5', fontWeight: 500 },
-                };
+                return { className: 'bill-row', style: { backgroundColor: '#F5F5F5', fontWeight: 500 } };
               }
               if (row._rowType === 'quota') {
-                return {
-                  className: 'quota-row',
-                  style: { backgroundColor: '#FAFAFA', fontSize: 13 },
-                };
+                return { className: 'quota-row', style: { backgroundColor: '#FAFAFA', fontSize: 13 } };
               }
-              // 主材行
-              return {
-                className: 'mat-row',
-                style: { backgroundColor: '#FFFBEB', fontSize: 13 },
-              };
+              return { className: 'mat-row', style: { backgroundColor: '#FFFBEB', fontSize: 13 } };
             }}
             locale={{ emptyText: '暂无数据' }}
           />
