@@ -825,6 +825,37 @@ export default function ResultsPage() {
                 >
                   一键确认高置信度
                 </Button>
+                {/* 按颜色全选 */}
+                <Button
+                  size="small"
+                  style={{ color: COLORS.greenSolid, borderColor: COLORS.greenSolid }}
+                  onClick={() => {
+                    const ids = results.filter(r => r.confidence >= GREEN_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    setSelectedRowKeys(ids);
+                  }}
+                >
+                  选绿灯({summary.high_confidence})
+                </Button>
+                <Button
+                  size="small"
+                  style={{ color: COLORS.yellowSolid, borderColor: COLORS.yellowSolid }}
+                  onClick={() => {
+                    const ids = results.filter(r => r.confidence >= YELLOW_THRESHOLD && r.confidence < GREEN_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    setSelectedRowKeys(ids);
+                  }}
+                >
+                  选黄灯({summary.mid_confidence})
+                </Button>
+                <Button
+                  size="small"
+                  style={{ color: COLORS.redSolid, borderColor: COLORS.redSolid }}
+                  onClick={() => {
+                    const ids = results.filter(r => r.confidence < YELLOW_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    setSelectedRowKeys(ids);
+                  }}
+                >
+                  选红灯({summary.low_confidence})
+                </Button>
                 {selectedRowKeys.length > 0 && (
                   <Button
                     type="primary"

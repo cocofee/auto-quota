@@ -279,6 +279,23 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
         <span style={{ color: '#999' }}>{(page - 1) * pageSize + index + 1}</span>
       ),
     },
+    // 类型标签列（彩色胶囊，文档06章）
+    {
+      title: '类型',
+      key: 'task_type',
+      width: 80,
+      render: () => (
+        <Tag style={{
+          color: '#16a34a',
+          borderColor: '#16a34a',
+          background: '#16a34a10',
+          fontWeight: 500,
+          margin: 0,
+        }}>
+          套定额
+        </Tag>
+      ),
+    },
     {
       title: '任务名称',
       dataIndex: 'name',
