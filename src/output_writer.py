@@ -1305,16 +1305,7 @@ class OutputWriter:
         cell_f.alignment = Alignment(horizontal="right", vertical="center",
                                      wrap_text=True)
 
-        # G列(qty_col+1)：单价 — 从价格库查询填入（自动单位换算）
-        price_col = qty_col + 1
-        mat_name = material.get("name", "")
-        mat_price = _get_material_price(
-            mat_name, spec=material.get("spec", ""), unit=mat_unit)
-        if mat_price is not None:
-            cell_price = ws.cell(row=m_row, column=price_col, value=round(mat_price, 2))
-            cell_price.font = GLD_FONT
-            cell_price.alignment = Alignment(horizontal="right", vertical="center")
-            cell_price.number_format = '0.00'
+        # G列(qty_col+1)：单价 — 套定额阶段不填，留给"智能填主材"功能填写
 
         # 所有列统一 thin 边框 + 宋体9号（覆盖到额外列末尾）
         for col in range(1, extra_start + 6):  # A列到主材列

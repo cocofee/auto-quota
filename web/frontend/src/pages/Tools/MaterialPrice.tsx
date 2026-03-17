@@ -34,6 +34,7 @@ interface MaterialRow {
   unit: string;
   qty: number | null;
   existing_price: number | null;
+  price_col: number | null;     // 价格列位置（export写回用）
   lookup_price: number | null;
   lookup_source: string | null;
   user_price?: number | null;
@@ -72,6 +73,7 @@ export default function MaterialPrice() {
   // 文件上传
   const [file, setFile] = useState<UploadFile[]>([]);
   const [parseLoading, setParseLoading] = useState(false);
+  const [fileKey, setFileKey] = useState<string>('');  // parse返回的文件标识，export时回传
 
   // 任务拉取
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -162,6 +164,7 @@ export default function MaterialPrice() {
         user_price: null,
       }));
       setMaterials(mats);
+      setFileKey(res.data.file_key || '');
       message.success(`识别出 ${mats.length} 条主材`);
     } catch (err) {
       message.error(getErrorMessage(err, '解析失败'));
@@ -185,6 +188,7 @@ export default function MaterialPrice() {
       }));
       setMaterials(mats);
       setTaskSourceName(res.data.task_name || '');
+      setFileKey(res.data.file_key || '');
       message.success(`从任务中拉取到 ${mats.length} 条主材`);
     } catch (err) {
       message.error(getErrorMessage(err, '拉取失败'));
@@ -242,6 +246,7 @@ export default function MaterialPrice() {
 
   // 提交用户贡献 + 导出
   const handleExport = async () => {
+    // 先贡献用户手填的价格
     if (contributeEnabled) {
       const userItems = materials
         .filter(m => m.user_price != null && m.user_price > 0)
@@ -264,38 +269,51 @@ export default function MaterialPrice() {
       }
     }
 
-    try {
-      const { utils: xlsxUtils, writeFile: xlsxWriteFile } = await import('xlsx');
-      const rows = materials.map(m => {
-        const finalPrice = m.user_price ?? m.lookup_price ?? m.existing_price;
+    // 两种模式都写回原Excel
+    if (fileKey) {
+      await _exportWriteBack();
+    } else {
+      message.error('文件丢失，请重新上传或拉取');
+    }
+  };
+
+  // 从任务拉取模式：把价格写回原Excel的主材行单价列
+  const _exportWriteBack = async () => {
+    const exportMaterials = materials
+      .map(m => {
+        const finalPrice = m.user_price ?? m.lookup_price ?? null;
+        if (finalPrice == null || m.price_col == null) return null;
         return {
-          '工作表': m.sheet,
-          '行号': m.row,
-          '编码': m.code,
-          '名称': m.name,
-          '规格': m.spec,
-          '单位': m.unit,
-          '数量': m.qty,
-          '单价': finalPrice,
-          '价格来源': m.user_price != null ? '手填'
-            : m.lookup_price != null ? (m.lookup_source || '系统查价')
-            : m.existing_price != null ? '原有'
-            : '',
+          row: m.row,
+          sheet: m.sheet,
+          price_col: m.price_col,
+          final_price: finalPrice,
         };
+      })
+      .filter(Boolean);
+
+    try {
+      const res = await api.post('/tools/material-price/export', {
+        file_key: fileKey,
+        materials: exportMaterials,
+      }, {
+        responseType: 'blob',
       });
 
-      const ws = xlsxUtils.json_to_sheet(rows);
-      ws['!cols'] = [
-        { wch: 12 }, { wch: 6 }, { wch: 15 }, { wch: 30 },
-        { wch: 15 }, { wch: 6 }, { wch: 10 }, { wch: 12 }, { wch: 15 },
-      ];
-      const wb = xlsxUtils.book_new();
-      xlsxUtils.book_append_sheet(wb, ws, '主材价格');
-      const baseName = inputMode === 'upload'
-        ? (file[0]?.name?.replace(/\.[^.]+$/, '') || '主材')
-        : (taskSourceName || '任务主材');
-      xlsxWriteFile(wb, `${baseName}_已填价.xlsx`);
-      message.success('导出成功');
+      // 下载文件
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const disposition = res.headers['content-disposition'] || '';
+      const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+      const filename = match ? decodeURIComponent(match[1]) : '已填价.xlsx';
+      a.href = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      message.success(`导出成功，已写入 ${exportMaterials.length} 个主材价格`);
     } catch (err) {
       message.error(getErrorMessage(err, '导出失败'));
     }
@@ -599,13 +617,15 @@ export default function MaterialPrice() {
                   unCheckedChildren="不贡献"
                 />
               </Tooltip>
-              <Button
-                type="primary"
-                icon={<DownloadOutlined />}
-                onClick={handleExport}
-              >
-                导出Excel
-              </Button>
+              <Tooltip title="把价格写回原Excel的主材行单价列">
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  onClick={handleExport}
+                >
+                  导出Excel
+                </Button>
+              </Tooltip>
             </Space>
           }
         >
