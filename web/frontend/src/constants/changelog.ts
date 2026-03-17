@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.50';
+export const APP_VERSION = '0.2.51';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.51',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '智能填主材支持远程模式——懒猫转发查价请求到本地电脑' },
+      { type: 'admin', text: '新增湖南+青海+深圳信息价导入工具' },
+      { type: 'admin', text: 'rule_validator支持compound双参数家族的DN取档' },
+    ],
+  },
   {
     version: '0.2.50',
     date: '2026-03-17',
