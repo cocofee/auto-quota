@@ -149,6 +149,9 @@ app.include_router(bill_library_router, prefix="/api/tools", tags=["工具-编�
 from app.api.quota_search import router as quota_search_router
 app.include_router(quota_search_router, prefix="/api/quota-search", tags=["定额搜索"])
 
+from app.api.material_price import router as material_price_router
+app.include_router(material_price_router, prefix="/api/tools", tags=["工具-智能填主材"])
+
 
 # ============================================================
 # 基础端点（健康检查）

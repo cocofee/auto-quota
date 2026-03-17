@@ -32,6 +32,7 @@ import {
   AlertOutlined,
   FolderOpenOutlined,
   DollarOutlined,
+  GoldOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
@@ -98,6 +99,11 @@ export default function MainLayout() {
             key: '/tools/price-backfill',
             icon: <DollarOutlined />,
             label: '智能填价',
+          },
+          {
+            key: '/tools/material-price',
+            icon: <GoldOutlined />,
+            label: '智能填主材',
           },
         ],
       },
