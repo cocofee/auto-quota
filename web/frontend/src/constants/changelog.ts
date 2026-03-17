@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.45';
+export const APP_VERSION = '0.2.46';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.46',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: 'smart接口远程超时加大+任务防重复提交' },
+      { type: 'admin', text: 'OpenClaw skill v5.0——分工明确+防偷懒铁律' },
+      { type: 'admin', text: '装修材料编号清理+成品门同义词修正+金属饰线同义词' },
+      { type: 'admin', text: '装修材料代号过滤+装饰同义词补充' },
+      { type: 'admin', text: 'OpenClaw搜索API稳定性修复——补logger导入+超时加大+自动重试' },
+      { type: 'admin', text: '重庆信息价PDF导入工具——造价期刊pdfplumber提取+侧边栏水印清洗' },
+    ],
+  },
   {
     version: '0.2.45',
     date: '2026-03-17',
