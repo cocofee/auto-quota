@@ -12,17 +12,19 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Card, Upload, Button, Table, Select, Space, App, Statistic, Row, Col,
-  InputNumber, Tag, Tooltip, Switch, Segmented, Radio,
+  Card, Upload, Button, Table, Select, Space, App,
+  InputNumber, Tag, Tooltip, Switch, Segmented, Radio, Input, Modal,
 } from 'antd';
 import {
   InboxOutlined, SearchOutlined, DownloadOutlined,
   QuestionCircleOutlined, UploadOutlined, UnorderedListOutlined,
   RightOutlined, DownOutlined, FileExcelOutlined, DeleteOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import api from '../../services/api';
 import { getErrorMessage } from '../../utils/error';
+import { useAuthStore } from '../../stores/auth';
 
 const { Dragger } = Upload;
 
@@ -142,6 +144,8 @@ function priceSourceTag(source: string | null): React.ReactNode {
 
 export default function MaterialPrice() {
   const { message } = App.useApp();
+  const { user } = useAuthStore();
+  const isAdmin = user?.is_admin ?? false;
 
   // 输入模式
   const [inputMode, setInputMode] = useState<'upload' | 'task'>('upload');
@@ -176,6 +180,12 @@ export default function MaterialPrice() {
 
   // 贡献开关
   const [contributeEnabled, setContributeEnabled] = useState(true);
+
+  // 广材网查价（管理员专用）
+  const [gldjcModalOpen, setGldjcModalOpen] = useState(false);
+  const [gldjcCookie, setGldjcCookie] = useState(() => localStorage.getItem('gldjc_cookie') || '');
+  const [gldjcLoading, setGldjcLoading] = useState(false);
+  const [gldjcProgress, setGldjcProgress] = useState('');
 
   // 分部折叠状态
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -358,6 +368,60 @@ export default function MaterialPrice() {
       }
     } else {
       message.error('文件丢失，请重新上传或拉取');
+    }
+  };
+
+  // 广材网实时查价（管理员专用）
+  const handleGldjcLookup = async () => {
+    // 筛选"未查到"的主材行
+    const unfound = materialRows.filter(m => m.lookup_price == null && m.user_price == null);
+    if (!unfound.length) {
+      message.info('没有需要查广材网的材料（全部已有价格）');
+      return;
+    }
+    if (!gldjcCookie.trim()) {
+      message.warning('请先输入广材网Cookie');
+      return;
+    }
+    // 单次上限30条（和后端一致）
+    const batch = unfound.slice(0, 30);
+    // 保存cookie到localStorage
+    localStorage.setItem('gldjc_cookie', gldjcCookie);
+    setGldjcModalOpen(false);
+    setGldjcLoading(true);
+    setGldjcProgress(`正在查询 ${batch.length} 条，每条5~8秒...`);
+    try {
+      const res = await api.post('/tools/material-price/gldjc-lookup', {
+        materials: batch.map(m => ({
+          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
+          _rowKey: m._rowKey,  // 传回rowKey方便前端定位
+        })),
+        cookie: gldjcCookie,
+      }, { timeout: 600000 });  // 10分钟超时（大批量查价）
+      const results: Array<{ _rowKey?: string; gldjc_price?: number | null; gldjc_source?: string }> = res.data.results || [];
+      // 用rowKey更新对应行的价格
+      const priceMap = new Map<string, { price: number; source: string }>();
+      for (const r of results) {
+        if (r._rowKey && r.gldjc_price != null) {
+          priceMap.set(r._rowKey, { price: r.gldjc_price, source: r.gldjc_source || '广材网市场价' });
+        }
+      }
+      setDisplayRows(prev =>
+        prev.map(row => {
+          if (row._rowType === 'material' && priceMap.has(row._rowKey)) {
+            const { price, source } = priceMap.get(row._rowKey)!;
+            return { ...row, lookup_price: price, lookup_source: source };
+          }
+          return row;
+        })
+      );
+      const found = res.data.found || 0;
+      message.success(`广材网查价完成：${found}/${unfound.length}条查到价格`);
+    } catch (err) {
+      message.error(getErrorMessage(err, '广材网查价失败'));
+    } finally {
+      setGldjcLoading(false);
+      setGldjcProgress('');
     }
   };
 
@@ -733,6 +797,20 @@ export default function MaterialPrice() {
             开始查价
           </Button>
 
+          {/* 广材网查价按钮（管理员专用，查价后才显示） */}
+          {isAdmin && hasData && emptyCount > 0 && (
+            <Tooltip title={`对 ${emptyCount} 条未查到的材料实时搜索广材网`}>
+              <Button
+                icon={<GlobalOutlined />} size="middle"
+                loading={gldjcLoading}
+                onClick={() => setGldjcModalOpen(true)}
+                style={{ color: '#d97706', borderColor: '#d97706' }}
+              >
+                {gldjcLoading ? gldjcProgress : `查广材网(${emptyCount})`}
+              </Button>
+            </Tooltip>
+          )}
+
           {/* 右侧统计 + 操作 */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
             {hasData && (
@@ -867,6 +945,37 @@ export default function MaterialPrice() {
           />
         </Card>
       )}
+
+      {/* 广材网Cookie输入弹窗（管理员专用） */}
+      <Modal
+        title="广材网实时查价"
+        open={gldjcModalOpen}
+        onCancel={() => setGldjcModalOpen(false)}
+        onOk={handleGldjcLookup}
+        okText="开始查价"
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ marginBottom: 8, color: '#666' }}>
+            将对 <b>{Math.min(emptyCount, 30)}</b> 条未查到价格的材料实时搜索广材网。
+            {emptyCount > 30 && <span style={{ color: '#d97706' }}>（单次上限30条，共{emptyCount}条待查，可分批操作）</span>}
+          </p>
+          <p style={{ marginBottom: 4, fontSize: 12, color: '#999' }}>
+            每条间隔5~8秒（随机模拟人工），预计 <b>{Math.ceil(Math.min(emptyCount, 30) * 6.5 / 60)}</b> 分钟。
+            查到的价格自动缓存，下次不再重复查。
+          </p>
+          <p style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
+            Cookie获取：登录 gldjc.com → F12开发者工具 → Network → 复制请求头中的Cookie
+          </p>
+          <Input.TextArea
+            rows={3}
+            placeholder="粘贴广材网Cookie（如：token=bearer xxx; ...）"
+            value={gldjcCookie}
+            onChange={e => setGldjcCookie(e.target.value)}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
