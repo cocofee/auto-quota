@@ -399,6 +399,53 @@ def _is_material_row(code: str, name: str) -> bool:
 
 
 # ============================================================
+# 4b. 从任务结果中提取主材行
+# ============================================================
+
+@router.get("/material-price/from-task/{task_id}")
+async def parse_from_task(task_id: str):
+    """从已完成的套定额任务中提取主材行
+
+    读取任务的output Excel（带主材版本），解析出主材行。
+    """
+    import uuid as _uuid
+    from sqlalchemy import select
+    from app.database import async_session
+    from app.models.task import Task
+
+    # 查任务
+    try:
+        task_uuid = _uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(400, "无效的任务ID")
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task).where(Task.id == task_uuid)
+        )
+        task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if task.status != "completed":
+        raise HTTPException(400, "任务尚未完成")
+    if not task.output_path or not Path(task.output_path).exists():
+        raise HTTPException(404, "输出文件不存在")
+
+    # 解析output Excel中的主材行
+    try:
+        materials = await asyncio.to_thread(_do_parse, task.output_path)
+        return {
+            "materials": materials,
+            "count": len(materials),
+            "task_name": task.original_filename or "",
+        }
+    except Exception as e:
+        logger.error(f"从任务提取主材失败: {e}")
+        raise HTTPException(500, f"提取失败: {e}")
+
+
+# ============================================================
 # 5. 批量查价
 # ============================================================
 

@@ -1,18 +1,22 @@
 /**
  * 智能填主材页面
  *
- * 上传套完定额的Excel → 识别主材行 → 选地区自动查价 → 手填补充 → 下载结果
+ * 两种输入方式：
+ * 1. 上传Excel（广联达材料表等）
+ * 2. 从"我的任务"拉取（套完定额的结果，已含主材）
+ *
+ * → 选地区自动查价 → 手填补充 → 导出结果
  * 用户手填的价格会贡献到价格库候选层（众包收集）。
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Upload, Button, Table, Select, Space, App, Statistic, Row, Col,
-  InputNumber, Tag, Tooltip, Switch,
+  InputNumber, Tag, Tooltip, Switch, Segmented,
 } from 'antd';
 import {
   InboxOutlined, SearchOutlined, DownloadOutlined, GoldOutlined,
-  QuestionCircleOutlined,
+  QuestionCircleOutlined, UploadOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import api from '../../services/api';
@@ -32,7 +36,7 @@ interface MaterialRow {
   existing_price: number | null;
   lookup_price: number | null;
   lookup_source: string | null;
-  user_price?: number | null;       // 用户手填价格
+  user_price?: number | null;
 }
 
 // 省份/城市数据
@@ -49,12 +53,31 @@ interface PeriodItem {
   label: string;
 }
 
+// 任务数据
+interface TaskItem {
+  id: string;
+  original_filename: string;
+  province: string;
+  status: string;
+  created_at: string;
+  total_items: number;
+}
+
 export default function MaterialPrice() {
   const { message } = App.useApp();
+
+  // 输入模式："upload" 或 "task"
+  const [inputMode, setInputMode] = useState<'upload' | 'task'>('upload');
 
   // 文件上传
   const [file, setFile] = useState<UploadFile[]>([]);
   const [parseLoading, setParseLoading] = useState(false);
+
+  // 任务拉取
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('');
+  const [taskLoading, setTaskLoading] = useState(false);
+  const [taskSourceName, setTaskSourceName] = useState<string>('');
 
   // 主材数据
   const [materials, setMaterials] = useState<MaterialRow[]>([]);
@@ -69,8 +92,6 @@ export default function MaterialPrice() {
 
   // 查价状态
   const [lookupLoading, setLookupLoading] = useState(false);
-  // lookupDone 用于跟踪查价是否完成（控制UI状态）
-  const [, setLookupDone] = useState(false);
 
   // 贡献开关
   const [contributeEnabled, setContributeEnabled] = useState(true);
@@ -79,6 +100,16 @@ export default function MaterialPrice() {
   useEffect(() => {
     api.get('/tools/material-price/provinces').then(res => {
       setProvinces(res.data.provinces || []);
+    }).catch(() => {});
+  }, []);
+
+  // 加载已完成的任务列表
+  useEffect(() => {
+    api.get('/tasks', { params: { status: 'completed' } }).then(res => {
+      const items = (res.data.items || res.data || [])
+        .filter((t: TaskItem) => t.status === 'completed')
+        .slice(0, 50);
+      setTasks(items);
     }).catch(() => {});
   }, []);
 
@@ -96,7 +127,6 @@ export default function MaterialPrice() {
     api.get('/tools/material-price/cities', { params: { province: selectedProvince } })
       .then(res => setCities(res.data.cities || []))
       .catch(() => {});
-    // 同时加载省级期次
     api.get('/tools/material-price/periods', { params: { province: selectedProvince } })
       .then(res => setPeriods(res.data.periods || []))
       .catch(() => {});
@@ -110,7 +140,6 @@ export default function MaterialPrice() {
     }).then(res => {
       const p = res.data.periods || [];
       if (p.length > 0) setPeriods(p);
-      // 城市没有期次数据就保留省级期次
     }).catch(() => {});
   }, [selectedCity, selectedProvince]);
 
@@ -124,7 +153,6 @@ export default function MaterialPrice() {
     formData.append('file', file[0].originFileObj as File);
 
     setParseLoading(true);
-    setLookupDone(false);
     try {
       const res = await api.post('/tools/material-price/parse', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -142,10 +170,33 @@ export default function MaterialPrice() {
     }
   };
 
+  // 从任务拉取主材
+  const handleTaskPull = async () => {
+    if (!selectedTaskId) {
+      message.warning('请先选择一个任务');
+      return;
+    }
+    setTaskLoading(true);
+    try {
+      const res = await api.get(`/tools/material-price/from-task/${selectedTaskId}`);
+      const mats: MaterialRow[] = (res.data.materials || []).map((m: MaterialRow) => ({
+        ...m,
+        user_price: null,
+      }));
+      setMaterials(mats);
+      setTaskSourceName(res.data.task_name || '');
+      message.success(`从任务中拉取到 ${mats.length} 条主材`);
+    } catch (err) {
+      message.error(getErrorMessage(err, '拉取失败'));
+    } finally {
+      setTaskLoading(false);
+    }
+  };
+
   // 批量查价
   const handleLookup = async () => {
     if (!materials.length) {
-      message.warning('请先上传并解析Excel');
+      message.warning('请先获取主材数据');
       return;
     }
     if (!selectedProvince) {
@@ -166,7 +217,6 @@ export default function MaterialPrice() {
         period_end: selectedPeriod,
       });
       const results = res.data.results || [];
-      // 合并查价结果到主材列表
       setMaterials(prev =>
         prev.map((m, i) => ({
           ...m,
@@ -174,7 +224,6 @@ export default function MaterialPrice() {
           lookup_source: results[i]?.lookup_source ?? null,
         }))
       );
-      setLookupDone(true);
       const stats = res.data.stats || {};
       message.success(`查价完成：${stats.found}条查到，${stats.not_found}条未查到`);
     } catch (err) {
@@ -193,7 +242,6 @@ export default function MaterialPrice() {
 
   // 提交用户贡献 + 导出
   const handleExport = async () => {
-    // 收集用户手填的价格，提交到候选层
     if (contributeEnabled) {
       const userItems = materials
         .filter(m => m.user_price != null && m.user_price > 0)
@@ -216,11 +264,9 @@ export default function MaterialPrice() {
       }
     }
 
-    // 导出Excel（前端生成）
     try {
       const { utils: xlsxUtils, writeFile: xlsxWriteFile } = await import('xlsx');
       const rows = materials.map(m => {
-        // 最终价格：优先用户手填 > 系统查价 > 已有价格
         const finalPrice = m.user_price ?? m.lookup_price ?? m.existing_price;
         return {
           '工作表': m.sheet,
@@ -245,8 +291,10 @@ export default function MaterialPrice() {
       ];
       const wb = xlsxUtils.book_new();
       xlsxUtils.book_append_sheet(wb, ws, '主材价格');
-      const origName = file[0]?.name?.replace(/\.[^.]+$/, '') || '主材';
-      xlsxWriteFile(wb, `${origName}_已填价.xlsx`);
+      const baseName = inputMode === 'upload'
+        ? (file[0]?.name?.replace(/\.[^.]+$/, '') || '主材')
+        : (taskSourceName || '任务主材');
+      xlsxWriteFile(wb, `${baseName}_已填价.xlsx`);
       message.success('导出成功');
     } catch (err) {
       message.error(getErrorMessage(err, '导出失败'));
@@ -351,41 +399,88 @@ export default function MaterialPrice() {
           <div>
             <h2 style={{ margin: 0 }}>智能填主材</h2>
             <span style={{ color: '#64748b' }}>
-              上传套好定额的Excel → 选地区自动查价 → 手动补充 → 导出结果
+              上传材料表或从已有任务拉取 → 选地区自动查价 → 手动补充 → 导出结果
             </span>
           </div>
         </div>
       </Card>
 
-      {/* 上传 + 地区选择 */}
+      {/* 数据来源 + 地区选择 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={10}>
-          <Card title="上传Excel" size="small">
-            <Dragger
-              fileList={file}
-              maxCount={1}
-              accept=".xlsx,.xls"
-              beforeUpload={() => false}
-              onChange={({ fileList }) => {
-                setFile(fileList.slice(-1));
-                setMaterials([]);
-                setLookupDone(false);
-              }}
-              style={{ padding: '12px 0' }}
-            >
-              <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-              <p className="ant-upload-text">上传套好定额的Excel</p>
-            </Dragger>
-            <Button
-              block
-              type="primary"
-              style={{ marginTop: 12 }}
-              loading={parseLoading}
-              disabled={!file.length}
-              onClick={handleParse}
-            >
-              识别主材
-            </Button>
+          <Card
+            size="small"
+            title={
+              <Segmented
+                value={inputMode}
+                onChange={v => {
+                  setInputMode(v as 'upload' | 'task');
+                  setMaterials([]);
+                }}
+                options={[
+                  { value: 'upload', label: '上传文件', icon: <UploadOutlined /> },
+                  { value: 'task', label: '从任务拉取', icon: <UnorderedListOutlined /> },
+                ]}
+                size="small"
+              />
+            }
+          >
+            {inputMode === 'upload' ? (
+              <>
+                <Dragger
+                  fileList={file}
+                  maxCount={1}
+                  accept=".xlsx,.xls"
+                  beforeUpload={() => false}
+                  onChange={({ fileList }) => {
+                    setFile(fileList.slice(-1));
+                    setMaterials([]);
+                  }}
+                  style={{ padding: '12px 0' }}
+                >
+                  <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                  <p className="ant-upload-text">上传材料表或套完定额的Excel</p>
+                </Dragger>
+                <Button
+                  block
+                  type="primary"
+                  style={{ marginTop: 12 }}
+                  loading={parseLoading}
+                  disabled={!file.length}
+                  onClick={handleParse}
+                >
+                  识别主材
+                </Button>
+              </>
+            ) : (
+              <>
+                <div style={{ marginBottom: 8, color: '#475569', fontSize: 13 }}>
+                  选择已完成的套定额任务
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  placeholder="选择任务"
+                  value={selectedTaskId || undefined}
+                  onChange={v => setSelectedTaskId(v)}
+                  showSearch
+                  optionFilterProp="label"
+                  options={tasks.map(t => ({
+                    value: t.id,
+                    label: `${t.original_filename}（${t.province || ''}，${t.total_items || 0}条）`,
+                  }))}
+                />
+                <Button
+                  block
+                  type="primary"
+                  style={{ marginTop: 12 }}
+                  loading={taskLoading}
+                  disabled={!selectedTaskId}
+                  onClick={handleTaskPull}
+                >
+                  拉取主材
+                </Button>
+              </>
+            )}
           </Card>
         </Col>
         <Col span={14}>
