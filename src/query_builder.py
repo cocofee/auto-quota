@@ -1236,8 +1236,8 @@ def build_quota_query(parser, name: str, description: str = "",
         _mat_upper = material.upper() if material else ""
         if "PPR" in _mat_upper or "PP-R" in _mat_upper:
             _full = f"{name} {description}".upper()
-            # 采暖方向：只看"采暖/供暖"关键词（"热水"属于给水方向，不是采暖）
-            if "采暖" in _full or "供暖" in _full or usage == "采暖":
+            # 采暖方向：采暖/供暖/地暖/暖气（"热水"属于给水方向，不是采暖）
+            if "采暖" in _full or "供暖" in _full or "地暖" in _full or "暖气" in _full or usage == "采暖":
                 material = "室内塑料管(热熔连接)"
                 if not usage:
                     usage = "采暖管道"
