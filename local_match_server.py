@@ -24,6 +24,7 @@ from fastapi import FastAPI, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 
+from loguru import logger
 from src.excel_compat import ensure_openpyxl_input, validate_excel_upload
 
 # 加载项目 .env
