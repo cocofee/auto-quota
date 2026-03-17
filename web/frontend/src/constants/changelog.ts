@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.43';
+export const APP_VERSION = '0.2.45';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,54 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.45',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '天津+北京信息价PDF导入工具——京津冀共享平台RAR包解析' },
+      { type: 'admin', text: 'book推断只在C前缀时介入，避免覆盖match_core已翻译的book' },
+      { type: 'admin', text: '新疆信息价Excel导入工具——xjzj.com API批量下载+xlrd解析' },
+      { type: 'admin', text: '措施费识别器扩充+消防模块输入/输出/输入输出细分' },
+      { type: 'admin', text: '补充控制柜同义词（风机控制柜/电气控制柜→成套配电柜安装）' },
+      { type: 'admin', text: '非标准book省份搜索全面修复——classify_to_books词频推断替代C-prefix硬翻译' },
+      { type: 'admin', text: '档位纠偏器扫描范围10→20 + 风管周长参数提取修复' },
+      { type: 'admin', text: '拆除类清单搜索词去掉"安装"，避免BM25偏向安装定额' },
+      { type: 'admin', text: '补充8个风机类同义词（排烟/送风/补风/排风/防爆/轴流/离心/柜式离心→通风机）' },
+      { type: 'admin', text: '手动调节阀路由+补充同义词（碳钢风管/挡烟垂壁/马桶/散热器）' },
+      { type: 'admin', text: '吉林信息价Word导入工具——支持docx+COM转换doc/wps/rtf' },
+      { type: 'admin', text: '移除旧版batch_runner（功能已被data-agent和批量匹配API替代）' },
+      { type: 'admin', text: 'build_quota_query透传section_title参数到query_builder' },
+      { type: 'admin', text: '贵州信息价PDF导入工具——pdfplumber表格提取+全角转半角+9城市自动识别' },
+      { type: 'admin', text: '电力技改审核修复——22条同义词+拆除互斥+介质冲突检查' },
+      { type: 'admin', text: '新增南宁信息价导入工具——从电子书JS文本提取材料价格' },
+      { type: 'admin', text: 'M1档位纠偏器——LTR排序后强制选同家族内参数最匹配的档位' },
+      { type: 'admin', text: '新增武汉信息价OCR导入工具——扫描件PDF用RapidOCR识别入库' },
+    ],
+  },
+  {
+    version: '0.2.44',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '天津+北京信息价PDF导入工具——京津冀共享平台RAR包解析' },
+      { type: 'admin', text: 'book推断只在C前缀时介入，避免覆盖match_core已翻译的book' },
+      { type: 'admin', text: '新疆信息价Excel导入工具——xjzj.com API批量下载+xlrd解析' },
+      { type: 'admin', text: '措施费识别器扩充+消防模块输入/输出/输入输出细分' },
+      { type: 'admin', text: '补充控制柜同义词（风机控制柜/电气控制柜→成套配电柜安装）' },
+      { type: 'admin', text: '非标准book省份搜索全面修复——classify_to_books词频推断替代C-prefix硬翻译' },
+      { type: 'admin', text: '档位纠偏器扫描范围10→20 + 风管周长参数提取修复' },
+      { type: 'admin', text: '拆除类清单搜索词去掉"安装"，避免BM25偏向安装定额' },
+      { type: 'admin', text: '补充8个风机类同义词（排烟/送风/补风/排风/防爆/轴流/离心/柜式离心→通风机）' },
+      { type: 'admin', text: '手动调节阀路由+补充同义词（碳钢风管/挡烟垂壁/马桶/散热器）' },
+      { type: 'admin', text: '吉林信息价Word导入工具——支持docx+COM转换doc/wps/rtf' },
+      { type: 'admin', text: '移除旧版batch_runner（功能已被data-agent和批量匹配API替代）' },
+      { type: 'admin', text: 'build_quota_query透传section_title参数到query_builder' },
+      { type: 'admin', text: '贵州信息价PDF导入工具——pdfplumber表格提取+全角转半角+9城市自动识别' },
+      { type: 'admin', text: '电力技改审核修复——22条同义词+拆除互斥+介质冲突检查' },
+      { type: 'admin', text: '新增南宁信息价导入工具——从电子书JS文本提取材料价格' },
+      { type: 'admin', text: 'M1档位纠偏器——LTR排序后强制选同家族内参数最匹配的档位' },
+      { type: 'admin', text: '新增武汉信息价OCR导入工具——扫描件PDF用RapidOCR识别入库' },
+    ],
+  },
   {
     version: '0.2.43',
     date: '2026-03-16',
