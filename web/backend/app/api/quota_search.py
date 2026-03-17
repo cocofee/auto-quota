@@ -41,8 +41,12 @@ def _validate_province(province: str) -> str:
     return province
 
 
-async def _remote_get(path: str, params: dict) -> dict:
-    """转发GET请求到本地匹配服务"""
+async def _remote_get(path: str, params: dict, timeout: float = 60.0) -> dict:
+    """转发GET请求到本地匹配服务
+
+    Args:
+        timeout: 超时秒数，默认60秒。smart等重计算接口应传更大值。
+    """
     import httpx
 
     url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
@@ -52,7 +56,7 @@ async def _remote_get(path: str, params: dict) -> dict:
     last_exc = None
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(url, headers=headers, params=params)
 
             if resp.status_code == 200:
@@ -83,7 +87,7 @@ async def _remote_get(path: str, params: dict) -> dict:
                 logger.warning(f"远程匹配服务超时，1秒后重试: {e}")
                 await asyncio.sleep(1)
                 continue
-            raise HTTPException(status_code=504, detail="本地匹配服务响应超时（60秒）")
+            raise HTTPException(status_code=504, detail=f"本地匹配服务响应超时（{int(timeout)}秒）")
         except HTTPException:
             raise
         except Exception as e:
@@ -251,7 +255,8 @@ async def smart_search(
             params["description"] = description
         if specialty:
             params["specialty"] = specialty
-        return await _remote_get("/quota-search/smart", params)
+        # smart接口做4步重计算（专业识别+搜索词构建+级联搜索+跨库），给180秒
+        return await _remote_get("/quota-search/smart", params, timeout=180.0)
 
     # 本地模式
     try:
