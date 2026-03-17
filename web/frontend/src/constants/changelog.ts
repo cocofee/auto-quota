@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.55';
+export const APP_VERSION = '0.2.56';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.56',
+    date: '2026-03-18',
+    changes: [
+      { type: 'admin', text: '智能查价——名称清洗+同义词+广材网品名映射，大幅提升查价命中率' },
+      { type: 'admin', text: '智能填主材——级联查价+广材网实时爬取+防封策略' },
+      { type: 'admin', text: 'v0.3.0 Phase3完——红灯Top3候选一键纠正+固定底部操作栏' },
+      { type: 'admin', text: 'v0.3.0 Phase3——按颜色全选+任务列表类型标签' },
+      { type: 'admin', text: 'v0.3.0 Phase2——套定额页省份自动识别+定额类型推荐' },
+      { type: 'admin', text: 'v0.3.0 Phase1——侧边栏重构+首页四功能卡片+统计卡片改版' },
+      { type: 'admin', text: 'book字段修复限定"册"编号+非标book直接映射' },
+      { type: 'admin', text: '智能填主材——紧凑布局+信息价/市场价选择+项目特征+导出原名' },
+    ],
+  },
   {
     version: '0.2.55',
     date: '2026-03-17',
