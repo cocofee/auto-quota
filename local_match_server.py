@@ -762,6 +762,205 @@ def flag_disputed_api(
 
 
 # ============================================================
+# 主材价格查询（远程模式下懒猫转发到这里）
+# ============================================================
+
+@app.get("/material-price/provinces")
+def material_price_provinces(x_api_key: str = Header(default="")):
+    """返回有价格数据的省份列表"""
+    _verify_api_key(x_api_key)
+    import sqlite3
+    from src.material_db import DB_PATH
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        rows = conn.execute(
+            """SELECT province, COUNT(*) as cnt
+               FROM price_fact
+               WHERE province != '' AND province != '全国'
+               GROUP BY province
+               ORDER BY cnt DESC"""
+        ).fetchall()
+        return {"provinces": [{"name": r[0], "count": r[1]} for r in rows]}
+    finally:
+        conn.close()
+
+
+@app.get("/material-price/cities")
+def material_price_cities(
+    province: str,
+    x_api_key: str = Header(default=""),
+):
+    """返回指定省份下有价格数据的城市列表"""
+    _verify_api_key(x_api_key)
+    import sqlite3
+    from src.material_db import DB_PATH
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        rows = conn.execute(
+            """SELECT city, COUNT(*) as cnt
+               FROM price_fact
+               WHERE province = ? AND city != ''
+               GROUP BY city
+               ORDER BY cnt DESC""",
+            (province,)
+        ).fetchall()
+        return {"cities": [{"name": r[0], "count": r[1]} for r in rows]}
+    finally:
+        conn.close()
+
+
+@app.get("/material-price/periods")
+def material_price_periods(
+    province: str,
+    city: str = "",
+    x_api_key: str = Header(default=""),
+):
+    """返回指定省份/城市的信息价期次列表"""
+    _verify_api_key(x_api_key)
+    import sqlite3
+    from src.material_db import DB_PATH
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        conditions = ["province = ?", "period_start != ''"]
+        params: list = [province]
+        if city:
+            conditions.append("city = ?")
+            params.append(city)
+        where = " AND ".join(conditions)
+        rows = conn.execute(
+            f"""SELECT period_start, period_end, COUNT(*) as cnt
+                FROM price_fact
+                WHERE {where}
+                GROUP BY period_start, period_end
+                ORDER BY period_end DESC
+                LIMIT 24""",
+            params
+        ).fetchall()
+
+        def _label(start):
+            try:
+                parts = start.split("-")
+                return f"{int(parts[0])}年{int(parts[1])}月"
+            except (IndexError, ValueError):
+                return start
+
+        return {
+            "periods": [
+                {"start": r[0], "end": r[1], "count": r[2], "label": _label(r[0])}
+                for r in rows
+            ]
+        }
+    finally:
+        conn.close()
+
+
+class _MaterialLookupRequest(_BaseModel):
+    """主材批量查价请求"""
+    materials: list[dict]
+    province: str
+    city: str = ""
+    period_end: str = ""
+
+
+@app.post("/material-price/lookup")
+def material_price_lookup(
+    req: _MaterialLookupRequest,
+    x_api_key: str = Header(default=""),
+):
+    """批量查价"""
+    _verify_api_key(x_api_key)
+    import re as _re
+    from src.material_db import MaterialDB
+    db = MaterialDB()
+    results = []
+    for mat in req.materials:
+        name = mat.get("name", "").strip()
+        spec = mat.get("spec", "").strip()
+        unit = mat.get("unit", "").strip()
+        if not name:
+            results.append({**mat, "lookup_price": None, "lookup_source": "名称为空"})
+            continue
+        price_info = db.search_price_by_name(
+            name, province=req.province, spec=spec, target_unit=unit
+        )
+        if price_info:
+            results.append({
+                **mat,
+                "lookup_price": price_info["price"],
+                "lookup_source": price_info.get("source", "价格库"),
+            })
+        else:
+            # 从名称中提取规格再查一次
+            m = _re.search(r'[Dd][Nn]\s*\d+|De\s*\d+|Φ\s*\d+|\d+mm', name)
+            if m:
+                extracted_spec = m.group(0).replace(" ", "")
+                short_name = name[:m.start()].strip()
+                if short_name:
+                    price_info2 = db.search_price_by_name(
+                        short_name, province=req.province,
+                        spec=extracted_spec, target_unit=unit
+                    )
+                    if price_info2:
+                        results.append({
+                            **mat,
+                            "lookup_price": price_info2["price"],
+                            "lookup_source": price_info2.get("source", "价格库"),
+                        })
+                        continue
+            results.append({**mat, "lookup_price": None, "lookup_source": "未查到"})
+
+    found = sum(1 for r in results if r.get("lookup_price") is not None)
+    return {
+        "results": results,
+        "stats": {"total": len(results), "found": found, "not_found": len(results) - found},
+    }
+
+
+class _MaterialContributeRequest(_BaseModel):
+    """用户贡献价格请求"""
+    items: list[dict]
+
+
+@app.post("/material-price/contribute")
+def material_price_contribute(
+    req: _MaterialContributeRequest,
+    x_api_key: str = Header(default=""),
+):
+    """用户手填价格存入候选层"""
+    _verify_api_key(x_api_key)
+    from src.material_db import MaterialDB
+    db = MaterialDB()
+    saved = 0
+    for item in req.items:
+        name = item.get("name", "").strip()
+        spec = item.get("spec", "").strip()
+        unit = item.get("unit", "").strip()
+        price = item.get("price")
+        province = item.get("province", "").strip()
+        city = item.get("city", "").strip()
+        if not name or price is None:
+            continue
+        try:
+            price_val = float(price)
+        except (ValueError, TypeError):
+            continue
+        if price_val <= 0 or price_val > 1_000_000:
+            continue
+        material_id = db.add_material(name, spec=spec, unit=unit)
+        db.add_price(
+            material_id=material_id,
+            price_incl_tax=price_val,
+            source_type="user_contribute",
+            province=province, city=city, unit=unit,
+            authority_level="reference",
+            source_doc="用户手填",
+            dedup=True,
+        )
+        saved += 1
+    return {"saved": saved, "message": f"已保存 {saved} 条价格"}
+
+
+# ============================================================
 # 后台匹配执行
 # ============================================================
 

@@ -5,9 +5,13 @@
   - GET  /provinces          获取有价格数据的省份列表
   - GET  /cities             获取指定省份的城市列表
   - GET  /periods            获取指定省份/城市的期次列表
-  - POST /parse              上传Excel，解析出主材行
+  - POST /parse              上传Excel，解析出主材行（本地处理，不转发）
   - POST /lookup             批量查价（根据省份/城市/期次）
   - POST /contribute         用户提交手填价格（存入候选层）
+
+远程模式（MATCH_BACKEND=remote）下，provinces/cities/periods/lookup/contribute
+转发到本地匹配服务（local_match_server.py），因为价格库在本地电脑上。
+parse 始终在本地处理（只需要解析Excel，不需要价格库）。
 """
 
 import asyncio
@@ -19,16 +23,57 @@ from typing import Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Query
 from loguru import logger
 
+from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+
 router = APIRouter()
 
-# 主材库路径（和 src/material_db.py 一致）
+# 主材库路径（本地模式使用）
 _MATERIAL_DB_PATH = Path(__file__).parent.parent.parent.parent.parent / "db" / "common" / "material.db"
+
+
+def _is_remote() -> bool:
+    """是否使用远程模式（价格库在本地电脑上）"""
+    return MATCH_BACKEND == "remote" and bool(LOCAL_MATCH_URL)
 
 
 def _get_db():
     """获取MaterialDB实例（延迟导入，避免启动时报错）"""
     from src.material_db import MaterialDB
     return MaterialDB(str(_MATERIAL_DB_PATH))
+
+
+async def _remote_get(path: str, params: dict = None) -> dict:
+    """转发GET请求到本地匹配服务"""
+    import httpx
+    url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
+    headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code == 200:
+            return resp.json()
+        logger.warning(f"远程主材查询返回 {resp.status_code}: {resp.text[:200]}")
+        return {}
+    except Exception as e:
+        logger.error(f"远程主材查询失败: [{type(e).__name__}] {e} | url={url}")
+        raise HTTPException(502, f"连接本地匹配服务失败: {e}")
+
+
+async def _remote_post(path: str, payload: dict) -> dict:
+    """转发POST请求到本地匹配服务"""
+    import httpx
+    url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
+    headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+        if resp.status_code == 200:
+            return resp.json()
+        logger.warning(f"远程主材操作返回 {resp.status_code}: {resp.text[:200]}")
+        return {}
+    except Exception as e:
+        logger.error(f"远程主材操作失败: [{type(e).__name__}] {e} | url={url}")
+        raise HTTPException(502, f"连接本地匹配服务失败: {e}")
 
 
 # ============================================================
@@ -38,6 +83,9 @@ def _get_db():
 @router.get("/material-price/provinces")
 async def get_provinces():
     """返回有价格数据的省份列表（按数据量降序）"""
+    if _is_remote():
+        return await _remote_get("/material-price/provinces")
+
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
     try:
@@ -62,6 +110,9 @@ async def get_provinces():
 @router.get("/material-price/cities")
 async def get_cities(province: str = Query(..., description="省份名称")):
     """返回指定省份下有价格数据的城市列表"""
+    if _is_remote():
+        return await _remote_get("/material-price/cities", {"province": province})
+
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
     try:
@@ -90,6 +141,12 @@ async def get_periods(
     city: str = Query("", description="城市名称（可选）"),
 ):
     """返回指定省份/城市的信息价期次列表（按时间倒序）"""
+    if _is_remote():
+        params = {"province": province}
+        if city:
+            params["city"] = city
+        return await _remote_get("/material-price/periods", params)
+
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
     try:
@@ -367,6 +424,17 @@ async def lookup_prices(body: dict):
     if not province:
         raise HTTPException(400, "province 不能为空")
 
+    # 远程模式：转发到本地匹配服务
+    if _is_remote():
+        result = await _remote_post("/material-price/lookup", {
+            "materials": materials,
+            "province": province,
+            "city": city,
+            "period_end": period_end,
+        })
+        return result or {"results": [], "stats": {"total": 0, "found": 0, "not_found": 0}}
+
+    # 本地模式：直接查价
     # 在线程池中批量查价
     results = await asyncio.to_thread(
         _do_lookup, materials, province, city, period_end
@@ -465,6 +533,12 @@ async def contribute_price(body: dict):
     if not items:
         raise HTTPException(400, "items 不能为空")
 
+    # 远程模式：转发到本地匹配服务
+    if _is_remote():
+        result = await _remote_post("/material-price/contribute", {"items": items})
+        return result or {"saved": 0, "message": "转发失败"}
+
+    # 本地模式：直接写入
     saved = await asyncio.to_thread(_do_contribute, items)
     return {"saved": saved, "message": f"已保存 {saved} 条价格，感谢贡献！"}
 
