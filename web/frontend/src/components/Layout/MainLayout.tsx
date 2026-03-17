@@ -13,26 +13,19 @@ import { Layout, Menu, Button, Dropdown, Tag, Modal, Timeline } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   DashboardOutlined,
-  PlusCircleOutlined,
   UnorderedListOutlined,
   LogoutOutlined,
   UserOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   DatabaseOutlined,
-  BarChartOutlined,
   TeamOutlined,
   SettingOutlined,
-  MessageOutlined,
-  AppstoreOutlined,
   BookOutlined,
   FileTextOutlined,
-  WalletOutlined,
-  CloudServerOutlined,
-  AlertOutlined,
-  FolderOpenOutlined,
-  DollarOutlined,
   GoldOutlined,
+  AimOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
@@ -59,51 +52,62 @@ export default function MainLayout() {
     return null;
   }, []);
 
-  // 根据角色动态生成菜单
+  // 根据角色动态生成菜单（按改版方案v0.3.0重构）
   const menuItems: MenuProps['items'] = useMemo(() => {
-    // 所有用户都能看到的基础菜单
+    // 四功能色值（文档07章）
+    const toolColors = {
+      bill: '#1a56db',     // 编清单-蓝
+      quota: '#16a34a',    // 套定额-绿
+      material: '#ea580c', // 填主材-橙
+      backfill: '#7c3aed', // 填价-紫
+    };
+
     const base: MenuProps['items'] = [
       {
         key: '/dashboard',
         icon: <DashboardOutlined />,
         label: '首页',
       },
-      {
-        key: '/tasks/create',
-        icon: <PlusCircleOutlined />,
-        label: '新建任务',
-      },
-      {
-        key: '/tasks',
-        icon: <UnorderedListOutlined />,
-        label: '我的任务',
-      },
       { type: 'divider' },
-      {
-        key: '/quota/logs',
-        icon: <WalletOutlined />,
-        label: '使用记录',
-      },
-      { type: 'divider' },
+      // ── 智能工具 ──
       {
         key: 'tools-group',
         type: 'group',
-        label: '工具',
+        label: '智能工具',
         children: [
           {
             key: '/tools/bill-compiler',
-            icon: <FileTextOutlined />,
-            label: '编清单',
+            icon: <FileTextOutlined style={{ color: toolColors.bill }} />,
+            label: '智能编清单',
           },
           {
-            key: '/tools/price-backfill',
-            icon: <DollarOutlined />,
-            label: '智能填价',
+            key: '/tasks/create',
+            icon: <AimOutlined style={{ color: toolColors.quota }} />,
+            label: '智能套定额',
           },
           {
             key: '/tools/material-price',
-            icon: <GoldOutlined />,
+            icon: <GoldOutlined style={{ color: toolColors.material }} />,
             label: '智能填主材',
+          },
+          {
+            key: '/tools/price-backfill',
+            icon: <BarChartOutlined style={{ color: toolColors.backfill }} />,
+            label: '智能填价',
+          },
+        ],
+      },
+      { type: 'divider' },
+      // ── 任务 ──
+      {
+        key: 'tasks-group',
+        type: 'group',
+        label: '任务',
+        children: [
+          {
+            key: '/tasks',
+            icon: <UnorderedListOutlined />,
+            label: '我的任务',
           },
         ],
       },
@@ -111,35 +115,14 @@ export default function MainLayout() {
 
     if (!isAdmin) return base;
 
-    // 管理员额外菜单（分组）
+    // 管理员额外菜单
     const adminItems: MenuProps['items'] = [
       { type: 'divider' },
-      {
-        key: 'admin-tasks-group',
-        type: 'group',
-        label: '任务管理',
-        children: [
-          {
-            key: '/admin/tasks',
-            icon: <AppstoreOutlined />,
-            label: '所有任务',
-          },
-          {
-            key: '/admin/feedback',
-            icon: <MessageOutlined />,
-            label: '反馈审核',
-          },
-          {
-            key: '/admin/batch',
-            icon: <CloudServerOutlined />,
-            label: '批量处理',
-          },
-        ],
-      },
+      // ── 数据 ──
       {
         key: 'admin-data-group',
         type: 'group',
-        label: '数据与分析',
+        label: '数据',
         children: [
           {
             key: '/admin/experience',
@@ -151,27 +134,14 @@ export default function MainLayout() {
             icon: <BookOutlined />,
             label: '定额库',
           },
-          {
-            key: '/admin/analytics',
-            icon: <BarChartOutlined />,
-            label: '准确率分析',
-          },
-          {
-            key: '/admin/error-analysis',
-            icon: <AlertOutlined />,
-            label: '错误分析',
-          },
-          {
-            key: '/admin/data',
-            icon: <FolderOpenOutlined />,
-            label: '数据管理',
-          },
         ],
       },
+      { type: 'divider' },
+      // ── 管理 ──
       {
         key: 'admin-system-group',
         type: 'group',
-        label: '系统管理',
+        label: '管理',
         children: [
           {
             key: '/admin/users',
@@ -179,19 +149,9 @@ export default function MainLayout() {
             label: '用户管理',
           },
           {
-            key: '/admin/billing',
-            icon: <WalletOutlined />,
-            label: '额度管理',
-          },
-          {
             key: '/admin/settings',
             icon: <SettingOutlined />,
             label: '系统设置',
-          },
-          {
-            key: '/admin/logs',
-            icon: <FileTextOutlined />,
-            label: '系统日志',
           },
         ],
       },
@@ -225,7 +185,8 @@ export default function MainLayout() {
         trigger={null}
         collapsible
         collapsed={collapsed}
-        width={isAdmin ? 200 : 180}
+        width={220}
+        collapsedWidth={64}
         style={{
           background: '#ffffff',
           borderRight: '1px solid #e2e8f0',
