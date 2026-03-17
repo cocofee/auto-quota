@@ -736,6 +736,23 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
     }
     if clean_name in _SECTION_TITLES:
         return True
+    # 附属计量条目——广东/江西等省的清单常把防腐保温面积、管件数量、超高部分
+    # 作为独立行列出，这些不是独立工程量清单，不应单独套定额
+    _SUBSIDIARY_PATTERNS = [
+        "外表面积",      # 防腐保温的管道外表面积
+        "保护层面积",    # 保温保护层面积
+        "超高外表面积",  # 超高部分的外表面积
+        "超高保护层面积",  # 超高部分的保护层面积
+        "超高长度",      # 超高部分管道长度
+        "超高数量",      # 超高部分管件数量
+    ]
+    if clean_name in _SUBSIDIARY_PATTERNS or any(
+        clean_name.startswith(p) for p in _SUBSIDIARY_PATTERNS
+    ):
+        return True
+    # "数量(个)" / "数量（个）" — 纯管件/阀门计数行
+    if clean_name.startswith("数量") and ("个" in clean_name or "只" in clean_name):
+        return True
     return False
 
 
