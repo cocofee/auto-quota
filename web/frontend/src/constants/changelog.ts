@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.48';
+export const APP_VERSION = '0.2.50';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,39 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.50',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '清理MaterialPrice.tsx未使用的导入，修复TS编译报错' },
+      { type: 'admin', text: '智能填主材支持广联达导出的纯材料表' },
+      { type: 'admin', text: '新增"智能填主材"功能——选地区自动查价+手填+众包收集' },
+      { type: 'admin', text: '新增同义词"钢柱散热器→柱式散热器安装"' },
+      { type: 'admin', text: '定额行/主材行C:D列合并遗漏——措施费编号+主材标记识别' },
+      { type: 'admin', text: '新增同义词"小厨宝→电热水器"' },
+      { type: 'admin', text: 'Codex审核修复——洗手盆→洗脸盆+地暖/暖气PPR走采暖' },
+      { type: 'admin', text: 'P0同义词补充——卫生器具+衬塑PP-R钢管映射' },
+      { type: 'admin', text: 'OpenClaw skill v5.1——红灯AI判断纠正+跳过xls文件' },
+      { type: 'admin', text: 'PPR材质提取修复+附属计量条目跳过+热水归给水方向' },
+      { type: 'admin', text: '措施费关键词补充——施工脚手架+综合脚手架' },
+    ],
+  },
+  {
+    version: '0.2.49',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '智能填主材支持广联达导出的纯材料表' },
+      { type: 'admin', text: '新增"智能填主材"功能——选地区自动查价+手填+众包收集' },
+      { type: 'admin', text: '新增同义词"钢柱散热器→柱式散热器安装"' },
+      { type: 'admin', text: '定额行/主材行C:D列合并遗漏——措施费编号+主材标记识别' },
+      { type: 'admin', text: '新增同义词"小厨宝→电热水器"' },
+      { type: 'admin', text: 'Codex审核修复——洗手盆→洗脸盆+地暖/暖气PPR走采暖' },
+      { type: 'admin', text: 'P0同义词补充——卫生器具+衬塑PP-R钢管映射' },
+      { type: 'admin', text: 'OpenClaw skill v5.1——红灯AI判断纠正+跳过xls文件' },
+      { type: 'admin', text: 'PPR材质提取修复+附属计量条目跳过+热水归给水方向' },
+      { type: 'admin', text: '措施费关键词补充——施工脚手架+综合脚手架' },
+    ],
+  },
   {
     version: '0.2.48',
     date: '2026-03-17',
