@@ -96,9 +96,97 @@ UNIT_COMPAT_GROUPS = [
 
 # 名称中的修饰词（拆解时去掉，只保留核心品名）
 NOISE_PREFIXES = [
-    "热浸锌", "热浸镀锌", "给水室外", "给水室内", "室外", "室内",
-    "国标", "非标", "加厚", "普通", "优质", "标准",
+    # 镀锌/防腐类
+    "热浸锌", "热浸镀锌", "热镀锌", "冷镀锌", "电镀锌",
+    # 场所/位置
+    "给水室外", "给水室内", "排水室外", "排水室内", "室外", "室内",
+    "地下", "地上", "屋面", "楼层",
+    # 品质/规格类
+    "国标", "非标", "加厚", "普通", "优质", "标准", "一级", "二级",
+    "A型", "B型", "C型", "I型", "II型",
+    # 工艺类
+    "焊接", "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔",
+    "涂塑", "衬塑", "内衬",
+    # 其他修饰
+    "柔性", "刚性", "单壁", "双壁", "薄壁", "厚壁",
+    "无缝", "有缝", "直缝",
+    "阻燃", "耐火", "低烟无卤",
 ]
+
+# 广材网品名映射（清单常见写法 → 广材网能搜到的关键词）
+# 这张表解决"清单写A，广材网只认B"的问题
+_GLDJC_NAME_MAP = {
+    # 管材
+    "衬塑PP-R钢管": "PPR管",
+    "PP-R管": "PPR管",
+    "PP-R给水管": "PPR给水管",
+    "衬塑钢管": "衬塑钢管",
+    "镀锌焊接钢管": "镀锌钢管",
+    "镀锌无缝钢管": "镀锌钢管",
+    "给水铸铁管": "铸铁管",
+    "排水铸铁管": "铸铁排水管",
+    "柔性铸铁管": "柔性铸铁排水管",
+    "HDPE双壁波纹管": "HDPE波纹管",
+    "HDPE排水管": "HDPE管",
+    "UPVC排水管": "PVC排水管",
+    "U-PVC排水管": "PVC排水管",
+    "CPVC电力管": "CPVC管",
+    "PE给水管": "PE管",
+    "PE-RT地暖管": "PE-RT管",
+    "铝塑复合管": "铝塑管",
+    "薄壁不锈钢管": "不锈钢管",
+    "焊接钢管": "焊接钢管",
+    # 管件
+    "弯头": "弯头",
+    "三通": "三通",
+    "异径管": "大小头",
+    "变径": "大小头",
+    # 阀门
+    "截止阀": "截止阀",
+    "闸阀": "闸阀",
+    "蝶阀": "蝶阀",
+    "止回阀": "止回阀",
+    "球阀": "球阀",
+    "减压阀": "减压阀",
+    "平衡阀": "平衡阀",
+    "过滤器": "过滤器",
+    "倒流防止器": "倒流防止器",
+    # 电气
+    "电力电缆": "电力电缆",
+    "控制电缆": "控制电缆",
+    "BV电线": "BV线",
+    "BV线": "BV线",
+    "RVS双绞线": "RVS线",
+    "金属线槽": "金属线槽",
+    "桥架": "电缆桥架",
+    "镀锌线管": "镀锌线管",
+    "PVC线管": "PVC线管",
+    "KBG管": "KBG管",
+    "JDG管": "JDG管",
+    "配电箱": "配电箱",
+    "开关": "开关",
+    "插座": "插座",
+    # 消防
+    "消防喷淋头": "喷淋头",
+    "消火栓": "消火栓",
+    "灭火器": "灭火器",
+    "烟感探测器": "烟感",
+    "温感探测器": "温感",
+    # 暖通
+    "风管": "镀锌风管",
+    "镀锌钢板风管": "镀锌风管",
+    "保温材料": "保温棉",
+    "橡塑保温": "橡塑保温",
+    "风口": "风口",
+    "风阀": "风阀",
+    # 五金/卫浴
+    "蹲便器": "蹲便器",
+    "坐便器": "坐便器",
+    "洗脸盆": "洗脸盆",
+    "水龙头": "水龙头",
+    "地漏": "地漏",
+    "角阀": "角阀",
+}
 
 # 规格提取正则（从名称中提取规格信息）
 # 注意：顺序很重要，长模式放前面避免被短模式截断
@@ -114,6 +202,64 @@ SPEC_PATTERNS = [
     r'Q[0-9]+[A-Z]*',          # 牌号 Q235B
     r'HRB\d+',                 # 钢筋牌号 HRB400
 ]
+
+
+# ========== 同义词加载 ==========
+
+_engineering_synonyms: dict | None = None  # 懒加载缓存
+
+
+def _load_engineering_synonyms() -> dict:
+    """加载Jarvis工程同义词表（718条），懒加载只读一次"""
+    global _engineering_synonyms
+    if _engineering_synonyms is not None:
+        return _engineering_synonyms
+    syn_path = Path(__file__).parent.parent / "data" / "engineering_synonyms.json"
+    if syn_path.exists():
+        try:
+            _engineering_synonyms = json.load(open(syn_path, encoding="utf-8"))
+        except Exception:
+            _engineering_synonyms = {}
+    else:
+        _engineering_synonyms = {}
+    return _engineering_synonyms
+
+
+def _get_gldjc_name(base_name: str, original: str) -> str | None:
+    """从广材网品名映射表找到对应的广材网常用名
+
+    先精确匹配base_name，再匹配original，再做包含匹配
+    """
+    # 精确匹配
+    if base_name in _GLDJC_NAME_MAP:
+        return _GLDJC_NAME_MAP[base_name]
+    if original in _GLDJC_NAME_MAP:
+        return _GLDJC_NAME_MAP[original]
+    # 包含匹配（清单名包含映射表的key）
+    for key, val in _GLDJC_NAME_MAP.items():
+        if key in base_name or key in original:
+            return val
+    return None
+
+
+def _get_synonym(base_name: str) -> str | None:
+    """从Jarvis工程同义词表查一个别名
+
+    同义词表格式: {"清单写法": ["定额写法1", ...]}
+    这里取第一个定额写法作为搜索别名
+    """
+    syns = _load_engineering_synonyms()
+    if not syns:
+        return None
+    # 精确匹配
+    if base_name in syns:
+        vals = syns[base_name]
+        return vals[0] if vals else None
+    # 包含匹配（清单名包含同义词key的核心部分）
+    for key, vals in syns.items():
+        if len(key) >= 3 and key in base_name and vals:
+            return vals[0]
+    return None
 
 
 # ========== 名称拆解 ==========
@@ -162,16 +308,44 @@ def parse_material(name: str, spec_col: str = "") -> dict:
     base_name = re.sub(r'^[\s\-\.]+', '', base_name)  # 去开头残留符号
     base_name = re.sub(r'\s+', '', base_name).strip()  # 去多余空格
 
-    # 4. 构建搜索关键词（分层降级）
+    # 4. 构建搜索关键词（分层降级，5层策略）
     # 第1优先：品名+核心规格（最精确）
-    # 第2优先：纯品名（更宽泛）
+    # 第2优先：纯品名（去掉规格的）
+    # 第3优先：广材网品名映射+规格（清单写法→广材网写法）
+    # 第4优先：广材网品名映射（纯映射名）
+    # 第5优先：工程同义词+规格
     search_keywords = []
+
     if specs:
         search_keywords.append(f"{base_name} {specs[0]}")
     search_keywords.append(base_name)
-    # 如果品名和原始名差异大，也加原始名（去掉规格后的）
+
+    # 广材网品名映射：检查原名/品名是否有对应的广材网常用名
+    mapped_name = _get_gldjc_name(base_name, original)
+    if mapped_name and mapped_name != base_name:
+        if specs:
+            search_keywords.append(f"{mapped_name} {specs[0]}")
+        search_keywords.append(mapped_name)
+
+    # 工程同义词：从Jarvis的同义词表查一个别名
+    synonym = _get_synonym(base_name)
+    if synonym and synonym != base_name and synonym != mapped_name:
+        if specs:
+            search_keywords.append(f"{synonym} {specs[0]}")
+        search_keywords.append(synonym)
+
+    # 最后兜底：如果品名和原始名差异大，也加原始名
     if base_name != original and len(base_name) >= 2:
         search_keywords.append(original)
+
+    # 去重保序
+    seen_kw: set[str] = set()
+    unique_kw: list[str] = []
+    for kw in search_keywords:
+        if kw not in seen_kw:
+            seen_kw.add(kw)
+            unique_kw.append(kw)
+    search_keywords = unique_kw
 
     return {
         "original": original,
