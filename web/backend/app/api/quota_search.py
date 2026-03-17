@@ -48,34 +48,47 @@ async def _remote_get(path: str, params: dict) -> dict:
     url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
     headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, headers=headers, params=params)
-
-        if resp.status_code == 200:
-            return resp.json()
-
-        # 转发错误
-        detail = ""
+    # 最多重试2次（首次 + 1次重试），应对偶发网络抖动
+    last_exc = None
+    for attempt in range(2):
         try:
-            detail = resp.json().get("detail", resp.text[:200])
-        except Exception:
-            detail = resp.text[:200]
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.get(url, headers=headers, params=params)
 
-        raise HTTPException(status_code=resp.status_code, detail=detail)
+            if resp.status_code == 200:
+                return resp.json()
 
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail="无法连接本地匹配服务，请确认电脑上的匹配服务已启动"
-        )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="本地匹配服务响应超时")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"远程定额搜索失败: {e}")
-        raise HTTPException(status_code=500, detail=f"远程搜索失败: {e}")
+            # 转发错误
+            detail = ""
+            try:
+                detail = resp.json().get("detail", resp.text[:200])
+            except Exception:
+                detail = resp.text[:200]
+
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+
+        except httpx.ConnectError as e:
+            last_exc = e
+            if attempt == 0:
+                logger.warning(f"远程匹配服务连接失败，1秒后重试: {e}")
+                await asyncio.sleep(1)
+                continue
+            raise HTTPException(
+                status_code=503,
+                detail="无法连接本地匹配服务，请确认电脑上的匹配服务已启动"
+            )
+        except httpx.TimeoutException as e:
+            last_exc = e
+            if attempt == 0:
+                logger.warning(f"远程匹配服务超时，1秒后重试: {e}")
+                await asyncio.sleep(1)
+                continue
+            raise HTTPException(status_code=504, detail="本地匹配服务响应超时（60秒）")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"远程定额搜索失败: {e}")
+            raise HTTPException(status_code=500, detail=f"远程搜索失败: {e}")
 
 
 @router.get("")
