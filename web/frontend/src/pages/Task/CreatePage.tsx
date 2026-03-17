@@ -5,7 +5,7 @@
  * 智能识别清单Sheet：按内容（而非Sheet名）判断是否为工程量清单
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card, Form, Button, Select, Switch, Upload, InputNumber, App, Progress,
@@ -144,6 +144,44 @@ interface SheetInfo {
   rowCount: number;   // 估算的清单数据行数
 }
 
+/** 从文件名中提取省份标签，如 "[广东]暖通工程.xlsx" → "广东"
+ *  支持格式：[省份]、【省份】、(省份)、（省份）
+ */
+function extractProvinceFromFilename(filename: string): string | null {
+  // 匹配方括号/中括号/圆括号中的2-4个字的省份名
+  const patterns = [
+    /[[\[【]([^[\]【】]{2,4}?)[]\]】]/,  // [广东]、【北京】
+    /[（(]([^（）()]{2,4}?)[）)]/,         // (上海)、（广西）
+  ];
+  for (const re of patterns) {
+    const m = filename.match(re);
+    if (m) {
+      const name = m[1];
+      // 排除非省份的常见标签（如"安装"、"给排水"等专业名）
+      if (/安装|市政|土建|电气|给排水|暖通|消防|园林|装饰/.test(name)) continue;
+      return name;
+    }
+  }
+  return null;
+}
+
+/** 定额类型推荐：根据文件名和Sheet名推荐安装/市政/建筑/园林等 */
+const QUOTA_TYPE_RULES: [RegExp, string][] = [
+  [/给排水|暖通|电气|消防|通风|空调|智能化|弱电|强电|管道/, '安装'],
+  [/道路|排水管网|路缘石|桥梁|隧道|交通|路灯|管网/, '市政'],
+  [/绿化|栽植|种植|园林|景观/, '园林'],
+  [/土建|装饰|混凝土|砌体|钢筋|模板|砌筑|抹灰|防水/, '房屋建筑'],
+  [/光伏|升压站|发电/, '光伏发电'],
+];
+
+function recommendQuotaType(filename: string, sheetNames: string[]): string | null {
+  const text = filename + ' ' + sheetNames.join(' ');
+  for (const [re, type] of QUOTA_TYPE_RULES) {
+    if (re.test(text)) return type;
+  }
+  return null;
+}
+
 export default function TaskCreatePage() {
   const navigate = useNavigate();
   const { message } = App.useApp();
@@ -249,6 +287,45 @@ export default function TaskCreatePage() {
     }
   };
 
+  /** 省份自动识别：根据文件名中的省份标签自动选中对应的区域和定额库 */
+  const autoSelectProvince = useCallback((provinceName: string, sheetNames: string[]) => {
+    // 在 regionMap 中找到匹配的区域
+    for (const [region, items] of regionMap.entries()) {
+      if (region.includes(provinceName) || provinceName.includes(region)) {
+        setSelectedRegion(region);
+        // 根据定额类型推荐进一步筛选（如"安装"/"市政"）
+        const recType = recommendQuotaType('', sheetNames);
+        if (recType) {
+          const matched = items.find(name => name.includes(recType));
+          if (matched) {
+            form.setFieldValue('province', matched);
+            message.success(`已自动识别：${region} · ${recType}`);
+            return;
+          }
+        }
+        // 没有类型推荐，选第一个
+        if (items.length > 0) {
+          form.setFieldValue('province', items[0]);
+          message.success(`已自动识别省份：${region}`);
+        }
+        return;
+      }
+    }
+  }, [regionMap, form, message]);
+
+  /** 定额类型推荐：没有省份标签时，根据文件名/Sheet名推荐定额类型 */
+  const autoRecommendType = useCallback((filename: string, sheetNames: string[]) => {
+    const recType = recommendQuotaType(filename, sheetNames);
+    if (recType && selectedRegion) {
+      const items = regionMap.get(selectedRegion) || [];
+      const matched = items.find(name => name.includes(recType));
+      if (matched && matched !== form.getFieldValue('province')) {
+        form.setFieldValue('province', matched);
+        message.info(`根据文件内容推荐：${recType}定额`);
+      }
+    }
+  }, [selectedRegion, regionMap, form, message]);
+
   // 根据搜索过滤Sheet
   const filteredSheets = useMemo(() => {
     return sheetInfos.filter((info) => {
@@ -332,6 +409,15 @@ export default function TaskCreatePage() {
         // 默认预览第一个清单Sheet
         const firstBill = infos.find(i => i.isBill) || infos.find(i => !i.isSkip) || infos[0];
         setPreviewSheet(firstBill?.name || '');
+
+        // === 省份自动识别（文档5.1）===
+        const detectedProvince = extractProvinceFromFilename(file.name);
+        if (detectedProvince) {
+          autoSelectProvince(detectedProvince, wb.SheetNames);
+        } else {
+          // 没检测到省份，尝试推荐定额类型（文档5.2）
+          autoRecommendType(file.name, wb.SheetNames);
+        }
 
       } catch {
         setSheetNames([]);
