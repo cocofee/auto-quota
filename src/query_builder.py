@@ -23,6 +23,13 @@ _BILL_CODE_PATTERN = re.compile(
     r'|\b\d{10,12}\b'       # 10-12位纯数字编码（050402001001）
 )
 
+# 装修材料代号正则（CT-03、MT-01、ST-02、M-03、MR-07、WD-02、WC-01、PT-01等）
+# 室内设计图纸上的材料编号，混在搜索词里会严重干扰BM25匹配
+_DECO_CODE_PATTERN = re.compile(
+    r'[（(]\s*[A-Z]{1,3}-?\d{1,3}\s*[）)]'  # 括号包裹的编号：（CT-03）(MT-01)
+    r'|(?<=[^\x00-\x7f])\s*[A-Z]{1,2}R?-\d{1,3}\b'  # 中文后跟的编号：成品门M-03、门MR-07
+)
+
 # ===== 工程同义词表（清单常用名 → 定额库常用名） =====
 # 只加载一次，后续复用缓存
 _SYNONYMS_CACHE = None
@@ -1079,8 +1086,11 @@ def build_quota_query(parser, name: str, description: str = "",
     # 这些编码混在特征描述中会污染搜索词，导致BM25搜不到正确定额
     original_name = name
     name = _BILL_CODE_PATTERN.sub('', name or '').strip() or original_name
+    # 过滤装修材料代号（CT-03、MT-01、M-03 等室内设计图纸编号）
+    name = _DECO_CODE_PATTERN.sub('', name).strip() or name
     if description:
         description = _BILL_CODE_PATTERN.sub('', description).strip()
+        description = _DECO_CODE_PATTERN.sub('', description).strip()
     description = description or ""
 
     full_text = f"{name} {description}".strip()
