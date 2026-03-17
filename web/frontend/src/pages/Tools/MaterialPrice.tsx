@@ -8,11 +8,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Upload, Button, Table, Select, Space, App, Statistic, Row, Col,
-  InputNumber, Tag, Tooltip, Switch, Cascader,
+  InputNumber, Tag, Tooltip, Switch,
 } from 'antd';
 import {
   InboxOutlined, SearchOutlined, DownloadOutlined, GoldOutlined,
-  CheckCircleOutlined, EditOutlined, QuestionCircleOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import type { UploadFile } from 'antd';
 import api from '../../services/api';
@@ -69,7 +69,8 @@ export default function MaterialPrice() {
 
   // 查价状态
   const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupDone, setLookupDone] = useState(false);
+  // lookupDone 用于跟踪查价是否完成（控制UI状态）
+  const [, setLookupDone] = useState(false);
 
   // 贡献开关
   const [contributeEnabled, setContributeEnabled] = useState(true);
