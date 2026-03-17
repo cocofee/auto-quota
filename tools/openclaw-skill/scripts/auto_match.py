@@ -436,7 +436,7 @@ def process_file(api, filepath, province, mode="search", use_experience=True):
 def find_new_excel_files(watch_dir, processed):
     """扫描目录，找出新的Excel文件"""
     new_files = []
-    patterns = ["**/*.xlsx", "**/*.xls"]
+    patterns = ["**/*.xlsx"]  # 跳过.xls，提交会失败
 
     for pattern in patterns:
         for filepath in Path(watch_dir).glob(pattern):
