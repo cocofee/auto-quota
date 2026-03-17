@@ -28,7 +28,7 @@ import {
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import {
-  COLORS, GREEN_THRESHOLD,
+  COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD,
   getBillRowBgColor as _getBillRowBgColor,
   getConfidenceCellBgColor,
   getConfidenceTextColor,
@@ -202,6 +202,9 @@ export default function ResultsPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
+  // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
+  const [confFilter, setConfFilter] = useState<'all' | 'green' | 'yellow' | 'red'>('all');
+
   // 分页状态（以清单项为单位）
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -228,11 +231,20 @@ export default function ResultsPage() {
     loadData();
   }, [loadData]);
 
-  // 分页 + 展平
+  // 置信度筛选 → 分页 → 展平
+  const filteredResults = useMemo(() => {
+    if (confFilter === 'all') return results;
+    return results.filter((r) => {
+      if (confFilter === 'green') return r.confidence >= GREEN_THRESHOLD;
+      if (confFilter === 'yellow') return r.confidence >= YELLOW_THRESHOLD && r.confidence < GREEN_THRESHOLD;
+      return r.confidence < YELLOW_THRESHOLD; // red
+    });
+  }, [results, confFilter]);
+
   const pagedResults = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return results.slice(start, start + pageSize);
-  }, [results, page, pageSize]);
+    return filteredResults.slice(start, start + pageSize);
+  }, [filteredResults, page, pageSize]);
 
   const displayRows = useMemo(() => flattenResults(pagedResults), [pagedResults]);
 
@@ -624,6 +636,30 @@ export default function ResultsPage() {
         );
       },
     },
+    // 匹配来源标签（只在清单行显示）
+    {
+      title: '来源',
+      key: 'match_source',
+      width: 70,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+      render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType !== 'bill') return null;
+        const source = row._result.match_source;
+        if (!source) return null;
+        // 来源标签映射
+        const sourceMap: Record<string, { color: string; text: string }> = {
+          experience: { color: 'gold', text: '经验库' },
+          experience_candidate: { color: 'orange', text: '候选' },
+          search: { color: 'blue', text: '搜索' },
+          rule: { color: 'green', text: '规则' },
+          llm: { color: 'purple', text: 'AI' },
+          llm_corrected: { color: 'volcano', text: 'AI纠正' },
+          manual: { color: 'cyan', text: '人工' },
+        };
+        const info = sourceMap[source] || { color: 'default', text: source };
+        return <Tag color={info.color} style={{ margin: 0, fontSize: 11 }}>{info.text}</Tag>;
+      },
+    },
     // 匹配说明（只在清单行显示，自动换行；AI纠正/存疑结果高亮）
     {
       title: '匹配说明',
@@ -807,6 +843,28 @@ export default function ResultsPage() {
             </Button>
           </Space>
         </div>
+        {/* 置信度快捷筛选 */}
+        <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+          {([
+            { key: 'all', label: '全部', color: undefined, count: results.length },
+            { key: 'green', label: '高置信度', color: COLORS.greenSolid, count: summary.high_confidence },
+            { key: 'yellow', label: '中置信度', color: COLORS.yellowSolid, count: summary.mid_confidence },
+            { key: 'red', label: '低置信度', color: COLORS.redSolid, count: summary.low_confidence },
+          ] as const).map(({ key, label, color, count }) => (
+            <Button
+              key={key}
+              size="small"
+              type={confFilter === key ? 'primary' : 'default'}
+              style={{
+                borderColor: confFilter === key ? undefined : color,
+                color: confFilter === key ? undefined : color,
+              }}
+              onClick={() => { setConfFilter(key); setPage(1); }}
+            >
+              {label} {count > 0 && `(${count})`}
+            </Button>
+          ))}
+        </div>
       </Card>
 
       {/* 结果表格（Excel 广联达风格） */}
@@ -930,14 +988,14 @@ export default function ResultsPage() {
         />
 
         {/* 手动分页（以清单项数量计） */}
-        {results.length > 0 && (
+        {filteredResults.length > 0 && (
           <div style={{ textAlign: 'right', marginTop: 12 }}>
             <Pagination
               current={page}
               pageSize={pageSize}
-              total={results.length}
+              total={filteredResults.length}
               showSizeChanger
-              showTotal={(total) => `共 ${total} 条清单`}
+              showTotal={(total) => `共 ${total} 条清单${confFilter !== 'all' ? '（已筛选）' : ''}`}
               pageSizeOptions={['20', '50', '100']}
               onChange={(p, ps) => { setPage(p); setPageSize(ps); setSelectedRowKeys([]); }}
             />

@@ -18,6 +18,7 @@ import {
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
+import { COLORS } from '../../utils/experience';
 import type { TaskInfo, TaskListResponse, TaskStatus, QuotaBalance } from '../../types';
 import { STATUS_MAP } from '../../constants/task';
 
@@ -128,18 +129,43 @@ export default function DashboardPage() {
     },
     ...baseColumns.slice(2),
     {
-      title: '匹配率',
-      key: 'match_rate',
-      width: 80,
+      title: (
+        <Tooltip title="高=推荐直接用 / 中=需复核 / 低=大概率要改">
+          <span>置信度</span>
+        </Tooltip>
+      ),
+      key: 'confidence_stats',
+      width: 140,
       render: (_: unknown, record: TaskInfo) => {
         // 进行中：显示实时进度
         if ((record.status === 'running' || record.status === 'pending') && record.progress > 0) {
           return <span style={{ color: '#1677ff' }}>{record.progress}%</span>;
         }
         if (!record.stats || !record.stats.total) return '-';
-        const rate = Math.round(((record.stats.matched ?? 0) / record.stats.total) * 100);
-        const color = rate < 70 ? '#ff4d4f' : rate < 85 ? '#faad14' : '#52c41a';
-        return <span style={{ color, fontWeight: rate < 70 ? 'bold' : undefined }}>{rate}%</span>;
+        const { total: t, high_conf = 0, mid_conf = 0, low_conf = 0 } = record.stats;
+        const gPct = t > 0 ? (high_conf / t) * 100 : 0;
+        const yPct = t > 0 ? (mid_conf / t) * 100 : 0;
+        const rPct = t > 0 ? (low_conf / t) * 100 : 0;
+        return (
+          <Tooltip title={`推荐: ${high_conf}条 / 参考: ${mid_conf}条 / 待审: ${low_conf}条`}>
+            <div style={{ minWidth: 90 }}>
+              {/* 比例条 */}
+              <div style={{ display: 'flex', height: 5, borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
+                {gPct > 0 && <div style={{ width: `${gPct}%`, background: COLORS.greenSolid }} />}
+                {yPct > 0 && <div style={{ width: `${yPct}%`, background: COLORS.yellowSolid }} />}
+                {rPct > 0 && <div style={{ width: `${rPct}%`, background: COLORS.redSolid }} />}
+              </div>
+              {/* 数字摘要 */}
+              <span style={{ fontSize: 11 }}>
+                <span style={{ color: COLORS.greenSolid }}>{high_conf}</span>
+                {'/'}
+                <span style={{ color: COLORS.yellowSolid }}>{mid_conf}</span>
+                {'/'}
+                <span style={{ color: COLORS.redSolid }}>{low_conf}</span>
+              </span>
+            </div>
+          </Tooltip>
+        );
       },
     },
   ];
