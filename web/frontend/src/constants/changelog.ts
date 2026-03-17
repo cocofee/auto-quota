@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.51';
+export const APP_VERSION = '0.2.52';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.52',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '上海定额book字段修复——从"03"统一改为正确册号' },
+      { type: 'admin', text: '智能填主材支持两种输入——上传文件/从任务拉取' },
+    ],
+  },
   {
     version: '0.2.51',
     date: '2026-03-17',
