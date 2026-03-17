@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.54';
+export const APP_VERSION = '0.2.55';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.55',
+    date: '2026-03-17',
+    changes: [
+      { type: 'admin', text: '智能填主材层级预览——分部标题→清单→定额→主材行' },
+    ],
+  },
   {
     version: '0.2.54',
     date: '2026-03-17',
