@@ -8,19 +8,22 @@
   - POST /parse              上传Excel，解析出主材行（本地处理，不转发）
   - POST /lookup             批量查价（根据省份/城市/期次）
   - POST /contribute         用户提交手填价格（存入候选层）
+  - POST /export             把价格写回原Excel的主材行单价列，返回下载
 
 远程模式（MATCH_BACKEND=remote）下，provinces/cities/periods/lookup/contribute
 转发到本地匹配服务（local_match_server.py），因为价格库在本地电脑上。
-parse 始终在本地处理（只需要解析Excel，不需要价格库）。
+parse/export 始终在本地处理（只需要操作Excel，不需要价格库）。
 """
 
 import asyncio
 import tempfile
 import re
+import uuid as _uuid_mod
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Query
+from fastapi.responses import FileResponse
 from loguru import logger
 
 from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
@@ -29,6 +32,10 @@ router = APIRouter()
 
 # 主材库路径（本地模式使用）
 _MATERIAL_DB_PATH = Path(__file__).parent.parent.parent.parent.parent / "db" / "common" / "material.db"
+
+# 上传文件缓存（parse后保留，export时用）
+# key=file_key(uuid), value=文件路径
+_uploaded_files: dict[str, str] = {}
 
 
 def _is_remote() -> bool:
@@ -199,30 +206,42 @@ def _format_period_label(start: str, end: str) -> str:
 
 @router.post("/material-price/parse")
 async def parse_materials(file: UploadFile = File(...)):
-    """上传Excel，识别出主材行，返回主材列表"""
+    """上传Excel，识别出主材行，返回主材列表
+
+    文件会保留在临时目录，export时用file_key找回来写入价格。
+    """
     # 校验文件类型
     filename = file.filename or ""
     if not filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "请上传Excel文件（.xlsx/.xls）")
 
-    # 保存到临时文件
+    # 保存到临时文件（不删除，留给export用）
     content = await file.read()
     suffix = Path(filename).suffix
+    file_key = str(_uuid_mod.uuid4())
     with tempfile.NamedTemporaryFile(
         mode="wb", suffix=suffix, delete=False, prefix="material_"
     ) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
 
+    # 记录文件路径
+    _uploaded_files[file_key] = tmp_path
+
     # 在线程池中解析（CPU密集型）
     try:
         materials = await asyncio.to_thread(_do_parse, tmp_path)
-        return {"materials": materials, "count": len(materials)}
+        return {
+            "materials": materials,
+            "count": len(materials),
+            "file_key": file_key,  # 前端保存，export时回传
+        }
     except Exception as e:
         logger.error(f"解析主材失败: {e}")
-        raise HTTPException(500, f"解析失败: {e}")
-    finally:
+        # 解析失败才删文件
         Path(tmp_path).unlink(missing_ok=True)
+        _uploaded_files.pop(file_key, None)
+        raise HTTPException(500, f"解析失败: {e}")
 
 
 def _do_parse(excel_path: str) -> list[dict]:
@@ -251,6 +270,8 @@ def _parse_sheet(ws) -> list[dict]:
     自动识别两种表格类型：
     1. 纯材料表（广联达导出的材料汇总表）→ 所有行都是主材，不用逐行判断
     2. 混合表（套完定额的清单）→ 需要逐行识别主材行
+
+    同时自动检测价格列位置（数量列后面那一列），用于export时写回。
     """
     materials = []
 
@@ -270,26 +291,30 @@ def _parse_sheet(ws) -> list[dict]:
     if not header_row:
         return materials
 
-    # 建立列映射，同时判断是否为纯材料表
-    for col_idx in range(1, min(15, ws.max_column + 1)):
-        val = str(ws.cell(row=header_row, column=col_idx).value or "").strip()
-        if val in ("编码", "编号", "序号", "材料编码"):
-            col_map["code"] = col_idx
-        elif val in ("名称", "项目名称", "材料名称"):
-            col_map["name"] = col_idx
-        elif val in ("规格", "规格型号"):
-            col_map["spec"] = col_idx
-        elif val in ("单位",):
-            col_map["unit"] = col_idx
-        elif val in ("数量", "工程量", "消耗量", "用量"):
-            col_map["qty"] = col_idx
-        elif val in ("单价", "综合单价", "不含税单价", "含税单价",
-                      "市场价", "信息价", "除税单价", "除税信息价"):
-            col_map["price"] = col_idx
-        # 纯材料表特征：表头含"材料名称"/"材料编码"/"市场价"/"信息价"等
-        if val in ("材料名称", "材料编码", "市场价", "信息价",
-                    "除税单价", "除税信息价", "消耗量"):
-            is_pure_material_table = True
+    # 建立列映射——扫描表头行及下一行（处理双行表头，如分部分项的"金额(元)"/"综合单价"）
+    _PRICE_KEYWORDS = ("单价", "综合单价", "不含税单价", "含税单价",
+                       "市场价", "信息价", "除税单价", "除税信息价")
+    for scan_row in range(header_row, min(header_row + 2, ws.max_row + 1)):
+        for col_idx in range(1, min(15, ws.max_column + 1)):
+            val = str(ws.cell(row=scan_row, column=col_idx).value or "").strip()
+            if not val:
+                continue
+            if val in ("编码", "编号", "材料编码", "项目编码"):
+                col_map.setdefault("code", col_idx)
+            elif val in ("名称", "项目名称", "材料名称"):
+                col_map.setdefault("name", col_idx)
+            elif val in ("规格", "规格型号", "规格、型号等特殊要求"):
+                col_map.setdefault("spec", col_idx)
+            elif val in ("单位", "计量单位"):
+                col_map.setdefault("unit", col_idx)
+            elif val in ("数量", "工程量", "消耗量", "用量"):
+                col_map.setdefault("qty", col_idx)
+            elif val in _PRICE_KEYWORDS:
+                col_map.setdefault("price", col_idx)
+            # 纯材料表特征
+            if val in ("材料名称", "材料编码", "市场价", "信息价",
+                        "除税单价", "除税信息价", "消耗量"):
+                is_pure_material_table = True
 
     # sheet名包含"材料"/"主材"也视为纯材料表
     sheet_name = ws.title or ""
@@ -298,6 +323,11 @@ def _parse_sheet(ws) -> list[dict]:
 
     if "name" not in col_map:
         return materials
+
+    # 确定价格列位置：优先用检测到的"单价"列，否则用数量列+1
+    price_col = col_map.get("price")
+    if price_col is None and "qty" in col_map:
+        price_col = col_map["qty"] + 1
 
     # 遍历数据行
     for row_idx in range(header_row + 1, ws.max_row + 1):
@@ -327,8 +357,8 @@ def _parse_sheet(ws) -> list[dict]:
                     pass
 
         price_val = None
-        if "price" in col_map:
-            raw = ws.cell(row=row_idx, column=col_map["price"]).value
+        if price_col is not None:
+            raw = ws.cell(row=row_idx, column=price_col).value
             if raw is not None:
                 try:
                     price_val = float(raw)
@@ -347,6 +377,7 @@ def _parse_sheet(ws) -> list[dict]:
                 "unit": unit_val,
                 "qty": qty_val,
                 "existing_price": price_val,  # Excel中已有的价格
+                "price_col": price_col,       # 价格列位置（export写回用）
                 "lookup_price": None,         # 系统查到的价格（后续填充）
                 "lookup_source": None,        # 价格来源说明
             })
@@ -435,10 +466,14 @@ async def parse_from_task(task_id: str):
     # 解析output Excel中的主材行
     try:
         materials = await asyncio.to_thread(_do_parse, task.output_path)
+        # 用任务的output_path作为file_key（不需要复制，直接指向）
+        file_key = f"task-{task_id}"
+        _uploaded_files[file_key] = task.output_path
         return {
             "materials": materials,
             "count": len(materials),
             "task_name": task.original_filename or "",
+            "file_key": file_key,
         }
     except Exception as e:
         logger.error(f"从任务提取主材失败: {e}")
@@ -634,3 +669,114 @@ def _do_contribute(items: list[dict]) -> int:
         saved += 1
 
     return saved
+
+
+# ============================================================
+# 7. 导出：把价格写回原Excel的主材行单价列
+# ============================================================
+
+@router.post("/material-price/export")
+async def export_with_prices(body: dict):
+    """把查到的价格写回到原Excel的主材行单价列，返回修改后的Excel下载
+
+    请求体:
+    {
+        "file_key": "xxx",  // parse返回的file_key
+        "materials": [      // 带价格的主材列表（前端合并后的最终结果）
+            {
+                "row": 10,
+                "sheet": "分部分项...",
+                "price_col": 7,
+                "final_price": 18.5  // 最终价格（手填优先，否则查价，否则原有）
+            },
+            ...
+        ]
+    }
+    """
+    file_key = body.get("file_key", "")
+    materials = body.get("materials", [])
+
+    if not file_key:
+        raise HTTPException(400, "file_key 不能为空")
+
+    # 找到原文件
+    source_path = _uploaded_files.get(file_key)
+    if not source_path or not Path(source_path).exists():
+        raise HTTPException(404, "原始文件不存在或已过期，请重新上传")
+
+    # 复制一份到临时文件（不改原文件）
+    import shutil
+    suffix = Path(source_path).suffix
+    with tempfile.NamedTemporaryFile(
+        mode="wb", suffix=suffix, delete=False, prefix="material_export_"
+    ) as tmp:
+        tmp_path = tmp.name
+    shutil.copy2(source_path, tmp_path)
+
+    # 在线程池中写入价格
+    try:
+        written = await asyncio.to_thread(_do_write_prices, tmp_path, materials)
+        logger.info(f"智能填主材导出：写入 {written} 个价格")
+
+        # 生成下载文件名
+        original_name = Path(source_path).stem
+        download_name = f"{original_name}_已填价{suffix}"
+
+        return FileResponse(
+            path=tmp_path,
+            filename=download_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            # FileResponse发送完毕后自动删除临时文件
+            background=None,
+        )
+    except Exception as e:
+        Path(tmp_path).unlink(missing_ok=True)
+        logger.error(f"写入价格失败: {e}")
+        raise HTTPException(500, f"导出失败: {e}")
+
+
+def _do_write_prices(excel_path: str, materials: list[dict]) -> int:
+    """把价格写入Excel的主材行单价列
+
+    按 sheet名+行号+列号 定位每个主材行，写入 final_price。
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_path)
+    written = 0
+
+    # 按sheet分组
+    sheet_materials: dict[str, list[dict]] = {}
+    for mat in materials:
+        sheet_name = mat.get("sheet", "")
+        if sheet_name not in sheet_materials:
+            sheet_materials[sheet_name] = []
+        sheet_materials[sheet_name].append(mat)
+
+    for sheet_name, mats in sheet_materials.items():
+        if sheet_name not in wb.sheetnames:
+            logger.warning(f"sheet [{sheet_name}] 不存在，跳过 {len(mats)} 条")
+            continue
+
+        ws = wb[sheet_name]
+        for mat in mats:
+            row = mat.get("row")
+            price_col = mat.get("price_col")
+            final_price = mat.get("final_price")
+
+            if row is None or price_col is None or final_price is None:
+                continue
+
+            try:
+                price_val = float(final_price)
+            except (ValueError, TypeError):
+                continue
+
+            # 写入单价
+            cell = ws.cell(row=row, column=price_col, value=round(price_val, 2))
+            cell.number_format = '0.00'
+            written += 1
+
+    wb.save(excel_path)
+    wb.close()
+    return written
