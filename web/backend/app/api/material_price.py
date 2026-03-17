@@ -662,12 +662,23 @@ def _do_lookup(materials: list[dict], province: str, city: str,
     """批量查价核心逻辑
 
     price_type: all=不限, info=只查信息价, market=只查市场价
+    级联策略：信息价 → 市场价(企业集采库) → 广材网缓存
     """
     import sqlite3
 
     db = _get_db()
     conn = sqlite3.connect(str(db.db_path))
     conn.row_factory = sqlite3.Row
+
+    # 加载广材网缓存（作为第三层兜底）
+    _gldjc_cache: dict = {}
+    _gldjc_cache_path = Path(__file__).resolve().parents[4] / "data" / "material_prices.json"
+    if _gldjc_cache_path.exists():
+        try:
+            import json as _json
+            _gldjc_cache = _json.loads(_gldjc_cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            _gldjc_cache = {}
 
     # 价格类型映射到 source_type 过滤条件
     source_filter = None
@@ -716,6 +727,19 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                             "lookup_source": price_info2.get("source", "价格库"),
                         })
                         continue
+
+            # 广材网缓存兜底（第三层）
+            if _gldjc_cache and price_type != "info":
+                # 广材网是市场价，信息价模式下不查
+                cache_key = f"{name}|{unit}"
+                cached = _gldjc_cache.get(cache_key)
+                if cached and cached.get("price_with_tax"):
+                    results.append({
+                        **mat,
+                        "lookup_price": cached["price_with_tax"],
+                        "lookup_source": "广材网市场价",
+                    })
+                    continue
 
             results.append({**mat, "lookup_price": None, "lookup_source": "未查到"})
 
@@ -917,3 +941,231 @@ def _do_write_prices(excel_path: str, materials: list[dict]) -> int:
     wb.save(excel_path)
     wb.close()
     return written
+
+
+# ============================================================
+# 8. 广材网实时查价（管理员专用）
+# ============================================================
+
+@router.post("/material-price/gldjc-lookup")
+async def gldjc_lookup(body: dict):
+    """管理员专用：对DB查不到的材料，实时爬广材网查价
+
+    请求体:
+    {
+        "materials": [{"name": "镀锌钢管 DN25", "unit": "m", "spec": "DN25"}, ...],
+        "cookie": "token=bearer xxx"  // 广材网登录Cookie
+    }
+
+    返回: { results: [...], total, found }
+    """
+    import os
+    from app.auth.dependencies import get_current_user_from_cookie
+
+    materials = body.get("materials", [])
+    cookie = body.get("cookie", "").strip()
+
+    if not cookie:
+        raise HTTPException(400, "请输入广材网Cookie")
+    if not materials:
+        raise HTTPException(400, "材料列表为空")
+
+    # 在线程池中执行（搜索有网络IO和sleep）
+    results = await asyncio.to_thread(
+        _do_gldjc_lookup, materials, cookie
+    )
+
+    found = sum(1 for r in results if r.get("gldjc_price"))
+    return {
+        "results": results,
+        "total": len(results),
+        "found": found,
+    }
+
+
+def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
+    """实时调用广材网搜索+打分+缓存（同步，在线程池中运行）
+
+    防封策略：
+    1. 单次上限30条（前端也应校验）
+    2. 随机间隔5~8秒（模拟人工浏览）
+    3. 检测登录失效/被封，立即停止
+    4. 每10条保存一次缓存（中途中断不丢数据）
+    5. 搜索结果去重（同关键词只搜一次）
+    """
+    import sys
+    import time
+    import random
+
+    # 安全上限：单次最多30条实时搜索
+    MAX_BATCH = 30
+
+    # 把 tools/ 加入路径，复用 gldjc_price.py 的核心函数
+    tools_dir = str(Path(__file__).resolve().parents[4] / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+
+    from gldjc_price import (
+        parse_material, search_material_web, filter_and_score,
+        get_median_price, determine_confidence,
+        load_cache, save_cache, update_cache, check_cache,
+    )
+    import requests as _requests
+    from datetime import datetime
+
+    # 创建带Cookie的session
+    session = _requests.Session()
+    for part in cookie.split("; "):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            session.cookies.set(key.strip(), value.strip())
+
+    cache = load_cache()
+    results = []
+
+    # 本次搜索去重：同关键词只搜一次
+    search_dedup: dict[str, list] = {}
+
+    # 计数：实际发起的网络请求数（不含缓存命中）
+    net_requests = 0
+    blocked = False  # 是否被封/登录失效
+
+    for i, mat in enumerate(materials):
+        name = mat.get("name", "").strip()
+        unit = mat.get("unit", "").strip()
+        spec = mat.get("spec", "").strip()
+
+        if not name:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空"})
+            continue
+
+        # 先查缓存（未过期+非低置信度）
+        cached = check_cache(cache, name, unit)
+        if cached and cached.get("price_with_tax") and cached.get("confidence") != "低":
+            results.append({
+                **mat,
+                "gldjc_price": cached["price_with_tax"],
+                "gldjc_source": f"广材网缓存({cached.get('confidence', '中')})",
+            })
+            continue
+
+        # 安全检查：网络请求超过上限，剩余全部跳过
+        if net_requests >= MAX_BATCH:
+            results.append({
+                **mat, "gldjc_price": None,
+                "gldjc_source": f"已达单次上限{MAX_BATCH}条，请分批查询",
+            })
+            continue
+
+        # 被封检测：之前发现异常则不再请求
+        if blocked:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）"})
+            continue
+
+        # 实时搜索广材网
+        parsed = parse_material(name, spec)
+        base_name = parsed["base_name"]
+        specs = parsed["specs"]
+
+        all_results = []
+        searched_keyword = ""
+        for kw in parsed["search_keywords"]:
+            # 搜索去重：同关键词复用结果
+            if kw in search_dedup:
+                all_results = search_dedup[kw]
+                searched_keyword = kw
+                if all_results:
+                    break
+                continue
+
+            # 随机间隔（模拟人工浏览，5~8秒）
+            if net_requests > 0:
+                delay = random.uniform(5, 8)
+                time.sleep(delay)
+
+            web_results = search_material_web(session, kw)
+            net_requests += 1
+            searched_keyword = kw
+            search_dedup[kw] = web_results
+
+            # 检测被封/登录失效（搜索函数返回空列表可能是正常无结果，
+            # 但如果连续3次都空，大概率有问题）
+            if not web_results and net_requests >= 3:
+                recent_empty = sum(
+                    1 for r in list(search_dedup.values())[-3:]
+                    if not r
+                )
+                if recent_empty >= 3:
+                    logger.warning("广材网连续3次搜索无结果，疑似Cookie失效或被限制，停止查询")
+                    blocked = True
+
+            if web_results:
+                all_results = web_results
+                break
+
+            # 关键词降级间隔（较短，因为主间隔已经够长）
+            time.sleep(random.uniform(1, 2))
+
+        if not all_results:
+            # 搜不到，缓存"未匹配"避免重复搜
+            update_cache(cache, name, unit, {
+                "price_with_tax": None, "confidence": "低",
+                "match_status": "未匹配", "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": 0,
+                "searched_keyword": searched_keyword,
+            })
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网未找到"})
+            continue
+
+        # 打分过滤
+        scored = filter_and_score(all_results, unit, specs, base_name)
+        confidence = determine_confidence(scored, unit, specs)
+        price_source = scored if scored else all_results
+        if not scored:
+            confidence = "低"
+
+        median = get_median_price(price_source)
+
+        if median and confidence in ("高", "中"):
+            update_cache(cache, name, unit, {
+                "price_with_tax": median,
+                "price_without_tax": round(median / 1.13, 2),
+                "confidence": confidence,
+                "match_status": "精确匹配" if confidence == "高" else "模糊匹配",
+                "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": len(price_source),
+                "searched_keyword": searched_keyword,
+            })
+            results.append({
+                **mat,
+                "gldjc_price": median,
+                "gldjc_source": f"广材网市场价({confidence})",
+            })
+        else:
+            update_cache(cache, name, unit, {
+                "price_with_tax": median,
+                "price_without_tax": round(median / 1.13, 2) if median else None,
+                "confidence": "低",
+                "match_status": "低置信度",
+                "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": len(price_source),
+                "searched_keyword": searched_keyword,
+            })
+            results.append({
+                **mat,
+                "gldjc_price": None,
+                "gldjc_source": "广材网低置信度",
+            })
+
+        # 每10条保存一次缓存（防中途中断丢数据）
+        if net_requests % 10 == 0:
+            save_cache(cache)
+
+    # 最终保存缓存
+    save_cache(cache)
+    logger.info(f"广材网查价完成：{len(materials)}条材料，{net_requests}次网络请求，"
+                f"{'被限制提前停止' if blocked else '正常完成'}")
+    return results

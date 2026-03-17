@@ -42,10 +42,33 @@ CACHE_EXPIRE_DAYS = 30
 
 # 请求头（模拟浏览器）
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Referer": "https://www.gldjc.com/",
 }
+
+# User-Agent池（随机选一个，避免固定UA被标记）
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+]
+
+
+def _get_headers() -> dict:
+    """每次请求随机选一个UA，其余头不变"""
+    h = dict(HEADERS)
+    h["User-Agent"] = random.choice(_UA_POOL)
+    return h
 
 # 非材料项关键词（出现这些词的行自动跳过，不查价）
 NON_MATERIAL_KEYWORDS = [
@@ -281,7 +304,7 @@ def search_material_web(session: requests.Session, keyword: str,
     params = {"keyword": keyword, "l": province_code}
 
     try:
-        resp = session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=30)
+        resp = session.get(SEARCH_URL, params=params, headers=_get_headers(), timeout=30)
         resp.raise_for_status()
     except Exception as e:
         print(f"  [错误] 搜索'{keyword}'失败: {e}")
