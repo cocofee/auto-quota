@@ -365,16 +365,17 @@ class MaterialDB:
 
     def search_price_by_name(self, name: str, province: str = "",
                              spec: str = "",
-                             target_unit: str = "") -> Optional[dict]:
-        """按材料名查信息价（给输出Excel主材行填单价用）
+                             target_unit: str = "",
+                             source_type: str = "") -> Optional[dict]:
+        """按材料名查价格（给输出Excel主材行填单价用）
 
         匹配策略（由精到粗，命中即返回）：
-        1. name+spec 精确匹配 material_master → 查该省最新信息价
+        1. name+spec 精确匹配 material_master → 查该省最新价格
         2. name 精确匹配（忽略spec）→ 查价格
         3. name 模糊匹配（LIKE）→ 取第一个有价格的
 
         target_unit: 主材行期望的单位（如'm'），用于单位换算。
-                     如果价格库单位和target_unit不一致，会尝试换算。
+        source_type: 价格类型过滤，空=不限, 'government'=信息价, 'market'=市场价
 
         返回：{"price": 含税单价, "unit": 单位, "source": 来源说明} 或 None
         """
@@ -391,7 +392,8 @@ class MaterialDB:
                 mid = self._find_material_id(conn, name, spec)
                 if mid:
                     price = self._get_price(conn, mid, province,
-                                            target_unit, name, spec)
+                                            target_unit, name, spec,
+                                            source_type=source_type)
                     if price:
                         return price
 
@@ -401,7 +403,8 @@ class MaterialDB:
                 # 查材料的spec（用于DN提取）
                 mat_spec = self._get_material_spec(conn, mid)
                 price = self._get_price(conn, mid, province,
-                                        target_unit, name, mat_spec or spec)
+                                        target_unit, name, mat_spec or spec,
+                                        source_type=source_type)
                 if price:
                     return price
 
@@ -414,7 +417,8 @@ class MaterialDB:
             for row in rows:
                 price = self._get_price(
                     conn, row["id"], province,
-                    target_unit, row["name"], row["spec"] or spec)
+                    target_unit, row["name"], row["spec"] or spec,
+                    source_type=source_type)
                 if price:
                     return price
 
@@ -448,41 +452,89 @@ class MaterialDB:
 
     def _get_price(self, conn, material_id: int, province: str,
                    target_unit: str = "", name: str = "",
-                   spec: str = "") -> Optional[dict]:
-        """查材料最新信息价，优先本省，其次任意省
+                   spec: str = "", source_type: str = "") -> Optional[dict]:
+        """查材料最新价格，优先本省，其次任意省
 
+        source_type: 空=不限(先信息价后市场价), 'government'=只查信息价, 'market'=只查市场价
         如果价格单位和target_unit不一致，会尝试换算（如吨→米）。
         换算失败则返回None（主材行单价留空）。
         """
-        # 按优先级依次查：本省信息价 → 任意省信息价 → 任意价格
+        # 按优先级依次查：本省 → 任意省 → 兜底
         queries = []
-        if province:
+
+        if source_type == "market":
+            # 只查市场价
+            if province:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, source_type
+                       FROM price_fact
+                       WHERE material_id=? AND province=?
+                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib')
+                         AND usable_for_quote=1
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (material_id, province),
+                    lambda r: f"{r['province']}市场价",
+                ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, source_type
+                   FROM price_fact
+                   WHERE material_id=?
+                     AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib')
+                     AND usable_for_quote=1
+                   ORDER BY created_at DESC LIMIT 1""",
+                (material_id,),
+                lambda r: f"{r['province'] or ''}市场价",
+            ))
+        elif source_type == "government":
+            # 只查信息价
+            if province:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, period_end
+                       FROM price_fact
+                       WHERE material_id=? AND province=?
+                         AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                       ORDER BY period_end DESC LIMIT 1""",
+                    (material_id, province),
+                    lambda r: f"{r['province']}信息价",
+                ))
             queries.append((
                 """SELECT price_incl_tax, unit, province, period_end
                    FROM price_fact
-                   WHERE material_id=? AND province=?
-                     AND source_type='official_info' AND usable_for_quote=1
+                   WHERE material_id=? AND source_type IN ('official_info','info_price')
+                     AND usable_for_quote=1
                    ORDER BY period_end DESC LIMIT 1""",
-                (material_id, province),
+                (material_id,),
                 lambda r: f"{r['province']}信息价",
             ))
-        queries.append((
-            """SELECT price_incl_tax, unit, province, period_end
-               FROM price_fact
-               WHERE material_id=? AND source_type='official_info'
-                 AND usable_for_quote=1
-               ORDER BY period_end DESC LIMIT 1""",
-            (material_id,),
-            lambda r: f"{r['province']}信息价",
-        ))
-        queries.append((
-            """SELECT price_incl_tax, unit, province, source_type
-               FROM price_fact
-               WHERE material_id=? AND usable_for_quote=1
-               ORDER BY created_at DESC LIMIT 1""",
-            (material_id,),
-            lambda r: f"{r['province'] or ''}市场价",
-        ))
+        else:
+            # 不限：先信息价后市场价（原有逻辑）
+            if province:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, period_end
+                       FROM price_fact
+                       WHERE material_id=? AND province=?
+                         AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                       ORDER BY period_end DESC LIMIT 1""",
+                    (material_id, province),
+                    lambda r: f"{r['province']}信息价",
+                ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, period_end
+                   FROM price_fact
+                   WHERE material_id=? AND source_type IN ('official_info','info_price')
+                     AND usable_for_quote=1
+                   ORDER BY period_end DESC LIMIT 1""",
+                (material_id,),
+                lambda r: f"{r['province']}信息价",
+            ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND usable_for_quote=1
+                   ORDER BY created_at DESC LIMIT 1""",
+                (material_id,),
+                lambda r: f"{r['province'] or ''}市场价",
+            ))
 
         for sql, params, source_fn in queries:
             row = conn.execute(sql, params).fetchone()
