@@ -83,6 +83,24 @@ async def create_task(
         raise HTTPException(status_code=400, detail="limit_count 必须在 1~10000 之间")
     province, sheet, _ = _normalize_create_task_inputs(province, sheet, None)
 
+    # 防重复提交：同一用户、同文件名、同省份，5分钟内有 pending/running 的任务就拒绝
+    from datetime import datetime, timezone, timedelta
+    original_filename = file.filename or "unknown.xlsx"
+    dup_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    dup_query = select(func.count()).select_from(Task).where(
+        Task.user_id == user.id,
+        Task.original_filename == original_filename,
+        Task.province == province,
+        Task.status.in_(["pending", "running"]),
+        Task.created_at >= dup_cutoff,
+    )
+    dup_count = (await db.execute(dup_query)).scalar_one()
+    if dup_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"该文件（{original_filename}）在同一定额库下已有进行中的任务，请等待完成后再提交"
+        )
+
     # 匹配模式：前端传入优先，未传则用后端默认配置
     from app.config import MATCH_MODE
     if mode and mode.strip():
@@ -119,7 +137,6 @@ async def create_task(
 
     # 3. 创建任务记录
     from pathlib import Path
-    original_filename = file.filename or "unknown.xlsx"
     if len(original_filename) > 255:
         # 校验失败，清理已保存的临时文件
         try:
