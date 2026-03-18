@@ -70,8 +70,10 @@ export default function DashboardPage() {
       });
       setTasks(data.items);
       setTotal(data.total);
+      // 本月完成：只统计当月创建的已完成任务
+      const monthStart = dayjs().startOf('month').format('YYYY-MM-DD');
       const completedRes = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 1, status_filter: 'completed' },
+        params: { page: 1, size: 1, status_filter: 'completed', created_after: monthStart },
       });
       setCompletedTotal(completedRes.data.total);
     } catch {

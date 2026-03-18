@@ -30,7 +30,6 @@ import { useAuthStore } from '../../stores/auth';
 import {
   COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD,
   getBillRowBgColor as _getBillRowBgColor,
-  getConfidenceCellBgColor,
   getConfidenceTextColor,
   confidenceToStars,
 } from '../../utils/experience';
@@ -622,7 +621,16 @@ export default function ResultsPage() {
         const hasQuotas = quotas.length > 0;
         const stars = confidenceToStars(r.confidence, hasQuotas);
         const textColor = hasQuotas ? getConfidenceTextColor(r.confidence) : '#999';
-        const bgColor = getConfidenceCellBgColor(r.confidence, hasQuotas);
+        // 星级标签用更醒目的颜色：绿底/黄底/红底
+        const starBgMap: Record<string, string> = {
+          green: '#b7eb8f',   // 亮绿
+          yellow: '#ffe58f',  // 亮黄
+          red: '#ffa39e',     // 亮红
+        };
+        const level = !hasQuotas ? 'none'
+          : r.confidence >= GREEN_THRESHOLD ? 'green'
+          : r.confidence >= YELLOW_THRESHOLD ? 'yellow' : 'red';
+        const bgColor = level === 'none' ? 'transparent' : starBgMap[level];
         return (
           <span style={{
             color: textColor,
@@ -649,12 +657,14 @@ export default function ResultsPage() {
         if (row._rowType !== 'bill') return null;
         const source = row._result.match_source;
         if (!source) return null;
-        // 来源标签映射
+        // 来源标签映射（原始字段名 → 中文胶囊）
         const sourceMap: Record<string, { color: string; text: string }> = {
           experience: { color: 'gold', text: '经验库' },
           experience_candidate: { color: 'orange', text: '候选' },
-          search: { color: 'blue', text: '搜索' },
-          rule: { color: 'green', text: '规则' },
+          experience_similar_confirmed: { color: 'orange', text: '⚠️经验库' },
+          experience_similar: { color: 'orange', text: '⚠️经验库' },
+          search: { color: 'default', text: '搜索' },
+          rule: { color: 'blue', text: '规则' },
           llm: { color: 'purple', text: 'AI' },
           llm_corrected: { color: 'volcano', text: 'AI纠正' },
           manual: { color: 'cyan', text: '人工' },
@@ -849,10 +859,10 @@ export default function ResultsPage() {
       fontWeight: 500,
       display: 'inline-block',
     });
-    // 准确率 = (已确认 + 已纠正) / 总数；无审核时回退到绿灯/总数
+    // 确认率 = (已确认 + 已纠正) / 总数
     const reviewed = confirmed + corrected;
-    const accuracy = total > 0
-      ? Math.round((reviewed > 0 ? reviewed : (high_confidence ?? 0)) / total * 100)
+    const confirmRate = total > 0
+      ? Math.round((reviewed / total) * 100)
       : 0;
     return (
       <Space size="small" wrap>
@@ -863,7 +873,7 @@ export default function ResultsPage() {
         {no_match > 0 && <span style={pill('#f5f5f5', '#999')}>未匹配 <b>{no_match}</b></span>}
         {total > 0 && (
           <span style={pill('#E3F2FD', '#1565C0')}>
-            准确率 <b>{accuracy}%</b>
+            已审核 <b>{reviewed}</b>/{total}（{confirmRate}%）
           </span>
         )}
         {reviewed > 0 && (
