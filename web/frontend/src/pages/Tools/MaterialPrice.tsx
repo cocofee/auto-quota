@@ -555,30 +555,17 @@ export default function MaterialPrice() {
     {
       title: '项目特征',
       key: 'desc',
-      width: 240,
+      width: 320,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType !== 'bill') return null;
         const desc = row._raw.desc;
         if (!desc) return <span style={{ color: '#ccc' }}>-</span>;
-        let lines = desc.split(/[\r\n]+/).map((s: string) => s.trim()).filter(Boolean);
-        if (lines.length <= 1 && /\d+[.、．]/.test(desc)) {
-          lines = desc.split(/(?=\d+[.、．])/).map((s: string) => s.trim()).filter(Boolean);
-        }
-        const filtered = lines.filter((line: string) => {
-          const clean = line.replace(/^\d+[.、．]\s*/, '');
-          if (!clean.trim()) return false;
-          if (/详见图纸|详见设计|按图施工|按规范/.test(clean)) return false;
-          if (/^其他[：:]\s*(详见|见|按|\/|无|—|-)\s*/.test(clean)) return false;
-          return true;
-        });
-        if (filtered.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+        // 原样显示项目特征，和套定额预览页样式一致
         return (
-          <Tooltip title={filtered.join('\n')}>
-            <div style={{ fontSize: 12, lineHeight: '1.5', maxHeight: 60, overflow: 'hidden' }}>
-              {filtered.map((line: string, idx: number) => <div key={idx}>{line}</div>)}
+            <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+              {desc}
             </div>
-          </Tooltip>
         );
       },
     },
