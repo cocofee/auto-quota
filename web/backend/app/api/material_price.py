@@ -959,9 +959,6 @@ async def gldjc_lookup(body: dict):
 
     返回: { results: [...], total, found }
     """
-    import os
-    from app.auth.dependencies import get_current_user_from_cookie
-
     materials = body.get("materials", [])
     cookie = body.get("cookie", "").strip()
 
