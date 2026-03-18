@@ -396,8 +396,12 @@ def import_to_experience(pairs: list[dict], project_name: str,
         provinces_to_try = [province]
 
     exp_db = ExperienceDB()
-    added = 0
+    inserted = 0
+    matched_existing = 0
+    duplicate_hits = 0
+    written = 0
     skipped = 0
+    seen_record_ids = set()
 
     for pair in pairs:
         if not isinstance(pair, dict):
@@ -449,6 +453,12 @@ def import_to_experience(pairs: list[dict], project_name: str,
                 if len(provinces_to_try) > 1 and not _quota_ids_exist_in_province(quota_ids, try_province):
                     continue  # 编号不属于这个省，跳过试下一个
 
+                existing = exp_db._find_exact_match(
+                    bill_text,
+                    try_province,
+                    authority_only=False,
+                )
+                existing_record_id = int(existing["id"]) if existing else None
                 record_id = exp_db.add_experience(
                     bill_text=bill_text,
                     quota_ids=quota_ids,
@@ -467,7 +477,15 @@ def import_to_experience(pairs: list[dict], project_name: str,
                     break  # 导入成功，不再尝试下一个定额库
 
             if record_id > 0:
-                added += 1
+                written += 1
+                if existing_record_id is None:
+                    inserted += 1
+                    seen_record_ids.add(record_id)
+                elif record_id in seen_record_ids:
+                    duplicate_hits += 1
+                else:
+                    matched_existing += 1
+                    seen_record_ids.add(record_id)
             else:
                 skipped += 1
         except Exception as e:
@@ -477,7 +495,13 @@ def import_to_experience(pairs: list[dict], project_name: str,
             )
             skipped += 1
 
-    return {"added": added, "skipped": skipped}
+    return {
+        "inserted": inserted,
+        "matched_existing": matched_existing,
+        "duplicate_hits": duplicate_hits,
+        "written": written,
+        "skipped": skipped,
+    }
 
 
 def _select_quota_db() -> str:
@@ -696,7 +720,12 @@ def main():
         logger.info(f"  多定额库模式: {', '.join(p[:20] for p in all_provinces)}")
     exp_stats = import_to_experience(pairs, project_name, all_provinces=all_provinces,
                                      source=source)
-    logger.info(f"  经验库: 新增{exp_stats['added']}条, 跳过{exp_stats['skipped']}条")
+    logger.info(
+        f"  经验库: 新增{exp_stats['inserted']}条, "
+        f"命中已有{exp_stats['matched_existing']}条, "
+        f"重复命中{exp_stats['duplicate_hits']}条, "
+        f"跳过{exp_stats['skipped']}条"
+    )
 
     # 第3步：导入通用知识库（定额名称模式，跨省份通用）
     logger.info("导入通用知识库...")
@@ -719,7 +748,11 @@ def main():
     logger.info(f"  清单项: {len(pairs)}条")
     logger.info(f"  定额项: {total_quotas}条")
     logger.info(f"  主材项: {total_materials}条（{bills_with_materials}条清单含主材）")
-    logger.info(f"  经验库: +{exp_stats['added']}条（带定额编号，同省直接用）")
+    logger.info(
+        f"  经验库: 新增{exp_stats['inserted']}条、"
+        f"命中已有{exp_stats['matched_existing']}条、"
+        f"重复命中{exp_stats['duplicate_hits']}条（带定额编号，同省直接用）"
+    )
     logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
     logger.info(f"  数据层级: {layer_hint}")
     logger.info("=" * 50)
