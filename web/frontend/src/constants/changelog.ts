@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.57';
+export const APP_VERSION = '0.2.59';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,21 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.59',
+    date: '2026-03-18',
+    changes: [
+      { type: 'admin', text: '删除LogViewer未使用的List/Text导入，修复TS编译错误' },
+      { type: 'admin', text: '修复广材网查价500错误——删除废弃的错误import' },
+    ],
+  },
+  {
+    version: '0.2.58',
+    date: '2026-03-18',
+    changes: [
+      { type: 'admin', text: '修复广材网查价500错误——删除废弃的错误import' },
+    ],
+  },
   {
     version: '0.2.57',
     date: '2026-03-18',
