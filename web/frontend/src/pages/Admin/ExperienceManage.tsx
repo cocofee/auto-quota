@@ -1,31 +1,42 @@
-/**
- * 管理员 — 经验库管理
- *
- * 改版：Table展示所有记录（和套定额预览页风格一致）
- * - 顶部统计卡片
- * - 筛选栏：省份、专业、层级、搜索
- * - 记录表格：清单名称 | 清单文本 | 定额编号 | 省份 | 专业 | 层级 | 置信度 | 来源 | 操作
- * - 支持分页、晋升/降级/删除
- */
-
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Card, Table, Tag, Button, Space, App, Statistic, Row, Col,
-  Select, Modal, Input, Tooltip, Segmented,
+  App,
+  Button,
+  Card,
+  Col,
+  Input,
+  Modal,
+  Pagination,
+  Row,
+  Segmented,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Tooltip,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import {
-  ReloadOutlined, DatabaseOutlined, SearchOutlined,
-  EnvironmentOutlined, ThunderboltOutlined,
-  SafetyOutlined, InboxOutlined, DeleteOutlined,
-  ArrowUpOutlined, ArrowDownOutlined,
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  DatabaseOutlined,
+  DeleteOutlined,
+  EnvironmentOutlined,
+  InboxOutlined,
+  ReloadOutlined,
+  SafetyOutlined,
+  SearchOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { extractRegion } from '../../utils/region';
-import { COLORS, sourceToLabel, specialtyLabel } from '../../utils/experience';
-
-// ============================================================
-// 类型定义
-// ============================================================
+import {
+  COLORS,
+  getBillRowBgColor,
+  sourceToLabel,
+  specialtyLabel,
+} from '../../utils/experience';
 
 interface ExperienceStats {
   total: number;
@@ -38,19 +49,35 @@ interface ExperienceStats {
   vector_count?: number;
 }
 
+interface ExperienceMaterial {
+  quota_code?: string;
+  name?: string;
+  code?: string;
+  unit?: string;
+  price?: number | string;
+  spec?: string;
+  desc?: string;
+  [key: string]: unknown;
+}
+
 interface ExperienceRecord {
   id: number;
   bill_text: string;
   bill_name?: string;
   province: string;
-  quota_ids: string | string[];
+  specialty?: string;
+  quota_ids: string[] | string;
+  quota_names?: string[] | string;
+  materials?: ExperienceMaterial[] | string;
   confidence?: number;
   source?: string;
-  layer_type?: string;  // authority / candidate
-  specialty?: string;
+  layer_type?: string;
   created_at?: string;
   updated_at?: string;
   confirm_count?: number;
+  bill_code?: string;
+  bill_unit?: string;
+  notes?: string;
 }
 
 interface ProvinceItem {
@@ -58,45 +85,245 @@ interface ProvinceItem {
   count: number;
 }
 
-// ============================================================
-// 组件
-// ============================================================
+interface BillDisplayRow {
+  _rowType: 'bill';
+  _rowKey: string;
+  _record: ExperienceRecord;
+  _quotaCount: number;
+  _materialCount: number;
+}
+
+interface QuotaDisplayRow {
+  _rowType: 'quota';
+  _rowKey: string;
+  _record: ExperienceRecord;
+  _quotaId: string;
+  _quotaName: string;
+  _quotaSpecialty: string;
+  _materialCount: number;
+}
+
+interface MaterialDisplayRow {
+  _rowType: 'material';
+  _rowKey: string;
+  _record: ExperienceRecord;
+  _material: ExperienceMaterial;
+  _quotaId: string;
+  _quotaSpecialty: string;
+}
+
+type DisplayRow = BillDisplayRow | QuotaDisplayRow | MaterialDisplayRow;
+
+
+function parseStringArray(raw: string[] | string | undefined): string[] {
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
+  } catch {
+    return raw ? [String(raw)] : [];
+  }
+}
+
+function parseMaterials(raw: ExperienceMaterial[] | string | undefined): ExperienceMaterial[] {
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeCode(text?: string | null): string {
+  return String(text || '').trim().replace(/\s+/g, '').toUpperCase();
+}
+
+function inferSpecialtyCodeFromQuotaId(quotaId?: string | null): string {
+  if (!quotaId) return '';
+  const alphaMatch = String(quotaId).trim().match(/^([A-Za-z]+\d{0,2})-/);
+  if (alphaMatch) return alphaMatch[1].toUpperCase();
+  const numericMatch = String(quotaId).trim().match(/^(\d{1,2})-/);
+  if (!numericMatch) return '';
+  const num = Number(numericMatch[1]);
+  if (Number.isNaN(num)) return '';
+  return num >= 1 && num <= 12 ? `C${num}` : String(num);
+}
+
+function inferDisplayCategory(
+  record: ExperienceRecord,
+  quotaId?: string,
+  quotaName?: string,
+): string {
+  const textParts = [
+    record.bill_name || '',
+    record.bill_text || '',
+    quotaId || '',
+    quotaName || '',
+    ...parseStringArray(record.quota_names),
+    ...parseStringArray(record.quota_ids),
+  ];
+  const text = textParts.join(' ').toLowerCase();
+
+  if (/光伏|升压站|发电/.test(text)) return '光伏';
+  if (/电力|变电|输电|配电装置|电力电缆|变压器|母线|开关站|开闭所|间隔/.test(text)) return '电力';
+
+  const specialtyCode = inferSpecialtyCodeFromQuotaId(quotaId) || record.specialty || '';
+  if (specialtyCode.startsWith('C')) return '安装';
+  if (specialtyCode === 'A' || specialtyCode === 'B') return '建筑装饰';
+  if (specialtyCode === 'D') return '市政';
+  if (specialtyCode === 'E') return '园林绿化';
+
+  return '安装';
+}
+
+function materialBelongsToQuota(material: ExperienceMaterial, quotaId: string): boolean {
+  const materialQuota = normalizeCode(String(material.quota_code || ''));
+  const normalizedQuotaId = normalizeCode(quotaId);
+  return Boolean(materialQuota && normalizedQuotaId && materialQuota === normalizedQuotaId);
+}
+
+function buildDisplayRows(records: ExperienceRecord[]): DisplayRow[] {
+  const rows: DisplayRow[] = [];
+
+  records.forEach((record) => {
+    const quotaIds = parseStringArray(record.quota_ids);
+    const quotaNames = parseStringArray(record.quota_names);
+    const materials = parseMaterials(record.materials);
+
+    rows.push({
+      _rowType: 'bill',
+      _rowKey: `bill-${record.id}`,
+      _record: record,
+      _quotaCount: quotaIds.length,
+      _materialCount: materials.length,
+    });
+
+    const matchedMaterialIndexes = new Set<number>();
+
+    quotaIds.forEach((quotaId, quotaIndex) => {
+      const quotaMaterials = materials.filter((material) => materialBelongsToQuota(material, quotaId));
+      const quotaSpecialty = inferSpecialtyCodeFromQuotaId(quotaId) || record.specialty || '';
+
+      rows.push({
+        _rowType: 'quota',
+        _rowKey: `quota-${record.id}-${quotaIndex}`,
+        _record: record,
+        _quotaId: quotaId,
+        _quotaName: quotaNames[quotaIndex] || '',
+        _quotaSpecialty: quotaSpecialty,
+        _materialCount: quotaMaterials.length,
+      });
+
+      materials.forEach((material, materialIndex) => {
+        if (!materialBelongsToQuota(material, quotaId)) return;
+        matchedMaterialIndexes.add(materialIndex);
+        rows.push({
+          _rowType: 'material',
+          _rowKey: `material-${record.id}-${quotaIndex}-${materialIndex}`,
+          _record: record,
+          _material: material,
+          _quotaId: quotaId,
+          _quotaSpecialty: quotaSpecialty,
+        });
+      });
+    });
+
+    materials.forEach((material, materialIndex) => {
+      if (matchedMaterialIndexes.has(materialIndex)) return;
+      const quotaSpecialty = inferSpecialtyCodeFromQuotaId(String(material.quota_code || '')) || record.specialty || '';
+      rows.push({
+        _rowType: 'material',
+        _rowKey: `material-${record.id}-unbound-${materialIndex}`,
+        _record: record,
+        _material: material,
+        _quotaId: String(material.quota_code || ''),
+        _quotaSpecialty: quotaSpecialty,
+      });
+    });
+  });
+
+  return rows;
+}
+
+function confidenceColor(confidence?: number): string {
+  if (confidence == null) return '#999';
+  if (confidence >= 85) return COLORS.greenSolid;
+  if (confidence >= 60) return COLORS.yellowSolid;
+  return COLORS.redSolid;
+}
+
+function getExperienceBillRowBgColor(confidence?: number, hasQuotas = true): string {
+  if (!hasQuotas) return '#F5F5F5';
+  return getBillRowBgColor(confidence || 0);
+}
+
+function formatMaterialMeta(material: ExperienceMaterial): string {
+  const parts = [
+    material.spec ? `规格: ${String(material.spec)}` : '',
+    material.desc ? `说明: ${String(material.desc)}` : '',
+    material.price != null && material.price !== '' ? `参考价: ${String(material.price)}` : '',
+  ].filter(Boolean);
+  return parts.join(' | ');
+}
+
+function formatMaterialName(material: ExperienceMaterial): string {
+  const rawName = String(material.name || '').trim();
+  if (!rawName) return '';
+
+  let text = rawName
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/^[◆●■\-\s]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  text = text
+    .replace(/[（(][^()（）]{0,80}(?:见平面图|详见|投标|中标|综合考虑|不予调整|仅供参考|参考)[^()（）]{0,80}[)）]/g, ' ')
+    .replace(/[（(][\u4e00-\u9fff、，,/\s]{7,}[)）]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const detailIndex = text.search(
+    /\s(?:功率|风量|风压|噪声|扬程|流量|全压|声压|电压|规格[:：]|型号[:：]|材质[:：]|名称[:：]|参数[:：]|说明[:：]|敷设方式[:：])/,
+  );
+  if (detailIndex > 0) {
+    text = text.slice(0, detailIndex).trim();
+  }
+
+  text = text.replace(/[，,;；:：\-\/]+$/, '').trim();
+  return text || rawName;
+}
 
 export default function ExperienceManage() {
   const { message } = App.useApp();
 
-  // 统计数据
   const [stats, setStats] = useState<ExperienceStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
-  // 记录列表
   const [records, setRecords] = useState<ExperienceRecord[]>([]);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [totalRecords, setTotalRecords] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // 筛选条件
   const [filterProvince, setFilterProvince] = useState<string | undefined>(undefined);
   const [filterLayer, setFilterLayer] = useState<string>('all');
   const [searchKeyword, setSearchKeyword] = useState('');
-  const [searchMode, setSearchMode] = useState(false); // 是否在搜索模式
-
-  // 省份列表（从stats提取）
+  const [searchMode, setSearchMode] = useState(false);
   const [provinces, setProvinces] = useState<ProvinceItem[]>([]);
 
-  // 批量晋升
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
   const [batchProvince, setBatchProvince] = useState<string | undefined>(undefined);
 
-  // 按地区分组省份列表
   const regionMap = useMemo(() => {
     const map = new Map<string, ProvinceItem[]>();
     for (const p of provinces) {
       const region = extractRegion(p.province);
       if (!map.has(region)) map.set(region, []);
-      map.get(region)!.push(p);
+      map.get(region)?.push(p);
     }
     return map;
   }, [provinces]);
@@ -110,21 +337,19 @@ export default function ExperienceManage() {
 
   const batchProvinceOptions = useMemo(() => {
     if (!selectedRegion) return [];
-    return (regionMap.get(selectedRegion) || []).map(p => ({
-      label: `${p.province}（${p.count}条）`,
-      value: p.province,
+    return (regionMap.get(selectedRegion) || []).map((item) => ({
+      label: `${item.province}（${item.count}条）`,
+      value: item.province,
     }));
-  }, [selectedRegion, regionMap]);
+  }, [regionMap, selectedRegion]);
 
-  // 省份下拉选项（带计数）
   const provinceOptions = useMemo(() =>
-    provinces.map(p => ({
-      label: `${p.province}（${p.count.toLocaleString()}条）`,
-      value: p.province,
+    provinces.map((item) => ({
+      label: `${item.province}（${item.count.toLocaleString()}条）`,
+      value: item.province,
     })),
   [provinces]);
 
-  // 专业统计（从stats提取，用于展示）
   const specialtyData = useMemo(() => {
     const bySpecialty = stats?.by_specialty || {};
     return Object.entries(bySpecialty)
@@ -132,21 +357,30 @@ export default function ExperienceManage() {
       .sort((a, b) => b.count - a.count);
   }, [stats]);
 
-  // ============================================================
-  // 数据加载
-  // ============================================================
+  const displayRows = useMemo(() => buildDisplayRows(records), [records]);
 
-  // 加载统计
+  const displaySummary = useMemo(() => {
+    let billCount = 0;
+    let quotaCount = 0;
+    let materialCount = 0;
+    displayRows.forEach((row) => {
+      if (row._rowType === 'bill') billCount += 1;
+      else if (row._rowType === 'quota') quotaCount += 1;
+      else materialCount += 1;
+    });
+    return { billCount, quotaCount, materialCount };
+  }, [displayRows]);
+
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
     try {
       const { data } = await api.get<ExperienceStats>('/admin/experience/stats');
       setStats(data);
       const byProvince = data.by_province || {};
-      const list: ProvinceItem[] = Object.entries(byProvince)
-        .map(([name, count]) => ({ province: name, count: count as number }))
+      const items = Object.entries(byProvince)
+        .map(([province, count]) => ({ province, count: count as number }))
         .sort((a, b) => b.count - a.count);
-      setProvinces(list);
+      setProvinces(items);
     } catch {
       message.error('加载经验库统计失败');
     } finally {
@@ -154,13 +388,15 @@ export default function ExperienceManage() {
     }
   }, [message]);
 
-  // 加载记录列表（分页）
   const loadRecords = useCallback(async () => {
     setRecordsLoading(true);
     setSearchMode(false);
     try {
       const { data } = await api.get<{
-        items: ExperienceRecord[]; total: number; page: number; size: number;
+        items: ExperienceRecord[];
+        total: number;
+        page: number;
+        size: number;
       }>('/admin/experience/records', {
         params: {
           layer: filterLayer,
@@ -176,22 +412,28 @@ export default function ExperienceManage() {
     } finally {
       setRecordsLoading(false);
     }
-  }, [filterLayer, filterProvince, page, pageSize, message]);
+  }, [filterLayer, filterProvince, message, page, pageSize]);
 
-  // 搜索
   const handleSearch = useCallback(async () => {
-    const kw = searchKeyword.trim();
-    if (!kw) {
+    const q = searchKeyword.trim();
+    if (!q) {
       setSearchMode(false);
       loadRecords();
       return;
     }
+
     setRecordsLoading(true);
     setSearchMode(true);
     try {
       const { data } = await api.get<{ items: ExperienceRecord[]; total: number }>(
         '/admin/experience/search',
-        { params: { q: kw, province: filterProvince || undefined, limit: 200 } },
+        {
+          params: {
+            q,
+            province: filterProvince || undefined,
+            limit: 200,
+          },
+        },
       );
       setRecords(data.items || []);
       setTotalRecords(data.total || 0);
@@ -200,16 +442,13 @@ export default function ExperienceManage() {
     } finally {
       setRecordsLoading(false);
     }
-  }, [searchKeyword, filterProvince, loadRecords, message]);
+  }, [filterProvince, loadRecords, message, searchKeyword]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
+
   useEffect(() => {
     if (!searchMode) loadRecords();
-  }, [loadRecords]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ============================================================
-  // 操作：晋升/降级/删除
-  // ============================================================
+  }, [loadRecords, searchMode]);
 
   const handlePromote = async (id: number) => {
     try {
@@ -236,8 +475,10 @@ export default function ExperienceManage() {
   const handleDelete = (id: number, billText: string) => {
     Modal.confirm({
       title: '确认删除',
-      content: `确定要删除「${billText.slice(0, 30)}」这条经验记录吗？`,
-      okText: '删除', okButtonProps: { danger: true }, cancelText: '取消',
+      content: `确定要删除“${billText.slice(0, 30)}”这条经验记录吗？`,
+      okText: '删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
       onOk: async () => {
         try {
           await api.delete(`/admin/experience/${id}`);
@@ -251,18 +492,19 @@ export default function ExperienceManage() {
     });
   };
 
-  // 按省份删除
   const handleDeleteProvince = (province: string, count: number) => {
     Modal.confirm({
       title: '确认删除',
-      content: `确定要删除「${province}」的全部 ${count} 条经验记录吗？此操作不可恢复。`,
-      okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
+      content: `确定要删除“${province}”的全部 ${count} 条经验记录吗？此操作不可恢复。`,
+      okText: '确认删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
       onOk: async () => {
         try {
-          const { data } = await api.delete<{ deleted: number }>(
-            '/admin/experience/by-province', { params: { province } },
-          );
-          message.success(`已删除「${province}」${data.deleted} 条记录`);
+          const { data } = await api.delete<{ deleted: number }>('/admin/experience/by-province', {
+            params: { province },
+          });
+          message.success(`已删除“${province}” ${data.deleted} 条记录`);
           loadRecords();
           loadStats();
         } catch {
@@ -272,45 +514,59 @@ export default function ExperienceManage() {
     });
   };
 
-  // 智能批量晋升
   const handleBatchPromote = async () => {
     setBatchLoading(true);
     try {
       const { data: preview } = await api.post<{
-        total: number; promoted: number; skipped: number;
-        errors: string[]; dry_run: boolean;
+        total: number;
+        promoted: number;
+        skipped: number;
+        errors: string[];
+        dry_run: boolean;
       }>('/admin/experience/batch-promote', {
-        province: batchProvince || null, dry_run: true,
+        province: batchProvince || null,
+        dry_run: true,
       }, { timeout: 120000 });
+
       setBatchLoading(false);
-      if (preview.total === 0) { message.info('没有可晋升的候选层记录'); return; }
-      const scopeText = batchProvince ? `「${batchProvince}」` : '全部省份';
+      if (preview.total === 0) {
+        message.info('没有可晋升的候选层记录');
+        return;
+      }
+
+      const scopeText = batchProvince ? `“${batchProvince}”` : '全部省份';
       Modal.confirm({
-        title: '智能批量晋升预览', width: 500,
+        title: '智能批量晋升预览',
+        width: 520,
         content: (
           <div>
             <p>范围：{scopeText}</p>
             <p>候选层记录：<strong>{preview.total}</strong> 条</p>
-            <p style={{ color: COLORS.greenSolid }}>校验通过（可晋升）：<strong>{preview.promoted}</strong> 条</p>
+            <p style={{ color: COLORS.greenSolid }}>
+              校验通过：<strong>{preview.promoted}</strong> 条
+            </p>
             {preview.skipped > 0 && (
-              <p style={{ color: COLORS.yellowSolid }}>校验不通过（跳过）：<strong>{preview.skipped}</strong> 条</p>
+              <p style={{ color: COLORS.yellowSolid }}>
+                跳过：<strong>{preview.skipped}</strong> 条
+              </p>
             )}
             {preview.errors.length > 0 && (
               <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
-                <div>不通过示例：</div>
-                {preview.errors.map((e, i) => <div key={i}>• {e}</div>)}
+                <div>跳过示例：</div>
+                {preview.errors.map((item, index) => <div key={index}>- {item}</div>)}
               </div>
             )}
           </div>
         ),
-        okText: `确认晋升 ${preview.promoted} 条`, cancelText: '取消',
+        okText: `确认晋升 ${preview.promoted} 条`,
+        cancelText: '取消',
         onOk: async () => {
-          const { data: result } = await api.post<{ promoted: number }>(
+          const { data } = await api.post<{ promoted: number }>(
             '/admin/experience/batch-promote',
             { province: batchProvince || null, dry_run: false },
             { timeout: 300000 },
           );
-          message.success(`批量晋升完成：${result.promoted} 条已晋升`);
+          message.success(`批量晋升完成，${data.promoted} 条已晋升`);
           loadRecords();
           loadStats();
         },
@@ -321,134 +577,195 @@ export default function ExperienceManage() {
     }
   };
 
-  // ============================================================
-  // 解析定额编号
-  // ============================================================
-
-  const parseQuotaIds = (raw: string | string[]): string[] => {
-    if (Array.isArray(raw)) return raw;
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return raw ? [raw] : [];
-    }
-  };
-
-  // ============================================================
-  // 表格列定义
-  // ============================================================
-
-  const columns = [
+  const columns: ColumnsType<DisplayRow> = [
     {
-      title: '层级',
-      key: 'layer',
-      width: 80,
-      render: (_: unknown, r: ExperienceRecord) => {
-        const isAuth = r.layer_type === 'authority';
-        return <Tag color={isAuth ? 'green' : 'orange'}>{isAuth ? '权威' : '候选'}</Tag>;
+      title: '类型',
+      key: 'type',
+      width: 120,
+      render: (_value, row) => {
+        if (row._rowType === 'bill') {
+          const isAuthority = row._record.layer_type === 'authority';
+          return (
+            <Space size={4} wrap>
+              <Tag color={isAuthority ? 'green' : 'orange'}>{isAuthority ? '权威' : '候选'}</Tag>
+              <Tag color="cyan">清单</Tag>
+            </Space>
+          );
+        }
+        if (row._rowType === 'quota') {
+          return <Tag color="geekblue">定额</Tag>;
+        }
+        return <Tag color="gold">主材</Tag>;
       },
     },
     {
-      title: '省份',
-      dataIndex: 'province',
-      key: 'province',
-      width: 100,
-      ellipsis: true,
-    },
-    {
-      title: '清单名称',
-      key: 'bill_name',
-      width: 180,
-      render: (_: unknown, r: ExperienceRecord) => (
-        <span style={{ fontWeight: 500 }}>{r.bill_name || '—'}</span>
-      ),
-    },
-    {
-      title: '清单文本',
-      dataIndex: 'bill_text',
-      key: 'bill_text',
-      width: 260,
-      render: (text: string) => (
-        <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-          {text || '—'}
-        </div>
-      ),
-    },
-    {
-      title: '定额编号',
-      key: 'quota_ids',
-      width: 180,
-      render: (_: unknown, r: ExperienceRecord) => {
-        const ids = parseQuotaIds(r.quota_ids);
-        if (ids.length === 0) return <span style={{ color: '#ccc' }}>—</span>;
+      title: '项目编码',
+      key: 'code',
+      width: 170,
+      render: (_value, row) => {
+        if (row._rowType === 'bill') {
+          return <span style={{ fontSize: 12, color: '#555' }}>{row._record.bill_code || '-'}</span>;
+        }
+        if (row._rowType === 'quota') {
+          return <Tag color="blue" style={{ margin: 0 }}>{row._quotaId}</Tag>;
+        }
         return (
-          <Space size={2} wrap>
-            {ids.map((id, i) => (
-              <Tag key={i} color="blue" style={{ margin: 0 }}>{id}</Tag>
-            ))}
+          <Space size={4} wrap>
+            {row._material.code ? (
+              <Tag color="gold" style={{ margin: 0 }}>{String(row._material.code)}</Tag>
+            ) : (
+              <span style={{ color: '#999' }}>-</span>
+            )}
+            {!row._quotaId && row._material.quota_code && (
+              <Tag style={{ margin: 0 }}>挂定额 {String(row._material.quota_code)}</Tag>
+            )}
           </Space>
         );
       },
     },
     {
-      title: '专业',
-      dataIndex: 'specialty',
-      key: 'specialty',
-      width: 90,
-      render: (v: string) => v ? <span style={{ fontSize: 12 }}>{specialtyLabel(v)}</span> : '—',
-    },
-    {
-      title: '置信度',
-      dataIndex: 'confidence',
-      key: 'confidence',
-      width: 80,
-      align: 'center' as const,
-      sorter: (a: ExperienceRecord, b: ExperienceRecord) =>
-        (a.confidence || 0) - (b.confidence || 0),
-      render: (v: number | undefined) => {
-        if (v == null) return '—';
-        let color = COLORS.redSolid;
-        if (v >= 85) color = COLORS.greenSolid;
-        else if (v >= 60) color = COLORS.yellowSolid;
-        return <span style={{ fontWeight: 600, color }}>{v}%</span>;
+      title: '项目名称',
+      key: 'name',
+      width: 420,
+      render: (_value, row) => {
+        if (row._rowType === 'bill') {
+          return (
+            <div>
+              <div style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all', lineHeight: 1.6 }}>
+                {row._record.bill_name || '未命名清单'}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
+                定额 {row._quotaCount} 项
+                {row._materialCount > 0 ? ` · 主材 ${row._materialCount} 项` : ''}
+              </div>
+            </div>
+          );
+        }
+
+        if (row._rowType === 'quota') {
+          return (
+            <div style={{ paddingLeft: 8 }}>
+              <div style={{ color: '#444', whiteSpace: 'normal', wordBreak: 'break-all', lineHeight: 1.6 }}>
+                {row._quotaName || row._quotaId}
+              </div>
+              {row._materialCount > 0 && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
+                  主材 {row._materialCount} 项
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div style={{ paddingLeft: 16 }}>
+            <span style={{ color: '#d97706', marginRight: 6 }}>●</span>
+            <span>{formatMaterialName(row._material) || '未命名主材'}</span>
+          </div>
+        );
       },
     },
     {
-      title: '来源',
-      dataIndex: 'source',
-      key: 'source',
-      width: 100,
-      ellipsis: true,
-      render: (v: string) => (
-        <span style={{ fontSize: 12, color: '#888' }}>{v ? sourceToLabel(v) : '—'}</span>
-      ),
+      title: '项目特征描述',
+      key: 'desc',
+      width: 420,
+      render: (_value, row) => {
+        if (row._rowType === 'bill') {
+          return (
+            <div style={{ fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              {row._record.bill_text || '-'}
+            </div>
+          );
+        }
+
+        if (row._rowType === 'quota') {
+          if (!row._quotaSpecialty) return null;
+          return (
+            <div style={{ fontSize: 12, color: '#666' }}>
+              {`专业：${inferDisplayCategory(row._record, row._quotaId, row._quotaName)}`}
+            </div>
+          );
+        }
+
+        const meta = formatMaterialMeta(row._material);
+        return (
+          <div style={{ fontSize: 12, color: '#666', lineHeight: 1.6 }}>
+            {meta || '无补充说明'}
+          </div>
+        );
+      },
+    },
+    {
+      title: '单位',
+      key: 'unit',
+      width: 80,
+      align: 'center',
+      render: (_value, row) => {
+        if (row._rowType === 'bill') return row._record.bill_unit || '-';
+        if (row._rowType === 'quota') return '-';
+        return row._material.unit ? String(row._material.unit) : '-';
+      },
+    },
+    {
+      title: '置信度 / 来源',
+      key: 'confidence-source',
+      width: 180,
+      render: (_value, row) => {
+        if (row._rowType !== 'bill') {
+          return <span style={{ fontSize: 12, color: '#999' }}>跟随清单</span>;
+        }
+
+        return (
+          <div>
+            <div style={{ fontWeight: 600, color: confidenceColor(row._record.confidence) }}>
+              {row._record.confidence == null ? '-' : `${row._record.confidence}%`}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: '#888' }}>
+              {row._record.source ? sourceToLabel(row._record.source) : '-'}
+            </div>
+          </div>
+        );
+      },
     },
     {
       title: '操作',
       key: 'action',
       width: 120,
-      render: (_: unknown, r: ExperienceRecord) => {
-        const isAuth = r.layer_type === 'authority';
+      render: (_value, row) => {
+        if (row._rowType !== 'bill') return null;
+
+        const isAuthority = row._record.layer_type === 'authority';
         return (
           <Space size={2}>
-            {isAuth ? (
+            {isAuthority ? (
               <Tooltip title="降级到候选层">
-                <Button type="text" size="small" icon={<ArrowDownOutlined />}
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ArrowDownOutlined />}
                   style={{ color: '#d48806' }}
-                  onClick={() => handleDemote(r.id)} />
+                  onClick={() => handleDemote(row._record.id)}
+                />
               </Tooltip>
             ) : (
               <Tooltip title="晋升到权威层">
-                <Button type="text" size="small" icon={<ArrowUpOutlined />}
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ArrowUpOutlined />}
                   style={{ color: '#16a34a' }}
-                  onClick={() => handlePromote(r.id)} />
+                  onClick={() => handlePromote(row._record.id)}
+                />
               </Tooltip>
             )}
             <Tooltip title="删除">
-              <Button type="text" size="small" danger icon={<DeleteOutlined />}
-                onClick={() => handleDelete(r.id, r.bill_text || r.bill_name || '')} />
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => handleDelete(row._record.id, row._record.bill_text || row._record.bill_name || '')}
+              />
             </Tooltip>
           </Space>
         );
@@ -456,184 +773,272 @@ export default function ExperienceManage() {
     },
   ];
 
-  // 行样式：权威层白色，候选层浅黄
-  const rowClassName = (r: ExperienceRecord) =>
-    r.layer_type === 'authority' ? 'exp-row-auth' : 'exp-row-cand';
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{`
-        .exp-table .ant-table {
+        .exp-preview-table .ant-table {
           border-radius: 8px;
           overflow: hidden;
           border: 1px solid #e8e8e8;
         }
-        .exp-table .ant-table-thead > tr > th {
+        .exp-preview-table .ant-table-thead > tr > th {
           background: #fafafa !important;
           font-weight: 600 !important;
           font-size: 13px;
           border-bottom: 2px solid #d9d9d9 !important;
         }
-        .exp-table .ant-table-tbody > tr > td {
+        .exp-preview-table .ant-table-tbody > tr > td {
+          background: inherit !important;
           border-bottom: 1px solid #f0f0f0;
-          padding: 6px 8px !important;
+          padding: 8px 10px !important;
         }
-        .exp-table .ant-table-tbody > tr.exp-row-auth > td {
-          background: #fff !important;
-        }
-        .exp-table .ant-table-tbody > tr.exp-row-cand > td {
-          background: #fffbe6 !important;
-        }
-        .exp-table .ant-table-tbody > tr:hover > td {
+        .exp-preview-table .ant-table-tbody > tr.bill-row:hover > td {
           filter: brightness(0.97);
+        }
+        .exp-preview-table .ant-table-tbody > tr.quota-row > td:nth-child(1),
+        .exp-preview-table .ant-table-tbody > tr.quota-row > td:nth-child(2) {
+          border-left: 3px solid #91caff;
+        }
+        .exp-preview-table .ant-table-tbody > tr.material-row > td:nth-child(1),
+        .exp-preview-table .ant-table-tbody > tr.material-row > td:nth-child(2) {
+          border-left: 3px solid #fbbf24;
         }
       `}</style>
 
-      {/* 第一行：统计概览 */}
       <Row gutter={[12, 12]}>
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
-            <Statistic title="总记录" value={stats?.total || 0} prefix={<DatabaseOutlined />}
-              valueStyle={{ fontSize: 28 }} />
+            <Statistic
+              title="总记录"
+              value={stats?.total || 0}
+              prefix={<DatabaseOutlined />}
+              valueStyle={{ fontSize: 28 }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
-            <Statistic title="权威层" value={stats?.authority || 0}
-              prefix={<SafetyOutlined />} valueStyle={{ fontSize: 28, color: COLORS.greenSolid }} />
+            <Statistic
+              title="权威层"
+              value={stats?.authority || 0}
+              prefix={<SafetyOutlined />}
+              valueStyle={{ fontSize: 28, color: COLORS.greenSolid }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
-            <Statistic title="候选层" value={stats?.candidate || 0}
-              prefix={<InboxOutlined />} valueStyle={{ fontSize: 28, color: COLORS.yellowSolid }} />
+            <Statistic
+              title="候选层"
+              value={stats?.candidate || 0}
+              prefix={<InboxOutlined />}
+              valueStyle={{ fontSize: 28, color: COLORS.yellowSolid }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
-            <Statistic title="省份/专业" value={`${provinces.length}省 ${specialtyData.length}专业`}
-              prefix={<EnvironmentOutlined />} valueStyle={{ fontSize: 20 }} />
+            <Statistic
+              title="省份 / 专业"
+              value={`${provinces.length}省 / ${specialtyData.length}专业`}
+              prefix={<EnvironmentOutlined />}
+              valueStyle={{ fontSize: 20 }}
+            />
           </Card>
         </Col>
       </Row>
 
-      {/* 第二行：筛选栏 + 记录表格 */}
       <Card
         styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {/* 层级筛选 */}
             <Segmented
               value={filterLayer}
-              onChange={v => { setFilterLayer(v as string); setPage(1); }}
+              onChange={(value) => {
+                setFilterLayer(value as string);
+                setPage(1);
+              }}
               options={[
                 { value: 'all', label: `全部 ${stats?.total?.toLocaleString() || 0}` },
-                { value: 'authority', label: <span style={{ color: COLORS.greenSolid }}>权威 {stats?.authority?.toLocaleString() || 0}</span> },
-                { value: 'candidate', label: <span style={{ color: COLORS.yellowSolid }}>候选 {stats?.candidate?.toLocaleString() || 0}</span> },
+                {
+                  value: 'authority',
+                  label: <span style={{ color: COLORS.greenSolid }}>权威 {stats?.authority?.toLocaleString() || 0}</span>,
+                },
+                {
+                  value: 'candidate',
+                  label: <span style={{ color: COLORS.yellowSolid }}>候选 {stats?.candidate?.toLocaleString() || 0}</span>,
+                },
               ]}
               size="small"
             />
 
             <div style={{ width: 1, height: 16, background: '#e8e8e8' }} />
 
-            {/* 省份筛选 */}
             <Select
-              allowClear placeholder="全部省份"
+              allowClear
+              placeholder="全部省份"
               value={filterProvince}
-              onChange={v => { setFilterProvince(v); setPage(1); }}
+              onChange={(value) => {
+                setFilterProvince(value);
+                setPage(1);
+              }}
               style={{ width: 180 }}
               options={provinceOptions}
-              showSearch optionFilterProp="label"
+              showSearch
+              optionFilterProp="label"
               size="small"
             />
 
-            {/* 搜索 */}
             <Input
-              placeholder="搜索清单名称/文本"
+              placeholder="搜索清单名称 / 文本"
               prefix={<SearchOutlined />}
               value={searchKeyword}
-              onChange={e => setSearchKeyword(e.target.value)}
+              onChange={(event) => setSearchKeyword(event.target.value)}
               onPressEnter={handleSearch}
-              style={{ width: 200 }}
+              style={{ width: 220 }}
               size="small"
               allowClear
-              onClear={() => { setSearchKeyword(''); setSearchMode(false); }}
             />
-            <Button size="small" type="primary" onClick={handleSearch}>搜索</Button>
+            <Button type="primary" size="small" onClick={handleSearch}>搜索</Button>
 
             {searchMode && (
-              <Tag color="blue">搜索结果：{totalRecords}条</Tag>
+              <Tag color="blue">搜索结果 {totalRecords} 条清单</Tag>
             )}
           </div>
         }
         extra={
           <Space size={4}>
-            {/* 按省份删除（筛选了省份后可用） */}
             {filterProvince && (
-              <Button size="small" danger icon={<DeleteOutlined />}
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
                 onClick={() => {
-                  const p = provinces.find(p => p.province === filterProvince);
-                  handleDeleteProvince(filterProvince, p?.count || 0);
-                }}>
+                  const provinceItem = provinces.find((item) => item.province === filterProvince);
+                  handleDeleteProvince(filterProvince, provinceItem?.count || 0);
+                }}
+              >
                 删除该省份
               </Button>
             )}
-            <Button size="small" icon={<ReloadOutlined />}
-              onClick={() => { loadStats(); loadRecords(); }}>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                loadStats();
+                if (searchMode) handleSearch();
+                else loadRecords();
+              }}
+            >
               刷新
             </Button>
           </Space>
         }
       >
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
+          <Space size={[8, 8]} wrap>
+            <Tag color="cyan" style={{ margin: 0 }}>清单 {displaySummary.billCount}</Tag>
+            <Tag color="geekblue" style={{ margin: 0 }}>定额 {displaySummary.quotaCount}</Tag>
+            <Tag color="gold" style={{ margin: 0 }}>主材 {displaySummary.materialCount}</Tag>
+          </Space>
+        </div>
+
         <Table
-          className="exp-table"
-          rowKey="id"
-          dataSource={records}
+          className="exp-preview-table"
+          rowKey="_rowKey"
+          dataSource={displayRows}
           columns={columns}
           size="small"
           loading={recordsLoading}
-          rowClassName={rowClassName}
-          pagination={searchMode ? {
-            pageSize: 200, showTotal: (t) => `共 ${t} 条`,
-          } : {
-            current: page,
-            pageSize,
-            total: totalRecords,
-            showSizeChanger: true,
-            pageSizeOptions: ['20', '50', '100'],
-            showTotal: (t) => `共 ${t.toLocaleString()} 条`,
-            onChange: (p, s) => { setPage(p); setPageSize(s); },
+          pagination={false}
+          scroll={{ x: 1420 }}
+          onRow={(row) => {
+            if (row._rowType === 'bill') {
+              return {
+                className: 'bill-row',
+                style: {
+                  backgroundColor: getExperienceBillRowBgColor(
+                    row._record.confidence,
+                    row._quotaCount > 0,
+                  ),
+                  fontWeight: 500,
+                },
+              };
+            }
+            if (row._rowType === 'quota') {
+              return {
+                className: 'quota-row',
+                style: { backgroundColor: '#fafafa', fontSize: 13 },
+              };
+            }
+            return {
+              className: 'material-row',
+              style: { backgroundColor: '#fffbeb', fontSize: 13 },
+            };
           }}
-          scroll={{ x: 1200 }}
           locale={{ emptyText: '暂无经验记录（可能经验库未连接）' }}
         />
+
+        {!searchMode && totalRecords > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px' }}>
+            <Pagination
+              current={page}
+              pageSize={pageSize}
+              total={totalRecords}
+              showSizeChanger
+              pageSizeOptions={['20', '50', '100']}
+              showTotal={(total) => `共 ${total.toLocaleString()} 条清单记录`}
+              onChange={(nextPage, nextPageSize) => {
+                setPage(nextPage);
+                setPageSize(nextPageSize);
+              }}
+            />
+          </div>
+        )}
       </Card>
 
-      {/* 第三行：批量操作 */}
       <Card title="批量操作" size="small" styles={{ body: { padding: '12px 20px' } }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <EnvironmentOutlined style={{ fontSize: 16 }} />
           <span>晋升范围：</span>
-          <Select allowClear placeholder="全部地区" value={selectedRegion}
-            onChange={v => {
-              setSelectedRegion(v);
-              if (v) {
-                const items = regionMap.get(v) || [];
+          <Select
+            allowClear
+            placeholder="全部地区"
+            value={selectedRegion}
+            onChange={(value) => {
+              setSelectedRegion(value);
+              if (value) {
+                const items = regionMap.get(value) || [];
                 setBatchProvince(items.length > 0 ? items[0].province : undefined);
               } else {
                 setBatchProvince(undefined);
               }
             }}
-            style={{ width: 180 }} options={regionOptions} showSearch size="small"
-            filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+            style={{ width: 180 }}
+            options={regionOptions}
+            showSearch
+            size="small"
+            filterOption={(input, option) => String(option?.label || '').toLowerCase().includes(input.toLowerCase())}
           />
-          <Select allowClear placeholder={selectedRegion ? '该地区全部省份' : '请先选地区'}
-            value={batchProvince} onChange={setBatchProvince} disabled={!selectedRegion}
-            style={{ width: 260 }} options={batchProvinceOptions} showSearch size="small"
-            filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+          <Select
+            allowClear
+            placeholder={selectedRegion ? '该地区全部省份' : '请先选地区'}
+            value={batchProvince}
+            onChange={setBatchProvince}
+            disabled={!selectedRegion}
+            style={{ width: 260 }}
+            options={batchProvinceOptions}
+            showSearch
+            size="small"
+            filterOption={(input, option) => String(option?.label || '').toLowerCase().includes(input.toLowerCase())}
           />
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleBatchPromote}
-            loading={batchLoading} size="small">
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={handleBatchPromote}
+            loading={batchLoading}
+            size="small"
+          >
             智能批量晋升
           </Button>
         </div>
