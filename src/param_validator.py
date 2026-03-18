@@ -29,6 +29,7 @@ from src.compat_primitives import (
     materials_compatible as _compat_materials_compatible,
     connections_compatible as _compat_connections_compatible,
 )
+from src.installation_validator import InstallationValidator
 
 
 class ParamValidator:
@@ -995,6 +996,13 @@ class ParamValidator:
         score = 1.0 - 0.1 * math.log2(ratio)
         return max(0.55, min(1.0, score))
 
+    def _get_installation_validator(self) -> InstallationValidator:
+        validator = getattr(self, "_installation_validator", None)
+        if validator is None:
+            validator = InstallationValidator(self._tier_up_score)
+            self._installation_validator = validator
+        return validator
+
     @staticmethod
     def _determine_param_tier(is_match: bool, score: float, detail: str) -> int:
         """
@@ -1040,6 +1048,21 @@ class ParamValidator:
         score_sum = 0.0
         check_count = 0
         has_hard_fail = False  # 是否有硬性不匹配
+
+        install_result = self._get_installation_validator().validate(
+            bill_params=bill_params,
+            quota_params=quota_params,
+        )
+        details.extend(install_result["details"])
+        score_sum += install_result["score_sum"]
+        check_count += install_result["check_count"]
+        has_hard_fail = has_hard_fail or install_result["hard_fail"]
+        if install_result["handled_params"]:
+            bill_params = {
+                key: value
+                for key, value in bill_params.items()
+                if key not in install_result["handled_params"]
+            }
 
         # === 1. DN管径（硬性参数：必须精确匹配或向上取档） ===
         if "dn" in bill_params:

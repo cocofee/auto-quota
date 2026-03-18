@@ -359,15 +359,23 @@ class HybridSearcher:
             if re.search(p, query, flags=re.IGNORECASE):
                 pattern_hits += 1
 
+        pattern_hits = max(pattern_hits, self._count_spec_signals(query))
+        has_complex_install_spec = bool(re.search(
+            r"\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?\s*\+\s*\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?",
+            query,
+            flags=re.IGNORECASE,
+        ))
+
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", query))
         reason = "balanced"
         new_bm25 = bm25_weight
         new_vector = vector_weight
 
         if pattern_hits >= 2 or (pattern_hits >= 1 and chinese_len <= 20):
-            new_bm25 = bm25_weight + boost
-            new_vector = vector_weight - boost
-            reason = "spec_heavy"
+            extra_boost = 0.08 if has_complex_install_spec else 0.0
+            new_bm25 = bm25_weight + boost + extra_boost
+            new_vector = vector_weight - boost - extra_boost
+            reason = "spec_heavy_installation" if has_complex_install_spec else "spec_heavy"
         elif pattern_hits == 0 and chinese_len >= 18:
             new_bm25 = bm25_weight - boost
             new_vector = vector_weight + boost
@@ -385,6 +393,23 @@ class HybridSearcher:
         new_vector = max(new_vector, 0.1)
         total = new_bm25 + new_vector
         return new_bm25 / total, new_vector / total, reason
+
+    @staticmethod
+    def _count_spec_signals(text: str) -> int:
+        spec_patterns = [
+            r"DN\s*\d+",
+            r"\d+\s*鍥炶矾",
+            r"\d+(\.\d+)?\s*(mm2|mm虏|kva|kv|kw|a|m)",
+            r"(?:SC|PC|PVC|JDG|KBG|RC|MT|FPC)\s*\d+",
+            r"(?:WDZ[NZ]?-?|NH-?)*(?:BV|BYJ|BVR|BLV|RVS|RVV|YJV|YJY)\s*-?\s*\d",
+            r"\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?(?:\s*\+\s*\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?)*",
+            r"[A-Za-z]{1,8}[-_/]*\d+([*×脳xX/]\d+)*",
+        ]
+        hits = 0
+        for pattern in spec_patterns:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                hits += 1
+        return hits
 
     def _get_feedback_bias(self) -> float:
         """
@@ -482,6 +507,7 @@ class HybridSearcher:
         for p in patterns:
             if re.search(p, text, flags=re.IGNORECASE):
                 hits += 1
+        hits = HybridSearcher._count_spec_signals(text)
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", text))
         return hits >= 2 or (hits >= 1 and chinese_len <= 20)
 

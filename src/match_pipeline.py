@@ -405,10 +405,14 @@ def _build_item_context(item: dict) -> dict:
     desc = item.get("description", "") or ""
     section = item.get("section", "") or ""
     original_name = item.get("original_name", name)
+    canonical_features = item.get("canonical_features") or {}
+    context_prior = item.get("context_prior") or {}
     search_query = text_parser.build_quota_query(name, desc,
                                                   specialty=item.get("specialty", ""),
                                                   bill_params=item.get("params"),
-                                                  section_title=section)
+                                                  section_title=section,
+                                                  canonical_features=canonical_features,
+                                                  context_prior=context_prior)
     # 线缆类型标签：追加到搜索词，帮助BM25区分电线/电缆/光缆定额
     cable_type = item.get("cable_type", "")
     if cable_type:
@@ -424,6 +428,13 @@ def _build_item_context(item: dict) -> dict:
         if _usage_hint and _usage_hint not in full_query:
             full_query = f"{full_query} {_usage_hint}"
 
+    canonical_name = canonical_features.get("canonical_name", "")
+    canonical_system = canonical_features.get("system", "")
+    if canonical_name and canonical_name not in full_query:
+        full_query = f"{full_query} {canonical_name}".strip()
+    if canonical_system and canonical_system not in full_query:
+        full_query = f"{full_query} {canonical_system}".strip()
+
     return {
         "name": name,
         "desc": desc,
@@ -433,6 +444,8 @@ def _build_item_context(item: dict) -> dict:
         "full_query": full_query,
         "normalized_query": normalize_bill_text(original_name, desc),
         "search_query": search_query,
+        "canonical_features": canonical_features,
+        "context_prior": context_prior,
         "item": item,  # L5：供跨省预热读取 _cross_province_hints
     }
 

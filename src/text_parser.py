@@ -20,6 +20,8 @@ import threading
 
 from loguru import logger
 
+from src.canonical_features import build_canonical_features
+
 
 class TextParser:
     """从工程文本中提取结构化参数"""
@@ -201,9 +203,14 @@ class TextParser:
 
         # 提取电缆截面（mm²）—— 接地扁钢已提取时跳过
         if "ground_bar_width" not in result:
+            cable_bundle = self._extract_cable_bundle_specs(text)
+            if cable_bundle:
+                result["cable_bundle"] = cable_bundle
             section = self._extract_cable_section(text)
             if section is not None:
                 result["cable_section"] = section
+            elif cable_bundle:
+                result["cable_section"] = max(spec["section"] for spec in cable_bundle)
 
         # 提取容量（kVA）
         kva = self._extract_kva(text)
@@ -299,6 +306,18 @@ class TextParser:
     # De外径→DN公称直径转换表（已弃用，保留避免外部引用报错）
     # 塑料管定额按外径(De)值分档（如"公称外径32mm以内"），不需要转换为DN
     # 之前误用此表把De32转成DN25，导致搜索和参数验证都对不上定额的外径分档值
+    def parse_canonical(self, text: str, specialty: str = "",
+                        context_prior: dict | None = None,
+                        params: dict | None = None) -> dict:
+        """将原始描述转换为标准化特征字典。"""
+        parsed_params = dict(params) if params is not None else self.parse(text)
+        return build_canonical_features(
+            raw_text=text,
+            params=parsed_params,
+            specialty=specialty,
+            context_prior=context_prior,
+        ).to_dict()
+
     DE_TO_DN = {
         20: 15, 25: 20, 32: 25, 40: 32, 50: 40,
         63: 50, 75: 65, 90: 80, 110: 100, 125: 100,
@@ -397,6 +416,29 @@ class TextParser:
         if pipe_code_match:
             return int(pipe_code_match.group(1))
         return None
+
+    def _extract_cable_bundle_specs(self, text: str) -> list[dict]:
+        """提取复合电缆规格，如 3x4+2x2.5。"""
+        if not re.search(r'(?:BV|BYJ|BVR|BLV|RVS|RVV|YJV|YJY|电缆|电线|导线|配线|穿线)',
+                         text, flags=re.IGNORECASE):
+            return []
+        normalized = text.replace("×", "x").replace("*", "x").replace("X", "x")
+        matches = re.findall(r'(\d+)\s*[脳x]\s*(\d+(?:\.\d+)?)', normalized)
+        if not matches:
+            return []
+
+        specs = []
+        for index, (cores, section) in enumerate(matches):
+            core_count = int(cores)
+            section_value = float(section)
+            if core_count > 61 or section_value > 500:
+                return []
+            specs.append({
+                "cores": core_count,
+                "section": section_value,
+                "role": "main" if index == 0 else "aux",
+            })
+        return specs
 
     def _extract_cable_section(self, text: str) -> Optional[float]:
         """
@@ -504,6 +546,10 @@ class TextParser:
                 val = float(spec_match.group(1))
                 if val in _standard_sections:
                     return val
+
+        bundle_specs = self._extract_cable_bundle_specs(text)
+        if bundle_specs:
+            return max(spec["section"] for spec in bundle_specs)
 
         return None
 
@@ -1108,11 +1154,15 @@ class TextParser:
     def build_quota_query(self, name: str, description: str = "",
                           specialty: str = "",
                           bill_params: dict = None,
-                          section_title: str = "") -> str:
+                          section_title: str = "",
+                          canonical_features: dict = None,
+                          context_prior: dict = None) -> str:
         """构建定额搜索query（实际实现在 query_builder.py）"""
         from src.query_builder import build_quota_query as _build
         return _build(self, name, description, specialty=specialty,
-                      bill_params=bill_params, section_title=section_title)
+                      bill_params=bill_params, section_title=section_title,
+                      canonical_features=canonical_features,
+                      context_prior=context_prior)
 
     def params_match(self, bill_params: dict, quota_params: dict) -> tuple[bool, float]:
         """
