@@ -26,6 +26,7 @@ import {
   GoldOutlined,
   AimOutlined,
   BarChartOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
@@ -125,9 +126,9 @@ export default function MainLayout() {
         label: '数据',
         children: [
           {
-            key: '/admin/experience',
+            key: '/admin',
             icon: <DatabaseOutlined />,
-            label: '经验库',
+            label: '管理中心',
           },
           {
             key: '/admin/quotas',
@@ -152,6 +153,11 @@ export default function MainLayout() {
             key: '/admin/settings',
             icon: <SettingOutlined />,
             label: '系统设置',
+          },
+          {
+            key: '/admin/logs',
+            icon: <FileSearchOutlined />,
+            label: '系统日志',
           },
         ],
       },

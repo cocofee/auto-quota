@@ -202,6 +202,7 @@ async def list_tasks(
     page: int = 1,
     size: int = 20,
     status_filter: str | None = None,
+    created_after: str | None = None,
     all_users: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -211,6 +212,7 @@ async def list_tasks(
     普通用户：只返回自己的任务。
     管理员：传 all_users=true 可查看所有用户的任务。
     可选按状态筛选: pending/running/completed/failed
+    可选按创建时间筛选: created_after=2026-03-01（ISO日期，只返回该日期之后创建的任务）
     """
     if page < 1:
         page = 1
@@ -227,6 +229,15 @@ async def list_tasks(
         base_filter = Task.user_id == user.id
         if status_filter:
             base_filter = (Task.user_id == user.id) & (Task.status == status_filter)
+
+    # 按创建时间过滤（用于"本月完成"等场景）
+    if created_after:
+        from datetime import datetime
+        try:
+            after_dt = datetime.fromisoformat(created_after)
+            base_filter = base_filter & (Task.created_at >= after_dt)
+        except ValueError:
+            pass  # 日期格式不对就忽略
 
     # 查总数 + 清单条数合计（stats 是 JSON 字段，取其中 total 值求和）
     count_query = select(
