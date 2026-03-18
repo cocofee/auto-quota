@@ -768,35 +768,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # ========== 第2阶段：并发LLM调用 ==========
     if llm_tasks:
-        # L6: 批量审核分组 — 中置信度项打包审核，低置信度逐条分析
-        batch_tasks = []      # 批量审核（中置信度）
-        individual_tasks = [] # 逐条分析（低置信度 + 审计项）
+        individual_tasks = llm_tasks
 
-        batch_enabled = getattr(config, "AGENT_BATCH_ENABLED", False)
-        batch_min_score = getattr(config, "AGENT_BATCH_MIN_SCORE", 0.45)
-        batch_size = getattr(config, "AGENT_BATCH_SIZE", 8)
-
-        for task in llm_tasks:
-            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
-            if is_audit or not batch_enabled:
-                # 审计项 / 批量关闭 → 走逐条
-                individual_tasks.append(task)
-            elif candidates:
-                # 根据搜索候选质量分组
-                top_score = float(candidates[0].get("param_score", 0) or 0)
-                if top_score >= batch_min_score:
-                    batch_tasks.append(task)
-                else:
-                    individual_tasks.append(task)
-            else:
-                individual_tasks.append(task)
-
-        batch_count = len(batch_tasks)
-        individual_count = len(individual_tasks)
-        if batch_count > 0:
-            logger.info(f"L6分组: 批量审核{batch_count}条, 逐条分析{individual_count}条")
-
-        # ===== 低置信度重试（批量+逐条共用）=====
         def _maybe_retry_low_confidence(result, task, overview_ctx=None):
             """低置信度/AI推荐不在候选时，用AI建议的搜索词重搜+重选。
 
@@ -894,49 +867,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
             return result, task_exp_hits, task_rule_hits
 
-        # ===== L6 批量审核处理 =====
-        if batch_tasks:
-            # 分批（每批最多 batch_size 条）
-            batches = [batch_tasks[i:i + batch_size]
-                       for i in range(0, len(batch_tasks), batch_size)]
-            for bi, batch in enumerate(batches, 1):
-                logger.info(f"批量审核第{bi}/{len(batches)}批: {len(batch)}条")
-                batch_items_for_agent = []
-                batch_task_refs = []  # 保持对原task的引用
-                for task in batch:
-                    idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
-                    batch_items_for_agent.append({
-                        "bill_item": item,
-                        "candidates": candidates,
-                        "search_query": search_query,
-                    })
-                    batch_task_refs.append(task)
-
-                try:
-                    batch_results = agent.match_batch(batch_items_for_agent)
-                except Exception as e:
-                    logger.warning(f"批量审核失败，降级为逐条: {e}")
-                    # 降级：把这批放回逐条队列
-                    individual_tasks.extend(batch)
-                    continue
-
-                # 把批量结果写入 results_by_idx（修复：批量也走低置信度重试）
-                for j, (task, result) in enumerate(zip(batch_task_refs, batch_results)):
-                    task_idx = task[0]  # idx
-                    # 批量结果也走低置信度重试，修复批量模式跳过第2层审核的漏洞
-                    result, retry_exp, retry_rule = _maybe_retry_low_confidence(result, task)
-                    if retry_exp:
-                        exp_hits += retry_exp
-                    if retry_rule:
-                        rule_hits += retry_rule
-                    results_by_idx[task_idx] = result
-                    _update_match_stats(result)
-                    agent_hits += 1
-                    # 批量审核也更新进度（避免前端卡在60%不动）
-                    batch_completed = sum(1 for t in batch_tasks if t[0] in results_by_idx)
-                    _notify_progress(batch_completed, phase=2, phase_total=len(batch_tasks) + len(individual_tasks))
-
-        # ===== 逐条LLM分析（原有逻辑）=====
+        # ===== ??LLM?? =====
         def _process_llm_task(task):
             """单个LLM任务处理（线程安全）"""
             idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
@@ -1057,7 +988,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
                 if completed % 10 == 0 or completed == len(individual_tasks):
                     logger.info(f"LLM进度: {completed}/{len(individual_tasks)}")
-                _notify_progress(len(batch_tasks) + completed, phase=2, phase_total=len(batch_tasks) + len(individual_tasks))
+                _notify_progress(completed, phase=2, phase_total=len(individual_tasks))
 
     # ========== 组装最终结果（按原始顺序）==========
     results = []
