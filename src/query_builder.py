@@ -290,6 +290,61 @@ def _format_number_for_query(value: float) -> str:
     return str(int(value)) if value % 1 == 0 else str(value)
 
 
+def _dedupe_terms(terms: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for term in terms:
+        clean = str(term or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    return deduped
+
+
+def _build_feature_alignment_terms(canonical_features: dict | None = None,
+                                   context_prior: dict | None = None) -> list[str]:
+    canonical_features = canonical_features or {}
+    context_prior = context_prior or {}
+
+    terms: list[str] = []
+    for key in ("canonical_name", "system", "entity", "install_method"):
+        value = canonical_features.get(key)
+        if value:
+            terms.append(str(value))
+
+    cable_bundle = canonical_features.get("cable_bundle") or []
+    for spec in cable_bundle[:2]:
+        cores = spec.get("cores")
+        section = spec.get("section")
+        if cores and section:
+            terms.append(f"{cores}x{_format_number_for_query(float(section))}")
+
+    for hint in (context_prior.get("context_hints") or [])[:2]:
+        terms.append(str(hint))
+
+    prior_family = context_prior.get("prior_family")
+    if prior_family:
+        terms.append(str(prior_family))
+
+    return _dedupe_terms(terms)
+
+
+def _finalize_query(query: str,
+                    specialty: str = "",
+                    canonical_features: dict | None = None,
+                    context_prior: dict | None = None,
+                    apply_synonyms: bool = True) -> str:
+    final_query = _apply_synonyms(query, specialty) if apply_synonyms else (query or "")
+    extras = [
+        term for term in _build_feature_alignment_terms(canonical_features, context_prior)
+        if term and term not in final_query
+    ]
+    if extras:
+        final_query = f"{final_query} {' '.join(extras)}".strip()
+    return re.sub(r"\s+", " ", final_query).strip()
+
+
 def extract_description_fields(description: str) -> dict:
     """
     从清单特征描述中提取标签-值字段
@@ -1057,7 +1112,9 @@ def _normalize_bill_name(name: str) -> str:
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
                       bill_params: dict = None,
-                      section_title: str = "") -> str:
+                      section_title: str = "",
+                      canonical_features: dict = None,
+                      context_prior: dict = None) -> str:
     """
     构建定额搜索query（模仿定额命名风格）
 
@@ -1096,6 +1153,19 @@ def build_quota_query(parser, name: str, description: str = "",
     full_text = f"{name} {description}".strip()
     # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
     params = bill_params if bill_params is not None else parser.parse(full_text)
+    use_feature_alignment = bool(canonical_features or context_prior)
+    canonical_features = dict(canonical_features or {})
+    context_prior = dict(context_prior or {})
+    if use_feature_alignment and not canonical_features:
+        try:
+            canonical_features = parser.parse_canonical(
+                full_text,
+                specialty=specialty,
+                context_prior=context_prior,
+                params=params,
+            )
+        except Exception:
+            canonical_features = {}
 
     # 提前提取描述字段（管道路由和通用路由都需要用）
     fields = extract_description_fields(description) if description else {}
@@ -1138,6 +1208,15 @@ def build_quota_query(parser, name: str, description: str = "",
             usage = "燃气"
 
     # 材质和连接方式从已提取的参数获取
+    if not usage:
+        canonical_system = canonical_features.get("system", "")
+        system_usage_map = {
+            "消防": "娑堥槻",
+            "给排水": "缁欐按",
+            "通风空调": "閫氶",
+        }
+        usage = system_usage_map.get(canonical_system, usage)
+
     material = params.get("material", "")
     connection = params.get("connection", "")
     dn = params.get("dn")
@@ -1161,14 +1240,31 @@ def build_quota_query(parser, name: str, description: str = "",
     # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
     garden_plant_query = _build_garden_plant_query(name, full_text, specialty)
     if garden_plant_query:
-        return garden_plant_query
+        return _finalize_query(
+            garden_plant_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
 
     # 阀门族对象模板：在管道路由之前拦截，避免被管道路由误覆盖
     valve_query = _build_valve_query(name, full_text, params, specialty)
     if valve_query:
-        return valve_query
+        return _finalize_query(
+            valve_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
 
-    is_electrical = any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
+    canonical_entity = canonical_features.get("entity", "")
+    is_electrical = (
+        any(kw in name for kw in ("电缆", "配管", "穿线", "配线", "桥架", "线槽"))
+        or canonical_entity in {"电缆", "配管", "桥架", "配电箱", "开关插座"}
+        or specialty in {"C4", "C5", "C11"}
+    )
     is_lamp = "灯" in name  # 灯具类走专用的_normalize_bill_name处理
     # 风口/喷口/散流器的φ值是开口直径，不是管道DN，不走管道路由
     is_wind_outlet = any(kw in name for kw in ("风口", "喷口", "散流器"))
@@ -1296,7 +1392,12 @@ def build_quota_query(parser, name: str, description: str = "",
         if desc_type:
             query_parts.append(desc_type)
 
-        return _apply_synonyms(" ".join(query_parts), specialty)
+        return _finalize_query(
+            " ".join(query_parts),
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+        )
     # ===== 电梯类：有电梯参数时构建专用搜索query =====
     # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
     # 例如 "载货电梯" 速度1.0m/s 10站 → "载货电梯 运行速度2m/s以下 层数 站数"
@@ -1328,8 +1429,18 @@ def build_quota_query(parser, name: str, description: str = "",
         # 从描述补充风口具体类型（如"旋流风口"→帮BM25区分散流器/旋转吹风口）
         desc_type = _extract_desc_equipment_type(fields, name)
         if desc_type:
-            return _apply_synonyms(f"{normalized_name} {desc_type} 安装 周长", specialty)
-        return _apply_synonyms(f"{normalized_name} 安装 周长", specialty)
+            return _finalize_query(
+                f"{normalized_name} {desc_type} 安装 周长",
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+            )
+        return _finalize_query(
+            f"{normalized_name} 安装 周长",
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+        )
 
     # ===== 非管道类：从描述中提取关键信息构建query =====
     # 电气设备、灯具、电缆、配管、配线等
@@ -1343,7 +1454,13 @@ def build_quota_query(parser, name: str, description: str = "",
         specialty=specialty,
     )
     if distribution_box_query:
-        return distribution_box_query
+        return _finalize_query(
+            distribution_box_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
 
     # 电缆头模板：在_normalize_bill_name之前拦截，
     # 因为normalize会把"电缆头"→"电缆终端头"丢失原始信息
@@ -1354,7 +1471,13 @@ def build_quota_query(parser, name: str, description: str = "",
         specialty=specialty,
     )
     if cable_head_query:
-        return cable_head_query
+        return _finalize_query(
+            cable_head_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
 
     # 清单名称 → 定额搜索名称的规范化映射
     # 清单用的名称和定额用的名称经常不一样
@@ -1392,7 +1515,12 @@ def build_quota_query(parser, name: str, description: str = "",
             query_parts[0] = f"{frame_material}{opening_type}"
             if "附框" in material_text:
                 query_parts.append("有附框")
-            return _apply_synonyms(" ".join(query_parts), specialty)
+            return _finalize_query(
+                " ".join(query_parts),
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+            )
     # --- 桥架类：清理尺寸噪声，构建桥架安装搜索词 ---
     # 清单写"热镀锌桥架100*50"，定额叫"钢制槽式桥架(宽+高)(mm以下) 200"
     # 100*50 的数字噪声会让 BM25 匹配到含"100×140"的混凝土结构定额
@@ -1403,7 +1531,12 @@ def build_quota_query(parser, name: str, description: str = "",
         if not clean:
             clean = "桥架"
         query_parts[0] = clean + " 安装"
-        return _apply_synonyms(" ".join(query_parts), specialty)
+        return _finalize_query(
+            " ".join(query_parts),
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+        )
 
     if description:
         # fields 已在函数开头提取，这里直接使用
@@ -1502,7 +1635,13 @@ def build_quota_query(parser, name: str, description: str = "",
                 query_parts.append("砖混凝土结构明配")
             elif "暗配" in full_text and "暗配" not in " ".join(query_parts):
                 query_parts.append("砖混凝土结构暗配")
-            return " ".join(query_parts)
+            return _finalize_query(
+                " ".join(query_parts),
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+                apply_synonyms=False,
+            )
         else:
             # 非配管类的材质提取（原逻辑保留）
             conduit_mat = fields.get("材质", "")
@@ -1755,7 +1894,12 @@ def build_quota_query(parser, name: str, description: str = "",
         if not has_install and "明装" not in full_text and "明配" not in full_text:
             query_parts.append("暗装")
 
-    query = _apply_synonyms(" ".join(query_parts), specialty)
+    query = _finalize_query(
+        " ".join(query_parts),
+        specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+    )
 
     # 拆除项后处理：去掉同义词追加的"安装"，确保"拆除"在query中
     # 例如 "拆除马桶 坐式大便器安装" → "拆除马桶 坐式大便器 拆除"

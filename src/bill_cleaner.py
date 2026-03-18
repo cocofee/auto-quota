@@ -68,6 +68,21 @@ def is_ambiguous_short_name(item: dict) -> bool:
     return False
 
 
+def _build_context_prior(item: dict) -> dict:
+    """整理可直接参与后续匹配的上下文先验。"""
+    context_prior = {
+        "specialty": item.get("specialty", ""),
+        "specialty_name": item.get("specialty_name", ""),
+    }
+    if item.get("_context_hints"):
+        context_prior["context_hints"] = list(item["_context_hints"])
+    if item.get("_prior_family"):
+        context_prior["prior_family"] = item["_prior_family"]
+    if item.get("cable_type"):
+        context_prior["cable_type"] = item["cable_type"]
+    return context_prior
+
+
 def _section_has_specialty(section: str) -> bool:
     """判断 section 标题能否识别出专业"""
     return parse_section_title(section) is not None
@@ -161,6 +176,17 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
         hinted = sum(1 for i in items if i.get("_context_hints"))
         logger.info(f"短名称歧义项: {ambiguous_count}条, "
                     f"其中{hinted}条获得上下文提示")
+
+    for item in items:
+        context_prior = _build_context_prior(item)
+        item["context_prior"] = context_prior
+        full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
+        item["canonical_features"] = text_parser.parse_canonical(
+            full_text,
+            specialty=item.get("specialty", ""),
+            context_prior=context_prior,
+            params=item.get("params"),
+        )
 
     return items
 
