@@ -716,11 +716,6 @@ VERIFY_SPOT_CHECK_RATE = float(os.getenv("VERIFY_SPOT_CHECK_RATE", "0.05"))
 VERIFY_RESCUE_MAX_PER_RUN = int(os.getenv("VERIFY_RESCUE_MAX_PER_RUN", "10"))  # 每次运行最多rescue几条
 VERIFY_RESCUE_CONCURRENT = int(os.getenv("VERIFY_RESCUE_CONCURRENT", "3"))     # rescue并发数
 
-# 批量审核模式（中置信度项打包一次LLM调用，减少API调用次数）
-AGENT_BATCH_ENABLED = True              # 是否启用批量审核
-AGENT_BATCH_SIZE = 8                     # 每批最多几条
-AGENT_BATCH_MIN_SCORE = 0.45             # 候选top1 param_score >= 此值才走批量（低于走逐条）
-
 # ============================================================
 # L7 搜索召回率优化
 # ============================================================
