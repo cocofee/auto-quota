@@ -59,6 +59,50 @@ class ParamValidator:
         frozenset(("配电箱", "阀门")),
         frozenset(("管道", "阀门")),
     }
+    _LOGIC_SCORE_BLEND = 0.35
+    _LOGIC_DEFAULT = 0.5
+    _LOGIC_UPPER_MARKERS = ("以内", "以下", "及以下", "及以内", "≤", "不大于", "不超过")
+    _LOGIC_LOWER_MARKERS = ("以上", "及以上", "≥", "不小于", "不少于")
+    _LOGIC_DEFAULT_UPPER_PARAMS = {
+        "dn", "cable_section", "kva", "kw", "circuits", "ampere",
+        "half_perimeter", "ground_bar_width", "perimeter", "large_side",
+        "elevator_stops", "switch_gangs",
+    }
+    _LOGIC_PARAM_WEIGHTS = {
+        "dn": 1.00,
+        "cable_section": 1.00,
+        "cable_cores": 1.00,
+        "circuits": 0.85,
+        "ampere": 0.85,
+        "kva": 0.75,
+        "kw": 0.75,
+        "switch_gangs": 0.70,
+        "half_perimeter": 0.60,
+        "ground_bar_width": 0.60,
+        "perimeter": 0.60,
+        "large_side": 0.60,
+        "elevator_stops": 0.60,
+    }
+    _LOGIC_PARAM_LABELS = {
+        "dn": "DN",
+        "cable_section": "截面",
+        "cable_cores": "芯数",
+        "circuits": "回路",
+        "ampere": "电流",
+        "kva": "容量",
+        "kw": "功率",
+        "switch_gangs": "联数",
+        "half_perimeter": "半周长",
+        "ground_bar_width": "扁钢宽",
+        "perimeter": "周长",
+        "large_side": "大边长",
+        "elevator_stops": "站数",
+    }
+    _CN_NUM_MAP = {
+        "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+        "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        "单": 1, "双": 2,
+    }
 
     # LTR模型特征列名（必须和训练时一致）
     # v1: 16维原始特征
@@ -153,6 +197,11 @@ class ParamValidator:
             canonical_source_text or query_text,
             params=bill_params,
         )
+        bill_logic_targets = self._build_bill_logic_targets(
+            canonical_source_text or query_text,
+            bill_params=bill_params,
+            bill_canonical_features=bill_canonical_features,
+        )
 
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
@@ -164,9 +213,11 @@ class ParamValidator:
                 db_params = self._get_db_params(c)
                 merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
                 candidate_features = self._build_candidate_canonical_features(c, merged)
+                candidate_logic_profile = self._build_candidate_logic_profile(c, merged)
                 c["candidate_canonical_features"] = candidate_features
+                c["candidate_logic_profile"] = candidate_logic_profile
 
-                has_tier = any(p in merged for p in self.TIER_PARAMS)
+                has_tier = any(p in merged for p in self.TIER_PARAMS) or bool(candidate_logic_profile)
                 if has_tier:
                     c["param_score"] = 0.6  # 定额有档位但清单没指定，不确定
                     c["param_detail"] = "定额有档位参数但清单未指定"
@@ -199,6 +250,14 @@ class ParamValidator:
                 if usage_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - usage_penalty)
                     c["param_detail"] += f"; {usage_detail}"
+                c["param_match"], c["param_score"], c["param_detail"] = self._apply_logic_alignment(
+                    candidate=c,
+                    is_match=c["param_match"],
+                    score=c["param_score"],
+                    detail=c["param_detail"],
+                    bill_logic_targets=bill_logic_targets,
+                    candidate_logic_profile=candidate_logic_profile,
+                )
                 c["param_match"], c["param_score"], c["param_detail"] = self._apply_feature_alignment(
                     candidate=c,
                     is_match=c["param_match"],
@@ -223,6 +282,7 @@ class ParamValidator:
 
             # 无参数分支：用LTR模型或品类词主导排序
             self._ltr_sort(candidates, query_text, search_books=search_books)
+            self._logic_rectify(candidates)
             return candidates
 
         # 逐个验证候选定额
@@ -237,7 +297,10 @@ class ParamValidator:
             merged_quota_params = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
             candidate_features = self._build_candidate_canonical_features(
                 candidate, merged_quota_params)
+            candidate_logic_profile = self._build_candidate_logic_profile(
+                candidate, merged_quota_params)
             candidate["candidate_canonical_features"] = candidate_features
+            candidate["candidate_logic_profile"] = candidate_logic_profile
 
             # 传入定额名称，供速度分类等校验使用
             merged_quota_params["_quota_name"] = candidate.get("name", "")
@@ -270,6 +333,14 @@ class ParamValidator:
                 score = max(0.0, score - usage_penalty)
                 detail += f"; {usage_detail}"
 
+            is_match, score, detail = self._apply_logic_alignment(
+                candidate=candidate,
+                is_match=is_match,
+                score=score,
+                detail=detail,
+                bill_logic_targets=bill_logic_targets,
+                candidate_logic_profile=candidate_logic_profile,
+            )
             is_match, score, detail = self._apply_feature_alignment(
                 candidate=candidate,
                 is_match=is_match,
@@ -299,6 +370,7 @@ class ParamValidator:
 
         # M1档位纠偏：LTR排完序后，如果同家族内有参数更匹配的候选，强制提升
         self._tier_rectify(validated, bill_params)
+        self._logic_rectify(validated)
 
         return validated
 
@@ -401,6 +473,54 @@ class ParamValidator:
                     f"分差{best_tier_score - top1_tier_score:.2f})")
                 # 把最佳候选提升到top1（其余顺序不变）
                 candidates.insert(0, candidates.pop(best_idx))
+
+    def _logic_rectify(self, candidates: list[dict]):
+        """对显式逻辑精确命中的同家族候选做排序纠偏。"""
+        if not candidates or len(candidates) < 2:
+            return
+
+        top1 = candidates[0]
+        if top1.get("logic_exact_primary_match"):
+            return
+
+        top1_base = self._get_family_base(top1.get("name", ""))
+        top1_logic = float(top1.get("logic_score", self._LOGIC_DEFAULT))
+        best_idx = -1
+        best_key = None
+
+        for idx, candidate in enumerate(candidates[:10]):
+            if idx == 0 or not candidate.get("logic_exact_primary_match"):
+                continue
+            candidate_base = self._get_family_base(candidate.get("name", ""))
+            if not (top1_base and candidate_base and candidate_base == top1_base):
+                continue
+
+            candidate_logic = float(candidate.get("logic_score", self._LOGIC_DEFAULT))
+            key = (
+                candidate_logic,
+                float(candidate.get("param_score", 0.0)),
+                float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0))),
+            )
+            if best_key is None or key > best_key:
+                best_idx = idx
+                best_key = key
+
+        if best_idx <= 0:
+            return
+
+        best = candidates[best_idx]
+        best_logic = float(best.get("logic_score", self._LOGIC_DEFAULT))
+        if best_logic < top1_logic + 0.08:
+            return
+
+        logger.debug(
+            "逻辑纠偏: [{}] → [{}] (logic {:.2f}->{:.2f})",
+            top1.get("name", "")[:80],
+            best.get("name", "")[:80],
+            top1_logic,
+            best_logic,
+        )
+        candidates.insert(0, candidates.pop(best_idx))
 
     def _get_candidate_tier_score(self, candidate: dict,
                                    main_param: str, main_value: float) -> float:
@@ -875,6 +995,204 @@ class ParamValidator:
         if alignment["detail"]:
             feature_detail = f"特征对齐{alignment['score']:.2f} [{alignment['detail']}]"
             detail = f"{detail}; {feature_detail}" if detail else feature_detail
+        return is_match, score, detail
+
+    @classmethod
+    def _parse_number_token(cls, token: str) -> int | None:
+        token = str(token or "").strip()
+        if not token:
+            return None
+        if token.isdigit():
+            return int(token)
+        if token in cls._CN_NUM_MAP:
+            return cls._CN_NUM_MAP[token]
+        if "十" in token:
+            parts = token.split("十", 1)
+            if len(parts) != 2:
+                return None
+            tens_text, ones_text = parts
+            tens = 1 if tens_text == "" else cls._CN_NUM_MAP.get(tens_text)
+            ones = 0 if ones_text == "" else cls._CN_NUM_MAP.get(ones_text)
+            if tens is None or ones is None:
+                return None
+            return tens * 10 + ones
+        return None
+
+    @classmethod
+    def _extract_core_count(cls, text: str, *, bundle: list[dict] | None = None) -> dict | None:
+        bundle = list(bundle or [])
+        total_cores = sum(
+            int(spec.get("cores", 0))
+            for spec in bundle
+            if spec.get("cores") is not None
+        )
+        if total_cores > 0:
+            return {"value": float(total_cores), "mode": "exact", "source": "bundle"}
+
+        if not text:
+            return None
+
+        patterns = [
+            (r'([0-9一二三四五六七八九十两单双]+)\s*芯(?:以下|以内|及以下|及以内)', "upper"),
+            (r'(?:芯(?:以下|以内|及以下|及以内)[)）]?\s*)([0-9一二三四五六七八九十两单双]+)', "upper"),
+            (r'([0-9一二三四五六七八九十两单双]+)\s*芯', "exact"),
+        ]
+        for pattern, mode in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            value = cls._parse_number_token(match.group(1))
+            if value is not None:
+                return {"value": float(value), "mode": mode, "source": "text"}
+        return None
+
+    @classmethod
+    def _infer_logic_mode(cls, quota_name: str, key: str) -> str:
+        quota_name = quota_name or ""
+        if any(marker in quota_name for marker in cls._LOGIC_LOWER_MARKERS):
+            return "lower"
+        if any(marker in quota_name for marker in cls._LOGIC_UPPER_MARKERS):
+            return "upper"
+        if key in cls._LOGIC_DEFAULT_UPPER_PARAMS:
+            return "upper"
+        return "exact"
+
+    def _build_bill_logic_targets(self, query_text: str, *,
+                                  bill_params: dict,
+                                  bill_canonical_features: dict) -> dict:
+        targets = {}
+        for key in self._LOGIC_PARAM_WEIGHTS:
+            if key == "cable_cores":
+                continue
+            value = bill_params.get(key)
+            if value is None:
+                continue
+            try:
+                targets[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+        core_spec = self._extract_core_count(
+            query_text,
+            bundle=bill_canonical_features.get("cable_bundle") or [],
+        )
+        if core_spec:
+            targets["cable_cores"] = float(core_spec["value"])
+        return targets
+
+    def _build_candidate_logic_profile(self, candidate: dict,
+                                       merged_quota_params: dict) -> dict:
+        profile = {}
+        quota_name = candidate.get("name", "")
+        for key in self._LOGIC_PARAM_WEIGHTS:
+            if key == "cable_cores":
+                continue
+            value = merged_quota_params.get(key)
+            if value is None:
+                continue
+            try:
+                profile[key] = {
+                    "value": float(value),
+                    "mode": self._infer_logic_mode(quota_name, key),
+                    "source": "param",
+                }
+            except (TypeError, ValueError):
+                continue
+
+        core_spec = self._extract_core_count(quota_name)
+        if core_spec:
+            profile["cable_cores"] = core_spec
+        return profile
+
+    def _score_logic_target(self, key: str, target_value: float,
+                            candidate_rule: dict) -> tuple[float, str, bool, bool]:
+        candidate_value = float(candidate_rule["value"])
+        mode = candidate_rule.get("mode", "exact")
+        label = self._LOGIC_PARAM_LABELS.get(key, key)
+
+        if mode == "upper":
+            if target_value <= candidate_value:
+                score = 1.0 if target_value == candidate_value else self._tier_up_score(
+                    target_value, candidate_value)
+                return score, f"{label}≤{candidate_value:g}", False, target_value == candidate_value
+            return 0.0, f"{label}{target_value:g}>{candidate_value:g}", True, False
+
+        if mode == "lower":
+            if target_value >= candidate_value:
+                if target_value == candidate_value:
+                    return 1.0, f"{label}≥{candidate_value:g}", False, True
+                ratio = max(target_value / max(candidate_value, 1.0), 1.0)
+                score = max(0.75, min(1.0, 1.0 - 0.05 * math.log2(ratio)))
+                return score, f"{label}≥{candidate_value:g}", False, False
+            return 0.0, f"{label}{target_value:g}<{candidate_value:g}", True, False
+
+        if target_value == candidate_value:
+            return 1.0, f"{label}={candidate_value:g}", False, True
+        return 0.0, f"{label}{target_value:g}!={candidate_value:g}", True, False
+
+    def _score_logic_alignment(self, bill_logic_targets: dict,
+                               candidate_logic_profile: dict) -> dict:
+        bill_logic_targets = dict(bill_logic_targets or {})
+        candidate_logic_profile = dict(candidate_logic_profile or {})
+        details = []
+        weighted_scores = []
+        hard_conflict = False
+        exact_primary_match = False
+
+        for key, target_value in bill_logic_targets.items():
+            candidate_rule = candidate_logic_profile.get(key)
+            if not candidate_rule:
+                continue
+            score, part_detail, part_hard, exact_hit = self._score_logic_target(
+                key, float(target_value), candidate_rule)
+            weight = self._LOGIC_PARAM_WEIGHTS.get(key, 0.5)
+            weighted_scores.append((weight, score))
+            details.append(part_detail)
+            hard_conflict = hard_conflict or part_hard
+            if exact_hit and weight >= 1.0:
+                exact_primary_match = True
+
+        total_weight = sum(weight for weight, _ in weighted_scores)
+        if total_weight <= 0:
+            score = self._LOGIC_DEFAULT
+        else:
+            score = sum(weight * value for weight, value in weighted_scores) / total_weight
+
+        return {
+            "score": score,
+            "detail": "; ".join(details),
+            "hard_conflict": hard_conflict,
+            "comparable_count": len(weighted_scores),
+            "exact_primary_match": exact_primary_match,
+        }
+
+    def _apply_logic_alignment(self, candidate: dict, *,
+                               is_match: bool, score: float, detail: str,
+                               bill_logic_targets: dict,
+                               candidate_logic_profile: dict) -> tuple[bool, float, str]:
+        alignment = self._score_logic_alignment(
+            bill_logic_targets=bill_logic_targets,
+            candidate_logic_profile=candidate_logic_profile,
+        )
+        candidate["logic_score"] = alignment["score"]
+        candidate["logic_detail"] = alignment["detail"]
+        candidate["logic_hard_conflict"] = alignment["hard_conflict"]
+        candidate["logic_comparable_count"] = alignment["comparable_count"]
+        candidate["logic_exact_primary_match"] = alignment["exact_primary_match"]
+
+        if alignment["hard_conflict"]:
+            score = min(score, 0.2)
+            is_match = False
+        elif alignment["exact_primary_match"]:
+            score = max(score, 0.98)
+        elif alignment["comparable_count"] > 0:
+            score = score * (1.0 - self._LOGIC_SCORE_BLEND) + (
+                alignment["score"] * self._LOGIC_SCORE_BLEND
+            )
+
+        if alignment["detail"]:
+            logic_detail = f"逻辑档位{alignment['score']:.2f} [{alignment['detail']}]"
+            detail = f"{detail}; {logic_detail}" if detail else logic_detail
         return is_match, score, detail
 
     def _get_db_params(self, candidate: dict) -> dict:
