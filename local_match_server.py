@@ -8,7 +8,7 @@
     python local_match_server.py
     或者双击「启动匹配服务.bat」
 
-端口：9527（固定）
+端口：9100（默认，可通过 LOCAL_MATCH_PORT 环境变量修改）
 """
 
 import json
@@ -26,6 +26,7 @@ import uvicorn
 
 from loguru import logger
 from src.excel_compat import ensure_openpyxl_input, validate_excel_upload
+from src.output_writer import safe_excel_text
 
 # 加载项目 .env
 load_dotenv()
@@ -37,12 +38,30 @@ import main as auto_quota_main  # 匹配入口
 # 配置
 # ============================================================
 
-# API密钥（从环境变量读取，未设置则自动生成一个随机密钥）
-_DEFAULT_KEY = uuid.uuid4().hex[:16]
-API_KEY = os.getenv("LOCAL_MATCH_API_KEY", _DEFAULT_KEY)
+def _require_api_key() -> str:
+    api_key = os.getenv("LOCAL_MATCH_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "LOCAL_MATCH_API_KEY 未配置，出于安全原因拒绝启动。\n"
+            "请先设置一个随机高强度密钥，再启动本地匹配服务。"
+        )
+    return api_key
+
+
+def _mask_secret(secret: str) -> str:
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}...{secret[-4:]}"
+
+
+# API密钥（必须显式配置，和懒猫环境变量 LOCAL_MATCH_API_KEY 保持一致）
+API_KEY = _require_api_key()
 
 # 最大并发匹配任务数
 MAX_CONCURRENT = int(os.getenv("LOCAL_MATCH_MAX_CONCURRENT", "5"))
+
+# 单文件上传上限（MB）
+MAX_UPLOAD_MB = int(os.getenv("LOCAL_MATCH_MAX_UPLOAD_MB", "30"))
 
 # 临时文件目录
 TEMP_DIR = Path("output/temp/remote_match")
@@ -52,7 +71,10 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 TASK_TTL = 3600  # 1小时
 
 # 服务端口
-PORT = int(os.getenv("LOCAL_MATCH_PORT", "9527"))
+PORT = int(os.getenv("LOCAL_MATCH_PORT", "9100"))
+
+# 默认监听所有网卡，便于懒猫盒子/局域网访问；如需仅本机访问可显式设为 127.0.0.1
+HOST = os.getenv("LOCAL_MATCH_HOST", "0.0.0.0").strip() or "0.0.0.0"
 
 # ============================================================
 # 全局状态
@@ -90,6 +112,35 @@ def _verify_api_key(api_key: str):
     """验证API密钥"""
     if api_key != API_KEY:
         raise HTTPException(status_code=401, detail="API Key不正确")
+
+
+def _sanitize_client_filename(filename: str | None, default: str = "input.xlsx") -> str:
+    raw = (filename or "").replace("\\", "/").split("/")[-1]
+    raw = raw.replace("\x00", "").replace("\r", "").replace("\n", "").strip().strip(". ")
+    return raw or default
+
+
+def _safe_join_under(base_dir: Path, filename: str) -> Path:
+    candidate = (base_dir / filename).resolve()
+    base_resolved = base_dir.resolve()
+    if candidate.parent != base_resolved:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    return candidate
+
+
+async def _read_and_validate_upload(file: UploadFile, label: str) -> tuple[bytes, str, str]:
+    filename = _sanitize_client_filename(file.filename)
+    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
+    content = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        content.extend(chunk)
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=400, detail=f"{label}大小超过 {MAX_UPLOAD_MB}MB 限制")
+    try:
+        info = validate_excel_upload(filename, bytes(content[:8]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return bytes(content), filename, info.normalized_suffix
 
 
 @app.get("/health")
@@ -144,19 +195,11 @@ async def create_match(
         work_dir = TEMP_DIR / match_id
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        content = await file.read()
-        filename = file.filename or "input.xlsx"
-        try:
-            info = validate_excel_upload(filename, content[:8])
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if info.is_mislabeled:
-            input_name = f"input{info.normalized_suffix}"
-        else:
-            input_name = f"input{Path(filename).suffix.lower()}"
+        content, filename, normalized_suffix = await _read_and_validate_upload(file, "Excel文件")
+        input_name = f"input{normalized_suffix}"
 
         # 保存上传的Excel文件
-        input_path = work_dir / input_name
+        input_path = _safe_join_under(work_dir, input_name)
         input_path.write_bytes(content)
 
         # 初始化任务状态
@@ -275,13 +318,12 @@ async def compile_bill_preview(
     """编清单预览 — 上传Excel，自动匹配12位清单编码，返回结果"""
     _verify_api_key(x_api_key)
 
-    content = await file.read()
-    filename = file.filename or "input.xlsx"
+    content, filename, normalized_suffix = await _read_and_validate_upload(file, "工程量文件")
 
     # 保存临时文件
     work_dir = TEMP_DIR / f"compile_{uuid.uuid4().hex[:8]}"
     work_dir.mkdir(parents=True, exist_ok=True)
-    input_path = work_dir / filename
+    input_path = _safe_join_under(work_dir, f"input{normalized_suffix}")
     input_path.write_bytes(content)
 
     try:
@@ -294,7 +336,7 @@ async def compile_bill_preview(
         if not items:
             raise HTTPException(status_code=400, detail="未从Excel中读取到清单项，请检查文件格式。")
 
-        compiled = compile_items(items)
+        compiled = compile_items(items, bill_version=bill_version)
 
         # 构建返回数据
         result_items = []
@@ -321,11 +363,14 @@ async def compile_bill_preview(
                 "description": item.get("description", ""),
                 "unit": item.get("unit", ""),
                 "quantity": item.get("quantity", None),
-                "bill_code": code,
+                "bill_code": safe_excel_text(code),
                 "bill_code_source": code_source,
-                "matched_name": bill_match.get("name", "") if bill_match else "",
-                "sheet_name": item.get("sheet_name", ""),
-                "section": item.get("section", ""),
+                "matched_name": safe_excel_text(bill_match.get("name", "") if bill_match else ""),
+                "standard_name": safe_excel_text(item.get("standard_name", "")),
+                "standard_unit": safe_excel_text(item.get("standard_unit", "")),
+                "compiled_features": safe_excel_text(item.get("compiled_features", "")),
+                "sheet_name": safe_excel_text(item.get("sheet_name", "")),
+                "section": safe_excel_text(item.get("section", "")),
             })
 
         return {
@@ -349,12 +394,11 @@ async def compile_bill_execute(
     """编清单导出 — 上传Excel，返回编好的工程量清单Excel文件"""
     _verify_api_key(x_api_key)
 
-    content = await file.read()
-    filename = file.filename or "input.xlsx"
+    content, filename, normalized_suffix = await _read_and_validate_upload(file, "工程量文件")
 
     work_dir = TEMP_DIR / f"compile_{uuid.uuid4().hex[:8]}"
     work_dir.mkdir(parents=True, exist_ok=True)
-    input_path = work_dir / filename
+    input_path = _safe_join_under(work_dir, f"input{normalized_suffix}")
     input_path.write_bytes(content)
 
     try:
@@ -367,14 +411,14 @@ async def compile_bill_execute(
         if not items:
             raise HTTPException(status_code=400, detail="未从Excel中读取到清单项，请检查文件格式。")
 
-        compiled = compile_items(items)
+        compiled = compile_items(items, bill_version=bill_version)
 
         # 生成结果Excel
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "工程量清单"
 
-        headers = ["序号", "项目编码", "项目名称", "项目特征", "计量单位", "工程量", "编码来源"]
+        headers = ["序号", "项目编码", "项目名称", "项目特征描述", "计量单位", "工程量", "编码来源", "原始名称"]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = openpyxl.styles.Font(bold=True)
@@ -393,16 +437,23 @@ async def compile_bill_execute(
                 code = original_code
                 source = "未匹配"
 
+            # 优先用标准名称和标准单位，没有则降级用原始值
+            display_name = item.get("standard_name") or item.get("name", "")
+            display_features = item.get("compiled_features") or item.get("description", "")
+            display_unit = item.get("standard_unit") or item.get("unit", "")
+            original_name = item.get("name", "")
+
             row = i + 2
             ws.cell(row=row, column=1, value=i + 1)
-            ws.cell(row=row, column=2, value=code)
-            ws.cell(row=row, column=3, value=item.get("name", ""))
-            ws.cell(row=row, column=4, value=item.get("description", ""))
-            ws.cell(row=row, column=5, value=item.get("unit", ""))
+            ws.cell(row=row, column=2, value=safe_excel_text(code))
+            ws.cell(row=row, column=3, value=safe_excel_text(display_name))
+            ws.cell(row=row, column=4, value=safe_excel_text(display_features))
+            ws.cell(row=row, column=5, value=safe_excel_text(display_unit))
             ws.cell(row=row, column=6, value=item.get("quantity", ""))
-            ws.cell(row=row, column=7, value=source)
+            ws.cell(row=row, column=7, value=safe_excel_text(source))
+            ws.cell(row=row, column=8, value=safe_excel_text(original_name))
 
-        col_widths = [8, 18, 30, 50, 10, 12, 12]
+        col_widths = [8, 18, 20, 50, 10, 12, 12, 25]
         for col, width in enumerate(col_widths, 1):
             ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
 
@@ -413,7 +464,7 @@ async def compile_bill_execute(
         return FileResponse(
             path=str(out_path),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=f"{Path(filename).stem}_工程量清单.xlsx",
+            filename=f"{Path(_sanitize_client_filename(filename)).stem}_工程量清单.xlsx",
         )
 
     except HTTPException:
@@ -856,15 +907,17 @@ def material_price_periods(
 
 class _MaterialLookupRequest(_BaseModel):
     """主材批量查价请求"""
+    model_config = {"extra": "ignore"}  # 兼容新旧版本，忽略多余字段
     materials: list[dict]
     province: str
     city: str = ""
     period_end: str = ""
+    price_type: str = "all"  # all=不限, info=信息价, market=市场价
 
 
 @app.post("/material-price/lookup")
 def material_price_lookup(
-    req: _MaterialLookupRequest,
+    req: dict,
     x_api_key: str = Header(default=""),
 ):
     """批量查价"""
@@ -872,8 +925,20 @@ def material_price_lookup(
     import re as _re
     from src.material_db import MaterialDB
     db = MaterialDB()
+
+    province = req.get("province", "")
+    materials = req.get("materials", [])
+
+    # 价格类型映射
+    source_filter = ""
+    price_type = req.get("price_type", "all")
+    if price_type == "info":
+        source_filter = "government"
+    elif price_type == "market":
+        source_filter = "market"
+
     results = []
-    for mat in req.materials:
+    for mat in materials:
         name = mat.get("name", "").strip()
         spec = mat.get("spec", "").strip()
         unit = mat.get("unit", "").strip()
@@ -881,7 +946,8 @@ def material_price_lookup(
             results.append({**mat, "lookup_price": None, "lookup_source": "名称为空"})
             continue
         price_info = db.search_price_by_name(
-            name, province=req.province, spec=spec, target_unit=unit
+            name, province=province, spec=spec, target_unit=unit,
+            source_type=source_filter
         )
         if price_info:
             results.append({
@@ -897,8 +963,9 @@ def material_price_lookup(
                 short_name = name[:m.start()].strip()
                 if short_name:
                     price_info2 = db.search_price_by_name(
-                        short_name, province=req.province,
-                        spec=extracted_spec, target_unit=unit
+                        short_name, province=province,
+                        spec=extracted_spec, target_unit=unit,
+                        source_type=source_filter
                     )
                     if price_info2:
                         results.append({
@@ -958,6 +1025,169 @@ def material_price_contribute(
         )
         saved += 1
     return {"saved": saved, "message": f"已保存 {saved} 条价格"}
+
+
+# ============================================================
+# 广材网实时查价（从Docker转发过来，本机执行爬虫）
+# ============================================================
+
+class _GldjcLookupRequest(_BaseModel):
+    materials: list[dict]
+    cookie: str
+
+@app.post("/material-price/gldjc-lookup")
+def material_price_gldjc_lookup(
+    req: _GldjcLookupRequest,
+    x_api_key: str = Header(default=""),
+):
+    """广材网实时查价（本机执行，Cookie绑定本机IP）"""
+    _verify_api_key(x_api_key)
+
+    cookie = req.cookie.strip()
+    materials = req.materials
+    if not cookie:
+        raise HTTPException(400, "请输入广材网Cookie")
+    if not materials:
+        raise HTTPException(400, "材料列表为空")
+
+    # 直接复用 tools/gldjc_price.py 的核心函数
+    import sys
+    import time
+    import random
+    tools_dir = str(Path(__file__).parent / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+
+    from gldjc_price import (
+        parse_material, search_material_web, filter_and_score,
+        get_median_price, determine_confidence,
+        load_cache, save_cache, update_cache, check_cache,
+    )
+    import requests as _requests
+    from datetime import datetime
+
+    # 创建带Cookie的session
+    session = _requests.Session()
+    for part in cookie.split("; "):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            session.cookies.set(key.strip(), value.strip())
+
+    cache = load_cache()
+    results = []
+    search_dedup: dict[str, list] = {}
+    net_requests = 0
+    blocked = False
+    MAX_BATCH = 30
+
+    for i, mat in enumerate(materials):
+        name = mat.get("name", "").strip()
+        unit = mat.get("unit", "").strip()
+        spec = mat.get("spec", "").strip()
+
+        if not name:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空"})
+            continue
+
+        # 先查缓存
+        cached = check_cache(cache, name, unit)
+        if cached and cached.get("price_with_tax") and cached.get("confidence") != "低":
+            results.append({
+                **mat,
+                "gldjc_price": cached["price_with_tax"],
+                "gldjc_source": f"广材网缓存({cached.get('confidence', '中')})",
+            })
+            continue
+
+        if net_requests >= MAX_BATCH:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": f"已达单次上限{MAX_BATCH}条"})
+            continue
+
+        if blocked:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）"})
+            continue
+
+        # 实时搜索广材网
+        parsed = parse_material(name, spec)
+        base_name = parsed["base_name"]
+        specs = parsed["specs"]
+        all_results = []
+        searched_keyword = ""
+
+        for kw in parsed["search_keywords"]:
+            if kw in search_dedup:
+                all_results = search_dedup[kw]
+                searched_keyword = kw
+                if all_results:
+                    break
+                continue
+
+            if net_requests > 0:
+                time.sleep(random.uniform(5, 8))
+
+            web_results = search_material_web(session, kw)
+            net_requests += 1
+            searched_keyword = kw
+            search_dedup[kw] = web_results
+
+            if not web_results and net_requests >= 3:
+                recent_empty = sum(1 for r in list(search_dedup.values())[-3:] if not r)
+                if recent_empty >= 3:
+                    logger.warning("广材网连续3次搜索无结果，疑似Cookie失效或被限制")
+                    blocked = True
+
+            if web_results:
+                all_results = web_results
+                break
+            time.sleep(random.uniform(1, 2))
+
+        if not all_results:
+            update_cache(cache, name, unit, {
+                "price_with_tax": None, "confidence": "低",
+                "match_status": "未匹配", "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": 0, "searched_keyword": searched_keyword,
+            })
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网未找到"})
+            continue
+
+        scored = filter_and_score(all_results, unit, specs, base_name)
+        confidence = determine_confidence(scored, unit, specs)
+        price_source = scored if scored else all_results
+        if not scored:
+            confidence = "低"
+        median = get_median_price(price_source)
+
+        if median and confidence in ("高", "中"):
+            update_cache(cache, name, unit, {
+                "price_with_tax": median,
+                "price_without_tax": round(median / 1.13, 2),
+                "confidence": confidence,
+                "match_status": "精确匹配" if confidence == "高" else "模糊匹配",
+                "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": len(price_source), "searched_keyword": searched_keyword,
+            })
+            results.append({**mat, "gldjc_price": median, "gldjc_source": f"广材网市场价({confidence})"})
+        else:
+            update_cache(cache, name, unit, {
+                "price_with_tax": median,
+                "price_without_tax": round(median / 1.13, 2) if median else None,
+                "confidence": "低", "match_status": "低置信度", "source": "广材网",
+                "query_date": datetime.now().strftime("%Y-%m-%d"),
+                "result_count": len(price_source), "searched_keyword": searched_keyword,
+            })
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网低置信度"})
+
+        if net_requests % 10 == 0:
+            save_cache(cache)
+
+    save_cache(cache)
+    logger.info(f"广材网查价完成：{len(materials)}条，{net_requests}次请求，"
+                f"{'被限制' if blocked else '正常'}")
+
+    found = sum(1 for r in results if r.get("gldjc_price"))
+    return {"results": results, "total": len(results), "found": found}
 
 
 # ============================================================
@@ -1072,15 +1302,17 @@ def main():
     print("=" * 60)
     print("  本地匹配API服务")
     print("=" * 60)
+    print(f"  监听地址: {HOST}")
     print(f"  端口: {PORT}")
-    print(f"  API Key: {API_KEY}")
+    print(f"  API Key: {_mask_secret(API_KEY)}")
     print(f"  最大并发: {MAX_CONCURRENT}")
+    print(f"  上传上限: {MAX_UPLOAD_MB}MB")
     print(f"  临时目录: {TEMP_DIR}")
     print()
     print("  把以下配置填入懒猫盒子的环境变量：")
     print(f"    MATCH_BACKEND=remote")
     print(f"    LOCAL_MATCH_URL=http://你的电脑IP:{PORT}")
-    print(f"    LOCAL_MATCH_API_KEY={API_KEY}")
+    print("    LOCAL_MATCH_API_KEY=<使用你当前已配置的密钥>")
     print()
     print("  按 Ctrl+C 停止服务")
     print("=" * 60)
@@ -1088,7 +1320,7 @@ def main():
     # 启动服务
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host=HOST,
         port=PORT,
         log_level="info",
     )
