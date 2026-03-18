@@ -41,6 +41,24 @@ class ParamValidator:
         "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
         "switch_gangs",  # 开关联数（单联/双联/三联/四联）
     ]
+    _FEATURE_ALIGNMENT_BLEND = 0.18
+    _FEATURE_ALIGNMENT_DEFAULT = 0.5
+    _FEATURE_ALIGNMENT_WEIGHTS = {
+        "entity": 0.40,
+        "canonical_name": 0.18,
+        "system": 0.12,
+        "material": 0.12,
+        "connection": 0.08,
+        "install_method": 0.05,
+        "traits": 0.05,
+    }
+    _FEATURE_ENTITY_HARD_CONFLICTS = {
+        frozenset(("电缆", "配管")),
+        frozenset(("电缆", "桥架")),
+        frozenset(("配管", "桥架")),
+        frozenset(("配电箱", "阀门")),
+        frozenset(("管道", "阀门")),
+    }
 
     # LTR模型特征列名（必须和训练时一致）
     # v1: 16维原始特征
@@ -128,6 +146,14 @@ class ParamValidator:
         if "conduit_dn" in bill_params and "dn" not in bill_params:
             bill_params["dn"] = bill_params.pop("conduit_dn")
 
+        canonical_source_text = " ".join(
+            part for part in (query_text, supplement_query) if part
+        ).strip()
+        bill_canonical_features = text_parser.parse_canonical(
+            canonical_source_text or query_text,
+            params=bill_params,
+        )
+
         # 没有可比较的清单参数时，仍然检查定额侧是否有档位参数
         # 有档位参数说明存在"不确定选对了哪个档"的风险，降低置信度
         if not bill_params:
@@ -137,6 +163,8 @@ class ParamValidator:
                 # 从数据库字段补充
                 db_params = self._get_db_params(c)
                 merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+                candidate_features = self._build_candidate_canonical_features(c, merged)
+                c["candidate_canonical_features"] = candidate_features
 
                 has_tier = any(p in merged for p in self.TIER_PARAMS)
                 if has_tier:
@@ -171,6 +199,16 @@ class ParamValidator:
                 if usage_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - usage_penalty)
                     c["param_detail"] += f"; {usage_detail}"
+                c["param_match"], c["param_score"], c["param_detail"] = self._apply_feature_alignment(
+                    candidate=c,
+                    is_match=c["param_match"],
+                    score=c["param_score"],
+                    detail=c["param_detail"],
+                    bill_canonical_features=bill_canonical_features,
+                    candidate_features=candidate_features,
+                )
+                c["param_tier"] = self._determine_param_tier(
+                    c["param_match"], c["param_score"], c["param_detail"])
                 # 无参数分支：LTR参数特征设为默认值（无参数可比较）
                 c["_ltr_param"] = {
                     "param_main_exact": 0,
@@ -197,6 +235,9 @@ class ParamValidator:
             db_params = self._get_db_params(candidate)
             # 合并：数据库字段优先，文本提取作为补充
             merged_quota_params = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+            candidate_features = self._build_candidate_canonical_features(
+                candidate, merged_quota_params)
+            candidate["candidate_canonical_features"] = candidate_features
 
             # 传入定额名称，供速度分类等校验使用
             merged_quota_params["_quota_name"] = candidate.get("name", "")
@@ -228,6 +269,15 @@ class ParamValidator:
             if usage_penalty > 0:
                 score = max(0.0, score - usage_penalty)
                 detail += f"; {usage_detail}"
+
+            is_match, score, detail = self._apply_feature_alignment(
+                candidate=candidate,
+                is_match=is_match,
+                score=score,
+                detail=detail,
+                bill_canonical_features=bill_canonical_features,
+                candidate_features=candidate_features,
+            )
 
             candidate["param_score"] = score
             candidate["param_detail"] = detail
@@ -640,6 +690,192 @@ class ParamValidator:
         intersection = bill_tokens & cand_tokens
         union = bill_tokens | cand_tokens
         return len(intersection) / len(union) if union else 0.0
+
+    def _build_candidate_canonical_features(self, candidate: dict,
+                                            merged_quota_params: dict) -> dict:
+        cached = candidate.get("candidate_canonical_features")
+        if cached:
+            return dict(cached)
+        return text_parser.parse_canonical(
+            candidate.get("name", ""),
+            params=merged_quota_params,
+        )
+
+    @classmethod
+    def _is_entity_hard_conflict(cls, bill_entity: str, candidate_entity: str) -> bool:
+        if not bill_entity or not candidate_entity or bill_entity == candidate_entity:
+            return False
+        return frozenset((bill_entity, candidate_entity)) in cls._FEATURE_ENTITY_HARD_CONFLICTS
+
+    @classmethod
+    def _compare_feature_text(cls, bill_value: str, candidate_value: str) -> float | None:
+        bill_value = str(bill_value or "").strip()
+        candidate_value = str(candidate_value or "").strip()
+        if not bill_value or not candidate_value:
+            return None
+        if bill_value == candidate_value:
+            return 1.0
+        if bill_value in candidate_value or candidate_value in bill_value:
+            return 0.85
+        overlap = cls._compute_token_overlap(bill_value, candidate_value)
+        return 0.25 + overlap * 0.5
+
+    def _score_feature_alignment(self, bill_canonical_features: dict,
+                                 candidate_features: dict) -> dict:
+        bill_canonical_features = dict(bill_canonical_features or {})
+        candidate_features = dict(candidate_features or {})
+        components: list[tuple[str, float, float]] = []
+        details: list[str] = []
+        hard_conflict = False
+
+        bill_entity = str(bill_canonical_features.get("entity") or "")
+        candidate_entity = str(candidate_features.get("entity") or "")
+        if bill_entity and candidate_entity:
+            if bill_entity == candidate_entity:
+                components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 1.0))
+                details.append(f"实体:{bill_entity}")
+            elif self._is_entity_hard_conflict(bill_entity, candidate_entity):
+                components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 0.0))
+                details.append(f"实体冲突:{bill_entity}!={candidate_entity}")
+                hard_conflict = True
+            else:
+                components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 0.25))
+                details.append(f"实体偏差:{bill_entity}!={candidate_entity}")
+
+        bill_canonical_name = str(bill_canonical_features.get("canonical_name") or "")
+        candidate_canonical_name = str(candidate_features.get("canonical_name") or "")
+        canonical_name_score = self._compare_feature_text(
+            bill_canonical_name, candidate_canonical_name)
+        if canonical_name_score is not None:
+            components.append((
+                "canonical_name",
+                self._FEATURE_ALIGNMENT_WEIGHTS["canonical_name"],
+                canonical_name_score,
+            ))
+            if canonical_name_score >= 0.8:
+                details.append(f"标准名:{candidate_canonical_name}")
+            elif bill_canonical_name and candidate_canonical_name:
+                details.append(f"标准名偏差:{bill_canonical_name}!={candidate_canonical_name}")
+
+        bill_system = str(bill_canonical_features.get("system") or "")
+        candidate_system = str(candidate_features.get("system") or "")
+        if bill_system and candidate_system:
+            system_score = 1.0 if bill_system == candidate_system else 0.2
+            components.append(("system", self._FEATURE_ALIGNMENT_WEIGHTS["system"], system_score))
+            details.append(
+                f"系统:{candidate_system}" if system_score == 1.0
+                else f"系统偏差:{bill_system}!={candidate_system}"
+            )
+
+        bill_material = str(bill_canonical_features.get("material") or "")
+        candidate_material = str(candidate_features.get("material") or "")
+        if bill_material and candidate_material:
+            if bill_material == candidate_material:
+                material_score = 1.0
+                details.append(f"材质:{candidate_material}")
+            elif self._materials_compatible(bill_material, candidate_material):
+                material_score = 0.8
+                details.append(f"材质兼容:{bill_material}~{candidate_material}")
+            else:
+                material_score = 0.15
+                details.append(f"材质偏差:{bill_material}!={candidate_material}")
+            components.append(("material", self._FEATURE_ALIGNMENT_WEIGHTS["material"], material_score))
+
+        bill_connection = str(bill_canonical_features.get("connection") or "")
+        candidate_connection = str(candidate_features.get("connection") or "")
+        if bill_connection and candidate_connection:
+            if bill_connection == candidate_connection:
+                connection_score = 1.0
+                details.append(f"连接:{candidate_connection}")
+            elif self._connections_compatible_pv(bill_connection, candidate_connection):
+                connection_score = 0.8
+                details.append(f"连接兼容:{bill_connection}~{candidate_connection}")
+            else:
+                connection_score = 0.15
+                details.append(f"连接偏差:{bill_connection}!={candidate_connection}")
+            components.append((
+                "connection",
+                self._FEATURE_ALIGNMENT_WEIGHTS["connection"],
+                connection_score,
+            ))
+
+        bill_install_method = str(bill_canonical_features.get("install_method") or "")
+        candidate_install_method = str(candidate_features.get("install_method") or "")
+        if bill_install_method and candidate_install_method:
+            install_score = (
+                1.0
+                if bill_install_method == candidate_install_method
+                or self._install_methods_compatible(bill_install_method, candidate_install_method)
+                else 0.25
+            )
+            components.append((
+                "install_method",
+                self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
+                install_score,
+            ))
+            details.append(
+                f"安装:{candidate_install_method}" if install_score == 1.0
+                else f"安装偏差:{bill_install_method}!={candidate_install_method}"
+            )
+
+        bill_traits = {
+            str(value).strip() for value in (bill_canonical_features.get("traits") or [])
+            if str(value).strip()
+        }
+        candidate_traits = {
+            str(value).strip() for value in (candidate_features.get("traits") or [])
+            if str(value).strip()
+        }
+        if bill_traits and candidate_traits:
+            trait_overlap = len(bill_traits & candidate_traits) / len(bill_traits | candidate_traits)
+            components.append((
+                "traits",
+                self._FEATURE_ALIGNMENT_WEIGHTS["traits"],
+                trait_overlap,
+            ))
+            if trait_overlap > 0:
+                details.append(f"特征:{'/'.join(sorted(bill_traits & candidate_traits))}")
+            else:
+                details.append("特征偏差")
+
+        total_weight = sum(weight for _, weight, _ in components)
+        if total_weight <= 0:
+            score = self._FEATURE_ALIGNMENT_DEFAULT
+        else:
+            score = sum(weight * value for _, weight, value in components) / total_weight
+
+        return {
+            "score": score,
+            "detail": "; ".join(details),
+            "hard_conflict": hard_conflict,
+            "comparable_count": len(components),
+        }
+
+    def _apply_feature_alignment(self, candidate: dict, *,
+                                 is_match: bool, score: float, detail: str,
+                                 bill_canonical_features: dict,
+                                 candidate_features: dict) -> tuple[bool, float, str]:
+        alignment = self._score_feature_alignment(
+            bill_canonical_features=bill_canonical_features,
+            candidate_features=candidate_features,
+        )
+        candidate["feature_alignment_score"] = alignment["score"]
+        candidate["feature_alignment_detail"] = alignment["detail"]
+        candidate["feature_alignment_hard_conflict"] = alignment["hard_conflict"]
+        candidate["feature_alignment_comparable_count"] = alignment["comparable_count"]
+
+        if alignment["hard_conflict"]:
+            score = min(score, 0.25)
+            is_match = False
+        elif alignment["comparable_count"] > 0:
+            score = score * (1.0 - self._FEATURE_ALIGNMENT_BLEND) + (
+                alignment["score"] * self._FEATURE_ALIGNMENT_BLEND
+            )
+
+        if alignment["detail"]:
+            feature_detail = f"特征对齐{alignment['score']:.2f} [{alignment['detail']}]"
+            detail = f"{detail}; {feature_detail}" if detail else feature_detail
+        return is_match, score, detail
 
     def _get_db_params(self, candidate: dict) -> dict:
         """从候选定额的数据库字段中提取参数"""
