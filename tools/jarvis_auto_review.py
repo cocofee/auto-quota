@@ -179,11 +179,12 @@ def _correct_phase(detected_errors, province, db_conn, sibling_provinces=None):
 
         if correction:
             # 纠正后编号和原来一样 → 说明搜不到更好的，不标"AI纠正"，转人工
-            if correction[0] == d["quota_id"]:
+            if correction["quota_id"] == d["quota_id"]:
                 manual_items.append(entry)
             else:
-                entry["corrected_quota_id"] = correction[0]
-                entry["corrected_quota_name"] = correction[1]
+                entry["corrected_quota_id"] = correction["quota_id"]
+                entry["corrected_quota_name"] = correction["quota_name"]
+                entry["corrected_province"] = correction.get("province", province)
                 error_items.append(entry)
         else:
             manual_items.append(entry)
@@ -281,6 +282,7 @@ def auto_review(json_path, province=None, sibling_provinces=None):
                 "seq": item["seq"],
                 "quota_id": item["corrected_quota_id"],
                 "quota_name": item["corrected_quota_name"],
+                "province": item.get("corrected_province", province),
                 "name": item["name"],
                 "sheet_name": item.get("sheet_name", ""),
                 "sheet_bill_seq": item.get("sheet_bill_seq"),

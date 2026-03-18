@@ -398,6 +398,31 @@ def _is_relevant_correction(item, corrected_name):
     return any(w in corrected_name for w in words)
 
 
+def _to_correction_payload(result, province):
+    """标准化纠正结果，补齐来源库信息。"""
+    if not result:
+        return None
+    if isinstance(result, dict):
+        quota_id = str(result.get("quota_id", "")).strip()
+        quota_name = str(result.get("quota_name", "")).strip()
+        result_province = str(result.get("province", "") or province or "").strip()
+    else:
+        if len(result) < 2:
+            return None
+        quota_id = str(result[0]).strip()
+        quota_name = str(result[1]).strip()
+        result_province = str(province or "").strip()
+
+    if not quota_id:
+        return None
+
+    return {
+        "quota_id": quota_id,
+        "quota_name": quota_name,
+        "province": result_province,
+    }
+
+
 def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=None):
     """统一入口：根据错误类型自动调度到对应纠正函数
 
@@ -408,7 +433,7 @@ def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=N
         province: 省份（主定额库）
         conn: 可选的共享数据库连接（主库用）
         sibling_provinces: 兄弟定额库列表（跨库搜索用，如["上海安装"]）
-    返回: (quota_id, quota_name) 或 None
+    返回: {"quota_id", "quota_name", "province"} 或 None
            失败时返回 None，失败原因记录到日志
     """
     error_type = ""
@@ -426,14 +451,15 @@ def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=N
         bill_name = item.get("name", "")[:30]
         logger.error(f"纠正搜索出错: [{error_type}] {bill_name} - {e}")
         result = None
+    result = _to_correction_payload(result, province)
 
     # 二次验真 + 防劣化
     if result:
-        if not validate_correction(error, result[0], result[1]):
-            logger.debug(f"纠正验真不通过: [{error_type}] 纠正结果 {result[0]} 未通过验真")
+        if not validate_correction(error, result["quota_id"], result["quota_name"]):
+            logger.debug(f"纠正验真不通过: [{error_type}] 纠正结果 {result['quota_id']} 未通过验真")
             result = None
-        elif not _is_relevant_correction(item, result[1]):
-            logger.debug(f"纠正防劣化拦截: [{error_type}] 纠正结果 {result[1]} 与清单无关")
+        elif not _is_relevant_correction(item, result["quota_name"]):
+            logger.debug(f"纠正防劣化拦截: [{error_type}] 纠正结果 {result['quota_name']} 与清单无关")
             result = None
 
     # 主库没搜到或验真不通过，尝试兄弟库（跨库搜索）
@@ -446,14 +472,15 @@ def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=N
             except Exception as e:
                 logger.error(f"跨库纠正出错: [{error_type}] {bill_name} 在 {sib_province} - {e}")
                 continue
+            sib_result = _to_correction_payload(sib_result, sib_province)
             if sib_result:
-                if not validate_correction(error, sib_result[0], sib_result[1]):
-                    logger.debug(f"跨库验真不通过: {sib_province} {sib_result[0]}")
+                if not validate_correction(error, sib_result["quota_id"], sib_result["quota_name"]):
+                    logger.debug(f"跨库验真不通过: {sib_province} {sib_result['quota_id']}")
                     continue
-                if not _is_relevant_correction(item, sib_result[1]):
-                    logger.debug(f"跨库防劣化拦截: {sib_province} {sib_result[1]} 与清单无关")
+                if not _is_relevant_correction(item, sib_result["quota_name"]):
+                    logger.debug(f"跨库防劣化拦截: {sib_province} {sib_result['quota_name']} 与清单无关")
                     continue
-                logger.info(f"跨库纠正成功: [{error_type}] {bill_name} → {sib_province} {sib_result[0]}")
+                logger.info(f"跨库纠正成功: [{error_type}] {bill_name} → {sib_province} {sib_result['quota_id']}")
                 return sib_result
 
     if not result:

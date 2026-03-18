@@ -46,6 +46,32 @@ def test_search_quota_db_empty_keywords_with_section_works():
         conn.close()
 
 
+def test_search_quota_db_sorts_by_dn_before_limit():
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """
+        CREATE TABLE quotas (
+            quota_id TEXT,
+            name TEXT,
+            unit TEXT
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO quotas (quota_id, name, unit) VALUES (?, ?, ?)",
+        [
+            (f"A{i:02d}", f"排水塑料管 DN{i * 10}", "m")
+            for i in range(1, 15)
+        ],
+    )
+    conn.commit()
+    try:
+        results = search_quota_db(["排水塑料管"], dn=140, conn=conn, limit=2)
+        assert [r[1] for r in results] == ["排水塑料管 DN140", "排水塑料管 DN130"]
+    finally:
+        conn.close()
+
+
 def test_search_quota_db_closes_own_connection_on_sql_error():
     class _BadCursor:
         def execute(self, *args, **kwargs):
