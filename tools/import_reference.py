@@ -33,6 +33,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 from loguru import logger
 from src.text_parser import normalize_bill_text
+from src.bill_reader import (
+    _is_material_code as _shared_is_material_code,
+    _is_quota_code as _shared_is_quota_code,
+)
 from db.sqlite import connect as _db_connect
 import config
 
@@ -238,12 +242,12 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     if has_serial and col_c and has_desc:
         return "bill"
 
-    # ② 主材行（必须在定额之前判断，否则Z@编码会被定额正则误匹配）
-    # 主材特征：无序号、有名称、无项目特征描述、编码含Z@或纯数字7位以上
-    # 例如：01190031（日光灯）、26010101Z@2（单联单控开关）、28110000Z@121（电缆）
+    # ② 主材行（必须在定额之前判断，否则材料编码里的@会被后续规则误处理）
+    # 直接复用 bill_reader 的主材编码规则，保持“导入带定额清单”和主读取链路一致。
+    # 例如：01190031、26010101Z@2、SZFWJC001@2、CL17033110-1@1、补充主材005
     # 注意：有序号的行是清单项（如 [7] 080801013001 防鼠板），不是主材
     if col_c and not col_d and not has_serial:
-        is_material_code = bool(re.match(r'^\d{7,}', col_b)) or 'Z@' in col_b
+        is_material_code = _shared_is_material_code(col_b)
         if is_material_code:
             return "material"
 
@@ -274,6 +278,41 @@ def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
         return "bill"
 
     return "other"
+
+
+def _classify_row_v2(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
+    """判断一行是清单、定额、主材还是其他。"""
+    has_serial = bool(re.fullmatch(r"\d+", col_a))
+    has_bill_code = bool(re.fullmatch(r"\d{9,12}", col_b))
+    has_desc = bool(col_d)
+
+    if has_bill_code and col_c and has_desc:
+        return "bill"
+    if has_serial and col_c and has_desc:
+        return "bill"
+
+    if col_c and not col_d and not has_serial and _shared_is_material_code(col_b):
+        return "material"
+
+    normalized_quota_code = col_b.replace(" ", "").strip()
+    if normalized_quota_code.endswith("换"):
+        normalized_quota_code = normalized_quota_code[:-1]
+    if normalized_quota_code.startswith("借"):
+        normalized_quota_code = normalized_quota_code[1:]
+
+    if col_c and (
+        _shared_is_quota_code(normalized_quota_code)
+        or normalized_quota_code.startswith("补子目")
+    ):
+        return "quota"
+
+    if has_bill_code and col_c and has_serial:
+        return "bill"
+
+    return "other"
+
+
+_classify_row = _classify_row_v2
 
 
 def convert_to_kb_records(pairs: list[dict]) -> list[dict]:
