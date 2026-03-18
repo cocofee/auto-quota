@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.56';
+export const APP_VERSION = '0.2.57';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.57',
+    date: '2026-03-18',
+    changes: [
+      { type: 'admin', text: '前端细节优化——来源标签中文化+本月完成数据修正+确认率标签+星级颜色+日志入口' },
+    ],
+  },
   {
     version: '0.2.56',
     date: '2026-03-18',
