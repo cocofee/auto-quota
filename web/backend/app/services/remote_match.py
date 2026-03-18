@@ -4,7 +4,7 @@
 用法（在 Celery worker 中）：
     from app.services.remote_match import RemoteMatchClient
 
-    client = RemoteMatchClient(url="http://192.168.1.100:9527", api_key="xxx")
+    client = RemoteMatchClient(url="http://192.168.1.100:9100", api_key="xxx")
     if not client.check_health():
         raise RuntimeError("本地匹配服务未启动")
 

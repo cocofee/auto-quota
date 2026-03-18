@@ -42,17 +42,6 @@ export default function MainLayout() {
   const { user, logout } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
 
-  // 取最新一条用户可见的更新摘要（侧边栏底部展示用）
-  const latestUserChange = useMemo(() => {
-    for (const entry of CHANGELOG) {
-      const userChange = entry.changes.find(c => c.type === 'user');
-      if (userChange) {
-        return { version: entry.version, date: entry.date, text: userChange.text };
-      }
-    }
-    return null;
-  }, []);
-
   // 根据角色动态生成菜单（按改版方案v0.3.0重构）
   const menuItems: MenuProps['items'] = useMemo(() => {
     // 四功能色值（文档07章）
@@ -230,7 +219,7 @@ export default function MainLayout() {
               style={{ borderRight: 0, padding: '8px 0' }}
             />
           </div>
-          {/* 底部版本号 + 最新更新摘要 */}
+          {/* 底部版本号入口 */}
           <div
             onClick={() => setChangelogOpen(true)}
             style={{
@@ -246,17 +235,13 @@ export default function MainLayout() {
             onMouseLeave={e => (e.currentTarget.style.color = '#94a3b8')}
           >
             <div>{collapsed ? `v${APP_VERSION.split('.').pop()}` : `v${APP_VERSION}`}</div>
-            {/* 展开状态下显示最新更新摘要 */}
-            {!collapsed && latestUserChange && (
+            {!collapsed && (
               <div style={{
                 marginTop: 4,
                 fontSize: 11,
                 lineHeight: 1.4,
               }}>
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {latestUserChange.text}
-                </div>
-                <div style={{ marginTop: 2 }}>{latestUserChange.date}</div>
+                更新日志
               </div>
             )}
           </div>

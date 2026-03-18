@@ -62,8 +62,9 @@ BOOK_TO_INDEX_LABEL = {
 # 数据加载（懒加载，只读一次）
 # ============================================================
 
-_features_db = None    # 项目特征数据库缓存（1182条，有features/unit/work_content）
-_bill_lib_index = None  # 清单库名称索引（从41.6万条全专业清单构建）
+_features_db = None    # 项目特征数据库缓存（1182条，有features/unit/work_content，仅2024版）
+_bill_lib_indexes = {}  # 按版本分开的清单库索引 {"2024": {...}, "2013": {...}}
+_bill_lib_raw = None    # 清单库原始数据缓存（只读一次JSON）
 _desc_db_conn = None    # 清单描述库连接（bill_library.db，11.2万条真实描述）
 
 
@@ -307,41 +308,87 @@ def _strip_model_prefix(name: str) -> str:
     return cleaned
 
 
-def _load_bill_library_index() -> dict:
-    """从清单库构建名称→编码索引。
-
-    从41.6万条全专业清单中按核心名称分组，同名不同编码取出现次数最多的。
-    支持安装(03)、房建(01)、装饰(02)、市政(04)、园林(05)等全部专业。
-
-    返回:
-        {
-            "镀锌钢管": [{"code9": "031001002", "appendix": "K", "major": "03", "count": 58}, ...],
-            "瓷砖地面": [{"code9": "010401xxx", "appendix": "", "major": "01", "count": 30}, ...],
-            ...
-        }
-        每个名称对应一个候选列表（按count降序排列），通常只有1~3个候选。
-    """
-    global _bill_lib_index
-    if _bill_lib_index is not None:
-        return _bill_lib_index
+def _load_bill_library_raw() -> dict:
+    """加载清单库原始JSON数据（只读一次，后续按版本过滤时复用）。"""
+    global _bill_lib_raw
+    if _bill_lib_raw is not None:
+        return _bill_lib_raw
 
     lib_path = Path(__file__).resolve().parent.parent / "data" / "bill_library_all.json"
     if not lib_path.exists():
         logger.warning(f"清单库不存在: {lib_path}")
-        _bill_lib_index = {}
-        return _bill_lib_index
+        _bill_lib_raw = {"libraries": {}}
+        return _bill_lib_raw
 
     with open(lib_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        _bill_lib_raw = json.load(f)
+    return _bill_lib_raw
 
-    # 统计：(核心名称, 9位编码) → 出现次数
+
+# 版本归属规则：库名中的年份 → 归属版本
+# 2024体系：2024新标准 + 2021过渡补充版
+# 2013体系：2013国标 + 2008/2006/2007/2009/2010等旧标准
+# 2015/2016/2017/2018/2020/2022/2025等地方标准：两个版本都收（编码体系没变，只是地方细则）
+_VERSION_2024_YEARS = {"2024", "2021"}
+_VERSION_2013_YEARS = {"2013", "2008", "2006", "2007", "2009", "2010"}
+# 以上两组之外的年份（2015/2016/2017/2018/2020/2022/2025等）属于地方标准，两个版本都包含
+
+
+def _classify_lib_version(lib_name: str) -> set[str]:
+    """判断一个清单库属于哪些版本。
+
+    返回 {"2024"}、{"2013"}、{"2024", "2013"}（地方标准两边都收）。
+    """
+    # 从库名中提取所有4位年份
+    years = set(re.findall(r'(?<!\d)(20\d{2})(?!\d)', lib_name))
+
+    versions = set()
+    for y in years:
+        if y in _VERSION_2024_YEARS:
+            versions.add("2024")
+        elif y in _VERSION_2013_YEARS:
+            versions.add("2013")
+        # 其他年份（地方标准）→ 下面统一处理
+
+    # 没命中任何明确版本 → 地方标准，两边都收
+    if not versions:
+        versions = {"2024", "2013"}
+
+    return versions
+
+
+def _load_bill_library_index(bill_version: str = "2024") -> dict:
+    """从清单库构建名称→编码索引（按版本隔离）。
+
+    2024版和2013版使用不同的清单库数据，互不干扰。
+    索引按版本分开缓存，第一次调用时构建，后续直接返回缓存。
+
+    参数:
+        bill_version: "2024" 或 "2013"
+
+    返回:
+        {
+            "镀锌钢管": [{"code9": "031001002", "appendix": "K", "major": "03", "count": 58}, ...],
+            ...
+        }
+    """
+    global _bill_lib_indexes
+    if bill_version in _bill_lib_indexes:
+        return _bill_lib_indexes[bill_version]
+
+    data = _load_bill_library_raw()
+
+    # 按版本过滤清单库
     from collections import Counter
     name_code_counter = Counter()
+    included_libs = 0
 
     for lib_name, lib_data in data.get("libraries", {}).items():
-        # 2024版权重×3（优先使用最新标准的编码）
-        weight = 3 if "2024" in lib_name else 1
+        lib_versions = _classify_lib_version(lib_name)
+        if bill_version not in lib_versions:
+            continue  # 这个库不属于当前版本，跳过
 
+        included_libs += 1
         for item in lib_data.get("items", []):
             code = item.get("code", "")
             name = item.get("name", "")
@@ -356,7 +403,7 @@ def _load_bill_library_index() -> dict:
             if not core or len(core) < 2:
                 continue
 
-            name_code_counter[(core, code9)] += weight
+            name_code_counter[(core, code9)] += 1
 
     # 构建索引：核心名称 → [{code9, appendix, major, count}, ...]
     index = {}
@@ -376,14 +423,14 @@ def _load_bill_library_index() -> dict:
         })
 
     # 每个名称的候选按优先级排列：安装(03)优先，同专业内按出现次数降序
-    # 原因：系统主业务是安装工程，同名时安装条目应排在前面
     for name in index:
         index[name].sort(key=lambda x: (0 if x["major"] == "03" else 1, -x["count"]))
 
-    _bill_lib_index = index
-    logger.info(f"清单库索引已构建: {len(index)}个不同名称, "
-                f"来自{sum(len(v) for v in index.values())}个名称-编码对")
-    return _bill_lib_index
+    _bill_lib_indexes[bill_version] = index
+    logger.info(f"清单库索引已构建[{bill_version}版]: {included_libs}个库, "
+                f"{len(index)}个不同名称, "
+                f"{sum(len(v) for v in index.values())}个名称-编码对")
+    return index
 
 
 # ============================================================
@@ -800,7 +847,8 @@ def _route_appendix(name: str, description: str = "",
 
 def match_bill_code(name: str, description: str = "",
                     hint_appendix: str = "",
-                    section_title: str = "") -> dict | None:
+                    section_title: str = "",
+                    bill_version: str = "2024") -> dict | None:
     """匹配清单编码。
 
     参数:
@@ -808,6 +856,7 @@ def match_bill_code(name: str, description: str = "",
         description: 项目特征描述（如"DN100 螺纹连接 室内"）
         hint_appendix: 提示附录字母（可选，如已知专业可直接指定）
         section_title: 分部标题（可选，用于消歧）
+        bill_version: 清单版本（"2024"或"2013"），决定使用哪个版本的清单库索引
 
     返回:
         匹配结果dict，包含:
@@ -829,7 +878,7 @@ def match_bill_code(name: str, description: str = "",
     if not name:
         return None
 
-    index = _load_bill_library_index()
+    index = _load_bill_library_index(bill_version)
     core = _extract_core_name(name)
     text = f"{name} {description}"
 
@@ -890,7 +939,8 @@ def match_bill_code(name: str, description: str = "",
     method = match["method"]
 
     # ---- 从项目特征库补全特征模板 ----
-    feat = _lookup_features(code9)
+    # 注意：项目特征库只有2024版，2013版不查（避免重号导致返回错误特征）
+    feat = _lookup_features(code9) if bill_version == "2024" else None
 
     # ---- 从历史清单库查询真实描述建议（80万条数据挖掘） ----
     # 用标准名称+用户描述中的参数去筛选，返回最匹配的历史描述
@@ -1057,7 +1107,7 @@ def _fuzzy_search(index: dict, name: str, text: str,
 # 邻居投票（batch匹配的第二遍扫描）
 # ============================================================
 
-def _neighbor_vote_pass(items: list[dict]):
+def _neighbor_vote_pass(items: list[dict], bill_version: str = "2024"):
     """邻居投票校正：用同section/sheet内邻居的匹配结果，校验消歧项。
 
     逻辑：
@@ -1131,7 +1181,8 @@ def _neighbor_vote_pass(items: list[dict]):
             # 用邻居的专业作为hint重新匹配
             name = item.get("name", "").strip()
             desc = item.get("description", "").strip()
-            new_result = match_bill_code(name, desc, hint_appendix=dominant)
+            new_result = match_bill_code(name, desc, hint_appendix=dominant,
+                                            bill_version=bill_version)
             if new_result:
                 new_result["match_method"] += "_neighbor"  # 标记来源
                 item["bill_match"] = new_result
@@ -1146,7 +1197,7 @@ def _neighbor_vote_pass(items: list[dict]):
 # 批量匹配（供 bill_compiler 调用）
 # ============================================================
 
-def match_bill_codes(items: list[dict]) -> list[dict]:
+def match_bill_codes(items: list[dict], bill_version: str = "2024") -> list[dict]:
     """批量匹配清单编码。
 
     对每条清单item，如果没有编码或编码不完整，尝试自动匹配。
@@ -1156,6 +1207,7 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
 
     参数:
         items: 清单项列表（bill_reader输出的dict列表）
+        bill_version: 清单版本（"2024"或"2013"），决定使用哪个版本的清单库
 
     返回:
         原列表（原地修改）
@@ -1165,7 +1217,7 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
 
     # 确保数据库已加载
     _load_features_db()
-    _load_bill_library_index()
+    _load_bill_library_index(bill_version)
 
     matched = 0
     skipped = 0
@@ -1198,14 +1250,15 @@ def match_bill_codes(items: list[dict]) -> list[dict]:
 
         # 匹配（传入分部标题，用于多义名称消歧）
         result = match_bill_code(name, desc, hint_appendix=hint,
-                                 section_title=section)
+                                 section_title=section,
+                                 bill_version=bill_version)
         if result:
             item["bill_match"] = result
             matched += 1
 
     # ---- 邻居投票校正（第二遍扫描） ----
     # 对消歧决定的匹配结果，用邻居的匹配结果做投票校验
-    _neighbor_vote_pass(items)
+    _neighbor_vote_pass(items, bill_version=bill_version)
 
     # 给匹配结果编后3位序号，组成完整12位编码
     # 规则：同一个9位编码按出现顺序编001、002、003…
