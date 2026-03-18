@@ -221,6 +221,172 @@ def read_excel_pairs(excel_path: str) -> list[dict]:
         wb.close()
 
 
+def _collect_excel_inputs(input_path: Path) -> list[Path]:
+    """收集待导入的 Excel 工作簿。
+
+    支持传入单个 Excel 文件，或一个目录（递归收集其中所有 Excel 工作簿）。
+    """
+    if input_path.is_file():
+        return [input_path]
+
+    excel_exts = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+    files = [
+        path for path in sorted(input_path.rglob("*"))
+        if path.is_file()
+        and path.suffix.lower() in excel_exts
+        and not path.name.startswith("~$")
+    ]
+    return files
+
+
+def _summarize_pairs(pairs: list[dict]) -> dict[str, int]:
+    """统计解析结果摘要。"""
+    total_quotas = sum(
+        len(p.get("quotas", []))
+        for p in pairs
+        if isinstance(p, dict) and isinstance(p.get("quotas", []), list)
+    )
+
+    total_materials = 0
+    bills_with_materials = 0
+    for p in pairs:
+        if not isinstance(p, dict):
+            continue
+        has_mat = False
+        for q in p.get("quotas", []):
+            if not isinstance(q, dict):
+                continue
+            mat_count = len(q.get("materials", []))
+            total_materials += mat_count
+            if mat_count > 0:
+                has_mat = True
+        if has_mat:
+            bills_with_materials += 1
+
+    return {
+        "bills": len(pairs),
+        "quotas": total_quotas,
+        "materials": total_materials,
+        "bills_with_materials": bills_with_materials,
+    }
+
+
+def _import_single_workbook(input_path: Path, project_name: str, province: str,
+                            all_provinces: list[str], dry_run: bool = False) -> dict:
+    """导入单个 Excel 工作簿并返回统计。"""
+    logger.info(f"解析文件: {input_path}")
+    pairs = read_excel_pairs(str(input_path))
+    logger.info(f"解析完成: {len(pairs)}条清单→定额对应关系")
+
+    if not pairs:
+        raise ValueError("未找到有效的清单→定额数据，请检查文件格式")
+
+    pair_stats = _summarize_pairs(pairs)
+    logger.info(f"  清单项: {pair_stats['bills']}条")
+    logger.info(f"  定额项: {pair_stats['quotas']}条")
+    logger.info(
+        f"  主材项: {pair_stats['materials']}条"
+        f"（{pair_stats['bills_with_materials']}条清单含主材）"
+    )
+    avg_per_bill = (pair_stats["quotas"] / pair_stats["bills"]) if pair_stats["bills"] else 0
+    logger.info(f"  平均每条清单: {avg_per_bill:.1f}条定额")
+
+    logger.info("--- 示例（前5条）---")
+    for i, pair in enumerate(pairs[:5]):
+        quotas = pair.get("quotas", []) if isinstance(pair, dict) else []
+        if not isinstance(quotas, list):
+            quotas = []
+        quota_names = [str(q.get("name", ""))[:30] for q in quotas if isinstance(q, dict) and q.get("name")]
+        if not quota_names:
+            quota_names = ["(无有效定额名称)"]
+        bill_name = pair.get("bill_name", "") if isinstance(pair, dict) else ""
+        logger.info(f"  [{i+1}] {str(bill_name)[:40]}")
+        logger.info(f"      → {', '.join(quota_names)}")
+
+    if dry_run:
+        logger.info("--- dry-run模式，不导入 ---")
+        for i, pair in enumerate(pairs):
+            bill_name = pair.get("bill_name", "") if isinstance(pair, dict) else ""
+            bill_desc = pair.get("bill_desc", "") if isinstance(pair, dict) else ""
+            bill_code = pair.get("bill_code", "") if isinstance(pair, dict) else ""
+            bill_pattern = pair.get("bill_pattern", "") if isinstance(pair, dict) else ""
+            quotas = pair.get("quotas", []) if isinstance(pair, dict) else []
+            if not isinstance(quotas, list):
+                quotas = []
+            print(f"\n--- 第{i+1}条 ---")
+            print(f"  清单: {bill_name}")
+            if bill_desc:
+                print(f"  特征: {str(bill_desc)[:100]}")
+            print(f"  编码: {bill_code}")
+            print(f"  模式: {str(bill_pattern)[:80]}")
+            for q in quotas:
+                if not isinstance(q, dict):
+                    continue
+                print(f"  定额: {q.get('code', '')} → {q.get('name', '')}")
+        return {
+            "project_name": project_name,
+            "pair_stats": pair_stats,
+            "exp_stats": None,
+            "kb_stats": None,
+        }
+
+    source = "project_import"
+    layer_hint = "authority（权威层，可直通匹配）"
+    logger.info(f"导入经验库... 数据将进入{layer_hint}")
+    if len(all_provinces) > 1:
+        logger.info(f"  多定额库模式: {', '.join(p[:20] for p in all_provinces)}")
+    exp_stats = import_to_experience(
+        pairs,
+        project_name,
+        all_provinces=all_provinces,
+        source=source,
+    )
+    logger.info(
+        f"  经验库: 新增{exp_stats['inserted']}条, "
+        f"命中已有{exp_stats['matched_existing']}条, "
+        f"重复命中{exp_stats['duplicate_hits']}条, "
+        f"跳过{exp_stats['skipped']}条"
+    )
+
+    logger.info("导入通用知识库...")
+    kb_records = convert_to_kb_records(pairs)
+    from src.universal_kb import UniversalKB
+    kb = UniversalKB()
+
+    kb_stats = kb.batch_import(
+        kb_records,
+        source_province=province,
+        source_project=project_name,
+    )
+    logger.info(f"  通用知识库: 新增{kb_stats['added']}条, 合并{kb_stats['merged']}条")
+
+    logger.info("=" * 50)
+    logger.info("导入完成")
+    logger.info(f"  项目: {project_name}")
+    logger.info(f"  定额库: {', '.join(p[:25] for p in all_provinces)}")
+    logger.info(f"  清单项: {pair_stats['bills']}条")
+    logger.info(f"  定额项: {pair_stats['quotas']}条")
+    logger.info(
+        f"  主材项: {pair_stats['materials']}条"
+        f"（{pair_stats['bills_with_materials']}条清单含主材）"
+    )
+    logger.info(
+        f"  经验库: 新增{exp_stats['inserted']}条、"
+        f"命中已有{exp_stats['matched_existing']}条、"
+        f"重复命中{exp_stats['duplicate_hits']}条（带定额编号，同省直接用）"
+    )
+    logger.info(f"  通用知识库: +{kb_stats['added']}条（定额名称模式，跨省通用）")
+    logger.info(f"  数据层级: {layer_hint}")
+    logger.info("=" * 50)
+
+    return {
+        "project_name": project_name,
+        "pair_stats": pair_stats,
+        "exp_stats": exp_stats,
+        "kb_stats": kb_stats,
+    }
+
+
 def _classify_row(col_a: str, col_b: str, col_c: str, col_d: str) -> str:
     """
     判断一行是清单行、定额行、主材行还是标题行
@@ -573,6 +739,9 @@ def main():
   # 导入预算文件（交互式选择定额库版本）
   python tools/import_reference.py 预算文件.xlsx
 
+  # 导入整个文件夹里的多个工作簿
+  python tools/import_reference.py F:\\jarvis\\广联达导出\\市政
+
   # 指定定额库版本（跳过交互选择）
   python tools/import_reference.py 预算文件.xlsx --province "北京市建设工程施工消耗量标准(2024)"
 
@@ -583,7 +752,7 @@ def main():
   python tools/import_reference.py 预算文件.xlsx --dry-run
         """,
     )
-    parser.add_argument("input_file", help="带定额的预算Excel文件（广联达/造价Home等导出）")
+    parser.add_argument("input_file", help="带定额的预算Excel文件，或包含多个工作簿的文件夹")
     parser.add_argument("--province", default=None,
                         help="定额库版本全称（如 '北京市建设工程施工消耗量标准(2024)'）。"
                              "不指定则交互式选择。")
@@ -599,10 +768,10 @@ def main():
 
     args = parser.parse_args()
 
-    # 验证文件
+    # 验证输入路径（支持单文件或文件夹）
     input_path = Path(args.input_file)
     if not input_path.exists():
-        logger.error(f"文件不存在: {input_path}")
+        logger.error(f"文件或文件夹不存在: {input_path}")
         sys.exit(1)
 
     # 确定定额库版本：指定了就解析匹配，没指定就交互选择
@@ -773,6 +942,176 @@ def main():
         except Exception as e:
             logger.debug(f"方法卡片自动分析跳过（不影响导入结果）: {e}")
 
+def cli_main():
+    parser = argparse.ArgumentParser(
+        description="预算数据导入工具 - 从做好的预算Excel导入经验（一键导入，经验库+通用知识库两边都存）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+  python tools/import_reference.py 预算文件.xlsx
+  python tools/import_reference.py F:\\jarvis\\广联达导出\\市政
+  python tools/import_reference.py 预算文件.xlsx --province "北京市建设工程施工消耗量标准(2024)"
+  python tools/import_reference.py 预算文件.xlsx --project 丰台安置房
+  python tools/import_reference.py 预算文件.xlsx --dry-run
+        """,
+    )
+    parser.add_argument("input_file", help="带定额的预算Excel文件，或包含多个工作簿的文件夹")
+    parser.add_argument("--province", default=None,
+                        help="定额库版本全称（如'北京市建设工程施工消耗量标准(2024)'）。"
+                             "不指定则交互式选择。")
+    parser.add_argument("--aux-provinces", default=None,
+                        help="辅助定额库（逗号分隔）。安装/土建混合项目时，"
+                             "定额编号在主定额库校验不过会自动尝试辅助定额库。")
+    parser.add_argument("--project", default=None, help="项目名称（默认用文件名）")
+    parser.add_argument("--dry-run", action="store_true", help="只解析不导入（调试用）")
+    parser.add_argument("--trust", action="store_true",
+                        help="信任模式：数据进权威层（默认进候选层，需人工确认后晋升）")
+    parser.add_argument("--no-analyze", action="store_true",
+                        help="导入后不自动分析生成方法卡片（默认会自动分析）")
+
+    args = parser.parse_args()
+
+    input_path = Path(args.input_file)
+    if not input_path.exists():
+        logger.error(f"文件或文件夹不存在: {input_path}")
+        sys.exit(1)
+
+    if args.province:
+        try:
+            province = config.resolve_province(args.province)
+        except ValueError as e:
+            logger.error(f"省份解析失败: {e}")
+            sys.exit(1)
+        db_path = config.get_quota_db_path(province)
+        if not db_path.exists():
+            logger.warning(f"主定额库尚未导入: {province}（导入的记录将不做定额编号校验）")
+    else:
+        province = _select_quota_db()
+
+    aux_provinces = []
+    if args.aux_provinces:
+        for ap in args.aux_provinces.split(","):
+            ap = ap.strip()
+            if not ap:
+                continue
+            try:
+                resolved = config.resolve_province(ap)
+                if resolved != province:
+                    aux_provinces.append(resolved)
+            except ValueError:
+                logger.warning(f"辅助定额库解析失败，跳过: {ap}")
+
+    all_provinces = [province] + aux_provinces
+    workbook_paths = _collect_excel_inputs(input_path)
+    if not workbook_paths:
+        logger.error(f"未找到可导入的Excel工作簿: {input_path}")
+        sys.exit(1)
+
+    if len(workbook_paths) > 1:
+        logger.info(f"检测到文件夹模式: 共 {len(workbook_paths)} 个工作簿待导入")
+        if args.project:
+            logger.warning("文件夹模式下忽略 --project，默认每个工作簿使用各自文件名作为项目名")
+
+    aggregate = {
+        "files_total": len(workbook_paths),
+        "files_ok": 0,
+        "files_failed": 0,
+        "bills": 0,
+        "quotas": 0,
+        "materials": 0,
+        "bills_with_materials": 0,
+        "exp_inserted": 0,
+        "exp_matched_existing": 0,
+        "exp_duplicate_hits": 0,
+        "exp_written": 0,
+        "exp_skipped": 0,
+        "kb_added": 0,
+        "kb_merged": 0,
+    }
+    failed_files: list[tuple[Path, str]] = []
+
+    for idx, workbook_path in enumerate(workbook_paths, start=1):
+        project_name = (args.project or workbook_path.stem) if len(workbook_paths) == 1 else workbook_path.stem
+
+        logger.info("=" * 70)
+        logger.info(f"[{idx}/{len(workbook_paths)}] 处理工作簿: {workbook_path.name}")
+        try:
+            result = _import_single_workbook(
+                workbook_path,
+                project_name=project_name,
+                province=province,
+                all_provinces=all_provinces,
+                dry_run=args.dry_run,
+            )
+        except Exception as e:
+            aggregate["files_failed"] += 1
+            failed_files.append((workbook_path, str(e)))
+            logger.exception(f"导入失败: {workbook_path}")
+            continue
+
+        aggregate["files_ok"] += 1
+        pair_stats = result["pair_stats"]
+        aggregate["bills"] += pair_stats["bills"]
+        aggregate["quotas"] += pair_stats["quotas"]
+        aggregate["materials"] += pair_stats["materials"]
+        aggregate["bills_with_materials"] += pair_stats["bills_with_materials"]
+
+        if result["exp_stats"]:
+            exp_stats = result["exp_stats"]
+            aggregate["exp_inserted"] += exp_stats["inserted"]
+            aggregate["exp_matched_existing"] += exp_stats["matched_existing"]
+            aggregate["exp_duplicate_hits"] += exp_stats["duplicate_hits"]
+            aggregate["exp_written"] += exp_stats["written"]
+            aggregate["exp_skipped"] += exp_stats["skipped"]
+
+        if result["kb_stats"]:
+            kb_stats = result["kb_stats"]
+            aggregate["kb_added"] += kb_stats["added"]
+            aggregate["kb_merged"] += kb_stats["merged"]
+
+    logger.info("=" * 70)
+    logger.info("批量导入汇总")
+    logger.info(f"  工作簿: 成功{aggregate['files_ok']}个 / 失败{aggregate['files_failed']}个 / 共{aggregate['files_total']}个")
+    logger.info(f"  清单项: {aggregate['bills']}条")
+    logger.info(f"  定额项: {aggregate['quotas']}条")
+    logger.info(
+        f"  主材项: {aggregate['materials']}条"
+        f"（{aggregate['bills_with_materials']}条清单含主材）"
+    )
+    if not args.dry_run:
+        logger.info(
+            f"  经验库: 新增{aggregate['exp_inserted']}条、"
+            f"命中已有{aggregate['exp_matched_existing']}条、"
+            f"重复命中{aggregate['exp_duplicate_hits']}条"
+        )
+        logger.info(
+            f"  通用知识库: 新增{aggregate['kb_added']}条、"
+            f"合并{aggregate['kb_merged']}条"
+        )
+
+    if failed_files:
+        logger.warning("以下工作簿导入失败:")
+        for path, err in failed_files:
+            logger.warning(f"  - {path}: {err}")
+
+    if aggregate["files_ok"] == 0:
+        sys.exit(1)
+
+    if not args.no_analyze and not args.dry_run:
+        try:
+            from tools.gen_method_cards import incremental_generate
+            logger.info("自动分析：检查是否有新模式可以提炼方法卡片...")
+            total_generated = 0
+            for p in all_provinces:
+                card_stats = incremental_generate(province=p, min_samples=5)
+                total_generated += card_stats["generated"]
+            if total_generated > 0:
+                logger.info(f"  新生成{total_generated} 张方法卡片")
+            else:
+                logger.info("  暂无新模式需要生成方法卡片（样本不足或已有卡片）")
+        except Exception as e:
+            logger.debug(f"方法卡片自动分析跳过（不影响导入结果）: {e}")
+
 
 if __name__ == "__main__":
-    main()
+    cli_main()

@@ -359,7 +359,7 @@ def _execute_remote_match(session, task, task_id, file_path, params,
     if not LOCAL_MATCH_URL:
         raise RuntimeError(
             "远程匹配模式需要配置 LOCAL_MATCH_URL（本地匹配服务地址）\n"
-            "例如: LOCAL_MATCH_URL=http://192.168.1.100:9527"
+            "例如: LOCAL_MATCH_URL=http://192.168.1.100:9100"
         )
 
     client = RemoteMatchClient(base_url=LOCAL_MATCH_URL, api_key=LOCAL_MATCH_API_KEY)

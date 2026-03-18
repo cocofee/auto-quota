@@ -287,6 +287,16 @@ def init_search_components(resolved_province: str, aux_provinces: list = None):
         from src.model_cache import ModelCache
         ModelCache.preload_all()
     except Exception as e:
+        try:
+            from db.sqlite import describe_db_path
+            import config as _quota_config
+            logger.warning(
+                "经验库路径诊断: "
+                f"{describe_db_path(_quota_config.get_experience_db_path())} "
+                f"chroma_dir={_quota_config.get_chroma_experience_dir()}"
+            )
+        except Exception as diag_error:
+            logger.debug(f"经验库路径诊断失败（不影响主流程）: {diag_error}")
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态

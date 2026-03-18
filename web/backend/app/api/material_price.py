@@ -967,7 +967,25 @@ async def gldjc_lookup(body: dict):
     if not materials:
         raise HTTPException(400, "材料列表为空")
 
-    # 在线程池中执行（搜索有网络IO和sleep）
+    # 远程模式：转发到本地匹配服务（广材网Cookie绑定IP，必须从本机发请求）
+    if _is_remote():
+        import httpx
+        url = f"{LOCAL_MATCH_URL.rstrip('/')}/material-price/gldjc-lookup"
+        headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                resp = await client.post(url, headers=headers, json={
+                    "materials": materials, "cookie": cookie,
+                })
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning(f"远程广材网查价返回 {resp.status_code}: {resp.text[:200]}")
+            raise HTTPException(resp.status_code, resp.json().get("detail", "远程查价失败"))
+        except httpx.HTTPError as e:
+            logger.error(f"远程广材网查价失败: {e}")
+            raise HTTPException(502, f"连接本地匹配服务失败: {e}")
+
+    # 本地模式：直接在线程池中执行
     results = await asyncio.to_thread(
         _do_gldjc_lookup, materials, cookie
     )

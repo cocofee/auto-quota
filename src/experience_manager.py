@@ -91,7 +91,7 @@ def demote_to_candidate(self, record_id: int, reason: str = ""):
     conn = self._connect()
     try:
         notes_update = f"[体检降级 {time.strftime('%Y-%m-%d')}] {reason}" if reason else ""
-        conn.execute("""
+        cursor = conn.execute("""
             UPDATE experiences
             SET layer = 'candidate',
                 notes = CASE
@@ -102,6 +102,7 @@ def demote_to_candidate(self, record_id: int, reason: str = ""):
             WHERE id = ? AND layer = 'authority'
         """, (notes_update, notes_update, time.time(), record_id))
         conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 
@@ -195,7 +196,7 @@ def get_authority_records(self, province: str = None,
     conn = self._connect()
     try:
         sql = """
-            SELECT id, bill_text, bill_name, quota_ids, quota_names,
+            SELECT id, bill_text, bill_name, quota_ids, quota_names, materials,
                    source, confidence, province, specialty,
                    bill_code, bill_unit, created_at
             FROM experiences
@@ -217,6 +218,7 @@ def get_authority_records(self, province: str = None,
     for row in rows:
         quota_ids = []
         quota_names = []
+        materials = []
         try:
             quota_ids = json.loads(row[3]) if row[3] else []
         except Exception:
@@ -225,19 +227,24 @@ def get_authority_records(self, province: str = None,
             quota_names = json.loads(row[4]) if row[4] else []
         except Exception:
             pass
+        try:
+            materials = json.loads(row[5]) if row[5] else []
+        except Exception:
+            pass
         records.append({
             "id": row[0],
             "bill_text": row[1],
             "bill_name": row[2] or "",
             "quota_ids": quota_ids,
             "quota_names": quota_names,
-            "source": row[5],
-            "confidence": row[6],
-            "province": row[7],
-            "specialty": row[8],
-            "bill_code": row[9] or "",
-            "bill_unit": row[10] or "",
-            "created_at": row[11] or "",
+            "materials": materials,
+            "source": row[6],
+            "confidence": row[7],
+            "province": row[8],
+            "specialty": row[9],
+            "bill_code": row[10] or "",
+            "bill_unit": row[11] or "",
+            "created_at": row[12] or "",
         })
     return records
 
@@ -259,7 +266,7 @@ def get_candidate_records(self, province: str = None,
     conn = self._connect()
     try:
         sql = """
-            SELECT id, bill_text, bill_name, quota_ids, quota_names,
+            SELECT id, bill_text, bill_name, quota_ids, quota_names, materials,
                    source, confidence, province, specialty, notes,
                    bill_code, bill_unit, created_at
             FROM experiences
@@ -283,6 +290,7 @@ def get_candidate_records(self, province: str = None,
     for row in rows:
         quota_ids = []
         quota_names = []
+        materials = []
         try:
             quota_ids = json.loads(row[3]) if row[3] else []
         except Exception:
@@ -291,19 +299,24 @@ def get_candidate_records(self, province: str = None,
             quota_names = json.loads(row[4]) if row[4] else []
         except Exception:
             pass
+        try:
+            materials = json.loads(row[5]) if row[5] else []
+        except Exception:
+            pass
         records.append({
             "id": row[0],
             "bill_text": row[1],
             "bill_name": row[2] or "",
             "quota_ids": quota_ids,
             "quota_names": quota_names,
-            "source": row[5],
-            "confidence": row[6],
-            "province": row[7],
-            "specialty": row[8],
-            "notes": row[9] or "",
-            "bill_code": row[10] or "",
-            "bill_unit": row[11] or "",
-            "created_at": row[12] or "",
+            "materials": materials,
+            "source": row[6],
+            "confidence": row[7],
+            "province": row[8],
+            "specialty": row[9],
+            "notes": row[10] or "",
+            "bill_code": row[11] or "",
+            "bill_unit": row[12] or "",
+            "created_at": row[13] or "",
         })
     return records
