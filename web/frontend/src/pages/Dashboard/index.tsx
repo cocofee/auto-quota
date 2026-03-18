@@ -58,6 +58,7 @@ export default function DashboardPage() {
   const [total, setTotal] = useState(0);
   const [completedTotal, setCompletedTotal] = useState(0);
   const [quotaBalance, setQuotaBalance] = useState<number | null>(null);
+  const [statsTasks, setStatsTasks] = useState<TaskInfo[]>([]); // 更多已完成任务（用于准确率计算）
 
   // 最近任务类型筛选
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -65,6 +66,7 @@ export default function DashboardPage() {
   const loadRecentTasks = useCallback(async () => {
     setLoading(true);
     try {
+      // 最近10个任务（用于表格展示）
       const { data } = await api.get<TaskListResponse>('/tasks', {
         params: { page: 1, size: 10 },
       });
@@ -76,6 +78,11 @@ export default function DashboardPage() {
         params: { page: 1, size: 1, status_filter: 'completed', created_after: monthStart },
       });
       setCompletedTotal(completedRes.data.total);
+      // 加载更多已完成任务用于计算准确率（最多100个）
+      const statsRes = await api.get<TaskListResponse>('/tasks', {
+        params: { page: 1, size: 100, status_filter: 'completed' },
+      });
+      setStatsTasks(statsRes.data.items);
     } catch {
       message.error('加载任务列表失败');
     } finally {
@@ -92,9 +99,9 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [loadRecentTasks]);
 
-  // 计算平均准确率（所有已完成任务的加权平均）
-  const completedTasks = tasks.filter(t => t.status === 'completed' && t.stats?.total);
-  const avgStats = completedTasks.reduce(
+  // 计算绿灯率（基于所有已完成任务的加权平均，样本量最多100个）
+  const completedWithStats = statsTasks.filter(t => t.stats?.total);
+  const avgStats = completedWithStats.reduce(
     (acc, t) => {
       const s = t.stats!;
       acc.total += s.total;
@@ -246,7 +253,7 @@ export default function DashboardPage() {
         <Col xs={12} sm={6}>
           <Card hoverable styles={{ body: { padding: '20px 24px' } }}>
             <Statistic
-              title="平均准确率"
+              title={<Tooltip title={`基于${completedWithStats.length}个已完成任务，绿灯(≥85%)占比`}>绿灯率</Tooltip>}
               value={avgAccuracy}
               suffix="%"
               valueStyle={{

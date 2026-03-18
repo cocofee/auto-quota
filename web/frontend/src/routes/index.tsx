@@ -20,17 +20,13 @@ import PurchasePage from '../pages/Quota/PurchasePage';
 import PayResultPage from '../pages/Quota/PayResultPage';
 // 管理员页面
 import TaskListAll from '../pages/Admin/TaskListAll';
-import ExperienceManage from '../pages/Admin/ExperienceManage';
 import FeedbackReview from '../pages/Admin/FeedbackReview';
-import AnalyticsPage from '../pages/Admin/AnalyticsPage';
 import UserManage from '../pages/Admin/UserManage';
 import SettingsPage from '../pages/Admin/SettingsPage';
 import QuotaManage from '../pages/Admin/QuotaManage';
 import LogViewer from '../pages/Admin/LogViewer';
 import BillingAdmin from '../pages/Admin/BillingAdmin';
-import BatchDashboard from '../pages/Admin/BatchDashboard';
-import ErrorAnalysis from '../pages/Admin/ErrorAnalysis';
-import DataManage from '../pages/Admin/DataManage';
+import AdminHub from '../pages/Admin/AdminHub';
 // 工具页面
 import PriceBackfill from '../pages/Tools/PriceBackfill';
 import BillCompiler from '../pages/Tools/BillCompiler';
@@ -72,18 +68,22 @@ const router = createBrowserRouter([
       { path: 'tools/material-price', element: <MaterialPrice /> },
 
       // === 管理员专属页面（RequireAdmin 包裹） ===
+      // 管理中心（合并了批量任务/数据概览/错误分析/准确率分析/经验库）
+      { path: 'admin', element: <RequireAdmin><AdminHub /></RequireAdmin> },
+      // 旧路由重定向到管理中心对应Tab（兼容已有收藏/链接）
+      { path: 'admin/batch', element: <Navigate to="/admin?tab=error" replace /> },
+      { path: 'admin/data', element: <Navigate to="/admin?tab=error" replace /> },
+      { path: 'admin/error-analysis', element: <Navigate to="/admin?tab=error" replace /> },
+      { path: 'admin/analytics', element: <Navigate to="/admin?tab=analytics" replace /> },
+      { path: 'admin/experience', element: <Navigate to="/admin?tab=experience" replace /> },
+      // 其他管理页面保持独立
       { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
-      { path: 'admin/experience', element: <RequireAdmin><ExperienceManage /></RequireAdmin> },
       { path: 'admin/quotas', element: <RequireAdmin><QuotaManage /></RequireAdmin> },
       { path: 'admin/feedback', element: <RequireAdmin><FeedbackReview /></RequireAdmin> },
-      { path: 'admin/analytics', element: <RequireAdmin><AnalyticsPage /></RequireAdmin> },
       { path: 'admin/users', element: <RequireAdmin><UserManage /></RequireAdmin> },
       { path: 'admin/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
       { path: 'admin/logs', element: <RequireAdmin><LogViewer /></RequireAdmin> },
       { path: 'admin/billing', element: <RequireAdmin><BillingAdmin /></RequireAdmin> },
-      { path: 'admin/batch', element: <RequireAdmin><BatchDashboard /></RequireAdmin> },
-      { path: 'admin/error-analysis', element: <RequireAdmin><ErrorAnalysis /></RequireAdmin> },
-      { path: 'admin/data', element: <RequireAdmin><DataManage /></RequireAdmin> },
     ],
   },
 ]);
