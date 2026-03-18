@@ -433,10 +433,7 @@ export default function ResultsPage() {
   /** 下载Excel */
   const downloadExcel = async () => {
     try {
-      // 管理员从全局设置读取是否带主材
-      const materials = isAdmin && localStorage.getItem('admin_include_materials') === 'true';
-      const params = materials ? '?materials=true' : '';
-      const response = await api.get(`/tasks/${taskId}/export${params}`, { responseType: 'blob' });
+      const response = await api.get(`/tasks/${taskId}/export?materials=true`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
