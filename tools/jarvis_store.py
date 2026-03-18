@@ -188,6 +188,8 @@ def store_batch(filepath: str, province: str = None, confirmed: bool = False):
             if not isinstance(quota_names, list):
                 quota_names = []
 
+        item_province = str(item.get("province", "") or province or "").strip() or None
+
         ok = store_one(
             name=name,
             desc=item.get("description", ""),
@@ -196,7 +198,7 @@ def store_batch(filepath: str, province: str = None, confirmed: bool = False):
             materials=item.get("materials", item.get("source_materials", [])),
             reason=item.get("reason", ""),
             specialty=item.get("specialty", ""),
-            province=province,
+            province=item_province,
             confirmed=confirmed,
         )
         if ok:

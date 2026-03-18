@@ -73,8 +73,10 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
 
     where = " AND ".join(conditions)
     where_clause = f" WHERE {where}" if where else ""
-    sql = f"SELECT quota_id, name, unit FROM quotas{where_clause} ORDER BY quota_id LIMIT ?"
-    params.append(limit)
+    sql = f"SELECT quota_id, name, unit FROM quotas{where_clause} ORDER BY quota_id"
+    if dn is None:
+        sql += " LIMIT ?"
+        params.append(limit)
 
     try:
         cursor.execute(sql, params)
@@ -83,8 +85,9 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
         if own_conn:
             conn.close()
 
-    # 如果指定了 DN，优先返回参数匹配的
-    if dn and results:
+    # 如果指定了 DN，先基于全部候选重排，再按 limit 截断。
+    # 不能先 LIMIT 再排序，否则高档位结果可能在 SQL 阶段就被截掉。
+    if dn is not None and results:
         def dn_distance(row):
             m = re.search(r'(\d+)\s*$', row[1])
             if m:
@@ -97,6 +100,8 @@ def search_quota_db(keywords, dn=None, section=None, province=None, limit=10,
                     return 10000 + dn - quota_dn  # 向下惩罚大
             return 5000
         results.sort(key=dn_distance)
+        if limit is not None:
+            results = results[:limit]
 
     return results
 
@@ -162,6 +167,7 @@ def search_by_id_prefix(quota_id, province=None, conn=None, limit=30):
     finally:
         if own_conn:
             conn.close()
+
     return results
 
 
