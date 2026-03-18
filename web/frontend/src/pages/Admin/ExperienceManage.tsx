@@ -114,6 +114,8 @@ interface MaterialDisplayRow {
 
 type DisplayRow = BillDisplayRow | QuotaDisplayRow | MaterialDisplayRow;
 
+const SPECIALTY_FILTERS = ['安装', '建筑装饰', '市政', '园林绿化', '电力', '光伏'] as const;
+
 
 function parseStringArray(raw: string[] | string | undefined): string[] {
   if (Array.isArray(raw)) return raw.filter(Boolean).map(String);
@@ -135,6 +137,18 @@ function parseMaterials(raw: ExperienceMaterial[] | string | undefined): Experie
   } catch {
     return [];
   }
+}
+
+function inferSpecialtyFromProvinceLabel(name?: string | null): string {
+  const text = String(name || '');
+  if (!text) return '';
+  if (/光伏|发电|升压站/i.test(text)) return '光伏';
+  if (/电力|输电|变电|配电/i.test(text)) return '电力';
+  if (/园林|绿化/.test(text)) return '园林绿化';
+  if (/市政/.test(text)) return '市政';
+  if (/装饰|装修/.test(text)) return '建筑装饰';
+  if (/安装/.test(text)) return '安装';
+  return '';
 }
 
 function normalizeCode(text?: string | null): string {
@@ -308,7 +322,8 @@ export default function ExperienceManage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  const [filterProvince, setFilterProvince] = useState<string | undefined>(undefined);
+  const [filterProvinceName, setFilterProvinceName] = useState<string | undefined>(undefined);
+  const [filterSpecialtyName, setFilterSpecialtyName] = useState<string>('all');
   const [filterLayer, setFilterLayer] = useState<string>('all');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searchMode, setSearchMode] = useState(false);
@@ -343,12 +358,38 @@ export default function ExperienceManage() {
     }));
   }, [regionMap, selectedRegion]);
 
-  const provinceOptions = useMemo(() =>
-    provinces.map((item) => ({
-      label: `${item.province}（${item.count.toLocaleString()}条）`,
-      value: item.province,
-    })),
-  [provinces]);
+  const provinceOptions = useMemo(() => {
+    const counter = new Map<string, number>();
+    provinces.forEach((item) => {
+      const provinceName = extractRegion(item.province);
+      if (!provinceName) return;
+      counter.set(provinceName, (counter.get(provinceName) || 0) + item.count);
+    });
+    return Array.from(counter.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([provinceName, count]) => ({
+        label: `${provinceName}（${count.toLocaleString()}条）`,
+        value: provinceName,
+      }));
+  }, [provinces]);
+
+  const specialtyOptions = useMemo(() => {
+    const counter = new Map<string, number>();
+    provinces.forEach((item) => {
+      const provinceName = extractRegion(item.province);
+      if (filterProvinceName && provinceName !== filterProvinceName) return;
+      const specialtyName = inferSpecialtyFromProvinceLabel(item.province);
+      if (!specialtyName) return;
+      counter.set(specialtyName, (counter.get(specialtyName) || 0) + item.count);
+    });
+    return [
+      { label: '全部专业', value: 'all' },
+      ...SPECIALTY_FILTERS.map((specialtyName) => ({
+        label: `${specialtyName}（${(counter.get(specialtyName) || 0).toLocaleString()}条）`,
+        value: specialtyName,
+      })),
+    ];
+  }, [filterProvinceName, provinces]);
 
   const specialtyData = useMemo(() => {
     const bySpecialty = stats?.by_specialty || {};
@@ -400,7 +441,8 @@ export default function ExperienceManage() {
       }>('/admin/experience/records', {
         params: {
           layer: filterLayer,
-          province: filterProvince || undefined,
+          province_name: filterProvinceName || undefined,
+          specialty_name: filterSpecialtyName !== 'all' ? filterSpecialtyName : undefined,
           page,
           size: pageSize,
         },
@@ -412,7 +454,7 @@ export default function ExperienceManage() {
     } finally {
       setRecordsLoading(false);
     }
-  }, [filterLayer, filterProvince, message, page, pageSize]);
+  }, [filterLayer, filterProvinceName, filterSpecialtyName, message, page, pageSize]);
 
   const handleSearch = useCallback(async () => {
     const q = searchKeyword.trim();
@@ -430,7 +472,8 @@ export default function ExperienceManage() {
         {
           params: {
             q,
-            province: filterProvince || undefined,
+            province_name: filterProvinceName || undefined,
+            specialty_name: filterSpecialtyName !== 'all' ? filterSpecialtyName : undefined,
             limit: 200,
           },
         },
@@ -442,7 +485,7 @@ export default function ExperienceManage() {
     } finally {
       setRecordsLoading(false);
     }
-  }, [filterProvince, loadRecords, message, searchKeyword]);
+  }, [filterProvinceName, filterSpecialtyName, loadRecords, message, searchKeyword]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
@@ -483,28 +526,6 @@ export default function ExperienceManage() {
         try {
           await api.delete(`/admin/experience/${id}`);
           message.success('删除成功');
-          loadRecords();
-          loadStats();
-        } catch {
-          message.error('删除失败');
-        }
-      },
-    });
-  };
-
-  const handleDeleteProvince = (province: string, count: number) => {
-    Modal.confirm({
-      title: '确认删除',
-      content: `确定要删除“${province}”的全部 ${count} 条经验记录吗？此操作不可恢复。`,
-      okText: '确认删除',
-      cancelText: '取消',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          const { data } = await api.delete<{ deleted: number }>('/admin/experience/by-province', {
-            params: { province },
-          });
-          message.success(`已删除“${province}” ${data.deleted} 条记录`);
           loadRecords();
           loadStats();
         } catch {
@@ -626,7 +647,7 @@ export default function ExperienceManage() {
     {
       title: '项目名称',
       key: 'name',
-      width: 420,
+      width: 520,
       render: (_value, row) => {
         if (row._rowType === 'bill') {
           return (
@@ -660,7 +681,9 @@ export default function ExperienceManage() {
         return (
           <div style={{ paddingLeft: 16 }}>
             <span style={{ color: '#d97706', marginRight: 6 }}>●</span>
-            <span>{formatMaterialName(row._material) || '未命名主材'}</span>
+            <span style={{ whiteSpace: 'normal', wordBreak: 'break-all', lineHeight: 1.6 }}>
+              {formatMaterialName(row._material) || '未命名主材'}
+            </span>
           </div>
         );
       },
@@ -877,15 +900,27 @@ export default function ExperienceManage() {
             <Select
               allowClear
               placeholder="全部省份"
-              value={filterProvince}
+              value={filterProvinceName}
               onChange={(value) => {
-                setFilterProvince(value);
+                setFilterProvinceName(value);
+                setFilterSpecialtyName('all');
                 setPage(1);
               }}
-              style={{ width: 180 }}
+              style={{ width: 160 }}
               options={provinceOptions}
               showSearch
               optionFilterProp="label"
+              size="small"
+            />
+
+            <Select
+              value={filterSpecialtyName}
+              onChange={(value) => {
+                setFilterSpecialtyName(value);
+                setPage(1);
+              }}
+              style={{ width: 170 }}
+              options={specialtyOptions}
               size="small"
             />
 
@@ -908,19 +943,6 @@ export default function ExperienceManage() {
         }
         extra={
           <Space size={4}>
-            {filterProvince && (
-              <Button
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => {
-                  const provinceItem = provinces.find((item) => item.province === filterProvince);
-                  handleDeleteProvince(filterProvince, provinceItem?.count || 0);
-                }}
-              >
-                删除该省份
-              </Button>
-            )}
             <Button
               size="small"
               icon={<ReloadOutlined />}
@@ -951,7 +973,7 @@ export default function ExperienceManage() {
           size="small"
           loading={recordsLoading}
           pagination={false}
-          scroll={{ x: 1420 }}
+          scroll={{ x: 1540 }}
           onRow={(row) => {
             if (row._rowType === 'bill') {
               return {
