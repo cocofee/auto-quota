@@ -638,6 +638,74 @@ def _build_switchgear_query(name: str,
     return None
 
 
+def _build_sanitary_query(name: str,
+                          full_text: str,
+                          params: dict) -> str | None:
+    """卫生器具标准化查询。"""
+    subtype = str(params.get("sanitary_subtype") or "")
+    if not subtype and not any(keyword in full_text for keyword in (
+        "便器", "洗脸盆", "洗面盆", "洗手盆", "洗涤盆", "水槽", "拖布池", "拖把池", "地漏", "水龙头", "龙头",
+    )):
+        return None
+
+    install_method = str(params.get("install_method") or "")
+    query_parts: list[str] = []
+
+    if subtype == "坐便器":
+        query_parts.append("坐式大便器安装")
+    elif subtype == "蹲便器":
+        query_parts.append("蹲式大便器安装")
+    elif subtype == "小便器":
+        if any(token in full_text for token in ("立式", "落地式")):
+            query_parts.append("立式小便器安装")
+        elif any(token in full_text for token in ("壁挂", "挂墙", "挂式")) or install_method == "挂墙":
+            query_parts.append("壁挂式小便器安装")
+        else:
+            query_parts.append("小便器安装")
+    elif subtype == "洗脸盆":
+        query_parts.append("洗脸盆")
+    elif subtype == "洗涤盆":
+        query_parts.append("洗涤盆")
+    elif subtype == "拖布池":
+        query_parts.append("成品拖布池安装")
+    elif subtype == "淋浴器":
+        query_parts.append("淋浴器安装")
+    elif subtype == "地漏":
+        query_parts.append("地漏安装")
+
+    if not query_parts:
+        return None
+
+    if "感应" in full_text:
+        query_parts.append("感应开关")
+        if any(token in full_text for token in ("埋入", "暗装", "埋入式")):
+            query_parts.append("埋入式")
+    if "脚踏" in full_text:
+        query_parts.append("脚踏开关")
+    if "自闭阀" in full_text:
+        query_parts.append("自闭阀")
+    if "连体水箱" in full_text:
+        query_parts.append("连体水箱")
+    if "隐蔽水箱" in full_text:
+        query_parts.append("隐蔽水箱")
+    if "冷水" in full_text:
+        query_parts.append("冷水")
+    if "冷热水" in full_text:
+        query_parts.append("冷热水")
+    if subtype == "洗涤盆" and "单孔" in full_text:
+        query_parts.append("单嘴")
+    if subtype == "洗涤盆" and "双孔" in full_text:
+        query_parts.append("双嘴")
+    if subtype == "小便器" and "自动冲洗" in full_text:
+        query_parts.append("自动冲洗")
+
+    deduped: list[str] = []
+    for part in query_parts:
+        if part and part not in deduped:
+            deduped.append(part)
+    return " ".join(deduped)
+
+
 def _build_garden_plant_query(name: str, full_text: str, specialty: str = "") -> str | None:
     """园林苗木类 query 构建：优先用土球/裸根等分档特征，避免误走 DN 管道路由。"""
     if not any(keyword in name for keyword in ("栽植乔木", "起挖乔木", "栽植灌木", "起挖灌木")):
@@ -1289,6 +1357,10 @@ def build_quota_query(parser, name: str, description: str = "",
     laying_method = params.get("laying_method", "")
     voltage_level = params.get("voltage_level", "")
     bridge_wh_sum = params.get("bridge_wh_sum")
+    valve_type = params.get("valve_type", "")
+    support_material = params.get("support_material", "")
+    surface_process = params.get("surface_process", "")
+    sanitary_subtype = params.get("sanitary_subtype", "")
 
     # 补充提取连接方式：text_parser有时漏提取描述中的"连接方式:xxx"
     # 例如"连接方式:卡压式连接"在parser中未被识别，导致query丢失关键区分词
@@ -1451,6 +1523,18 @@ def build_quota_query(parser, name: str, description: str = "",
         if dn:
             query_parts.append(f"DN{dn}")
 
+        if valve_type and valve_type not in "".join(query_parts):
+            query_parts.append(valve_type)
+
+        if support_material and any(token in name for token in ("支架", "吊架", "支吊架")):
+            query_parts.append(support_material)
+
+        if sanitary_subtype and sanitary_subtype not in "".join(query_parts):
+            query_parts.append(sanitary_subtype)
+
+        if surface_process and any(token in full_text for token in ("刷油", "除锈", "油漆", "防锈漆")):
+            query_parts.append(surface_process.split("/")[0])
+
         if material and "管" in material and name and name != material:
             query_parts.append(name)
 
@@ -1540,6 +1624,20 @@ def build_quota_query(parser, name: str, description: str = "",
 
     # 电缆头模板：在_normalize_bill_name之前拦截，
     # 因为normalize会把"电缆头"→"电缆终端头"丢失原始信息
+    sanitary_query = _build_sanitary_query(
+        name=name,
+        full_text=full_text,
+        params=params,
+    )
+    if sanitary_query:
+        return _finalize_query(
+            sanitary_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
     cable_head_query = _build_cable_head_query(
         name=name,
         full_text=full_text,

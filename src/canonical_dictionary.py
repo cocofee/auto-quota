@@ -14,8 +14,9 @@ ENTITY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("软接头", ("软接头", "橡胶软接头", "可曲挠橡胶接头", "金属波纹管", "波纹软接头")),
     ("减压器", ("减压器", "减压孔板")),
     ("水龙头", ("水龙头", "龙头")),
-    ("坐便器", ("坐便器", "大便器", "座便器")),
-    ("蹲便器", ("蹲便器",)),
+    ("坐便器", ("坐便器", "座便器", "马桶")),
+    ("蹲便器", ("蹲便器", "蹲式大便器")),
+    ("大便器", ("大便器",)),
     ("洗脸盆", ("洗脸盆", "洗面盆")),
     ("洗涤盆", ("洗涤盆", "水槽", "单孔水槽")),
     ("小便器", ("小便器",)),
@@ -110,6 +111,7 @@ ENTITY_TO_SYSTEM = {
     "水龙头": "给排水",
     "坐便器": "给排水",
     "蹲便器": "给排水",
+    "大便器": "给排水",
     "洗脸盆": "给排水",
     "洗涤盆": "给排水",
     "小便器": "给排水",
@@ -236,6 +238,17 @@ TRAIT_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("落地式", ("落地式",)),
     ("悬挂式", ("悬挂式",)),
     ("嵌入式", ("嵌入式", "嵌顶式")),
+    ("连体水箱", ("连体水箱",)),
+    ("隐蔽水箱", ("隐蔽水箱", "隐藏水箱")),
+    ("高水箱", ("高水箱",)),
+    ("低水箱", ("低水箱",)),
+    ("感应开关", ("感应开关", "感应式", "感应")),
+    ("脚踏开关", ("脚踏开关", "脚踏式")),
+    ("自闭阀", ("自闭阀",)),
+    ("冷水", ("冷水",)),
+    ("冷热水", ("冷热水",)),
+    ("单嘴", ("单嘴",)),
+    ("双嘴", ("双嘴",)),
     ("离心式", ("离心式",)),
     ("轴流式", ("轴流式",)),
     ("手动", ("手动",)),
@@ -258,6 +271,16 @@ TRAIT_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("管内穿线", ("管内穿线", "管内穿", "穿线")),
     ("桥架内", ("桥架内", "沿桥架", "桥架敷设")),
     ("吊顶内", ("吊顶内",)),
+    ("角钢", ("角钢",)),
+    ("槽钢", ("槽钢", "C型槽钢", "C槽钢")),
+    ("圆钢", ("圆钢",)),
+    ("扁钢", ("扁钢",)),
+    ("手工除锈", ("手工除锈",)),
+    ("机械除锈", ("机械除锈", "动力工具除锈")),
+    ("喷砂除锈", ("喷砂除锈",)),
+    ("防锈漆", ("防锈漆", "红丹防锈漆")),
+    ("调和漆", ("调和漆", "调合漆")),
+    ("银粉漆", ("银粉漆",)),
     ("防爆", ("防爆",)),
     ("防水", ("防水",)),
     ("防尘", ("防尘",)),
@@ -472,6 +495,7 @@ def build_specs(params: dict[str, Any] | None) -> dict[str, Any]:
     keys = (
         "cable_bundle", "shape", "elevator_type", "cable_type",
         "conduit_dn", "install_method", "laying_method", "voltage_level",
+        "valve_type", "support_material", "surface_process", "sanitary_subtype",
     )
     return {key: params[key] for key in keys if params.get(key) not in (None, "", [])}
 
@@ -482,7 +506,17 @@ def collect_traits(params: dict[str, Any] | None,
     params = params or {}
     context_prior = dict(context_prior or {})
     traits: list[str] = []
-    for key in ("shape", "elevator_type", "cable_type", "voltage_level", "laying_method"):
+    for key in (
+        "shape",
+        "elevator_type",
+        "cable_type",
+        "voltage_level",
+        "laying_method",
+        "valve_type",
+        "support_material",
+        "surface_process",
+        "sanitary_subtype",
+    ):
         value = params.get(key)
         if value:
             traits.append(str(value))

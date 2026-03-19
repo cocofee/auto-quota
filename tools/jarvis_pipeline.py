@@ -23,6 +23,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.reason_reporting import reason_bucket, summarize_reason_bucket, update_reason_bucket
+
 
 def _generate_run_id() -> str:
     """生成唯一运行ID（毫秒时间戳 + 6位随机hex），用于文件命名防碰撞。
@@ -61,6 +63,40 @@ def _count_manual_review_rows(manual_items) -> tuple[int, int]:
     return manual_rows, manual_reminders
 
 
+def _build_reason_summary(results, *, low_conf_threshold: int = 60) -> dict:
+    overall = reason_bucket()
+    low_conf = reason_bucket()
+    no_match = reason_bucket()
+    total = 0
+    low_total = 0
+    no_match_total = 0
+
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        total += 1
+        update_reason_bucket(overall, result)
+
+        try:
+            confidence = int(result.get("confidence", 0) or 0)
+        except (TypeError, ValueError):
+            confidence = 0
+
+        quotas = result.get("quotas") or []
+        if not quotas:
+            no_match_total += 1
+            update_reason_bucket(no_match, result)
+        if confidence < low_conf_threshold:
+            low_total += 1
+            update_reason_bucket(low_conf, result)
+
+    return {
+        "overall": summarize_reason_bucket(overall, total=total, top_n=5),
+        "low_confidence": summarize_reason_bucket(low_conf, total=low_total, top_n=5),
+        "no_match": summarize_reason_bucket(no_match, total=no_match_total, top_n=5),
+    }
+
+
 def _build_pipeline_stats(results, auto_corrections, manual_items, measure_items) -> dict:
     """统一构建流水线统计，避免跨项提醒污染正确率。"""
     manual_rows, manual_reminders = _count_manual_review_rows(manual_items)
@@ -78,6 +114,7 @@ def _build_pipeline_stats(results, auto_corrections, manual_items, measure_items
         "manual_reminders": manual_reminders,
         "measure": len(measure_items),
         "fallback": fallback_count,
+        "reason_summary": _build_reason_summary(results),
     }
 
 
@@ -366,6 +403,11 @@ def pipeline(excel_path, province=None, aux_provinces=None,
             pct = stats['fallback'] * 100 / max(stats['total'], 1)
             summary_line += f" 降级{stats['fallback']}({pct:.0f}%)"
         logger.info(summary_line)
+        top_low_reasons = ((stats.get("reason_summary") or {}).get("low_confidence") or {}).get("primary") or []
+        if top_low_reasons:
+            logger.info("低置信主因:")
+            for row in top_low_reasons[:3]:
+                logger.info(f"  {row['key']} x {row['count']} ({row.get('rate', 0)}%)")
         logger.info(f"日志文件: {log_file}")
 
         print()
@@ -381,6 +423,11 @@ def pipeline(excel_path, province=None, aux_provinces=None,
         if stats.get("manual_reminders", 0):
             print(f"  跨项提醒: {stats['manual_reminders']}条")
         print(f"  措施项:   {stats['measure']}条（已跳过）")
+        top_low_reasons = ((stats.get("reason_summary") or {}).get("low_confidence") or {}).get("primary") or []
+        if top_low_reasons:
+            print("  低置信主因:")
+            for row in top_low_reasons[:3]:
+                print(f"    - {row['key']} x {row['count']} ({row.get('rate', 0)}%)")
         print(f"  运行日志: {log_file}")
         print("=" * 60)
 

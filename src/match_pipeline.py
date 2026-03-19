@@ -22,6 +22,7 @@ from src.candidate_arbiter import arbitrate_candidates
 from src.context_builder import summarize_batch_context_for_trace
 from src.text_parser import parser as text_parser, normalize_bill_text
 from src.query_router import build_query_route_profile
+from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
 from src.specialty_classifier import classify as classify_specialty
 from src.rule_validator import RuleValidator
 from src.match_core import (
@@ -206,6 +207,10 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     sanitary_candidate = _pick_explicit_sanitary_family_candidate(bill_text, candidates)
     if sanitary_candidate is not None:
         return sanitary_candidate
+
+    button_broadcast_candidate = _pick_explicit_button_broadcast_candidate(bill_text, candidates)
+    if button_broadcast_candidate is not None:
+        return button_broadcast_candidate
 
     plumbing_accessory_candidate = _pick_explicit_plumbing_accessory_candidate(bill_text, candidates)
     if plumbing_accessory_candidate is not None:
@@ -538,6 +543,9 @@ def _pick_explicit_bridge_family_candidate(bill_text: str,
     prefer_bridge = "桥架" in text
     prefer_trunking = "线槽" in text and "桥架" not in text
     prefer_busway = "母线槽" in text
+    prefer_slot = "槽式" in text
+    prefer_tray = "托盘式" in text
+    prefer_ladder = "梯式" in text
 
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:
@@ -565,6 +573,21 @@ def _pick_explicit_bridge_family_candidate(bill_text: str,
                 score -= 8
             if "线槽配线" in quota_name:
                 score -= 10
+        if prefer_slot:
+            if "槽式" in quota_name:
+                score += 8
+            if any(word in quota_name for word in ("托盘式", "梯式")):
+                score -= 8
+        if prefer_tray:
+            if "托盘式" in quota_name:
+                score += 8
+            if any(word in quota_name for word in ("槽式", "梯式")):
+                score -= 8
+        if prefer_ladder:
+            if "梯式" in quota_name:
+                score += 8
+            if any(word in quota_name for word in ("槽式", "托盘式")):
+                score -= 8
         if bill_half_perimeter is not None:
             cand_half_perimeter = cand_params.get("half_perimeter")
             if cand_half_perimeter is not None:
@@ -597,8 +620,18 @@ def _pick_explicit_distribution_box_candidate(bill_text: str,
     if not any(keyword in text for keyword in ("配电箱", "配电柜", "控制箱", "控制柜")):
         return None
 
+    bill_params = text_parser.parse(text)
+    install_method = str(bill_params.get("install_method") or "")
+    upper_text = text.upper()
     prefer_floor = any(keyword in text for keyword in ("落地", "柜基础", "基础槽钢"))
     prefer_wall = any(keyword in text for keyword in ("悬挂", "嵌入", "明装", "暗装", "挂墙", "壁挂", "墙上", "柱上", "距地"))
+    if install_method == "落地":
+        prefer_floor = True
+        prefer_wall = False
+    elif install_method in {"挂墙", "嵌入"} or "明装" in install_method or "暗装" in install_method or "悬挂" in install_method:
+        prefer_wall = True
+    if re.search(r"\b\d*AP\d+\b", upper_text) and not prefer_wall:
+        prefer_floor = True
     if not prefer_floor and not prefer_wall:
         if any(keyword in text for keyword in ("配电柜", "控制柜")):
             prefer_floor = True
@@ -736,8 +769,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     if not any(keyword in text for keyword in ("支架", "支/吊架", "支吊架")):
         return None
 
-    prefer_bridge = any(keyword in text for keyword in ("桥架", "电缆桥架", "抗震支吊架"))
+    prefer_bridge = any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向", "抗震支吊架"))
     prefer_pipe = any(keyword in text for keyword in ("管道", "管架", "管道支架"))
+    prefer_fabrication = any(keyword in text for keyword in ("图集", "详见图集", "制作", "单件重量", "型钢"))
     if not prefer_bridge and not prefer_pipe:
         return None
     scored: list[tuple[tuple[int, float, float], dict]] = []
@@ -747,6 +781,8 @@ def _pick_explicit_support_family_candidate(bill_text: str,
         if prefer_bridge:
             if any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
                 score += 12
+            if any(word in quota_name for word in ("支架制作", "支架安装")) and "桥架" in quota_name:
+                score += 6
             if any(word in quota_name for word in ("管架", "管道支架")):
                 score -= 10
         elif prefer_pipe:
@@ -754,6 +790,13 @@ def _pick_explicit_support_family_candidate(bill_text: str,
                 score += 8
             if "桥架支撑架" in quota_name:
                 score -= 6
+        if prefer_fabrication:
+            if "制作" in quota_name:
+                score += 10
+            if any(word in quota_name for word in ("单件重量", "kg", "重量")):
+                score += 6
+            if any(word in quota_name for word in ("安装", "一般管架")):
+                score -= 8
         if score <= 0:
             continue
         scored.append((
@@ -830,9 +873,26 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
     if not any(keyword in text for keyword in ("便器", "水龙头", "洗脸盆", "洗涤盆", "水槽", "小便器")):
         return None
 
+    bill_params = text_parser.parse(text)
+    sanitary_subtype = str(bill_params.get("sanitary_subtype") or "")
     expected_words: list[str] = []
     forbidden_words: list[str] = []
     prefer_words: list[str] = []
+    if sanitary_subtype == "坐便器":
+        expected_words.extend(["坐式大便器", "坐便器"])
+        forbidden_words.extend(["蹲式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
+    elif sanitary_subtype == "蹲便器":
+        expected_words.extend(["蹲式大便器", "蹲便器"])
+        forbidden_words.extend(["坐式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
+    elif sanitary_subtype == "小便器":
+        expected_words.append("小便器")
+        forbidden_words.extend(["大便器", "洗脸盆", "洗涤盆", "水龙头"])
+    elif sanitary_subtype == "洗脸盆":
+        expected_words.append("洗脸盆")
+        forbidden_words.extend(["洗涤盆", "水龙头", "大便器", "小便器"])
+    elif sanitary_subtype == "洗涤盆":
+        expected_words.append("洗涤盆")
+        forbidden_words.extend(["洗脸盆", "水龙头", "大便器", "小便器"])
     if any(keyword in text for keyword in ("水龙头", "龙头")):
         expected_words.append("水龙头")
         forbidden_words.extend(["控制器", "探测器", "入侵"])
@@ -856,6 +916,10 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
         expected_words.append("挂墙式")
     if "立式" in text:
         expected_words.append("立式")
+    if "壁挂" in text:
+        expected_words.append("壁挂式")
+    if "埋入" in text:
+        prefer_words.append("埋入式")
 
     if not expected_words and not forbidden_words:
         return None
@@ -866,6 +930,63 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
         score = sum(8 for word in expected_words if word and word in quota_name)
         score -= sum(8 for word in forbidden_words if word and word in quota_name)
         score += sum(3 for word in prefer_words if word and word in quota_name)
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_button_broadcast_candidate(bill_text: str,
+                                              candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if not any(keyword in text for keyword in ("扬声器", "按钮")):
+        return None
+
+    bill_params = text_parser.parse(text)
+    install_method = str(bill_params.get("install_method") or "")
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        score = 0
+
+        if "扬声器" in text:
+            if "扬声器" in quota_name:
+                score += 10
+            if install_method == "挂墙":
+                if any(word in quota_name for word in ("壁挂", "挂墙", "壁装")):
+                    score += 10
+                if "吸顶" in quota_name:
+                    score -= 10
+            elif install_method == "吸顶":
+                if "吸顶" in quota_name:
+                    score += 10
+                if any(word in quota_name for word in ("壁挂", "挂墙", "壁装")):
+                    score -= 10
+
+        if "按钮" in text:
+            if "紧急呼叫" in text and all(word not in text for word in ("消防", "报警", "消火栓")):
+                if "按钮" in quota_name:
+                    score += 8
+                if any(word in quota_name for word in ("报警按钮", "消火栓")):
+                    score -= 10
+            elif any(word in text for word in ("手动报警", "报警按钮", "消火栓")):
+                if any(word in quota_name for word in ("报警按钮", "消火栓")):
+                    score += 10
+                if "普通开关、按钮安装 按钮" in quota_name:
+                    score -= 8
+
         if score <= 0:
             continue
         scored.append((
@@ -1184,6 +1305,147 @@ def _extract_usage_from_section(section: str) -> str:
         return "工业管道"
     return ""
 
+
+_PURE_CODE_NAME_RE = re.compile(r"^[A-Za-z]{0,3}\d{5,}$")
+_PURE_DIGIT_NAME_RE = re.compile(r"^\d{5,}$")
+_STRONG_DESC_MARKERS = (
+    "名称", "规格", "型号", "类型", "材质", "连接", "安装", "敷设", "部位",
+    "系统", "参数", "附件", "做法", "管", "阀", "箱", "桥架", "电缆",
+    "风机", "灯", "器", "DN", "De", "kV", "mm",
+)
+
+
+def _looks_like_internal_code_name(name: str) -> bool:
+    clean = re.sub(r"\s+", "", str(name or ""))
+    if not clean:
+        return False
+    return bool(_PURE_CODE_NAME_RE.fullmatch(clean) or _PURE_DIGIT_NAME_RE.fullmatch(clean))
+
+
+def _has_meaningful_description(desc: str) -> bool:
+    text = str(desc or "").strip()
+    if not text:
+        return False
+    if any(marker in text for marker in _STRONG_DESC_MARKERS):
+        return True
+    chinese_chars = re.findall(r"[\u4e00-\u9fff]", text)
+    return len(chinese_chars) >= 8
+
+
+def _is_generic_short_name(name: str) -> bool:
+    chinese_chars = re.findall(r"[\u4e00-\u9fff]", str(name or ""))
+    return 0 < len(chinese_chars) <= 3
+
+
+def _set_result_reason(result: dict,
+                       primary_reason: str,
+                       reason_tags: list[str] | tuple[str, ...],
+                       detail: str = "") -> dict:
+    """Attach unified reason metadata to result objects."""
+    return apply_reason_metadata(
+        result,
+        primary_reason=primary_reason,
+        reason_tags=reason_tags,
+        detail=detail,
+    )
+
+
+def _build_input_gate_abstain_result(item: dict,
+                                     *,
+                                     primary_reason: str,
+                                     detail: str,
+                                     reason_tags: list[str] | tuple[str, ...]) -> dict:
+    result = {
+        "bill_item": item,
+        "quotas": [],
+        "alternatives": [],
+        "confidence": 0,
+        "match_source": "input_gate_abstain",
+        "decision_type": "abstain",
+        "explanation": detail,
+        "no_match_reason": detail,
+    }
+    _set_result_reason(result, primary_reason, reason_tags, detail)
+    _append_trace_step(
+        result,
+        "input_gate_abstain",
+        primary_reason=primary_reason,
+        reason_tags=list(reason_tags or []),
+        reason_detail=detail,
+    )
+    return result
+
+
+def _evaluate_input_gate(name: str, desc: str) -> dict:
+    """Classify dirty inputs before retrieval."""
+    if not _looks_like_internal_code_name(name):
+        return {
+            "is_dirty_code": False,
+            "should_abstain": False,
+            "query_name": name,
+        }
+
+    desc_is_strong = _has_meaningful_description(desc)
+    if not desc_is_strong:
+        return {
+            "is_dirty_code": True,
+            "should_abstain": True,
+            "primary_reason": "dirty_input",
+            "reason_tags": ["dirty_input", "numeric_code", "manual_review", "abstained"],
+            "detail": "清单名称为纯数字/内部编码，且缺少足够描述，转人工审核",
+            "query_name": "",
+        }
+
+    return {
+        "is_dirty_code": True,
+        "should_abstain": False,
+        "primary_reason": "dirty_input",
+        "reason_tags": ["dirty_input", "numeric_code", "description_driven"],
+        "detail": "清单名称为内部编码，检索阶段忽略编码，仅使用描述特征",
+        "query_name": "",
+    }
+
+
+def _evaluate_context_gate(name: str,
+                           desc: str,
+                           section: str,
+                           classification: dict) -> dict:
+    primary = str((classification or {}).get("primary") or "").strip()
+    confidence = str((classification or {}).get("confidence") or "").strip().lower()
+    fallbacks = [item for item in list((classification or {}).get("fallbacks") or []) if item]
+    has_section = bool(str(section or "").strip())
+    desc_is_strong = _has_meaningful_description(desc)
+    is_generic_short = _is_generic_short_name(name)
+    weak_classification = (not primary) or (confidence != "high" and len(fallbacks) >= 3)
+
+    if not weak_classification:
+        return {
+            "should_abstain": False,
+            "reason_tags": [],
+            "detail": "",
+        }
+
+    base_tags = ["specialty_missing"]
+    if not has_section:
+        base_tags.append("context_missing")
+    if not desc_is_strong:
+        base_tags.append("weak_text")
+
+    if not has_section and not desc_is_strong and is_generic_short:
+        return {
+            "should_abstain": True,
+            "primary_reason": "context_missing",
+            "reason_tags": merge_reason_tags(base_tags, ["manual_review", "abstained"]),
+            "detail": "缺少专业/上下文信息，且清单名称过短、描述过弱，转人工审核",
+        }
+
+    return {
+        "should_abstain": False,
+        "primary_reason": "specialty_missing" if "specialty_missing" in base_tags else "",
+        "reason_tags": base_tags,
+        "detail": "专业或上下文信息不足，继续检索但降低自动判定可信度" if base_tags else "",
+    }
+
 def _build_item_context(item: dict) -> dict:
     """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
     name = item.get("name", "")
@@ -1192,7 +1454,9 @@ def _build_item_context(item: dict) -> dict:
     original_name = item.get("original_name", name)
     canonical_features = item.get("canonical_features") or {}
     context_prior = item.get("context_prior") or {}
-    search_query = text_parser.build_quota_query(name, desc,
+    input_gate = _evaluate_input_gate(name, desc)
+    query_name = input_gate.get("query_name", name)
+    search_query = text_parser.build_quota_query(query_name, desc,
                                                   specialty=item.get("specialty", ""),
                                                   bill_params=item.get("params"),
                                                   section_title=section,
@@ -1203,7 +1467,9 @@ def _build_item_context(item: dict) -> dict:
     if cable_type:
         search_query = f"{search_query} {cable_type}"
 
-    full_query = f"{name} {desc}".strip()
+    full_query = f"{query_name} {desc}".strip()
+    if not full_query:
+        full_query = f"{name} {desc}".strip()
 
     # 从分项标题/Sheet名推断用途关键词，注入到full_query中
     # 这样param_validator的介质冲突检查能利用section的方向信息
@@ -1241,6 +1507,7 @@ def _build_item_context(item: dict) -> dict:
         "context_prior": context_prior,
         "query_route": query_route,
         "item": item,  # L5：供跨省预热读取 _cross_province_hints
+        "input_gate": input_gate,
     }
 
 
@@ -1270,6 +1537,8 @@ def _prepare_rule_match(rule_validator: RuleValidator, full_query: str, item: di
         - rule_direct: 高置信直通结果
         - rule_backup: 低置信备选结果
     """
+    if rule_validator is None:
+        return None, None
     rule_books = [classification.get("primary")] + classification.get("fallbacks", [])
     rule_books = [b for b in rule_books if b]
     rule_result = rule_validator.match_by_rules(
@@ -1354,6 +1623,12 @@ def _build_skip_measure_result(item: dict) -> dict:
         "match_source": "skip_measure",
         "explanation": "措施项（管理费用），不套安装定额",
     }
+    _set_result_reason(
+        result,
+        "measure_item",
+        ["measure_item", "abstained"],
+        "措施项（管理费用），不套安装定额",
+    )
     _append_trace_step(result, "skip_measure", reason="管理费用类条目")
     return result
 
@@ -1368,6 +1643,7 @@ def _build_empty_match_result(item: dict, reason: str, source: str = "search") -
         "no_match_reason": reason,
         "match_source": source,
     }
+    _set_result_reason(result, "recall_failure", ["recall_failure", "no_candidates"], reason)
     _append_trace_step(result, "empty_result", reason=reason)
     return result
 
@@ -1636,6 +1912,52 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         "needs_reasoning": bool(reasoning_decision.get("is_ambiguous")),
         "require_final_review": bool(reasoning_decision.get("require_final_review")),
     }
+    input_gate = item.get("_input_gate") or {}
+    if best and valid_candidates and any(c.get("param_match", True) for c in valid_candidates):
+        _set_result_reason(
+            result,
+            "structured_selection",
+            ["retrieved", "validated"],
+            explanation or "候选已召回，按结构化参数与重排结果选定",
+        )
+    elif best and valid_candidates:
+        _set_result_reason(
+            result,
+            "param_conflict",
+            ["retrieved", "param_conflict", "manual_review"],
+            explanation or "召回到候选，但未发现完全参数一致项",
+        )
+    elif candidates and not valid_candidates:
+        _set_result_reason(
+            result,
+            "candidate_invalid",
+            ["retrieved", "candidate_invalid", "manual_review"],
+            "搜索返回了候选，但缺少有效定额编号或名称",
+        )
+    else:
+        _set_result_reason(
+            result,
+            "recall_failure",
+            ["recall_failure", "no_candidates"],
+            "搜索无匹配结果",
+        )
+    if input_gate:
+        _set_result_reason(
+            result,
+            result.get("primary_reason", ""),
+            list(input_gate.get("reason_tags") or []),
+            result.get("reason_detail", "") or str(input_gate.get("detail") or ""),
+        )
+    if reasoning_decision.get("is_ambiguous"):
+        ambiguity_tags = ["ambiguous_candidates"]
+        if reasoning_decision.get("require_final_review"):
+            ambiguity_tags.append("manual_review")
+        _set_result_reason(
+            result,
+            result.get("primary_reason", ""),
+            ambiguity_tags,
+            result.get("reason_detail", "") or explanation,
+        )
     _append_trace_step(
         result,
         "search_select",
@@ -1694,6 +2016,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     full_query = ctx["full_query"]
     search_query = ctx["search_query"]
     normalized_query = ctx["normalized_query"]
+    input_gate = ctx.get("input_gate") or {}
 
     if _is_measure_item(name, desc, ctx["unit"], ctx["quantity"]):
         return {
@@ -1701,9 +2024,54 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             "early_type": "skip_measure",
         }
 
+    if input_gate.get("should_abstain"):
+        return {
+            "early_result": _build_input_gate_abstain_result(
+                item,
+                primary_reason=str(input_gate.get("primary_reason") or "dirty_input"),
+                detail=str(input_gate.get("detail") or "输入质量不足，转人工审核"),
+                reason_tags=list(input_gate.get("reason_tags") or []),
+            ),
+            "early_type": "input_gate_abstain",
+        }
+
+    if input_gate.get("is_dirty_code"):
+        current_gate = dict(item.get("_input_gate") or {})
+        current_gate["primary_reason"] = current_gate.get("primary_reason") or input_gate.get("primary_reason", "dirty_input")
+        current_gate["reason_tags"] = merge_reason_tags(
+            current_gate.get("reason_tags") or [],
+            input_gate.get("reason_tags") or [],
+        )
+        if input_gate.get("detail") and not current_gate.get("detail"):
+            current_gate["detail"] = input_gate.get("detail", "")
+        item["_input_gate"] = current_gate
+
     classification = _build_classification(
         item, name, desc, ctx["section"], province=province
     )
+    context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
+    if context_gate.get("should_abstain"):
+        return {
+            "early_result": _build_input_gate_abstain_result(
+                item,
+                primary_reason=str(context_gate.get("primary_reason") or "context_missing"),
+                detail=str(context_gate.get("detail") or "上下文不足，转人工审核"),
+                reason_tags=list(context_gate.get("reason_tags") or []),
+            ),
+            "early_type": "input_gate_abstain",
+        }
+
+    if context_gate.get("reason_tags"):
+        current_gate = dict(item.get("_input_gate") or {})
+        current_gate["primary_reason"] = current_gate.get("primary_reason") or context_gate.get("primary_reason", "")
+        current_gate["reason_tags"] = merge_reason_tags(
+            current_gate.get("reason_tags") or [],
+            context_gate.get("reason_tags") or [],
+        )
+        if context_gate.get("detail") and not current_gate.get("detail"):
+            current_gate["detail"] = context_gate.get("detail", "")
+        item["_input_gate"] = current_gate
+
     exp_result = try_experience_match(
         normalized_query, item, experience_db, rule_validator, province=province)
 

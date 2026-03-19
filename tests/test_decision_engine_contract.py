@@ -13,6 +13,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from src.match_pipeline import (
+    _build_item_context,
     _prepare_item_for_matching,
     _resolve_search_mode_result,
     _apply_mode_backups,
@@ -49,6 +50,7 @@ class TestPrepareItemContract:
         assert "early_result" in prepared
         result = prepared["early_result"]
         assert result.get("match_source") == "skip_measure"
+        assert "measure_item" in result.get("reason_tags", [])
 
     def test_normal_item_no_crash(self):
         """普通清单项 -> 不崩溃"""
@@ -73,6 +75,76 @@ class TestPrepareItemContract:
         # 非措施项应包含搜索所需的上下文
         if "early_result" not in prepared:
             assert "search_query" in prepared or "ctx" in prepared
+
+    def test_numeric_code_without_meaningful_desc_abstains_early(self):
+        item = {
+            "name": "0005002",
+            "description": "",
+            "unit": "项",
+            "quantity": 1,
+        }
+
+        prepared = _prepare_item_for_matching(
+            item, experience_db=None, rule_validator=None,
+        )
+
+        assert prepared["early_type"] == "input_gate_abstain"
+        result = prepared["early_result"]
+        assert result["match_source"] == "input_gate_abstain"
+        assert result["primary_reason"] == "dirty_input"
+        assert "numeric_code" in result["reason_tags"]
+        assert "manual_review" in result["reason_tags"]
+
+    def test_numeric_code_with_rich_desc_uses_description_driven_query(self):
+        item = {
+            "name": "0005002",
+            "description": "材质:PPR给水管 规格:De32 连接形式:热熔连接",
+            "specialty": "C10",
+        }
+
+        ctx = _build_item_context(item)
+
+        assert ctx["input_gate"]["is_dirty_code"] is True
+        assert ctx["input_gate"]["should_abstain"] is False
+        assert "0005002" not in ctx["full_query"]
+        assert "0005002" not in ctx["search_query"]
+        assert "PPR" in ctx["search_query"] or "给水" in ctx["search_query"]
+
+    def test_context_missing_short_generic_item_abstains(self):
+        item = {
+            "name": "支架",
+            "description": "",
+            "unit": "项",
+            "quantity": 1,
+        }
+
+        prepared = _prepare_item_for_matching(
+            item, experience_db=None, rule_validator=None,
+        )
+
+        assert prepared["early_type"] == "input_gate_abstain"
+        result = prepared["early_result"]
+        assert result["primary_reason"] == "context_missing"
+        assert "specialty_missing" in result["reason_tags"]
+        assert "weak_text" in result["reason_tags"]
+
+    def test_context_missing_but_rich_desc_keeps_search_mode_with_tags(self):
+        rule_validator = MagicMock()
+        rule_validator.match_by_rules.return_value = {"quotas": [], "confidence": 0}
+        rule_validator.rules = True
+        item = {
+            "name": "支架",
+            "description": "材质:镀锌角钢 安装部位:桥架侧纵向支撑",
+            "unit": "kg",
+            "quantity": 20,
+        }
+
+        prepared = _prepare_item_for_matching(
+            item, experience_db=None, rule_validator=rule_validator,
+        )
+
+        assert prepared.get("early_result") is None
+        assert "specialty_missing" in item.get("_input_gate", {}).get("reason_tags", [])
 
     def test_review_rejected_rule_direct_does_not_fall_back_to_rule_backup(self):
         """已被审核规则拦截的 rule_direct 不能再降级成 rule_backup 回流覆盖搜索结果"""

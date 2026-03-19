@@ -117,6 +117,76 @@ class InstallationValidator:
                 return bill_hit, quota_hit
         return None
 
+    @staticmethod
+    def _split_multi_value(value: str) -> set[str]:
+        return {
+            part.strip()
+            for part in str(value or "").replace("、", "/").replace("|", "/").split("/")
+            if part.strip()
+        }
+
+    def _validate_exact_text_param(self,
+                                   *,
+                                   key: str,
+                                   label: str,
+                                   bill_params: dict,
+                                   quota_params: dict,
+                                   handled_params: set[str],
+                                   details: list[str]) -> tuple[float, int, bool]:
+        if key not in bill_params:
+            return 0.0, 0, False
+        handled_params.add(key)
+        bill_value = str(bill_params.get(key) or "").strip()
+        if not bill_value:
+            return 0.0, 0, False
+        if key not in quota_params:
+            details.append(f"定额无{label}参数(通用定额降权)")
+            return self.GENERIC_SCORE, 1, False
+
+        quota_value = str(quota_params.get(key) or "").strip()
+        if not quota_value:
+            details.append(f"定额无{label}参数(通用定额降权)")
+            return self.GENERIC_SCORE, 1, False
+        if bill_value == quota_value:
+            details.append(f"{label}:{bill_value}")
+            return 1.0, 1, False
+
+        details.append(f"{label}冲突:{bill_value}!={quota_value}")
+        return 0.0, 1, True
+
+    def _validate_surface_process(self,
+                                  *,
+                                  bill_params: dict,
+                                  quota_params: dict,
+                                  handled_params: set[str],
+                                  details: list[str]) -> tuple[float, int, bool]:
+        key = "surface_process"
+        if key not in bill_params:
+            return 0.0, 0, False
+        handled_params.add(key)
+        bill_parts = self._split_multi_value(bill_params.get(key))
+        if not bill_parts:
+            return 0.0, 0, False
+        if key not in quota_params:
+            details.append("定额无表面处理参数(通用定额降权)")
+            return self.GENERIC_SCORE, 1, False
+
+        quota_parts = self._split_multi_value(quota_params.get(key))
+        if not quota_parts:
+            details.append("定额无表面处理参数(通用定额降权)")
+            return self.GENERIC_SCORE, 1, False
+
+        overlap = bill_parts & quota_parts
+        if overlap:
+            score = len(overlap) / max(len(bill_parts), len(quota_parts))
+            details.append(f"表面处理:{'/'.join(sorted(overlap))}")
+            return max(score, 0.7), 1, False
+
+        details.append(
+            f"表面处理偏差:{'/'.join(sorted(bill_parts))}!={'/'.join(sorted(quota_parts))}"
+        )
+        return 0.35, 1, False
+
     def validate(self, bill_params: dict, quota_params: dict,
                  bill_canonical_features: dict | None = None,
                  quota_canonical_features: dict | None = None) -> dict:
@@ -157,6 +227,33 @@ class InstallationValidator:
             hard_fail = True
             check_count += 1
             details.append(f"特征冲突:{trait_conflict[0]}!={trait_conflict[1]}")
+
+        for key, label in (
+            ("valve_type", "阀门类型"),
+            ("support_material", "支架材质"),
+            ("sanitary_subtype", "卫生器具"),
+        ):
+            add_score, add_checks, add_hard_fail = self._validate_exact_text_param(
+                key=key,
+                label=label,
+                bill_params=bill_params,
+                quota_params=quota_params,
+                handled_params=handled_params,
+                details=details,
+            )
+            score_sum += add_score
+            check_count += add_checks
+            hard_fail = hard_fail or add_hard_fail
+
+        add_score, add_checks, add_hard_fail = self._validate_surface_process(
+            bill_params=bill_params,
+            quota_params=quota_params,
+            handled_params=handled_params,
+            details=details,
+        )
+        score_sum += add_score
+        check_count += add_checks
+        hard_fail = hard_fail or add_hard_fail
 
         for key, label, unit, hard_match in self._CORE_SPECS:
             if key not in bill_params:

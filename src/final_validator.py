@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.quota_search import search_by_id
+from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags, tags_for_issue
 from src.review_checkers import (
     check_category_mismatch,
     check_connection_mismatch,
@@ -146,6 +147,25 @@ class FinalValidator:
             status = "corrected"
         elif issues:
             status = "manual_review"
+
+        merged_tags = merge_reason_tags(result.get("reason_tags") or [])
+        for issue in issues:
+            merged_tags = merge_reason_tags(merged_tags, [issue.issue_type], tags_for_issue(issue.issue_type))
+        if status == "manual_review":
+            merged_tags = merge_reason_tags(merged_tags, ["manual_review"])
+        if corrected:
+            merged_tags = merge_reason_tags(merged_tags, ["corrected"])
+        if merged_tags:
+            result["reason_tags"] = merged_tags
+        if issues:
+            result["final_reason"] = issues[0].message
+            apply_reason_metadata(
+                result,
+                primary_reason=result.get("primary_reason") or issues[0].issue_type,
+                reason_tags=merged_tags,
+                detail=result.get("reason_detail") or issues[0].message,
+                stage="final_validator",
+            )
 
         result["final_validation"] = {
             "status": status,
