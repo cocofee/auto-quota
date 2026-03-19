@@ -22,6 +22,40 @@ from loguru import logger
 
 from src.canonical_features import build_canonical_features
 
+_CABLE_PREFIX_PATTERN = r'(?:WDZ[A-Z]*-?|ZA[N]?-?|NH-?|N-?|ZR[A-E]?-?|ZC-?)*'
+_ALUMINUM_CORE_MODEL_PATTERNS = (
+    "BPYJLV",
+    "YJLV",
+    "JKLV",
+    "VLV",
+    "BLV",
+    "LGJ",
+)
+_COPPER_CORE_MODEL_PATTERNS = (
+    "BPYJV",
+    "BPYJY",
+    "YJV",
+    "YJY",
+    "YJFE",
+    "JKYJ",
+    "JKV",
+    "KYJY",
+    "KVV",
+    "KVVP",
+    "KVVR",
+    "VV",
+    "VY",
+    "BYJ",
+    "BV",
+    "BVR",
+    "RVV",
+    "RVS",
+    "YTTW",
+    "BBTRZ",
+    "BTTZ",
+    "BTLY",
+)
+
 
 class TextParser:
     """从工程文本中提取结构化参数"""
@@ -245,6 +279,11 @@ class TextParser:
 
         # 提取材质
         material = self._extract_material(text)
+        inferred_material = self._infer_cable_material_from_model(text)
+        if inferred_material == "矿物绝缘电缆":
+            material = inferred_material
+        elif not material and inferred_material:
+            material = inferred_material
         if material:
             result["material"] = material
 
@@ -773,6 +812,42 @@ class TextParser:
             # 排序：先按位置升序（越前越好），再按长度降序（越长越精确）
             matches.sort(key=lambda x: (x[0], -x[1]))
             return matches[0][2]
+
+        return None
+
+    def _infer_cable_material_from_model(self, text: str) -> Optional[str]:
+        """从电缆/导线型号推断芯材，并单独识别矿物绝缘电缆。"""
+        if not text:
+            return None
+
+        if "矿物绝缘" in text or "矿物电缆" in text:
+            return "矿物绝缘电缆"
+
+        compact_text = re.sub(r"\s+", "", text).upper()
+        if not compact_text:
+            return None
+
+        mineral_models = ("BTTRZ", "BTTVZ", "BTLY", "BTTZ", "TBTRZY", "YTTW", "BBTRZ", "NG-A")
+        for model in mineral_models:
+            if re.search(
+                rf"{_CABLE_PREFIX_PATTERN}{re.escape(model)}(?=[\-\d,./()*×Xx]|$)",
+                compact_text,
+            ):
+                return "矿物绝缘电缆"
+
+        for model in _ALUMINUM_CORE_MODEL_PATTERNS:
+            if re.search(
+                rf"{_CABLE_PREFIX_PATTERN}{re.escape(model)}(?=[\-\d,./()*×Xx]|$)",
+                compact_text,
+            ):
+                return "铝芯"
+
+        for model in _COPPER_CORE_MODEL_PATTERNS:
+            if re.search(
+                rf"{_CABLE_PREFIX_PATTERN}{re.escape(model)}(?=[\-\d,./()*×Xx]|$)",
+                compact_text,
+            ):
+                return "铜芯"
 
         return None
 

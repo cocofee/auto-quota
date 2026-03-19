@@ -232,6 +232,21 @@ class TestExtractMaterial:
         result = parser.parse("排水 铸铁管 DN100")
         assert result["material"] == "铸铁管"
 
+    def test_infer_copper_from_bpyjv_model(self):
+        """BPYJV等交联电缆型号应补出铜芯"""
+        result = parser.parse("阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40")
+        assert result["material"] == "铜芯"
+
+    def test_infer_aluminum_from_yjlv_model(self):
+        """YJLV等电缆型号应补出铝芯"""
+        result = parser.parse("电力电缆 型号:YJLV-0.6/1kV-4x120+1x70")
+        assert result["material"] == "铝芯"
+
+    def test_infer_mineral_cable_from_btly_model(self):
+        """BTLY/BTTZ等矿物绝缘型号应单独区分"""
+        result = parser.parse("矿物绝缘电力电缆 型号:BTLY-3x185+2x95")
+        assert result["material"] == "矿物绝缘电缆"
+
 
 class TestExtractConnection:
     """连接方式提取测试"""

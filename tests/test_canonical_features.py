@@ -36,6 +36,19 @@ def test_parse_canonical_prefers_cable_entity_over_bridge_context_words():
     assert features["entity"] == "电缆"
     assert features["family"] == "cable_family"
     assert features["cable_section"] == 240
+    assert features["material"] == "铜芯"
+
+
+def test_parse_canonical_marks_mineral_insulated_cable_material():
+    parser = TextParser()
+    features = parser.parse_canonical(
+        "矿物绝缘电力电缆 型号:BTLY-3x185+2x95 敷设方式、部位:桥架或配管内敷设",
+        specialty="A4",
+    )
+
+    assert features["entity"] == "电缆"
+    assert features["family"] == "cable_family"
+    assert features["material"] == "矿物绝缘电缆"
 
 
 def test_parse_canonical_separates_cable_head_from_cable_body():
