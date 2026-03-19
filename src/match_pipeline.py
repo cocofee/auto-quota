@@ -253,7 +253,8 @@ def _pick_explicit_cable_family_candidate(bill_text: str,
     bill_cores = bill_params.get("cable_cores")
     bill_section = bill_params.get("cable_section")
 
-    is_terminal = any(keyword in text for keyword in ("终端头", "电缆头"))
+    is_head = any(keyword in text for keyword in ("终端头", "电缆头", "中间头"))
+    is_middle_head = "中间头" in text
     is_control = "控制" in text or any(keyword in upper_text for keyword in ("KVV", "KVVP", "KVVR", "RVVSP", "RVSP"))
     is_power = not is_control
 
@@ -268,23 +269,28 @@ def _pick_explicit_cable_family_candidate(bill_text: str,
         expected_words.append("电力电缆")
         forbidden_words.append("控制电缆")
 
-    if is_terminal:
-        expected_words.extend(["终端头", "电缆头"])
+    if is_head:
+        if is_middle_head:
+            expected_words.append("中间头")
+            forbidden_words.extend(["终端头", "电缆头"])
+        else:
+            expected_words.extend(["终端头", "电缆头"])
+            forbidden_words.append("中间头")
     else:
-        forbidden_words.extend(["终端头", "电缆头"])
+        forbidden_words.extend(["终端头", "电缆头", "中间头"])
 
     if "单芯" in text:
         core_words.append("单芯")
-    if "四芯" in text or re.search(r'4\s*[×xX*]', text):
+    if "四芯" in text or re.search(r"4\s*[×xX*]", text):
         core_words.append("四芯")
-    if "五芯" in text or re.search(r'5\s*[×xX*]', text):
+    if "五芯" in text or re.search(r"5\s*[×xX*]", text):
         core_words.append("五芯")
 
-    core_count_match = re.search(r'(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?', text)
+    core_count_match = re.search(r"(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?", text)
     if core_count_match:
         core_count = int(core_count_match.group(1))
-        if is_control or is_terminal:
-            core_words.extend([f"≤{core_count}", f"{core_count}芯", f"{core_count}"])
+        if is_control or is_head:
+            core_words.extend([f"<={core_count}", f"{core_count}芯", f"{core_count}"])
 
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:

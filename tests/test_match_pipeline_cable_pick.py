@@ -47,3 +47,15 @@ def test_pick_explicit_cable_family_candidate_prefers_total_cores_from_complex_b
     picked = _pick_explicit_cable_family_candidate(bill_text, candidates)
 
     assert picked["name"] == "铜芯电力电缆敷设 一般五芯电缆 电缆截面4mm2以下"
+
+
+def test_pick_explicit_cable_family_candidate_rejects_middle_head_for_cable_laying():
+    bill_text = "阻燃电力电缆 型号:ZRC-YJV-0.6/1kV,4x35+1x16 敷设方式、部位:室内穿管或桥架"
+    candidates = [
+        {"name": "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤35", "param_score": 0.95, "rerank_score": 0.95},
+        {"name": "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2)≤35", "param_score": 0.70, "rerank_score": 0.70},
+    ]
+
+    picked = _pick_explicit_cable_family_candidate(bill_text, candidates)
+
+    assert picked["name"] == "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2)≤35"

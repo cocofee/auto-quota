@@ -67,6 +67,7 @@ class ParamValidator:
     _FEATURE_ENTITY_HARD_CONFLICTS = {
         frozenset(("电缆", "配管")),
         frozenset(("电缆", "桥架")),
+        frozenset(("电缆", "电缆头")),
         frozenset(("配管", "桥架")),
         frozenset(("开关", "插座")),
         frozenset(("闸阀", "止回阀")),
@@ -162,6 +163,7 @@ class ParamValidator:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("cable_head_accessory", "cable_family")),
     }
     _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
         "bridge_raceway",
@@ -193,6 +195,7 @@ class ParamValidator:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("cable_head_accessory", "cable_family")),
     }
     _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
         "bridge_raceway",

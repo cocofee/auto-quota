@@ -18,6 +18,7 @@ class InstallationValidator:
     _ENTITY_HARD_CONFLICTS = {
         frozenset(("电缆", "配管")),
         frozenset(("电缆", "桥架")),
+        frozenset(("电缆", "电缆头")),
         frozenset(("配管", "桥架")),
         frozenset(("开关", "插座")),
         frozenset(("闸阀", "止回阀")),
@@ -66,6 +67,7 @@ class InstallationValidator:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("cable_head_accessory", "cable_family")),
     }
     _TRAIT_CONFLICT_GROUPS = (
         frozenset(("单栓", "双栓")),

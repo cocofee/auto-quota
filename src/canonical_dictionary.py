@@ -5,6 +5,7 @@ import re
 
 
 ENTITY_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("电缆头", ("电缆终端头", "电缆中间头", "终端头", "中间头", "电缆头")),
     ("地漏", ("地漏", "洗衣机地漏", "侧排地漏")),
     ("雨水斗", ("雨水斗", "雨水口")),
     ("倒流防止器", ("倒流防止器",)),
@@ -98,6 +99,7 @@ SPECIALTY_TO_SYSTEM = {
 }
 
 ENTITY_TO_SYSTEM = {
+    "电缆头": "电气",
     "地漏": "给排水",
     "雨水斗": "给排水",
     "倒流防止器": "给排水",
@@ -310,6 +312,14 @@ def detect_entity(text: str) -> str:
         keyword in text for keyword in ("钢管", "管道", "立管", "支管")
     ):
         return "消火栓"
+    primary_text = re.split(
+        r"(?:名称|型号(?:、规格)?|规格(?:、型号)?|材质(?:、规格)?|敷设方式(?:、部位)?|安装部位|配置形式|部位|电压等级|类别)\s*[:：]",
+        text,
+        maxsplit=1,
+    )[0].strip()
+    picked = _pick_by_rules(primary_text, ENTITY_RULES)
+    if picked:
+        return picked
     return _pick_by_rules(text, ENTITY_RULES)
 
 
@@ -435,6 +445,9 @@ def detect_family(text: str,
 
     if entity in {"配管", "金属软管", "接线盒"}:
         return "conduit_raceway"
+
+    if entity == "电缆头":
+        return "cable_head_accessory"
 
     if entity == "电缆":
         return "cable_family"
