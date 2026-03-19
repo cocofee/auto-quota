@@ -1211,7 +1211,13 @@ class OutputWriter:
                 current_row += 1
         else:
             # 未匹配提示行
-            no_reason = result.get("no_match_reason", "未找到匹配定额")
+            no_reason = (
+                result.get("no_match_reason")
+                or result.get("final_reason")
+                or result.get("reason_detail")
+                or result.get("explanation")
+                or "未找到匹配定额"
+            )
             self._write_no_match_row(ws, current_row, no_reason, max_col)
             current_row += 1
 

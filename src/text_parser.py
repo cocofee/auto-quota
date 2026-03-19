@@ -296,6 +296,22 @@ class TextParser:
         if connection:
             result["connection"] = connection
 
+        valve_type = self._extract_valve_type(text)
+        if valve_type:
+            result["valve_type"] = valve_type
+
+        support_material = self._extract_support_material(text)
+        if support_material:
+            result["support_material"] = support_material
+
+        surface_process = self._extract_surface_process(text)
+        if surface_process:
+            result["surface_process"] = surface_process
+
+        sanitary_subtype = self._extract_sanitary_subtype(text)
+        if sanitary_subtype:
+            result["sanitary_subtype"] = sanitary_subtype
+
         # 提取回路数（配电箱按回路分档：4/8/16/24/32/48）
         circuits = self._extract_circuits(text)
         if circuits is not None:
@@ -386,6 +402,19 @@ class TextParser:
         250: 250, 315: 300, 355: 350, 400: 400,
     }
 
+    def _prefer_nominal_dn_for_de(self, text: str) -> bool:
+        """Return True when a De-sized description should be normalized to DN."""
+        if not text:
+            return False
+        for keyword in (
+            "\u9600\u95e8", "\u95f8\u9600", "\u622a\u6b62\u9600", "\u6b62\u56de\u9600", "\u8776\u9600", "\u7403\u9600",
+            "\u6cd5\u5170", "\u5957\u7ba1", "\u963b\u706b\u5708", "\u8fc7\u6ee4\u5668", "\u8865\u507f\u5668",
+            "\u5012\u6d41\u9632\u6b62\u5668", "\u6c34\u8868",
+        ):
+            if keyword in text:
+                return True
+        return False
+
     def _extract_dn(self, text: str) -> Optional[int]:
         """
         提取管径DN值，统一返回整数（毫米）
@@ -418,7 +447,10 @@ class TextParser:
         # 塑料管定额按外径(De)分档（如"公称外径32mm以内"），De值=定额分档值
         de_match = re.search(r'[Dd][Ee]\s*(\d+)', text)
         if de_match:
-            return int(de_match.group(1))
+            de_value = int(de_match.group(1))
+            if self._prefer_nominal_dn_for_de(text):
+                return self.DE_TO_DN.get(de_value, de_value)
+            return de_value
 
         # 匹配"规格：65"格式（清单描述中常见，管道项的规格通常就是DN值）
         # 安全条件：
@@ -913,6 +945,94 @@ class TextParser:
             if conn in text:
                 return conn
         return None
+
+    def _extract_valve_type(self, text: str) -> str:
+        """提取阀门类型锚点。"""
+        if not text:
+            return ""
+        valve_rules = (
+            ("止回阀", ("止回阀", "逆止阀", "回流阀")),
+            ("截止阀", ("截止阀", "截断阀")),
+            ("闸阀", ("闸阀", "软密封闸阀", "信号闸阀")),
+            ("蝶阀", ("蝶阀", "信号蝶阀", "电动蝶阀", "双位蝶阀")),
+            ("球阀", ("球阀", "浮球阀")),
+            ("安全阀", ("安全阀",)),
+            ("减压阀", ("减压阀",)),
+            ("电磁阀", ("电磁阀",)),
+            ("排气阀", ("排气阀", "自动排气阀", "快速排气阀")),
+        )
+        for canonical, aliases in valve_rules:
+            if any(alias in text for alias in aliases):
+                return canonical
+        return ""
+
+    def _extract_support_material(self, text: str) -> str:
+        """提取支架材质锚点。"""
+        if not text:
+            return ""
+        material_rules = (
+            ("C型槽钢", ("C型槽钢", "C槽钢")),
+            ("槽钢", ("槽钢",)),
+            ("角钢", ("角钢",)),
+            ("圆钢", ("圆钢", "镀锌圆钢")),
+            ("扁钢", ("扁钢", "镀锌扁钢")),
+            ("型钢", ("型钢", "一般型钢")),
+        )
+        for canonical, aliases in material_rules:
+            if any(alias in text for alias in aliases):
+                return canonical
+        return ""
+
+    def _extract_surface_process(self, text: str) -> str:
+        """提取除锈/刷油/漆种等表面处理工艺。"""
+        if not text:
+            return ""
+        process_rules = (
+            ("手工除锈", ("手工除锈",)),
+            ("机械除锈", ("机械除锈", "动力工具除锈")),
+            ("喷砂除锈", ("喷砂除锈",)),
+            ("刷油", ("刷油",)),
+            ("红丹防锈漆", ("红丹防锈漆",)),
+            ("防锈漆", ("防锈漆",)),
+            ("调和漆", ("调和漆", "调合漆")),
+            ("银粉漆", ("银粉漆",)),
+            ("镀锌", ("镀锌", "热镀锌", "热浸锌")),
+        )
+        hits: list[str] = []
+        for canonical, aliases in process_rules:
+            if any(alias in text for alias in aliases) and canonical not in hits:
+                if canonical == "防锈漆" and "红丹防锈漆" in hits:
+                    continue
+                hits.append(canonical)
+        return "/".join(hits)
+
+    def _extract_sanitary_subtype(self, text: str) -> str:
+        """提取卫生器具细类。"""
+        if not text:
+            return ""
+        if any(alias in text for alias in ("坐便器", "座便器", "马桶")):
+            return "坐便器"
+        if "蹲便器" in text or "蹲式大便器" in text:
+            return "蹲便器"
+        if "大便器" in text:
+            if any(alias in text for alias in ("蹲式", "脚踏", "感应蹲", "蹲便")):
+                return "蹲便器"
+            if any(alias in text for alias in ("连体水箱", "隐蔽水箱", "高水箱", "低水箱", "座便", "坐便")):
+                return "坐便器"
+            return ""
+
+        subtype_rules = (
+            ("小便器", ("小便器",)),
+            ("洗脸盆", ("洗脸盆", "洗面盆", "洗手盆", "面盆")),
+            ("洗涤盆", ("洗涤盆", "水槽", "单孔水槽")),
+            ("拖布池", ("拖布池", "拖把池")),
+            ("淋浴器", ("淋浴器", "淋浴喷头")),
+            ("地漏", ("地漏",)),
+        )
+        for canonical, aliases in subtype_rules:
+            if any(alias in text for alias in aliases):
+                return canonical
+        return ""
 
     def _extract_circuits(self, text: str) -> Optional[int]:
         """

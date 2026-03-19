@@ -138,3 +138,19 @@ def test_reasoning_decision_can_force_manual_review_without_other_conflicts():
     assert result["confidence"] == 78
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "ambiguity_review"
+
+
+def test_final_validator_merges_reason_tags_and_final_reason():
+    result = {
+        "bill_item": {"name": "0005002", "description": "", "unit": "项"},
+        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "m"}],
+        "confidence": 70,
+        "match_source": "search",
+        "reason_tags": ["dirty_input", "numeric_code"],
+    }
+
+    FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
+
+    assert "dirty_input" in result["reason_tags"]
+    assert "manual_review" in result["reason_tags"]
+    assert result["final_reason"]

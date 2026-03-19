@@ -32,6 +32,10 @@ class CanonicalFeatureSet:
     install_method: str = ""
     laying_method: str = ""
     voltage_level: str = ""
+    valve_type: str = ""
+    support_material: str = ""
+    surface_process: str = ""
+    sanitary_subtype: str = ""
     numeric_params: dict[str, Any] = field(default_factory=dict)
     specs: dict[str, Any] = field(default_factory=dict)
     dn: int | None = None
@@ -97,6 +101,10 @@ def build_canonical_features(raw_text: str,
         install_method=install_method,
         laying_method=str(params.get("laying_method") or ""),
         voltage_level=str(params.get("voltage_level") or ""),
+        valve_type=str(params.get("valve_type") or ""),
+        support_material=str(params.get("support_material") or ""),
+        surface_process=str(params.get("surface_process") or ""),
+        sanitary_subtype=str(params.get("sanitary_subtype") or ""),
         numeric_params=build_numeric_params(params),
         specs=build_specs({**params, "install_method": install_method}),
         dn=params.get("dn"),
