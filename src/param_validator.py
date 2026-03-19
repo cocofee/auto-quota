@@ -50,6 +50,7 @@ class ParamValidator:
         "elevator_stops",
         "ground_bar_width",
         "half_perimeter",
+        "bridge_wh_sum",
         "switch_gangs",
     ]
     _FEATURE_ALIGNMENT_BLEND = 0.22
@@ -1447,6 +1448,48 @@ class ParamValidator:
                 else f"安装偏差:{bill_install_method}!={candidate_install_method}"
             )
 
+        bill_laying_method = str(bill_canonical_features.get("laying_method") or "")
+        candidate_laying_method = str(candidate_features.get("laying_method") or "")
+        if bill_laying_method and candidate_laying_method:
+            if self._laying_methods_compatible(bill_laying_method, candidate_laying_method):
+                laying_score = 1.0
+                details.append(f"敷设:{candidate_laying_method}")
+                exact_anchor_count += 1
+            else:
+                laying_score = 0.0 if self._is_laying_method_hard_conflict(
+                    bill_laying_method, candidate_laying_method) else 0.25
+                if laying_score == 0.0:
+                    hard_conflict = True
+                    details.append(f"敷设冲突:{bill_laying_method}!={candidate_laying_method}")
+                else:
+                    details.append(f"敷设偏差:{bill_laying_method}!={candidate_laying_method}")
+            components.append((
+                "laying_method",
+                self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
+                laying_score,
+            ))
+
+        bill_voltage_level = str(bill_canonical_features.get("voltage_level") or "")
+        candidate_voltage_level = str(candidate_features.get("voltage_level") or "")
+        if bill_voltage_level and candidate_voltage_level:
+            if bill_voltage_level == candidate_voltage_level:
+                voltage_score = 1.0
+                details.append(f"电压等级:{candidate_voltage_level}")
+                exact_anchor_count += 1
+            else:
+                voltage_score = 0.0 if self._is_voltage_level_hard_conflict(
+                    bill_voltage_level, candidate_voltage_level) else 0.2
+                if voltage_score == 0.0:
+                    hard_conflict = True
+                    details.append(f"电压等级冲突:{bill_voltage_level}!={candidate_voltage_level}")
+                else:
+                    details.append(f"电压等级偏差:{bill_voltage_level}!={candidate_voltage_level}")
+            components.append((
+                "voltage_level",
+                self._FEATURE_ALIGNMENT_WEIGHTS["traits"],
+                voltage_score,
+            ))
+
         bill_traits = {
             str(value).strip() for value in (bill_canonical_features.get("traits") or [])
             if str(value).strip()
@@ -2304,6 +2347,39 @@ class ParamValidator:
         return False
 
     @staticmethod
+    def _split_laying_methods(value: str) -> set[str]:
+        return {
+            part.strip()
+            for part in re.split(r"[、/,，或]+", str(value or ""))
+            if part.strip()
+        }
+
+    @classmethod
+    def _laying_methods_compatible(cls, m1: str, m2: str) -> bool:
+        if m1 == m2:
+            return True
+        parts1 = cls._split_laying_methods(m1)
+        parts2 = cls._split_laying_methods(m2)
+        return bool(parts1 and parts2 and (parts1 & parts2))
+
+    @classmethod
+    def _is_laying_method_hard_conflict(cls, m1: str, m2: str) -> bool:
+        if cls._laying_methods_compatible(m1, m2):
+            return False
+        parts1 = cls._split_laying_methods(m1)
+        parts2 = cls._split_laying_methods(m2)
+        constrained = {"桥架", "线槽", "穿管", "直埋", "排管", "支架"}
+        return bool((parts1 & constrained) and (parts2 & constrained))
+
+    @staticmethod
+    def _is_voltage_level_hard_conflict(v1: str, v2: str) -> bool:
+        if not v1 or not v2:
+            return False
+        if v1 == v2:
+            return False
+        return {v1, v2} in ({"高压", "低压"}, {"中压", "低压"}, {"高压", "中压"})
+
+    @staticmethod
     def _tier_up_score(bill_value: float, quota_value: float) -> float:
         """
         向上取档的评分函数
@@ -2674,6 +2750,28 @@ class ParamValidator:
                 check_count += 1
                 score_sum += 0.64
                 details.append("定额无半周长参数(通用定额降权)")
+
+        # === 10.6 桥架宽+高（硬性参数：桥架按宽+高取档） ===
+        if "bridge_wh_sum" in bill_params:
+            if "bridge_wh_sum" in quota_params:
+                check_count += 1
+                bill_bridge = bill_params["bridge_wh_sum"]
+                quota_bridge = quota_params["bridge_wh_sum"]
+                if bill_bridge == quota_bridge:
+                    score_sum += 1.0
+                    details.append(f"桥架宽高和{bill_bridge}={quota_bridge} 精确匹配")
+                elif bill_bridge <= quota_bridge:
+                    tier_score = self._tier_up_score(bill_bridge, quota_bridge)
+                    score_sum += tier_score
+                    details.append(f"桥架宽高和{bill_bridge}→{quota_bridge} 向上取档")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"桥架宽高和{bill_bridge}>{quota_bridge} 不匹配(清单>定额)")
+            else:
+                check_count += 1
+                score_sum += 0.64
+                details.append("定额无桥架宽高和参数(通用定额降权)")
 
         # === 11. 大边长（硬性参数：弯头导流叶片等按大边长取档） ===
         if "large_side" in bill_params and "large_side" in quota_params:

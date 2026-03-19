@@ -267,6 +267,10 @@ class TextParser:
         if kv is not None:
             result["kv"] = kv
 
+        voltage_level = self._extract_voltage_level(text, kv=kv)
+        if voltage_level:
+            result["voltage_level"] = voltage_level
+
         # 提取电流（A）
         ampere = self._extract_ampere(text)
         if ampere is not None:
@@ -338,6 +342,14 @@ class TextParser:
         install_method = self._extract_install_method(text)
         if install_method:
             result["install_method"] = install_method
+
+        laying_method = self._extract_laying_method(text)
+        if laying_method:
+            result["laying_method"] = laying_method
+
+        bridge_wh_sum = self._extract_bridge_wh_sum(text)
+        if bridge_wh_sum is not None:
+            result["bridge_wh_sum"] = bridge_wh_sum
 
         # 提取电梯类型（从名称关键词判断：货梯→载货电梯、客梯→曳引式电梯等）
         elevator_type = self._extract_elevator_type(text)
@@ -727,6 +739,28 @@ class TextParser:
             # 格式: 数字kV
             (r'(\d+(?:\.\d+)?)\s*[kK][vV](?![·.aA])', 1),
         ])
+
+    def _extract_voltage_level(self, text: str, kv: Optional[float] = None) -> str:
+        """提取高压/中压/低压等级，优先显式词，其次根据kV推断。"""
+        if not text:
+            return ""
+        if "高压" in text:
+            return "高压"
+        if "低压" in text:
+            return "低压"
+        if "中压" in text:
+            return "中压"
+
+        voltage = kv if kv is not None else self._extract_kv(text)
+        if voltage is None:
+            if re.search(r'(?:220|380|400|660)\s*[vV]\b', text):
+                return "低压"
+            return ""
+        if voltage >= 10:
+            return "高压"
+        if voltage >= 3:
+            return "中压"
+        return "低压"
 
     def _extract_ampere(self, text: str) -> Optional[float]:
         """
@@ -1174,6 +1208,63 @@ class TextParser:
             if any(kw in text for kw in keywords):
                 return method
         return ""
+
+    def _extract_laying_method(self, text: str) -> str:
+        """提取线缆/桥架/配管场景的敷设方式，支持复合方式。"""
+        if not text:
+            return ""
+        if not any(kw in text for kw in ("敷设", "布放", "穿管", "桥架", "线槽", "直埋", "排管", "支架", "管内", "配线")):
+            return ""
+
+        hits: list[str] = []
+
+        if any(kw in text for kw in ("直埋", "埋地", "埋设")):
+            hits.append("直埋")
+        if any(kw in text for kw in ("桥架", "梯架", "托盘")):
+            hits.append("桥架")
+        if any(kw in text for kw in ("线槽", "槽盒")):
+            hits.append("线槽")
+        if any(kw in text for kw in ("排管", "排管内")):
+            hits.append("排管")
+        if any(kw in text for kw in ("穿管", "管内", "导管内", "钢管内", "PVC管内", "配管内")):
+            hits.append("穿管")
+        if any(kw in text for kw in ("沿墙", "沿支架", "支架上", "墙面敷设")):
+            hits.append("支架")
+
+        normalized: list[str] = []
+        for method in hits:
+            if method not in normalized:
+                normalized.append(method)
+        return "/".join(normalized)
+
+    def _extract_bridge_wh_sum(self, text: str) -> Optional[float]:
+        """提取桥架宽+高，统一为mm；若明显是cm写法则转为mm。"""
+        if not text or "桥架" not in text:
+            return None
+
+        named_match = re.search(
+            r'宽\+高(?:\s*\([^)]+\)|\s*(?:mm|毫米)?(?:以内|以下|以上))?\)?\s*[≤≥<>=]?\s*(\d+(?:\.\d+)?)',
+            text,
+            re.IGNORECASE,
+        )
+        if named_match:
+            return float(named_match.group(1))
+
+        spec_match = re.search(
+            r'(?:规格(?:型号)?[：:]?\s*|MR-?|CT-?)?(\d{2,4})\s*[*×xX]\s*(\d{2,4})(?:\s*[*×xX]\s*\d{2,4})?',
+            text,
+            re.IGNORECASE,
+        )
+        if not spec_match:
+            return None
+
+        width = float(spec_match.group(1))
+        height = float(spec_match.group(2))
+        explicit_mm = bool(re.search(r'(?:mm|毫米)', text, re.IGNORECASE))
+        if not explicit_mm and width < 100 and height < 100:
+            width *= 10
+            height *= 10
+        return width + height
 
     # 电梯类型判断规则（按优先级排列：具体类型优先，泛称在后）
     _ELEVATOR_TYPE_RULES = [

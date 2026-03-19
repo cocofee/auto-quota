@@ -461,6 +461,7 @@ def build_numeric_params(params: dict[str, Any] | None) -> dict[str, Any]:
         "dn", "cable_section", "cable_cores", "kva", "kw", "kv", "ampere",
         "circuits", "port_count", "weight_t", "perimeter", "half_perimeter",
         "large_side", "ground_bar_width", "elevator_stops", "elevator_speed",
+        "bridge_wh_sum",
         "switch_gangs",
     )
     return {key: params[key] for key in keys if params.get(key) is not None}
@@ -470,7 +471,7 @@ def build_specs(params: dict[str, Any] | None) -> dict[str, Any]:
     params = params or {}
     keys = (
         "cable_bundle", "shape", "elevator_type", "cable_type",
-        "conduit_dn", "install_method",
+        "conduit_dn", "install_method", "laying_method", "voltage_level",
     )
     return {key: params[key] for key in keys if params.get(key) not in (None, "", [])}
 
@@ -481,7 +482,7 @@ def collect_traits(params: dict[str, Any] | None,
     params = params or {}
     context_prior = dict(context_prior or {})
     traits: list[str] = []
-    for key in ("shape", "elevator_type", "cable_type"):
+    for key in ("shape", "elevator_type", "cable_type", "voltage_level", "laying_method"):
         value = params.get(key)
         if value:
             traits.append(str(value))
