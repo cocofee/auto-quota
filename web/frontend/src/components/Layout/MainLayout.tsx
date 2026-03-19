@@ -41,6 +41,11 @@ export default function MainLayout() {
   const location = useLocation();
   const { user, logout } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
+  const adminTaskMenu = isAdmin ? [{
+    key: '/admin/tasks',
+    icon: <UnorderedListOutlined />,
+    label: '鎵€鏈変换鍔?',
+  }] : [];
 
   // 根据角色动态生成菜单（按改版方案v0.3.0重构）
   const menuItems: MenuProps['items'] = useMemo(() => {
@@ -107,6 +112,8 @@ export default function MainLayout() {
 
     // 管理员额外菜单
     const adminItems: MenuProps['items'] = [
+      { type: 'divider' },
+      ...adminTaskMenu,
       { type: 'divider' },
       // ── 数据 ──
       {

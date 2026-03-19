@@ -72,6 +72,7 @@ async def store_experience(
     specialty: str,
     province: str,
     confirmed: bool,
+    feedback_payload: dict | None = None,
 ) -> bool:
     """将单条数据回流经验库
 
@@ -95,6 +96,7 @@ async def store_experience(
             "specialty": specialty,
             "province": province,
             "confirmed": confirmed,
+            "feedback_payload": feedback_payload,
         })
         return result.get("success", False)
 
@@ -112,6 +114,7 @@ async def store_experience(
                 specialty=specialty,
                 province=province,
                 confirmed=confirmed,
+                feedback_payload=feedback_payload,
             )
 
         result = await asyncio.to_thread(_store)
@@ -161,6 +164,7 @@ async def store_experience_batch(
                         specialty=rec.get("specialty", ""),
                         province=province,
                         confirmed=confirmed,
+                        feedback_payload=rec.get("feedback_payload"),
                     )
                     if ok:
                         count += 1

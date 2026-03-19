@@ -1562,7 +1562,8 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
                 ps = c.get("param_score", 0)
                 nb = c.get("name_bonus", 0)
                 rr = c.get("rerank_score", c.get("hybrid_score", 0))
-                return ps * 0.55 + nb * 0.30 + rr * 0.15
+                fg = max(min(float(c.get("family_gate_score", 0.0) or 0.0), 2.0), -2.0)
+                return ps * 0.55 + fg * 0.08 + nb * 0.22 + rr * 0.15
             best_composite = _calc_composite(best)
             others = [c for c in matched_candidates if c is not best]
             second_composite = max((_calc_composite(c) for c in others), default=0)

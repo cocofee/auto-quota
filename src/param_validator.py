@@ -562,6 +562,7 @@ class ParamValidator:
         self._logic_rectify(validated)
         self._context_rectify(validated)
         self._feature_rectify(validated)
+        self._family_gate_rectify(validated)
 
         return validated
 
@@ -833,6 +834,66 @@ class ParamValidator:
         )
         candidates.insert(0, candidates.pop(best_idx))
 
+    def _family_gate_rectify(self, candidates: list[dict]):
+        """对家族门控显著更优的候选做保守纠偏。"""
+        if not candidates or len(candidates) < 2:
+            return
+
+        top1 = candidates[0]
+        top1_gate = float(top1.get("family_gate_score", 0.0) or 0.0)
+        top1_param = float(top1.get("param_score", 0.0))
+        top1_feature = float(top1.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
+        top1_hard = bool(top1.get("family_gate_hard_conflict"))
+
+        best_idx = -1
+        best_key = None
+        for idx, candidate in enumerate(candidates[:10]):
+            if idx == 0:
+                continue
+            if candidate.get("family_gate_hard_conflict"):
+                continue
+            if not candidate.get("param_match", True):
+                continue
+
+            gate_score = float(candidate.get("family_gate_score", 0.0) or 0.0)
+            if gate_score < 1.0:
+                continue
+
+            key = (
+                gate_score,
+                float(candidate.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT)),
+                float(candidate.get("param_score", 0.0)),
+                float(candidate.get("logic_score", self._LOGIC_DEFAULT)),
+                float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0))),
+            )
+            if best_key is None or key > best_key:
+                best_idx = idx
+                best_key = key
+
+        if best_idx <= 0:
+            return
+
+        best = candidates[best_idx]
+        best_gate = float(best.get("family_gate_score", 0.0) or 0.0)
+        best_param = float(best.get("param_score", 0.0))
+        best_feature = float(best.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
+
+        if not top1_hard and best_gate < top1_gate + 0.8:
+            return
+        if best_feature + 0.05 < top1_feature:
+            return
+        if best_param + 0.04 < top1_param:
+            return
+
+        logger.debug(
+            "family gate rectify: [{}] -> [{}] ({:.2f}->{:.2f})",
+            top1.get("name", "")[:80],
+            best.get("name", "")[:80],
+            top1_gate,
+            best_gate,
+        )
+        candidates.insert(0, candidates.pop(best_idx))
+
     def _get_candidate_tier_score(self, candidate: dict,
                                    main_param: str, main_value: float) -> float:
         """计算单个候选对指定参数的档位匹配分"""
@@ -958,6 +1019,7 @@ class ParamValidator:
             key=lambda x: (
                 x.get("param_tier", 1),
                 x.get("param_score", 0) * 0.55
+                + max(min(x.get("family_gate_score", 0.0), 2.0), -2.0) * 0.08
                 + x.get("name_bonus", 0) * 0.30
                 + (x.get("rerank_score") or x.get("hybrid_score") or 0) * 0.15,
             ),

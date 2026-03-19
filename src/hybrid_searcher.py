@@ -27,11 +27,43 @@ import config
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
 from src.query_router import build_query_route_profile, count_spec_signals
+from src.text_parser import parser as text_parser
 from db.sqlite import connect as _db_connect
 
 
 class HybridSearcher:
     """混合搜索引擎：BM25 + 向量搜索，RRF融合"""
+    _FAMILY_GATE_HARD_CONFLICTS = {
+        frozenset(("bridge_support", "bridge_raceway")),
+        frozenset(("bridge_support", "pipe_support")),
+        frozenset(("pipe_support", "bridge_raceway")),
+        frozenset(("valve_body", "valve_accessory")),
+        frozenset(("air_terminal", "air_valve")),
+        frozenset(("air_terminal", "air_device")),
+        frozenset(("air_valve", "air_device")),
+        frozenset(("electrical_box", "conduit_raceway")),
+        frozenset(("electrical_box", "cable_family")),
+    }
+    _FAMILY_GATE_STRICT_ENTITY_FAMILIES = {
+        "bridge_raceway",
+        "bridge_support",
+        "pipe_support",
+        "valve_accessory",
+        "air_device",
+        "sanitary_fixture",
+        "electrical_box",
+        "conduit_raceway",
+    }
+    _FAMILY_WINDOW_FAMILIES = {
+        "valve_accessory",
+        "bridge_support",
+        "sanitary_fixture",
+        "air_terminal",
+        "air_valve",
+        "air_device",
+        "electrical_box",
+        "conduit_raceway",
+    }
 
     def __init__(self, province: str = None):
         """
@@ -133,6 +165,16 @@ class HybridSearcher:
             {id, quota_id, name, unit, hybrid_score, bm25_rank, vector_rank, ...}
         """
         top_k = top_k or config.HYBRID_TOP_K
+        query_features = text_parser.parse_canonical(query or "")
+        route_profile = build_query_route_profile(
+            query,
+            canonical_features=query_features,
+        )
+        rank_window = self._resolve_rank_window(
+            top_k=top_k,
+            query_features=query_features,
+            route_profile=route_profile,
+        )
         base_bm25_weight = config.BM25_WEIGHT if bm25_weight is None else bm25_weight
         base_vector_weight = config.VECTOR_WEIGHT if vector_weight is None else vector_weight
         bm25_weight, vector_weight, weight_reason = self._get_adaptive_weights(
@@ -184,11 +226,18 @@ class HybridSearcher:
         # ============================================================
         # 第1步：多查询变体检索（Query2doc / MuGI 思路的轻量落地）
         # ============================================================
-        query_variants = self._build_query_variants(query, kb_hints)
+        query_variants = self._build_query_variants(
+            query,
+            kb_hints,
+            query_features=query_features,
+            route_profile=route_profile,
+        )
         bm25_runs = []
         vector_runs = []
         total_bm25_hits = 0
         total_vector_hits = 0
+        bm25_top_k = max(int(getattr(config, "BM25_TOP_K", top_k)), rank_window)
+        vector_top_k = max(int(getattr(config, "VECTOR_TOP_K", top_k)), rank_window)
 
         # 向量搜索开关（环境变量VECTOR_ENABLED=false可关闭，Docker/懒猫无GPU时用）
         vector_enabled = config.VECTOR_ENABLED
@@ -212,7 +261,7 @@ class HybridSearcher:
             bm25_results = []
             try:
                 bm25_results = self.bm25_engine.search(
-                    q_text, top_k=config.BM25_TOP_K, books=books
+                    q_text, top_k=bm25_top_k, books=books
                 )
                 total_bm25_hits += len(bm25_results)
             except Exception as e:
@@ -224,7 +273,7 @@ class HybridSearcher:
                     # 使用预计算的向量，跳过逐条编码
                     embedding = all_embeddings[idx - 1] if all_embeddings[0] is not None else None
                     vector_results = self.vector_engine.search(
-                        q_text, top_k=config.VECTOR_TOP_K, books=books,
+                        q_text, top_k=vector_top_k, books=books,
                         precomputed_embedding=embedding
                     )
                     total_vector_hits += len(vector_results)
@@ -259,7 +308,7 @@ class HybridSearcher:
             vector_only = self._merge_single_engine_runs(
                 vector_runs, engine="vector", k=config.RRF_K
             )
-            top_results = vector_only[:top_k]
+            top_results = vector_only[:rank_window]
             for r in top_results:
                 r["hybrid_score"] = r.get("vector_rrf_score", r.get("vector_score", 0))
                 r["bm25_rank"] = None
@@ -267,13 +316,14 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            return self._finalize_candidates(top_results)
+            finalized = self._finalize_candidates(top_results, query_text=query)
+            return finalized[:top_k]
 
         if total_vector_hits == 0:
             bm25_only = self._merge_single_engine_runs(
                 bm25_runs, engine="bm25", k=config.RRF_K
             )
-            top_results = bm25_only[:top_k]
+            top_results = bm25_only[:rank_window]
             for r in top_results:
                 r["hybrid_score"] = r.get("bm25_rrf_score", r.get("bm25_score", 0))
                 r["vector_rank"] = None
@@ -281,7 +331,8 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            return self._finalize_candidates(top_results)
+            finalized = self._finalize_candidates(top_results, query_text=query)
+            return finalized[:top_k]
 
         # ============================================================
         # 第2步：RRF融合排序
@@ -306,8 +357,7 @@ class HybridSearcher:
                 k=config.RRF_K,
             )
 
-        # 取Top K
-        top_results = merged[:top_k]
+        top_results = merged[:rank_window]
 
         for r in top_results:
             r["fusion_mode"] = "adaptive_multi_query_rrf" if multi_query_effective else "adaptive_rrf"
@@ -332,11 +382,12 @@ class HybridSearcher:
                 for k in keys_to_remove:
                     del self._session_cache[k]
                 logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
-            finalized = self._finalize_candidates(top_results)
+            finalized = self._finalize_candidates(top_results, query_text=query)
+            finalized = finalized[:top_k]
             self._session_cache[cache_key] = copy.deepcopy(finalized)
             return finalized
 
-        return self._finalize_candidates(top_results)
+        return self._finalize_candidates(top_results, query_text=query)[:top_k]
 
     def _get_adaptive_weights(self, query: str, bm25_weight: float,
                               vector_weight: float) -> tuple[float, float, str]:
@@ -569,12 +620,18 @@ class HybridSearcher:
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", text))
         return hits >= 2 or (hits >= 1 and chinese_len <= 20)
 
-    def _build_query_variants(self, query: str, kb_hints: list[str]) -> list[dict]:
+    def _build_query_variants(self, query: str, kb_hints: list[str], *,
+                              query_features: dict | None = None,
+                              route_profile: dict | None = None) -> list[dict]:
         """
         构造少量高价值查询变体，避免纯原始query召回盲区。
         """
         max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 4))
         max_variants = max(max_variants, 1)
+        query_features = dict(query_features or {})
+        route_profile = dict(route_profile or {})
+        if query_features.get("family"):
+            max_variants = max(max_variants, 5)
         raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60, 0.50])
         if not isinstance(raw_weights, (list, tuple)) or not raw_weights:
             raw_weights = [1.0, 0.75, 0.60, 0.50]
@@ -605,6 +662,16 @@ class HybridSearcher:
         normalized = re.sub(r"[，,。；;、|/\\]+", " ", query)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         _add(normalized, "normalized")
+
+        # V3.5: family-focused 变体
+        family_variants = self._build_family_query_variants(
+            query_features=query_features,
+            route_profile=route_profile,
+        )
+        for idx, family_variant in enumerate(family_variants, start=1):
+            if len(variants) >= max_variants:
+                break
+            _add(family_variant, f"family_focus_{idx}")
 
         # V4: 参数强化query（把关键规格参数显式再强调一遍）
         param_tokens = []
@@ -642,6 +709,105 @@ class HybridSearcher:
             _add(f"{query} {kb_hints[0]}", "kb_hint")
 
         return variants[:max_variants]
+
+    @staticmethod
+    def _format_numeric_variant_tokens(query_features: dict) -> list[str]:
+        numeric_params = dict((query_features or {}).get("numeric_params") or {})
+        tokens: list[str] = []
+        if numeric_params.get("dn") is not None:
+            tokens.append(f"DN{int(numeric_params['dn'])}")
+        if numeric_params.get("circuits") is not None:
+            tokens.append(f"{int(numeric_params['circuits'])}回路")
+        if numeric_params.get("port_count") is not None:
+            tokens.append(f"{int(numeric_params['port_count'])}口")
+        if numeric_params.get("switch_gangs") is not None:
+            tokens.append(f"{int(numeric_params['switch_gangs'])}联")
+        if numeric_params.get("cable_section") is not None:
+            value = numeric_params["cable_section"]
+            value_text = int(value) if float(value).is_integer() else value
+            tokens.append(f"{value_text}mm2")
+        if numeric_params.get("half_perimeter") is not None:
+            tokens.append(f"半周长{numeric_params['half_perimeter']}")
+        if numeric_params.get("perimeter") is not None:
+            tokens.append(f"周长{numeric_params['perimeter']}")
+        if numeric_params.get("weight_t") is not None:
+            kg = float(numeric_params["weight_t"]) * 1000.0
+            kg_text = int(kg) if kg.is_integer() else round(kg, 2)
+            tokens.append(f"{kg_text}kg")
+        return tokens
+
+    def _build_family_query_variants(self, *, query_features: dict,
+                                     route_profile: dict) -> list[str]:
+        family = str((query_features or {}).get("family") or "").strip()
+        entity = str((query_features or {}).get("entity") or "").strip()
+        canonical_name = str((query_features or {}).get("canonical_name") or "").strip()
+        material = str((query_features or {}).get("material") or "").strip()
+        connection = str((query_features or {}).get("connection") or "").strip()
+        install_method = str((query_features or {}).get("install_method") or "").strip()
+        system = str((query_features or {}).get("system") or "").strip()
+        traits = [
+            str(value).strip()
+            for value in ((query_features or {}).get("traits") or [])
+            if str(value).strip()
+        ]
+        route = str((route_profile or {}).get("route") or "").strip()
+
+        if not family:
+            return []
+
+        variants: list[str] = []
+        numeric_tokens = self._format_numeric_variant_tokens(query_features)
+        base_tokens = [token for token in (canonical_name, entity, material, connection, install_method) if token]
+        trait_tokens = traits[:3]
+
+        def _push(*tokens: str):
+            text = " ".join(token for token in tokens if token).strip()
+            if text and text not in variants:
+                variants.append(text)
+
+        if family == "bridge_support":
+            _push("桥架支撑架", entity or "支吊架", *trait_tokens, *numeric_tokens)
+        elif family == "pipe_support":
+            _push("管道支架", entity or "支吊架", *trait_tokens, *numeric_tokens)
+        elif family == "valve_accessory":
+            _push(entity or canonical_name, connection, *numeric_tokens)
+            _push(system, entity or canonical_name, *numeric_tokens)
+        elif family == "sanitary_fixture":
+            _push(entity or canonical_name, *trait_tokens, install_method, *numeric_tokens)
+        elif family in {"air_terminal", "air_valve", "air_device"}:
+            _push(entity or canonical_name, *trait_tokens, *numeric_tokens)
+            _push(system, entity or canonical_name, *trait_tokens)
+        elif family == "electrical_box":
+            _push(entity or canonical_name, install_method, *numeric_tokens)
+        elif family == "conduit_raceway":
+            _push(material, entity or canonical_name, install_method, *numeric_tokens)
+        elif family == "bridge_raceway":
+            _push(canonical_name or entity, *trait_tokens, *numeric_tokens)
+        elif family == "cable_family":
+            _push(canonical_name or entity, material, *trait_tokens, *numeric_tokens)
+        else:
+            _push(*base_tokens, *trait_tokens, *numeric_tokens)
+
+        if route in {"installation_spec", "spec_heavy"} and canonical_name and canonical_name != entity:
+            _push(canonical_name, *numeric_tokens)
+
+        return variants[:2]
+
+    def _resolve_rank_window(self, *, top_k: int,
+                             query_features: dict,
+                             route_profile: dict) -> int:
+        family = str((query_features or {}).get("family") or "").strip()
+        route = str((route_profile or {}).get("route") or "").strip()
+        spec_count = int((route_profile or {}).get("spec_signal_count", 0) or 0)
+
+        rank_window = max(int(top_k), 10)
+        if route in {"installation_spec", "spec_heavy"}:
+            rank_window = max(rank_window, top_k * 3, 30)
+        if family in self._FAMILY_WINDOW_FAMILIES:
+            rank_window = max(rank_window, top_k * 4, 40)
+        if spec_count >= 2 and family:
+            rank_window = max(rank_window, top_k * 5, 50)
+        return int(rank_window)
 
     @staticmethod
     def _extract_core_noun_query(query: str) -> str | None:
@@ -900,19 +1066,106 @@ class HybridSearcher:
 
         return scored_results
 
-    def _finalize_candidates(self, candidates: list[dict]) -> list[dict]:
+    @classmethod
+    def _is_family_hard_conflict(cls, query_family: str, candidate_family: str) -> bool:
+        if not query_family or not candidate_family or query_family == candidate_family:
+            return False
+        return frozenset((query_family, candidate_family)) in cls._FAMILY_GATE_HARD_CONFLICTS
+
+    def _score_family_gate(self, query_features: dict, candidate: dict) -> tuple[float, bool, str]:
+        candidate_features = candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
+        query_family = str((query_features or {}).get("family") or "").strip()
+        candidate_family = str((candidate_features or {}).get("family") or "").strip()
+        query_entity = str((query_features or {}).get("entity") or "").strip()
+        candidate_entity = str((candidate_features or {}).get("entity") or "").strip()
+        query_system = str((query_features or {}).get("system") or "").strip()
+        candidate_system = str((candidate_features or {}).get("system") or "").strip()
+
+        if not query_family:
+            return 0.0, False, ""
+
+        score = 0.0
+        details: list[str] = []
+        hard_conflict = False
+
+        if self._is_family_hard_conflict(query_family, candidate_family):
+            score -= 2.0
+            hard_conflict = True
+            details.append(f"家族冲突:{query_family}!={candidate_family}")
+        elif query_family and candidate_family and query_family == candidate_family:
+            score += 1.2
+            details.append(f"同家族:{candidate_family}")
+            if (
+                query_family in self._FAMILY_GATE_STRICT_ENTITY_FAMILIES
+                and query_entity and candidate_entity and query_entity != candidate_entity
+            ):
+                score -= 1.1
+                hard_conflict = True
+                details.append(f"家族内实体冲突:{query_entity}!={candidate_entity}")
+            elif query_entity and candidate_entity and query_entity == candidate_entity:
+                score += 0.6
+                details.append(f"同实体:{candidate_entity}")
+        elif query_entity and candidate_entity and query_entity == candidate_entity:
+            score += 0.5
+            details.append(f"同实体:{candidate_entity}")
+        elif query_entity and candidate_entity:
+            score -= 0.15
+            details.append(f"实体偏差:{query_entity}!={candidate_entity}")
+
+        if query_system and candidate_system:
+            if query_system == candidate_system:
+                score += 0.15
+                details.append(f"同系统:{candidate_system}")
+            else:
+                score -= 0.10
+                details.append(f"系统偏差:{query_system}!={candidate_system}")
+
+        return score, hard_conflict, "; ".join(details)
+
+    def _apply_family_gate(self, query_text: str, candidates: list[dict]) -> list[dict]:
+        if not candidates:
+            return candidates
+        query_features = text_parser.parse_canonical(query_text or "")
+        query_family = str(query_features.get("family") or "").strip()
+        query_entity = str(query_features.get("entity") or "").strip()
+        if not query_family and not query_entity:
+            return candidates
+
+        for index, candidate in enumerate(candidates):
+            gate_score, hard_conflict, gate_detail = self._score_family_gate(query_features, candidate)
+            candidate["family_gate_score"] = gate_score
+            candidate["family_gate_hard_conflict"] = hard_conflict
+            candidate["family_gate_detail"] = gate_detail
+            candidate["_family_gate_index"] = index
+
+        candidates.sort(
+            key=lambda candidate: (
+                1 if not candidate.get("family_gate_hard_conflict") else 0,
+                float(candidate.get("family_gate_score", 0.0)),
+                float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0))),
+                -int(candidate.get("_family_gate_index", 0)),
+            ),
+            reverse=True,
+        )
+        for candidate in candidates:
+            candidate.pop("_family_gate_index", None)
+        return candidates
+
+    def _finalize_candidates(self, candidates: list[dict], query_text: str = "") -> list[dict]:
         attach_candidate_canonical_features(candidates, province=self.province)
+        if query_text:
+            self._apply_family_gate(query_text, candidates)
         return candidates
 
     def search_bm25_only(self, query: str, top_k: int = None) -> list[dict]:
         """仅使用BM25搜索（调试用）"""
         top_k = top_k or config.BM25_TOP_K
-        return self._finalize_candidates(self.bm25_engine.search(query, top_k=top_k))
+        return self._finalize_candidates(self.bm25_engine.search(query, top_k=top_k), query_text=query)
 
     def search_vector_only(self, query: str, top_k: int = None) -> list[dict]:
         """仅使用向量搜索（调试用）"""
         top_k = top_k or config.VECTOR_TOP_K
-        return self._finalize_candidates(self.vector_engine.search(query, top_k=top_k))
+        return self._finalize_candidates(self.vector_engine.search(query, top_k=top_k), query_text=query)
 
     def get_status(self) -> dict:
         """获取搜索引擎状态"""
