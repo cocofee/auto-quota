@@ -615,6 +615,29 @@ def _build_distribution_box_query(name: str,
 
 
 
+def _build_switchgear_query(name: str,
+                            description: str,
+                            full_text: str,
+                            params: dict) -> str | None:
+    """高低压开关柜/配电柜对象模板。"""
+    switchgear_keywords = ("开关柜", "开关屏", "配电柜", "成套配电柜", "高压柜", "低压柜")
+    if not any(keyword in full_text for keyword in switchgear_keywords):
+        return None
+    if "配电箱" in name and "开关柜" not in full_text and "配电柜" not in full_text:
+        return None
+
+    voltage_level = str(params.get("voltage_level") or "")
+    if re.search(r'10\s*[kK][vV]', full_text):
+        return "10kV开关柜安装"
+    if voltage_level == "高压":
+        return "高压成套配电柜安装"
+    if voltage_level == "中压":
+        return "中压开关柜安装"
+    if voltage_level == "低压" or "低压" in full_text:
+        return "低压成套配电柜"
+    return None
+
+
 def _build_garden_plant_query(name: str, full_text: str, specialty: str = "") -> str | None:
     """园林苗木类 query 构建：优先用土球/裸根等分档特征，避免误走 DN 管道路由。"""
     if not any(keyword in name for keyword in ("栽植乔木", "起挖乔木", "栽植灌木", "起挖灌木")):
@@ -1263,6 +1286,9 @@ def build_quota_query(parser, name: str, description: str = "",
     dn = params.get("dn")
     cable_section = params.get("cable_section")
     shape = params.get("shape", "")  # 风管形状：矩形/圆形
+    laying_method = params.get("laying_method", "")
+    voltage_level = params.get("voltage_level", "")
+    bridge_wh_sum = params.get("bridge_wh_sum")
 
     # 补充提取连接方式：text_parser有时漏提取描述中的"连接方式:xxx"
     # 例如"连接方式:卡压式连接"在parser中未被识别，导致query丢失关键区分词
@@ -1439,6 +1465,15 @@ def build_quota_query(parser, name: str, description: str = "",
             canonical_features=canonical_features,
             context_prior=context_prior,
         )
+
+    switchgear_query = _build_switchgear_query(name, description, full_text, params)
+    if switchgear_query:
+        return _finalize_query(
+            switchgear_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+        )
     # ===== 电梯类：有电梯参数时构建专用搜索query =====
     # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
     # 例如 "载货电梯" 速度1.0m/s 10站 → "载货电梯 运行速度2m/s以下 层数 站数"
@@ -1571,7 +1606,16 @@ def build_quota_query(parser, name: str, description: str = "",
         clean = re.sub(r'[-—_]+$', '', clean).strip()
         if not clean:
             clean = "桥架"
+        bridge_type = ""
+        for candidate in ("槽式", "托盘式", "梯式", "线槽"):
+            if candidate in full_text:
+                bridge_type = candidate
+                break
+        if bridge_type and bridge_type not in clean:
+            clean = f"{bridge_type}桥架" if bridge_type != "线槽" else "线槽"
         query_parts[0] = clean + " 安装"
+        if bridge_wh_sum:
+            query_parts.append(f"宽+高 {bridge_wh_sum:g}")
         return _finalize_query(
             " ".join(query_parts),
             specialty=specialty,
@@ -1773,7 +1817,7 @@ def build_quota_query(parser, name: str, description: str = "",
 
             # 构建搜索词：桥架配线 / 多芯软导线 / 照明线 / 动力线
             # 只有识别出已知线型(BYJ/BV/RVV等)才特化，否则保持原名（如UTP双绞线等弱电）
-            if "桥架" in name or "线槽" in name or "桥架" in description or "线槽" in description:
+            if any(token in laying_method for token in ("桥架", "线槽")) or "桥架" in name or "线槽" in name or "桥架" in description or "线槽" in description:
                 query_parts[0] = "线槽配线"
             elif wire_type_known and is_multi_core:
                 query_parts[0] = "穿多芯软导线"
@@ -1814,16 +1858,20 @@ def build_quota_query(parser, name: str, description: str = "",
                 if "22" in model_upper or "23" in model_upper:
                     laying_raw = "埋地"  # YJV22/VV22=钢带铠装→埋地
 
+            effective_laying = laying_method or laying_raw
+
             # 控制电缆：按敷设方式+芯数构建query
             # 控制电缆按芯数分档（6/14/24/37/48芯），和电力电缆按截面分档不同
             if is_control_cable:
-                if "桥架" in laying_raw or "线槽" in laying_raw:
+                if "桥架" in effective_laying or "线槽" in effective_laying:
                     query_parts[0] = "控制电缆沿桥架敷设"
-                elif "支架" in laying_raw:
+                elif "支架" in effective_laying:
                     query_parts[0] = "控制电缆沿支架敷设"
-                elif "埋地" in laying_raw or "直埋" in laying_raw:
+                elif "埋地" in effective_laying or "直埋" in effective_laying:
                     query_parts[0] = "控制电缆埋地敷设"
-                elif "管" in laying_raw:
+                elif "排管" in effective_laying:
+                    query_parts[0] = "控制电缆排管敷设"
+                elif "穿管" in effective_laying or "管" in effective_laying:
                     query_parts[0] = "控制电缆穿管敷设"
                 else:
                     query_parts[0] = "控制电缆敷设"
@@ -1837,21 +1885,21 @@ def build_quota_query(parser, name: str, description: str = "",
                                      for m in ("BTTRZ", "BTLY", "BTTZ", "YTTW", "BBTRZ")):
                 query_parts[0] = "矿物绝缘电缆"
             # 普通电力电缆按敷设方式
-            elif "桥架" in laying_raw or "线槽" in laying_raw:
+            elif "桥架" in effective_laying or "线槽" in effective_laying:
                 # 不用"线槽"避免BM25误匹配"金属线槽敷设"（线槽是另一品类）
                 # "室内敷设电力电缆 沿桥架"兼容两种命名风格：
                 #   北京: "电缆沿桥架、线槽敷设"（BM25匹配"电缆""桥架""敷设"）
                 #   江西: "室内敷设电力电缆"（BM25匹配"室内""敷设""电力电缆"）
                 query_parts[0] = "室内敷设电力电缆 沿桥架"
-            elif "排管" in laying_raw:
+            elif "排管" in effective_laying:
                 query_parts[0] = "排管内电力电缆敷设"
-            elif "管" in laying_raw:
+            elif "穿管" in effective_laying or "管" in effective_laying:
                 query_parts[0] = "电缆穿导管敷设"
-            elif "埋地" in laying_raw or "直埋" in laying_raw:
+            elif "埋地" in effective_laying or "直埋" in effective_laying:
                 query_parts[0] = "电缆埋地敷设"
-            elif "墙" in laying_raw or "支架" in laying_raw:
+            elif "墙" in effective_laying or "支架" in effective_laying:
                 query_parts[0] = "电缆沿墙面、支架敷设"
-            elif "室内" in laying_raw:
+            elif "室内" in effective_laying:
                 query_parts[0] = "室内敷设电力电缆"
             else:
                 query_parts[0] = "室内敷设电力电缆"  # 默认室内（最常见）

@@ -30,10 +30,13 @@ class CanonicalFeatureSet:
     material: str = ""
     connection: str = ""
     install_method: str = ""
+    laying_method: str = ""
+    voltage_level: str = ""
     numeric_params: dict[str, Any] = field(default_factory=dict)
     specs: dict[str, Any] = field(default_factory=dict)
     dn: int | None = None
     cable_section: float | None = None
+    bridge_wh_sum: float | None = None
     cable_bundle: list[dict[str, Any]] = field(default_factory=list)
     kva: float | None = None
     kw: float | None = None
@@ -92,10 +95,13 @@ def build_canonical_features(raw_text: str,
         material=material,
         connection=connection,
         install_method=install_method,
+        laying_method=str(params.get("laying_method") or ""),
+        voltage_level=str(params.get("voltage_level") or ""),
         numeric_params=build_numeric_params(params),
         specs=build_specs({**params, "install_method": install_method}),
         dn=params.get("dn"),
         cable_section=params.get("cable_section"),
+        bridge_wh_sum=params.get("bridge_wh_sum"),
         cable_bundle=list(params.get("cable_bundle") or []),
         kva=params.get("kva"),
         kw=params.get("kw"),
