@@ -16,6 +16,41 @@ from src.excel_compat import detect_excel_format_from_header, validate_excel_upl
 from app.config import UPLOAD_DIR, UPLOAD_MAX_MB, TASK_OUTPUT_DIR
 
 
+_TRACE_STEP_KEYS = {
+    "stage",
+    "selected_quota",
+    "selected_reasoning",
+    "candidates_count",
+    "candidates",
+    "quota_ids",
+    "confidence",
+    "reason",
+    "error_type",
+    "error_reason",
+    "books",
+    "threshold",
+    "backup_confidence",
+    "search_confidence",
+    "replaced_source",
+    "replaced_confidence",
+    "materials_count",
+    "experience_source",
+    "quota_id",
+    "degraded_confidence",
+    "final_source",
+    "final_confidence",
+    "final_validation",
+    "final_review_correction",
+    "reasoning_engaged",
+    "reasoning_conflicts",
+    "reasoning_decision",
+    "reasoning_compare_points",
+    "query_route",
+    "batch_context",
+    "early_type",
+}
+
+
 def _is_valid_excel_signature(suffix: str, header: bytes) -> bool:
     """校验Excel文件魔数，避免仅靠扩展名绕过。"""
     info = detect_excel_format_from_header(header, f"dummy{suffix}")
@@ -78,6 +113,59 @@ def get_task_output_dir(task_id: uuid.UUID) -> Path:
     return output_dir
 
 
+def _compact_quota_items(quotas_raw: list[dict] | None) -> list[dict]:
+    """压缩定额项，但保留人工回流所需的推理信息。"""
+    quotas = []
+    for q in quotas_raw or []:
+        if not isinstance(q, dict):
+            continue
+        item = {
+            "quota_id": q.get("quota_id", ""),
+            "name": q.get("name", ""),
+            "unit": q.get("unit", ""),
+            "param_score": q.get("param_score"),
+            "rerank_score": q.get("rerank_score"),
+            "source": q.get("source", ""),
+        }
+        if q.get("reason"):
+            item["reason"] = q.get("reason")
+        if q.get("reasoning"):
+            item["reasoning"] = q.get("reasoning")
+        if q.get("db_id") is not None:
+            item["db_id"] = q.get("db_id")
+        quotas.append(item)
+    return quotas
+
+
+def _compact_trace(trace_raw: dict | None) -> dict | None:
+    """保留回流需要的 trace 路径、候选摘要和选中理由。"""
+    if not isinstance(trace_raw, dict) or not trace_raw:
+        return None
+
+    trace = {
+        "path": trace_raw.get("path", []),
+        "final_source": trace_raw.get("final_source", ""),
+        "final_confidence": trace_raw.get("final_confidence"),
+    }
+
+    steps_out = []
+    for step in trace_raw.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        compact = {
+            key: value
+            for key, value in step.items()
+            if key in _TRACE_STEP_KEYS and value not in (None, "", [], {})
+        }
+        if compact:
+            steps_out.append(compact)
+
+    if steps_out:
+        trace["steps"] = steps_out[-8:]
+
+    return trace
+
+
 def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
     """把 main.run() 返回的匹配结果保存到 PostgreSQL
 
@@ -93,34 +181,17 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
         bill_item = result.get("bill_item", {})
 
         # 提取定额列表（只保留关键字段，减少存储体积）
-        quotas_raw = result.get("quotas", [])
-        quotas = []
-        for q in quotas_raw:
-            quotas.append({
-                "quota_id": q.get("quota_id", ""),
-                "name": q.get("name", ""),
-                "unit": q.get("unit", ""),
-                "param_score": q.get("param_score"),
-                "rerank_score": q.get("rerank_score"),
-                "source": q.get("source", ""),
-            })
+        quotas = _compact_quota_items(result.get("quotas", []))
 
         # 提取备选定额（供OpenClaw纠正时直接选用）
         alternatives_raw = result.get("alternatives", [])
         alternatives = alternatives_raw if alternatives_raw else None
 
         # 提取 trace 的简化版本（只保留 path 和 final_source）
-        trace_raw = result.get("trace", {})
-        trace_simplified = None
-        if trace_raw:
-            trace_simplified = {
-                "path": trace_raw.get("path", []),
-                "final_source": trace_raw.get("final_source", ""),
-                "final_confidence": trace_raw.get("final_confidence"),
-            }
+        trace_simplified = _compact_trace(result.get("trace", {}))
 
         # 判断是否措施项（match_source为skip表示匹配时已跳过）
-        is_measure = result.get("match_source") == "skip"
+        is_measure = bool(result.get("is_measure_item")) or result.get("match_source") == "skip_measure"
 
         # 读取单价和金额（清单Excel里可能有也可能没有）
         unit_price = bill_item.get("unit_price")

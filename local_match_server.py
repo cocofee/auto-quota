@@ -838,6 +838,7 @@ class _StoreExperienceRequest(_BaseModel):
     specialty: str = ""
     province: str = ""
     confirmed: bool = False
+    feedback_payload: dict | None = None
 
 
 @app.post("/experience/store")
@@ -858,6 +859,7 @@ def store_experience_api(
             specialty=req.specialty,
             province=req.province or None,
             confirmed=req.confirmed,
+            feedback_payload=req.feedback_payload,
         )
         return {"success": bool(result), "record_id": result if isinstance(result, int) else 0}
     except Exception as e:
@@ -895,6 +897,7 @@ def store_experience_batch_api(
                     specialty=rec.get("specialty", ""),
                     province=req.province or None,
                     confirmed=req.confirmed,
+                    feedback_payload=rec.get("feedback_payload"),
                 )
                 if ok:
                     count += 1

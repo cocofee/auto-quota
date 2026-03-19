@@ -42,6 +42,140 @@ _GREEN_THRESHOLD = 85
 _YELLOW_THRESHOLD = 70
 
 
+def _compact_feedback_trace(trace: dict | None) -> dict:
+    """提取经验回流需要的 trace 摘要。"""
+    if not isinstance(trace, dict):
+        return {}
+
+    payload = {}
+    for key in ("path", "final_source", "final_confidence"):
+        value = trace.get(key)
+        if value not in (None, "", [], {}):
+            payload[key] = value
+
+    steps_out = []
+    for step in trace.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        item = {}
+        for key in (
+            "stage",
+            "selected_quota",
+            "selected_reasoning",
+            "candidates_count",
+            "candidates",
+            "quota_ids",
+            "confidence",
+            "reason",
+            "error_type",
+            "error_reason",
+            "final_source",
+            "final_confidence",
+            "final_validation",
+            "final_review_correction",
+            "reasoning_engaged",
+            "reasoning_conflicts",
+            "reasoning_decision",
+            "reasoning_compare_points",
+            "query_route",
+            "batch_context",
+        ):
+            value = step.get(key)
+            if value not in (None, "", [], {}):
+                item[key] = value
+        if item:
+            steps_out.append(item)
+
+    if steps_out:
+        payload["steps"] = steps_out[-6:]
+
+    return payload
+
+
+def _extract_feedback_meta(trace: dict | None) -> dict:
+    """从 trace 中提取经验回流可直接消费的终检与仲裁摘要。"""
+    if not isinstance(trace, dict):
+        return {}
+
+    final_validation = {}
+    final_review_correction = {}
+    reasoning_summary = {}
+    query_route = {}
+    batch_context = {}
+
+    for step in reversed(trace.get("steps", []) or []):
+        if not isinstance(step, dict):
+            continue
+        if not final_validation and isinstance(step.get("final_validation"), dict):
+            final_validation = step.get("final_validation") or {}
+        if not final_review_correction and isinstance(step.get("final_review_correction"), dict):
+            final_review_correction = step.get("final_review_correction") or {}
+        if not reasoning_summary and (
+            step.get("reasoning_engaged")
+            or step.get("reasoning_conflicts")
+            or step.get("reasoning_decision")
+            or step.get("reasoning_compare_points")
+        ):
+            reasoning_summary = {
+                "engaged": bool(step.get("reasoning_engaged")),
+                "decision": step.get("reasoning_decision") or {},
+                "conflict_summaries": step.get("reasoning_conflicts") or [],
+                "compare_points": step.get("reasoning_compare_points") or [],
+            }
+        if not query_route and isinstance(step.get("query_route"), dict):
+            query_route = step.get("query_route") or {}
+        if not batch_context and isinstance(step.get("batch_context"), dict):
+            batch_context = step.get("batch_context") or {}
+        if final_validation and reasoning_summary and query_route and batch_context:
+            break
+
+    payload = {}
+    if final_validation:
+        payload["final_validation"] = final_validation
+    if final_review_correction:
+        payload["final_review_correction"] = final_review_correction
+    if reasoning_summary:
+        payload["reasoning_summary"] = reasoning_summary
+    if query_route:
+        payload["query_route"] = query_route
+    if batch_context:
+        payload["batch_context"] = batch_context
+    return payload
+
+
+def _build_feedback_payload(
+    match_result,
+    *,
+    action: str,
+    review_note: str = "",
+    corrected_quotas: list[dict] | None = None,
+) -> dict:
+    """构造写入经验库的结构化回流快照。"""
+    original_quotas = match_result.quotas or []
+    chosen_quotas = corrected_quotas or match_result.corrected_quotas or original_quotas
+    trace_payload = _compact_feedback_trace(match_result.trace)
+    payload = {
+        "action": action,
+        "review_note": review_note or "",
+        "match_source": match_result.match_source or "",
+        "confidence": match_result.confidence or 0,
+        "review_status": match_result.review_status or "",
+        "bill_snapshot": {
+            "name": match_result.bill_name or "",
+            "description": match_result.bill_description or "",
+            "unit": match_result.bill_unit or "",
+            "specialty": match_result.specialty or "",
+        },
+        "original_quotas": original_quotas,
+        "selected_quotas": chosen_quotas,
+        "corrected_quotas": corrected_quotas or [],
+        "alternatives": (match_result.alternatives or [])[:3],
+        "trace": trace_payload,
+    }
+    payload.update(_extract_feedback_meta(trace_payload))
+    return payload
+
+
 def _strip_material_rows(source_path: str, task_id: str) -> str:
     """去掉Excel中的主材行，返回处理后的文件路径
 
@@ -176,13 +310,7 @@ async def correct_result(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """纠正或确认匹配结果
-
-    两种用法：
-    1. 纠正：传 corrected_quotas → review_status 变为 "corrected"
-    2. 确认：传 review_status="confirmed"（不传 corrected_quotas）→ 直接确认
-    兼容 OpenClaw 等外部工具直接调 PUT 接口的场景。
-    """
+    """纠正或确认匹配结果。"""
     task = await get_user_task(task_id, user, db)
 
     result = await db.execute(
@@ -195,13 +323,11 @@ async def correct_result(
     if not match_result:
         raise HTTPException(status_code=404, detail="结果不存在")
 
-    # 场景1：只是确认（没传 corrected_quotas）
     if not req.corrected_quotas:
         match_result.review_status = req.review_status or "confirmed"
         match_result.review_note = req.review_note
         await db.flush()
 
-        # 确认数据回流经验库权威层
         quotas_data = match_result.quotas
         if quotas_data and match_result.review_status == "confirmed":
             await store_experience(
@@ -212,17 +338,21 @@ async def correct_result(
                 reason=f"API确认: {req.review_note or ''}",
                 specialty=match_result.specialty or "",
                 province=task.province,
-                confirmed=True,  # 确认 → 权威层
+                confirmed=True,
+                feedback_payload=_build_feedback_payload(
+                    match_result,
+                    action="confirm",
+                    review_note=req.review_note or "",
+                ),
             )
         return match_result
 
-    # 场景2：纠正（传了 corrected_quotas）
-    match_result.corrected_quotas = [q.model_dump() for q in req.corrected_quotas]
+    corrected_quotas = [q.model_dump() for q in req.corrected_quotas]
+    match_result.corrected_quotas = corrected_quotas
     match_result.review_status = "corrected"
     match_result.review_note = req.review_note
     await db.flush()
 
-    # 纠正数据回流经验库候选层
     await store_experience(
         name=match_result.bill_name,
         desc=match_result.bill_description or "",
@@ -231,10 +361,15 @@ async def correct_result(
         reason=f"Web端纠正: {req.review_note or ''}",
         specialty=match_result.specialty or "",
         province=task.province,
-        confirmed=False,  # 纠正 → 候选层
+        confirmed=False,
+        feedback_payload=_build_feedback_payload(
+            match_result,
+            action="correct",
+            review_note=req.review_note or "",
+            corrected_quotas=corrected_quotas,
+        ),
     )
 
-    # 如果纠正的是经验库直通的结果，标记原权威记录为"有争议"
     if match_result.match_source and "experience" in match_result.match_source:
         await flag_disputed_experience(
             bill_name=match_result.bill_name,
@@ -252,14 +387,9 @@ async def confirm_results(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """批量确认匹配结果
-
-    用户确认系统匹配正确的结果（通常是高置信度的绿色项）。
-    确认后 review_status 变为 "confirmed"。
-    """
+    """批量确认匹配结果。"""
     await get_user_task(task_id, user, db)
 
-    # 批量查询要确认的结果
     result = await db.execute(
         select(MatchResult).where(
             MatchResult.task_id == task_id,
@@ -270,22 +400,18 @@ async def confirm_results(
 
     updated = 0
     skipped = 0
-    skipped_low_conf = 0  # 低置信度被拦截的条数
-    confirmed_records = []  # 收集需要回流经验库的记录
+    skipped_low_conf = 0
+    confirmed_records = []
     for r in results:
-        # 已纠正的结果不能被批量确认覆盖（保留人工纠正状态）
         if r.review_status == "corrected":
             skipped += 1
             continue
-        # 低置信度不允许批量确认（防止错误数据污染权威层）
-        # 置信度<70%的结果准确率太低，必须逐条确认（PUT接口），不能批量过
         if r.confidence < 70:
             skipped_low_conf += 1
             continue
         if r.review_status != "confirmed":
             r.review_status = "confirmed"
             updated += 1
-            # 收集数据用于经验库写入（优先用纠正后的定额）
             quotas_data = r.corrected_quotas or r.quotas
             if quotas_data:
                 confirmed_records.append({
@@ -294,18 +420,22 @@ async def confirm_results(
                     "quota_ids": [q["quota_id"] for q in quotas_data if q.get("quota_id")],
                     "quota_names": [q.get("name", "") for q in quotas_data],
                     "specialty": r.specialty or "",
+                    "feedback_payload": _build_feedback_payload(
+                        r,
+                        action="confirm",
+                        review_note="",
+                    ),
                 })
 
     await db.flush()
 
-    # 确认数据回流经验库（权威层，系统匹配+用户确认=双重保障）
     if confirmed_records:
         task = await get_user_task(task_id, user, db)
         await store_experience_batch(
             records=confirmed_records,
             province=task.province,
             reason="Web端确认",
-            confirmed=True,  # 确认 → 权威层
+            confirmed=True,
         )
 
     return {

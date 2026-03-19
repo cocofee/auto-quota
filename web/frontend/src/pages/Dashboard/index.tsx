@@ -52,6 +52,7 @@ export default function DashboardPage() {
   const { message } = App.useApp();
   const { user } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
+  const taskListPath = isAdmin ? '/admin/tasks' : '/tasks';
 
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
@@ -66,21 +67,22 @@ export default function DashboardPage() {
   const loadRecentTasks = useCallback(async () => {
     setLoading(true);
     try {
+      const taskParams = isAdmin ? { all_users: true } : {};
       // 最近10个任务（用于表格展示）
       const { data } = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 10 },
+        params: { page: 1, size: 10, ...taskParams },
       });
       setTasks(data.items);
       setTotal(data.total);
       // 本月完成：只统计当月创建的已完成任务
       const monthStart = dayjs().startOf('month').format('YYYY-MM-DD');
       const completedRes = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 1, status_filter: 'completed', created_after: monthStart },
+        params: { page: 1, size: 1, status_filter: 'completed', created_after: monthStart, ...taskParams },
       });
       setCompletedTotal(completedRes.data.total);
       // 加载更多已完成任务用于计算准确率（最多100个）
       const statsRes = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 100, status_filter: 'completed' },
+        params: { page: 1, size: 100, status_filter: 'completed', ...taskParams },
       });
       setStatsTasks(statsRes.data.items);
     } catch {
@@ -88,7 +90,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [isAdmin, message]);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,7 +230,7 @@ export default function DashboardPage() {
       {/* ========== 统计卡片（4列） ========== */}
       <Row gutter={16}>
         <Col xs={12} sm={6}>
-          <Card hoverable onClick={() => navigate('/tasks')}
+          <Card hoverable onClick={() => navigate(taskListPath)}
             styles={{ body: { padding: '20px 24px' } }}
           >
             <Statistic
@@ -239,7 +241,7 @@ export default function DashboardPage() {
           </Card>
         </Col>
         <Col xs={12} sm={6}>
-          <Card hoverable onClick={() => navigate('/tasks?status=completed')}
+          <Card hoverable onClick={() => navigate(`${taskListPath}?status=completed`)}
             styles={{ body: { padding: '20px 24px' } }}
           >
             <Statistic
