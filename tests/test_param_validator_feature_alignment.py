@@ -164,6 +164,32 @@ def test_logic_score_uses_bundle_total_cores_for_power_cable_family():
     assert five_core["logic_score"] > single_core["logic_score"]
 
 
+def test_feature_alignment_rejects_cable_head_for_cable_laying_query():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="阻燃电力电缆 型号:ZRC-YJV-0.6/1kV,4x35+1x16 敷设方式、部位:室内穿管或桥架",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤35",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2)≤35",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["param_match"] is False
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
 def test_logic_score_prefers_exact_switch_port_bucket():
     validator = ParamValidator()
     results = validator.validate_candidates(

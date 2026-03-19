@@ -26,6 +26,29 @@ def test_parse_canonical_includes_context_prior():
     assert features["context_prior"]["context_hints"] == ["桥架"]
 
 
+def test_parse_canonical_prefers_cable_entity_over_bridge_context_words():
+    parser = TextParser()
+    features = parser.parse_canonical(
+        "阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位：室内穿管或桥架",
+        specialty="A4",
+    )
+
+    assert features["entity"] == "电缆"
+    assert features["family"] == "cable_family"
+    assert features["cable_section"] == 240
+
+
+def test_parse_canonical_separates_cable_head_from_cable_body():
+    parser = TextParser()
+    features = parser.parse_canonical(
+        "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤240",
+        specialty="A4",
+    )
+
+    assert features["entity"] == "电缆头"
+    assert features["family"] == "cable_head_accessory"
+
+
 def test_clean_bill_items_attaches_context_prior_and_canonical_features():
     items = clean_bill_items([
         {

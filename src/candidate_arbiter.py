@@ -100,7 +100,7 @@ def _item_main_param(item: dict) -> tuple[str, float] | tuple[None, None]:
         for part in (item.get("name"), item.get("description"))
         if part
     ).strip()
-    terminal_like = "终端头" in text or "电缆头" in text
+    terminal_like = any(keyword in text for keyword in ("终端头", "电缆头", "中间头"))
     key_order = list(_MAIN_PARAM_KEYS)
     if terminal_like:
         key_order = [

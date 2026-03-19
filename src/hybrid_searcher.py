@@ -43,6 +43,7 @@ class HybridSearcher:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("cable_head_accessory", "cable_family")),
     }
     _FAMILY_GATE_STRICT_ENTITY_FAMILIES = {
         "bridge_raceway",
