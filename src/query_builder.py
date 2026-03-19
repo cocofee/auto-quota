@@ -302,6 +302,47 @@ def _dedupe_terms(terms: list[str]) -> list[str]:
     return deduped
 
 
+def _build_decor_finish_query(name: str, full_text: str) -> str:
+    text = str(full_text or "")
+    clean_name = str(name or "")
+
+    if "窗帘盒" in clean_name:
+        if any(keyword in text for keyword in ("胶合板", "夹板", "玻镁板", "石膏板", "阻燃板")):
+            return "窗帘盒 胶合板 单轨"
+
+    if "窗帘" in clean_name and "窗帘盒" not in clean_name and "轨道" not in clean_name:
+        if any(keyword in text for keyword in ("不透光", "遮光布", "装饰布帘")):
+            return "成品窗帘安装 装饰布帘（不透光）"
+        if "纱" in text:
+            return "成品窗帘安装 装饰布帘（纱布）"
+
+    floor_tile_hint = any(keyword in text for keyword in ("抛光砖", "防滑砖", "耐磨砖", "仿石砖", "陶瓷地砖"))
+    floor_context = any(keyword in text for keyword in ("楼面", "楼地面", "地面"))
+    if floor_tile_hint and floor_context:
+        size_match = re.search(r'(\d+)\s*[*×xX]\s*(\d+)', text)
+        if size_match:
+            width = int(size_match.group(1))
+            height = int(size_match.group(2))
+            perimeter = (width + height) * 2
+            if perimeter <= 2400:
+                return "楼地面陶瓷地砖(每块周长mm) 2400以内 水泥砂浆"
+            if perimeter <= 3200:
+                return "楼地面陶瓷地砖(每块周长mm) 3200以内 水泥砂浆"
+            return "楼地面陶瓷地砖(每块周长mm) 3200以外 水泥砂浆"
+        return "楼地面陶瓷地砖 水泥砂浆"
+
+    wall_tile_hint = any(keyword in text for keyword in ("面砖内墙面", "瓷砖墙面", "釉面砖", "陶瓷面砖"))
+    decor_board_tile_hint = "墙面装饰板" in clean_name and any(
+        keyword in text for keyword in ("瓷砖专用粘贴剂", "建筑胶粘剂", "岩板", "瓷砖", "釉面砖")
+    )
+    if wall_tile_hint or decor_board_tile_hint:
+        if any(keyword in text for keyword in ("建筑胶粘剂", "瓷砖专用粘贴剂", "强力胶粉泥")):
+            return "镶贴陶瓷面砖密缝 墙面 建筑胶粘剂粘贴"
+        return "镶贴陶瓷面砖密缝 墙面"
+
+    return ""
+
+
 def _build_feature_alignment_terms(canonical_features: dict | None = None,
                                    context_prior: dict | None = None) -> list[str]:
     canonical_features = canonical_features or {}

@@ -30,20 +30,32 @@ from src.compat_primitives import (
     connections_compatible as _compat_connections_compatible,
 )
 from src.installation_validator import InstallationValidator
+from src.specialty_classifier import get_book_from_quota_id
 
 
 class ParamValidator:
     """候选定额的参数验证器"""
     TIER_PARAMS = [
-        "dn", "cable_section", "kva", "kw", "circuits", "ampere",
-        "weight_t", "perimeter", "large_side", "elevator_stops",
-        "ground_bar_width",  # 接地扁钢宽度（如40×4中的40mm）
-        "half_perimeter",  # 配电箱半周长（悬挂/嵌入式按半周长取档）
-        "switch_gangs",  # 开关联数（单联/双联/三联/四联）
+        "dn",
+        "cable_section",
+        "cable_cores",
+        "kva",
+        "kw",
+        "circuits",
+        "port_count",
+        "ampere",
+        "weight_t",
+        "perimeter",
+        "large_side",
+        "elevator_stops",
+        "ground_bar_width",
+        "half_perimeter",
+        "switch_gangs",
     ]
-    _FEATURE_ALIGNMENT_BLEND = 0.18
+    _FEATURE_ALIGNMENT_BLEND = 0.22
     _FEATURE_ALIGNMENT_DEFAULT = 0.5
     _FEATURE_ALIGNMENT_WEIGHTS = {
+        "family": 0.22,
         "entity": 0.40,
         "canonical_name": 0.18,
         "system": 0.12,
@@ -56,23 +68,166 @@ class ParamValidator:
         frozenset(("电缆", "配管")),
         frozenset(("电缆", "桥架")),
         frozenset(("配管", "桥架")),
+        frozenset(("开关", "插座")),
+        frozenset(("闸阀", "止回阀")),
+        frozenset(("闸阀", "蝶阀")),
+        frozenset(("止回阀", "蝶阀")),
+        frozenset(("坐便器", "蹲便器")),
+        frozenset(("坐便器", "小便器")),
+        frozenset(("坐便器", "洗脸盆")),
+        frozenset(("坐便器", "洗涤盆")),
+        frozenset(("蹲便器", "小便器")),
+        frozenset(("洗脸盆", "淋浴器")),
+        frozenset(("洗脸盆", "小便器")),
+        frozenset(("洗脸盆", "洗涤盆")),
+        frozenset(("洗涤盆", "小便器")),
+        frozenset(("洗涤盆", "淋浴器")),
+        frozenset(("压力开关", "开关插座")),
+        frozenset(("压力开关", "开关")),
+        frozenset(("报警按钮", "开关插座")),
+        frozenset(("报警按钮", "开关")),
+        frozenset(("风阀", "风管")),
+        frozenset(("风口", "风管")),
+        frozenset(("风阀", "风口")),
+        frozenset(("卫生间通风器", "风机")),
+        frozenset(("卫生间通风器", "排气扇")),
+        frozenset(("排气扇", "风机")),
+        frozenset(("暖风机", "风机")),
+        frozenset(("套管", "管道")),
+        frozenset(("水泵", "管道")),
         frozenset(("配电箱", "阀门")),
         frozenset(("管道", "阀门")),
+        frozenset(("消火栓", "管道")),
+        frozenset(("消火栓", "阀门")),
+        frozenset(("水表", "阀门")),
+        frozenset(("倒流防止器", "阀门")),
+        frozenset(("过滤器", "阀门")),
+        frozenset(("软接头", "阀门")),
+        frozenset(("减压器", "阀门")),
     }
+    _FEATURE_SYSTEM_HARD_CONFLICTS = {
+        frozenset(("消防", "电气")),
+        frozenset(("电气", "给排水")),
+        frozenset(("电气", "通风空调")),
+        frozenset(("消防", "给排水")),
+        frozenset(("消防", "通风空调")),
+        frozenset(("给排水", "通风空调")),
+    }
+    _FEATURE_TRAIT_CONFLICT_GROUPS = (
+        frozenset(("单栓", "双栓")),
+        frozenset(("刚性", "柔性")),
+        frozenset(("感烟", "感温")),
+        frozenset(("单控", "双控")),
+        frozenset(("单相", "三相")),
+        frozenset(("三孔", "五孔")),
+        frozenset(("吸顶灯", "筒灯", "应急灯")),
+        frozenset(("吸顶式", "嵌入式", "壁挂式", "落地式", "悬挂式")),
+        frozenset(("离心式", "轴流式")),
+        frozenset(("直立型", "下垂型", "边墙型")),
+        frozenset(("湿式", "干式", "预作用", "雨淋")),
+        frozenset(("托盘式", "槽式", "梯式", "线槽")),
+        frozenset(("一般管架", "支撑架")),
+        frozenset(("防雨百叶", "格栅风口", "钢百叶窗", "板式排烟口")),
+    )
+    _CONTEXT_SCORE_BLEND = 0.22
+    _CONTEXT_DEFAULT = 0.5
+    _CONTEXT_WEIGHTS = {
+        "specialty": 0.28,
+        "system": 0.30,
+        "cable_type": 0.22,
+        "prior_family": 0.12,
+        "context_hints": 0.08,
+    }
+    """
+    _SPECIALTY_SYSTEM_MAP = {
+        "C4": "鐢垫皵",
+        "C5": "鐢垫皵",
+        "C7": "閫氶绌鸿皟",
+        "C9": "娑堥槻",
+        "C10": "缁欐帓姘?,
+        "C11": "鐢垫皵",
+    }
+    _CONTEXT_SYSTEM_HARD_CONFLICTS = {
+        frozenset(("鐢垫皵", "缁欐帓姘?)),
+        frozenset(("鐢垫皵", "閫氶绌鸿皟")),
+        frozenset(("缁欐帓姘?, "閫氶绌鸿皟")),
+    }
+    _FEATURE_FAMILY_HARD_CONFLICTS = {
+        frozenset(("bridge_support", "bridge_raceway")),
+        frozenset(("bridge_support", "pipe_support")),
+        frozenset(("pipe_support", "bridge_raceway")),
+        frozenset(("valve_body", "valve_accessory")),
+        frozenset(("air_terminal", "air_valve")),
+        frozenset(("air_terminal", "air_device")),
+        frozenset(("air_valve", "air_device")),
+        frozenset(("electrical_box", "conduit_raceway")),
+        frozenset(("electrical_box", "cable_family")),
+    }
+    _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
+        "bridge_raceway",
+        "bridge_support",
+        "pipe_support",
+        "valve_accessory",
+        "air_device",
+        "sanitary_fixture",
+        "electrical_box",
+        "conduit_raceway",
+    }
+    _CONTEXT_CABLE_TYPES = ("鐢电嚎", "鐢电紗", "鍏夌紗", "鍙岀粸绾?, "杞绾?)
+    """
+    _SPECIALTY_SYSTEM_MAP = {
+        "C4": "电气",
+        "C5": "电气",
+        "C7": "通风空调",
+        "C9": "消防",
+        "C10": "给排水",
+        "C11": "电气",
+    }
+    _FEATURE_FAMILY_HARD_CONFLICTS = {
+        frozenset(("bridge_support", "bridge_raceway")),
+        frozenset(("bridge_support", "pipe_support")),
+        frozenset(("pipe_support", "bridge_raceway")),
+        frozenset(("valve_body", "valve_accessory")),
+        frozenset(("air_terminal", "air_valve")),
+        frozenset(("air_terminal", "air_device")),
+        frozenset(("air_valve", "air_device")),
+        frozenset(("electrical_box", "conduit_raceway")),
+        frozenset(("electrical_box", "cable_family")),
+    }
+    _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
+        "bridge_raceway",
+        "bridge_support",
+        "pipe_support",
+        "valve_accessory",
+        "air_device",
+        "sanitary_fixture",
+        "electrical_box",
+        "conduit_raceway",
+    }
+    _CONTEXT_SYSTEM_HARD_CONFLICTS = {
+        frozenset(("消防", "电气")),
+        frozenset(("电气", "给排水")),
+        frozenset(("电气", "通风空调")),
+        frozenset(("消防", "给排水")),
+        frozenset(("消防", "通风空调")),
+        frozenset(("给排水", "通风空调")),
+    }
+    _CONTEXT_CABLE_TYPES = ("电线", "电缆", "光缆", "双绞线", "软导线")
     _LOGIC_SCORE_BLEND = 0.35
     _LOGIC_DEFAULT = 0.5
-    _LOGIC_UPPER_MARKERS = ("以内", "以下", "及以下", "及以内", "≤", "不大于", "不超过")
-    _LOGIC_LOWER_MARKERS = ("以上", "及以上", "≥", "不小于", "不少于")
+    _LOGIC_UPPER_MARKERS = ("以内", "以下", "及以下", "及以内", "≤", "<", "不大于", "不超过")
+    _LOGIC_LOWER_MARKERS = ("以上", "及以上", "≥", ">", "不小于", "不少于")
     _LOGIC_DEFAULT_UPPER_PARAMS = {
         "dn", "cable_section", "kva", "kw", "circuits", "ampere",
         "half_perimeter", "ground_bar_width", "perimeter", "large_side",
-        "elevator_stops", "switch_gangs",
+        "elevator_stops", "switch_gangs", "port_count",
     }
     _LOGIC_PARAM_WEIGHTS = {
         "dn": 1.00,
         "cable_section": 1.00,
         "cable_cores": 1.00,
         "circuits": 0.85,
+        "port_count": 1.00,
         "ampere": 0.85,
         "kva": 0.75,
         "kw": 0.75,
@@ -88,6 +243,7 @@ class ParamValidator:
         "cable_section": "截面",
         "cable_cores": "芯数",
         "circuits": "回路",
+        "port_count": "口数",
         "ampere": "电流",
         "kva": "容量",
         "kw": "功率",
@@ -151,7 +307,9 @@ class ParamValidator:
     def validate_candidates(self, query_text: str, candidates: list[dict],
                             supplement_query: str = None,
                             bill_params: dict = None,
-                            search_books: list[str] = None) -> list[dict]:
+                            search_books: list[str] = None,
+                            canonical_features: dict = None,
+                            context_prior: dict = None) -> list[dict]:
         """
         对候选定额进行参数验证和重排序
 
@@ -193,10 +351,17 @@ class ParamValidator:
         canonical_source_text = " ".join(
             part for part in (query_text, supplement_query) if part
         ).strip()
-        bill_canonical_features = text_parser.parse_canonical(
-            canonical_source_text or query_text,
-            params=bill_params,
-        )
+        if canonical_features is not None:
+            bill_canonical_features = dict(canonical_features)
+        else:
+            bill_canonical_features = text_parser.parse_canonical(
+                canonical_source_text or query_text,
+                params=bill_params,
+                context_prior=context_prior,
+            )
+        effective_context_prior = dict(context_prior or {})
+        if not effective_context_prior and bill_canonical_features.get("context_prior"):
+            effective_context_prior = dict(bill_canonical_features.get("context_prior") or {})
         bill_logic_targets = self._build_bill_logic_targets(
             canonical_source_text or query_text,
             bill_params=bill_params,
@@ -266,6 +431,15 @@ class ParamValidator:
                     bill_canonical_features=bill_canonical_features,
                     candidate_features=candidate_features,
                 )
+                c["param_match"], c["param_score"], c["param_detail"] = self._apply_context_alignment(
+                    candidate=c,
+                    is_match=c["param_match"],
+                    score=c["param_score"],
+                    detail=c["param_detail"],
+                    bill_canonical_features=bill_canonical_features,
+                    context_prior=effective_context_prior,
+                    candidate_features=candidate_features,
+                )
                 c["param_tier"] = self._determine_param_tier(
                     c["param_match"], c["param_score"], c["param_detail"])
                 # 无参数分支：LTR参数特征设为默认值（无参数可比较）
@@ -283,6 +457,7 @@ class ParamValidator:
             # 无参数分支：用LTR模型或品类词主导排序
             self._ltr_sort(candidates, query_text, search_books=search_books)
             self._logic_rectify(candidates)
+            self._context_rectify(candidates)
             return candidates
 
         # 逐个验证候选定额
@@ -306,7 +481,12 @@ class ParamValidator:
             merged_quota_params["_quota_name"] = candidate.get("name", "")
 
             # 执行参数匹配
-            is_match, score, detail = self._check_params(bill_params, merged_quota_params)
+            is_match, score, detail = self._check_params(
+                bill_params,
+                merged_quota_params,
+                bill_canonical_features=bill_canonical_features,
+                quota_canonical_features=candidate_features,
+            )
 
             # 负向关键词检查：清单没提到"防爆"/"铜制"，定额却包含 → 降分
             neg_penalty, neg_detail = self._check_negative_keywords(
@@ -349,6 +529,15 @@ class ParamValidator:
                 bill_canonical_features=bill_canonical_features,
                 candidate_features=candidate_features,
             )
+            is_match, score, detail = self._apply_context_alignment(
+                candidate=candidate,
+                is_match=is_match,
+                score=score,
+                detail=detail,
+                bill_canonical_features=bill_canonical_features,
+                context_prior=effective_context_prior,
+                candidate_features=candidate_features,
+            )
 
             candidate["param_score"] = score
             candidate["param_detail"] = detail
@@ -371,6 +560,8 @@ class ParamValidator:
         # M1档位纠偏：LTR排完序后，如果同家族内有参数更匹配的候选，强制提升
         self._tier_rectify(validated, bill_params)
         self._logic_rectify(validated)
+        self._context_rectify(validated)
+        self._feature_rectify(validated)
 
         return validated
 
@@ -519,6 +710,126 @@ class ParamValidator:
             best.get("name", "")[:80],
             top1_logic,
             best_logic,
+        )
+        candidates.insert(0, candidates.pop(best_idx))
+
+    def _context_rectify(self, candidates: list[dict]):
+        """瀵逛笂涓嬫枃鍛戒腑鏄庢樉鏇村ソ鐨勫€欓€夊仛淇濆畧绾犲亸銆?"""
+        if not candidates or len(candidates) < 2:
+            return
+
+        top1 = candidates[0]
+        top1_score = float(top1.get("context_alignment_score", self._CONTEXT_DEFAULT))
+        top1_param = float(top1.get("param_score", 0.0))
+
+        best_idx = -1
+        best_key = None
+        for idx, candidate in enumerate(candidates[:10]):
+            if idx == 0:
+                continue
+            if candidate.get("context_alignment_hard_conflict"):
+                continue
+            if not candidate.get("param_match", True):
+                continue
+
+            context_score = float(candidate.get("context_alignment_score", self._CONTEXT_DEFAULT))
+            comparable_count = int(candidate.get("context_alignment_comparable_count", 0) or 0)
+            if comparable_count < 2:
+                continue
+            if context_score < 0.78:
+                continue
+
+            key = (
+                context_score,
+                float(candidate.get("param_score", 0.0)),
+                float(candidate.get("logic_score", self._LOGIC_DEFAULT)),
+                float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0))),
+            )
+            if best_key is None or key > best_key:
+                best_idx = idx
+                best_key = key
+
+        if best_idx <= 0:
+            return
+
+        best = candidates[best_idx]
+        best_score = float(best.get("context_alignment_score", self._CONTEXT_DEFAULT))
+        best_param = float(best.get("param_score", 0.0))
+        if best_score < top1_score + 0.15:
+            return
+        if best_param + 0.03 < top1_param:
+            return
+
+        logger.debug(
+            "context rectify: [{}] -> [{}] ({:.2f}->{:.2f})",
+            top1.get("name", "")[:80],
+            best.get("name", "")[:80],
+            top1_score,
+            best_score,
+        )
+        candidates.insert(0, candidates.pop(best_idx))
+
+    def _feature_rectify(self, candidates: list[dict]):
+        """对结构化锚点明显更优的候选做最终纠偏。"""
+        if not candidates or len(candidates) < 2:
+            return
+
+        top1 = candidates[0]
+        top1_score = float(top1.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
+        top1_exact = int(top1.get("feature_alignment_exact_anchor_count", 0) or 0)
+        top1_param = float(top1.get("param_score", 0.0))
+
+        best_idx = -1
+        best_key = None
+        for idx, candidate in enumerate(candidates[:10]):
+            if idx == 0:
+                continue
+            if candidate.get("feature_alignment_hard_conflict"):
+                continue
+            if not candidate.get("param_match", True):
+                continue
+
+            feature_score = float(candidate.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
+            exact_anchor_count = int(candidate.get("feature_alignment_exact_anchor_count", 0) or 0)
+            comparable_count = int(candidate.get("feature_alignment_comparable_count", 0) or 0)
+            if comparable_count < 2:
+                continue
+            if feature_score < 0.80 and exact_anchor_count < 2:
+                continue
+
+            key = (
+                feature_score,
+                exact_anchor_count,
+                float(candidate.get("param_score", 0.0)),
+                float(candidate.get("logic_score", self._LOGIC_DEFAULT)),
+                float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0))),
+            )
+            if best_key is None or key > best_key:
+                best_idx = idx
+                best_key = key
+
+        if best_idx <= 0:
+            return
+
+        best = candidates[best_idx]
+        best_score = float(best.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
+        best_exact = int(best.get("feature_alignment_exact_anchor_count", 0) or 0)
+        best_param = float(best.get("param_score", 0.0))
+        if best_score < top1_score + 0.18 and best_exact <= top1_exact:
+            return
+        if best_exact < top1_exact and best_score < top1_score + 0.25:
+            return
+        if best_param + 0.04 < top1_param:
+            return
+
+        logger.debug(
+            "feature rectify: [{}] -> [{}] ({:.2f}->{:.2f}, anchors {}->{})",
+            top1.get("name", "")[:80],
+            best.get("name", "")[:80],
+            top1_score,
+            best_score,
+            top1_exact,
+            best_exact,
         )
         candidates.insert(0, candidates.pop(best_idx))
 
@@ -816,9 +1127,22 @@ class ParamValidator:
         cached = candidate.get("candidate_canonical_features")
         if cached:
             return dict(cached)
+        cached = candidate.get("canonical_features")
+        if cached:
+            return dict(cached)
+        candidate_specialty = (
+            candidate.get("specialty")
+            or get_book_from_quota_id(candidate.get("quota_id", ""))
+            or ""
+        )
+        raw_text = " ".join(
+            part for part in (candidate.get("name", ""), candidate.get("description", ""))
+            if part
+        ).strip()
         return text_parser.parse_canonical(
-            candidate.get("name", ""),
+            raw_text or candidate.get("name", ""),
             params=merged_quota_params,
+            specialty=candidate_specialty,
         )
 
     @classmethod
@@ -826,6 +1150,28 @@ class ParamValidator:
         if not bill_entity or not candidate_entity or bill_entity == candidate_entity:
             return False
         return frozenset((bill_entity, candidate_entity)) in cls._FEATURE_ENTITY_HARD_CONFLICTS
+
+    @classmethod
+    def _is_system_hard_conflict(cls, bill_system: str, candidate_system: str) -> bool:
+        if not bill_system or not candidate_system or bill_system == candidate_system:
+            return False
+        if "消防" in (bill_system, candidate_system):
+            other = candidate_system if bill_system == "消防" else bill_system
+            if other in {"给排水", "通风空调"}:
+                return True
+        return frozenset((bill_system, candidate_system)) in cls._FEATURE_SYSTEM_HARD_CONFLICTS
+
+    @classmethod
+    def _find_trait_hard_conflict(cls, bill_traits: set[str],
+                                  candidate_traits: set[str]) -> tuple[str, str] | None:
+        if not bill_traits or not candidate_traits:
+            return None
+        for group in cls._FEATURE_TRAIT_CONFLICT_GROUPS:
+            bill_hit = next((trait for trait in group if trait in bill_traits), "")
+            candidate_hit = next((trait for trait in group if trait in candidate_traits), "")
+            if bill_hit and candidate_hit and bill_hit != candidate_hit:
+                return bill_hit, candidate_hit
+        return None
 
     @classmethod
     def _compare_feature_text(cls, bill_value: str, candidate_value: str) -> float | None:
@@ -840,6 +1186,65 @@ class ParamValidator:
         overlap = cls._compute_token_overlap(bill_value, candidate_value)
         return 0.25 + overlap * 0.5
 
+    @classmethod
+    def _is_family_hard_conflict(cls, bill_family: str, candidate_family: str) -> bool:
+        if not bill_family or not candidate_family or bill_family == candidate_family:
+            return False
+        return frozenset((bill_family, candidate_family)) in cls._FEATURE_FAMILY_HARD_CONFLICTS
+
+    def _score_family_alignment(self, bill_canonical_features: dict,
+                                candidate_features: dict) -> dict:
+        bill_family = str((bill_canonical_features or {}).get("family") or "").strip()
+        candidate_family = str((candidate_features or {}).get("family") or "").strip()
+        bill_entity = str((bill_canonical_features or {}).get("entity") or "").strip()
+        candidate_entity = str((candidate_features or {}).get("entity") or "").strip()
+
+        if not bill_family or not candidate_family:
+            return {
+                "score": self._FEATURE_ALIGNMENT_DEFAULT,
+                "detail": "",
+                "hard_conflict": False,
+                "comparable_count": 0,
+                "exact_anchor_count": 0,
+            }
+
+        if self._is_family_hard_conflict(bill_family, candidate_family):
+            return {
+                "score": 0.0,
+                "detail": f"家族冲突:{bill_family}!={candidate_family}",
+                "hard_conflict": True,
+                "comparable_count": 1,
+                "exact_anchor_count": 0,
+            }
+
+        if bill_family == candidate_family:
+            if (
+                bill_family in self._FEATURE_STRICT_FAMILY_ENTITY_MATCH
+                and bill_entity and candidate_entity and bill_entity != candidate_entity
+            ):
+                return {
+                    "score": 0.0,
+                    "detail": f"家族内实体冲突:{bill_entity}!={candidate_entity}",
+                    "hard_conflict": True,
+                    "comparable_count": 1,
+                    "exact_anchor_count": 0,
+                }
+            return {
+                "score": 1.0,
+                "detail": f"家族:{candidate_family}",
+                "hard_conflict": False,
+                "comparable_count": 1,
+                "exact_anchor_count": 1,
+            }
+
+        return {
+            "score": 0.25,
+            "detail": f"家族偏差:{bill_family}!={candidate_family}",
+            "hard_conflict": False,
+            "comparable_count": 1,
+            "exact_anchor_count": 0,
+        }
+
     def _score_feature_alignment(self, bill_canonical_features: dict,
                                  candidate_features: dict) -> dict:
         bill_canonical_features = dict(bill_canonical_features or {})
@@ -847,6 +1252,22 @@ class ParamValidator:
         components: list[tuple[str, float, float]] = []
         details: list[str] = []
         hard_conflict = False
+        exact_anchor_count = 0
+
+        family_alignment = self._score_family_alignment(
+            bill_canonical_features=bill_canonical_features,
+            candidate_features=candidate_features,
+        )
+        if family_alignment["comparable_count"] > 0:
+            components.append((
+                "family",
+                self._FEATURE_ALIGNMENT_WEIGHTS["family"],
+                family_alignment["score"],
+            ))
+            if family_alignment["detail"]:
+                details.append(family_alignment["detail"])
+            hard_conflict = hard_conflict or family_alignment["hard_conflict"]
+            exact_anchor_count += family_alignment.get("exact_anchor_count", 0)
 
         bill_entity = str(bill_canonical_features.get("entity") or "")
         candidate_entity = str(candidate_features.get("entity") or "")
@@ -854,6 +1275,7 @@ class ParamValidator:
             if bill_entity == candidate_entity:
                 components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 1.0))
                 details.append(f"实体:{bill_entity}")
+                exact_anchor_count += 1
             elif self._is_entity_hard_conflict(bill_entity, candidate_entity):
                 components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 0.0))
                 details.append(f"实体冲突:{bill_entity}!={candidate_entity}")
@@ -880,10 +1302,18 @@ class ParamValidator:
         bill_system = str(bill_canonical_features.get("system") or "")
         candidate_system = str(candidate_features.get("system") or "")
         if bill_system and candidate_system:
-            system_score = 1.0 if bill_system == candidate_system else 0.2
+            if bill_system == candidate_system:
+                system_score = 1.0
+                exact_anchor_count += 1
+            elif self._is_system_hard_conflict(bill_system, candidate_system):
+                system_score = 0.0
+                hard_conflict = True
+            else:
+                system_score = 0.2
             components.append(("system", self._FEATURE_ALIGNMENT_WEIGHTS["system"], system_score))
             details.append(
                 f"系统:{candidate_system}" if system_score == 1.0
+                else f"系统冲突:{bill_system}!={candidate_system}" if system_score == 0.0
                 else f"系统偏差:{bill_system}!={candidate_system}"
             )
 
@@ -893,6 +1323,7 @@ class ParamValidator:
             if bill_material == candidate_material:
                 material_score = 1.0
                 details.append(f"材质:{candidate_material}")
+                exact_anchor_count += 1
             elif self._materials_compatible(bill_material, candidate_material):
                 material_score = 0.8
                 details.append(f"材质兼容:{bill_material}~{candidate_material}")
@@ -907,6 +1338,7 @@ class ParamValidator:
             if bill_connection == candidate_connection:
                 connection_score = 1.0
                 details.append(f"连接:{candidate_connection}")
+                exact_anchor_count += 1
             elif self._connections_compatible_pv(bill_connection, candidate_connection):
                 connection_score = 0.8
                 details.append(f"连接兼容:{bill_connection}~{candidate_connection}")
@@ -928,6 +1360,8 @@ class ParamValidator:
                 or self._install_methods_compatible(bill_install_method, candidate_install_method)
                 else 0.25
             )
+            if install_score == 1.0:
+                exact_anchor_count += 1
             components.append((
                 "install_method",
                 self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
@@ -947,13 +1381,23 @@ class ParamValidator:
             if str(value).strip()
         }
         if bill_traits and candidate_traits:
-            trait_overlap = len(bill_traits & candidate_traits) / len(bill_traits | candidate_traits)
+            trait_conflict = self._find_trait_hard_conflict(bill_traits, candidate_traits)
+            if trait_conflict:
+                trait_overlap = 0.0
+                hard_conflict = True
+                details.append(f"特征冲突:{trait_conflict[0]}!={trait_conflict[1]}")
+            else:
+                trait_overlap = len(bill_traits & candidate_traits) / len(bill_traits | candidate_traits)
+                if trait_overlap == 1.0:
+                    exact_anchor_count += 1
             components.append((
                 "traits",
                 self._FEATURE_ALIGNMENT_WEIGHTS["traits"],
                 trait_overlap,
             ))
-            if trait_overlap > 0:
+            if trait_conflict:
+                pass
+            elif trait_overlap > 0:
                 details.append(f"特征:{'/'.join(sorted(bill_traits & candidate_traits))}")
             else:
                 details.append("特征偏差")
@@ -969,6 +1413,7 @@ class ParamValidator:
             "detail": "; ".join(details),
             "hard_conflict": hard_conflict,
             "comparable_count": len(components),
+            "exact_anchor_count": exact_anchor_count,
         }
 
     def _apply_feature_alignment(self, candidate: dict, *,
@@ -983,18 +1428,196 @@ class ParamValidator:
         candidate["feature_alignment_detail"] = alignment["detail"]
         candidate["feature_alignment_hard_conflict"] = alignment["hard_conflict"]
         candidate["feature_alignment_comparable_count"] = alignment["comparable_count"]
+        candidate["feature_alignment_exact_anchor_count"] = alignment.get("exact_anchor_count", 0)
 
         if alignment["hard_conflict"]:
             score = min(score, 0.25)
             is_match = False
         elif alignment["comparable_count"] > 0:
-            score = score * (1.0 - self._FEATURE_ALIGNMENT_BLEND) + (
-                alignment["score"] * self._FEATURE_ALIGNMENT_BLEND
-            )
+            blend = self._FEATURE_ALIGNMENT_BLEND
+            if alignment["comparable_count"] >= 4:
+                blend = max(blend, 0.28)
+            if alignment.get("exact_anchor_count", 0) >= 2:
+                blend = max(blend, 0.34)
+            score = score * (1.0 - blend) + (alignment["score"] * blend)
+            if alignment.get("exact_anchor_count", 0) >= 3:
+                score = max(score, 0.78)
+            elif alignment["comparable_count"] >= 3 and alignment["score"] <= 0.35:
+                score = min(score, 0.42)
 
         if alignment["detail"]:
             feature_detail = f"特征对齐{alignment['score']:.2f} [{alignment['detail']}]"
             detail = f"{detail}; {feature_detail}" if detail else feature_detail
+        return is_match, score, detail
+
+    @classmethod
+    def _specialty_to_system(cls, specialty: str) -> str:
+        return cls._SPECIALTY_SYSTEM_MAP.get(str(specialty or "").strip().upper(), "")
+
+    @classmethod
+    def _extract_context_cable_type(cls, text: str) -> str:
+        text = str(text or "")
+        upper_text = text.upper()
+        if any(keyword in text for keyword in ("光纤", "光缆")):
+            return "光缆"
+        if any(keyword in text for keyword in ("双绞线", "网线", "网络线")):
+            return "双绞线"
+        if "软导线" in text:
+            return "软导线"
+        if re.search(r'(?:YJV|YJY|KVV|VV|JKYJ|BBTRZ|BTTZ)', upper_text):
+            return "电缆"
+        if re.search(r'(?:BV|BVR|BYJ|RVS|RVV)', upper_text):
+            return "电线"
+        if "电缆" in text:
+            return "电缆"
+        if "电线" in text or "导线" in text or "配线" in text:
+            return "电线"
+        return ""
+
+    @classmethod
+    def _candidate_context_system(cls, candidate: dict, candidate_features: dict) -> str:
+        system = str((candidate_features or {}).get("system") or "").strip()
+        if system:
+            return system
+        return cls._specialty_to_system(get_book_from_quota_id(candidate.get("quota_id", "")) or "")
+
+    @classmethod
+    def _context_system_hard_conflict(cls, expected_system: str,
+                                      candidate_system: str) -> bool:
+        if not expected_system or not candidate_system or expected_system == candidate_system:
+            return False
+        if "消防" in (expected_system, candidate_system):
+            other = candidate_system if expected_system == "消防" else expected_system
+            if other in {"给排水", "通风空调"}:
+                return True
+        return frozenset((expected_system, candidate_system)) in cls._CONTEXT_SYSTEM_HARD_CONFLICTS
+
+    def _score_context_alignment(self, candidate: dict, *,
+                                 bill_canonical_features: dict,
+                                 context_prior: dict,
+                                 candidate_features: dict) -> dict:
+        bill_canonical_features = dict(bill_canonical_features or {})
+        context_prior = dict(context_prior or {})
+        candidate_features = dict(candidate_features or {})
+
+        components: list[tuple[str, float, float]] = []
+        details: list[str] = []
+        hard_conflict = False
+
+        expected_specialty = str(
+            context_prior.get("specialty")
+            or bill_canonical_features.get("specialty")
+            or ""
+        ).strip().upper()
+        candidate_book = str(
+            get_book_from_quota_id(candidate.get("quota_id", "")) or ""
+        ).strip().upper()
+        if expected_specialty and candidate_book:
+            specialty_score = 1.0 if expected_specialty == candidate_book else 0.2
+            components.append(("specialty", self._CONTEXT_WEIGHTS["specialty"], specialty_score))
+            details.append(
+                f"专业:{candidate_book}" if specialty_score == 1.0
+                else f"专业偏差:{expected_specialty}!={candidate_book}"
+            )
+
+        expected_system = str(bill_canonical_features.get("system") or "").strip()
+        if not expected_system:
+            expected_system = self._specialty_to_system(expected_specialty)
+        candidate_system = self._candidate_context_system(candidate, candidate_features)
+        if expected_system and candidate_system:
+            system_score = 1.0 if expected_system == candidate_system else 0.15
+            components.append(("system", self._CONTEXT_WEIGHTS["system"], system_score))
+            details.append(
+                f"上下文系统:{candidate_system}" if system_score == 1.0
+                else f"上下文系统冲突:{expected_system}!={candidate_system}"
+            )
+            hard_conflict = hard_conflict or self._context_system_hard_conflict(
+                expected_system, candidate_system)
+
+        expected_cable_type = str(context_prior.get("cable_type") or "").strip()
+        if not expected_cable_type:
+            expected_cable_type = self._extract_context_cable_type(
+                bill_canonical_features.get("raw_text") or ""
+            )
+        candidate_cable_type = self._extract_context_cable_type(candidate.get("name", ""))
+        if expected_cable_type and candidate_cable_type:
+            cable_score = 1.0 if expected_cable_type == candidate_cable_type else 0.1
+            components.append(("cable_type", self._CONTEXT_WEIGHTS["cable_type"], cable_score))
+            details.append(
+                f"线缆:{candidate_cable_type}" if cable_score == 1.0
+                else f"线缆偏差:{expected_cable_type}!={candidate_cable_type}"
+            )
+            if ("光缆" in (expected_cable_type, candidate_cable_type)
+                    and expected_cable_type != candidate_cable_type):
+                hard_conflict = True
+
+        prior_family = str(context_prior.get("prior_family") or "").strip()
+        if prior_family:
+            prior_family_score = self._compare_feature_text(prior_family, candidate.get("name", "")) or 0.2
+            components.append(("prior_family", self._CONTEXT_WEIGHTS["prior_family"], prior_family_score))
+            details.append(
+                f"先验家族:{prior_family}" if prior_family_score >= 0.8
+                else f"先验家族偏差:{prior_family}"
+            )
+
+        context_hints = [
+            str(value).strip() for value in (context_prior.get("context_hints") or [])
+            if str(value).strip()
+        ]
+        if context_hints:
+            candidate_name = candidate.get("name", "")
+            candidate_canonical_name = str(candidate_features.get("canonical_name") or "")
+            hint_hits = 0
+            for hint in context_hints[:3]:
+                if hint in candidate_name or (candidate_canonical_name and hint in candidate_canonical_name):
+                    hint_hits += 1
+            hint_score = hint_hits / max(len(context_hints[:3]), 1)
+            components.append(("context_hints", self._CONTEXT_WEIGHTS["context_hints"], hint_score))
+            details.append(
+                f"上下文提示:{hint_hits}/{len(context_hints[:3])}"
+                if hint_hits else "上下文提示未命中"
+            )
+
+        total_weight = sum(weight for _, weight, _ in components)
+        if total_weight <= 0:
+            score = self._CONTEXT_DEFAULT
+        else:
+            score = sum(weight * value for _, weight, value in components) / total_weight
+
+        return {
+            "score": score,
+            "detail": "; ".join(details),
+            "hard_conflict": hard_conflict,
+            "comparable_count": len(components),
+        }
+
+    def _apply_context_alignment(self, candidate: dict, *,
+                                 is_match: bool, score: float, detail: str,
+                                 bill_canonical_features: dict,
+                                 context_prior: dict,
+                                 candidate_features: dict) -> tuple[bool, float, str]:
+        alignment = self._score_context_alignment(
+            candidate=candidate,
+            bill_canonical_features=bill_canonical_features,
+            context_prior=context_prior,
+            candidate_features=candidate_features,
+        )
+        candidate["context_alignment_score"] = alignment["score"]
+        candidate["context_alignment_detail"] = alignment["detail"]
+        candidate["context_alignment_hard_conflict"] = alignment["hard_conflict"]
+        candidate["context_alignment_comparable_count"] = alignment["comparable_count"]
+
+        if alignment["hard_conflict"]:
+            score = min(score, 0.2)
+            is_match = False
+        elif alignment["comparable_count"] > 0:
+            score = score * (1.0 - self._CONTEXT_SCORE_BLEND) + (
+                alignment["score"] * self._CONTEXT_SCORE_BLEND
+            )
+
+        if alignment["detail"]:
+            context_detail = f"上下文对齐{alignment['score']:.2f} [{alignment['detail']}]"
+            detail = f"{detail}; {context_detail}" if detail else context_detail
         return is_match, score, detail
 
     @classmethod
@@ -1130,6 +1753,60 @@ class ParamValidator:
             return 1.0, f"{label}={candidate_value:g}", False, True
         return 0.0, f"{label}{target_value:g}!={candidate_value:g}", True, False
 
+    @classmethod
+    def _infer_logic_mode(cls, quota_name: str, key: str) -> str:
+        quota_name = quota_name or ""
+        if ">" in quota_name:
+            return "lower_strict"
+        if "<" in quota_name:
+            return "upper_strict"
+        if any(marker in quota_name for marker in cls._LOGIC_LOWER_MARKERS):
+            return "lower"
+        if any(marker in quota_name for marker in cls._LOGIC_UPPER_MARKERS):
+            return "upper"
+        if key in cls._LOGIC_DEFAULT_UPPER_PARAMS:
+            return "upper"
+        return "exact"
+
+    def _score_logic_target(self, key: str, target_value: float,
+                            candidate_rule: dict) -> tuple[float, str, bool, bool]:
+        candidate_value = float(candidate_rule["value"])
+        mode = candidate_rule.get("mode", "exact")
+        label = self._LOGIC_PARAM_LABELS.get(key, key)
+
+        if mode == "upper":
+            if target_value <= candidate_value:
+                score = 1.0 if target_value == candidate_value else self._tier_up_score(
+                    target_value, candidate_value)
+                return score, f"{label}<={candidate_value:g}", False, target_value == candidate_value
+            return 0.0, f"{label}{target_value:g}>{candidate_value:g}", True, False
+
+        if mode == "upper_strict":
+            if target_value < candidate_value:
+                score = self._tier_up_score(target_value, candidate_value)
+                return score, f"{label}<{candidate_value:g}", False, False
+            return 0.0, f"{label}{target_value:g}>={candidate_value:g}", True, False
+
+        if mode == "lower":
+            if target_value >= candidate_value:
+                if target_value == candidate_value:
+                    return 1.0, f"{label}>={candidate_value:g}", False, True
+                ratio = max(target_value / max(candidate_value, 1.0), 1.0)
+                score = max(0.75, min(1.0, 1.0 - 0.05 * math.log2(ratio)))
+                return score, f"{label}>={candidate_value:g}", False, False
+            return 0.0, f"{label}{target_value:g}<{candidate_value:g}", True, False
+
+        if mode == "lower_strict":
+            if target_value > candidate_value:
+                ratio = max(target_value / max(candidate_value, 1.0), 1.0)
+                score = max(0.75, min(1.0, 1.0 - 0.05 * math.log2(ratio)))
+                return score, f"{label}>{candidate_value:g}", False, False
+            return 0.0, f"{label}{target_value:g}<={candidate_value:g}", True, False
+
+        if target_value == candidate_value:
+            return 1.0, f"{label}={candidate_value:g}", False, True
+        return 0.0, f"{label}{target_value:g}!={candidate_value:g}", True, False
+
     def _score_logic_alignment(self, bill_logic_targets: dict,
                                candidate_logic_profile: dict) -> dict:
         bill_logic_targets = dict(bill_logic_targets or {})
@@ -1202,6 +1879,8 @@ class ParamValidator:
             params["dn"] = candidate["dn"]
         if candidate.get("cable_section") is not None:
             params["cable_section"] = candidate["cable_section"]
+        if candidate.get("cable_cores") is not None:
+            params["cable_cores"] = candidate["cable_cores"]
         if candidate.get("kva") is not None:
             params["kva"] = candidate["kva"]
         if candidate.get("kv") is not None:
@@ -1218,6 +1897,8 @@ class ParamValidator:
             params["install_method"] = candidate["install_method"]
         if candidate.get("circuits") is not None:
             params["circuits"] = candidate["circuits"]
+        if candidate.get("port_count") is not None:
+            params["port_count"] = candidate["port_count"]
         if candidate.get("shape"):
             params["shape"] = candidate["shape"]
         if candidate.get("perimeter") is not None:
@@ -1504,7 +2185,7 @@ class ParamValidator:
 
     # 安装方式兼容组：同组内的表达方式互相兼容（一个方式可出现在多组中）
     _INSTALL_COMPAT_GROUPS = [
-        {"挂墙", "壁挂", "悬挂"},  # 明装系：悬挂/挂墙/壁挂（外露安装）
+        {"挂墙", "挂壁", "壁挂", "悬挂"},  # 明装系：悬挂/挂墙/壁挂（外露安装）
         {"明装", "明敷"},  # 电气设备用"明装"，母线/线缆用"明敷"
         {"暗装", "暗敷", "嵌入", "嵌墙"},  # 暗装系：暗装/嵌入/嵌墙（墙体内安装）
     ]
@@ -1584,7 +2265,9 @@ class ParamValidator:
         # 定额有参数且匹配通过 → 精确匹配层
         return 2
 
-    def _check_params(self, bill_params: dict, quota_params: dict) -> tuple[bool, float, str]:
+    def _check_params(self, bill_params: dict, quota_params: dict,
+                      bill_canonical_features: dict | None = None,
+                      quota_canonical_features: dict | None = None) -> tuple[bool, float, str]:
         """
         对比清单参数和定额参数
 
@@ -1595,7 +2278,7 @@ class ParamValidator:
         返回:
             (是否匹配, 分数0-1, 详情说明)
         """
-        if not quota_params:
+        if not quota_params and not quota_canonical_features:
             return True, 0.8, "定额无参数可验证"
 
         details = []  # 记录每项检查结果
@@ -1606,6 +2289,8 @@ class ParamValidator:
         install_result = self._get_installation_validator().validate(
             bill_params=bill_params,
             quota_params=quota_params,
+            bill_canonical_features=bill_canonical_features,
+            quota_canonical_features=quota_canonical_features,
         )
         details.extend(install_result["details"])
         score_sum += install_result["score_sum"]

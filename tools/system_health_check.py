@@ -160,6 +160,7 @@ def _build_checks(mode: str) -> list[tuple[str, callable]]:
                         "import src.match_core, src.match_pipeline, src.match_engine, src.agent_matcher; "
                         "import src.query_builder, src.quota_db, src.hybrid_searcher, src.param_validator; "
                         "import src.output_writer, src.experience_db, src.rule_validator, src.text_parser; "
+                        "import tools.run_install_smoke; "
                         "import src.vector_engine, src.reranker; "
                         "import src.experience_importer, src.experience_manager; "
                         "import src.rule_family, src.rule_post_validator; "

@@ -12,15 +12,18 @@
 这些函数不依赖 match_pipeline 或 match_engine，只依赖外部模块。
 """
 
+import inspect
 import json
 import random
 
 from loguru import logger
 
 import config
+from src.ambiguity_gate import analyze_ambiguity
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
+from src.policy_engine import PolicyEngine
 
 
 # ============================================================
@@ -214,8 +217,54 @@ def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> l
             "rerank_score": _safe_float_value(
                 c.get("rerank_score", c.get("hybrid_score", 0)), 0.0
             ),
+            "reasoning": summarize_candidate_reasoning(c),
         })
     return summary
+
+
+def summarize_candidate_reasoning(candidate: dict) -> dict:
+    """抽取候选解释，供 trace/结果输出复用。"""
+    candidate = candidate or {}
+    reasoning = {
+        "param_match": bool(candidate.get("param_match", True)),
+        "param_score": _safe_float_value(candidate.get("param_score"), 0.0),
+        "param_tier": int(candidate.get("param_tier", 1) or 1),
+        "name_bonus": _safe_float_value(candidate.get("name_bonus"), 0.0),
+        "rerank_score": _safe_float_value(
+            candidate.get("rerank_score", candidate.get("hybrid_score", 0)), 0.0
+        ),
+    }
+
+    layers = {}
+    for prefix, key in (
+        ("feature_alignment", "feature"),
+        ("logic", "logic"),
+        ("context_alignment", "context"),
+    ):
+        score = candidate.get(f"{prefix}_score")
+        detail = str(candidate.get(f"{prefix}_detail", "") or "").strip()
+        comparable_count = int(candidate.get(f"{prefix}_comparable_count", 0) or 0)
+        hard_conflict = bool(candidate.get(f"{prefix}_hard_conflict", False))
+        if score is None and not detail and comparable_count <= 0 and not hard_conflict:
+            continue
+        layers[key] = {
+            "score": _safe_float_value(score, 0.0),
+            "detail": detail,
+            "comparable_count": comparable_count,
+            "hard_conflict": hard_conflict,
+        }
+        if prefix == "logic":
+            layers[key]["exact_primary_match"] = bool(
+                candidate.get("logic_exact_primary_match", False)
+            )
+
+    if layers:
+        reasoning["layers"] = layers
+
+    detail = str(candidate.get("param_detail", "") or "").strip()
+    if detail:
+        reasoning["detail"] = detail
+    return reasoning
 
 
 def _append_trace_step(result: dict, stage: str, **fields):
@@ -291,6 +340,32 @@ def _normalize_classification(classification: dict) -> dict:
     base["primary"] = primary
     base["fallbacks"] = fallbacks
     return base
+
+
+def _validate_candidates_with_context(validator: ParamValidator,
+                                      full_query: str,
+                                      candidates: list[dict],
+                                      *,
+                                      supplement_query: str = None,
+                                      bill_params: dict = None,
+                                      search_books: list[str] = None,
+                                      canonical_features: dict = None,
+                                      context_prior: dict = None) -> list[dict]:
+    kwargs = {
+        "supplement_query": supplement_query,
+        "bill_params": bill_params,
+        "search_books": search_books,
+    }
+    try:
+        param_names = set(inspect.signature(validator.validate_candidates).parameters)
+    except (TypeError, ValueError):
+        param_names = set()
+
+    if "canonical_features" in param_names:
+        kwargs["canonical_features"] = canonical_features
+    if "context_prior" in param_names:
+        kwargs["context_prior"] = context_prior
+    return validator.validate_candidates(full_query, candidates, **kwargs)
 
 
 # ============================================================
@@ -763,7 +838,9 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
 def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
                         search_query: str, full_query: str,
                         classification: dict,
-                        bill_params: dict = None) -> list[dict]:
+                        bill_params: dict = None,
+                        canonical_features: dict = None,
+                        context_prior: dict = None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     candidates = cascade_search(searcher, search_query, classification)
 
@@ -793,9 +870,16 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
     if candidates:
         # 从classification中提取search_books（用于v3 LTR特征book_match）
         search_books = classification.get("search_books", []) if classification else []
-        candidates = validator.validate_candidates(
-            full_query, candidates, supplement_query=search_query,
-            bill_params=bill_params, search_books=search_books)
+        candidates = _validate_candidates_with_context(
+            validator,
+            full_query,
+            candidates,
+            supplement_query=search_query,
+            bill_params=bill_params,
+            search_books=search_books,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+        )
     return candidates
 
 
@@ -831,7 +915,10 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
     item_params = item.get("params") if isinstance(item, dict) else None
     candidates = _prepare_candidates(
         searcher, reranker, validator, search_query, full_query, classification,
-        bill_params=item_params)
+        bill_params=item_params,
+        canonical_features=ctx.get("canonical_features"),
+        context_prior=ctx.get("context_prior"),
+    )
     return (
         ctx,
         full_query,
@@ -877,9 +964,10 @@ def _has_fastpath_conflict(candidates: list[dict],
     return False
 
 
-def _should_skip_agent_llm(candidates: list[dict],
-                           exp_backup: dict = None,
-                           rule_backup: dict = None) -> bool:
+def _should_skip_agent_llm_legacy(candidates: list[dict],
+                                  exp_backup: dict = None,
+                                  rule_backup: dict = None,
+                                  route_profile=None) -> bool:
     """
     Agent快速通道：参数匹配通过且分数达标的候选，跳过LLM直接采用搜索结果。
 
@@ -915,28 +1003,29 @@ def _should_skip_agent_llm(candidates: list[dict],
     if _has_fastpath_conflict(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
         return False
 
+    policy = PolicyEngine.get_route_policy(route_profile)
     top_score = _safe_float_value(top.get("param_score"), 0.0)
-    if top_score < config.AGENT_FASTPATH_SCORE:
+    if top_score < policy.agent_fastpath_score:
         return False
 
     # ===== 无参数候选盲区检查 =====
     # 清单有参数（DN/截面/回路等）但top1的param_score较低（定额无参数或参数不确定）
     # → 强制走LLM，避免无参数候选因语义得分高而盲通
-    if getattr(config, "AGENT_FASTPATH_REQUIRE_PARAM_MATCH", True):
+    if policy.require_param_match:
         top_detail = str(top.get("param_detail", ""))
         if ("定额无" in top_detail or "未指定" in top_detail) and top_score < 0.7:
             return False
 
     # ===== 单候选拦截 =====
     # 只搜到1条结果时，搜索质量不可靠（没有对比对象），强制走LLM仲裁
-    if len(candidates) < 2:
+    if len(candidates) < policy.agent_fastpath_min_candidates:
         logger.debug("FastPath拦截: 单候选，强制走LLM")
         return False
 
     # ===== 搜索排名分差检查 =====
     # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁
     # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
-    score_gap_threshold = _safe_float_value(config.AGENT_FASTPATH_SCORE_GAP, 1.0)
+    score_gap_threshold = policy.agent_fastpath_score_gap
     if score_gap_threshold > 0:
         top1_rs = _safe_float_value(
             candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0)), 0.0)
@@ -949,6 +1038,29 @@ def _should_skip_agent_llm(candidates: list[dict],
             return False  # 分差不够，让LLM来选
 
     return True
+
+
+def _should_skip_agent_llm(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None,
+                           route_profile=None) -> bool:
+    """显式歧义门控：高置信候选走快通道，歧义候选交给 Agent。"""
+    decision = analyze_ambiguity(
+        candidates,
+        exp_backup=exp_backup,
+        rule_backup=rule_backup,
+        route_profile=route_profile,
+    )
+    if decision.top_quota_id:
+        logger.debug(
+            "FastPath判定: quota={} reason={} gap={:.3f} candidates={}".format(
+                decision.top_quota_id,
+                decision.reason,
+                decision.top_score_gap,
+                decision.candidates_count,
+            )
+        )
+    return decision.can_fastpath
 
 
 def _should_audit_fastpath() -> bool:

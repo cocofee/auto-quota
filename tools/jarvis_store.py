@@ -35,9 +35,20 @@ def _parse_json_list(raw_text: str, field_name: str) -> list:
     return value
 
 
+def _build_notes(reason: str = "", feedback_payload: dict | None = None) -> str:
+    parts = [str(reason or "").strip()]
+    if feedback_payload:
+        parts.append(
+            "[feedback_payload] "
+            + json.dumps(feedback_payload, ensure_ascii=False, sort_keys=True)
+        )
+    return "\n".join(part for part in parts if part)
+
+
 def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
               reason: str = "", specialty: str = "", province: str = None,
-              confirmed: bool = False, materials: list = None):
+              confirmed: bool = False, materials: list = None,
+              feedback_payload: dict | None = None):
     """存入一条纠正到经验库
 
     参数:
@@ -53,6 +64,8 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
     # 否则写候选层（source=auto_review）待后续审核
     source = "user_confirmed" if confirmed else "auto_review"
     confidence = 95 if confirmed else 85
+    material_project_name = reason
+    reason = _build_notes(reason, feedback_payload)
 
     record_id = exp_db.add_experience(
         bill_text=bill_text,
@@ -106,7 +119,7 @@ def store_one(name: str, desc: str, quota_ids: list, quota_names: list,
                         quantity=float(mat.get("qty", 0) or 0),
                         material_code=mat.get("code", ""),
                         province=province,
-                        project_name=reason,
+                        project_name=material_project_name,
                     )
             except Exception as e:
                 from loguru import logger as _logger
@@ -200,6 +213,7 @@ def store_batch(filepath: str, province: str = None, confirmed: bool = False):
             specialty=item.get("specialty", ""),
             province=item_province,
             confirmed=confirmed,
+            feedback_payload=item.get("feedback_payload"),
         )
         if ok:
             success += 1

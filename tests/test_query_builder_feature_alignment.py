@@ -6,7 +6,7 @@ parser = TextParser()
 
 
 def test_build_quota_query_appends_feature_alignment_terms():
-    name = "配线"
+    name = "电力电缆敷设"
     description = "WDZN-BYJ 3x4+2x2.5"
     params = parser.parse(f"{name} {description}")
     context_prior = {"context_hints": ["桥架"]}

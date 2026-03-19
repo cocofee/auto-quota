@@ -145,6 +145,7 @@ class AgentMatcher:
                      reference_cases: list[dict] = None,
                      rules_context: list[dict] = None,
                      method_cards: list[dict] = None,
+                     reasoning_packet: dict = None,
                      overview_context: str = "",
                      search_query: str = "") -> dict:
         """
@@ -182,7 +183,7 @@ class AgentMatcher:
         # 构建造价员Prompt
         prompt = self._build_agent_prompt(
             bill_item, candidates, reference_cases,
-            rules_context, method_cards, overview_context
+            rules_context, method_cards, reasoning_packet, overview_context
         )
 
         # 调用大模型
@@ -281,6 +282,7 @@ class AgentMatcher:
                             reference_cases: list[dict] = None,
                             rules_context: list[dict] = None,
                             method_cards: list[dict] = None,
+                            reasoning_packet: dict = None,
                             overview_context: str = "") -> str:
         """
         构建造价员Agent的Prompt
@@ -401,6 +403,16 @@ class AgentMatcher:
         if overview_context:
             overview_text = f"\n## 整表概览\n{overview_context}"
 
+        reasoning_text = ""
+        if isinstance(reasoning_packet, dict) and reasoning_packet.get("engaged"):
+            lines = []
+            for summary in (reasoning_packet.get("conflict_summaries") or [])[:6]:
+                lines.append(f"- {summary}")
+            for point in (reasoning_packet.get("compare_points") or [])[:4]:
+                lines.append(f"- 仲裁重点: {point}")
+            if lines:
+                reasoning_text = "\n## 候选差异仲裁摘要\n" + "\n".join(lines)
+
         prompt = f"""你是一位经验丰富的工程造价师，精通{self.province}版安装工程定额。
 请像真正的造价师一样分析这条清单，从候选定额中选出最合适的。
 
@@ -413,7 +425,7 @@ class AgentMatcher:
 {overview_text}
 ## 候选定额（代码已搜索并按匹配度排序）
 {candidates_text}
-{cases_text}{method_text}{rules_text}
+{cases_text}{method_text}{rules_text}{reasoning_text}
 
 ## 分析要求
 请按以下步骤思考：

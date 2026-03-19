@@ -283,6 +283,10 @@ def check_connection_mismatch(item, quota_name, desc_lines):
     if not connection:
         return None
 
+    full_text = f"{item.get('name', '')} {' '.join(desc_lines)}"
+    if any(keyword in full_text for keyword in ("水表", "真空破坏器")):
+        return None
+
     # 定额名中的所有连接方式关键词列表
     _all_connection_words = ["沟槽", "丝扣", "螺纹", "法兰", "焊接",
                              "电熔", "热熔", "粘接", "管箍", "承插",

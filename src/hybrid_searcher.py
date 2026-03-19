@@ -25,6 +25,8 @@ from loguru import logger
 
 import config
 from src.bm25_engine import BM25Engine
+from src.candidate_canonicalizer import attach_candidate_canonical_features
+from src.query_router import build_query_route_profile, count_spec_signals
 from db.sqlite import connect as _db_connect
 
 
@@ -265,7 +267,7 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            return top_results
+            return self._finalize_candidates(top_results)
 
         if total_vector_hits == 0:
             bm25_only = self._merge_single_engine_runs(
@@ -279,7 +281,7 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            return top_results
+            return self._finalize_candidates(top_results)
 
         # ============================================================
         # 第2步：RRF融合排序
@@ -330,9 +332,11 @@ class HybridSearcher:
                 for k in keys_to_remove:
                     del self._session_cache[k]
                 logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
-            self._session_cache[cache_key] = copy.deepcopy(top_results)
+            finalized = self._finalize_candidates(top_results)
+            self._session_cache[cache_key] = copy.deepcopy(finalized)
+            return finalized
 
-        return top_results
+        return self._finalize_candidates(top_results)
 
     def _get_adaptive_weights(self, query: str, bm25_weight: float,
                               vector_weight: float) -> tuple[float, float, str]:
@@ -410,6 +414,60 @@ class HybridSearcher:
             if re.search(pattern, text, flags=re.IGNORECASE):
                 hits += 1
         return hits
+
+    def _get_adaptive_weights(self, query: str, bm25_weight: float,
+                              vector_weight: float) -> tuple[float, float, str]:
+        """
+        鏌ヨ鑷€傚簲鏉冮噸锛?
+        - 瑙勬牸鍨嬪彿/鏁板瓧鍙傛暟瀵嗛泦锛氭彁楂楤M25鍗犳瘮
+        - 绾涔夋弿杩颁负涓伙細鎻愰珮鍚戦噺鍗犳瘮
+        """
+        if not bool(getattr(config, "HYBRID_ADAPTIVE_FUSION", True)):
+            total = max(bm25_weight + vector_weight, 1e-9)
+            return bm25_weight / total, vector_weight / total, "static"
+
+        boost = float(getattr(config, "HYBRID_ADAPTIVE_BOOST", 0.18))
+        boost = min(max(boost, 0.0), 0.4)
+
+        route_profile = build_query_route_profile(query)
+        route = route_profile["route"]
+        has_complex_install_spec = bool(route_profile.get("has_complex_install_spec"))
+        reason = "balanced"
+        new_bm25 = bm25_weight
+        new_vector = vector_weight
+
+        if route in {"installation_spec", "spec_heavy"}:
+            extra_boost = 0.08 if has_complex_install_spec else 0.0
+            new_bm25 = bm25_weight + boost + extra_boost
+            new_vector = vector_weight - boost - extra_boost
+            reason = route_profile.get("reason") or (
+                "spec_heavy_installation" if has_complex_install_spec else "spec_heavy"
+            )
+        elif route == "material":
+            new_bm25 = bm25_weight + boost * 0.75
+            new_vector = vector_weight - boost * 0.75
+            reason = route_profile.get("reason") or "material_heavy"
+        elif route == "semantic_description":
+            new_bm25 = bm25_weight - boost
+            new_vector = vector_weight + boost
+            reason = route_profile.get("reason") or "semantic_heavy"
+        elif route == "ambiguous_short":
+            reason = route_profile.get("reason") or "ambiguous_short"
+
+        feedback_bias = self._get_feedback_bias()
+        if feedback_bias != 0:
+            new_bm25 += feedback_bias
+            new_vector -= feedback_bias
+            reason = f"{reason}+feedback"
+
+        new_bm25 = max(new_bm25, 0.1)
+        new_vector = max(new_vector, 0.1)
+        total = new_bm25 + new_vector
+        return new_bm25 / total, new_vector / total, reason
+
+    @staticmethod
+    def _count_spec_signals(text: str) -> int:
+        return count_spec_signals(text)
 
     def _get_feedback_bias(self) -> float:
         """
@@ -842,15 +900,19 @@ class HybridSearcher:
 
         return scored_results
 
+    def _finalize_candidates(self, candidates: list[dict]) -> list[dict]:
+        attach_candidate_canonical_features(candidates, province=self.province)
+        return candidates
+
     def search_bm25_only(self, query: str, top_k: int = None) -> list[dict]:
         """仅使用BM25搜索（调试用）"""
         top_k = top_k or config.BM25_TOP_K
-        return self.bm25_engine.search(query, top_k=top_k)
+        return self._finalize_candidates(self.bm25_engine.search(query, top_k=top_k))
 
     def search_vector_only(self, query: str, top_k: int = None) -> list[dict]:
         """仅使用向量搜索（调试用）"""
         top_k = top_k or config.VECTOR_TOP_K
-        return self.vector_engine.search(query, top_k=top_k)
+        return self._finalize_candidates(self.vector_engine.search(query, top_k=top_k))
 
     def get_status(self) -> dict:
         """获取搜索引擎状态"""

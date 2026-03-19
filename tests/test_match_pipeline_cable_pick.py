@@ -35,3 +35,15 @@ def test_pick_explicit_cable_family_candidate_prefers_terminal_head_over_laying_
     picked = _pick_explicit_cable_family_candidate(bill_text, candidates)
 
     assert picked["name"] == "1kV以下户内干包式铜芯电力电缆终端头制作、安装 铜芯干包终端头(截面mm2以下) 16"
+
+
+def test_pick_explicit_cable_family_candidate_prefers_total_cores_from_complex_bundle():
+    bill_text = "电力电缆敷设 WDZN-BYJ 3x4+2x2.5"
+    candidates = [
+        {"name": "铜芯电力电缆敷设 一般四芯电缆 电缆截面4mm2以下", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "铜芯电力电缆敷设 一般五芯电缆 电缆截面4mm2以下", "param_score": 0.8, "rerank_score": 0.7},
+    ]
+
+    picked = _pick_explicit_cable_family_candidate(bill_text, candidates)
+
+    assert picked["name"] == "铜芯电力电缆敷设 一般五芯电缆 电缆截面4mm2以下"
