@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.72';
+export const APP_VERSION = '0.2.73';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.73',
+    date: '2026-03-19',
+    changes: [
+      { type: 'admin', text: 'checkpoint current workspace state' },
+      { type: 'admin', text: 'checkpoint family alignment architecture' },
+      { type: 'admin', text: 'Add structured logic bucket scoring' },
+      { type: 'admin', text: 'Add candidate feature alignment validation' },
+      { type: 'admin', text: 'Add feature-aligned installation matching pipeline' },
+      { type: 'admin', text: 'Fix Jarvis quota ranking and cross-province correction provenance' },
+      { type: 'admin', text: 'add bill feature builder workflow' },
+    ],
+  },
   {
     version: '0.2.72',
     date: '2026-03-18',
