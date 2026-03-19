@@ -544,6 +544,62 @@ def classify_by_category_words(bill_name: str) -> tuple[str | None, str]:
 
     return None, ""
 
+
+def _resolve_code_text_conflict(code_book: str | None,
+                                bill_name: str,
+                                bill_desc: str = "") -> tuple[str | None, str]:
+    """Resolve conflicts between bill-code routing and explicit text signals.
+
+    In practice some uploaded bills carry stale or generic GB codes while the
+    item name still clearly states the true installation family, such as
+    "给水管道安装" or "排水管道安装". For these cases, a strong text signal
+    should override the code-based guess instead of locking the item into a
+    wrong specialty.
+
+    Returns:
+        (preferred_book, reason). When no strong conflict exists, returns
+        (None, "") so the caller can keep the code-based route.
+    """
+    if not code_book:
+        return None, ""
+
+    text = f"{bill_name} {bill_desc}".strip()
+    cat_book, cat_tier = classify_by_category_words(bill_name)
+    keyword_book, keyword_score, matched_keyword = _keyword_match(text) if text else (None, 0, "")
+
+    # Strongest case: mined category routing explicitly points to another book.
+    if cat_book and cat_book != code_book:
+        if cat_tier == "tier1":
+            return (
+                cat_book,
+                f"文本信号覆盖编码: 品类词路由(tier1) '{bill_name}' → {BOOKS[cat_book]['name']}",
+            )
+        if (
+            cat_tier == "tier2"
+            and keyword_book == cat_book
+            and keyword_score >= 2
+        ):
+            return (
+                cat_book,
+                f"文本信号覆盖编码: 品类词路由(tier2)+关键词 '{matched_keyword}' → {BOOKS[cat_book]['name']}",
+            )
+
+    # No category route, but multiple explicit keywords consistently point away
+    # from the code-based book. This is weaker than tier1 routing, so require a
+    # higher keyword score.
+    if (
+        keyword_book
+        and keyword_book != code_book
+        and keyword_score >= 3
+        and (not cat_book or cat_book == keyword_book)
+    ):
+        return (
+            keyword_book,
+            f"文本信号覆盖编码: 关键词匹配 '{matched_keyword}' → {BOOKS[keyword_book]['name']}",
+        )
+
+    return None, ""
+
 def classify(bill_name: str, bill_desc: str = "",
              section_title: str = None, province: str = None,
              bill_code: str = None) -> dict:
@@ -605,6 +661,23 @@ def classify(bill_name: str, bill_desc: str = "",
     if bill_code:
         code_book = classify_by_bill_code(bill_code)
         if code_book and code_book in BOOKS:
+            preferred_book, preferred_reason = _resolve_code_text_conflict(
+                code_book,
+                bill_name,
+                bill_desc,
+            )
+            if preferred_book and preferred_book in BOOKS:
+                fallbacks = BORROW_PRIORITY.get(preferred_book, ["C12"])
+                return {
+                    "primary": preferred_book,
+                    "primary_name": BOOKS[preferred_book]["name"],
+                    "fallbacks": fallbacks,
+                    "confidence": "high",
+                    "reason": (
+                        f"{preferred_reason}; 原编码 {bill_code[:4]} → "
+                        f"{BOOKS[code_book]['name']}"
+                    ),
+                }
             fallbacks = BORROW_PRIORITY.get(code_book, ["C12"])
             return {
                 "primary": code_book,

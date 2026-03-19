@@ -6,7 +6,7 @@ parser = TextParser()
 
 
 def test_build_item_context_propagates_canonical_features():
-    name = "配线"
+    name = "电力电缆敷设"
     description = "WDZN-BYJ 3x4+2x2.5"
     params = parser.parse(f"{name} {description}")
     context_prior = {"context_hints": ["桥架"]}
@@ -31,3 +31,4 @@ def test_build_item_context_propagates_canonical_features():
     assert "电缆" in context["search_query"]
     assert "桥架" in context["search_query"]
     assert "电缆" in context["full_query"]
+    assert context["query_route"]["route"] == "installation_spec"

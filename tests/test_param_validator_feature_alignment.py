@@ -140,7 +140,7 @@ def test_logic_score_rejects_under_bucket_control_cable_candidate():
 def test_logic_score_uses_bundle_total_cores_for_power_cable_family():
     validator = ParamValidator()
     results = validator.validate_candidates(
-        query_text="配线 WDZN-BYJ 3x4+2x2.5",
+        query_text="电力电缆敷设 WDZN-BYJ 3x4+2x2.5",
         candidates=[
             {
                 "quota_id": "A",
@@ -162,3 +162,464 @@ def test_logic_score_uses_bundle_total_cores_for_power_cable_family():
     five_core = next(item for item in results if item["quota_id"] == "B")
     assert five_core["logic_exact_primary_match"] is True
     assert five_core["logic_score"] > single_core["logic_score"]
+
+
+def test_logic_score_prefers_exact_switch_port_bucket():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="楼层交换机 24口千兆POE交换机",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "交换机设备安装、调试 交换机 固定配置 >24口",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "交换机设备安装、调试 交换机 固定配置 ≤24口",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    over_bucket = next(item for item in results if item["quota_id"] == "A")
+    exact_bucket = next(item for item in results if item["quota_id"] == "B")
+    assert over_bucket["logic_hard_conflict"] is True
+    assert exact_bucket["logic_exact_primary_match"] is True
+
+
+def test_feature_rectify_prefers_exact_sprinkler_trait_anchor():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="喷头安装 直立型",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "喷头安装 下垂型",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "喷头安装 直立型",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    exact_hit = next(item for item in results if item["quota_id"] == "B")
+    wrong_hit = next(item for item in results if item["quota_id"] == "A")
+    assert exact_hit["feature_alignment_exact_anchor_count"] >= 2
+    assert wrong_hit["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_rectify_prefers_jdg_conduit_family_anchor():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="JDG20 暗敷",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "镀锌钢管敷设 暗配",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "JDG管 配管 暗敷",
+                "rerank_score": 0.12,
+                "hybrid_score": 0.12,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    best = next(item for item in results if item["quota_id"] == "B")
+    assert best["feature_alignment_exact_anchor_count"] >= 3
+    assert best["feature_alignment_score"] > 0.85
+
+
+def test_feature_alignment_prefers_pressure_switch_over_regular_switch():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="压力开关安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "按钮开关安装",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "消防压力开关安装",
+                "rerank_score": 0.12,
+                "hybrid_score": 0.12,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_hvac_damper_over_generic_duct():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="风阀安装 电动调节阀",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "风管制作安装",
+                "rerank_score": 0.93,
+                "hybrid_score": 0.93,
+            },
+            {
+                "quota_id": "B",
+                "name": "风阀安装 电动调节阀",
+                "rerank_score": 0.11,
+                "hybrid_score": 0.11,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    best = next(item for item in results if item["quota_id"] == "B")
+    assert best["feature_alignment_exact_anchor_count"] >= 2
+
+
+def test_feature_alignment_prefers_alarm_button_over_generic_switch():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="手动报警按钮安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "按钮开关安装",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "手动报警按钮安装",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_sleeve_over_generic_pipe():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="刚性防水套管制作安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "钢管安装",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "刚性防水套管制作安装",
+                "rerank_score": 0.11,
+                "hybrid_score": 0.11,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_gate_valve_over_check_valve():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="闸阀安装 DN100",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "止回阀安装 DN100",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "闸阀安装 DN100",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_smoke_detector_over_heat_detector():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="感烟探测器安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "感温探测器安装",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "感烟探测器安装",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_single_phase_five_hole_outlet():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="单相五孔插座安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "三相三孔插座安装",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "单相五孔插座安装",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_toilet_over_squatting_pan():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="坐便器安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "蹲便器安装",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "坐便器安装",
+                "rerank_score": 0.12,
+                "hybrid_score": 0.12,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_filter_over_generic_valve():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="Y型过滤器 DN50",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "焊接法兰阀安装 公称直径(mm以内) 50",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "Y型过滤器安装(法兰连接) 公称直径(mm以内) 50",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    right = next(item for item in results if item["quota_id"] == "B")
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert right["feature_alignment_score"] >= wrong["feature_alignment_score"]
+
+
+def test_feature_alignment_prefers_soft_joint_over_valve():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="可曲挠橡胶接头 DN100",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "焊接法兰阀安装 公称直径(mm以内) 100",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "可曲挠橡胶接头安装 公称直径(mm以内) 100",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    right = next(item for item in results if item["quota_id"] == "B")
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert right["feature_alignment_score"] >= wrong["feature_alignment_score"]
+
+
+def test_feature_alignment_prefers_slot_bridge_over_tray_bridge():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="钢制槽式桥架",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "钢制托盘式桥架安装(宽+高mm以下) 1000",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "钢制槽式桥架安装(宽+高mm以下) 400",
+                "rerank_score": 0.12,
+                "hybrid_score": 0.12,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_prefers_wall_speaker_for_emergency_call():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="紧急呼叫扬声器",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "消防广播(扬声器)安装 扬声器 吸顶式()",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "消防广播(扬声器)安装 扬声器 壁挂式()",
+                "rerank_score": 0.08,
+                "hybrid_score": 0.08,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    ceiling = next(item for item in results if item["quota_id"] == "A")
+    wall = next(item for item in results if item["quota_id"] == "B")
+    assert wall["feature_alignment_score"] > ceiling["feature_alignment_score"]
+
+
+def test_logic_score_prefers_named_kg_weight_bucket():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="暖风机 重量(kg以内) 160",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "暖风机安装 重量(kg以内) 2000",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "暖风机安装 重量(kg以内) 160",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    exact_hit = next(item for item in results if item["quota_id"] == "B")
+    large_bucket = next(item for item in results if item["quota_id"] == "A")
+    assert exact_hit["param_score"] > large_bucket["param_score"]
+
+
+def test_feature_alignment_rejects_bridge_support_for_pipe_support_query():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="管道支架制作安装",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "电缆桥架支撑架制作",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "室内管道管道支架制作安装 一般管架",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+    assert "家族冲突" in wrong["feature_alignment_detail"]
+
+
+def test_feature_alignment_rejects_mismatched_valve_accessory_entity():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="Y型过滤器 DN50",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "水表组成安装 螺翼式水表 DN50",
+                "rerank_score": 0.96,
+                "hybrid_score": 0.96,
+            },
+            {
+                "quota_id": "B",
+                "name": "Y型过滤器安装(法兰连接) 公称直径(mm以内) 50",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    wrong = next(item for item in results if item["quota_id"] == "A")
+    assert wrong["feature_alignment_hard_conflict"] is True
+    assert "家族内实体冲突" in wrong["feature_alignment_detail"]

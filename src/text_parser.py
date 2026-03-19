@@ -188,6 +188,9 @@ class TextParser:
         dn = self._extract_dn(text)
         if dn is not None:
             result["dn"] = dn
+        elif re.search(r'水龙头|龙头', text):
+            # 未显式标注时，卫生器具中的水龙头通常按 DN15 套档。
+            result["dn"] = 15
 
         # 提取电气配管管径（SC20、PC25 等管材代号）
         # 单独存放，不参与参数验证的 DN 比较（电气配管定额不按管径分档）
@@ -211,6 +214,9 @@ class TextParser:
                 result["cable_section"] = section
             elif cable_bundle:
                 result["cable_section"] = max(spec["section"] for spec in cable_bundle)
+            cable_cores = self._extract_cable_cores(text, cable_bundle=cable_bundle)
+            if cable_cores is not None:
+                result["cable_cores"] = cable_cores
 
         # 提取容量（kVA）
         kva = self._extract_kva(text)
@@ -251,6 +257,10 @@ class TextParser:
         circuits = self._extract_circuits(text)
         if circuits is not None:
             result["circuits"] = circuits
+
+        port_count = self._extract_port_count(text)
+        if port_count is not None:
+            result["port_count"] = port_count
 
         # 提取风管形状（矩形/圆形，通风空调管道的核心分类维度）
         shape = self._extract_shape(text)
@@ -553,6 +563,32 @@ class TextParser:
 
         return None
 
+    def _extract_cable_cores(self, text: str,
+                             cable_bundle: list[dict] | None = None) -> Optional[int]:
+        """提取电缆总芯数，复杂规格按主芯和辅助芯求和。"""
+        bundle = list(cable_bundle or [])
+        if bundle:
+            total_cores = sum(
+                int(spec.get("cores", 0))
+                for spec in bundle
+                if spec.get("cores") is not None
+            )
+            if total_cores > 0:
+                return total_cores
+
+        if not text or "芯" not in text:
+            return None
+
+        match = re.search(r'(\d+)\s*芯(?:以下|以内|内|及以下)?', text)
+        if match:
+            return int(match.group(1))
+
+        match = re.search(r'([单双一二三四五六七八九十两])\s*芯', text)
+        if match:
+            return self._CN_GANG_NUM.get(match.group(1))
+
+        return None
+
     def _search_first_float(self, text: str, patterns: list[str]) -> Optional[float]:
         """Return first float captured by regex patterns, or None."""
         for pattern in patterns:
@@ -681,6 +717,13 @@ class TextParser:
         if weight_t is not None:
             return weight_t
 
+        named_kg = re.search(
+            r'(?:设备)?(?:重量|质量)\s*(?:\([kK][gG](?:以内)?\))?\s*(\d+(?:\.\d+)?)',
+            text,
+        )
+        if named_kg and "kg" in text.lower():
+            return float(named_kg.group(1)) / 1000
+
         # 千克 → 转为吨
         match = re.search(r'(\d+(?:\.\d+)?)\s*[kK][gG]', text)
         if match:
@@ -779,6 +822,22 @@ class TextParser:
             # 格式3："X路"（排除"路灯"、"路由"、"路径"等干扰词）
             r'(\d+)\s*路(?!灯|由|径|面)',
         ])
+
+    def _extract_port_count(self, text: str) -> Optional[int]:
+        """提取交换机等网络设备口数。"""
+        if not text:
+            return None
+        if not any(keyword in text for keyword in ("交换机", "配线架", "集线器", "路由器", "网络设备")):
+            return None
+
+        match = re.search(r'(\d+)\s*口', text)
+        if not match:
+            return None
+
+        value = int(match.group(1))
+        if 1 <= value <= 512:
+            return value
+        return None
 
     def _extract_shape(self, text: str) -> str:
         """
@@ -1005,10 +1064,11 @@ class TextParser:
         (["明敷设", "明敷"], "明敷"),
         (["暗敷设", "暗敷"], "暗敷"),
         # 安装方式-具体子类（长词优先）
-        (["壁挂安装", "壁挂式", "挂墙安装", "挂墙式", "挂墙"], "挂墙"),
+        (["壁挂安装", "壁挂式", "挂墙安装", "挂墙式", "挂墙", "壁式", "壁装", "墙上式"], "挂墙"),
         (["落地安装", "落地式"], "落地"),
-        (["嵌入式", "嵌入安装"], "嵌入"),
-        (["吊装", "吊顶内安装", "吊顶安装"], "吊装"),
+        (["嵌入式", "嵌入安装", "嵌顶式"], "嵌入"),
+        (["吸顶式", "吸顶安装"], "吸顶"),
+        (["吊装", "吊顶内安装", "吊顶安装", "吊顶式", "天花式", "天棚式"], "吊装"),
         (["悬挂式", "悬挂安装", "悬吊"], "悬挂"),
         # 明装/暗装（最通用的二分法，放在最后避免覆盖更具体的类型）
         (["明装"], "明装"),
@@ -1030,6 +1090,11 @@ class TextParser:
         """
         if not text:
             return ""
+        if "紧急呼叫" in text and "扬声器" in text:
+            return "挂墙"
+        upper_text = text.upper()
+        if "配电箱" in text and re.search(r'\b\d*AP\d+\b', upper_text):
+            return "落地"
         for keywords, method in self._INSTALL_METHOD_RULES:
             if any(kw in text for kw in keywords):
                 return method

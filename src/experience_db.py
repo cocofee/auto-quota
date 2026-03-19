@@ -671,6 +671,7 @@ class ExperienceDB:
                     materials_json=materials_json,
                     specialty=specialty,
                     project_name=project_name,
+                    notes=notes,
                     conn=conn, cursor=cursor, commit=False
                 )
             else:
@@ -718,6 +719,7 @@ class ExperienceDB:
                            materials_json: str = None,
                            specialty: str = None,
                            project_name: str = None,
+                           notes: str = None,
                            conn=None, cursor=None,
                            commit: bool = True) -> int:
         """更新已有的经验记录
@@ -890,6 +892,16 @@ class ExperienceDB:
             """, (record_id,))
             if cursor.rowcount > 0:
                 logger.info(f"经验库自动晋升: ID={record_id} 候选层→权威层（达到确认门槛）")
+
+        if notes:
+            cursor.execute("""
+                UPDATE experiences SET
+                    notes = CASE
+                        WHEN notes IS NULL OR notes = '' THEN ?
+                        ELSE notes || '\n' || ?
+                    END
+                WHERE id = ?
+            """, (notes, notes, record_id))
 
         if commit:
             conn.commit()

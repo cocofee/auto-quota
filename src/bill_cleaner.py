@@ -17,6 +17,11 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.context_builder import (
+    apply_batch_context as external_apply_batch_context,
+    build_context_prior as external_build_context_prior,
+    build_project_context as external_build_project_context,
+)
 from src.specialty_classifier import classify as classify_specialty
 from src.specialty_classifier import parse_section_title
 from src.text_parser import parser as text_parser
@@ -169,8 +174,15 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
                 f"名称修正{name_fixed}条, 专业分类{classified}条, "
                 f"有参数{with_params}条, 线缆标签{cable_tagged}条")
 
-    # 第二轮：局部上下文注入（为短名称歧义项补充邻居提示）
-    _annotate_local_context(items)
+    # 第二轮：批次上下文构建（邻居提示 + section/sheet 主导系统 + 项目级主题）
+    project_context = external_build_project_context(items)
+    _short_name_priors = _load_short_name_priors()
+    external_apply_batch_context(
+        items,
+        project_context=project_context,
+        is_ambiguous_fn=is_ambiguous_short_name,
+        short_name_priors=_short_name_priors,
+    )
     ambiguous_count = sum(1 for i in items if i.get("_is_ambiguous_short"))
     if ambiguous_count:
         hinted = sum(1 for i in items if i.get("_context_hints"))
@@ -178,7 +190,10 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
                     f"其中{hinted}条获得上下文提示")
 
     for item in items:
-        context_prior = _build_context_prior(item)
+        context_prior = external_build_context_prior(
+            item,
+            project_context=project_context,
+        )
         item["context_prior"] = context_prior
         full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
         item["canonical_features"] = text_parser.parse_canonical(

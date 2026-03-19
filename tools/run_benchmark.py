@@ -91,10 +91,102 @@ def load_json_papers(province_filter: str = None,
 
 
 INSTALL_PROVINCE_KEYWORDS = ("安装工程", "通用安装", "安装定额")
+NON_INSTALL_PROVINCE_KEYWORDS = (
+    "房屋建筑",
+    "建筑与装饰",
+    "建筑装饰",
+    "装饰工程",
+    "市政工程",
+    "园林绿化",
+    "仿古建筑",
+)
+MIXED_PROVINCE_KEYWORDS = ("施工消耗量标准", "消耗量标准", "建设工程")
+INSTALL_ITEM_HINTS = (
+    "安装",
+    "配电箱",
+    "配电柜",
+    "桥架",
+    "电缆",
+    "电线",
+    "照明",
+    "灯具",
+    "开关",
+    "插座",
+    "风管",
+    "风口",
+    "风阀",
+    "喷淋",
+    "消防",
+    "消火栓",
+    "给水",
+    "排水",
+    "阀门",
+    "管道",
+    "电机",
+    "交换机",
+    "网线",
+)
 
 
 def _is_install_province(province: str) -> bool:
     return any(keyword in (province or "") for keyword in INSTALL_PROVINCE_KEYWORDS)
+
+
+def _is_non_install_province(province: str) -> bool:
+    return any(keyword in (province or "") for keyword in NON_INSTALL_PROVINCE_KEYWORDS)
+
+
+def _is_mixed_province(province: str) -> bool:
+    if _is_install_province(province) or _is_non_install_province(province):
+        return False
+    return any(keyword in (province or "") for keyword in MIXED_PROVINCE_KEYWORDS)
+
+
+def _classify_province_scope(province: str) -> str:
+    if _is_install_province(province):
+        return "install"
+    if _is_non_install_province(province):
+        return "non_install"
+    if _is_mixed_province(province):
+        return "mixed"
+    return "unknown"
+
+
+def _looks_like_install_quota_id(quota_id: str) -> bool:
+    quota_id = str(quota_id or "").strip().upper()
+    if not quota_id:
+        return False
+    if re.match(r"^C\d+-", quota_id):
+        return True
+    if re.match(r"^C[A-Z]-", quota_id):
+        return True
+    if quota_id.startswith("BC-"):
+        return True
+    return False
+
+
+def _looks_like_install_specialty(specialty: str) -> bool:
+    specialty = str(specialty or "").strip().upper()
+    return bool(re.match(r"^C\d+$", specialty))
+
+
+def _looks_like_install_text(text: str) -> bool:
+    text = str(text or "")
+    return any(keyword in text for keyword in INSTALL_ITEM_HINTS)
+
+
+def _is_install_item(item: dict, province_scope: str = "unknown") -> bool:
+    quota_ids = item.get("quota_ids") or []
+    if any(_looks_like_install_quota_id(quota_id) for quota_id in quota_ids):
+        return True
+
+    if province_scope in {"install", "mixed"} and _looks_like_install_specialty(item.get("specialty", "")):
+        return True
+
+    if province_scope in {"mixed", "unknown"} and _looks_like_install_text(_item_search_text(item)):
+        return True
+
+    return province_scope == "install"
 
 
 def _item_search_text(item: dict) -> str:
@@ -117,10 +209,16 @@ def filter_json_papers(papers: dict,
     normalized_keywords = [kw.strip() for kw in (item_keywords or []) if kw and kw.strip()]
 
     for province, data in papers.items():
-        if install_only and not _is_install_province(province):
+        province_scope = _classify_province_scope(province)
+        if install_only and province_scope == "non_install":
             continue
 
         items = list(data.get("items", []))
+        if install_only and province_scope != "install":
+            items = [
+                item for item in items
+                if _is_install_item(item, province_scope=province_scope)
+            ]
         if normalized_keywords:
             items = [
                 item for item in items

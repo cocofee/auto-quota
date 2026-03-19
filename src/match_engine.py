@@ -19,9 +19,13 @@ import time
 from loguru import logger
 
 import config
+from src.context_builder import build_project_context, format_overview_context
+from src.context_builder import summarize_batch_context_for_trace
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
+from src.final_validator import FinalValidator
+from src.reasoning_agent import ReasoningAgent
 from src.match_core import (
     _append_trace_step,
     _finalize_trace,
@@ -215,6 +219,13 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reference_cases_cache = {}
     if rules_context_cache is None:
         rules_context_cache = {}
+    reasoning_packet = ReasoningAgent().build_packet(
+        item,
+        candidates,
+        route_profile=item.get("query_route"),
+        exp_backup=exp_backup,
+        rule_backup=rule_backup,
+    )
 
     reference_cases = _get_reference_cases_cached(
         reference_cases_cache, experience_db, full_query, province=province,
@@ -242,8 +253,14 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reference_cases=reference_cases,
         rules_context=rules_context,
         method_cards=relevant_cards,
+        reasoning_packet=reasoning_packet,
         search_query=search_query,
         overview_context=overview_context,
+    )
+    result["reasoning_decision"] = reasoning_packet.get("decision", {})
+    result["needs_reasoning"] = bool(reasoning_packet.get("decision", {}).get("is_ambiguous"))
+    result["require_final_review"] = bool(
+        reasoning_packet.get("decision", {}).get("require_final_review")
     )
     _append_trace_step(
         result,
@@ -253,6 +270,12 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         rules_context_count=len(rules_context or []),
         method_cards_count=len(relevant_cards or []),
         method_card_categories=[c.get("category", "") for c in (relevant_cards or [])],
+        reasoning_engaged=bool(reasoning_packet.get("engaged")),
+        reasoning_conflicts=reasoning_packet.get("conflict_summaries", []),
+        reasoning_decision=reasoning_packet.get("decision", {}),
+        reasoning_compare_points=reasoning_packet.get("compare_points", []),
+        query_route=item.get("query_route") or {},
+        batch_context=summarize_batch_context_for_trace(item),
         province=province or "",
     )
     result, exp_hits, rule_hits = _apply_mode_backups(
@@ -564,12 +587,17 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
+    FinalValidator(province=province).validate_results(results)
+
     for result in results:
         _append_trace_step(
             result,
-            "rule_post_validate",
+            "final_validate",
             final_source=result.get("match_source", ""),
             final_confidence=result.get("confidence", 0),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
         _finalize_trace(result)
 
@@ -650,23 +678,20 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     # 表级匹配统计（用于构建上下文摘要传给LLM，帮助保持同类清单一致性）
     match_stats = {}  # {"清单名称片段 → 定额编号": 计数}
     match_stats_lock = threading.Lock()
+    project_context_summary = build_project_context(bill_items)
 
-    def _build_overview_context() -> str:
-        """合并项目概览 + 已处理项统计，构建完整的上下文摘要"""
-        parts = []
-
-        # 第1部分：项目整体概览（来自 analyze_project_context，匹配前就生成好的）
-        if project_overview:
-            parts.append(project_overview)
-
-        # 第2部分：已处理项的匹配统计（随匹配进度动态积累）
+    def _build_overview_context(current_item: dict | None = None) -> str:
+        """合并项目概览 + 批次主题 + 已处理项统计，构建完整的上下文摘要"""
         with match_stats_lock:
-            if match_stats:
-                sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-                lines = [f"- {desc}: {count}条" for desc, count in sorted_stats]
-                parts.append("已处理的同类清单匹配情况：\n" + "\n".join(lines))
+            sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+            stat_lines = [f"{desc}: {count}条" for desc, count in sorted_stats]
 
-        return "\n".join(parts) if parts else ""
+        return format_overview_context(
+            item=current_item,
+            project_context=project_context_summary,
+            project_overview=project_overview,
+            match_stats=stat_lines,
+        )
 
     def _update_match_stats(result: dict):
         """从匹配结果中更新统计"""
@@ -752,8 +777,23 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
         name = ctx["name"]
         desc = ctx["desc"]
+        item["query_route"] = ctx.get("query_route")
 
-        if _should_skip_agent_llm(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
+        try:
+            should_skip_agent = _should_skip_agent_llm(
+                candidates,
+                exp_backup=exp_backup,
+                rule_backup=rule_backup,
+                route_profile=ctx.get("query_route"),
+            )
+        except TypeError:
+            should_skip_agent = _should_skip_agent_llm(
+                candidates,
+                exp_backup=exp_backup,
+                rule_backup=rule_backup,
+            )
+
+        if should_skip_agent:
             fast_result, exp_hits, rule_hits = _resolve_search_mode_result(
                 item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
             _mark_agent_fastpath(fast_result)
@@ -811,7 +851,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
             logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_query}'")
 
-            ctx = overview_ctx or _build_overview_context()
+            ctx = overview_ctx or _build_overview_context(item)
             task_exp_hits, task_rule_hits = 0, 0
 
             try:
@@ -882,7 +922,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             """单个LLM任务处理（线程安全）"""
             idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
             # 构建表级上下文摘要（在LLM调用前快照，线程安全）
-            ctx_summary = _build_overview_context()
+            ctx_summary = _build_overview_context(item)
             result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
                 agent=agent,
                 item=item,
@@ -1041,12 +1081,17 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
+    FinalValidator(province=province).validate_results(results)
+
     for result in results:
         _append_trace_step(
             result,
-            "rule_post_validate",
+            "final_validate",
             final_source=result.get("match_source", ""),
             final_confidence=result.get("confidence", 0),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
         _finalize_trace(result)
 
