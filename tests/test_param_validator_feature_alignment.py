@@ -190,6 +190,33 @@ def test_feature_alignment_rejects_cable_head_for_cable_laying_query():
     assert wrong["feature_alignment_hard_conflict"] is True
 
 
+def test_feature_alignment_prefers_copper_cable_over_aluminum_for_yjv_query():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位:室内穿管或桥架",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "铝芯电力电缆敷设 电缆截面(mm2)≤240",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "B",
+                "name": "铜芯电力电缆敷设 电缆截面(mm2)≤240",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+    )
+
+    assert results[0]["quota_id"] == "B"
+    aluminum = next(item for item in results if item["quota_id"] == "A")
+    copper = next(item for item in results if item["quota_id"] == "B")
+    assert aluminum["feature_alignment_hard_conflict"] is True
+    assert copper["feature_alignment_score"] > aluminum["feature_alignment_score"]
+
+
 def test_logic_score_prefers_exact_switch_port_bucket():
     validator = ParamValidator()
     results = validator.validate_candidates(

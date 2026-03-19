@@ -1393,8 +1393,18 @@ class ParamValidator:
                 material_score = 0.8
                 details.append(f"材质兼容:{bill_material}~{candidate_material}")
             else:
-                material_score = 0.15
-                details.append(f"材质偏差:{bill_material}!={candidate_material}")
+                if self._is_strict_cable_material_conflict(
+                    bill_material,
+                    candidate_material,
+                    bill_canonical_features=bill_canonical_features,
+                    candidate_features=candidate_features,
+                ):
+                    material_score = 0.0
+                    hard_conflict = True
+                    details.append(f"材质冲突:{bill_material}!={candidate_material}")
+                else:
+                    material_score = 0.15
+                    details.append(f"材质偏差:{bill_material}!={candidate_material}")
             components.append(("material", self._FEATURE_ALIGNMENT_WEIGHTS["material"], material_score))
 
         bill_connection = str(bill_canonical_features.get("connection") or "")
@@ -2071,6 +2081,34 @@ class ParamValidator:
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:
         """判断两种材质是否兼容（委托给 compat_primitives 统一实现）"""
         return _compat_materials_compatible(mat1, mat2)
+
+    def _is_strict_cable_material_conflict(
+        self,
+        bill_material: str,
+        candidate_material: str,
+        bill_canonical_features: dict | None = None,
+        candidate_features: dict | None = None,
+    ) -> bool:
+        """电缆场景下，铜芯/铝芯/矿物绝缘冲突应按硬冲突处理。"""
+        if not bill_material or not candidate_material:
+            return False
+        if self._materials_compatible(bill_material, candidate_material):
+            return False
+
+        strict_tokens = ("铜芯", "铝芯", "矿物绝缘")
+        joined_materials = f"{bill_material}|{candidate_material}"
+        if not any(token in joined_materials for token in strict_tokens):
+            return False
+
+        cable_families = {"cable_family", "cable_head_accessory", "wire_family"}
+        bill_family = str((bill_canonical_features or {}).get("family") or "")
+        candidate_family = str((candidate_features or {}).get("family") or "")
+        return (
+            not bill_family
+            or not candidate_family
+            or bill_family in cable_families
+            or candidate_family in cable_families
+        )
 
     @staticmethod
     def _check_negative_keywords(bill_text: str, quota_name: str) -> tuple[float, str]:
