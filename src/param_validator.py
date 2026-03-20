@@ -29,6 +29,7 @@ from src.compat_primitives import (
     materials_compatible as _compat_materials_compatible,
     connections_compatible as _compat_connections_compatible,
 )
+from src.candidate_scoring import compute_candidate_rank_score, compute_candidate_sort_key
 from src.installation_validator import InstallationValidator
 from src.specialty_classifier import get_book_from_quota_id
 
@@ -131,11 +132,12 @@ class ParamValidator:
         frozenset(("一般管架", "支撑架")),
         frozenset(("防雨百叶", "格栅风口", "钢百叶窗", "板式排烟口")),
     )
-    _CONTEXT_SCORE_BLEND = 0.22
+    # Context is useful but should not overwhelm strong structured matches.
+    _CONTEXT_SCORE_BLEND = 0.16
     _CONTEXT_DEFAULT = 0.5
     _CONTEXT_WEIGHTS = {
-        "specialty": 0.28,
-        "system": 0.30,
+        "specialty": 0.18,
+        "system": 0.40,
         "cable_type": 0.22,
         "prior_family": 0.12,
         "context_hints": 0.08,
@@ -483,6 +485,7 @@ class ParamValidator:
 
             # 传入定额名称，供速度分类等校验使用
             merged_quota_params["_quota_name"] = candidate.get("name", "")
+            merged_quota_params["_quota_id"] = candidate.get("quota_id", "")
 
             # 执行参数匹配
             is_match, score, detail = self._check_params(
@@ -490,6 +493,7 @@ class ParamValidator:
                 merged_quota_params,
                 bill_canonical_features=bill_canonical_features,
                 quota_canonical_features=candidate_features,
+                context_prior=effective_context_prior,
             )
 
             # 负向关键词检查：清单没提到"防爆"/"铜制"，定额却包含 → 降分
@@ -1009,6 +1013,7 @@ class ParamValidator:
                 scores = self._ltr_model.predict(features)
                 for i, c in enumerate(candidates):
                     # 硬失败候选不让模型翻身
+                    c["rank_score"] = compute_candidate_rank_score(c)
                     if c.get("param_tier", 1) == 0:
                         c["ltr_score"] = -1e9
                     else:
@@ -1019,14 +1024,10 @@ class ParamValidator:
                 logger.warning(f"LTR模型预测失败，回退手工公式: {e}")
 
         # 回退：手工公式排序（有参数分支权重）
+        for candidate in candidates:
+            candidate["rank_score"] = compute_candidate_rank_score(candidate)
         candidates.sort(
-            key=lambda x: (
-                x.get("param_tier", 1),
-                x.get("param_score", 0) * 0.55
-                + max(min(x.get("family_gate_score", 0.0), 2.0), -2.0) * 0.08
-                + x.get("name_bonus", 0) * 0.30
-                + (x.get("rerank_score") or x.get("hybrid_score") or 0) * 0.15,
-            ),
+            key=compute_candidate_sort_key,
             reverse=True,
         )
 
@@ -1077,13 +1078,9 @@ class ParamValidator:
         vector_ids = {candidates[i].get("quota_id", "") for i in range(n)
                       if (candidates[i].get("vector_score") or 0) > 0}
 
-        # top1的composite分（用于score_gap_to_top1）
-        top1 = candidates[0] if candidates else {}
-        top1_composite = (
-            (top1.get("param_score") or 0) * 0.55
-            + (top1.get("name_bonus") or 0) * 0.30
-            + (top1.get("rerank_score") or top1.get("hybrid_score") or 0) * 0.15
-        )
+        # top1必须和共享排序口径一致，不能依赖传入候选的现有顺序
+        rank_scores = [compute_candidate_rank_score(candidate) for candidate in candidates]
+        top1_composite = max(rank_scores, default=0.0)
 
         features = np.zeros((n, n_features), dtype=np.float64)
         for i, c in enumerate(candidates):
@@ -1092,7 +1089,7 @@ class ParamValidator:
             ps = c.get("param_score") or 0
             nb = c.get("name_bonus") or 0
             rr = c.get("rerank_score") or c.get("hybrid_score") or 0
-            composite = ps * 0.55 + nb * 0.30 + rr * 0.15
+            composite = rank_scores[i]
             cand_name = c.get("name", "")
 
             # 基础16维特征
@@ -1630,18 +1627,24 @@ class ParamValidator:
         candidate_book = str(
             get_book_from_quota_id(candidate.get("quota_id", "")) or ""
         ).strip().upper()
+        expected_system = str(bill_canonical_features.get("system") or "").strip()
+        if not expected_system:
+            expected_system = self._specialty_to_system(expected_specialty)
+        candidate_system = self._candidate_context_system(candidate, candidate_features)
         if expected_specialty and candidate_book:
-            specialty_score = 1.0 if expected_specialty == candidate_book else 0.2
+            if expected_specialty == candidate_book:
+                specialty_score = 1.0
+            elif expected_system and candidate_system and expected_system == candidate_system:
+                # 同系统的跨专业（如C10/C2）在安装场景下经常是可接受映射，降低惩罚强度。
+                specialty_score = 0.70
+            else:
+                specialty_score = 0.35
             components.append(("specialty", self._CONTEXT_WEIGHTS["specialty"], specialty_score))
             details.append(
                 f"专业:{candidate_book}" if specialty_score == 1.0
                 else f"专业偏差:{expected_specialty}!={candidate_book}"
             )
 
-        expected_system = str(bill_canonical_features.get("system") or "").strip()
-        if not expected_system:
-            expected_system = self._specialty_to_system(expected_specialty)
-        candidate_system = self._candidate_context_system(candidate, candidate_features)
         if expected_system and candidate_system:
             system_score = 1.0 if expected_system == candidate_system else 0.15
             components.append(("system", self._CONTEXT_WEIGHTS["system"], system_score))
@@ -2013,6 +2016,14 @@ class ParamValidator:
             params["connection"] = candidate["connection"]
         if candidate.get("install_method"):
             params["install_method"] = candidate["install_method"]
+        if candidate.get("outlet_grounding"):
+            params["outlet_grounding"] = candidate["outlet_grounding"]
+        if candidate.get("sanitary_water_mode"):
+            params["sanitary_water_mode"] = candidate["sanitary_water_mode"]
+        if candidate.get("sanitary_nozzle_mode"):
+            params["sanitary_nozzle_mode"] = candidate["sanitary_nozzle_mode"]
+        if candidate.get("sanitary_tank_mode"):
+            params["sanitary_tank_mode"] = candidate["sanitary_tank_mode"]
         if candidate.get("circuits") is not None:
             params["circuits"] = candidate["circuits"]
         if candidate.get("port_count") is not None:
@@ -2446,7 +2457,8 @@ class ParamValidator:
 
     def _check_params(self, bill_params: dict, quota_params: dict,
                       bill_canonical_features: dict | None = None,
-                      quota_canonical_features: dict | None = None) -> tuple[bool, float, str]:
+                      quota_canonical_features: dict | None = None,
+                      context_prior: dict | None = None) -> tuple[bool, float, str]:
         """
         对比清单参数和定额参数
 
@@ -2470,6 +2482,9 @@ class ParamValidator:
             quota_params=quota_params,
             bill_canonical_features=bill_canonical_features,
             quota_canonical_features=quota_canonical_features,
+            plugin_hints=(context_prior or {}).get("plugin_hints", {}),
+            candidate_quota_id=str(quota_params.get("_quota_id", "") or ""),
+            candidate_quota_name=str(quota_params.get("_quota_name", "") or ""),
         )
         details.extend(install_result["details"])
         score_sum += install_result["score_sum"]

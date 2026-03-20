@@ -314,3 +314,82 @@ def test_arbitrate_candidates_can_use_family_when_entity_is_missing():
 
     assert reordered[0]["quota_id"] == "Q2"
     assert decision["applied"] is True
+
+
+def test_arbitrate_candidates_does_not_relax_thresholds_via_plugin_gap():
+    item = {"query_route": {"route": "installation_spec", "spec_signal_count": 2}}
+    candidates = [
+        {
+            **_candidate(
+                "Q1",
+                name="成套配电箱安装 落地式",
+                entity="box",
+                family="electrical_box",
+                param_score=0.84,
+                logic_score=0.80,
+                feature_score=0.82,
+                context_score=0.80,
+                rerank_score=0.86,
+            ),
+            "plugin_score": -0.10,
+        },
+        {
+            **_candidate(
+                "Q2",
+                name="成套配电箱安装 悬挂、嵌入式",
+                entity="box",
+                family="electrical_box",
+                param_score=0.85,
+                logic_score=0.82,
+                feature_score=0.84,
+                context_score=0.82,
+                rerank_score=0.82,
+            ),
+            "plugin_score": 0.18,
+        },
+    ]
+
+    reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
+
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["reason"] == "structured_gap_too_small"
+
+
+def test_arbitrate_candidates_ignores_plugin_only_margin_when_swapping():
+    item = {"query_route": {"route": "installation_spec", "spec_signal_count": 2}}
+    candidates = [
+        {
+            **_candidate(
+                "Q1",
+                name="成套配电箱安装 落地式",
+                entity="box",
+                family="electrical_box",
+                param_score=0.84,
+                logic_score=0.80,
+                feature_score=0.82,
+                context_score=0.80,
+                rerank_score=0.84,
+            ),
+            "plugin_score": -2.0,
+        },
+        {
+            **_candidate(
+                "Q2",
+                name="成套配电箱安装 悬挂、嵌入式",
+                entity="box",
+                family="electrical_box",
+                param_score=0.84,
+                logic_score=0.80,
+                feature_score=0.82,
+                context_score=0.80,
+                rerank_score=0.84,
+            ),
+            "plugin_score": 6.0,
+        },
+    ]
+
+    reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
+
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False

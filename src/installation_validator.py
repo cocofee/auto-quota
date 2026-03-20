@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 
@@ -76,6 +77,7 @@ class InstallationValidator:
         frozenset(("单控", "双控")),
         frozenset(("单相", "三相")),
         frozenset(("三孔", "五孔")),
+        frozenset(("带接地", "不带接地")),
         frozenset(("吸顶灯", "筒灯", "应急灯")),
         frozenset(("吸顶式", "嵌入式", "壁挂式", "落地式", "悬挂式")),
         frozenset(("离心式", "轴流式")),
@@ -88,6 +90,7 @@ class InstallationValidator:
 
     _CORE_SPECS = (
         ("dn", "DN", "", True),
+        ("conduit_dn", "配管直径", "", True),
         ("cable_section", "截面", "", True),
         ("cable_cores", "芯数", "", True),
         ("kva", "容量", "kVA", True),
@@ -95,10 +98,35 @@ class InstallationValidator:
         ("circuits", "回路", "", True),
         ("port_count", "口数", "口", True),
         ("ampere", "电流", "A", True),
+        ("half_perimeter", "半周长", "mm", True),
+        ("bridge_wh_sum", "桥架宽高和", "mm", True),
+        ("perimeter", "周长", "mm", True),
+        ("switch_gangs", "联数", "", True),
+    )
+    _INSTALL_COMPAT_GROUPS = (
+        frozenset(("挂墙", "挂壁", "壁挂", "悬挂", "明装", "明敷")),
+        frozenset(("暗装", "暗敷", "嵌入", "嵌墙")),
+        frozenset(("落地",)),
     )
 
     def __init__(self, tier_up_score_fn: Callable[[float, float], float]):
         self._tier_up_score = tier_up_score_fn
+
+    @staticmethod
+    def _quota_book(qid: str) -> str:
+        qid = str(qid or "").strip()
+        if len(qid) >= 2 and qid[0] == "C" and qid[1].isalpha():
+            letter_map = {'A': 'C1', 'B': 'C2', 'C': 'C3', 'D': 'C4',
+                          'E': 'C5', 'F': 'C6', 'G': 'C7', 'H': 'C8',
+                          'I': 'C9', 'J': 'C10', 'K': 'C11', 'L': 'C12'}
+            return letter_map.get(qid[1], "")
+        match = re.match(r"(C\d+)-", qid)
+        if match:
+            return match.group(1)
+        match = re.match(r"(\d+)-", qid)
+        if match:
+            return f"C{match.group(1)}"
+        return ""
 
     @classmethod
     def _is_conflict(cls, left: str, right: str, conflicts: set[frozenset[str]]) -> bool:
@@ -125,10 +153,54 @@ class InstallationValidator:
             if part.strip()
         }
 
+    @classmethod
+    def _install_methods_compatible(cls, left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        return any(left in group and right in group for group in cls._INSTALL_COMPAT_GROUPS)
+
+    @classmethod
+    def _install_method_group(cls, value: str) -> frozenset[str] | None:
+        for group in cls._INSTALL_COMPAT_GROUPS:
+            if value in group:
+                return group
+        return None
+
+    @classmethod
+    def _install_methods_hard_conflict(cls, left: str, right: str) -> bool:
+        if not left or not right or cls._install_methods_compatible(left, right):
+            return False
+        left_group = cls._install_method_group(left)
+        right_group = cls._install_method_group(right)
+        return bool(left_group and right_group and left_group != right_group)
+
+    @staticmethod
+    def _split_support_actions(value: str) -> set[str]:
+        text = str(value or "").strip()
+        if not text:
+            return set()
+        actions = set()
+        if "制作" in text:
+            actions.add("制作")
+        if "安装" in text:
+            actions.add("安装")
+        return actions
+
+    @classmethod
+    def _support_actions_compatible(cls, bill_value: str, quota_value: str) -> bool:
+        bill_actions = cls._split_support_actions(bill_value)
+        quota_actions = cls._split_support_actions(quota_value)
+        if not bill_actions or not quota_actions:
+            return False
+        return bill_actions.issubset(quota_actions)
+
     def _validate_exact_text_param(self,
                                    *,
                                    key: str,
                                    label: str,
+                                   strict: bool,
                                    bill_params: dict,
                                    quota_params: dict,
                                    handled_params: set[str],
@@ -150,9 +222,14 @@ class InstallationValidator:
         if bill_value == quota_value:
             details.append(f"{label}:{bill_value}")
             return 1.0, 1, False
+        if key == "support_action" and self._support_actions_compatible(bill_value, quota_value):
+            details.append(f"{label}:{bill_value}->{quota_value}")
+            return 0.9, 1, False
 
         details.append(f"{label}冲突:{bill_value}!={quota_value}")
-        return 0.0, 1, True
+        if strict:
+            return 0.0, 1, True
+        return 0.35, 1, False
 
     def _validate_surface_process(self,
                                   *,
@@ -187,9 +264,75 @@ class InstallationValidator:
         )
         return 0.35, 1, False
 
+    def _validate_install_method(self,
+                                 *,
+                                 bill_params: dict,
+                                 quota_params: dict,
+                                 handled_params: set[str],
+                                 details: list[str]) -> tuple[float, int, bool]:
+        if "install_method" not in bill_params:
+            return 0.0, 0, False
+        handled_params.add("install_method")
+        bill_value = str(bill_params.get("install_method") or "").strip()
+        if not bill_value:
+            return 0.0, 0, False
+
+        quota_value = str(quota_params.get("install_method") or "").strip()
+        if not quota_value:
+            details.append("定额无安装方式参数(通用定额降权)")
+            return self.GENERIC_SCORE, 1, False
+        if self._install_methods_compatible(bill_value, quota_value):
+            details.append(f"安装方式:{bill_value}~{quota_value}")
+            return 1.0, 1, False
+        if self._install_methods_hard_conflict(bill_value, quota_value):
+            details.append(f"安装方式冲突:{bill_value}!={quota_value}")
+            return 0.0, 1, True
+        details.append(f"安装方式偏差:{bill_value}!={quota_value}")
+        return 0.35, 1, False
+
+    def _validate_plugin_preferences(self,
+                                     *,
+                                     plugin_hints: dict | None,
+                                     candidate_quota_id: str,
+                                     candidate_quota_name: str,
+                                     details: list[str]) -> tuple[float, int, bool]:
+        plugin_hints = dict(plugin_hints or {})
+        preferred_books = {str(value or "").strip() for value in plugin_hints.get("preferred_books", []) if str(value or "").strip()}
+        preferred_names = [str(value or "").strip() for value in plugin_hints.get("preferred_quota_names", []) if str(value or "").strip()]
+        avoided_names = [str(value or "").strip() for value in plugin_hints.get("avoided_quota_names", []) if str(value or "").strip()]
+        if not any((preferred_books, preferred_names, avoided_names)):
+            return 0.0, 0, False
+
+        score = 0.0
+        checks = 0
+        quota_name = str(candidate_quota_name or "").strip()
+        quota_book = self._quota_book(candidate_quota_id)
+        if preferred_books:
+            checks += 1
+            if quota_book in preferred_books:
+                score += 0.08
+                details.append(f"plugin优先册:{quota_book}")
+
+        if preferred_names:
+            checks += 1
+            if any(name and name in quota_name for name in preferred_names):
+                score += 0.12
+                details.append("plugin优先名称命中")
+
+        if avoided_names:
+            checks += 1
+            if any(name and name in quota_name for name in avoided_names):
+                score -= 0.12
+                details.append("plugin规避名称命中")
+
+        return score, checks, False
+
     def validate(self, bill_params: dict, quota_params: dict,
                  bill_canonical_features: dict | None = None,
-                 quota_canonical_features: dict | None = None) -> dict:
+                 quota_canonical_features: dict | None = None,
+                 plugin_hints: dict | None = None,
+                 candidate_quota_id: str = "",
+                 candidate_quota_name: str = "") -> dict:
         details: list[str] = []
         score_sum = 0.0
         check_count = 0
@@ -228,14 +371,31 @@ class InstallationValidator:
             check_count += 1
             details.append(f"特征冲突:{trait_conflict[0]}!={trait_conflict[1]}")
 
-        for key, label in (
-            ("valve_type", "阀门类型"),
-            ("support_material", "支架材质"),
-            ("sanitary_subtype", "卫生器具"),
+        for key, label, strict in (
+            ("support_scope", "support_scope", True),
+            ("support_action", "support_action", False),
+            ("sanitary_mount_mode", "sanitary_mount_mode", True),
+            ("sanitary_flush_mode", "sanitary_flush_mode", True),
+            ("sanitary_water_mode", "用水方式", True),
+            ("sanitary_nozzle_mode", "龙头形式", True),
+            ("sanitary_tank_mode", "水箱形式", True),
+            ("lamp_type", "lamp_type", True),
+            ("valve_type", "阀门类型", True),
+            ("valve_connection_family", "阀门连接家族", True),
+            ("support_material", "支架材质", True),
+            ("sanitary_subtype", "卫生器具", True),
+            ("cable_type", "线缆类型", True),
+            ("cable_head_type", "电缆头类型", True),
+            ("conduit_type", "配管类型", True),
+            ("box_mount_mode", "配电箱安装方式", True),
+            ("bridge_type", "桥架类型", True),
+            ("outlet_grounding", "插座接地", True),
+            ("wire_type", "线缆型号", False),
         ):
             add_score, add_checks, add_hard_fail = self._validate_exact_text_param(
                 key=key,
                 label=label,
+                strict=strict,
                 bill_params=bill_params,
                 quota_params=quota_params,
                 handled_params=handled_params,
@@ -245,10 +405,30 @@ class InstallationValidator:
             check_count += add_checks
             hard_fail = hard_fail or add_hard_fail
 
+        add_score, add_checks, add_hard_fail = self._validate_install_method(
+            bill_params=bill_params,
+            quota_params=quota_params,
+            handled_params=handled_params,
+            details=details,
+        )
+        score_sum += add_score
+        check_count += add_checks
+        hard_fail = hard_fail or add_hard_fail
+
         add_score, add_checks, add_hard_fail = self._validate_surface_process(
             bill_params=bill_params,
             quota_params=quota_params,
             handled_params=handled_params,
+            details=details,
+        )
+        score_sum += add_score
+        check_count += add_checks
+        hard_fail = hard_fail or add_hard_fail
+
+        add_score, add_checks, add_hard_fail = self._validate_plugin_preferences(
+            plugin_hints=plugin_hints,
+            candidate_quota_id=candidate_quota_id,
+            candidate_quota_name=candidate_quota_name,
             details=details,
         )
         score_sum += add_score
