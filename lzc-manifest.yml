@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.2.73
+version: 0.2.77
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
@@ -30,6 +30,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      OPENCLAW_API_KEY: ""
       # 远程模式不需要向量搜索和大模型（全部在本地电脑上）
       VECTOR_ENABLED: "false"
       # Cookie安全配置（懒猫微服通过HTTPS提供服务）
@@ -56,6 +57,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      OPENCLAW_API_KEY: ""
       # 远程模式不需要向量搜索和大模型
       VECTOR_ENABLED: "false"
       # 远程匹配模式（和backend保持一致）

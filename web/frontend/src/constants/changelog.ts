@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.73';
+export const APP_VERSION = '0.2.77';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,46 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.77',
+    date: '2026-03-20',
+    changes: [
+      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
+      { type: 'admin', text: 'add installation rule anchors' },
+      { type: 'admin', text: 'infer cable core material from model' },
+      { type: 'admin', text: 'separate cable laying from cable head matching' },
+    ],
+  },
+  {
+    version: '0.2.76',
+    date: '2026-03-20',
+    changes: [
+      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
+      { type: 'admin', text: 'add installation rule anchors' },
+      { type: 'admin', text: 'infer cable core material from model' },
+      { type: 'admin', text: 'separate cable laying from cable head matching' },
+    ],
+  },
+  {
+    version: '0.2.75',
+    date: '2026-03-20',
+    changes: [
+      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
+      { type: 'admin', text: 'add installation rule anchors' },
+      { type: 'admin', text: 'infer cable core material from model' },
+      { type: 'admin', text: 'separate cable laying from cable head matching' },
+    ],
+  },
+  {
+    version: '0.2.74',
+    date: '2026-03-20',
+    changes: [
+      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
+      { type: 'admin', text: 'add installation rule anchors' },
+      { type: 'admin', text: 'infer cable core material from model' },
+      { type: 'admin', text: 'separate cable laying from cable head matching' },
+    ],
+  },
   {
     version: '0.2.73',
     date: '2026-03-19',
