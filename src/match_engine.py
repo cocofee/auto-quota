@@ -198,15 +198,56 @@ def _append_agent_result_and_log(results: list[dict], result: dict,
     return agent_hits
 
 
+def _canonical_query_payload(ctx: dict | None,
+                             *,
+                             full_query: str = "",
+                             search_query: str = "",
+                             item: dict | None = None) -> dict:
+    """Normalize canonical_query for Agent/retry links while keeping old callers compatible."""
+    payload = dict((ctx or {}).get("canonical_query") or (item or {}).get("canonical_query") or {})
+    raw_query = f"{(ctx or {}).get('name', '')} {(ctx or {}).get('desc', '')}".strip()
+    payload.setdefault("raw_query", raw_query or full_query)
+    payload.setdefault("route_query", payload.get("raw_query") or full_query)
+    payload.setdefault("validation_query", full_query or payload.get("route_query") or payload.get("raw_query") or "")
+    payload.setdefault("search_query", search_query or payload.get("validation_query") or "")
+    payload.setdefault("normalized_query", "")
+    return payload
+
+
+def _canonical_query_views(canonical_query: dict | None,
+                           *,
+                           full_query: str = "",
+                           search_query: str = "") -> tuple[dict, str, str]:
+    payload = dict(canonical_query or {})
+    validation_query = str(
+        payload.get("validation_query")
+        or full_query
+        or payload.get("route_query")
+        or payload.get("raw_query")
+        or ""
+    ).strip()
+    resolved_search_query = str(
+        payload.get("search_query")
+        or search_query
+        or validation_query
+    ).strip()
+    payload.setdefault("validation_query", validation_query)
+    payload.setdefault("search_query", resolved_search_query)
+    payload.setdefault("route_query", payload.get("raw_query") or validation_query)
+    payload.setdefault("normalized_query", "")
+    return payload, validation_query, resolved_search_query
+
+
 # ============================================================
 # Agent模式结果处理
 # ============================================================
 
 def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
-                               experience_db, full_query: str, search_query: str,
+                               experience_db, canonical_query: dict | None,
                                rule_kb, name: str, desc: str,
                                exp_backup: dict, rule_backup: dict,
                                exp_hits: int, rule_hits: int,
+                               full_query: str = "", search_query: str = "",
                                province: str = None,
                                reference_cases_cache: dict = None,
                                reference_cases_cache_lock=None,
@@ -219,6 +260,13 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reference_cases_cache = {}
     if rules_context_cache is None:
         rules_context_cache = {}
+    canonical_query, full_query, search_query = _canonical_query_views(
+        canonical_query or item.get("canonical_query") or {},
+        full_query=full_query,
+        search_query=search_query,
+    )
+    if canonical_query:
+        item["canonical_query"] = canonical_query
     reasoning_packet = ReasoningAgent().build_packet(
         item,
         candidates,
@@ -254,9 +302,13 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         rules_context=rules_context,
         method_cards=relevant_cards,
         reasoning_packet=reasoning_packet,
+        canonical_query=canonical_query,
         search_query=search_query,
         overview_context=overview_context,
     )
+    if canonical_query:
+        result["canonical_query"] = canonical_query
+        result.setdefault("search_query", canonical_query.get("search_query") or search_query)
     result["reasoning_decision"] = reasoning_packet.get("decision", {})
     result["needs_reasoning"] = bool(reasoning_packet.get("decision", {}).get("is_ambiguous"))
     result["require_final_review"] = bool(
@@ -274,6 +326,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reasoning_conflicts=reasoning_packet.get("conflict_summaries", []),
         reasoning_decision=reasoning_packet.get("decision", {}),
         reasoning_compare_points=reasoning_packet.get("compare_points", []),
+        canonical_query=canonical_query,
         query_route=item.get("query_route") or {},
         batch_context=summarize_batch_context_for_trace(item),
         province=province or "",
@@ -707,9 +760,27 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # ========== 第1阶段：串行搜索 + 快通道 ==========
     # 收集需要LLM的条目
-    llm_tasks = []  # [(idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit)]
+    llm_tasks = []  # [{idx,item,candidates,canonical_query,name,desc,exp_backup,rule_backup,is_audit}]
     _consumed_buf = []  # _prepare_match_iteration 会往这里 append 消耗掉的结果
     total = len(bill_items)
+
+    def _make_llm_task(*, idx: int, item: dict, candidates: list[dict], canonical_query: dict,
+                       name: str, desc: str, exp_backup: dict, rule_backup: dict,
+                       is_audit: bool) -> dict:
+        canonical_query, validation_query, resolved_search_query = _canonical_query_views(canonical_query)
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "canonical_query": canonical_query,
+            "full_query": validation_query,
+            "search_query": resolved_search_query,
+            "name": name,
+            "desc": desc,
+            "exp_backup": exp_backup,
+            "rule_backup": rule_backup,
+            "is_audit": is_audit,
+        }
 
     # 进度回调辅助（第1阶段: 30%~60%, 第2阶段: 60%~90%）
     def _notify_progress(current_idx, phase=1, phase_total=None):
@@ -775,9 +846,16 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             continue
 
         ctx, full_query, search_query, candidates, exp_backup, rule_backup = prepared_bundle
+        canonical_query = _canonical_query_payload(
+            ctx,
+            full_query=full_query,
+            search_query=search_query,
+            item=item,
+        )
         name = ctx["name"]
         desc = ctx["desc"]
         item["query_route"] = ctx.get("query_route")
+        item["canonical_query"] = canonical_query
 
         try:
             should_skip_agent = _should_skip_agent_llm(
@@ -805,12 +883,30 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             # 质量护栏：抽检走快通道的条目（收集到LLM任务里一起并发）
             if _should_audit_fastpath():
                 fastpath_audit_total += 1
-                llm_tasks.append((idx, item, candidates, full_query, search_query,
-                                  name, desc, exp_backup, rule_backup, True))  # True=审计模式
+                llm_tasks.append(_make_llm_task(
+                    idx=idx,
+                    item=item,
+                    candidates=candidates,
+                    canonical_query=canonical_query,
+                    name=name,
+                    desc=desc,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    is_audit=True,
+                ))
         else:
             # 需要LLM分析
-            llm_tasks.append((idx, item, candidates, full_query, search_query,
-                              name, desc, exp_backup, rule_backup, False))  # False=正常模式
+            llm_tasks.append(_make_llm_task(
+                idx=idx,
+                item=item,
+                candidates=candidates,
+                canonical_query=canonical_query,
+                name=name,
+                desc=desc,
+                exp_backup=exp_backup,
+                rule_backup=rule_backup,
+                is_audit=False,
+            ))
 
         _notify_progress(idx, phase=1)
 
@@ -826,7 +922,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             批量模式和逐条模式共用此函数，修复批量模式跳过重试的流程漏洞。
             返回: (result, exp_hits, rule_hits) — 可能是改善后的结果或原结果
             """
-            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            name = task["name"]
+            desc = task["desc"]
+            exp_backup = task["exp_backup"]
+            rule_backup = task["rule_backup"]
+            is_audit = task["is_audit"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
             if is_audit or not candidates:
                 return result, 0, 0
 
@@ -848,8 +956,16 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             ai_suggested = result.get("suggested_search", "")
             ai_rec_id = result.get("_ai_recommended_id", "")
             retry_query = ai_suggested or ai_rec_id or search_query
+            retry_canonical_query = dict(canonical_query or {})
+            if retry_query:
+                retry_canonical_query["search_query"] = retry_query
+            retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
+                retry_canonical_query,
+                full_query=full_query,
+                search_query=retry_query,
+            )
             retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
-            logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_query}'")
+            logger.info(f"#{idx} {retry_reason}，触发AI引导重试搜索: '{retry_search_query}'")
 
             ctx = overview_ctx or _build_overview_context(item)
             task_exp_hits, task_rule_hits = 0, 0
@@ -857,12 +973,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             try:
                 # 全库搜索（不限册号），增加候选数
                 retry_candidates = searcher.search(
-                    retry_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+                    retry_search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
                 if retry_candidates and len(retry_candidates) > 1:
-                    retry_candidates = reranker.rerank(retry_query, retry_candidates)
+                    retry_candidates = reranker.rerank(retry_search_query, retry_candidates)
                 if retry_candidates:
                     retry_candidates = validator.validate_candidates(
-                        full_query, retry_candidates, supplement_query=retry_query)
+                        retry_validation_query, retry_candidates, supplement_query=retry_search_query)
                 if retry_candidates:
                     # 合并原候选和重试候选，按quota_id去重，重复ID保留param_score更高的
                     seen_ids = {}
@@ -896,10 +1012,11 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         # 用合并候选重新调用LLM
                         retry_result, r_exp, r_rule = _resolve_agent_mode_result(
                             agent=agent, item=item, candidates=merged,
-                            experience_db=experience_db, full_query=full_query,
-                            search_query=retry_query, rule_kb=rule_kb,
+                            experience_db=experience_db, canonical_query=retry_canonical_query, rule_kb=rule_kb,
                             name=name, desc=desc, exp_backup=exp_backup,
                             rule_backup=rule_backup, exp_hits=0, rule_hits=0,
+                            full_query=retry_validation_query,
+                            search_query=retry_search_query,
                             province=province,
                             reference_cases_cache=reference_cases_cache,
                             reference_cases_cache_lock=reference_cases_cache_lock,
@@ -920,7 +1037,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         # ===== ??LLM?? =====
         def _process_llm_task(task):
             """单个LLM任务处理（线程安全）"""
-            idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            name = task["name"]
+            desc = task["desc"]
+            exp_backup = task["exp_backup"]
+            rule_backup = task["rule_backup"]
+            is_audit = task["is_audit"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
             # 构建表级上下文摘要（在LLM调用前快照，线程安全）
             ctx_summary = _build_overview_context(item)
             result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
@@ -928,8 +1057,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 item=item,
                 candidates=candidates,
                 experience_db=experience_db,
-                full_query=full_query,
-                search_query=search_query,
+                canonical_query=canonical_query,
                 rule_kb=rule_kb,
                 name=name,
                 desc=desc,
@@ -937,6 +1065,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 rule_backup=rule_backup,
                 exp_hits=0,
                 rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
                 province=province,
                 reference_cases_cache=reference_cases_cache,
                 reference_cases_cache_lock=reference_cases_cache_lock,
@@ -966,7 +1096,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             for future in as_completed(futures):
                 completed += 1
                 task = futures[future]
-                idx, item, candidates, full_query, search_query, name, desc, exp_backup, rule_backup, is_audit = task
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                exp_backup = task["exp_backup"]
+                rule_backup = task["rule_backup"]
+                is_audit = task["is_audit"]
                 try:
                     idx, result, task_exp_hits, task_rule_hits, is_audit = future.result()
                 except Exception as e:

@@ -4,6 +4,11 @@ from dataclasses import asdict, dataclass
 
 from collections.abc import Mapping
 
+from src.candidate_scoring import (
+    compute_candidate_search_score,
+    compute_candidate_structured_score,
+    compute_candidate_total_score,
+)
 from src.query_router import normalize_query_route
 from src.text_parser import parser as text_parser
 
@@ -50,27 +55,11 @@ def _candidate_system(candidate: dict) -> str:
 
 
 def _search_score(candidate: dict) -> float:
-    return (
-        _safe_float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0))) * 0.65
-        + _safe_float(candidate.get("name_bonus")) * 0.20
-        + _safe_float(candidate.get("param_score")) * 0.15
-    )
+    return compute_candidate_search_score(candidate, include_plugin=False)
 
 
 def _structured_score(candidate: dict) -> float:
-    score = (
-        _safe_float(candidate.get("param_score"), 0.0) * 0.34
-        + _safe_float(candidate.get("logic_score"), 0.5) * 0.28
-        + _safe_float(candidate.get("feature_alignment_score"), 0.5) * 0.20
-        + _safe_float(candidate.get("context_alignment_score"), 0.5) * 0.18
-    )
-    if candidate.get("logic_exact_primary_match"):
-        score += 0.08
-    if candidate.get("feature_alignment_hard_conflict") or candidate.get("logic_hard_conflict"):
-        score -= 0.20
-    if not candidate.get("param_match", True):
-        score -= 0.12
-    return score
+    return compute_candidate_structured_score(candidate, include_plugin=False)
 
 
 _MAIN_PARAM_KEYS = (
@@ -145,33 +134,14 @@ def _candidate_param_value(candidate: dict, key: str) -> float | None:
         return None
 
 
-def _band_score(target_value: float, candidate_value: float | None) -> tuple[float, bool]:
-    if candidate_value is None:
-        return 0.45, False
-    if candidate_value == target_value:
-        return 1.0, True
-    if candidate_value > target_value:
-        ratio = candidate_value / max(target_value, 1.0)
-        if ratio <= 1.10:
-            return 0.90, False
-        if ratio <= 1.35:
-            return 0.78, False
-        if ratio <= 2.0:
-            return 0.60, False
-        return 0.35, False
-    return 0.0, False
-
-
 def _candidate_total_score(candidate: dict, *, main_param_key: str | None, target_value: float | None) -> tuple[float, float, bool]:
-    structured = _structured_score(candidate)
-    if not main_param_key or target_value is None:
-        return structured, 0.0, False
-    band_score, exact_match = _band_score(
-        target_value,
-        _candidate_param_value(candidate, main_param_key),
+    return compute_candidate_total_score(
+        candidate,
+        main_param_key=main_param_key,
+        target_value=target_value,
+        candidate_value=_candidate_param_value(candidate, main_param_key) if main_param_key else None,
+        include_plugin=False,
     )
-    # 主参数仅作为“精排增强”，不应压过主体检索分。
-    return structured + band_score * 0.22, band_score, exact_match
 
 
 def _share_anchor_family(top: dict, challenger: dict) -> bool:
@@ -315,7 +285,6 @@ def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None)
             min_structured_gap = min(min_structured_gap, 0.08)
         elif band_gap < 0.12:
             min_structured_gap = max(min_structured_gap, 0.14)
-
     if structured_gap < min_structured_gap:
         return candidates, ArbitrationDecision(
             applied=False,

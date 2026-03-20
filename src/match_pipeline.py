@@ -19,15 +19,17 @@ from loguru import logger
 from src.compat_primitives import connections_compatible
 from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
-from src.context_builder import summarize_batch_context_for_trace
+from src.candidate_scoring import compute_candidate_rank_score, compute_candidate_sort_key
+from src.context_builder import build_context_prior, summarize_batch_context_for_trace
 from src.province_plugins import resolve_plugin_hints
 from src.text_parser import parser as text_parser, normalize_bill_text
 from src.query_router import build_query_route_profile
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
-from src.specialty_classifier import classify as classify_specialty
+from src.specialty_classifier import BORROW_PRIORITY, classify as classify_specialty
 from src.rule_validator import RuleValidator
 from src.match_core import (
     calculate_confidence,
+    infer_confidence_family_alignment,
     _append_trace_step,
     _normalize_classification,
     _is_measure_item,
@@ -177,9 +179,17 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     if wiring_candidate is not None:
         return wiring_candidate
 
+    cast_iron_pipe_candidate = _pick_explicit_cast_iron_pipe_candidate(bill_text, candidates)
+    if cast_iron_pipe_candidate is not None:
+        return cast_iron_pipe_candidate
+
     sleeve_candidate = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
     if sleeve_candidate is not None:
         return sleeve_candidate
+
+    general_sleeve_candidate = _pick_explicit_sleeve_family_candidate(bill_text, candidates)
+    if general_sleeve_candidate is not None:
+        return general_sleeve_candidate
 
     conduit_candidate = _pick_explicit_conduit_family_candidate(bill_text, candidates)
     if conduit_candidate is not None:
@@ -200,6 +210,10 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     support_candidate = _pick_explicit_support_family_candidate(bill_text, candidates)
     if support_candidate is not None:
         return support_candidate
+
+    insulation_candidate = _pick_explicit_insulation_family_candidate(bill_text, candidates)
+    if insulation_candidate is not None:
+        return insulation_candidate
 
     motor_candidate = _pick_explicit_motor_family_candidate(bill_text, candidates)
     if motor_candidate is not None:
@@ -558,6 +572,151 @@ def _pick_explicit_plastic_sleeve_candidate(bill_text: str,
     return scored[0][1]
 
 
+def _pick_explicit_cast_iron_pipe_candidate(bill_text: str,
+                                            candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if "铸铁" not in text or "管" not in text:
+        return None
+
+    drainage_context = any(keyword in text for keyword in ("排水", "污水", "废水", "污废水", "雨水"))
+    if not drainage_context:
+        return None
+
+    bill_params = text_parser.parse(text)
+    bill_dn = bill_params.get("dn")
+    expected_words = ["铸铁"]
+    forbidden_words = [
+        "钢塑复合管", "复合管", "塑料给水管", "塑料排水管",
+        "给水管", "PPR", "PP-R", "钢管",
+    ]
+    prefer_words: list[str] = []
+
+    if "雨水" in text:
+        expected_words.append("雨水")
+        forbidden_words.append("排水管")
+    else:
+        expected_words.append("排水")
+        forbidden_words.append("雨水")
+
+    if "室内" in text:
+        prefer_words.append("室内")
+        forbidden_words.append("室外")
+    elif "室外" in text:
+        prefer_words.append("室外")
+        forbidden_words.append("室内")
+
+    if any(keyword in text for keyword in ("机械接口", "机械连接")):
+        prefer_words.extend(["机械接口", "机械连接"])
+        forbidden_words.extend(["卡箍", "胶圈"])
+    elif any(keyword in text for keyword in ("卡箍", "无承口")):
+        prefer_words.extend(["卡箍", "无承口"])
+        forbidden_words.append("机械接口")
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        if "铸铁" not in quota_name:
+            continue
+        cand_params = text_parser.parse(quota_name)
+        score = sum(10 for word in expected_words if word and word in quota_name)
+        score -= sum(10 for word in forbidden_words if word and word in quota_name)
+        score += sum(4 for word in prefer_words if word and word in quota_name)
+        if bill_dn is not None:
+            cand_dn = cand_params.get("dn")
+            if cand_dn is not None:
+                if cand_dn == bill_dn:
+                    score += 8
+                elif cand_dn > bill_dn:
+                    score += 3
+                else:
+                    score -= 6
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_sleeve_family_candidate(bill_text: str,
+                                           candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if not any(keyword in text for keyword in ("套管", "堵洞", "封堵")):
+        return None
+    if any(keyword in text for keyword in ("电气配管", "导管", "穿线管", "可挠金属套管")):
+        return None
+
+    bill_params = text_parser.parse(text)
+    bill_dn = bill_params.get("dn")
+    expected_words: list[str] = []
+    forbidden_words: list[str] = []
+    prefer_words: list[str] = []
+
+    if any(keyword in text for keyword in ("堵洞", "封堵")):
+        expected_words.extend(["堵洞", "封堵"])
+        forbidden_words.extend(["套管", "钢套管", "防水套管", "管道"])
+    elif any(keyword in text for keyword in ("刚性防水", "刚性防水套管")):
+        expected_words.extend(["刚性防水套管"])
+        forbidden_words.extend(["柔性防水", "一般钢套管", "塑料套管", "堵洞"])
+    elif any(keyword in text for keyword in ("柔性防水", "柔性防水套管")):
+        expected_words.extend(["柔性防水套管"])
+        forbidden_words.extend(["刚性防水", "一般钢套管", "塑料套管", "堵洞"])
+    elif any(keyword in text for keyword in ("密闭", "人防", "防护密闭")):
+        expected_words.extend(["密闭套管", "人防", "防护密闭"])
+        forbidden_words.extend(["一般钢套管", "塑料套管", "堵洞"])
+    else:
+        expected_words.extend(["钢套管", "一般钢套管", "填料套管"])
+        forbidden_words.extend(["刚性防水", "柔性防水", "塑料套管", "成品防火", "堵洞"])
+
+    if "穿墙" in text:
+        prefer_words.append("穿墙")
+    if "穿楼板" in text:
+        prefer_words.append("穿楼板")
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        if "套管" not in quota_name and not any(keyword in quota_name for keyword in ("堵洞", "封堵")):
+            continue
+        cand_params = text_parser.parse(quota_name)
+        score = sum(10 for word in expected_words if word and word in quota_name)
+        score -= sum(10 for word in forbidden_words if word and word in quota_name)
+        score += sum(3 for word in prefer_words if word and word in quota_name)
+        if bill_dn is not None:
+            cand_dn = cand_params.get("dn")
+            if cand_dn is not None:
+                if cand_dn == bill_dn:
+                    score += 6
+                elif cand_dn > bill_dn:
+                    score += 2
+                else:
+                    score -= 4
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
 def _pick_explicit_conduit_family_candidate(bill_text: str,
                                             candidates: list[dict]) -> dict | None:
     """对“明确电气配管语义”的清单，优先在前几名里选对家族。
@@ -574,6 +733,10 @@ def _pick_explicit_conduit_family_candidate(bill_text: str,
     code_match = re.search(r'(?<![A-Z0-9])(JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G)\s*\d+\b', upper_text)
     bill_conduit_type = str(bill_params.get("conduit_type") or (code_match.group(1) if code_match else ""))
     bill_conduit_dn = bill_params.get("conduit_dn")
+    bill_laying_method = str(bill_params.get("laying_method") or "")
+    bill_wire_type = str(bill_params.get("wire_type") or "")
+    bill_cable_type = str(bill_params.get("cable_type") or "")
+    bill_head_type = str(bill_params.get("cable_head_type") or "")
     explicit_electrical = any(keyword in text for keyword in (
         "电气配管", "穿线管", "导管", "金属软管", "可挠金属套管",
     ))
@@ -620,6 +783,10 @@ def _pick_explicit_conduit_family_candidate(bill_text: str,
         cand_params = text_parser.parse(quota_name)
         cand_conduit_type = str(cand_params.get("conduit_type") or "")
         cand_conduit_dn = cand_params.get("conduit_dn")
+        cand_laying_method = str(cand_params.get("laying_method") or "")
+        cand_wire_type = str(cand_params.get("wire_type") or "")
+        cand_cable_type = str(cand_params.get("cable_type") or "")
+        cand_head_type = str(cand_params.get("cable_head_type") or "")
         family_hits = sum(1 for word in expected_words if word and word in quota_name)
         family_penalty = sum(1 for word in forbidden_words if word and word in quota_name)
         layout_hits = sum(1 for word in layout_words if word and word in quota_name)
@@ -832,10 +999,26 @@ def _pick_explicit_distribution_box_candidate(bill_text: str,
 def _pick_explicit_ventilation_family_candidate(bill_text: str,
                                                 candidates: list[dict]) -> dict | None:
     text = bill_text or ""
-    if not any(keyword in text for keyword in (
+    ventilation_entity_keywords = (
         "风口", "散流器", "百叶", "风机", "排气扇", "换气扇", "通风器", "软风管", "消声器",
+    )
+    ventilation_valve_keywords = (
         "止回阀", "调节阀", "防火阀", "排烟阀", "定风量阀", "插板阀",
+    )
+    ventilation_context_keywords = (
+        "风管", "通风", "空调", "送风", "回风", "排烟", "风量", "多叶", "对开", "防火",
+    )
+    if not any(keyword in text for keyword in (
+        *ventilation_entity_keywords,
+        *ventilation_valve_keywords,
     )):
+        return None
+    # 仅含“止回阀/调节阀”等词但没有通风上下文时，不抢占管道阀门家族。
+    if (
+        any(keyword in text for keyword in ventilation_valve_keywords)
+        and not any(keyword in text for keyword in ventilation_context_keywords)
+        and not any(keyword in text for keyword in ventilation_entity_keywords)
+    ):
         return None
 
     bill_params = text_parser.parse(text)
@@ -981,6 +1164,7 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     prefer_single = "单管" in text
     prefer_multi = "多管" in text
     prefer_door_frame = "门型" in text
+    generic_pipe_support = any(keyword in text for keyword in ("按需制作", "一般管架"))
     if not any(keyword in text for keyword in ("支架", "支/吊架", "支吊架")):
         return None
 
@@ -998,6 +1182,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     )
     if not prefer_bridge and not prefer_pipe:
         return None
+    support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
+    surface_process_words = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆")
+    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:
         quota_name = cand.get("name", "") or ""
@@ -1005,6 +1192,18 @@ def _pick_explicit_support_family_candidate(bill_text: str,
         cand_support_scope = str(cand_params.get("support_scope") or "")
         cand_support_action = str(cand_params.get("support_action") or "")
         cand_support_material = str(cand_params.get("support_material") or "")
+        has_support_anchor = (
+            bool(cand_support_scope)
+            or any(word in quota_name for word in support_anchor_words)
+        )
+        if not has_support_anchor:
+            continue
+        if (
+            any(word in quota_name for word in surface_process_words)
+            and not any(word in text for word in surface_process_words)
+        ):
+            # 清单是支架族但未写除锈/刷油时，压制防腐刷油定额误召回。
+            continue
         score = 0
         if bill_support_scope and cand_support_scope:
             if bill_support_scope == cand_support_scope:
@@ -1051,6 +1250,11 @@ def _pick_explicit_support_family_candidate(bill_text: str,
                 score += 8
             if "桥架支撑架" in quota_name:
                 score -= 6
+            if generic_pipe_support and "一般管架" in quota_name:
+                score += 10
+            for word in support_special_shape_words:
+                if word in quota_name and word not in text:
+                    score -= 12
         if prefer_side:
             if "侧向" in quota_name:
                 score += 8
@@ -1092,6 +1296,75 @@ def _pick_explicit_support_family_candidate(bill_text: str,
                     score += 4
                 else:
                     score -= 8
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_insulation_family_candidate(bill_text: str,
+                                               candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if not any(keyword in text for keyword in ("绝热", "保温", "保冷", "防潮层", "保护层")):
+        return None
+
+    bill_params = text_parser.parse(text)
+    bill_thickness = bill_params.get("thickness")
+    prefer_pipe = any(keyword in text for keyword in (
+        "管道", "给水", "排水", "采暖", "消防", "风管", "阀门", "法兰", "弯头",
+    ))
+    prefer_equipment = any(keyword in text for keyword in (
+        "设备", "容器", "储罐", "塔器", "换热器", "机组",
+    ))
+    insulation_words = ("绝热", "保温", "保冷", "防潮层", "保护层")
+    pipe_anchor_words = ("管道", "风管", "管壳", "弯头", "法兰", "阀门", "给排水")
+    equipment_anchor_words = ("设备", "立式设备", "卧式设备", "容器", "储罐", "塔器", "换热器")
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        if not any(word in quota_name for word in insulation_words):
+            continue
+        cand_params = text_parser.parse(quota_name)
+        score = sum(5 for word in insulation_words if word in quota_name)
+
+        if prefer_pipe:
+            if any(word in quota_name for word in pipe_anchor_words):
+                score += 12
+            if any(word in quota_name for word in equipment_anchor_words):
+                score -= 12
+        if prefer_equipment:
+            if any(word in quota_name for word in equipment_anchor_words):
+                score += 10
+            if any(word in quota_name for word in pipe_anchor_words):
+                score -= 10
+
+        if "防潮层" in text and "防潮层" in quota_name:
+            score += 6
+        if "保护层" in text and "保护层" in quota_name:
+            score += 6
+
+        if bill_thickness is not None:
+            cand_thickness = cand_params.get("thickness")
+            if cand_thickness is not None:
+                if cand_thickness == bill_thickness:
+                    score += 8
+                elif cand_thickness > bill_thickness:
+                    score += 2
+                else:
+                    score -= 6
+
         if score <= 0:
             continue
         scored.append((
@@ -1415,6 +1688,8 @@ def _pick_explicit_plumbing_accessory_candidate(bill_text: str,
     text = bill_text or ""
     bill_params = text_parser.parse(text)
     bill_dn = bill_params.get("dn")
+    prefer_flexible_joint = False
+    prefer_pipe_clamp = False
 
     expected_words: list[str] = []
     forbidden_words: list[str] = []
@@ -1458,12 +1733,39 @@ def _pick_explicit_plumbing_accessory_candidate(bill_text: str,
         else:
             prefer_words.append("不带水表")
             forbidden_words.append("带水表")
+    elif any(keyword in text for keyword in ("软接头", "伸缩节", "柔性接头", "橡胶接头")):
+        prefer_flexible_joint = True
+        expected_words.extend(["软接头", "伸缩节", "柔性接头", "橡胶接头", "柔性接口"])
+        forbidden_words.extend([
+            "法兰安装", "螺纹法兰安装", "法兰阀门",
+            "塑料给水管", "塑料排水管", "给水管", "排水管",
+        ])
+        if "法兰" in text:
+            prefer_words.append("法兰")
+        if "螺纹" in text or "丝扣" in text:
+            prefer_words.append("螺纹")
+    elif any(keyword in text for keyword in ("塑料管卡", "管卡", "管夹", "卡箍", "管箍")):
+        prefer_pipe_clamp = True
+        expected_words.extend(["管卡", "管夹", "卡箍", "管箍"])
+        forbidden_words.extend([
+            "塑料给水管", "塑料排水管", "给水管", "排水管",
+            "钢管", "管道安装",
+        ])
+        if "塑料" in text:
+            prefer_words.append("塑料")
+    elif any(keyword in text for keyword in ("喇叭口", "溢水喇叭口")):
+        expected_words.extend(["喇叭口"])
+        forbidden_words.extend(["广播喇叭", "音箱"])
     else:
         return None
 
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:
         quota_name = cand.get("name", "") or ""
+        if prefer_flexible_joint and not any(word in quota_name for word in ("软接头", "伸缩节", "柔性", "橡胶接头")):
+            continue
+        if prefer_pipe_clamp and not any(word in quota_name for word in ("管卡", "管夹", "卡箍", "管箍")):
+            continue
         score = sum(10 for word in expected_words if word and word in quota_name)
         score -= sum(8 for word in forbidden_words if word and word in quota_name)
         score += sum(3 for word in prefer_words if word and word in quota_name)
@@ -1497,11 +1799,12 @@ def _pick_explicit_plumbing_accessory_candidate(bill_text: str,
 def _pick_explicit_valve_family_candidate(bill_text: str,
                                           candidates: list[dict]) -> dict | None:
     text = bill_text or ""
+    upper_text = text.upper()
     if "倒流防止器" in text:
         return None
     if not any(keyword in text for keyword in (
         "螺纹阀门", "焊接法兰阀门", "法兰阀门", "螺纹法兰阀门",
-        "碳钢阀门",
+        "碳钢阀门", "塑料阀门", "PPR阀门", "PP-R阀门",
     )):
         return None
     if any(keyword in text for keyword in (
@@ -1516,17 +1819,23 @@ def _pick_explicit_valve_family_candidate(bill_text: str,
     bill_valve_type = str(bill_params.get("valve_type") or "")
 
     prefer_words = []
-    forbidden_words = ["塑料法兰"]
+    forbidden_words = [
+        "塑料法兰",
+        "风管", "防火阀", "调节阀", "多叶", "排烟阀", "定风量阀",
+        "塑料给水管", "塑料排水管", "给水管", "排水管",
+    ]
 
     if "碳钢阀门" in text:
         prefer_words.extend(["阀门", "碳钢"])
-        forbidden_words.extend(["调节阀", "防火阀", "风管"])
+    elif "塑料阀门" in text or (("PPR" in upper_text or "PP-R" in upper_text) and "阀" in text):
+        prefer_words.extend(["阀门", "塑料"])
+        forbidden_words.extend(["法兰安装", "螺纹法兰安装"])
     elif "螺纹法兰阀门" in text:
         prefer_words.extend(["法兰阀门", "阀门"])
         forbidden_words.extend(["法兰安装", "螺纹法兰安装"])
     elif "焊接法兰阀门" in text or "法兰阀门" in text:
         prefer_words.extend(["法兰阀门", "阀门"])
-        forbidden_words.extend(["法兰安装", "螺纹法兰安装"])
+        forbidden_words.extend(["法兰安装", "螺纹法兰安装", "对焊阀门", "对焊阀安装"])
     elif "螺纹阀门" in text:
         prefer_words.extend(["螺纹阀", "阀门"])
         forbidden_words.extend(["法兰安装", "塑料法兰"])
@@ -1540,6 +1849,8 @@ def _pick_explicit_valve_family_candidate(bill_text: str,
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:
         quota_name = cand.get("name", "") or ""
+        if "阀" not in quota_name:
+            continue
         cand_params = text_parser.parse(quota_name)
         cand_valve_family = str(cand_params.get("valve_connection_family") or "")
         cand_valve_type = str(cand_params.get("valve_type") or "")
@@ -1867,8 +2178,37 @@ def _evaluate_context_gate(name: str,
         "detail": "专业或上下文信息不足，继续检索但降低自动判定可信度" if base_tags else "",
     }
 
+def _ensure_item_feature_context(item: dict):
+    """Lazily restore feature context for retry/replay callers that bypass preprocessing."""
+    if not isinstance(item, dict):
+        return
+
+    context_prior = item.get("context_prior")
+    if not isinstance(context_prior, dict) or not context_prior:
+        context_prior = build_context_prior(item)
+        item["context_prior"] = context_prior
+
+    full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
+    params = item.get("params")
+    if not isinstance(params, dict) or not params:
+        params = text_parser.parse(full_text)
+        item["params"] = params
+
+    canonical_features = item.get("canonical_features")
+    if isinstance(canonical_features, dict) and canonical_features:
+        return
+
+    item["canonical_features"] = text_parser.parse_canonical(
+        full_text,
+        specialty=item.get("specialty", ""),
+        context_prior=context_prior,
+        params=params,
+    )
+
+
 def _build_item_context(item: dict) -> dict:
     """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
+    _ensure_item_feature_context(item)
     name = item.get("name", "")
     desc = item.get("description", "") or ""
     section = item.get("section", "") or ""
@@ -1901,32 +2241,37 @@ def _build_item_context(item: dict) -> dict:
     if cable_type:
         search_query = f"{search_query} {cable_type}"
 
-    full_query = f"{query_name} {desc}".strip()
-    if not full_query:
-        full_query = f"{name} {desc}".strip()
-    for alias in list(plugin_hints.get("synonym_aliases", []) or [])[:2]:
-        if alias not in search_query:
-            search_query = f"{search_query} {alias}".strip()
-        if alias not in full_query:
-            full_query = f"{full_query} {alias}".strip()
+    raw_query = f"{query_name} {desc}".strip()
+    if not raw_query:
+        raw_query = f"{name} {desc}".strip()
 
     # 从分项标题/Sheet名推断用途关键词，注入到full_query中
     # 这样param_validator的介质冲突检查能利用section的方向信息
     # 只在清单文本本身不含这些关键词时才注入，避免重复
+    route_query = raw_query
     if section:
         _usage_hint = _extract_usage_from_section(section)
-        if _usage_hint and _usage_hint not in full_query:
-            full_query = f"{full_query} {_usage_hint}"
+        if _usage_hint and _usage_hint not in route_query:
+            route_query = f"{route_query} {_usage_hint}"
 
     canonical_name = canonical_features.get("canonical_name", "")
     canonical_system = canonical_features.get("system", "")
-    if canonical_name and canonical_name not in full_query:
-        full_query = f"{full_query} {canonical_name}".strip()
-    if canonical_system and canonical_system not in full_query:
-        full_query = f"{full_query} {canonical_system}".strip()
+    if canonical_name and canonical_name not in route_query:
+        route_query = f"{route_query} {canonical_name}".strip()
+    if canonical_system and canonical_system not in route_query:
+        route_query = f"{route_query} {canonical_system}".strip()
+
+    validation_query = route_query.strip()
+    canonical_query = {
+        "raw_query": raw_query.strip(),
+        "route_query": route_query.strip(),
+        "validation_query": validation_query,
+        "search_query": search_query.strip(),
+        "normalized_query": normalize_bill_text(original_name, desc),
+    }
 
     query_route = build_query_route_profile(
-        full_query,
+        canonical_query["route_query"],
         item=item,
         specialty=item.get("specialty", ""),
         canonical_features=canonical_features,
@@ -1939,9 +2284,10 @@ def _build_item_context(item: dict) -> dict:
         "section": section,
         "unit": item.get("unit"),
         "quantity": item.get("quantity"),
-        "full_query": full_query,
-        "normalized_query": normalize_bill_text(original_name, desc),
-        "search_query": search_query,
+        "canonical_query": canonical_query,
+        "full_query": canonical_query["validation_query"],
+        "normalized_query": canonical_query["normalized_query"],
+        "search_query": canonical_query["search_query"],
         "canonical_features": canonical_features,
         "context_prior": context_prior,
         "plugin_hints": plugin_hints,
@@ -1954,10 +2300,21 @@ def _build_item_context(item: dict) -> dict:
 def _build_classification(item: dict, name: str, desc: str, section: str,
                           province: str = None) -> dict:
     """获取并标准化专业分类结果。"""
+    primary = str(item.get("specialty") or "").strip()
+    fallbacks = [
+        str(book).strip()
+        for book in (item.get("specialty_fallbacks") or [])
+        if str(book).strip()
+    ]
+    if primary and not fallbacks:
+        fallbacks = list(BORROW_PRIORITY.get(primary, []))
     classification = {
-        "primary": item.get("specialty"),
-        "fallbacks": item.get("specialty_fallbacks", []),
+        "primary": primary,
+        "fallbacks": fallbacks,
     }
+    if primary:
+        classification["confidence"] = "high"
+        classification["reason"] = "item_specialty"
     if not classification["primary"]:
         classification = classify_specialty(
             name, desc, section_title=section, province=province,
@@ -2041,6 +2398,8 @@ def _build_alternatives(candidates: list[dict], selected_ids: set = None,
             alt_ps, alt.get("param_match", True),
             name_bonus=alt.get("name_bonus", 0.0),
             rerank_score=alt.get("rerank_score", alt.get("hybrid_score", 0.0)),
+            family_aligned=infer_confidence_family_alignment(alt),
+            family_hard_conflict=bool(alt.get("family_gate_hard_conflict", False)),
         )
         alternatives.append({
             "quota_id": quota_id,
@@ -2312,12 +2671,10 @@ def _apply_plugin_candidate_biases(item: dict, candidates: list[dict]) -> list[d
     if not has_plugin_signal:
         return biased
 
+    for candidate in biased:
+        candidate["rank_score"] = compute_candidate_rank_score(candidate)
     biased.sort(
-        key=lambda cand: (
-            float(cand.get("param_score", 0.0) or 0.0),
-            float(cand.get("rerank_score", cand.get("hybrid_score", 0.0)) or 0.0),
-            float(cand.get("plugin_score", 0.0) or 0.0),
-        ),
+        key=compute_candidate_sort_key,
         reverse=True,
     )
     return biased
@@ -2411,18 +2768,9 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             best = _pick_category_safe_candidate(item, matched_candidates)
             decision_candidates = [best] + [c for c in matched_candidates if c is not best]
             param_score = best.get("param_score", 0.5)
-            # 用和排序一致的综合分来算score_gap（修复#4：和best选择脱节）
-            def _calc_composite(c):
-                """和param_validator排序一致的综合分"""
-                ps = c.get("param_score", 0)
-                nb = c.get("name_bonus", 0)
-                rr = c.get("rerank_score", c.get("hybrid_score", 0))
-                fg = max(min(float(c.get("family_gate_score", 0.0) or 0.0), 2.0), -2.0)
-                pg = float(c.get("plugin_score", 0.0) or 0.0)
-                return ps * 0.52 + fg * 0.08 + nb * 0.20 + rr * 0.15 + pg * 0.20
-            best_composite = _calc_composite(best)
+            best_composite = compute_candidate_rank_score(best)
             others = [c for c in matched_candidates if c is not best]
-            second_composite = max((_calc_composite(c) for c in others), default=0)
+            second_composite = max((compute_candidate_rank_score(c) for c in others), default=0)
             score_gap = best_composite - second_composite
             confidence = calculate_confidence(
                 param_score, param_match=True,
@@ -2449,6 +2797,10 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             param_score = best.get("param_score", 0.0)
             confidence = calculate_confidence(
                 param_score, param_match=False,
+                name_bonus=best.get("name_bonus", 0.0),
+                rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                family_aligned=infer_confidence_family_alignment(best),
+                family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
                 candidates_count=len(valid_candidates),
                 is_ambiguous_short=item.get("_is_ambiguous_short", False),
             )
@@ -2466,16 +2818,28 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         if str(c.get("quota_id", "")).strip()
     ]
 
+    quotas = [{
+        "quota_id": best["quota_id"],
+        "name": best["name"],
+        "unit": best.get("unit", ""),
+        "reason": explanation,
+        "reasoning": summarize_candidate_reasoning(best),
+        "db_id": best.get("id"),
+    }] if best else []
+    supplemental_quotas = item.get("_supplemental_quotas") if isinstance(item, dict) else []
+    if quotas and isinstance(supplemental_quotas, list):
+        seen_ids = {str(quota.get("quota_id", "")).strip() for quota in quotas if str(quota.get("quota_id", "")).strip()}
+        for quota in supplemental_quotas:
+            quota_id = str((quota or {}).get("quota_id", "")).strip()
+            quota_name = str((quota or {}).get("name", "")).strip()
+            if not quota_id or not quota_name or quota_id in seen_ids:
+                continue
+            quotas.append(dict(quota))
+            seen_ids.add(quota_id)
+
     result = {
         "bill_item": item,
-        "quotas": [{
-            "quota_id": best["quota_id"],
-            "name": best["name"],
-            "unit": best.get("unit", ""),
-            "reason": explanation,
-            "reasoning": summarize_candidate_reasoning(best),
-            "db_id": best.get("id"),
-        }] if best else [],
+        "quotas": quotas,
         "confidence": confidence,
         "explanation": explanation,
         "candidates_count": len(valid_candidates),
@@ -2591,11 +2955,13 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     item["query_route"] = ctx.get("query_route")
     item["plugin_hints"] = ctx.get("plugin_hints") or {}
     item["context_prior"] = ctx.get("context_prior") or item.get("context_prior") or {}
+    item["canonical_query"] = ctx.get("canonical_query") or {}
     name = ctx["name"]
     desc = ctx["desc"]
-    full_query = ctx["full_query"]
-    search_query = ctx["search_query"]
-    normalized_query = ctx["normalized_query"]
+    canonical_query = ctx.get("canonical_query") or {}
+    full_query = canonical_query.get("validation_query") or ctx["full_query"]
+    search_query = canonical_query.get("search_query") or ctx["search_query"]
+    normalized_query = canonical_query.get("normalized_query") or ctx["normalized_query"]
     input_gate = ctx.get("input_gate") or {}
 
     if _is_measure_item(name, desc, ctx["unit"], ctx["quantity"]):
