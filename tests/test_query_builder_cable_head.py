@@ -170,6 +170,29 @@ def test_cable_laying_not_intercepted():
     assert "敷设" in query or "电力电缆" in query
 
 
+def test_cable_laying_strips_head_and_terminal_noise():
+    """电缆本体描述里的中间头/接线端子噪声不应污染电缆敷设 query。"""
+    query = build_quota_query(
+        parser,
+        "电力电缆",
+        "型号:TC90-0.6/1KV-5*35 材质:铝合金 敷设方式、部位:穿管 电缆接线端子及电缆中间头制作安装"
+    )
+    assert "敷设" in query
+    assert "中间头" not in query
+    assert "接线端子" not in query
+
+
+def test_middle_head_keeps_aluminum_anchor():
+    """中间头 query 应保留中间头和铝芯锚点。"""
+    query = build_quota_query(
+        parser,
+        "电缆中间头",
+        "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤240"
+    )
+    assert "中间头" in query
+    assert "铝芯" in query
+
+
 def test_control_cable_laying_not_intercepted():
     """控制电缆（非电缆头）→ 不应被电缆头模板拦截"""
     query = build_quota_query(
