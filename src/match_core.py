@@ -60,12 +60,31 @@ STRONG_MEASURE_KEYWORDS = [
     "垃圾清运", "垃圾弃置",
     "安全文明施工", "文明施工费",
     "夜间施工", "冬雨季施工",
+    "二次搬运费", "已完工程及设备保护费", "暂列金额",
 ]
 
 
 # ============================================================
 # 统一打分函数
 # ============================================================
+
+# 绮剧‘鎺掗櫎鐨勮垂鐢ㄧ被/鏆傚垪绫绘潯鐩紙闃叉琚濂楀畾棰濓級
+_MEASURE_EXACT_NAMES = {
+    "\u6682\u5217\u91d1\u989d",  # 暂列金额
+    "\u6682\u4f30\u4ef7",  # 暂估价
+    "\u4e13\u4e1a\u5de5\u7a0b\u6682\u4f30\u4ef7",  # 专业工程暂估价
+    "\u4e8c\u6b21\u642c\u8fd0\u8d39",  # 二次搬运费
+    "\u5df2\u5b8c\u5de5\u7a0b\u53ca\u8bbe\u5907\u4fdd\u62a4\u8d39",  # 已完工程及设备保护费
+}
+
+# 妯＄硦鍖归厤鍏抽敭璇嶏紙涓婇潰 exact 鍏堟嫤锛岃繖閲屽仛鍙樹綋鍏滃簳锛?
+_MEASURE_CONTAINS_KEYWORDS = (
+    "\u4e8c\u6b21\u642c\u8fd0",
+    "\u6682\u5217\u91d1\u989d",
+    "\u6682\u4f30\u4ef7",
+    "\u5df2\u5b8c\u5de5\u7a0b\u53ca\u8bbe\u5907\u4fdd\u62a4",
+)
+
 
 def calculate_confidence(param_score: float, param_match: bool = True,
                          name_bonus: float = 0.0,
@@ -789,6 +808,12 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
        防止误伤正常清单（比如"超高层钢结构"不应被跳过）
     """
     # 强关键词：直接跳过
+    clean_name = name.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+    if clean_name in _MEASURE_EXACT_NAMES:
+        return True
+    if any(kw in clean_name for kw in _MEASURE_CONTAINS_KEYWORDS):
+        return True
+
     if any(kw in name for kw in STRONG_MEASURE_KEYWORDS):
         return True
     # 弱关键词：需要无单位无工程量
@@ -800,7 +825,7 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
     # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，不是实体清单
     # 有些Excel给标题行也填了"项"和"1"作为单位/工程量，所以不能要求无单位无工程量
     # 用明确的专业标题名单做强过滤，避免误伤真实清单（如"钢结构工程"子项）
-    clean_name = name.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+    # clean_name already normalized above
     _SECTION_TITLES = {
         "电气工程", "给排水工程", "通风空调工程", "消防工程", "智能化工程",
         "建筑工程", "装饰工程", "装饰装修工程", "建筑装饰工程",
@@ -887,8 +912,9 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
                                       reranker, validator: ParamValidator):
     """从统一 prepared 上下文中取字段并执行候选流水线。"""
     ctx = prepared["ctx"]
-    full_query = ctx["full_query"]
-    search_query = ctx["search_query"]
+    canonical_query = ctx.get("canonical_query") or {}
+    full_query = canonical_query.get("validation_query") or ctx["full_query"]
+    search_query = canonical_query.get("search_query") or ctx["search_query"]
     classification = prepared["classification"]
 
     # L5跨省预热：如果经验库miss时留下了跨省提示，增强搜索查询

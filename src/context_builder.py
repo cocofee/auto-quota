@@ -253,6 +253,7 @@ def format_overview_context(*,
     item = dict(item or {})
     project_context = dict(project_context or {})
     batch_context = dict((item.get("context_prior") or {}).get("batch_context") or item.get("_batch_context") or {})
+    canonical_query = dict(item.get("canonical_query") or {})
 
     parts: list[str] = []
     if project_overview:
@@ -276,6 +277,9 @@ def format_overview_context(*,
     sheet_system = str(batch_context.get("sheet_system_hint") or "").strip()
     neighbor_system = str(batch_context.get("neighbor_system_hint") or "").strip()
     context_hints = list((item.get("context_prior") or {}).get("context_hints") or item.get("_context_hints") or [])
+    route_query = str(canonical_query.get("route_query") or "").strip()
+    validation_query = str(canonical_query.get("validation_query") or "").strip()
+    search_query = str(canonical_query.get("search_query") or "").strip()
 
     item_lines: list[str] = []
     if section:
@@ -290,6 +294,12 @@ def format_overview_context(*,
         item_lines.append(f"邻近条目主系统: {neighbor_system}")
     if context_hints:
         item_lines.append(f"上下文提示: {', '.join(str(v) for v in context_hints[:4])}")
+    if route_query:
+        item_lines.append(f"RouteQuery: {route_query[:80]}")
+    if validation_query and validation_query != route_query:
+        item_lines.append(f"ValidationQuery: {validation_query[:80]}")
+    if search_query and search_query not in {route_query, validation_query}:
+        item_lines.append(f"SearchQuery: {search_query[:80]}")
     if item_lines:
         structured_lines.append("当前条目批次上下文: " + " | ".join(item_lines))
 
@@ -306,6 +316,8 @@ def summarize_batch_context_for_trace(item: dict[str, Any] | None = None) -> dic
     item = dict(item or {})
     context_prior = dict(item.get("context_prior") or {})
     batch_context = dict(context_prior.get("batch_context") or item.get("_batch_context") or {})
+    plugin_hints = dict(context_prior.get("plugin_hints") or item.get("plugin_hints") or {})
+    canonical_query = dict(item.get("canonical_query") or {})
     summary = {
         "context_hints": list(context_prior.get("context_hints") or item.get("_context_hints") or []),
         "prior_family": str(context_prior.get("prior_family") or item.get("_prior_family") or ""),
@@ -315,5 +327,12 @@ def summarize_batch_context_for_trace(item: dict[str, Any] | None = None) -> dic
         "sheet_system_hint": str(batch_context.get("sheet_system_hint") or ""),
         "neighbor_system_hint": str(batch_context.get("neighbor_system_hint") or ""),
         "batch_size": int(batch_context.get("batch_size") or 0),
+        "plugin_terms": list(plugin_hints.get("matched_terms") or []),
+        "plugin_aliases": list(plugin_hints.get("synonym_aliases") or [])[:2],
+        "plugin_books": list(plugin_hints.get("preferred_books") or [])[:2],
+        "plugin_specialties": list(plugin_hints.get("preferred_specialties") or [])[:2],
+        "route_query": str(canonical_query.get("route_query") or ""),
+        "validation_query": str(canonical_query.get("validation_query") or ""),
+        "search_query": str(canonical_query.get("search_query") or ""),
     }
     return {key: value for key, value in summary.items() if value not in ("", [], {}, 0, None)}
