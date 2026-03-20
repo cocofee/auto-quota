@@ -290,6 +290,54 @@ def _format_number_for_query(value: float) -> str:
     return str(int(value)) if value % 1 == 0 else str(value)
 
 
+def _strip_cable_accessory_noise(text: str) -> str:
+    """移除电缆本体描述里的电缆头/接线端子噪声，避免检索词误漂到附件定额。"""
+    cleaned = str(text or "")
+    if not cleaned:
+        return ""
+    noise_patterns = (
+        r"电缆接线端子及电缆中间头制作安装",
+        r"电缆中间头制作安装",
+        r"电缆终端头制作安装",
+        r"电缆头制作安装",
+        r"中间头制作安装",
+        r"终端头制作安装",
+        r"电缆头或电线头[^。；;\n]*?(?:铜鼻子|接线端子)",
+        r"(?:焊|压)?铜接线端子[^。；;\n]*",
+        r"(?:焊|压)?铝接线端子[^。；;\n]*",
+        r"铜鼻子[^。；;\n]*",
+        r"接线端子材质[、,，]?(?:规格)?[：:][^。；;\n]*",
+    )
+    for pattern in noise_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _infer_cable_conductor(*, text: str, material: str = "", wire_type: str = "") -> str:
+    """推断电缆导体材质，用于强化铜芯/铝芯区分。"""
+    raw_text = str(text or "")
+    material = str(material or "")
+    wire_type = str(wire_type or "").upper()
+    combined = f"{raw_text} {material}".upper()
+
+    if "铝合金" in raw_text or "铝合金" in material:
+        return "铝合金"
+    if any(keyword in combined for keyword in ("铝芯", "压铝", "铝电缆")):
+        return "铝芯"
+    if any(keyword in combined for keyword in ("铜芯", "压铜", "铜电缆")):
+        return "铜芯"
+
+    if wire_type.startswith(("YJLV", "VLV", "VLL", "YJHLV")):
+        return "铝芯"
+    if wire_type.startswith((
+        "BPYJV", "YJV", "YJY", "VV", "KYJY", "KVV", "KVVP",
+        "BTLY", "BTTRZ", "BTTZ", "YTTW", "BBTRZ",
+    )):
+        return "铜芯"
+    return ""
+
+
 def _dedupe_terms(terms: list[str]) -> list[str]:
     seen = set()
     deduped = []
@@ -349,7 +397,29 @@ def _build_feature_alignment_terms(canonical_features: dict | None = None,
     context_prior = context_prior or {}
 
     terms: list[str] = []
-    for key in ("canonical_name", "system", "entity", "install_method"):
+    for key in (
+        "canonical_name",
+        "system",
+        "entity",
+        "install_method",
+        "laying_method",
+        "cable_type",
+        "cable_head_type",
+        "conduit_type",
+        "wire_type",
+        "box_mount_mode",
+        "bridge_type",
+        "valve_connection_family",
+        "support_scope",
+        "support_action",
+        "sanitary_mount_mode",
+        "sanitary_flush_mode",
+        "sanitary_water_mode",
+        "sanitary_nozzle_mode",
+        "sanitary_tank_mode",
+        "lamp_type",
+        "voltage_level",
+    ):
         value = canonical_features.get(key)
         if value:
             terms.append(str(value))
@@ -478,7 +548,7 @@ def _normalize_distribution_box_name(value: str) -> str:
     cleaned = re.sub(r'^成套配电箱(?!安装)', '成套配电箱安装 ', cleaned)
     cleaned = re.sub(r'^成套配电柜(?!安装)', '成套配电柜安装 ', cleaned)
     cleaned = re.sub(
-        r'((?:配电箱|配电柜|控制箱|电表箱))([A-Za-z0-9#/_\-.]{2,})$',
+        r'((?:配电箱|配电柜|控制箱|控制柜|程序控制箱|动力箱|照明箱|双电源箱|双电源配电箱|电表箱))([A-Za-z0-9#/_\-.]{2,})$',
         r'\1 \2',
         cleaned,
     )
@@ -532,9 +602,21 @@ def _build_distribution_box_query(name: str,
                                   params: dict,
                                   specialty: str = "") -> str | None:
     """配电箱/配电柜对象模板：优先具体箱名/型号，其次安装方式+半周长模板。"""
+    text = " ".join(part for part in (name, description, full_text) if part)
+    box_keywords = (
+        "配电箱", "配电柜", "控制箱", "控制柜", "程序控制箱",
+        "动力箱", "照明箱", "双电源箱", "双电源配电箱",
+    )
+    electrical_specialties = ("C4", "C5", "C11", "A4", "A5", "A11")
+    prefer_cabinet = any(keyword in text for keyword in ("配电柜", "控制柜"))
     is_box_item = (
-        ("配电箱" in name and "杆上" not in name)
-        or name.strip() in {"配电柜", "成套配电柜", "成套配电柜安装"}
+        "杆上" not in text
+        and any(keyword in text for keyword in box_keywords)
+        and (
+            any(keyword in name for keyword in box_keywords)
+            or specialty.startswith(electrical_specialties)
+            or not specialty
+        )
     )
     if not is_box_item:
         return None
@@ -542,7 +624,10 @@ def _build_distribution_box_query(name: str,
     box_fields = dict(fields)
     box_fields.update(_extract_distribution_box_fields(description))
 
-    explicit_family = re.search(r'((?:高压|低压)?成套配电[箱柜](?:安装)?)\s*([A-Za-z0-9#/_\-.]{2,})?', description)
+    explicit_family = re.search(
+        r'(?<![\u4e00-\u9fff])((?:高压|低压)?(?:成套)?(?:配电|控制)[箱柜](?:安装)?|程序控制箱|动力箱|照明箱|双电源(?:配电)?箱)\s*([A-Za-z0-9#/_\-.]{2,})?',
+        description,
+    )
     if explicit_family:
         family = explicit_family.group(1)
         if not family.endswith("安装"):
@@ -559,7 +644,7 @@ def _build_distribution_box_query(name: str,
 
     if not model:
         loose_model_match = re.search(
-            r'^(?:配电箱|配电柜|成套配电箱安装|成套配电柜安装)\s+([A-Za-z0-9#/_\-.]{2,})\b',
+            r'^(?:配电箱|配电柜|控制箱|控制柜|程序控制箱|动力箱|照明箱|双电源(?:配电)?箱|成套配电箱安装|成套配电柜安装)\s+([A-Za-z0-9#/_\-.]{2,})\b',
             description,
         )
         if loose_model_match:
@@ -568,6 +653,13 @@ def _build_distribution_box_query(name: str,
     generic_names = {
         "配电箱",
         "配电柜",
+        "控制箱",
+        "控制柜",
+        "程序控制箱",
+        "动力箱",
+        "照明箱",
+        "双电源箱",
+        "双电源配电箱",
         "成套配电箱",
         "成套配电箱安装",
         "成套配电柜",
@@ -590,28 +682,35 @@ def _build_distribution_box_query(name: str,
 
     if model and _is_known_product_model(model):
         # 只有已知产品型号才值得独立搜索（如"配电箱 XL-21"）
-        base = "配电柜" if "配电柜" in name else "配电箱"
+        base = "配电柜" if prefer_cabinet else "配电箱"
         return f"{base} {model}"
 
     install_text = _clean_distribution_box_text(box_fields.get("安装方式", ""))
     if not install_text:
-        for candidate in ("明装", "暗装", "落地", "落地式", "嵌入", "嵌入式", "壁挂", "挂墙", "悬挂"):
+        for candidate in ("明装", "暗装", "落地", "落地式", "嵌入", "嵌入式", "壁挂", "挂墙", "墙上", "柱上", "悬挂"):
             if candidate in full_text:
                 install_text = candidate
                 break
 
-    if "落地" in install_text:
-        return "成套配电箱安装 落地式"
+    box_mount_mode = str(params.get("box_mount_mode") or "")
+    floor_template = "成套配电柜安装" if prefer_cabinet else "成套配电箱安装"
+    wall_template = "成套配电箱安装"
+    if box_mount_mode == "落地式" or "落地" in install_text:
+        return f"{floor_template} 落地式"
 
     half_perimeter_mm = _extract_distribution_box_half_perimeter_mm(full_text, spec_text, params)
     bucket = _bucket_distribution_box_half_perimeter(half_perimeter_mm)
+    if box_mount_mode == "悬挂/嵌入式" and bucket:
+        return f"{wall_template} 悬挂、嵌入式 半周长{bucket}"
     if bucket:
-        return f"成套配电箱安装 悬挂、嵌入式 半周长{bucket}"
+        return f"{wall_template} 悬挂、嵌入式 半周长{bucket}"
 
-    if any(keyword in install_text for keyword in ("明装", "暗装", "嵌入", "悬挂", "壁挂", "挂墙")):
-        return "成套配电箱安装 悬挂、嵌入式"
+    if box_mount_mode == "悬挂/嵌入式":
+        return f"{wall_template} 悬挂、嵌入式"
+    if any(keyword in install_text for keyword in ("明装", "暗装", "嵌入", "悬挂", "壁挂", "挂墙", "墙上", "柱上")):
+        return f"{wall_template} 悬挂、嵌入式"
 
-    return "成套配电箱安装"
+    return floor_template if prefer_cabinet else wall_template
 
 
 
@@ -643,6 +742,9 @@ def _build_sanitary_query(name: str,
                           params: dict) -> str | None:
     """卫生器具标准化查询。"""
     subtype = str(params.get("sanitary_subtype") or "")
+    water_mode = str(params.get("sanitary_water_mode") or "")
+    nozzle_mode = str(params.get("sanitary_nozzle_mode") or "")
+    tank_mode = str(params.get("sanitary_tank_mode") or "")
     if not subtype and not any(keyword in full_text for keyword in (
         "便器", "洗脸盆", "洗面盆", "洗手盆", "洗涤盆", "水槽", "拖布池", "拖把池", "地漏", "水龙头", "龙头",
     )):
@@ -684,18 +786,12 @@ def _build_sanitary_query(name: str,
         query_parts.append("脚踏开关")
     if "自闭阀" in full_text:
         query_parts.append("自闭阀")
-    if "连体水箱" in full_text:
-        query_parts.append("连体水箱")
-    if "隐蔽水箱" in full_text:
-        query_parts.append("隐蔽水箱")
-    if "冷水" in full_text:
-        query_parts.append("冷水")
-    if "冷热水" in full_text:
-        query_parts.append("冷热水")
-    if subtype == "洗涤盆" and "单孔" in full_text:
-        query_parts.append("单嘴")
-    if subtype == "洗涤盆" and "双孔" in full_text:
-        query_parts.append("双嘴")
+    if tank_mode:
+        query_parts.append(tank_mode)
+    if water_mode:
+        query_parts.append(water_mode)
+    if subtype in {"洗涤盆", "洗脸盆", "水龙头"} and nozzle_mode:
+        query_parts.append(nozzle_mode)
     if subtype == "小便器" and "自动冲洗" in full_text:
         query_parts.append("自动冲洗")
 
@@ -764,6 +860,14 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
         return None
 
     upper_text = full_text.upper()
+    wire_type = str(params.get("wire_type") or "")
+    cable_type = str(params.get("cable_type") or "")
+    cable_head_type = str(params.get("cable_head_type") or "")
+    conductor = _infer_cable_conductor(
+        text=full_text,
+        material=str(params.get("material") or ""),
+        wire_type=wire_type,
+    )
 
     # --- 步骤1：压铜接线端子（浙江特例） ---
     # 清单名"电力电缆头"但描述里明确写"压铜接线端子"
@@ -780,19 +884,20 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
     _MINERAL_MODELS = ("BTTRZ", "BTLY", "BTTZ", "YTTW", "BBTRZ", "NG-A")
     is_mineral = any(m in upper_text for m in _MINERAL_MODELS)
     if is_mineral:
+        head_word = "中间头" if cable_head_type == "中间头" or "中间" in full_text else "终端头"
         # 矿物绝缘分控制/电力两种
-        if "控制" in full_text:
+        if "控制" in full_text or cable_type == "控制电缆":
             # 提取芯数
             core_match = re.search(r'(\d+)\s*[×xX*]\s*\d+', full_text)
             core_count = int(core_match.group(1)) if core_match else None
-            query = "矿物绝缘控制电缆终端头"
+            query = f"矿物绝缘控制电缆{head_word}"
             if core_count:
                 query += f" 芯数 {core_count}"
             return query
         else:
             # 矿物绝缘电力电缆头
             section = params.get("cable_section")
-            query = "矿物绝缘电力电缆终端头"
+            query = f"矿物绝缘电力电缆{head_word}"
             if section:
                 section_str = _format_number_for_query(section)
                 query += f" 截面 {section_str}"
@@ -800,7 +905,7 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
 
     # --- 步骤3：控制电缆头 ---
     # 清单名含"控制"，或描述中含"控制电缆"
-    is_control = "控制" in name or "控制" in full_text
+    is_control = "控制" in name or "控制" in full_text or cable_type == "控制电缆"
     # 信号电缆也按控制电缆计
     if not is_control:
         is_control = "信号" in name
@@ -818,7 +923,7 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
                 core_count = int(core_match.group(1))
 
         # 中间头 vs 终端头
-        if "中间" in full_text:
+        if cable_head_type == "中间头" or "中间" in full_text:
             query = "控制电缆中间头"
         else:
             query = "控制电缆终端头"
@@ -853,8 +958,10 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
     section = params.get("cable_section")
 
     # 中间头 vs 终端头
-    if "中间" in name or "中间" in full_text:
-        query = f"{voltage}以下{location}电力电缆中间头"
+    conductor = conductor or "铜芯"
+
+    if cable_head_type == "中间头" or "中间" in name or "中间" in full_text:
+        query = f"{voltage}以下{location}{conductor}电力电缆中间头"
         if section:
             section_str = _format_number_for_query(section)
             query += f" 截面 {section_str}"
@@ -862,7 +969,7 @@ def _build_cable_head_query(name: str, full_text: str, params: dict,
 
     # 电力电缆终端头（最常见的case）
     # 搜索词格式："1kV以下室内干包式铜芯电力电缆终端头 截面 N"
-    query = f"{voltage}以下{location}{craft}铜芯电力电缆终端头"
+    query = f"{voltage}以下{location}{craft}{conductor}电力电缆终端头"
     if section:
         section_str = _format_number_for_query(section)
         query += f" 截面 {section_str}"
@@ -1352,6 +1459,10 @@ def build_quota_query(parser, name: str, description: str = "",
     material = params.get("material", "")
     connection = params.get("connection", "")
     dn = params.get("dn")
+    conduit_type = params.get("conduit_type", "")
+    conduit_dn = params.get("conduit_dn")
+    wire_type = params.get("wire_type", "")
+    cable_type = params.get("cable_type", "")
     cable_section = params.get("cable_section")
     shape = params.get("shape", "")  # 风管形状：矩形/圆形
     laying_method = params.get("laying_method", "")
@@ -1359,8 +1470,16 @@ def build_quota_query(parser, name: str, description: str = "",
     bridge_wh_sum = params.get("bridge_wh_sum")
     valve_type = params.get("valve_type", "")
     support_material = params.get("support_material", "")
+    support_scope = params.get("support_scope", "")
+    support_action = params.get("support_action", "")
     surface_process = params.get("surface_process", "")
     sanitary_subtype = params.get("sanitary_subtype", "")
+    sanitary_mount_mode = params.get("sanitary_mount_mode", "")
+    sanitary_flush_mode = params.get("sanitary_flush_mode", "")
+    sanitary_water_mode = params.get("sanitary_water_mode", "")
+    sanitary_nozzle_mode = params.get("sanitary_nozzle_mode", "")
+    sanitary_tank_mode = params.get("sanitary_tank_mode", "")
+    lamp_type = params.get("lamp_type", "")
 
     # 补充提取连接方式：text_parser有时漏提取描述中的"连接方式:xxx"
     # 例如"连接方式:卡压式连接"在parser中未被识别，导致query丢失关键区分词
@@ -1529,8 +1648,36 @@ def build_quota_query(parser, name: str, description: str = "",
         if support_material and any(token in name for token in ("支架", "吊架", "支吊架")):
             query_parts.append(support_material)
 
+        if support_scope and any(token in name for token in ("支架", "吊架", "支吊架")):
+            query_parts.append(support_scope)
+            if support_scope == "桥架支架":
+                query_parts.append("桥架支撑架")
+            elif support_scope == "管道支架":
+                query_parts.append("一般管架")
+
+        if support_action and any(token in name for token in ("支架", "吊架", "支吊架")):
+            query_parts.append(support_action)
+
         if sanitary_subtype and sanitary_subtype not in "".join(query_parts):
             query_parts.append(sanitary_subtype)
+
+        if sanitary_mount_mode and sanitary_mount_mode not in "".join(query_parts):
+            query_parts.append(sanitary_mount_mode)
+
+        if sanitary_flush_mode and sanitary_flush_mode not in "".join(query_parts):
+            query_parts.append(sanitary_flush_mode)
+
+        if sanitary_water_mode and sanitary_water_mode not in "".join(query_parts):
+            query_parts.append(sanitary_water_mode)
+
+        if sanitary_nozzle_mode and sanitary_nozzle_mode not in "".join(query_parts):
+            query_parts.append(sanitary_nozzle_mode)
+
+        if sanitary_tank_mode and sanitary_tank_mode not in "".join(query_parts):
+            query_parts.append(sanitary_tank_mode)
+
+        if lamp_type and lamp_type not in "".join(query_parts):
+            query_parts.append(lamp_type)
 
         if surface_process and any(token in full_text for token in ("刷油", "除锈", "油漆", "防锈漆")):
             query_parts.append(surface_process.split("/")[0])
@@ -1740,9 +1887,11 @@ def build_quota_query(parser, name: str, description: str = "",
             "CT":  "桥架",              # 桥架归类另算
         }
         # 识别配管：清单名含"配管"、或含材质型号（SC管/JDG管等）
-        conduit_keywords = ("配管", "SC管", "JDG管", "KBG管", "PVC管", "导管")
-        is_conduit = (any(kw in name for kw in conduit_keywords)
-                      and "穿线" not in name and "电缆" not in name)
+        conduit_keywords = ("配管", "SC管", "JDG管", "KBG管", "PVC管", "导管", "穿线管", "金属软管", "可挠金属套管")
+        is_conduit = (
+            (any(kw in name for kw in conduit_keywords) and "电缆" not in name)
+            or bool(conduit_type)
+        )
 
         # --- 配管材质+配置形式+管径：fields.get经常失败，统一用正则从全文提取 ---
         if is_conduit:
@@ -1750,13 +1899,13 @@ def build_quota_query(parser, name: str, description: str = "",
             normalized_conduit_text = full_text.upper().replace("KJG", "KBG")
 
             # 1. 材质型号：从全文提取SC/JDG/KBG/PC等代号
-            conduit_code = None
+            conduit_code = conduit_type or None
             # 匹配配管材质代号（按长度降序，避免短代号抢先匹配）
             # G/RC/MT 是单/双字母代号，用\b边界防止从JDG/DG中误提取
             mat_match = re.search(
                 r'(JDG|KBG|FPC|PVC|SC|PC|DG|RC|MT|G)(?:管)?\s*\d*',
                 normalized_conduit_text)
-            if mat_match:
+            if mat_match and not conduit_code:
                 conduit_code = mat_match.group(1)
 
             if "金属软管" in full_text:
@@ -1789,34 +1938,40 @@ def build_quota_query(parser, name: str, description: str = "",
             config_match = re.search(
                 r'配置形式[：:]\s*(.*?)(?:\s|含|工作|其他|$)',
                 full_text)
+            layout_hint = ""
             if config_match:
-                config_raw = config_match.group(1)
-                if "暗" in config_raw:
-                    query_parts.append("砖混凝土结构暗配")
-                elif "明" in config_raw:
-                    query_parts.append("砖混凝土结构明配")
+                layout_hint = config_match.group(1)
+            if not layout_hint and laying_method:
+                layout_hint = laying_method
+            if "暗" in layout_hint:
+                query_parts.append("砖混凝土结构暗配")
+            elif "明" in layout_hint:
+                query_parts.append("砖混凝土结构明配")
 
             # 3. 管径：从"SC25"、"JDG32"、"Φ20"或"规格:25"提取
             query_str = " ".join(query_parts)
             if "公称直径" not in query_str and "外径" not in query_str:
                 # 先匹配材质代号后直接跟数字（SC25, JDG32, RC20, MT16, G20）或DN前缀（DN100）
-                size_match = re.search(
-                    r'(?:SC|JDG|KJG|KBG|PC|RC|MT|G|Φ|φ|DN|D)\s*(\d+)',
-                    normalized_conduit_text, re.IGNORECASE)
-                # 再匹配规格字段中的数字（规格:25, 规格:Φ20, 规格:DN25）
-                if not size_match:
+                if conduit_dn is not None:
+                    query_parts.append(f"公称直径 {int(conduit_dn)}")
+                else:
                     size_match = re.search(
-                        r'规格[：:]\s*(?:Φ|φ|DN)?\s*(\d+)',
-                        full_text)
-                if size_match:
-                    query_parts.append(f"公称直径 {size_match.group(1)}")
+                        r'(?:SC|JDG|KJG|KBG|PC|RC|MT|G|Φ|φ|DN|D)\s*(\d+)',
+                        normalized_conduit_text, re.IGNORECASE)
+                    # 再匹配规格字段中的数字（规格:25, 规格:Φ20, 规格:DN25）
+                    if not size_match:
+                        size_match = re.search(
+                            r'规格[：:]\s*(?:Φ|φ|DN)?\s*(\d+)',
+                            full_text)
+                    if size_match:
+                        query_parts.append(f"公称直径 {size_match.group(1)}")
 
             # 配管query已构建完整（含材质+配置+管径），直接返回
             # 不走末尾的_apply_synonyms，避免"焊接钢管敷设"被同义词再加一次"敷设"
             # 但先补充名称/描述中的明配/暗配（配置形式字段已在上方处理，这里兜底关键词）
-            if "明配" in full_text and "明配" not in " ".join(query_parts):
+            if ("明配" in full_text or "明敷" in full_text) and "明配" not in " ".join(query_parts):
                 query_parts.append("砖混凝土结构明配")
-            elif "暗配" in full_text and "暗配" not in " ".join(query_parts):
+            elif ("暗配" in full_text or "暗敷" in full_text) and "暗配" not in " ".join(query_parts):
                 query_parts.append("砖混凝土结构暗配")
             return _finalize_query(
                 " ".join(query_parts),
@@ -1917,6 +2072,15 @@ def build_quota_query(parser, name: str, description: str = "",
             # 只有识别出已知线型(BYJ/BV/RVV等)才特化，否则保持原名（如UTP双绞线等弱电）
             if any(token in laying_method for token in ("桥架", "线槽")) or "桥架" in name or "线槽" in name or "桥架" in description or "线槽" in description:
                 query_parts[0] = "线槽配线"
+            elif any(token in laying_method for token in ("穿管", "明配", "暗配")) or "管内穿线" in full_text or "管内" in full_text:
+                if wire_type_known and is_multi_core:
+                    query_parts[0] = "管内穿线 穿多芯软导线"
+                elif wire_type_known and section and section > 6:
+                    query_parts[0] = f"管内穿线 穿动力线 {core_material}"
+                elif wire_type_known:
+                    query_parts[0] = f"管内穿线 穿照明线 {core_material}"
+                else:
+                    query_parts[0] = "管内穿线"
             elif wire_type_known and is_multi_core:
                 query_parts[0] = "穿多芯软导线"
             elif wire_type_known and section and section > 6:
@@ -1927,6 +2091,9 @@ def build_quota_query(parser, name: str, description: str = "",
 
         # --- 电缆类：根据敷设方式构建query ---
         # 北京2024定额按敷设方式命名：电缆埋地/沿墙面/沿桥架/穿导管敷设
+        cable_query_text = full_text
+        if "电缆" in name and not any(token in name for token in ("终端头", "中间头", "电缆头")):
+            cable_query_text = _strip_cable_accessory_noise(full_text)
         cable_model = fields.get("规格", "") or fields.get("型号", "")
         # fields提取经常失败，从全文正则提取电缆型号和敷设方式
         if not cable_model:
@@ -1935,7 +2102,7 @@ def build_quota_query(parser, name: str, description: str = "",
                 r'((?:WDZ[A-Z0-9]*-|ZR[A-Z]?-|NH-|ZB[N]?-)?'
                 r'(?:YJV|YJY|VV|BTTRZ|BTLY|BTTZ|YTTW|BBTRZ|KYJY|KVV|KVVP)'
                 r'[A-Z0-9.*×xX/\-]*)',
-                full_text.upper())
+                cable_query_text.upper())
             if model_match:
                 cable_model = model_match.group(1)
         is_cable = ("电缆" in name and "终端头" not in name
@@ -1943,10 +2110,15 @@ def build_quota_query(parser, name: str, description: str = "",
         is_control_cable = ("控制" in name or "信号" in name
                             or "控制" in cable_model.upper())
         if is_cable:
+            conductor = _infer_cable_conductor(
+                text=cable_query_text,
+                material=material,
+                wire_type=wire_type,
+            )
             # 敷设方式：先从fields取，再从全文正则提取
             laying_raw = fields.get("敷设方式", "") or fields.get("敷设方式、部位", "")
             if not laying_raw:
-                lay_match = re.search(r'敷设方式[、部位]*[：:]\s*(.+?)(?:\s|电压|$)', full_text)
+                lay_match = re.search(r'敷设方式[、部位]*[：:]\s*(.+?)(?:\s|电压|$)', cable_query_text)
                 if lay_match:
                     laying_raw = lay_match.group(1)
 
@@ -1961,7 +2133,10 @@ def build_quota_query(parser, name: str, description: str = "",
             # 控制电缆：按敷设方式+芯数构建query
             # 控制电缆按芯数分档（6/14/24/37/48芯），和电力电缆按截面分档不同
             if is_control_cable:
-                if "桥架" in effective_laying or "线槽" in effective_laying:
+                if "桥架" in effective_laying and "穿管" in effective_laying:
+                    query_parts[0] = "控制电缆敷设"
+                    query_parts.extend(["桥架", "穿管"])
+                elif "桥架" in effective_laying or "线槽" in effective_laying:
                     query_parts[0] = "控制电缆沿桥架敷设"
                 elif "支架" in effective_laying:
                     query_parts[0] = "控制电缆沿支架敷设"
@@ -1981,8 +2156,11 @@ def build_quota_query(parser, name: str, description: str = "",
             # 矿物绝缘电缆：BTTRZ/BTLY/BTTZ/YTTW/BBTRZ
             elif cable_model and any(m in cable_model.upper()
                                      for m in ("BTTRZ", "BTLY", "BTTZ", "YTTW", "BBTRZ")):
-                query_parts[0] = "矿物绝缘电缆"
+                query_parts[0] = "矿物绝缘电缆敷设"
             # 普通电力电缆按敷设方式
+            elif "桥架" in effective_laying and "穿管" in effective_laying:
+                query_parts[0] = "室内敷设电力电缆"
+                query_parts.extend(["桥架", "穿管"])
             elif "桥架" in effective_laying or "线槽" in effective_laying:
                 # 不用"线槽"避免BM25误匹配"金属线槽敷设"（线槽是另一品类）
                 # "室内敷设电力电缆 沿桥架"兼容两种命名风格：
@@ -2001,6 +2179,14 @@ def build_quota_query(parser, name: str, description: str = "",
                 query_parts[0] = "室内敷设电力电缆"
             else:
                 query_parts[0] = "室内敷设电力电缆"  # 默认室内（最常见）
+
+            if conductor and conductor not in "".join(query_parts):
+                if conductor == "铝合金":
+                    query_parts.append("铝合金")
+                else:
+                    query_parts.append(conductor)
+            if wire_type == "BPYJV" or "变频" in full_text:
+                query_parts.append("变频")
 
             # 电缆截面
             if cable_section:

@@ -1,15 +1,42 @@
 from src.match_pipeline import (
     _pick_explicit_button_broadcast_candidate,
     _pick_explicit_bridge_family_candidate,
+    _pick_explicit_cable_family_candidate,
     _pick_explicit_distribution_box_candidate,
     _pick_explicit_fire_device_candidate,
+    _pick_explicit_lamp_family_candidate,
     _pick_explicit_motor_family_candidate,
     _pick_explicit_network_device_candidate,
     _pick_explicit_sanitary_family_candidate,
     _pick_explicit_support_family_candidate,
     _pick_explicit_valve_family_candidate,
     _pick_explicit_ventilation_family_candidate,
+    _pick_explicit_wiring_family_candidate,
 )
+
+
+def test_pick_explicit_sanitary_family_candidate_prefers_wall_sensor_urinal():
+    picked = _pick_explicit_sanitary_family_candidate(
+        "感应式小便器 壁挂式",
+        [
+            {"name": "立式小便器安装 自动冲洗 一联", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "壁挂式小便器安装 感应开关 埋入式", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "壁挂式小便器安装 感应开关 埋入式"
+
+
+def test_pick_explicit_lamp_family_candidate_prefers_lamp_band():
+    picked = _pick_explicit_lamp_family_candidate(
+        "LED线形灯 嵌入式安装",
+        [
+            {"name": "吸顶灯具安装 灯罩周长(mm) ≤800", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "荧光艺术装饰灯具安装 天棚荧光灯带", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "荧光艺术装饰灯具安装 天棚荧光灯带"
 
 
 def test_pick_explicit_distribution_box_candidate_prefers_floor_mode():
@@ -36,6 +63,30 @@ def test_pick_explicit_distribution_box_candidate_defaults_box_to_wall_mode():
     assert picked["name"] == "成套配电箱安装 悬挂式 半周长(m以内) 1.5"
 
 
+def test_pick_explicit_distribution_box_candidate_does_not_force_ap_code_to_floor():
+    picked = _pick_explicit_distribution_box_candidate(
+        "配电箱 1AP1",
+        [
+            {"name": "成套配电箱安装 落地式", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "成套配电箱安装 悬挂式 半周长(m以内) 1.5", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "成套配电箱安装 悬挂式 半周长(m以内) 1.5"
+
+
+def test_pick_explicit_distribution_box_candidate_prefers_control_box_wall_mode():
+    picked = _pick_explicit_distribution_box_candidate(
+        "控制箱 AC-B1-WS1~4 安装方式:明装",
+        [
+            {"name": "控制箱安装 落地式", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "控制箱安装 墙上", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "控制箱安装 墙上"
+
+
 def test_pick_explicit_ventilation_family_candidate_prefers_louver_outlet_over_window():
     picked = _pick_explicit_ventilation_family_candidate(
         "碳钢风口、散流器、百叶窗 名称:单层防雨百叶",
@@ -58,6 +109,18 @@ def test_pick_explicit_ventilation_family_candidate_prefers_ceiling_exhaust_fan(
     )
 
     assert picked["name"] == "风扇安装 天花式排气扇"
+
+
+def test_pick_explicit_ventilation_family_candidate_prefers_closer_warm_fan_weight():
+    picked = _pick_explicit_ventilation_family_candidate(
+        "暖风机安装 重量(kg以内) 160",
+        [
+            {"name": "暖风机安装 重量(kg以内) 2000", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "暖风机安装 重量(kg以内) 160", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "暖风机安装 重量(kg以内) 160"
 
 
 def test_pick_explicit_ventilation_family_candidate_prefers_flexible_joint_over_valve():
@@ -108,6 +171,18 @@ def test_pick_explicit_bridge_family_candidate_prefers_bridge_over_cable_laying(
     assert picked["name"] == "钢制槽式桥架安装 宽+高(mm以下) 400"
 
 
+def test_pick_explicit_bridge_family_candidate_uses_bridge_wh_sum_not_half_perimeter():
+    picked = _pick_explicit_bridge_family_candidate(
+        "桥架 名称:钢制槽式桥架 规格:200×100",
+        [
+            {"name": "钢制槽式桥架安装 宽+高(mm以下) 200", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "钢制槽式桥架安装 宽+高(mm以下) 300", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "钢制槽式桥架安装 宽+高(mm以下) 300"
+
+
 def test_pick_explicit_support_family_candidate_prefers_bridge_support():
     picked = _pick_explicit_support_family_candidate(
         "管道支架 管架形式:桥架侧纵向抗震支吊架",
@@ -118,6 +193,18 @@ def test_pick_explicit_support_family_candidate_prefers_bridge_support():
     )
 
     assert picked["name"] == "支架制作与安装 电缆桥架支撑架制作"
+
+
+def test_pick_explicit_support_family_candidate_prefers_weight_bucket():
+    picked = _pick_explicit_support_family_candidate(
+        "管道支架 详见图集03S402-77~79 单件重量5kg",
+        [
+            {"name": "室内管道管道支架制作安装 一般管架", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "管道支架制作 单件重量(kg以内) 5", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "管道支架制作 单件重量(kg以内) 5"
 
 
 def test_pick_explicit_motor_family_candidate_prefers_check_wiring():
@@ -192,6 +279,54 @@ def test_pick_explicit_valve_family_candidate_prefers_carbon_steel_valve_family(
     assert picked["name"] == "法兰阀门安装 公称直径(mm以内) 100 碳钢"
 
 
+def test_pick_explicit_valve_family_candidate_prefers_exact_dn_bucket():
+    picked = _pick_explicit_valve_family_candidate(
+        "螺纹阀门 类型:截止阀 规格:DN32",
+        [
+            {"name": "螺纹阀门安装 公称直径(mm以内) 40", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "螺纹阀门安装 公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "螺纹阀门安装 公称直径(mm以内) 32"
+
+
+def test_pick_explicit_wiring_family_candidate_prefers_pipe_wiring_family():
+    picked = _pick_explicit_wiring_family_candidate(
+        "配线 配线形式:管内穿线 型号:WDZN-BYJ-3x4+2x2.5",
+        [
+            {"name": "线槽配线 导线截面(mm2以内) 4", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2以内) 4", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2以内) 4"
+
+
+def test_pick_explicit_cable_family_candidate_prefers_matching_laying_and_model():
+    picked = _pick_explicit_cable_family_candidate(
+        "阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位:室内穿管或桥架",
+        [
+            {"name": "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) 240", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "电缆穿导管敷设 铜芯电力电缆 BPYJV 电缆截面(mm2) 240", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "电缆穿导管敷设 铜芯电力电缆 BPYJV 电缆截面(mm2) 240"
+
+
+def test_pick_explicit_cable_family_candidate_prefers_middle_head_and_aluminum_conductor():
+    picked = _pick_explicit_cable_family_candidate(
+        "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤240",
+        [
+            {"name": "终端头制作与安装 1kV以下室内干包式铜芯电力电缆 电缆截面(mm2)≤240", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤240", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "中间头制作与安装 1kV以下室内干包式铝芯电力电缆 电缆截面(mm2)≤240"
+
+
 def test_pick_explicit_fire_device_candidate_prefers_hydrant_device_over_pipe():
     picked = _pick_explicit_fire_device_candidate(
         "室内消火栓 暗装 带自救卷盘 DN65",
@@ -214,6 +349,18 @@ def test_pick_explicit_network_device_candidate_prefers_small_port_bucket():
     )
 
     assert picked["name"] == "交换机设备安装、调试 交换机 固定配置 ≤24口"
+
+
+def test_pick_explicit_support_family_candidate_prefers_aseismic_side_single_pipe():
+    picked = _pick_explicit_support_family_candidate(
+        "抗震支架 名称:水管侧向抗震支架 管道数量:单管",
+        [
+            {"name": "成品抗震支架安装 单管纵向支架", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "成品抗震支架安装 单管侧向支架", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "成品抗震支架安装 单管侧向支架"
 
 
 def test_pick_explicit_network_device_candidate_prefers_exact_large_port_bucket():
