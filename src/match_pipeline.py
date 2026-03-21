@@ -210,6 +210,11 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     support_candidate = _pick_explicit_support_family_candidate(bill_text, candidates)
     if support_candidate is not None:
         return support_candidate
+    if _should_force_conservative_support_fallback(item, bill_text):
+        support_fallback_candidate = _pick_safe_support_fallback_candidate(item, candidates)
+        if support_fallback_candidate is not None:
+            return support_fallback_candidate
+        return None
 
     insulation_candidate = _pick_explicit_insulation_family_candidate(bill_text, candidates)
     if insulation_candidate is not None:
@@ -263,6 +268,123 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     # 全部不通过，回退到第一个
     return candidates[0]
+
+
+def _should_force_conservative_support_fallback(item: dict, bill_text: str) -> bool:
+    params = item.get("params") if isinstance(item, dict) else None
+    if not isinstance(params, dict) or not params:
+        params = text_parser.parse(bill_text or "")
+    support_scope = str(params.get("support_scope") or "")
+    if support_scope in {"抗震支架", "桥架支架", "管道支架", "设备支架"}:
+        return True
+    return any(
+        keyword in (bill_text or "")
+        for keyword in (
+            "抗震支架",
+            "抗震支吊架",
+            "桥架支架",
+            "桥架支撑架",
+            "电缆桥架",
+            "管道支架",
+            "给排水",
+            "消防水",
+            "通风空调",
+            "风管",
+            "设备支架",
+        )
+    )
+
+
+def _pick_safe_support_fallback_candidate(item: dict, candidates: list[dict]) -> dict | None:
+    bill_name = str((item or {}).get("name") or "")
+    desc = str((item or {}).get("description") or "")
+    bill_text = f"{bill_name} {desc}".strip()
+    params = (item or {}).get("params")
+    if not isinstance(params, dict) or not params:
+        params = text_parser.parse(bill_text)
+    support_scope = str(params.get("support_scope") or "")
+    specialty = str((item or {}).get("specialty") or "")
+
+    prefer_bridge = support_scope == "桥架支架" or any(
+        keyword in bill_text for keyword in ("桥架", "电缆桥架", "桥架支撑架")
+    )
+    prefer_duct = specialty.startswith("C7") or any(
+        keyword in bill_text for keyword in ("通风", "空调", "风管")
+    )
+    prefer_pipe = not prefer_bridge and support_scope != "设备支架"
+
+    support_anchor_words = (
+        "支架", "吊架", "支吊架", "支撑架", "管架",
+        "吊托支架", "仪表支架", "桥架立柱", "托臂",
+    )
+    hard_reject_words = (
+        "风帽", "风罩", "敷设", "穿线", "控制台",
+        "控制箱", "终端头", "调试", "配电箱",
+        "撑杆", "计量泵",
+    )
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = str(cand.get("name") or "")
+        if not quota_name:
+            continue
+        if any(word in quota_name for word in hard_reject_words):
+            continue
+        cand_params = text_parser.parse(quota_name)
+        cand_scope = str(cand_params.get("support_scope") or "")
+        has_support_anchor = bool(cand_scope) or any(word in quota_name for word in support_anchor_words)
+        if not has_support_anchor:
+            continue
+
+        score = 0
+        if support_scope and cand_scope:
+            if support_scope == cand_scope:
+                score += 12
+            elif support_scope == "抗震支架" and cand_scope in {"桥架支架", "管道支架"}:
+                score += 4
+            else:
+                score -= 12
+
+        if prefer_bridge:
+            if any(word in quota_name for word in ("桥架支撑架", "桥架立柱", "电缆桥架")):
+                score += 14
+            if "仪表支架" in quota_name and "桥架立柱" in quota_name:
+                score += 8
+            if any(word in quota_name for word in ("光缆", "电缆敷设")):
+                score -= 14
+            if any(word in quota_name for word in ("管道支吊架", "吊托支架")):
+                score -= 8
+        elif prefer_pipe:
+            if any(word in quota_name for word in ("管道支吊架", "吊托支架", "一般管架")):
+                score += 12
+            if "仪表支架" in quota_name:
+                score -= 10
+            if any(word in quota_name for word in ("桥架", "电缆")):
+                score -= 12
+        if prefer_duct:
+            if any(word in quota_name for word in ("管道支吊架", "吊托支架", "支吊架")):
+                score += 4
+            if "仪表支架" in quota_name:
+                score -= 12
+            if any(word in quota_name for word in ("桥架", "电缆")):
+                score -= 10
+
+        if "制作" in quota_name or "安装" in quota_name:
+            score += 4
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
 
 
 def _infer_cable_conductor_anchor(text: str, parsed: dict | None = None) -> str:
@@ -1331,22 +1453,25 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     prefer_equipment = bill_support_scope == "设备支架" or any(
         keyword in text for keyword in ("设备支架", "设备吊架", "设备支吊架")
     )
+    prefer_duct = any(
+        keyword in text for keyword in ("通风", "空调", "风管", "风口")
+    )
     if not any(keyword in text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
         return None
 
     prefer_bridge = (
-        bill_support_scope in {"桥架支架", "抗震支架"}
-        or any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向", "抗震支吊架"))
+        bill_support_scope == "桥架支架"
+        or any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向"))
     )
     prefer_pipe = (
         bill_support_scope == "管道支架"
-        or any(keyword in text for keyword in ("管道", "管架", "管道支架"))
+        or any(keyword in text for keyword in ("管道", "管架", "管道支架", "给排水", "消防水", "喷淋", "消火栓", "水管"))
     )
     prefer_fabrication = (
         bill_support_action in {"制作", "制作安装"}
         or any(keyword in text for keyword in ("图集", "详见图集", "制作", "单件重量", "型钢"))
     )
-    if not prefer_bridge and not prefer_pipe and not prefer_equipment:
+    if not prefer_bridge and not prefer_pipe and not prefer_equipment and not prefer_duct and not prefer_aseismic:
         return None
 
     support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
@@ -1354,6 +1479,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
     support_action_words = ("制作", "安装", "制作安装", "制安")
     equipment_support_words = ("设备支架", "设备吊架", "设备及部件支架")
+    bridge_support_words = ("桥架支撑架", "电缆桥架")
+    pipe_support_words = ("管架", "管道支架", "管道支吊架", "吊托支架", "支吊架")
+    instrument_support_words = ("仪表支架", "仪表支吊架")
 
     scored: list[tuple[tuple[int, float, float], dict]] = []
     for cand in candidates:
@@ -1410,7 +1538,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
         if prefer_aseismic:
             if "抗震" in quota_name:
                 score += 12
-            elif prefer_bridge and any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
+            elif prefer_bridge and any(word in quota_name for word in bridge_support_words):
+                score += 2
+            elif (prefer_pipe or prefer_duct) and any(word in quota_name for word in pipe_support_words):
                 score += 2
             elif any(word in quota_name for word in ("一般管架", "支撑架制作", "桥架支撑架制作")):
                 score -= 4
@@ -1418,30 +1548,41 @@ def _pick_explicit_support_family_candidate(bill_text: str,
             score -= 8
 
         if prefer_bridge:
-            if any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
+            if any(word in quota_name for word in bridge_support_words):
                 score += 12
             if any(word in quota_name for word in ("支架制作", "支架安装")) and "桥架" in quota_name:
                 score += 6
-            if any(word in quota_name for word in ("管架", "管道支架")):
+            if any(word in quota_name for word in pipe_support_words):
                 score -= 10
             if any(word in quota_name for word in equipment_support_words):
                 score -= 8
         elif prefer_pipe:
-            if any(word in quota_name for word in ("管架", "管道支架")):
+            if any(word in quota_name for word in pipe_support_words):
                 score += 8
-            if "桥架支撑架" in quota_name:
-                score -= 6
+            if any(word in quota_name for word in bridge_support_words):
+                score -= 10
             if generic_pipe_support and "一般管架" in quota_name:
                 score += 10
             for word in support_special_shape_words:
                 if word in quota_name and word not in text:
                     score -= 12
+            if any(word in quota_name for word in instrument_support_words):
+                score -= 10
             if any(word in quota_name for word in equipment_support_words):
                 score -= 10
+        elif prefer_duct:
+            if any(word in quota_name for word in ("支吊架", "吊托支架", "风管支吊架")):
+                score += 8
+            if any(word in quota_name for word in bridge_support_words):
+                score -= 10
+            if any(word in quota_name for word in instrument_support_words):
+                score -= 10
+            if any(word in quota_name for word in equipment_support_words):
+                score -= 8
         elif prefer_equipment:
             if any(word in quota_name for word in equipment_support_words):
                 score += 12
-            if any(word in quota_name for word in ("管架", "管道支架", "桥架支撑架", "电缆桥架")):
+            if any(word in quota_name for word in pipe_support_words + bridge_support_words):
                 score -= 10
             if any(word in quota_name for word in ("单件重量", "每个支架重量", "每组重量", "kg", "重量")):
                 score += 6
@@ -2957,26 +3098,29 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             )
             # 规则审核前置：跳过类别明显不匹配的候选
             best = _pick_category_safe_candidate(item, matched_candidates)
-            decision_candidates = [best] + [c for c in matched_candidates if c is not best]
-            param_score = best.get("param_score", 0.5)
-            best_composite = compute_candidate_rank_score(best)
-            others = [c for c in matched_candidates if c is not best]
-            second_composite = max((compute_candidate_rank_score(c) for c in others), default=0)
-            score_gap = best_composite - second_composite
-            confidence = calculate_confidence(
-                param_score, param_match=True,
-                name_bonus=best.get("name_bonus", 0.0),
-                score_gap=score_gap,
-                rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
-                candidates_count=len(valid_candidates),
-                is_ambiguous_short=item.get("_is_ambiguous_short", False),
-            )
-            explanation = best.get("param_detail", "")
-            reasoning_decision = analyze_ambiguity(
-                decision_candidates,
-                route_profile=item.get("query_route"),
-                arbitration=arbitration,
-            ).as_dict()
+            if best:
+                decision_candidates = [best] + [c for c in matched_candidates if c is not best]
+                param_score = best.get("param_score", 0.5)
+                best_composite = compute_candidate_rank_score(best)
+                others = [c for c in matched_candidates if c is not best]
+                second_composite = max((compute_candidate_rank_score(c) for c in others), default=0)
+                score_gap = best_composite - second_composite
+                confidence = calculate_confidence(
+                    param_score, param_match=True,
+                    name_bonus=best.get("name_bonus", 0.0),
+                    score_gap=score_gap,
+                    rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                    candidates_count=len(valid_candidates),
+                    is_ambiguous_short=item.get("_is_ambiguous_short", False),
+                )
+                explanation = best.get("param_detail", "")
+                reasoning_decision = analyze_ambiguity(
+                    decision_candidates,
+                    route_profile=item.get("query_route"),
+                    arbitration=arbitration,
+                ).as_dict()
+            else:
+                explanation = "显式支架项未找到安全近邻候选，转未匹配"
         else:
             arbitration = {
                 "applied": False,
@@ -2984,23 +3128,26 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
                 "reason": "no_param_matched_candidates",
             }
             best = _pick_category_safe_candidate(item, valid_candidates)
-            decision_candidates = [best] + [c for c in valid_candidates if c is not best]
-            param_score = best.get("param_score", 0.0)
-            confidence = calculate_confidence(
-                param_score, param_match=False,
-                name_bonus=best.get("name_bonus", 0.0),
-                rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
-                family_aligned=infer_confidence_family_alignment(best),
-                family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
-                candidates_count=len(valid_candidates),
-                is_ambiguous_short=item.get("_is_ambiguous_short", False),
-            )
-            explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
-            reasoning_decision = analyze_ambiguity(
-                decision_candidates,
-                route_profile=item.get("query_route"),
-                arbitration=arbitration,
-            ).as_dict()
+            if best:
+                decision_candidates = [best] + [c for c in valid_candidates if c is not best]
+                param_score = best.get("param_score", 0.0)
+                confidence = calculate_confidence(
+                    param_score, param_match=False,
+                    name_bonus=best.get("name_bonus", 0.0),
+                    rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                    family_aligned=infer_confidence_family_alignment(best),
+                    family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
+                    candidates_count=len(valid_candidates),
+                    is_ambiguous_short=item.get("_is_ambiguous_short", False),
+                )
+                explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
+                reasoning_decision = analyze_ambiguity(
+                    decision_candidates,
+                    route_profile=item.get("query_route"),
+                    arbitration=arbitration,
+                ).as_dict()
+            else:
+                explanation = "显式支架项未找到安全近邻候选，转未匹配"
 
     # 收集所有候选定额ID（供benchmark统计"正确答案是否在候选中"）
     all_candidate_ids = [
@@ -3106,7 +3253,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         result["alternatives"] = _build_alternatives(
             valid_candidates, skip_obj=best, top_n=3)
     if not best:
-        result["no_match_reason"] = "搜索无匹配结果"
+        result["no_match_reason"] = explanation or "搜索无匹配结果"
     return result
 
 

@@ -1,4 +1,5 @@
 from src.match_pipeline import (
+    _pick_category_safe_candidate,
     _pick_explicit_button_broadcast_candidate,
     _pick_explicit_bridge_family_candidate,
     _pick_explicit_cable_family_candidate,
@@ -159,6 +160,18 @@ def test_pick_explicit_ventilation_family_candidate_prefers_manual_multi_leaf_da
     assert picked["name"] == "碳钢 调节阀安装 手动对开多叶调节阀 周长(mm以内) 1600"
 
 
+def test_pick_explicit_ventilation_family_candidate_does_not_hijack_plumbing_check_valve():
+    picked = _pick_explicit_ventilation_family_candidate(
+        "焊接法兰阀门 名称:止回阀 规格:DN80",
+        [
+            {"name": "碳钢 调节阀安装 圆、方形风管止回阀 周长(mm以内) 3200", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "法兰阀门安装 公称直径(mm以内) 80", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked is None
+
+
 def test_pick_explicit_bridge_family_candidate_prefers_bridge_over_cable_laying():
     picked = _pick_explicit_bridge_family_candidate(
         "桥架 名称:钢制桥架 规格:300×100",
@@ -291,6 +304,18 @@ def test_pick_explicit_valve_family_candidate_prefers_exact_dn_bucket():
     assert picked["name"] == "螺纹阀门安装 公称直径(mm以内) 32"
 
 
+def test_pick_explicit_valve_family_candidate_prefers_ppr_plastic_valve_over_plastic_pipe():
+    picked = _pick_explicit_valve_family_candidate(
+        "塑料阀门 类型:止回阀 规格:DN32",
+        [
+            {"name": "塑料给水管(热熔连接) 公称外径(mm以内) 32", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "塑料阀门安装 公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "塑料阀门安装 公称直径(mm以内) 32"
+
+
 def test_pick_explicit_wiring_family_candidate_prefers_pipe_wiring_family():
     picked = _pick_explicit_wiring_family_candidate(
         "配线 配线形式:管内穿线 型号:WDZN-BYJ-3x4+2x2.5",
@@ -361,6 +386,94 @@ def test_pick_explicit_support_family_candidate_prefers_aseismic_side_single_pip
     )
 
     assert picked["name"] == "成品抗震支架安装 单管侧向支架"
+
+
+def test_pick_explicit_support_family_candidate_prefers_pipe_like_fallback_for_plumbing_aseismic():
+    picked = _pick_explicit_support_family_candidate(
+        "给排水双向抗震支架 1.规格:TL-DN100mm",
+        [
+            {"name": "仪表支架制作安装 仪表支吊架安装 双杆吊架安装", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "吊托支架制作、安装", "param_score": 0.7, "rerank_score": 0.7},
+            {"name": "电缆桥架支撑架制作", "param_score": 0.6, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "吊托支架制作、安装"
+
+
+def test_pick_category_safe_candidate_prefers_pipe_insulation_over_equipment():
+    item = {
+        "name": "管道绝热",
+        "description": "绝热厚度:30mm",
+    }
+    candidates = [
+        {"name": "立式设备绝热 绝热层厚度(mm以内) 30", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "管道绝热 绝热层厚度(mm以内) 30", "param_score": 0.7, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "管道绝热 绝热层厚度(mm以内) 30"
+
+
+def test_pick_category_safe_candidate_prefers_pipe_check_valve_over_duct_check_valve():
+    item = {
+        "name": "焊接法兰阀门",
+        "description": "类型:止回阀 规格:DN100",
+    }
+    candidates = [
+        {"name": "碳钢 调节阀安装 圆、方形风管止回阀 周长(mm以内) 3200", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "焊接法兰阀门安装 公称直径(mm以内) 100", "param_score": 0.7, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "焊接法兰阀门安装 公称直径(mm以内) 100"
+
+
+def test_pick_category_safe_candidate_prefers_pipe_like_support_fallback_over_instrument_support():
+    item = {
+        "name": "给排水双向抗震支架",
+        "description": "1.规格:TL-DN100mm",
+        "specialty": "C10",
+    }
+    candidates = [
+        {"name": "仪表支架制作安装 仪表支吊架安装 双杆吊架安装", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "吊托支架制作、安装", "param_score": 0.7, "rerank_score": 0.7},
+        {"name": "电缆桥架支撑架制作", "param_score": 0.6, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "吊托支架制作、安装"
+
+
+def test_pick_category_safe_candidate_abstains_when_explicit_support_only_has_unrelated_entities():
+    item = {
+        "name": "通风空调侧向抗震支架",
+        "description": "1.规格:T-DN800mm",
+        "specialty": "C7",
+    }
+    candidates = [
+        {"name": "圆伞形风帽安装 ≤10kg", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "锥形风帽安装 ≤25kg", "param_score": 0.8, "rerank_score": 0.8},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked is None
+
+
+def test_pick_explicit_valve_family_candidate_prefers_plastic_valve_over_plastic_pipe():
+    picked = _pick_explicit_valve_family_candidate(
+        "PPR塑料阀门 规格:DN32",
+        [
+            {"name": "室外塑料给水管(热熔连接) 公称直径(mm以内) 32", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "螺纹阀门安装 公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.6},
+        ],
+    )
+
+    assert picked["name"] == "螺纹阀门安装 公称直径(mm以内) 32"
 
 
 def test_pick_explicit_network_device_candidate_prefers_exact_large_port_bucket():

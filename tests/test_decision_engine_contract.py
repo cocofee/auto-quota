@@ -52,6 +52,46 @@ class TestPrepareItemContract:
         assert result.get("match_source") == "skip_measure"
         assert "measure_item" in result.get("reason_tags", [])
 
+    @pytest.mark.parametrize(
+        "item_name",
+        [
+            "二次搬运费",
+            "已完工程及设备保护费",
+            "暂列金额",
+            "专业工程暂估价（给排水）",
+            " 暂 列 金 额 ",
+            "总承包服务费",
+            "预算包干费",
+            "工程优质费",
+            "现场签证费用",
+            "税前工程造价",
+            "总造价",
+            "人工费",
+            "概算幅度差",
+            "其他项目",
+            "其他费用",
+            "计日工",
+            "增值税销项税额",
+        ],
+    )
+    def test_measure_specific_fee_items_return_early(self, item_name):
+        """回归：费用类措施项应直接跳过，不进入套定额流程。"""
+        item = {
+            "name": item_name,
+            "description": "",
+            "unit": "项",
+            "quantity": 1,
+        }
+
+        prepared = _prepare_item_for_matching(
+            item, experience_db=None, rule_validator=None,
+        )
+
+        assert prepared.get("early_type") == "skip_measure"
+        result = prepared["early_result"]
+        assert result.get("match_source") == "skip_measure"
+        assert "measure_item" in result.get("reason_tags", [])
+
     def test_normal_item_no_crash(self):
         """普通清单项 -> 不崩溃"""
         rule_validator = MagicMock()
