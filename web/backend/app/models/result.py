@@ -84,6 +84,15 @@ class MatchResult(Base):
     # 置信度（0~100的整数，越高越可靠）
     confidence: Mapped[int] = mapped_column(Integer, default=0)
 
+    # 原始分数，不再被终审硬封顶；confidence 保留给兼容读取
+    confidence_score: Mapped[int] = mapped_column(Integer, default=0)
+
+    # 终审风险等级：low / medium / high
+    review_risk: Mapped[str] = mapped_column(String(20), default="low")
+
+    # 绿黄红灯：green / yellow / red
+    light_status: Mapped[str] = mapped_column(String(20), default="red")
+
     # 匹配来源: "search"=纯搜索, "agent"=Agent, "experience"=经验库直通
     match_source: Mapped[str] = mapped_column(String(50), default="")
 

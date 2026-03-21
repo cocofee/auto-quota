@@ -14,6 +14,7 @@ from loguru import logger
 from src.excel_compat import detect_excel_format_from_header, validate_excel_upload
 
 from app.config import UPLOAD_DIR, UPLOAD_MAX_MB, TASK_OUTPUT_DIR
+from app.text_utils import normalize_client_filename
 
 
 _TRACE_STEP_KEYS = {
@@ -69,7 +70,7 @@ def save_upload_file(file: UploadFile, task_id: uuid.UUID) -> Path:
         ValueError: 文件格式不对或超过大小限制
     """
     # 检查文件扩展名
-    filename = file.filename or "unknown.xlsx"
+    filename = normalize_client_filename(file.filename, "unknown.xlsx")
     suffix = Path(filename).suffix.lower()
     if suffix not in (".xlsx", ".xls"):
         raise ValueError(f"不支持的文件格式 '{suffix}'，请上传 .xlsx 或 .xls 文件")
@@ -220,6 +221,9 @@ def save_results_to_db(session, task_id: uuid.UUID, results: list[dict]):
             quotas=quotas if quotas else None,
             alternatives=alternatives,
             confidence=result.get("confidence", 0),
+            confidence_score=result.get("confidence_score", result.get("confidence", 0)),
+            review_risk=result.get("review_risk", "low"),
+            light_status=result.get("light_status", "red"),
             match_source=result.get("match_source", ""),
             explanation=result.get("explanation", ""),
             candidates_count=result.get("candidates_count", 0),

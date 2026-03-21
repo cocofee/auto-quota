@@ -933,7 +933,8 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         classification: dict,
                         bill_params: dict = None,
                         canonical_features: dict = None,
-                        context_prior: dict = None) -> list[dict]:
+                        context_prior: dict = None,
+                        route_profile=None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     candidates = cascade_search(searcher, search_query, classification)
 
@@ -959,7 +960,14 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
 
     # 单候选时重排无意义，可直接跳过提升速度
     if candidates and len(candidates) > 1:
-        candidates = reranker.rerank(search_query, candidates)
+        try:
+            candidates = reranker.rerank(
+                search_query,
+                candidates,
+                route_profile=route_profile,
+            )
+        except TypeError:
+            candidates = reranker.rerank(search_query, candidates)
     if candidates:
         # 从classification中提取search_books（用于v3 LTR特征book_match）
         search_books = classification.get("search_books", []) if classification else []
@@ -1183,6 +1191,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         bill_params=item_params,
         canonical_features=ctx.get("canonical_features"),
         context_prior=ctx.get("context_prior"),
+        route_profile=item.get("query_route") if isinstance(item, dict) else None,
     )
     if isinstance(item, dict):
         item["_supplemental_quotas"] = _build_support_surface_process_quotas(

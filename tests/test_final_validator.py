@@ -1,17 +1,20 @@
 from src.final_validator import FinalValidator
 
 
-def test_unit_conflict_caps_confidence_and_marks_manual_review():
+def test_unit_conflict_marks_red_light_without_capping_score():
     result = {
         "bill_item": {"name": "给水管道", "description": "", "unit": "m"},
-        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "台"}],
+        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "个"}],
         "confidence": 91,
         "match_source": "search",
     }
 
     FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
 
-    assert result["confidence"] == 68
+    assert result["confidence"] == 91
+    assert result["confidence_score"] == 91
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "unit_conflict"
 
@@ -27,7 +30,7 @@ def test_review_conflict_can_auto_correct(monkeypatch):
     monkeypatch.setattr(
         FinalValidator,
         "_check_review_error",
-        lambda self, item, result: {"type": "category_mismatch", "reason": "类别冲突"},
+        lambda self, item, current_result: {"type": "category_mismatch", "reason": "类别冲突"},
     )
     monkeypatch.setattr(
         "src.final_validator.correct_error",
@@ -46,6 +49,10 @@ def test_review_conflict_can_auto_correct(monkeypatch):
 
     assert result["quotas"][0]["quota_id"] == "Q2"
     assert result["quotas"][0]["unit"] == "m"
+    assert result["confidence"] == 88
+    assert result["confidence_score"] == 88
+    assert result["review_risk"] == "medium"
+    assert result["light_status"] == "yellow"
     assert result["final_validation"]["status"] == "corrected"
     assert result["final_review_correction"]["quota_id"] == "Q2"
 
@@ -61,18 +68,21 @@ def test_review_conflict_without_correction_stays_manual_review(monkeypatch):
     monkeypatch.setattr(
         FinalValidator,
         "_check_review_error",
-        lambda self, item, result: {"type": "category_mismatch", "reason": "类别冲突"},
+        lambda self, item, current_result: {"type": "category_mismatch", "reason": "类别冲突"},
     )
     monkeypatch.setattr("src.final_validator.correct_error", lambda *args, **kwargs: None)
 
     FinalValidator(province="测试省份", auto_correct=True).validate_result(result)
 
-    assert result["confidence"] == 62
+    assert result["confidence"] == 80
+    assert result["confidence_score"] == 80
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "category_mismatch"
 
 
-def test_anchor_conflict_marks_manual_review_and_caps_confidence(monkeypatch):
+def test_anchor_conflict_marks_manual_review_and_red_light(monkeypatch):
     result = {
         "bill_item": {
             "name": "桥架安装",
@@ -96,11 +106,14 @@ def test_anchor_conflict_marks_manual_review_and_caps_confidence(monkeypatch):
         "match_source": "search",
     }
 
-    monkeypatch.setattr(FinalValidator, "_check_review_error", lambda self, item, result: None)
+    monkeypatch.setattr(FinalValidator, "_check_review_error", lambda self, item, current_result: None)
 
     FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
 
-    assert result["confidence"] == 64
+    assert result["confidence"] == 89
+    assert result["confidence_score"] == 89
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "anchor_conflict"
 
@@ -116,10 +129,13 @@ def test_anchor_conflict_skips_when_features_missing():
     FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
 
     assert result["confidence"] == 82
+    assert result["confidence_score"] == 82
+    assert result["review_risk"] == "medium"
+    assert result["light_status"] == "yellow"
     assert result["final_validation"]["status"] == "ok"
 
 
-def test_reasoning_decision_can_force_manual_review_without_other_conflicts():
+def test_reasoning_decision_can_force_manual_review_without_capping_score():
     result = {
         "bill_item": {"name": "支架", "description": "", "unit": "m"},
         "quotas": [{"quota_id": "Q1", "name": "桥架支撑架安装", "unit": "m"}],
@@ -135,7 +151,10 @@ def test_reasoning_decision_can_force_manual_review_without_other_conflicts():
 
     FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
 
-    assert result["confidence"] == 78
+    assert result["confidence"] == 88
+    assert result["confidence_score"] == 88
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "ambiguity_review"
 
@@ -153,4 +172,5 @@ def test_final_validator_merges_reason_tags_and_final_reason():
 
     assert "dirty_input" in result["reason_tags"]
     assert "manual_review" in result["reason_tags"]
+    assert "light_red" in result["reason_tags"]
     assert result["final_reason"]

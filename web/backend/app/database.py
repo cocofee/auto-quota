@@ -141,6 +141,9 @@ async def init_db():
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_amount FLOAT",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS alternatives JSON",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS is_measure_item BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS confidence_score INTEGER DEFAULT 0",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS review_risk VARCHAR(20) DEFAULT 'low'",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS light_status VARCHAR(20) DEFAULT 'red'",
         ]
         from sqlalchemy import text
         for sql in migrations:

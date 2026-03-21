@@ -408,13 +408,13 @@ export default function SettingsPage() {
       <Card title="匹配参数">
         <Descriptions bordered column={1} size="small">
           <Descriptions.Item label="高置信度（绿灯）">
-            <Badge status="success" text="≥ 85分 → 系统有把握，可直接采用" />
+            <Badge status="success" text="≥ 90分 → 系统有把握，可直接采用" />
           </Descriptions.Item>
           <Descriptions.Item label="中置信度（黄灯）">
-            <Badge status="warning" text="70-84分 → 不太确定，需要人工复核确认" />
+            <Badge status="warning" text="75-89分 → 可参考，建议人工复核确认" />
           </Descriptions.Item>
           <Descriptions.Item label="低置信度（红灯）">
-            <Badge status="error" text="< 70分 → 系统没信心，很可能需要修改" />
+            <Badge status="error" text="< 75分 → 风险较高，通常需要修改" />
           </Descriptions.Item>
           <Descriptions.Item label="经验库直通阈值">
             <Badge status="processing" text="权威层精确匹配" />

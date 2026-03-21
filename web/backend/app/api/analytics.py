@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import results as results_api
 from app.database import get_db
 from app.models.user import User
 from app.models.task import Task
@@ -54,22 +55,18 @@ async def analytics_overview(
         select(func.count()).select_from(MatchResult)
     )).scalar() or 0
 
-    # 高置信度条数（>=85）
-    high_conf = (await db.execute(
-        select(func.count()).select_from(MatchResult).where(MatchResult.confidence >= 85)
-    )).scalar() or 0
-
-    # 中置信度条数（70-84）
-    mid_conf = (await db.execute(
-        select(func.count()).select_from(MatchResult).where(
-            MatchResult.confidence >= 70, MatchResult.confidence < 85
+    status_rows = (
+        await db.execute(
+            select(
+                MatchResult.light_status,
+                MatchResult.confidence_score,
+                MatchResult.confidence,
+            )
         )
-    )).scalar() or 0
-
-    # 低置信度条数（<70）
-    low_conf = (await db.execute(
-        select(func.count()).select_from(MatchResult).where(MatchResult.confidence < 70)
-    )).scalar() or 0
+    ).all()
+    high_conf = sum(1 for row in status_rows if results_api._resolve_light_status(row) == "green")
+    mid_conf = sum(1 for row in status_rows if results_api._resolve_light_status(row) == "yellow")
+    low_conf = sum(1 for row in status_rows if results_api._resolve_light_status(row) == "red")
 
     # 平均置信度
     avg_conf = (await db.execute(

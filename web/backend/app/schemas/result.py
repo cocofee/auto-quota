@@ -34,6 +34,9 @@ class MatchResultResponse(BaseModel):
     quotas: list[QuotaItem] | None
     alternatives: list[dict] | None = None
     confidence: int
+    confidence_score: int = 0
+    review_risk: str = "low"
+    light_status: str = "red"
     match_source: str
     explanation: str
     candidates_count: int

@@ -33,13 +33,62 @@ from app.schemas.result import (
 )
 from app.api.shared import get_user_task, store_experience, store_experience_batch, flag_disputed_experience
 from app.services.match_service import get_task_output_dir
+from app.text_utils import normalize_client_filename, repair_mojibake_data
 
 router = APIRouter()
 
 # 置信度分档阈值（必须与 config.py CONFIDENCE_GREEN/YELLOW 和前端 experience.ts 保持一致）
 # 修改时三处同步：config.py:585-586 / experience.ts:12-13 / 此处
-_GREEN_THRESHOLD = 85
-_YELLOW_THRESHOLD = 70
+_GREEN_THRESHOLD = 90
+_YELLOW_THRESHOLD = 75
+
+
+def _read_result_value(result, key: str, default=None):
+    if isinstance(result, dict):
+        return result.get(key, default)
+    return getattr(result, key, default)
+
+
+def _effective_confidence(result) -> int:
+    if isinstance(result, (int, float)):
+        try:
+            return max(0, min(100, int(result)))
+        except (TypeError, ValueError):
+            return 0
+    value = _read_result_value(result, "confidence_score", None)
+    if value is None:
+        value = _read_result_value(result, "confidence", 0)
+    try:
+        return max(0, min(100, int(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolve_light_status(result) -> str:
+    light_status = str(_read_result_value(result, "light_status", "") or "").strip().lower()
+    if light_status in {"green", "yellow", "red"}:
+        return light_status
+
+    confidence = _effective_confidence(result)
+    if confidence >= _GREEN_THRESHOLD:
+        return "green"
+    if confidence >= _YELLOW_THRESHOLD:
+        return "yellow"
+    return "red"
+
+
+def _is_confirmable_result(result) -> bool:
+    return _resolve_light_status(result) != "red"
+
+
+def _task_download_stem(original_filename: str | None) -> str:
+    return Path(normalize_client_filename(original_filename, "result.xlsx")).stem
+
+
+def _to_result_response(match_result: MatchResult) -> MatchResultResponse:
+    payload = MatchResultResponse.model_validate(match_result).model_dump()
+    repaired = repair_mojibake_data(payload, preserve_newlines=True)
+    return MatchResultResponse.model_validate(repaired)
 
 
 def _compact_feedback_trace(trace: dict | None) -> dict:
@@ -254,9 +303,9 @@ async def list_results(
 
     # 统计置信度分布 + 审核状态
     total = len(items)
-    high_conf = sum(1 for r in items if r.confidence >= _GREEN_THRESHOLD)
-    mid_conf = sum(1 for r in items if _YELLOW_THRESHOLD <= r.confidence < _GREEN_THRESHOLD)
-    low_conf = sum(1 for r in items if r.confidence < _YELLOW_THRESHOLD)
+    high_conf = sum(1 for r in items if _resolve_light_status(r) == "green")
+    mid_conf = sum(1 for r in items if _resolve_light_status(r) == "yellow")
+    low_conf = sum(1 for r in items if _resolve_light_status(r) == "red")
     no_match = sum(1 for r in items if not r.quotas)
     # 审核维度：已确认/已纠正/待审核
     confirmed = sum(1 for r in items if r.review_status == "confirmed")
@@ -274,7 +323,11 @@ async def list_results(
         "pending": pending,        # 待审核条数
     }
 
-    return ResultListResponse(items=items, total=total, summary=summary)
+    return ResultListResponse(
+        items=[_to_result_response(item) for item in items],
+        total=total,
+        summary=summary,
+    )
 
 
 @router.get("/tasks/{task_id}/results/{result_id}", response_model=MatchResultResponse)
@@ -299,7 +352,7 @@ async def get_result(
     match_result = result.scalar_one_or_none()
     if not match_result:
         raise HTTPException(status_code=404, detail="结果不存在")
-    return match_result
+    return _to_result_response(match_result)
 
 
 @router.put("/tasks/{task_id}/results/{result_id}", response_model=MatchResultResponse)
@@ -345,7 +398,7 @@ async def correct_result(
                     review_note=req.review_note or "",
                 ),
             )
-        return match_result
+        return _to_result_response(match_result)
 
     corrected_quotas = [q.model_dump() for q in req.corrected_quotas]
     match_result.corrected_quotas = corrected_quotas
@@ -377,7 +430,7 @@ async def correct_result(
             reason=f"被纠正为 {[q.quota_id for q in req.corrected_quotas]}; {req.review_note or ''}",
         )
 
-    return match_result
+    return _to_result_response(match_result)
 
 
 @router.post("/tasks/{task_id}/results/confirm")
@@ -406,7 +459,7 @@ async def confirm_results(
         if r.review_status == "corrected":
             skipped += 1
             continue
-        if r.confidence < 70:
+        if not _is_confirmable_result(r):
             skipped_low_conf += 1
             continue
         if r.review_status != "confirmed":
@@ -466,7 +519,7 @@ async def export_results(
         raise HTTPException(status_code=404, detail="输出文件不存在")
 
     # 构造下载文件名（原始文件名 + _定额匹配结果）
-    download_name = Path(task.original_filename).stem + "_定额匹配结果.xlsx"
+    download_name = _task_download_stem(task.original_filename) + "_定额匹配结果.xlsx"
 
     # 带主材：直接返回完整文件
     if materials:
@@ -521,7 +574,7 @@ async def export_final(
     # 检查是否有纠正——没有纠正直接返回原始文件（快速路径）
     has_corrections = any(r.corrected_quotas for r in items)
     if not has_corrections and task.output_path and Path(task.output_path).exists():
-        download_name = Path(task.original_filename).stem + "_定额匹配结果.xlsx"
+        download_name = _task_download_stem(task.original_filename) + "_定额匹配结果.xlsx"
         export_path = task.output_path
         # 不带主材时去掉主材行
         if not materials:
@@ -579,7 +632,7 @@ async def export_final(
         logger.error(f"生成纠正后Excel失败: {e}")
         raise HTTPException(status_code=500, detail=f"生成Excel失败: {e}")
 
-    download_name = Path(task.original_filename).stem + "_最终结果.xlsx"
+    download_name = _task_download_stem(task.original_filename) + "_最终结果.xlsx"
     export_path = final_path
     # 不带主材时去掉主材行
     if not materials:
