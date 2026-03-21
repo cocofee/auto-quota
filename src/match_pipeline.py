@@ -1150,8 +1150,8 @@ def _pick_explicit_ventilation_family_candidate(bill_text: str,
     return scored[0][1]
 
 
-def _pick_explicit_support_family_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
+def _pick_explicit_support_family_candidate_legacy(bill_text: str,
+                                                   candidates: list[dict]) -> dict | None:
     text = bill_text or ""
     bill_params = text_parser.parse(text)
     bill_support_scope = str(bill_params.get("support_scope") or "")
@@ -1248,6 +1248,187 @@ def _pick_explicit_support_family_candidate(bill_text: str,
         elif prefer_pipe:
             if any(word in quota_name for word in ("管架", "管道支架")):
                 score += 8
+            if any(word in quota_name for word in ("桥架支撑架", "电缆桥架", "桥架支架")):
+                score -= 6
+            if generic_pipe_support and "一般管架" in quota_name:
+                score += 10
+            for word in support_special_shape_words:
+                if word in quota_name and word not in text:
+                    score -= 12
+        if prefer_side:
+            if "侧向" in quota_name:
+                score += 8
+            elif any(word in quota_name for word in ("纵向", "门型")):
+                score -= 8
+        if prefer_longitudinal:
+            if "纵向" in quota_name:
+                score += 8
+            elif any(word in quota_name for word in ("侧向", "门型")):
+                score -= 8
+        if prefer_door_frame:
+            if "门型" in quota_name:
+                score += 8
+            elif any(word in quota_name for word in ("侧向", "纵向")):
+                score -= 6
+        if prefer_single:
+            if "单管" in quota_name:
+                score += 6
+            elif "多管" in quota_name:
+                score -= 6
+        if prefer_multi:
+            if "多管" in quota_name:
+                score += 6
+            elif "单管" in quota_name:
+                score -= 6
+        if prefer_fabrication:
+            if "制作" in quota_name:
+                score += 10
+            if any(word in quota_name for word in ("单件重量", "kg", "重量")):
+                score += 6
+            if any(word in quota_name for word in ("安装", "一般管架")):
+                score -= 8
+        if bill_weight is not None:
+            cand_weight = cand_params.get("weight_t")
+            if cand_weight is not None:
+                if cand_weight == bill_weight:
+                    score += 10
+                elif cand_weight > bill_weight:
+                    score += 4
+                else:
+                    score -= 8
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _pick_explicit_support_family_candidate(bill_text: str,
+                                            candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    bill_params = text_parser.parse(text)
+    bill_support_scope = str(bill_params.get("support_scope") or "")
+    bill_support_action = str(bill_params.get("support_action") or "")
+    bill_weight = bill_params.get("weight_t")
+    bill_support_material = str(bill_params.get("support_material") or "")
+    prefer_aseismic = "抗震" in text or bill_support_scope == "抗震支架"
+    prefer_side = "侧向" in text
+    prefer_longitudinal = "纵向" in text
+    prefer_single = "单管" in text
+    prefer_multi = "多管" in text
+    prefer_door_frame = "门型" in text
+    generic_pipe_support = any(keyword in text for keyword in ("按需制作", "一般管架"))
+    prefer_equipment = bill_support_scope == "设备支架" or any(
+        keyword in text for keyword in ("设备支架", "设备吊架", "设备支吊架")
+    )
+    if not any(keyword in text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+        return None
+
+    prefer_bridge = (
+        bill_support_scope in {"桥架支架", "抗震支架"}
+        or any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向", "抗震支吊架"))
+    )
+    prefer_pipe = (
+        bill_support_scope == "管道支架"
+        or any(keyword in text for keyword in ("管道", "管架", "管道支架"))
+    )
+    prefer_fabrication = (
+        bill_support_action in {"制作", "制作安装"}
+        or any(keyword in text for keyword in ("图集", "详见图集", "制作", "单件重量", "型钢"))
+    )
+    if not prefer_bridge and not prefer_pipe and not prefer_equipment:
+        return None
+
+    support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
+    surface_process_words = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆")
+    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
+    support_action_words = ("制作", "安装", "制作安装", "制安")
+    equipment_support_words = ("设备支架", "设备吊架", "设备及部件支架")
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        cand_params = text_parser.parse(quota_name)
+        cand_support_scope = str(cand_params.get("support_scope") or "")
+        cand_support_action = str(cand_params.get("support_action") or "")
+        cand_support_material = str(cand_params.get("support_material") or "")
+        has_support_anchor = (
+            bool(cand_support_scope)
+            or any(word in quota_name for word in support_anchor_words)
+        )
+        if not has_support_anchor:
+            continue
+
+        candidate_is_surface_process = (
+            any(word in quota_name for word in surface_process_words)
+            and not any(word in quota_name for word in support_action_words)
+        )
+        if candidate_is_surface_process:
+            continue
+        if (
+            any(word in quota_name for word in surface_process_words)
+            and not any(word in text for word in surface_process_words)
+        ):
+            continue
+
+        score = 0
+        if bill_support_scope and cand_support_scope:
+            if bill_support_scope == cand_support_scope:
+                score += 12
+            elif (
+                bill_support_scope == "抗震支架"
+                and cand_support_scope in {"桥架支架", "管道支架"}
+            ):
+                score += 2
+            else:
+                score -= 12
+        if bill_support_action and cand_support_action:
+            if bill_support_action == cand_support_action:
+                score += 10
+            elif bill_support_action == "制作" and cand_support_action == "制作安装":
+                score -= 4
+            elif bill_support_action == "安装" and cand_support_action == "制作安装":
+                score -= 2
+            else:
+                score -= 8
+        if bill_support_material and cand_support_material:
+            if bill_support_material == cand_support_material:
+                score += 8
+            else:
+                score -= 8
+
+        if prefer_aseismic:
+            if "抗震" in quota_name:
+                score += 12
+            elif prefer_bridge and any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
+                score += 2
+            elif any(word in quota_name for word in ("一般管架", "支撑架制作", "桥架支撑架制作")):
+                score -= 4
+        elif "抗震" in quota_name:
+            score -= 8
+
+        if prefer_bridge:
+            if any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
+                score += 12
+            if any(word in quota_name for word in ("支架制作", "支架安装")) and "桥架" in quota_name:
+                score += 6
+            if any(word in quota_name for word in ("管架", "管道支架")):
+                score -= 10
+            if any(word in quota_name for word in equipment_support_words):
+                score -= 8
+        elif prefer_pipe:
+            if any(word in quota_name for word in ("管架", "管道支架")):
+                score += 8
             if "桥架支撑架" in quota_name:
                 score -= 6
             if generic_pipe_support and "一般管架" in quota_name:
@@ -1255,6 +1436,16 @@ def _pick_explicit_support_family_candidate(bill_text: str,
             for word in support_special_shape_words:
                 if word in quota_name and word not in text:
                     score -= 12
+            if any(word in quota_name for word in equipment_support_words):
+                score -= 10
+        elif prefer_equipment:
+            if any(word in quota_name for word in equipment_support_words):
+                score += 12
+            if any(word in quota_name for word in ("管架", "管道支架", "桥架支撑架", "电缆桥架")):
+                score -= 10
+            if any(word in quota_name for word in ("单件重量", "每个支架重量", "每组重量", "kg", "重量")):
+                score += 6
+
         if prefer_side:
             if "侧向" in quota_name:
                 score += 8
