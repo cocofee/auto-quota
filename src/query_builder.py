@@ -1091,16 +1091,120 @@ def _build_valve_query(name: str, full_text: str, params: dict,
             conn_type = "法兰连接" if _dn_val >= 50 else "螺纹连接"
         return _apply_synonyms(f"软接头({conn_type})", specialty)
 
-    # === 5. 电热熔法兰套件 → 塑料法兰 ===
+    # === 5. 塑料阀门（PPR/PP-R）→ 阀门家族，不落到塑料管 ===
+    _plastic_valve_check = (real_type or _name_base or "").upper()
+    if "塑料阀门" in _check or (("PPR" in _plastic_valve_check or "PP-R" in _plastic_valve_check) and "阀" in _check):
+        _dn_val = int(dn) if dn else 25
+        if any(keyword in connection for keyword in ("热熔", "熔接", "粘接", "电熔")):
+            return _apply_synonyms("塑料阀门安装(熔接)", specialty)
+        if "法兰" in connection:
+            return _apply_synonyms("法兰阀门安装", specialty)
+        if any(keyword in connection for keyword in ("螺纹", "丝扣")):
+            return _apply_synonyms("螺纹阀门", specialty)
+        return _apply_synonyms("塑料阀门安装(熔接)" if _dn_val < 50 else "法兰阀门安装", specialty)
+
+    # === 6. 电热熔法兰套件 → 塑料法兰 ===
     if "法兰套件" in _check or "电热熔法兰" in _check:
         return _apply_synonyms("塑料法兰(带短管)安装(热熔连接)", specialty)
 
-    # === 6. 管道阀门 → 不在模板中处理，交给后续管道路由 ===
+    # === 7. 管道阀门 → 不在模板中处理，交给后续管道路由 ===
     # 管道路由会保留 location/usage/connection 等上下文（如"室内消防法兰阀门安装"），
     # 模板直接返回会丢失这些修饰词导致搜索不够精准。
     # 管道阀门（闸阀/蝶阀/碳钢阀门等）的规范化由 build_quota_query 中
     # 原有的管道路由代码（lines 925+）处理。
     return None
+
+
+def _build_support_query_legacy(name: str, full_text: str, params: dict) -> str | None:
+    """支架项优先回到支架家族，避免被除锈/刷油文本带偏。"""
+    if not any(keyword in full_text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+        return None
+
+    support_scope = str(params.get("support_scope") or "")
+    support_action = str(params.get("support_action") or "")
+    surface_process = str(params.get("surface_process") or "")
+    has_detail_bucket = any(keyword in full_text for keyword in ("03S402", "单件重量", "每组重量"))
+    if support_scope == "管道支架" and not has_detail_bucket:
+        if surface_process or any(keyword in full_text for keyword in ("按需制作", "一般管架")):
+            action = "制作安装" if support_action in {"制作", "安装", "制作安装"} else "制作安装"
+            return f"管道支架{action} 一般管架"
+    return None
+
+
+def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
+    """支架项优先回到支架家族，避免被除锈/刷油文本带偏。"""
+    if not any(keyword in full_text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+        return None
+
+    support_scope = str(params.get("support_scope") or "")
+    support_action = str(params.get("support_action") or "")
+    surface_process = str(params.get("surface_process") or "")
+    prefer_aseismic = support_scope == "抗震支架" or "抗震" in full_text
+    prefer_bridge = support_scope == "桥架支架" or any(
+        keyword in full_text for keyword in ("桥架支架", "桥架支撑架", "电缆桥架", "桥架")
+    )
+    prefer_equipment = support_scope == "设备支架" or any(
+        keyword in full_text for keyword in ("设备支架", "设备吊架", "设备支吊架")
+    )
+    name_has_support_anchor = any(
+        keyword in (name or "")
+        for keyword in ("支架", "吊架", "支吊架", "支撑架")
+    )
+    has_detail_bucket = any(keyword in full_text for keyword in ("03S402", "单件重量", "每组重量"))
+    action = "制作安装" if support_action in {"制作", "安装", "制作安装"} else "制作安装"
+    if support_scope == "管道支架" and not has_detail_bucket:
+        if surface_process or any(keyword in full_text for keyword in ("按需制作", "一般管架")):
+            return f"管道支架{action} 一般管架"
+    if prefer_aseismic and name_has_support_anchor:
+        support_parts = ["抗震支架"]
+        if prefer_bridge:
+            support_parts.append("桥架")
+        elif "风管" in full_text:
+            support_parts.append("风管")
+        elif any(keyword in full_text for keyword in ("管道", "水管", "消防管", "给水", "排水")):
+            support_parts.append("管道")
+        if "侧向" in full_text:
+            support_parts.append("侧向")
+        elif "纵向" in full_text:
+            support_parts.append("纵向")
+        elif "门型" in full_text:
+            support_parts.append("门型")
+        if "多管" in full_text:
+            support_parts.append("多管")
+        elif "单管" in full_text:
+            support_parts.append("单管")
+        return " ".join(support_parts)
+    if prefer_bridge and name_has_support_anchor:
+        return f"电缆桥架支撑架{action}"
+    if prefer_equipment and name_has_support_anchor:
+        return f"设备支架{action}"
+    return None
+
+
+def _build_pipe_insulation_query(name: str, full_text: str, params: dict) -> str | None:
+    """管道橡塑绝热优先命中管道保温家族，避免被直埋保温管劫持。"""
+    if not any(keyword in full_text for keyword in ("绝热", "保温", "保冷")):
+        return None
+
+    scope_text = f"{name} {full_text}"
+    if not any(keyword in scope_text for keyword in ("管道", "给水", "排水", "采暖", "消防", "风管", "阀门", "法兰")):
+        return None
+    if any(keyword in full_text for keyword in ("直埋保温管", "聚氨酯直埋", "外护管")):
+        return None
+    if "橡塑" not in full_text:
+        return None
+
+    if any(keyword in scope_text for keyword in ("阀门", "法兰")):
+        base = "橡塑板安装(阀门、法兰) 阀门"
+    elif "风管" in scope_text:
+        base = "橡塑板安装(管道、风管) 风管"
+    else:
+        base = "橡塑管壳安装(管道) 管道"
+
+    dn = params.get("dn")
+    if dn:
+        base = f"{base} DN{int(dn)}"
+    return base
 
 
 def _normalize_bill_name(name: str) -> str:
@@ -1448,6 +1552,16 @@ def build_quota_query(parser, name: str, description: str = "",
 
     # 材质和连接方式从已提取的参数获取
     if not usage:
+        for _kw in ("污废水", "废污水", "污水", "废水", "雨水"):
+            if _kw in full_text:
+                usage = "排水"
+                break
+    if not usage:
+        for _kw in ("生活给水", "饮用水", "给水", "冷水", "热水"):
+            if _kw in full_text:
+                usage = "给水"
+                break
+    if not usage:
         canonical_system = canonical_features.get("system", "")
         system_usage_map = {
             "消防": "娑堥槻",
@@ -1511,6 +1625,60 @@ def build_quota_query(parser, name: str, description: str = "",
     if valve_query:
         return _finalize_query(
             valve_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
+    support_query = _build_support_query(name, full_text, params)
+    if support_query:
+        return _finalize_query(
+            support_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
+    pipe_insulation_query = _build_pipe_insulation_query(name, full_text, params)
+    if pipe_insulation_query:
+        return _finalize_query(
+            pipe_insulation_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
+    sleeve_text = f"{name} {description}"
+    is_explicit_sleeve = (
+        any(keyword in sleeve_text for keyword in ("套管", "堵洞", "封堵"))
+        and not any(keyword in sleeve_text for keyword in ("可挠金属套管", "电气配管", "导管", "穿线管"))
+    )
+    if is_explicit_sleeve:
+        sleeve_parts = []
+        if any(keyword in sleeve_text for keyword in ("堵洞", "封堵")):
+            sleeve_parts.append("堵洞")
+        elif any(keyword in sleeve_text for keyword in ("刚性防水", "刚性防水套管")):
+            sleeve_parts.append("刚性防水套管制作安装")
+        elif any(keyword in sleeve_text for keyword in ("柔性防水", "柔性防水套管")):
+            sleeve_parts.append("柔性防水套管制作安装")
+        elif any(keyword in sleeve_text for keyword in ("人防", "防护密闭", "密闭")):
+            sleeve_parts.append("密闭套管")
+        elif any(keyword in sleeve_text for keyword in ("塑料套管", "PVC套管")):
+            sleeve_parts.append("一般塑料套管制作安装")
+        else:
+            sleeve_parts.append("一般钢套管制作安装")
+
+        if "穿墙" in sleeve_text:
+            sleeve_parts.append("穿墙")
+        if "穿楼板" in sleeve_text:
+            sleeve_parts.append("穿楼板")
+        if dn:
+            sleeve_parts.append(f"DN{dn}")
+        return _finalize_query(
+            " ".join(sleeve_parts),
             specialty=specialty,
             canonical_features=canonical_features,
             context_prior=context_prior,
@@ -1588,7 +1756,7 @@ def build_quota_query(parser, name: str, description: str = "",
         # 清单写"PPR冷水管"/"PP-R管"，定额叫"室内塑料给水管(热熔连接)"或"采暖管道 室内塑料管(热熔连接)"
         # 直接替换为定额名，避免BM25因"PPR"匹配不到"塑料给水管"
         _mat_upper = material.upper() if material else ""
-        if "PPR" in _mat_upper or "PP-R" in _mat_upper:
+        if ("PPR" in _mat_upper or "PP-R" in _mat_upper) and "阀" not in name:
             _full = f"{name} {description}".upper()
             # 采暖方向：采暖/供暖/地暖/暖气（"热水"属于给水方向，不是采暖）
             if "采暖" in _full or "供暖" in _full or "地暖" in _full or "暖气" in _full or usage == "采暖":
@@ -1618,6 +1786,32 @@ def build_quota_query(parser, name: str, description: str = "",
             connection = ""  # 连接方式已融入material
             if not usage or usage in ("给水", "热水", "冷水"):
                 usage = "给排水管道"
+
+        _pipe_text = f"{name} {description} {material}"
+        _has_cast_iron_pipe = any(keyword in _pipe_text for keyword in ("铸铁管", "柔性铸铁", "球墨铸铁"))
+        _is_drainage_cast_iron = usage == "排水" or any(keyword in _pipe_text for keyword in ("污水", "废水", "排水", "雨水"))
+        if _has_cast_iron_pipe and _is_drainage_cast_iron:
+            cast_iron_parts = ["给排水管道"]
+            if location:
+                cast_iron_parts.append(location)
+            if "雨水" in _pipe_text:
+                family = "柔性铸铁雨水管"
+            else:
+                family = "柔性铸铁排水管"
+            if any(keyword in _pipe_text for keyword in ("机械接口", "机械连接")):
+                family += "(机械接口)"
+            elif any(keyword in _pipe_text for keyword in ("卡箍", "无承口")):
+                family += "(卡箍连接)"
+            cast_iron_parts.append(family)
+            if dn:
+                cast_iron_parts.append(f"DN{dn}")
+            return _finalize_query(
+                " ".join(cast_iron_parts),
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+                apply_synonyms=False,
+            )
 
         if material and "管" in material:
             core = f"{location}{usage}{material}"
