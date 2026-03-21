@@ -15,6 +15,7 @@
 import inspect
 import json
 import random
+import re
 
 from loguru import logger
 
@@ -75,6 +76,18 @@ _MEASURE_EXACT_NAMES = {
     "\u4e13\u4e1a\u5de5\u7a0b\u6682\u4f30\u4ef7",  # 专业工程暂估价
     "\u4e8c\u6b21\u642c\u8fd0\u8d39",  # 二次搬运费
     "\u5df2\u5b8c\u5de5\u7a0b\u53ca\u8bbe\u5907\u4fdd\u62a4\u8d39",  # 已完工程及设备保护费
+    "\u603b\u627f\u5305\u670d\u52a1\u8d39",
+    "\u9884\u7b97\u5305\u5e72\u8d39",
+    "\u5de5\u7a0b\u4f18\u8d28\u8d39",
+    "\u73b0\u573a\u7b7e\u8bc1\u8d39\u7528",
+    "\u7a0e\u524d\u5de5\u7a0b\u9020\u4ef7",
+    "\u603b\u9020\u4ef7",
+    "\u4eba\u5de5\u8d39",
+    "\u6982\u7b97\u5e45\u5ea6\u5dee",
+    "\u5176\u4ed6\u9879\u76ee",
+    "\u5176\u4ed6\u8d39\u7528",
+    "\u8ba1\u65e5\u5de5",
+    "\u589e\u503c\u7a0e\u9500\u9879\u7a0e\u989d",
 }
 
 # 妯＄硦鍖归厤鍏抽敭璇嶏紙涓婇潰 exact 鍏堟嫤锛岃繖閲屽仛鍙樹綋鍏滃簳锛?
@@ -90,6 +103,8 @@ def calculate_confidence(param_score: float, param_match: bool = True,
                          name_bonus: float = 0.0,
                          score_gap: float = 1.0,
                          rerank_score: float = 0.0,
+                         family_aligned: bool = False,
+                         family_hard_conflict: bool = False,
                          candidates_count: int = 20,
                          is_ambiguous_short: bool = False) -> int:
     """
@@ -117,9 +132,30 @@ def calculate_confidence(param_score: float, param_match: bool = True,
     except (TypeError, ValueError):
         ps = 0.5 if param_match else 0.0
 
+    try:
+        nb = float(name_bonus)
+    except (TypeError, ValueError):
+        nb = 0.0
+    nb = min(max(nb, 0.0), 1.0)
+
+    try:
+        rr = float(rerank_score)
+    except (TypeError, ValueError):
+        rr = 0.0
+    rr = min(max(rr, 0.0), 1.0)
+
     if not param_match:
         # 参数不匹配：封顶50，确保不会进绿灯区
-        return max(int(ps * 50), 15)
+        mismatch_base = max(int(ps * 50), 15)
+        if family_hard_conflict:
+            return mismatch_base
+        if not family_aligned:
+            return min(mismatch_base, 58)
+
+        name_part = min(nb / 0.3, 1.0) * 10.0
+        rerank_part = rr * 8.0
+        confidence = mismatch_base + name_part + rerank_part + 8.0
+        return max(min(int(confidence), 82), 15)
 
     # === 基础分（param_score贡献，满分40分） ===
     base = ps * 40.0
@@ -202,6 +238,36 @@ def calculate_confidence(param_score: float, param_match: bool = True,
 # ============================================================
 # 工具函数
 # ============================================================
+
+def infer_confidence_family_alignment(candidate: dict) -> bool:
+    """Infer whether a param-mismatch fallback is still same-family enough for yellow confidence."""
+    candidate = candidate or {}
+    if bool(candidate.get("family_gate_hard_conflict", False)):
+        return False
+    if bool(candidate.get("feature_alignment_hard_conflict", False)):
+        return False
+    if bool(candidate.get("logic_hard_conflict", False)):
+        return False
+
+    if _safe_float_value(candidate.get("family_gate_score"), 0.0) >= 1.0:
+        return True
+
+    param_score = _safe_float_value(candidate.get("param_score"), 0.0)
+    name_bonus = _safe_float_value(candidate.get("name_bonus"), 0.0)
+    feature_score = _safe_float_value(candidate.get("feature_alignment_score"), 0.0)
+    feature_comp = int(candidate.get("feature_alignment_comparable_count", 0) or 0)
+    feature_anchors = int(candidate.get("feature_alignment_exact_anchor_count", 0) or 0)
+    context_score = _safe_float_value(candidate.get("context_alignment_score"), 0.0)
+    context_comp = int(candidate.get("context_alignment_comparable_count", 0) or 0)
+
+    if param_score < 0.55 or name_bonus < 0.20:
+        return False
+    if feature_score >= 0.90 and (feature_anchors >= 2 or feature_comp >= 3):
+        return True
+    if feature_score >= 0.84 and feature_comp >= 2:
+        return context_comp <= 0 or context_score >= 0.65
+    return False
+
 
 def _safe_float_value(value, default: float = 0.0) -> float:
     try:
@@ -908,6 +974,177 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
     return candidates
 
 
+def _parse_chinese_count_token(token: str) -> int:
+    token = str(token or "").strip()
+    if not token:
+        return 0
+    if token.isdigit():
+        return int(token)
+    mapping = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
+    if token == "十":
+        return 10
+    if token.startswith("十") and len(token) == 2:
+        return 10 + mapping.get(token[1], 0)
+    if token.endswith("十") and len(token) == 2:
+        return mapping.get(token[0], 0) * 10
+    if len(token) == 2 and "十" in token:
+        left, _, right = token.partition("十")
+        return mapping.get(left, 0) * 10 + mapping.get(right, 0)
+    return mapping.get(token, 0)
+
+
+def _extract_surface_process_count(text: str, token: str) -> int:
+    if not text or not token:
+        return 0
+    patterns = [
+        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*道",
+        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*遍",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        count = _parse_chinese_count_token(match.group(1))
+        if count > 0:
+            return count
+    return 0
+
+
+def _search_surface_process_candidate(searcher: HybridSearcher, reranker, *,
+                                      query: str, books: list[str],
+                                      matcher) -> dict | None:
+    try:
+        candidates = searcher.search(
+            query,
+            top_k=max(int(config.HYBRID_TOP_K), 8),
+            books=books or None,
+        )
+    except Exception as e:
+        logger.debug(f"表面处理附加搜索失败: query={query!r} error={e}")
+        return None
+
+    if candidates and len(candidates) > 1 and reranker is not None:
+        try:
+            candidates = reranker.rerank(query, candidates)
+        except Exception as e:
+            logger.debug(f"表面处理附加重排失败: query={query!r} error={e}")
+
+    for candidate in candidates or []:
+        name = str(candidate.get("name") or "")
+        if name and matcher(name):
+            return candidate
+    return None
+
+
+def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, reranker,
+                                          classification: dict) -> list[dict]:
+    if not isinstance(item, dict):
+        return []
+
+    full_text = " ".join(
+        part for part in (item.get("name", ""), item.get("description", ""))
+        if part
+    ).strip()
+    if not full_text:
+        return []
+
+    params = item.get("params") or text_parser.parse(full_text)
+    support_scope = str(params.get("support_scope") or "").strip()
+    if support_scope != "管道支架":
+        return []
+
+    if not any(token in full_text for token in ("除锈", "刷油", "油漆", "防锈漆", "调和漆", "调合漆")):
+        return []
+
+    search_books = [
+        str(book).strip()
+        for book in ((classification or {}).get("search_books") or [])
+        if str(book).strip() == "C12"
+    ] or ["C12"]
+
+    specs: list[tuple[str, str, object]] = []
+    if "除锈" in full_text:
+        specs.append((
+            "surface_rust_remove",
+            "手工除锈 一般钢结构 轻锈",
+            lambda name: "除锈" in name,
+        ))
+
+    primer_token = "红丹防锈漆" if "红丹防锈漆" in full_text else ("防锈漆" if "防锈漆" in full_text else "")
+    primer_count = _extract_surface_process_count(full_text, primer_token) if primer_token else 0
+    if primer_token:
+        specs.append((
+            "surface_primer_first",
+            f"一般钢结构 {primer_token} 第一遍",
+            lambda name, token=primer_token: token in name and any(flag in name for flag in ("第一遍", "一遍")),
+        ))
+        if primer_count >= 2:
+            specs.append((
+                "surface_primer_extra",
+                f"一般钢结构 {primer_token} 增一遍",
+                lambda name, token=primer_token: token in name and any(flag in name for flag in ("增一遍", "增加一遍")),
+            ))
+
+    finish_count = max(
+        _extract_surface_process_count(full_text, "调和漆"),
+        _extract_surface_process_count(full_text, "调合漆"),
+    )
+    if any(token in full_text for token in ("调和漆", "调合漆")):
+        specs.append((
+            "surface_finish_first",
+            "一般钢结构 调和漆 第一遍",
+            lambda name: ("调和漆" in name or "调合漆" in name) and any(flag in name for flag in ("第一遍", "一遍")),
+        ))
+        if finish_count >= 2:
+            specs.append((
+                "surface_finish_extra",
+                "一般钢结构 调和漆 增一遍",
+                lambda name: ("调和漆" in name or "调合漆" in name) and any(flag in name for flag in ("增一遍", "增加一遍")),
+            ))
+
+    supplemental: list[dict] = []
+    seen_ids: set[str] = set()
+    for role, query, matcher in specs:
+        candidate = _search_surface_process_candidate(
+            searcher,
+            reranker,
+            query=query,
+            books=search_books,
+            matcher=matcher,
+        )
+        if not candidate:
+            continue
+        quota_id = str(candidate.get("quota_id") or "").strip()
+        quota_name = str(candidate.get("name") or "").strip()
+        if not quota_id or not quota_name or quota_id in seen_ids:
+            continue
+        seen_ids.add(quota_id)
+        supplemental.append({
+            "quota_id": quota_id,
+            "name": quota_name,
+            "unit": candidate.get("unit", "") or item.get("unit", ""),
+            "reason": f"附加定额:{query}",
+            "reasoning": summarize_candidate_reasoning(candidate),
+            "db_id": candidate.get("id"),
+            "quota_role": role,
+            "is_supplemental": True,
+        })
+
+    return supplemental
+
+
 def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
                                       reranker, validator: ParamValidator):
     """从统一 prepared 上下文中取字段并执行候选流水线。"""
@@ -945,6 +1182,13 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         canonical_features=ctx.get("canonical_features"),
         context_prior=ctx.get("context_prior"),
     )
+    if isinstance(item, dict):
+        item["_supplemental_quotas"] = _build_support_surface_process_quotas(
+            item,
+            searcher,
+            reranker,
+            classification,
+        )
     return (
         ctx,
         full_query,
