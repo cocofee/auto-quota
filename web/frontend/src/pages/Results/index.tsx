@@ -29,6 +29,7 @@ import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import {
   COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD,
+  resolveLightStatus,
   getBillRowBgColor as _getBillRowBgColor,
   getConfidenceTextColor,
   confidenceToStars,
@@ -38,9 +39,9 @@ import type {
 } from '../../types';
 
 // 包一层兼容 hasQuotas 参数
-function getBillRowBgColor(confidence: number, hasQuotas: boolean): string {
+function getBillRowBgColor(result: MatchResult, hasQuotas: boolean): string {
   if (!hasQuotas) return '#F5F5F5';
-  return _getBillRowBgColor(confidence);
+  return _getBillRowBgColor(result);
 }
 
 const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
@@ -237,9 +238,10 @@ export default function ResultsPage() {
   const filteredResults = useMemo(() => {
     if (confFilter === 'all') return results;
     return results.filter((r) => {
-      if (confFilter === 'green') return r.confidence >= GREEN_THRESHOLD;
-      if (confFilter === 'yellow') return r.confidence >= YELLOW_THRESHOLD && r.confidence < GREEN_THRESHOLD;
-      return r.confidence < YELLOW_THRESHOLD; // red
+      const light = resolveLightStatus(r);
+      if (confFilter === 'green') return light === 'green';
+      if (confFilter === 'yellow') return light === 'yellow';
+      return light === 'red';
     });
   }, [results, confFilter]);
 
@@ -370,7 +372,7 @@ export default function ResultsPage() {
   /** 一键确认所有高置信度 */
   const confirmAllHigh = async () => {
     const highConfIds = results
-      .filter((r) => r.confidence >= GREEN_THRESHOLD && r.review_status === 'pending')
+      .filter((r) => resolveLightStatus(r) === 'green' && r.review_status === 'pending')
       .map((r) => r.id);
     if (highConfIds.length === 0) {
       message.info('没有待确认的高置信度结果');
@@ -616,17 +618,15 @@ export default function ResultsPage() {
         const r = row._result;
         const quotas = r.corrected_quotas || r.quotas || [];
         const hasQuotas = quotas.length > 0;
-        const stars = confidenceToStars(r.confidence, hasQuotas);
-        const textColor = hasQuotas ? getConfidenceTextColor(r.confidence) : '#999';
+        const stars = confidenceToStars(r, hasQuotas);
+        const textColor = hasQuotas ? getConfidenceTextColor(r) : '#999';
         // 星级标签用更醒目的颜色：绿底/黄底/红底
         const starBgMap: Record<string, string> = {
           green: '#b7eb8f',   // 亮绿
           yellow: '#ffe58f',  // 亮黄
           red: '#ffa39e',     // 亮红
         };
-        const level = !hasQuotas ? 'none'
-          : r.confidence >= GREEN_THRESHOLD ? 'green'
-          : r.confidence >= YELLOW_THRESHOLD ? 'yellow' : 'red';
+        const level = !hasQuotas ? 'none' : resolveLightStatus(r);
         const bgColor = level === 'none' ? 'transparent' : starBgMap[level];
         return (
           <span style={{
@@ -716,7 +716,7 @@ export default function ResultsPage() {
 
         // 低置信度行：展开Top3候选
         const alts = r.alternatives as { quota_id: string; name: string; unit: string; confidence: number; reason?: string }[] | null;
-        const isLow = r.confidence < YELLOW_THRESHOLD;
+        const isLow = resolveLightStatus(r) === 'red';
         const isExpanded = expandedAlts.has(r.id);
         const hasAlts = alts && alts.length > 0;
 
@@ -918,7 +918,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.greenSolid, borderColor: COLORS.greenSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => r.confidence >= GREEN_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => resolveLightStatus(r) === 'green' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -928,7 +928,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.yellowSolid, borderColor: COLORS.yellowSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => r.confidence >= YELLOW_THRESHOLD && r.confidence < GREEN_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => resolveLightStatus(r) === 'yellow' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -938,7 +938,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.redSolid, borderColor: COLORS.redSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => r.confidence < YELLOW_THRESHOLD && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => resolveLightStatus(r) === 'red' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -1089,7 +1089,7 @@ export default function ResultsPage() {
               return {
                 className: 'bill-row',
                 style: {
-                  backgroundColor: getBillRowBgColor(r.confidence, quotas.length > 0),
+                  backgroundColor: getBillRowBgColor(r, quotas.length > 0),
                   fontWeight: 500,
                 },
               };

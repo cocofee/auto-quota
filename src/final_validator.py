@@ -22,21 +22,14 @@ from src.review_correctors import correct_error
 
 _UNIT_ALIASES = {
     "m": "m",
-    "米": "m",
     "M": "m",
     "m2": "m2",
-    "m²": "m2",
-    "㎡": "m2",
     "平方米": "m2",
-    "平米": "m2",
     "m3": "m3",
-    "m³": "m3",
     "立方米": "m3",
     "kg": "kg",
     "千克": "kg",
-    "公斤": "kg",
     "t": "t",
-    "吨": "t",
 }
 
 _UNIT_FAMILY = {
@@ -45,14 +38,26 @@ _UNIT_FAMILY = {
     "m3": "volume",
     "kg": "weight",
     "t": "weight",
-    "台": "count",
-    "套": "count",
-    "组": "count",
     "个": "count",
     "只": "count",
+    "台": "count",
+    "套": "count",
     "樘": "count",
-    "件": "count",
     "项": "item",
+}
+
+_HARD_REVIEW_ISSUES = {
+    "unit_conflict",
+    "anchor_conflict",
+    "category_mismatch",
+    "sleeve_mismatch",
+    "material_mismatch",
+    "connection_mismatch",
+    "pipe_usage_mismatch",
+    "parameter_deviation",
+    "electric_pair_mismatch",
+    "elevator_type_mismatch",
+    "elevator_floor_mismatch",
 }
 
 
@@ -82,11 +87,59 @@ def _unit_family(unit: str) -> str:
 def _candidate_features(quota: dict) -> dict:
     if not isinstance(quota, dict):
         return {}
-    return (
-        quota.get("candidate_canonical_features")
-        or quota.get("canonical_features")
-        or {}
-    )
+    return quota.get("candidate_canonical_features") or quota.get("canonical_features") or {}
+
+
+def _safe_confidence(value) -> int:
+    try:
+        return max(0, min(100, int(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _has_hard_issue(issues: list[ValidationIssue]) -> bool:
+    for issue in issues:
+        if issue.severity == "error":
+            return True
+        if issue.issue_type in _HARD_REVIEW_ISSUES:
+            return True
+    return False
+
+
+def _review_risk_from_state(
+    *,
+    confidence_score: int,
+    issues: list[ValidationIssue],
+    corrected: bool,
+    has_quotas: bool,
+) -> str:
+    if not has_quotas:
+        return "high"
+    if _has_hard_issue(issues):
+        return "high"
+    if confidence_score < 75:
+        return "high"
+    if corrected or issues:
+        return "medium"
+    if confidence_score < 90:
+        return "medium"
+    return "low"
+
+
+def _light_status_from_state(
+    *,
+    confidence_score: int,
+    review_risk: str,
+    status: str,
+    has_quotas: bool,
+) -> str:
+    if not has_quotas:
+        return "red"
+    if review_risk == "high" or confidence_score < 75:
+        return "red"
+    if review_risk == "low" and confidence_score >= 90 and status == "ok":
+        return "green"
+    return "yellow"
 
 
 class FinalValidator:
@@ -104,49 +157,63 @@ class FinalValidator:
             return result
 
         item = result.get("bill_item") or {}
+        quotas = result.get("quotas") or []
         issues: list[ValidationIssue] = []
         corrected = False
 
         ambiguity_issue = self._check_reasoning_review(result)
         if ambiguity_issue:
             issues.append(ambiguity_issue)
-            self._cap_confidence(result, cap=78)
-
-        unit_issue = self._check_unit_conflict(item, result)
-        if unit_issue:
-            issues.append(unit_issue)
-            self._cap_confidence(result, cap=68)
-
-        anchor_issue = self._check_anchor_conflict(item, result)
-        if anchor_issue:
-            issues.append(anchor_issue)
-            self._cap_confidence(result, cap=64)
 
         review_error = self._check_review_error(item, result)
         if review_error:
             correction = self._try_auto_correct(item, result, review_error)
             if correction:
                 corrected = True
-                issues.append(ValidationIssue(
-                    issue_type="review_corrected",
-                    severity="info",
-                    message=f"{review_error.get('type', '')} -> {correction['quota_id']}",
-                ))
+                issues.append(
+                    ValidationIssue(
+                        issue_type="review_corrected",
+                        severity="info",
+                        message=f"{review_error.get('type', 'review_conflict')} -> {correction['quota_id']}",
+                    )
+                )
                 result["final_review_correction"] = correction
-                self._cap_confidence(result, floor=72, cap=86)
             else:
-                issues.append(ValidationIssue(
-                    issue_type=review_error.get("type", "review_conflict"),
-                    severity="error",
-                    message=review_error.get("reason", "审核规则冲突"),
-                ))
-                self._cap_confidence(result, cap=62)
+                issues.append(
+                    ValidationIssue(
+                        issue_type=review_error.get("type", "review_conflict"),
+                        severity="error",
+                        message=review_error.get("reason", "审核规则冲突"),
+                    )
+                )
+
+        unit_issue = self._check_unit_conflict(item, result)
+        if unit_issue:
+            issues.append(unit_issue)
+
+        anchor_issue = self._check_anchor_conflict(item, result)
+        if anchor_issue:
+            issues.append(anchor_issue)
 
         status = "ok"
         if corrected:
             status = "corrected"
         elif issues:
             status = "manual_review"
+
+        confidence_score = _safe_confidence(result.get("confidence_score", result.get("confidence")))
+        review_risk = _review_risk_from_state(
+            confidence_score=confidence_score,
+            issues=issues,
+            corrected=corrected,
+            has_quotas=bool(quotas),
+        )
+        light_status = _light_status_from_state(
+            confidence_score=confidence_score,
+            review_risk=review_risk,
+            status=status,
+            has_quotas=bool(quotas),
+        )
 
         merged_tags = merge_reason_tags(result.get("reason_tags") or [])
         for issue in issues:
@@ -155,6 +222,8 @@ class FinalValidator:
             merged_tags = merge_reason_tags(merged_tags, ["manual_review"])
         if corrected:
             merged_tags = merge_reason_tags(merged_tags, ["corrected"])
+        if light_status:
+            merged_tags = merge_reason_tags(merged_tags, [f"light_{light_status}"])
         if merged_tags:
             result["reason_tags"] = merged_tags
         if issues:
@@ -167,10 +236,17 @@ class FinalValidator:
                 stage="final_validator",
             )
 
+        result["confidence_score"] = confidence_score
+        result["review_risk"] = review_risk
+        result["light_status"] = light_status
+        result["confidence"] = confidence_score
         result["final_validation"] = {
             "status": status,
             "corrected": corrected,
             "issues": [issue.as_dict() for issue in issues],
+            "confidence_score": confidence_score,
+            "review_risk": review_risk,
+            "light_status": light_status,
         }
         return result
 
@@ -186,7 +262,7 @@ class FinalValidator:
         route = str(decision.get("route") or "")
         return ValidationIssue(
             issue_type="ambiguity_review",
-            severity="warning" if risk_level != "high" else "error",
+            severity="error" if risk_level == "high" else "warning",
             message=f"reason={reason}; risk={risk_level}; route={route}",
         )
 
@@ -207,7 +283,7 @@ class FinalValidator:
         return ValidationIssue(
             issue_type="unit_conflict",
             severity="error",
-            message=f"清单单位{bill_unit}与定额单位{quota_unit}不一致",
+            message=f"清单单位 {bill_unit} 与定额单位 {quota_unit} 不一致",
         )
 
     def _check_anchor_conflict(self, item: dict, result: dict) -> ValidationIssue | None:
@@ -249,6 +325,9 @@ class FinalValidator:
         main_quota = quotas[0]
         quota_name = str(main_quota.get("name") or "").strip()
         quota_id = str(main_quota.get("quota_id") or "").strip()
+        return self._check_review_error_for_quota(item, quota_name, quota_id)
+
+    def _check_review_error_for_quota(self, item: dict, quota_name: str, quota_id: str = "") -> dict | None:
         if not quota_name:
             return None
 
@@ -285,20 +364,16 @@ class FinalValidator:
         if corrected_row and len(corrected_row) >= 3:
             corrected_unit = corrected_row[2]
 
+        post_error = self._check_review_error_for_quota(
+            item,
+            corrected["quota_name"],
+            corrected["quota_id"],
+        )
+        if post_error:
+            return None
+
         quotas[0]["quota_id"] = corrected["quota_id"]
         quotas[0]["name"] = corrected["quota_name"]
         quotas[0]["unit"] = corrected_unit
         quotas[0]["reason"] = review_error.get("reason", "")
         return corrected
-
-    @staticmethod
-    def _cap_confidence(result: dict, *, floor: int | None = None, cap: int | None = None):
-        try:
-            current = int(result.get("confidence", 0) or 0)
-        except (TypeError, ValueError):
-            current = 0
-        if floor is not None:
-            current = max(current, floor)
-        if cap is not None:
-            current = min(current, cap)
-        result["confidence"] = current

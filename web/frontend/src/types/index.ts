@@ -115,6 +115,8 @@ export interface QuotaItem {
 
 /** 审核状态 */
 export type ReviewStatus = 'pending' | 'confirmed' | 'corrected';
+export type ReviewRisk = 'low' | 'medium' | 'high';
+export type LightStatus = 'green' | 'yellow' | 'red';
 
 /** 单条匹配结果 */
 export interface MatchResult {
@@ -133,6 +135,9 @@ export interface MatchResult {
   quotas: QuotaItem[] | null;
   alternatives: Record<string, unknown>[] | null;  // 备选定额（top-N）
   confidence: number;
+  confidence_score: number;
+  review_risk: ReviewRisk;
+  light_status: LightStatus;
   match_source: string;
   explanation: string;
   candidates_count: number;
