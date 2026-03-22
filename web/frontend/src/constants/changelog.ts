@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.80';
+export const APP_VERSION = '0.2.83';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,32 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.83',
+    date: '2026-03-22',
+    changes: [
+      { type: 'admin', text: 'Prioritize correct top1 and decouple light status' },
+      { type: 'admin', text: 'skip remaining measure fee items' },
+      { type: 'admin', text: 'tighten support fallback routing' },
+      { type: 'admin', text: 'tighten support topic routing' },
+      { type: 'admin', text: 'Fix installation routing and arbitration framework' },
+      { type: 'admin', text: 'Unify canonical query context flow' },
+      { type: 'admin', text: 'Refine installation cable and support routing' },
+    ],
+  },
+  {
+    version: '0.2.82',
+    date: '2026-03-22',
+    changes: [
+      { type: 'admin', text: 'Prioritize correct top1 and decouple light status' },
+      { type: 'admin', text: 'skip remaining measure fee items' },
+      { type: 'admin', text: 'tighten support fallback routing' },
+      { type: 'admin', text: 'tighten support topic routing' },
+      { type: 'admin', text: 'Fix installation routing and arbitration framework' },
+      { type: 'admin', text: 'Unify canonical query context flow' },
+      { type: 'admin', text: 'Refine installation cable and support routing' },
+    ],
+  },
   {
     version: '0.2.80',
     date: '2026-03-20',
