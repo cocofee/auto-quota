@@ -27,6 +27,7 @@ import config
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
 from src.query_router import build_query_route_profile, count_spec_signals
+from src.specialty_classifier import get_book_from_quota_id
 from src.text_parser import parser as text_parser
 from db.sqlite import connect as _db_connect
 
@@ -317,7 +318,7 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            finalized = self._finalize_candidates(top_results, query_text=query)
+            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
             return finalized[:top_k]
 
         if total_vector_hits == 0:
@@ -332,7 +333,7 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            finalized = self._finalize_candidates(top_results, query_text=query)
+            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
             return finalized[:top_k]
 
         # ============================================================
@@ -383,12 +384,12 @@ class HybridSearcher:
                 for k in keys_to_remove:
                     del self._session_cache[k]
                 logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
-            finalized = self._finalize_candidates(top_results, query_text=query)
+            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
             finalized = finalized[:top_k]
             self._session_cache[cache_key] = copy.deepcopy(finalized)
             return finalized
 
-        return self._finalize_candidates(top_results, query_text=query)[:top_k]
+        return self._finalize_candidates(top_results, query_text=query, expected_books=books)[:top_k]
 
     def _get_adaptive_weights(self, query: str, bm25_weight: float,
                               vector_weight: float) -> tuple[float, float, str]:
@@ -411,100 +412,23 @@ class HybridSearcher:
             r"\d+(\.\d+)?\s*(mm2|mm²|kva|kv|kw|a|m)",
             r"[A-Za-z]{1,8}[-_/]*\d+([*×xX/]\d+)*",
         ]
-        for p in spec_patterns:
-            if re.search(p, query, flags=re.IGNORECASE):
+        for pattern in spec_patterns:
+            if re.search(pattern, query, flags=re.IGNORECASE):
                 pattern_hits += 1
-
-        pattern_hits = max(pattern_hits, self._count_spec_signals(query))
-        has_complex_install_spec = bool(re.search(
-            r"\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?\s*\+\s*\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?",
-            query,
-            flags=re.IGNORECASE,
-        ))
 
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", query))
         reason = "balanced"
         new_bm25 = bm25_weight
         new_vector = vector_weight
 
-        if pattern_hits >= 2 or (pattern_hits >= 1 and chinese_len <= 20):
-            extra_boost = 0.08 if has_complex_install_spec else 0.0
-            new_bm25 = bm25_weight + boost + extra_boost
-            new_vector = vector_weight - boost - extra_boost
-            reason = "spec_heavy_installation" if has_complex_install_spec else "spec_heavy"
+        if pattern_hits >= 2:
+            new_bm25 = bm25_weight + boost
+            new_vector = vector_weight - boost
+            reason = "spec_heavy"
         elif pattern_hits == 0 and chinese_len >= 18:
             new_bm25 = bm25_weight - boost
             new_vector = vector_weight + boost
             reason = "semantic_heavy"
-
-        # 叠加来自用户反馈的全局偏置（快速进化学习）
-        feedback_bias = self._get_feedback_bias()
-        if feedback_bias != 0:
-            new_bm25 += feedback_bias
-            new_vector -= feedback_bias
-            reason = f"{reason}+feedback"
-
-        # 防止某一路权重过低导致失去召回能力
-        new_bm25 = max(new_bm25, 0.1)
-        new_vector = max(new_vector, 0.1)
-        total = new_bm25 + new_vector
-        return new_bm25 / total, new_vector / total, reason
-
-    @staticmethod
-    def _count_spec_signals(text: str) -> int:
-        spec_patterns = [
-            r"DN\s*\d+",
-            r"\d+\s*鍥炶矾",
-            r"\d+(\.\d+)?\s*(mm2|mm虏|kva|kv|kw|a|m)",
-            r"(?:SC|PC|PVC|JDG|KBG|RC|MT|FPC)\s*\d+",
-            r"(?:WDZ[NZ]?-?|NH-?)*(?:BV|BYJ|BVR|BLV|RVS|RVV|YJV|YJY)\s*-?\s*\d",
-            r"\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?(?:\s*\+\s*\d+\s*[*×脳xX]\s*\d+(?:\.\d+)?)*",
-            r"[A-Za-z]{1,8}[-_/]*\d+([*×脳xX/]\d+)*",
-        ]
-        hits = 0
-        for pattern in spec_patterns:
-            if re.search(pattern, text, flags=re.IGNORECASE):
-                hits += 1
-        return hits
-
-    def _get_adaptive_weights(self, query: str, bm25_weight: float,
-                              vector_weight: float) -> tuple[float, float, str]:
-        """
-        鏌ヨ鑷€傚簲鏉冮噸锛?
-        - 瑙勬牸鍨嬪彿/鏁板瓧鍙傛暟瀵嗛泦锛氭彁楂楤M25鍗犳瘮
-        - 绾涔夋弿杩颁负涓伙細鎻愰珮鍚戦噺鍗犳瘮
-        """
-        if not bool(getattr(config, "HYBRID_ADAPTIVE_FUSION", True)):
-            total = max(bm25_weight + vector_weight, 1e-9)
-            return bm25_weight / total, vector_weight / total, "static"
-
-        boost = float(getattr(config, "HYBRID_ADAPTIVE_BOOST", 0.18))
-        boost = min(max(boost, 0.0), 0.4)
-
-        route_profile = build_query_route_profile(query)
-        route = route_profile["route"]
-        has_complex_install_spec = bool(route_profile.get("has_complex_install_spec"))
-        reason = "balanced"
-        new_bm25 = bm25_weight
-        new_vector = vector_weight
-
-        if route in {"installation_spec", "spec_heavy"}:
-            extra_boost = 0.08 if has_complex_install_spec else 0.0
-            new_bm25 = bm25_weight + boost + extra_boost
-            new_vector = vector_weight - boost - extra_boost
-            reason = route_profile.get("reason") or (
-                "spec_heavy_installation" if has_complex_install_spec else "spec_heavy"
-            )
-        elif route == "material":
-            new_bm25 = bm25_weight + boost * 0.75
-            new_vector = vector_weight - boost * 0.75
-            reason = route_profile.get("reason") or "material_heavy"
-        elif route == "semantic_description":
-            new_bm25 = bm25_weight - boost
-            new_vector = vector_weight + boost
-            reason = route_profile.get("reason") or "semantic_heavy"
-        elif route == "ambiguous_short":
-            reason = route_profile.get("reason") or "ambiguous_short"
 
         feedback_bias = self._get_feedback_bias()
         if feedback_bias != 0:
@@ -1073,7 +997,8 @@ class HybridSearcher:
             return False
         return frozenset((query_family, candidate_family)) in cls._FAMILY_GATE_HARD_CONFLICTS
 
-    def _score_family_gate(self, query_features: dict, candidate: dict) -> tuple[float, bool, str]:
+    def _score_family_gate(self, query_features: dict, candidate: dict,
+                           expected_books: list[str] | None = None) -> tuple[float, bool, str]:
         candidate_features = candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
         query_family = str((query_features or {}).get("family") or "").strip()
         candidate_family = str((candidate_features or {}).get("family") or "").strip()
@@ -1088,6 +1013,16 @@ class HybridSearcher:
         score = 0.0
         details: list[str] = []
         hard_conflict = False
+        candidate_book = str(get_book_from_quota_id(candidate.get("quota_id", "")) or "").strip().upper()
+        normalized_expected_books = [
+            str(book or "").strip().upper()
+            for book in (expected_books or [])
+            if str(book or "").strip()
+        ]
+
+        if normalized_expected_books and candidate_book and candidate_book not in normalized_expected_books:
+            score -= 3.0
+            details.append(f"册号偏差:{candidate_book}")
 
         if self._is_family_hard_conflict(query_family, candidate_family):
             score -= 2.0
@@ -1123,7 +1058,48 @@ class HybridSearcher:
 
         return score, hard_conflict, "; ".join(details)
 
-    def _apply_family_gate(self, query_text: str, candidates: list[dict]) -> list[dict]:
+    @staticmethod
+    def _score_support_subtype_gate(query_text: str, query_features: dict, candidate: dict) -> tuple[float, str]:
+        query_features = dict(query_features or {})
+        if str(query_features.get("family") or "").strip() != "pipe_support":
+            return 0.0, ""
+        if str(query_features.get("support_scope") or "").strip() != "管道支架":
+            return 0.0, ""
+
+        traits = [
+            str(value).strip()
+            for value in (query_features.get("traits") or [])
+            if str(value).strip()
+        ]
+        query_text = query_text or ""
+        candidate_name = str(candidate.get("name") or "")
+        has_general_support_shape = (
+            "一般管架" in query_text
+            or any("一般管架" in trait for trait in traits)
+            or "按需制作" in query_text
+        )
+        has_weight_bucket = (
+            dict(query_features.get("numeric_params") or {}).get("weight_t") is not None
+            or any(token in query_text for token in ("单件重量", "每组重量"))
+        )
+        if not has_general_support_shape or has_weight_bucket or not candidate_name:
+            return 0.0, ""
+
+        score = 0.0
+        details: list[str] = []
+        if "一般管架" in candidate_name:
+            score += 0.9
+            details.append("泛型管架优先")
+
+        for token in ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管"):
+            if token in candidate_name and token not in query_text:
+                score -= 1.1
+                details.append(f"未声明子型:{token}")
+
+        return score, "; ".join(details)
+
+    def _apply_family_gate(self, query_text: str, candidates: list[dict],
+                           expected_books: list[str] | None = None) -> list[dict]:
         if not candidates:
             return candidates
         query_features = text_parser.parse_canonical(query_text or "")
@@ -1133,17 +1109,29 @@ class HybridSearcher:
             return candidates
 
         for index, candidate in enumerate(candidates):
-            gate_score, hard_conflict, gate_detail = self._score_family_gate(query_features, candidate)
+            gate_score, hard_conflict, gate_detail = self._score_family_gate(
+                query_features,
+                candidate,
+                expected_books=expected_books,
+            )
+            support_subtype_score, support_subtype_detail = self._score_support_subtype_gate(
+                query_text,
+                query_features,
+                candidate,
+            )
+            gate_score += support_subtype_score
             candidate["family_gate_score"] = gate_score
             candidate["family_gate_hard_conflict"] = hard_conflict
-            candidate["family_gate_detail"] = gate_detail
+            detail_parts = [part for part in (gate_detail, support_subtype_detail) if part]
+            candidate["family_gate_detail"] = "; ".join(detail_parts)
+            candidate["support_subtype_gate_score"] = support_subtype_score
             candidate["_family_gate_index"] = index
 
         candidates.sort(
             key=lambda candidate: (
                 1 if not candidate.get("family_gate_hard_conflict") else 0,
-                float(candidate.get("family_gate_score", 0.0)),
-                float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0))),
+                float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0)))
+                + float(candidate.get("family_gate_score", 0.0)) * 0.005,
                 -int(candidate.get("_family_gate_index", 0)),
             ),
             reverse=True,
@@ -1152,10 +1140,11 @@ class HybridSearcher:
             candidate.pop("_family_gate_index", None)
         return candidates
 
-    def _finalize_candidates(self, candidates: list[dict], query_text: str = "") -> list[dict]:
+    def _finalize_candidates(self, candidates: list[dict], query_text: str = "",
+                             expected_books: list[str] | None = None) -> list[dict]:
         attach_candidate_canonical_features(candidates, province=self.province)
         if query_text:
-            self._apply_family_gate(query_text, candidates)
+            self._apply_family_gate(query_text, candidates, expected_books=expected_books)
         return candidates
 
     def search_bm25_only(self, query: str, top_k: int = None) -> list[dict]:

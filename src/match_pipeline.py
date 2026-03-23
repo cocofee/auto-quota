@@ -154,6 +154,28 @@ def _check_rule_subtype_conflict(rule_result: dict, bill_text: str) -> dict:
 
 
 
+def _safe_candidate_hybrid_score(candidate: dict | None) -> float:
+    if not isinstance(candidate, dict):
+        return 0.0
+    value = candidate.get("hybrid_score", candidate.get("rerank_score", 0.0))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _guard_explicit_candidate(top_candidate: dict, explicit_candidate: dict | None, hybrid_margin: float = 0.005) -> dict | None:
+    if explicit_candidate is None:
+        return None
+    if not top_candidate:
+        return explicit_candidate
+    top_hybrid = _safe_candidate_hybrid_score(top_candidate)
+    pick_hybrid = _safe_candidate_hybrid_score(explicit_candidate)
+    if top_hybrid - pick_hybrid > hybrid_margin:
+        return top_candidate
+    return explicit_candidate
+
+
 def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     """在候选列表中优先选类别匹配的（规则审核前置）
 
@@ -166,6 +188,7 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     if len(candidates) <= 1:
         return candidates[0]
 
+    top_candidate = candidates[0]
     desc = item.get("description", "") or ""
     bill_name = item.get("name", "") or ""
     bill_text = f"{bill_name} {desc}"
@@ -173,43 +196,43 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     cable_candidate = _pick_explicit_cable_family_candidate(bill_text, candidates)
     if cable_candidate is not None:
-        return cable_candidate
+        return _guard_explicit_candidate(top_candidate, cable_candidate)
 
     wiring_candidate = _pick_explicit_wiring_family_candidate(bill_text, candidates)
     if wiring_candidate is not None:
-        return wiring_candidate
+        return _guard_explicit_candidate(top_candidate, wiring_candidate)
 
     cast_iron_pipe_candidate = _pick_explicit_cast_iron_pipe_candidate(bill_text, candidates)
     if cast_iron_pipe_candidate is not None:
-        return cast_iron_pipe_candidate
+        return _guard_explicit_candidate(top_candidate, cast_iron_pipe_candidate)
 
     sleeve_candidate = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
     if sleeve_candidate is not None:
-        return sleeve_candidate
+        return _guard_explicit_candidate(top_candidate, sleeve_candidate)
 
     general_sleeve_candidate = _pick_explicit_sleeve_family_candidate(bill_text, candidates)
     if general_sleeve_candidate is not None:
-        return general_sleeve_candidate
+        return _guard_explicit_candidate(top_candidate, general_sleeve_candidate)
 
     conduit_candidate = _pick_explicit_conduit_family_candidate(bill_text, candidates)
     if conduit_candidate is not None:
-        return conduit_candidate
+        return _guard_explicit_candidate(top_candidate, conduit_candidate)
 
     bridge_candidate = _pick_explicit_bridge_family_candidate(bill_text, candidates)
     if bridge_candidate is not None:
-        return bridge_candidate
+        return _guard_explicit_candidate(top_candidate, bridge_candidate)
 
     distribution_box_candidate = _pick_explicit_distribution_box_candidate(bill_text, candidates)
     if distribution_box_candidate is not None:
-        return distribution_box_candidate
+        return _guard_explicit_candidate(top_candidate, distribution_box_candidate)
 
     ventilation_candidate = _pick_explicit_ventilation_family_candidate(bill_text, candidates)
     if ventilation_candidate is not None:
-        return ventilation_candidate
+        return _guard_explicit_candidate(top_candidate, ventilation_candidate)
 
     support_candidate = _pick_explicit_support_family_candidate(bill_text, candidates)
     if support_candidate is not None:
-        return support_candidate
+        return _guard_explicit_candidate(top_candidate, support_candidate)
     if _should_force_conservative_support_fallback(item, bill_text):
         support_fallback_candidate = _pick_safe_support_fallback_candidate(item, candidates)
         if support_fallback_candidate is not None:
@@ -218,39 +241,39 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     insulation_candidate = _pick_explicit_insulation_family_candidate(bill_text, candidates)
     if insulation_candidate is not None:
-        return insulation_candidate
+        return _guard_explicit_candidate(top_candidate, insulation_candidate)
 
     motor_candidate = _pick_explicit_motor_family_candidate(bill_text, candidates)
     if motor_candidate is not None:
-        return motor_candidate
+        return _guard_explicit_candidate(top_candidate, motor_candidate)
 
     sanitary_candidate = _pick_explicit_sanitary_family_candidate(bill_text, candidates)
     if sanitary_candidate is not None:
-        return sanitary_candidate
+        return _guard_explicit_candidate(top_candidate, sanitary_candidate)
 
     lamp_candidate = _pick_explicit_lamp_family_candidate(bill_text, candidates)
     if lamp_candidate is not None:
-        return lamp_candidate
+        return _guard_explicit_candidate(top_candidate, lamp_candidate)
 
     button_broadcast_candidate = _pick_explicit_button_broadcast_candidate(bill_text, candidates)
     if button_broadcast_candidate is not None:
-        return button_broadcast_candidate
+        return _guard_explicit_candidate(top_candidate, button_broadcast_candidate)
 
     plumbing_accessory_candidate = _pick_explicit_plumbing_accessory_candidate(bill_text, candidates)
     if plumbing_accessory_candidate is not None:
-        return plumbing_accessory_candidate
+        return _guard_explicit_candidate(top_candidate, plumbing_accessory_candidate)
 
     valve_candidate = _pick_explicit_valve_family_candidate(bill_text, candidates)
     if valve_candidate is not None:
-        return valve_candidate
+        return _guard_explicit_candidate(top_candidate, valve_candidate)
 
     fire_candidate = _pick_explicit_fire_device_candidate(bill_text, candidates)
     if fire_candidate is not None:
-        return fire_candidate
+        return _guard_explicit_candidate(top_candidate, fire_candidate)
 
     network_candidate = _pick_explicit_network_device_candidate(bill_text, candidates)
     if network_candidate is not None:
-        return network_candidate
+        return _guard_explicit_candidate(top_candidate, network_candidate)
 
     for cand in candidates[:5]:
         quota_name = cand.get("name", "")
@@ -1085,6 +1108,14 @@ def _pick_explicit_distribution_box_candidate(bill_text: str,
         quota_name = cand.get("name", "") or ""
         cand_params = text_parser.parse(quota_name)
         cand_box_mount_mode = str(cand_params.get("box_mount_mode") or "")
+        cand_half_perimeter = cand_params.get("half_perimeter")
+        cand_circuits = cand_params.get("circuits")
+        candidate_is_junction_box = any(word in quota_name for word in ("接线箱", "接线盒", "分线盒"))
+        candidate_is_box_wiring = "盘、柜、箱、板配线" in quota_name
+        candidate_is_box_install = any(
+            word in quota_name
+            for word in ("配电箱", "配电柜", "控制箱", "控制柜", "动力箱", "照明箱", "程序控制箱", "箱体安装")
+        )
         score = 0
         if prefer_floor:
             if "落地" in quota_name:
@@ -1101,6 +1132,38 @@ def _pick_explicit_distribution_box_candidate(bill_text: str,
                 score += 10
             else:
                 score -= 10
+        if candidate_is_box_install:
+            score += 10
+        if candidate_is_junction_box:
+            score -= 28
+        if candidate_is_box_wiring:
+            score -= 26
+        if "配线" in quota_name and "安装" not in quota_name:
+            score -= 12
+        bill_half_perimeter = bill_params.get("half_perimeter")
+        if bill_half_perimeter is not None:
+            if cand_half_perimeter is None:
+                score -= 6
+            elif cand_half_perimeter < bill_half_perimeter:
+                score -= 18
+            elif cand_half_perimeter == bill_half_perimeter:
+                score += 16
+            elif cand_half_perimeter <= bill_half_perimeter * 1.2:
+                score += 12
+            else:
+                score += 8
+        bill_circuits = bill_params.get("circuits")
+        if bill_circuits is not None:
+            if cand_circuits is None:
+                score -= 4
+            elif cand_circuits < bill_circuits:
+                score -= 16
+            elif cand_circuits == bill_circuits:
+                score += 12
+            elif cand_circuits <= bill_circuits * 1.5:
+                score += 9
+            else:
+                score += 6
         if score <= 0:
             continue
         scored.append((
@@ -1643,6 +1706,37 @@ def _pick_explicit_support_family_candidate(bill_text: str,
         return None
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored[0][1]
+
+
+def _promote_explicit_distribution_box_candidate(item: dict,
+                                                 candidates: list[dict]) -> list[dict]:
+    if not candidates:
+        return []
+
+    bill_text = " ".join(
+        part for part in (
+            (item or {}).get("name", ""),
+            (item or {}).get("description", ""),
+        ) if part
+    )
+    picked = _pick_explicit_distribution_box_candidate(bill_text, candidates)
+    if not picked:
+        return list(candidates)
+
+    picked_id = str(picked.get("quota_id", "")).strip()
+    if not picked_id:
+        return list(candidates)
+
+    reordered: list[dict] = []
+    chosen = None
+    for candidate in candidates:
+        if str(candidate.get("quota_id", "")).strip() == picked_id:
+            chosen = candidate
+        else:
+            reordered.append(candidate)
+    if chosen is None:
+        return list(candidates)
+    return [chosen, *reordered]
 
 
 def _pick_explicit_insulation_family_candidate(bill_text: str,
@@ -2668,21 +2762,40 @@ def _prepare_rule_match(rule_validator: RuleValidator, full_query: str, item: di
     """
     if rule_validator is None:
         return None, None
-    rule_books = [classification.get("primary")] + classification.get("fallbacks", [])
-    rule_books = [b for b in rule_books if b]
-    rule_result = rule_validator.match_by_rules(
-        full_query, item, clean_query=search_query,
-        books=rule_books if rule_books else None)
+
+    def _try_match(books: list[str] | None):
+        active_books = [b for b in (books or []) if b]
+        result = rule_validator.match_by_rules(
+            full_query,
+            item,
+            clean_query=search_query,
+            books=active_books if active_books else None,
+        )
+        if not result:
+            return None, active_books
+        result = _check_rule_subtype_conflict(result, full_query)
+        if not result:
+            return None, active_books
+        return result, active_books
+
+    primary_book = classification.get("primary")
+    fallback_books = [b for b in classification.get("fallbacks", []) if b]
+
+    rule_result = None
+    rule_books: list[str] = []
+    if primary_book:
+        rule_result, rule_books = _try_match([primary_book])
+
+    if not rule_result:
+        expanded_books = [primary_book] + fallback_books if primary_book else fallback_books
+        rule_result, rule_books = _try_match(expanded_books)
+
     if not rule_result:
         return None, None
 
     # 品类一致性检查：清单明确写了子类型（如"刚性防水套管"），
     # 但规则匹配到的定额不含该子类型（如匹配到"成品防火套管"），
     # 则丢弃规则匹配结果，让搜索来处理（搜索能更精准地按名称匹配）
-    rule_result = _check_rule_subtype_conflict(rule_result, full_query)
-    if not rule_result:
-        return None, None
-
     _append_trace_step(
         rule_result,
         "rule_precheck",
@@ -3096,8 +3209,13 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             matched_candidates, arbitration = arbitrate_candidates(
                 item, matched_candidates, route_profile=item.get("query_route")
             )
+            matched_candidates = _promote_explicit_distribution_box_candidate(
+                item, matched_candidates
+            )
             # 规则审核前置：跳过类别明显不匹配的候选
-            best = _pick_category_safe_candidate(item, matched_candidates)
+            best = matched_candidates[0] if matched_candidates else None
+            if not best:
+                best = _pick_category_safe_candidate(item, matched_candidates)
             if best:
                 decision_candidates = [best] + [c for c in matched_candidates if c is not best]
                 param_score = best.get("param_score", 0.5)
@@ -3127,7 +3245,9 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
                 "route": str((item.get("query_route") or {}).get("route") or ""),
                 "reason": "no_param_matched_candidates",
             }
-            best = _pick_category_safe_candidate(item, valid_candidates)
+            best = valid_candidates[0] if valid_candidates else None
+            if not best:
+                best = _pick_category_safe_candidate(item, valid_candidates)
             if best:
                 decision_candidates = [best] + [c for c in valid_candidates if c is not best]
                 param_score = best.get("param_score", 0.0)

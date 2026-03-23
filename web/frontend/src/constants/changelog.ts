@@ -29,8 +29,11 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.2.83',
-    date: '2026-03-22',
+    date: '2026-03-23',
     changes: [
+      { type: 'admin', text: 'Benchmark rerank weight rebalance for hybrid_score, param_score, and family gate' },
+      { type: 'admin', text: 'Add hybrid-score safety guard to explicit category candidate overrides' },
+      { type: 'admin', text: 'Tighten primary-book routing and confidence thresholds for benchmark recovery' },
       { type: 'admin', text: 'Prioritize correct top1 and decouple light status' },
       { type: 'admin', text: 'skip remaining measure fee items' },
       { type: 'admin', text: 'tighten support fallback routing' },

@@ -171,7 +171,7 @@ def calculate_confidence(param_score: float, param_match: bool = True,
         nb = 0.0
     nb = min(nb, 1.0)
     # nb>=0.3视为品类完全命中，给满分
-    nb_normalized = min(nb / 0.3, 1.0)
+    nb_normalized = min(nb / 0.15, 1.0)
     name_part = nb_normalized * 20.0
 
     # === top1/top2差距（满分15分） ===
@@ -184,7 +184,7 @@ def calculate_confidence(param_score: float, param_match: bool = True,
         gap = 0.0
     gap = min(max(gap, 0.0), 1.0)
     # 基础3分 + 差距最多12分 = 仍是满分15
-    gap_normalized = min(gap / 0.15, 1.0)
+    gap_normalized = min(gap / 0.05, 1.0)
     gap_part = gap_normalized * 12.0 + 3.0
 
     # === 搜索语义相关性（满分10分） ===
@@ -822,44 +822,52 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
             except (KeyError, TypeError, ValueError, AttributeError,
                     OSError, RuntimeError, ImportError) as e:
                 logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
-    # 多取一些候选（top_k*2），让借用册有机会出现在结果中
-    # 场景：搜"镀锌钢管沟槽连接"时，C10的"镀锌钢管螺纹连接"得分高会挤掉C9的"钢管沟槽连接"
-    # 扩大搜索范围能让C9结果有机会进入候选池，由Reranker和参数验证挑最好的
-    #
-    # 统一逻辑：classify()已通过BookClassifier（数据驱动）给出了primary+fallbacks，
-    # 不再区分标准/行业定额。行业定额仅需做册号翻译（C10→"10"等）
-    search_books = [primary] + fallbacks
-    if not searcher.uses_standard_books and search_books:
-        # 行业定额：C-book编号翻译为实际book值（如C10→"10"）
-        translated = _translate_books_for_industry(
-            search_books, searcher.bm25_engine.quota_books
-        )
-        if translated:
-            search_books = translated
-        else:
-            # 翻译失败：降级用词频统计判断册号
-            search_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
-    candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
+    def _resolve_search_books(c_books: list[str]) -> list[str]:
+        if not c_books:
+            return []
+        resolved = list(c_books)
+        if not searcher.uses_standard_books:
+            translated = _translate_books_for_industry(
+                resolved, searcher.bm25_engine.quota_books
+            )
+            if translated:
+                return translated
+            fallback_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
+            return fallback_books or resolved
+        return resolved
 
-    # 结果足够就返回（加质量门槛检查）
-    if len(candidates) >= CASCADE_MIN_CANDIDATES:
-        # 候选较多（>= 5个）：直接返回，不需要额外质量检查
-        if len(candidates) >= CASCADE_MIN_CANDIDATES + 2:
-            return _merge_with_aux(candidates, aux_candidates, top_k * 2)
-        # 候选较少（3-4个）：检查top候选是否有明确的分差优势
-        # 如果top1和top3分数太接近，说明搜索结果不确定，需要扩大搜索
-        top_score = candidates[0].get("hybrid_score", 0)
-        third_idx = min(2, len(candidates) - 1)
-        third_score = candidates[third_idx].get("hybrid_score", 0)
+    def _search_is_good_enough(found: list[dict]) -> bool:
+        if len(found) < CASCADE_MIN_CANDIDATES:
+            return False
+        if len(found) >= CASCADE_MIN_CANDIDATES + 2:
+            return True
+        top_score = found[0].get("hybrid_score", 0)
+        third_idx = min(2, len(found) - 1)
+        third_score = found[third_idx].get("hybrid_score", 0)
         quality_threshold = getattr(config, "CASCADE_QUALITY_THRESHOLD", 0.3)
         if top_score > 0 and (top_score - third_score) / top_score >= quality_threshold:
-            return _merge_with_aux(candidates, aux_candidates, top_k * 2)
-        # 分差不够，继续全库搜索补充候选
+            return True
         logger.debug(
-            f"主搜{len(candidates)}条但质量不足"
+            f"主册搜{len(found)}条但质量不足"
             f"(分差比{(top_score - third_score) / max(top_score, 1e-9):.2f}"
-            f"<{quality_threshold})，触发全库补充搜索"
+            f"<{quality_threshold})，继续扩大搜索"
         )
+        return False
+
+    # 先只搜主册，避免借用册候选过早把主册结果顶掉。
+    primary_candidates = searcher.search(
+        search_query,
+        top_k=top_k * 2,
+        books=_resolve_search_books([primary]),
+    )
+    if _search_is_good_enough(primary_candidates):
+        return _merge_with_aux(primary_candidates, aux_candidates, top_k * 2)
+
+    # 主册候选不足时，再放开到借用册。
+    search_books = _resolve_search_books([primary] + fallbacks)
+    candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
+    if _search_is_good_enough(candidates):
+        return _merge_with_aux(candidates, aux_candidates, top_k * 2)
 
     # 第2步：兜底全库搜索
     candidates = searcher.search(search_query, top_k=top_k, books=None)
