@@ -9,7 +9,8 @@
 # 构建命令:
 #   docker build -f web/backend/Dockerfile.light -t autoquota-backend-light .
 
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+FROM ${PYTHON_IMAGE}
 
 # UTF-8编码
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
@@ -40,6 +41,9 @@ COPY web/backend/ /app/web/backend/
 # config.py 需要复制（Web config 引用 PROJECT_ROOT）
 # main.py 不复制（远程模式不会调用 main.run()）
 COPY config.py /app/config.py
+COPY docs/ /app/docs/
+COPY db/__init__.py /app/db/__init__.py
+COPY db/sqlite.py /app/db/sqlite.py
 
 # 不复制 src/, tools/, data/, db/, knowledge/（远程模式不需要）
 

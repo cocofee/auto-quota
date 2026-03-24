@@ -38,7 +38,8 @@ jarvis-correct-*
 nul
 
 # 文档（构建不需要）
-docs/
+docs/*
+!docs/knowledge_staging_schema_v1.sql
 *.md
 !README.md
 
@@ -52,6 +53,8 @@ scripts/
 
 # 大文件/数据（通过 volume 挂载，不打包进镜像）
 data/
-db/
+db/*
+!db/__init__.py
+!db/sqlite.py
 output/
 logs/

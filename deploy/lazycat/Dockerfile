@@ -5,10 +5,14 @@
 # 后端服务: cd /app/web/backend && uvicorn app.main:app ...
 # Celery服务: cd /app/web/backend && celery -A app.celery_app worker ...
 
+ARG NODE_IMAGE=node:22-alpine
+ARG PYTHON_IMAGE=python:3.12-slim
+
 # ============================================================
 # 阶段1：构建前端 React 应用
+# 可用 --build-arg NODE_IMAGE=... 覆盖，避免依赖私有基础镜像仓库
 # ============================================================
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/node:22-alpine AS frontend-builder
+FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app
 
@@ -24,8 +28,9 @@ RUN npm run build
 
 # ============================================================
 # 阶段2：最终镜像（Python + Nginx）
+# 可用 --build-arg PYTHON_IMAGE=... 覆盖
 # ============================================================
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
+FROM ${PYTHON_IMAGE}
 
 # 设置UTF-8编码（避免中文乱码）
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
@@ -58,6 +63,9 @@ COPY deploy/lazycat/nginx.conf /etc/nginx/conf.d/default.conf
 # 复制后端代码
 COPY config.py /app/config.py
 COPY main.py /app/main.py
+COPY docs/ /app/docs/
+COPY db/__init__.py /app/db/__init__.py
+COPY db/sqlite.py /app/db/sqlite.py
 COPY src/ /app/src/
 COPY tools/ /app/tools/
 COPY tests/ /app/tests/
