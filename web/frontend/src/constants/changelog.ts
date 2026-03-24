@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.88';
+export const APP_VERSION = '0.2.89';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.89',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: '修复知识晋升 staging 初始化锁冲突' },
+      { type: 'admin', text: '优化知识晋升工作台首屏与中文语义' },
+    ],
+  },
   {
     version: '0.2.88',
     date: '2026-03-24',
