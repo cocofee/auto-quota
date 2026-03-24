@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.84';
+export const APP_VERSION = '0.2.86';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -28,39 +28,53 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.2.86',
+    date: '2026-03-24',
+    changes: [
+      { type: 'admin', text: 'v0.2.86 更新' },
+    ],
+  },
+  {
+    version: '0.2.85',
+    date: '2026-03-24',
+    changes: [
+      { type: 'admin', text: 'v0.2.85 更新' },
+    ],
+  },
+  {
     version: '0.2.84',
     date: '2026-03-24',
     changes: [
-      { type: 'admin', text: 'rebalance benchmark rerank and routing guards' },
+      { type: 'admin', text: '基准集重排权重与路由保护规则重平衡' },
     ],
   },
   {
     version: '0.2.83',
     date: '2026-03-23',
     changes: [
-      { type: 'admin', text: 'Benchmark rerank weight rebalance for hybrid_score, param_score, and family gate' },
-      { type: 'admin', text: 'Add hybrid-score safety guard to explicit category candidate overrides' },
-      { type: 'admin', text: 'Tighten primary-book routing and confidence thresholds for benchmark recovery' },
-      { type: 'admin', text: 'Prioritize correct top1 and decouple light status' },
-      { type: 'admin', text: 'skip remaining measure fee items' },
-      { type: 'admin', text: 'tighten support fallback routing' },
-      { type: 'admin', text: 'tighten support topic routing' },
-      { type: 'admin', text: 'Fix installation routing and arbitration framework' },
-      { type: 'admin', text: 'Unify canonical query context flow' },
-      { type: 'admin', text: 'Refine installation cable and support routing' },
+      { type: 'admin', text: '重平衡 hybrid_score、param_score 与 family gate 的基准集重排权重' },
+      { type: 'admin', text: '为显式类别候选覆盖增加 hybrid-score 安全保护' },
+      { type: 'admin', text: '收紧主册路由与置信度阈值，提升基准集恢复能力' },
+      { type: 'admin', text: '优先保证 Top1 正确，并拆分红黄绿灯状态' },
+      { type: 'admin', text: '跳过剩余措施费项目' },
+      { type: 'admin', text: '收紧支撑类兜底路由' },
+      { type: 'admin', text: '收紧支撑类主题路由' },
+      { type: 'admin', text: '修复安装专业路由与仲裁框架' },
+      { type: 'admin', text: '统一 canonical 查询上下文流转' },
+      { type: 'admin', text: '细化安装电缆与支撑类路由' },
     ],
   },
   {
     version: '0.2.82',
     date: '2026-03-22',
     changes: [
-      { type: 'admin', text: 'Prioritize correct top1 and decouple light status' },
-      { type: 'admin', text: 'skip remaining measure fee items' },
-      { type: 'admin', text: 'tighten support fallback routing' },
-      { type: 'admin', text: 'tighten support topic routing' },
-      { type: 'admin', text: 'Fix installation routing and arbitration framework' },
-      { type: 'admin', text: 'Unify canonical query context flow' },
-      { type: 'admin', text: 'Refine installation cable and support routing' },
+      { type: 'admin', text: '优先保证 Top1 正确，并拆分红黄绿灯状态' },
+      { type: 'admin', text: '跳过剩余措施费项目' },
+      { type: 'admin', text: '收紧支撑类兜底路由' },
+      { type: 'admin', text: '收紧支撑类主题路由' },
+      { type: 'admin', text: '修复安装专业路由与仲裁框架' },
+      { type: 'admin', text: '统一 canonical 查询上下文流转' },
+      { type: 'admin', text: '细化安装电缆与支撑类路由' },
     ],
   },
   {
@@ -88,67 +102,67 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '0.2.77',
     date: '2026-03-20',
     changes: [
-      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
-      { type: 'admin', text: 'add installation rule anchors' },
-      { type: 'admin', text: 'infer cable core material from model' },
-      { type: 'admin', text: 'separate cable laying from cable head matching' },
+      { type: 'admin', text: '新增带原因解释的诊断报告' },
+      { type: 'admin', text: '新增安装专业规则锚点' },
+      { type: 'admin', text: '根据型号推断电缆芯材' },
+      { type: 'admin', text: '拆分电缆敷设与电缆头匹配逻辑' },
     ],
   },
   {
     version: '0.2.76',
     date: '2026-03-20',
     changes: [
-      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
-      { type: 'admin', text: 'add installation rule anchors' },
-      { type: 'admin', text: 'infer cable core material from model' },
-      { type: 'admin', text: 'separate cable laying from cable head matching' },
+      { type: 'admin', text: '新增带原因解释的诊断报告' },
+      { type: 'admin', text: '新增安装专业规则锚点' },
+      { type: 'admin', text: '根据型号推断电缆芯材' },
+      { type: 'admin', text: '拆分电缆敷设与电缆头匹配逻辑' },
     ],
   },
   {
     version: '0.2.75',
     date: '2026-03-20',
     changes: [
-      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
-      { type: 'admin', text: 'add installation rule anchors' },
-      { type: 'admin', text: 'infer cable core material from model' },
-      { type: 'admin', text: 'separate cable laying from cable head matching' },
+      { type: 'admin', text: '新增带原因解释的诊断报告' },
+      { type: 'admin', text: '新增安装专业规则锚点' },
+      { type: 'admin', text: '根据型号推断电缆芯材' },
+      { type: 'admin', text: '拆分电缆敷设与电缆头匹配逻辑' },
     ],
   },
   {
     version: '0.2.74',
     date: '2026-03-20',
     changes: [
-      { type: 'admin', text: 'add reason-aware diagnostic reporting' },
-      { type: 'admin', text: 'add installation rule anchors' },
-      { type: 'admin', text: 'infer cable core material from model' },
-      { type: 'admin', text: 'separate cable laying from cable head matching' },
+      { type: 'admin', text: '新增带原因解释的诊断报告' },
+      { type: 'admin', text: '新增安装专业规则锚点' },
+      { type: 'admin', text: '根据型号推断电缆芯材' },
+      { type: 'admin', text: '拆分电缆敷设与电缆头匹配逻辑' },
     ],
   },
   {
     version: '0.2.73',
     date: '2026-03-19',
     changes: [
-      { type: 'admin', text: 'checkpoint current workspace state' },
-      { type: 'admin', text: 'checkpoint family alignment architecture' },
-      { type: 'admin', text: 'Add structured logic bucket scoring' },
-      { type: 'admin', text: 'Add candidate feature alignment validation' },
-      { type: 'admin', text: 'Add feature-aligned installation matching pipeline' },
-      { type: 'admin', text: 'Fix Jarvis quota ranking and cross-province correction provenance' },
-      { type: 'admin', text: 'add bill feature builder workflow' },
+      { type: 'admin', text: '记录当前工作区检查点状态' },
+      { type: 'admin', text: '记录 family 对齐架构检查点' },
+      { type: 'admin', text: '新增结构化逻辑桶评分' },
+      { type: 'admin', text: '新增候选特征对齐校验' },
+      { type: 'admin', text: '新增特征对齐版安装匹配流水线' },
+      { type: 'admin', text: '修复 Jarvis 定额排序与跨省纠正溯源' },
+      { type: 'admin', text: '新增清单特征构建流程' },
     ],
   },
   {
     version: '0.2.72',
     date: '2026-03-18',
     changes: [
-      { type: 'admin', text: 'split experience filters by province and specialty' },
+      { type: 'admin', text: '按省份和专业拆分经验过滤逻辑' },
     ],
   },
   {
     version: '0.2.71',
     date: '2026-03-18',
     changes: [
-      { type: 'admin', text: 'restore material display and export' },
+      { type: 'admin', text: '恢复主材展示与导出' },
     ],
   },
   {
@@ -162,7 +176,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '0.2.69',
     date: '2026-03-18',
     changes: [
-      { type: 'admin', text: 'Fix import experience stats' },
+      { type: 'admin', text: '修复导入经验统计' },
     ],
   },
   {
@@ -204,8 +218,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '0.2.63',
     date: '2026-03-18',
     changes: [
-      { type: 'admin', text: 'remove agent batch review flow' },
-      { type: 'admin', text: 'Fix bill compiler security and remote reachability' },
+      { type: 'admin', text: '移除 agent 批量审核流程' },
+      { type: 'admin', text: '修复编清单安全性与远程可达性' },
     ],
   },
   {
