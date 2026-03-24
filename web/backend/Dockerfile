@@ -6,7 +6,8 @@
 # 构建命令（由 docker-compose 自动调用）:
 #   docker build -f web/backend/Dockerfile -t autoquota-backend .
 
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+FROM ${PYTHON_IMAGE}
 
 # UTF-8编码（镜像层级写死，解决celery worker中文编码ascii错误）
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
@@ -37,6 +38,9 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r /ap
 # 核心匹配逻辑（src/, config.py, main.py 等）
 COPY config.py /app/config.py
 COPY main.py /app/main.py
+COPY docs/ /app/docs/
+COPY db/__init__.py /app/db/__init__.py
+COPY db/sqlite.py /app/db/sqlite.py
 COPY src/ /app/src/
 COPY tools/ /app/tools/
 COPY tests/ /app/tests/
