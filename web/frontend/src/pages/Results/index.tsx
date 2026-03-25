@@ -50,14 +50,6 @@ const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
   corrected: { color: 'processing', text: '已纠正' },
 };
 
-const OPENCLAW_REVIEW_MAP: Record<string, { color: string; text: string }> = {
-  pending: { color: 'default', text: 'OpenClaw 未提交建议' },
-  reviewed: { color: 'orange', text: 'OpenClaw 已提交建议，待人工确认' },
-  approved: { color: 'blue', text: 'OpenClaw 建议已确认通过' },
-  rejected: { color: 'red', text: 'OpenClaw 建议已人工驳回' },
-  applied: { color: 'processing', text: 'OpenClaw 建议已应用' },
-};
-
 // ============================================================
 // 展示行类型（分部标题行 + 清单行 + 定额行混合扁平数组）
 // ============================================================
@@ -226,8 +218,9 @@ export default function ResultsPage() {
   const [expandedAlts, setExpandedAlts] = useState<Set<string>>(new Set());
 
   // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
-  const [confFilter, setConfFilter] = useState<'all' | 'green' | 'yellow' | 'red'>('all');
-  const [showOpenClawPendingOnly, setShowOpenClawPendingOnly] = useState(false);
+  const [confFilter, setConfFilter] = useState<'all' | 'need_review' | 'green' | 'yellow' | 'red'>(
+    isAdmin ? 'need_review' : 'all',
+  );
 
   // 分页状态（以清单项为单位）
   const [page, setPage] = useState(1);
@@ -256,13 +249,14 @@ export default function ResultsPage() {
   }, [loadData]);
 
   useEffect(() => {
+    if (targetResultId) return;
+    setConfFilter(isAdmin ? 'need_review' : 'all');
+  }, [taskId, isAdmin, targetResultId]);
+
+  useEffect(() => {
     if (!targetResultId || results.length === 0) return;
     if (confFilter !== 'all') {
       setConfFilter('all');
-      return;
-    }
-    if (showOpenClawPendingOnly) {
-      setShowOpenClawPendingOnly(false);
       return;
     }
     const targetIndex = results.findIndex((item) => item.id === targetResultId);
@@ -271,7 +265,7 @@ export default function ResultsPage() {
     if (page !== targetPage) {
       setPage(targetPage);
     }
-  }, [targetResultId, results, confFilter, showOpenClawPendingOnly, pageSize, page]);
+  }, [targetResultId, results, confFilter, pageSize, page]);
 
   // 置信度筛选 → 分页 → 展平
   const filteredResults = useMemo(() => {
@@ -279,22 +273,21 @@ export default function ResultsPage() {
     if (confFilter !== 'all') {
       next = next.filter((r) => {
         const light = resolveLightStatus(r);
+        if (confFilter === 'need_review') return light === 'yellow' || light === 'red';
         if (confFilter === 'green') return light === 'green';
         if (confFilter === 'yellow') return light === 'yellow';
         return light === 'red';
       });
     }
-    if (showOpenClawPendingOnly) {
-      next = next.filter((r) => r.openclaw_review_status === 'reviewed' && r.openclaw_review_confirm_status === 'pending');
-    }
     return next;
-  }, [results, confFilter, showOpenClawPendingOnly]);
-
-  const openClawPendingCount = useMemo(
-    () => results.filter((r) => r.openclaw_review_status === 'reviewed' && r.openclaw_review_confirm_status === 'pending').length,
+  }, [results, confFilter]);
+  const reviewFocusCount = useMemo(
+    () => results.filter((r) => {
+      const light = resolveLightStatus(r);
+      return light === 'yellow' || light === 'red';
+    }).length,
     [results],
   );
-
   const pagedResults = useMemo(() => {
     const start = (page - 1) * pageSize;
     return filteredResults.slice(start, start + pageSize);
@@ -460,33 +453,6 @@ export default function ResultsPage() {
           message.error('确认失败');
         } finally {
           setConfirmLoading(false);
-        }
-      },
-    });
-  };
-
-  const confirmOpenClawReview = (result: MatchResult, decision: 'approve' | 'reject') => {
-    const draftQuotas = result.openclaw_suggested_quotas || [];
-    const actionText = decision === 'approve' ? '采纳' : '驳回';
-    const detailText = draftQuotas.map((item) => `${item.quota_id} ${item.name}`).join('；');
-
-    modal.confirm({
-      title: `${actionText} OpenClaw 审核建议`,
-      content: decision === 'approve'
-        ? `将把建议定额应用为正式纠正：${detailText || '无建议定额'}`
-        : `将驳回该条 OpenClaw 审核建议：${detailText || '无建议定额'}`,
-      okText: actionText,
-      okButtonProps: decision === 'reject' ? { danger: true } : undefined,
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await api.post(`/openclaw/tasks/${taskId}/results/${result.id}/review-confirm`, {
-            decision,
-          });
-          message.success(`OpenClaw 审核建议已${actionText}`);
-          loadData();
-        } catch {
-          message.error(`${actionText} OpenClaw 审核建议失败`);
         }
       },
     });
@@ -895,13 +861,6 @@ export default function ResultsPage() {
         if (row._rowType === 'bill') {
           const status = row._result.review_status;
           const info = REVIEW_MAP[status] || { color: 'default', text: status };
-          const openclawStatus = row._result.openclaw_review_status || 'pending';
-          const openclawInfo = OPENCLAW_REVIEW_MAP[openclawStatus] || { color: 'default', text: openclawStatus };
-          const hasOpenClawDraft = (row._result.openclaw_suggested_quotas || []).length > 0;
-          const openclawPending = openclawStatus === 'reviewed' && row._result.openclaw_review_confirm_status === 'pending';
-          const openclawDraftText = (row._result.openclaw_suggested_quotas || [])
-            .map((item) => `${item.quota_id} ${item.name}`)
-            .join('\n');
           return (
             <Space size={2} direction="vertical">
               <Space size={2} wrap>
@@ -916,53 +875,6 @@ export default function ResultsPage() {
                   />
                 )}
               </Space>
-              {hasOpenClawDraft && (
-                <Space size={2} wrap>
-                  <Tooltip
-                    title={(
-                      <div style={{ maxWidth: 360 }}>
-                        <div><strong>建议定额</strong></div>
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{openclawDraftText || '-'}</div>
-                        {row._result.openclaw_review_note && (
-                          <div style={{ marginTop: 8 }}>
-                            <strong>审核备注</strong>
-                            <div style={{ whiteSpace: 'pre-wrap' }}>{row._result.openclaw_review_note}</div>
-                          </div>
-                        )}
-                        {(row._result.openclaw_review_actor || row._result.openclaw_review_confidence != null) && (
-                          <div style={{ marginTop: 8 }}>
-                            {row._result.openclaw_review_actor || '-'}
-                            {row._result.openclaw_review_confidence != null ? ` | 置信度 ${row._result.openclaw_review_confidence}` : ''}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  >
-                    <Tag color={openclawInfo.color} style={{ margin: 0 }}>{openclawInfo.text}</Tag>
-                  </Tooltip>
-                  {openclawPending && (
-                    <>
-                      <Button
-                        type="link"
-                        size="small"
-                        onClick={(e) => { e.stopPropagation(); confirmOpenClawReview(row._result, 'approve'); }}
-                        style={{ padding: 0 }}
-                      >
-                        采纳
-                      </Button>
-                      <Button
-                        type="link"
-                        size="small"
-                        danger
-                        onClick={(e) => { e.stopPropagation(); confirmOpenClawReview(row._result, 'reject'); }}
-                        style={{ padding: 0 }}
-                      >
-                        驳回
-                      </Button>
-                    </>
-                  )}
-                </Space>
-              )}
             </Space>
           );
         }
@@ -991,8 +903,7 @@ export default function ResultsPage() {
   // ============================================================
 
   const renderSummary = () => {
-    const { total, high_confidence, mid_confidence, low_confidence, no_match,
-            confirmed = 0, corrected = 0 } = summary;
+    const { total, confirmed = 0, corrected = 0, no_match } = summary;
     const pill = (bg: string, color: string): React.CSSProperties => ({
       padding: '2px 12px',
       borderRadius: 12,
@@ -1010,9 +921,6 @@ export default function ResultsPage() {
     return (
       <Space size="small" wrap>
         <span style={pill('#f0f0f0', '#333')}>共 <b>{total}</b> 条</span>
-        <span style={pill(COLORS.greenBg, COLORS.greenText)}>★★★ <b>{high_confidence}</b></span>
-        <span style={pill(COLORS.yellowBg, COLORS.yellowText)}>★★ <b>{mid_confidence}</b></span>
-        <span style={pill(COLORS.redBg, COLORS.redText)}>★ <b>{low_confidence}</b></span>
         {no_match > 0 && <span style={pill('#f5f5f5', '#999')}>未匹配 <b>{no_match}</b></span>}
         {total > 0 && (
           <span style={pill('#E3F2FD', '#1565C0')}>
@@ -1140,6 +1048,7 @@ export default function ResultsPage() {
         {/* 置信度快捷筛选 */}
         <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
           {([
+            ...(isAdmin ? [{ key: 'need_review', label: '先看要核对的项', color: '#d97706', count: reviewFocusCount }] : []),
             { key: 'all', label: '全部', color: undefined, count: results.length },
             { key: 'green', label: '高置信度', color: COLORS.greenSolid, count: summary.high_confidence },
             { key: 'yellow', label: '中置信度', color: COLORS.yellowSolid, count: summary.mid_confidence },
@@ -1153,23 +1062,11 @@ export default function ResultsPage() {
                 borderColor: confFilter === key ? undefined : color,
                 color: confFilter === key ? undefined : color,
               }}
-              onClick={() => { setConfFilter(key); setPage(1); }}
+              onClick={() => { setConfFilter(key as 'all' | 'need_review' | 'green' | 'yellow' | 'red'); setPage(1); }}
             >
               {label} {count > 0 && `(${count})`}
             </Button>
           ))}
-          {isAdmin && (
-            <Button
-              size="small"
-              type={showOpenClawPendingOnly ? 'primary' : 'default'}
-              onClick={() => {
-                setShowOpenClawPendingOnly((prev) => !prev);
-                setPage(1);
-              }}
-            >
-              待确认的 OpenClaw 建议 {openClawPendingCount > 0 && `(${openClawPendingCount})`}
-            </Button>
-          )}
         </div>
       </Card>
 

@@ -1,13 +1,10 @@
-/**
- * Tab1：总览
- *
- * 4张统计卡片 + 置信度分布饼图 + 任务趋势折线图
- */
-
 import { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Space, Select, App } from 'antd';
 import {
-  CheckCircleOutlined, BarChartOutlined, FileTextOutlined, DashboardOutlined,
+  CheckCircleOutlined,
+  BarChartOutlined,
+  FileTextOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons';
 import { Pie, Line } from '@ant-design/charts';
 import api from '../../../services/api';
@@ -22,11 +19,11 @@ export default function OverviewTab() {
   const [trendDays, setTrendDays] = useState(30);
 
   useEffect(() => {
-    loadOverview();
+    void loadOverview();
   }, []);
 
   useEffect(() => {
-    loadTrends(trendDays);
+    void loadTrends(trendDays);
   }, [trendDays]);
 
   const loadOverview = async () => {
@@ -35,7 +32,7 @@ export default function OverviewTab() {
       const res = await api.get<OverviewData>('/admin/analytics/overview');
       setOverview(res.data);
     } catch {
-      message.error('加载概览数据失败');
+      message.error('加载效果总览失败');
     } finally {
       setLoading(false);
     }
@@ -46,41 +43,43 @@ export default function OverviewTab() {
       const res = await api.get<{ items: TrendItem[] }>('/admin/analytics/trends', { params: { days } });
       setTrends(res.data.items);
     } catch {
-      // 静默失败
+      setTrends([]);
     }
   };
 
-  // 置信度饼图数据
   const pieData = overview ? [
-    { type: `高置信度(≥${GREEN_THRESHOLD}%)`, value: overview.high_confidence },
-    { type: `中置信度(${YELLOW_THRESHOLD}-${GREEN_THRESHOLD - 1}%)`, value: overview.mid_confidence },
-    { type: '低置信度(<70%)', value: overview.low_confidence },
+    { type: `高置信度（≥${GREEN_THRESHOLD}%）`, value: overview.high_confidence },
+    { type: `中置信度（${YELLOW_THRESHOLD}% - ${GREEN_THRESHOLD - 1}%）`, value: overview.mid_confidence },
+    { type: `低置信度（<${YELLOW_THRESHOLD}%）`, value: overview.low_confidence },
   ] : [];
 
-  // 颜色映射
   const colorMap: Record<string, string> = {
-    [`高置信度(≥${GREEN_THRESHOLD}%)`]: COLORS.greenSolid,
-    [`中置信度(${YELLOW_THRESHOLD}-${GREEN_THRESHOLD - 1}%)`]: COLORS.yellowSolid,
-    '低置信度(<70%)': COLORS.redSolid,
+    [`高置信度（≥${GREEN_THRESHOLD}%）`]: COLORS.greenSolid,
+    [`中置信度（${YELLOW_THRESHOLD}% - ${GREEN_THRESHOLD - 1}%）`]: COLORS.yellowSolid,
+    [`低置信度（<${YELLOW_THRESHOLD}%）`]: COLORS.redSolid,
   };
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {/* 4张统计卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={12} sm={6}>
           <Card loading={loading}>
-            <Statistic title="总任务" value={overview?.total_tasks || 0} prefix={<FileTextOutlined />} />
+            <Statistic title="任务总数" value={overview?.total_tasks || 0} prefix={<FileTextOutlined />} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={loading}>
-            <Statistic title="已完成" value={overview?.completed_tasks || 0} prefix={<CheckCircleOutlined />} valueStyle={{ color: COLORS.greenSolid }} />
+            <Statistic
+              title="已完成任务"
+              value={overview?.completed_tasks || 0}
+              prefix={<CheckCircleOutlined />}
+              valueStyle={{ color: COLORS.greenSolid }}
+            />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card loading={loading}>
-            <Statistic title="总匹配条数" value={overview?.total_results || 0} prefix={<BarChartOutlined />} />
+            <Statistic title="匹配结果数" value={overview?.total_results || 0} prefix={<BarChartOutlined />} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
@@ -91,19 +90,21 @@ export default function OverviewTab() {
               suffix="%"
               prefix={<DashboardOutlined />}
               valueStyle={{
-                color: (overview?.avg_confidence || 0) >= GREEN_THRESHOLD ? COLORS.greenSolid
-                  : (overview?.avg_confidence || 0) >= YELLOW_THRESHOLD ? COLORS.yellowSolid : COLORS.redSolid,
+                color: (overview?.avg_confidence || 0) >= GREEN_THRESHOLD
+                  ? COLORS.greenSolid
+                  : (overview?.avg_confidence || 0) >= YELLOW_THRESHOLD
+                    ? COLORS.yellowSolid
+                    : COLORS.redSolid,
               }}
             />
           </Card>
         </Col>
       </Row>
 
-      {/* 置信度分布饼图 + 任务趋势折线图（并排） */}
       <Row gutter={16}>
         <Col xs={24} md={10}>
           <Card title="置信度分布" loading={loading}>
-            {pieData.length > 0 && pieData.some(d => d.value > 0) ? (
+            {pieData.length > 0 && pieData.some((item) => item.value > 0) ? (
               <Pie
                 data={pieData}
                 angleField="value"
@@ -112,36 +113,37 @@ export default function OverviewTab() {
                 height={280}
                 style={{ fill: ({ type }: { type: string }) => colorMap[type] || '#ccc' }}
                 label={{
-                  text: (d: { type: string; value: number }) => `${d.value}条`,
+                  text: (item: { value: number }) => `${item.value} 条`,
                   style: { fontSize: 12 },
                 }}
                 legend={{ color: { position: 'bottom', layout: { justifyContent: 'center' } } }}
                 tooltip={{ title: 'type', items: [{ channel: 'y' }] }}
               />
             ) : (
-              <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>暂无数据</div>
+              <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>暂时没有分布数据</div>
             )}
           </Card>
         </Col>
+
         <Col xs={24} md={14}>
           <Card
             title="任务趋势"
             loading={loading}
-            extra={
+            extra={(
               <Select
                 value={trendDays}
                 onChange={setTrendDays}
-                style={{ width: 110 }}
+                style={{ width: 120 }}
                 options={[
-                  { value: 7, label: '最近7天' },
-                  { value: 30, label: '最近30天' },
-                  { value: 90, label: '最近90天' },
+                  { value: 7, label: '最近 7 天' },
+                  { value: 30, label: '最近 30 天' },
+                  { value: 90, label: '最近 90 天' },
                 ]}
               />
-            }
+            )}
           >
             {trends.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>暂无任务数据</div>
+              <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>暂时没有任务趋势数据</div>
             ) : (
               <Line
                 data={trends}
@@ -151,7 +153,7 @@ export default function OverviewTab() {
                 axis={{
                   x: {
                     labelAutoRotate: true,
-                    label: { formatter: (v: string) => v.slice(5) },
+                    label: { formatter: (value: string) => value.slice(5) },
                   },
                   y: { title: '任务数' },
                 }}
