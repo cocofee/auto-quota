@@ -27,6 +27,7 @@ from db.sqlite import connect_init as _db_connect_init
 
 # 数据库路径：和经验库放一起
 _DB_PATH = config.COMMON_DB_DIR / "run_history.db"
+_KNOWLEDGE_LAYERS = ("ExperienceDB", "RuleKnowledge", "MethodCards")
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -72,8 +73,242 @@ def _get_conn() -> sqlite3.Connection:
             created_at REAL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_hit_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_date TEXT NOT NULL,
+            run_time TEXT NOT NULL,
+            input_file TEXT,
+            mode TEXT,
+            province TEXT,
+            task_id TEXT DEFAULT '',
+            layer TEXT NOT NULL,
+            total_results INTEGER DEFAULT 0,
+            hit_count INTEGER DEFAULT 0,
+            direct_count INTEGER DEFAULT 0,
+            assist_count INTEGER DEFAULT 0,
+            high_conf_count INTEGER DEFAULT 0,
+            low_risk_count INTEGER DEFAULT 0,
+            green_count INTEGER DEFAULT 0,
+            hint_count INTEGER DEFAULT 0,
+            created_at REAL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_hit_history_created
+        ON knowledge_hit_history(created_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_hit_history_layer_date
+        ON knowledge_hit_history(layer, run_date)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_hit_result_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_date TEXT NOT NULL,
+            run_time TEXT NOT NULL,
+            input_file TEXT,
+            mode TEXT,
+            province TEXT,
+            task_id TEXT DEFAULT '',
+            result_index INTEGER NOT NULL,
+            layer TEXT NOT NULL,
+            object_ref TEXT DEFAULT '',
+            hit_type TEXT NOT NULL,
+            match_source TEXT DEFAULT '',
+            confidence INTEGER DEFAULT 0,
+            review_risk TEXT DEFAULT '',
+            light_status TEXT DEFAULT '',
+            created_at REAL
+        )
+    """)
+    try:
+        conn.execute("ALTER TABLE knowledge_hit_result_history ADD COLUMN object_ref TEXT DEFAULT ''")
+    except Exception:
+        pass
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_hit_result_history_task
+        ON knowledge_hit_result_history(task_id, result_index, layer)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_knowledge_hit_result_history_created
+        ON knowledge_hit_result_history(created_at)
+    """)
     conn.commit()
     return conn
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_trace_steps(result: dict) -> list[dict]:
+    trace = result.get("trace")
+    if not isinstance(trace, dict):
+        return []
+    steps = trace.get("steps")
+    if not isinstance(steps, list):
+        return []
+    return [step for step in steps if isinstance(step, dict)]
+
+
+def _summarize_knowledge_hits(results: list[dict]) -> dict[str, dict[str, int]]:
+    summary = {
+        layer: {
+            "hit_count": 0,
+            "direct_count": 0,
+            "assist_count": 0,
+            "high_conf_count": 0,
+            "low_risk_count": 0,
+            "green_count": 0,
+            "hint_count": 0,
+        }
+        for layer in _KNOWLEDGE_LAYERS
+    }
+
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+
+        match_source = str(result.get("match_source", "") or "").strip().lower()
+        confidence = _safe_int(result.get("confidence", 0))
+        review_risk = str(result.get("review_risk", "") or "").strip().lower()
+        light_status = str(result.get("light_status", "") or "").strip().lower()
+        rule_hints = str(result.get("rule_hints", "") or "").strip()
+
+        reference_cases_count = 0
+        rules_context_count = 0
+        method_cards_count = 0
+        for step in _extract_trace_steps(result):
+            reference_cases_count = max(
+                reference_cases_count,
+                _safe_int(step.get("reference_cases_count", 0)),
+            )
+            rules_context_count = max(
+                rules_context_count,
+                _safe_int(step.get("rules_context_count", 0)),
+            )
+            method_cards_count = max(
+                method_cards_count,
+                _safe_int(step.get("method_cards_count", 0)),
+            )
+
+        layer_flags = {
+            "ExperienceDB": {
+                "hit": match_source.startswith("experience") or reference_cases_count > 0,
+                "direct": match_source.startswith("experience"),
+            },
+            "RuleKnowledge": {
+                "hit": match_source.startswith("rule") or rules_context_count > 0 or bool(rule_hints),
+                "direct": match_source.startswith("rule"),
+            },
+            "MethodCards": {
+                "hit": method_cards_count > 0,
+                "direct": False,
+            },
+        }
+
+        for layer, flags in layer_flags.items():
+            if not flags["hit"]:
+                continue
+            item = summary[layer]
+            item["hit_count"] += 1
+            if flags["direct"]:
+                item["direct_count"] += 1
+            else:
+                item["assist_count"] += 1
+            if confidence >= 90:
+                item["high_conf_count"] += 1
+            if light_status == "green":
+                item["green_count"] += 1
+            if review_risk in {"", "low"}:
+                item["low_risk_count"] += 1
+            if layer == "RuleKnowledge" and rule_hints:
+                item["hint_count"] += 1
+
+    return summary
+
+
+def _extract_knowledge_hit_details(results: list[dict]) -> list[dict]:
+    details: list[dict] = []
+    for idx, result in enumerate(results or []):
+        if not isinstance(result, dict):
+            continue
+
+        match_source = str(result.get("match_source", "") or "").strip().lower()
+        confidence = _safe_int(result.get("confidence", 0))
+        review_risk = str(result.get("review_risk", "") or "").strip().lower()
+        light_status = str(result.get("light_status", "") or "").strip().lower()
+        rule_hints = str(result.get("rule_hints", "") or "").strip()
+
+        reference_cases_count = 0
+        rules_context_count = 0
+        method_cards_count = 0
+        for step in _extract_trace_steps(result):
+            reference_cases_count = max(
+                reference_cases_count,
+                _safe_int(step.get("reference_cases_count", 0)),
+            )
+            rules_context_count = max(
+                rules_context_count,
+                _safe_int(step.get("rules_context_count", 0)),
+            )
+            method_cards_count = max(
+                method_cards_count,
+                _safe_int(step.get("method_cards_count", 0)),
+            )
+
+        layer_flags = (
+            ("ExperienceDB", match_source.startswith("experience") or reference_cases_count > 0, match_source.startswith("experience")),
+            ("RuleKnowledge", match_source.startswith("rule") or rules_context_count > 0 or bool(rule_hints), match_source.startswith("rule")),
+            ("MethodCards", method_cards_count > 0, False),
+        )
+        for layer, hit, direct in layer_flags:
+            if not hit:
+                continue
+            object_refs: list[str] = []
+            for step in _extract_trace_steps(result):
+                if layer == "ExperienceDB":
+                    stage = str(step.get("stage", "") or "")
+                    if stage in {"experience_exact", "experience_similar"} and step.get("record_id") not in (None, ""):
+                        object_refs.append(f"experience:{step.get('record_id')}")
+                    for ref_id in step.get("reference_case_ids", []) or []:
+                        ref_text = str(ref_id or "").strip()
+                        if ref_text:
+                            object_refs.append(f"experience:{ref_text}")
+                elif layer == "RuleKnowledge":
+                    for ref_id in step.get("rule_context_ids", []) or []:
+                        ref_text = str(ref_id or "").strip()
+                        if ref_text:
+                            object_refs.append(f"rule:{ref_text}")
+                elif layer == "MethodCards":
+                    for ref_id in step.get("method_card_ids", []) or []:
+                        ref_text = str(ref_id or "").strip()
+                        if ref_text:
+                            object_refs.append(f"method_card:{ref_text}")
+
+            unique_refs: list[str] = []
+            for ref in object_refs:
+                if ref and ref not in unique_refs:
+                    unique_refs.append(ref)
+            if not unique_refs:
+                unique_refs = [""]
+
+            for object_ref in unique_refs:
+                details.append({
+                    "result_index": idx,
+                    "layer": layer,
+                    "object_ref": object_ref,
+                    "hit_type": "direct" if direct else "assist",
+                    "match_source": match_source,
+                    "confidence": confidence,
+                    "review_risk": review_risk,
+                    "light_status": light_status,
+                })
+    return details
 
 
 class AccuracyTracker:
@@ -166,6 +401,273 @@ class AccuracyTracker:
         finally:
             if conn is not None:
                 conn.close()
+
+    def record_knowledge_hits(self, results: list[dict], *,
+                              input_file: str = "", mode: str = "",
+                              province: str = "", task_id: str = ""):
+        """Record per-run knowledge-layer hit metrics derived from real match results."""
+        now = time.localtime()
+        run_date = time.strftime("%Y-%m-%d", now)
+        run_time = time.strftime("%H:%M:%S", now)
+        file_name = Path(input_file).name if input_file else ""
+        total_results = len(results or [])
+        layer_summary = _summarize_knowledge_hits(results or [])
+        detail_rows = _extract_knowledge_hit_details(results or [])
+
+        conn = None
+        try:
+            conn = _get_conn()
+            rows = []
+            created_at = time.time()
+            for layer in _KNOWLEDGE_LAYERS:
+                metrics = layer_summary.get(layer, {})
+                rows.append((
+                    run_date,
+                    run_time,
+                    file_name,
+                    mode,
+                    province,
+                    str(task_id or ""),
+                    layer,
+                    total_results,
+                    int(metrics.get("hit_count", 0)),
+                    int(metrics.get("direct_count", 0)),
+                    int(metrics.get("assist_count", 0)),
+                    int(metrics.get("high_conf_count", 0)),
+                    int(metrics.get("low_risk_count", 0)),
+                    int(metrics.get("green_count", 0)),
+                    int(metrics.get("hint_count", 0)),
+                    created_at,
+                ))
+            conn.executemany("""
+                INSERT INTO knowledge_hit_history
+                (run_date, run_time, input_file, mode, province, task_id, layer,
+                 total_results, hit_count, direct_count, assist_count,
+                 high_conf_count, low_risk_count, green_count, hint_count, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+            if detail_rows:
+                conn.executemany("""
+                    INSERT INTO knowledge_hit_result_history
+                    (run_date, run_time, input_file, mode, province, task_id,
+                     result_index, layer, object_ref, hit_type, match_source, confidence,
+                     review_risk, light_status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    (
+                        run_date,
+                        run_time,
+                        file_name,
+                        mode,
+                        province,
+                        str(task_id or ""),
+                        int(item["result_index"]),
+                        str(item["layer"]),
+                        str(item.get("object_ref", "")),
+                        str(item["hit_type"]),
+                        str(item["match_source"]),
+                        int(item["confidence"]),
+                        str(item["review_risk"]),
+                        str(item["light_status"]),
+                        created_at,
+                    )
+                    for item in detail_rows
+                ])
+            conn.commit()
+            logger.debug(f"知识命中指标已记录: {run_date} {run_time}")
+        except Exception as e:
+            logger.warning(f"保存知识命中指标失败（不影响主流程）: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def get_recent_knowledge_hit_details(self, days: int = 7) -> list[dict]:
+        """Return recent result-level knowledge hit rows for review linkage."""
+        days = max(1, int(days))
+        cutoff = time.time() - (days * 86400)
+        conn = None
+        try:
+            conn = _get_conn()
+            rows = conn.execute("""
+                SELECT
+                    task_id,
+                    result_index,
+                    layer,
+                    object_ref,
+                    hit_type,
+                    match_source,
+                    confidence,
+                    review_risk,
+                    light_status,
+                    run_date,
+                    created_at
+                FROM knowledge_hit_result_history
+                WHERE created_at >= ?
+                  AND TRIM(COALESCE(task_id, '')) != ''
+                ORDER BY created_at DESC, id DESC
+            """, (cutoff,)).fetchall()
+            return [
+                {
+                    "task_id": str(row[0] or ""),
+                    "result_index": int(row[1] or 0),
+                    "layer": str(row[2] or ""),
+                    "object_ref": str(row[3] or ""),
+                    "hit_type": str(row[4] or ""),
+                    "match_source": str(row[5] or ""),
+                    "confidence": int(row[6] or 0),
+                    "review_risk": str(row[7] or ""),
+                    "light_status": str(row[8] or ""),
+                    "run_date": str(row[9] or ""),
+                    "created_at": float(row[10] or 0),
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning(f"读取结果级知识命中明细失败: {e}")
+            return []
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def get_knowledge_hit_report(self, days: int = 7) -> dict:
+        """Return aggregated knowledge-layer hit and benefit metrics."""
+        days = max(1, int(days))
+        cutoff = time.time() - (days * 86400)
+        conn = None
+        try:
+            conn = _get_conn()
+            summary_row = conn.execute("""
+                SELECT
+                    COUNT(DISTINCT run_date || ' ' || run_time || '|' || COALESCE(task_id, '') || '|' || COALESCE(input_file, '')) AS tracked_runs,
+                    COALESCE(SUM(CASE WHEN layer = 'ExperienceDB' THEN total_results ELSE 0 END), 0) AS tracked_results,
+                    COUNT(DISTINCT CASE
+                        WHEN created_at >= ? THEN run_date || ' ' || run_time || '|' || COALESCE(task_id, '') || '|' || COALESCE(input_file, '')
+                    END) AS last_7d_runs,
+                    COALESCE(SUM(CASE
+                        WHEN layer = 'ExperienceDB' AND created_at >= ? THEN total_results ELSE 0
+                    END), 0) AS last_7d_results,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN hit_count ELSE 0 END), 0) AS last_7d_hits,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN direct_count ELSE 0 END), 0) AS last_7d_direct
+                FROM knowledge_hit_history
+            """, (cutoff, cutoff, cutoff, cutoff)).fetchone()
+
+            layer_rows = conn.execute("""
+                SELECT
+                    layer,
+                    COUNT(*) AS run_count,
+                    COALESCE(MAX(total_results), 0) AS max_total_results,
+                    COALESCE(SUM(total_results), 0) AS total_results,
+                    COALESCE(SUM(hit_count), 0) AS hit_count,
+                    COALESCE(SUM(direct_count), 0) AS direct_count,
+                    COALESCE(SUM(assist_count), 0) AS assist_count,
+                    COALESCE(SUM(high_conf_count), 0) AS high_conf_count,
+                    COALESCE(SUM(low_risk_count), 0) AS low_risk_count,
+                    COALESCE(SUM(green_count), 0) AS green_count,
+                    COALESCE(SUM(hint_count), 0) AS hint_count
+                FROM knowledge_hit_history
+                GROUP BY layer
+                ORDER BY layer ASC
+            """).fetchall()
+
+            recent_rows = conn.execute("""
+                SELECT
+                    run_date,
+                    COALESCE(SUM(CASE WHEN layer = 'ExperienceDB' THEN total_results ELSE 0 END), 0) AS total_results,
+                    COALESCE(SUM(CASE WHEN layer = 'ExperienceDB' THEN 1 ELSE 0 END), 0) AS run_rows,
+                    COALESCE(SUM(CASE WHEN layer = 'ExperienceDB' THEN hit_count ELSE 0 END), 0) AS experience_hits,
+                    COALESCE(SUM(CASE WHEN layer = 'ExperienceDB' THEN direct_count ELSE 0 END), 0) AS experience_direct,
+                    COALESCE(SUM(CASE WHEN layer = 'RuleKnowledge' THEN hit_count ELSE 0 END), 0) AS rule_hits,
+                    COALESCE(SUM(CASE WHEN layer = 'RuleKnowledge' THEN direct_count ELSE 0 END), 0) AS rule_direct,
+                    COALESCE(SUM(CASE WHEN layer = 'MethodCards' THEN hit_count ELSE 0 END), 0) AS method_hits,
+                    COALESCE(SUM(CASE WHEN layer = 'MethodCards' THEN assist_count ELSE 0 END), 0) AS method_assist
+                FROM knowledge_hit_history
+                WHERE created_at >= ?
+                GROUP BY run_date
+                ORDER BY run_date ASC
+            """, (cutoff,)).fetchall()
+        except Exception as e:
+            logger.warning(f"读取知识命中指标失败: {e}")
+            return {
+                "summary": {
+                    "tracked_runs": 0,
+                    "tracked_results": 0,
+                    "last_7d_runs": 0,
+                    "last_7d_results": 0,
+                    "last_7d_hits": 0,
+                    "last_7d_direct": 0,
+                },
+                "layer_metrics": [],
+                "recent_activity": [],
+            }
+        finally:
+            if conn is not None:
+                conn.close()
+
+        layer_map = {
+            row[0]: {
+                "layer": row[0],
+                "run_count": int(row[1] or 0),
+                "total_results": int(row[3] or 0),
+                "hit_count": int(row[4] or 0),
+                "direct_count": int(row[5] or 0),
+                "assist_count": int(row[6] or 0),
+                "high_conf_count": int(row[7] or 0),
+                "low_risk_count": int(row[8] or 0),
+                "green_count": int(row[9] or 0),
+                "hint_count": int(row[10] or 0),
+            }
+            for row in layer_rows
+        }
+
+        layer_metrics = []
+        for layer in _KNOWLEDGE_LAYERS:
+            item = layer_map.get(layer, {
+                "layer": layer,
+                "run_count": 0,
+                "total_results": 0,
+                "hit_count": 0,
+                "direct_count": 0,
+                "assist_count": 0,
+                "high_conf_count": 0,
+                "low_risk_count": 0,
+                "green_count": 0,
+                "hint_count": 0,
+            })
+            hit_count = int(item["hit_count"])
+            total_results = int(item["total_results"])
+            item["hit_rate"] = round((hit_count / total_results) * 100, 1) if total_results else 0.0
+            item["direct_rate"] = round((int(item["direct_count"]) / hit_count) * 100, 1) if hit_count else 0.0
+            item["high_conf_rate"] = round((int(item["high_conf_count"]) / hit_count) * 100, 1) if hit_count else 0.0
+            item["low_risk_rate"] = round((int(item["low_risk_count"]) / hit_count) * 100, 1) if hit_count else 0.0
+            layer_metrics.append(item)
+
+        recent_activity = [
+            {
+                "date": str(row[0]),
+                "total_results": int(row[1] or 0),
+                "runs": int(row[2] or 0),
+                "experience_hits": int(row[3] or 0),
+                "experience_direct": int(row[4] or 0),
+                "rule_hits": int(row[5] or 0),
+                "rule_direct": int(row[6] or 0),
+                "method_hits": int(row[7] or 0),
+                "method_assist": int(row[8] or 0),
+            }
+            for row in recent_rows
+        ]
+
+        return {
+            "summary": {
+                "tracked_runs": int(summary_row[0] or 0) if summary_row else 0,
+                "tracked_results": int(summary_row[1] or 0) if summary_row else 0,
+                "last_7d_runs": int(summary_row[2] or 0) if summary_row else 0,
+                "last_7d_results": int(summary_row[3] or 0) if summary_row else 0,
+                "last_7d_hits": int(summary_row[4] or 0) if summary_row else 0,
+                "last_7d_direct": int(summary_row[5] or 0) if summary_row else 0,
+            },
+            "layer_metrics": layer_metrics,
+            "recent_activity": recent_activity,
+        }
 
     def show_trend(self, last_n: int = 20):
         """

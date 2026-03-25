@@ -207,7 +207,8 @@ def run(input_file, mode="agent", output=None,
         limit=None, province=None, aux_provinces=None,
         no_experience=False, sheet=None,
         json_output=None, agent_llm=None, verify_llm=None,
-        interactive=None, progress_callback=None, original_file=None):
+        interactive=None, progress_callback=None, original_file=None,
+        task_id: str = ""):
     """执行匹配的核心逻辑（供命令行和其他模块直接调用）
 
     参数:
@@ -370,9 +371,17 @@ def run(input_file, mode="agent", output=None,
     # 6. 记录运行指标（准确率追踪）
     try:
         from src.accuracy_tracker import AccuracyTracker
-        AccuracyTracker().record_run(
+        tracker = AccuracyTracker()
+        tracker.record_run(
             stats, input_file=str(original_input_path),
             mode=mode, province=resolved_province)
+        tracker.record_knowledge_hits(
+            results,
+            input_file=str(original_input_path),
+            mode=mode,
+            province=resolved_province,
+            task_id=task_id,
+        )
     except Exception as e:
         logger.error(f"准确率追踪记录失败: {e}")
 

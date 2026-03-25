@@ -20,6 +20,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD } from '../../utils/experience';
 
 // 根因中文名
 const ROOT_CAUSE_LABELS: Record<string, string> = {
@@ -155,7 +156,15 @@ export default function ErrorAnalysis() {
       dataIndex: 'avg_confidence',
       width: 100,
       render: (v: number) => (
-        <span style={{ color: v < 40 ? '#ef4444' : v < 60 ? '#f59e0b' : '#22c55e' }}>
+        <span
+          style={{
+            color: v >= GREEN_THRESHOLD
+              ? COLORS.greenSolid
+              : v >= YELLOW_THRESHOLD
+                ? COLORS.yellowSolid
+                : COLORS.redSolid,
+          }}
+        >
           {v}%
         </span>
       ),
@@ -277,7 +286,13 @@ export default function ErrorAnalysis() {
                 title="平均置信度"
                 value={summary.avg_confidence}
                 suffix="%"
-                valueStyle={{ color: summary.avg_confidence >= 60 ? '#22c55e' : '#ef4444' }}
+                valueStyle={{
+                  color: summary.avg_confidence >= GREEN_THRESHOLD
+                    ? COLORS.greenSolid
+                    : summary.avg_confidence >= YELLOW_THRESHOLD
+                      ? COLORS.yellowSolid
+                      : COLORS.redSolid,
+                }}
               />
             </Card>
           </Col>

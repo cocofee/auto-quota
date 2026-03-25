@@ -22,6 +22,7 @@
 """
 
 import json
+import hashlib
 import re
 import sqlite3
 import threading
@@ -712,6 +713,110 @@ class ExperienceDB:
         else:
             logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={source}")
         return record_id
+
+    def add_experience_text(self, *,
+                            province: str,
+                            bill_text: str,
+                            quota_ids: list[str],
+                            quota_names: list[str] | None = None,
+                            bill_name: str = "",
+                            bill_code: str = "",
+                            bill_unit: str = "",
+                            specialty: str = "",
+                            materials: list[dict] | None = None,
+                            project_name: str = "",
+                            notes: str = "",
+                            confidence: int = 95) -> dict:
+        """
+        Minimal formal-layer write entry for staging promotions.
+
+        This path is intentionally narrower than the general add_experience() flow:
+        - requires reviewed structured payload
+        - deduplicates exact authority records
+        - uses user_correction semantics so reviewed staging can correct old records
+        """
+        province = str(province or "").strip()
+        bill_text = str(bill_text or "").strip()
+        bill_name = str(bill_name or "").strip()
+        bill_code = str(bill_code or "").strip()
+        bill_unit = str(bill_unit or "").strip()
+        specialty = str(specialty or "").strip()
+        project_name = str(project_name or "").strip()
+        notes = str(notes or "").strip()
+        if isinstance(quota_ids, str):
+            quota_ids = [quota_ids]
+        if isinstance(quota_names, str):
+            quota_names = [quota_names]
+        quota_ids = [str(item).strip() for item in (quota_ids or []) if str(item).strip()]
+        quota_names = [str(item).strip() for item in (quota_names or []) if str(item).strip()]
+        materials = materials if isinstance(materials, list) else []
+
+        if not province or not bill_text or not quota_ids:
+            raise ValueError("province, bill_text and quota_ids are required")
+        if quota_names and len(quota_names) != len(quota_ids):
+            raise ValueError("quota_names must align with quota_ids")
+
+        content_hash = hashlib.md5(
+            json.dumps(
+                {
+                    "province": province,
+                    "bill_text": bill_text,
+                    "quota_ids": quota_ids,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+
+        conn = self._connect(row_factory=True)
+        try:
+            row = conn.execute(
+                """
+                SELECT id, quota_ids, quota_names, layer
+                FROM experiences
+                WHERE bill_text = ? AND province = ?
+                ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (bill_text, province),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if row:
+            existing = self._normalize_record_quota_fields(dict(row))
+            if existing.get("layer") == "authority" and existing.get("quota_ids") == quota_ids:
+                return {
+                    "experience_id": int(existing["id"]),
+                    "added": False,
+                    "skipped": True,
+                    "content_hash": content_hash,
+                }
+
+        record_id = self.add_experience(
+            bill_text=bill_text,
+            bill_name=bill_name or None,
+            bill_code=bill_code or None,
+            bill_unit=bill_unit or None,
+            quota_ids=quota_ids,
+            quota_names=quota_names or [],
+            materials=materials,
+            source="user_correction",
+            confidence=max(int(confidence or 95), 95),
+            province=province,
+            project_name=project_name or None,
+            notes=notes or None,
+            specialty=specialty or None,
+        )
+        if record_id <= 0:
+            raise ValueError("failed to write reviewed experience into ExperienceDB")
+
+        return {
+            "experience_id": int(record_id),
+            "added": True,
+            "skipped": False,
+            "content_hash": content_hash,
+        }
 
     def _update_experience(self, record_id: int, quota_ids: list[str],
                            quota_names: list[str], source: str,

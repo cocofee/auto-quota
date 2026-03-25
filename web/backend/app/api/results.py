@@ -225,6 +225,73 @@ def _build_feedback_payload(
     return payload
 
 
+async def _apply_confirm_result(
+    *,
+    match_result: MatchResult,
+    task,
+    review_note: str,
+) -> None:
+    match_result.review_status = "confirmed"
+    match_result.review_note = review_note
+
+    quotas_data = match_result.quotas
+    if not quotas_data:
+        return
+
+    await store_experience(
+        name=match_result.bill_name,
+        desc=match_result.bill_description or "",
+        quota_ids=[q["quota_id"] for q in quotas_data if q.get("quota_id")],
+        quota_names=[q.get("name", "") for q in quotas_data],
+        reason=f"API确认: {review_note or ''}",
+        specialty=match_result.specialty or "",
+        province=task.province,
+        confirmed=True,
+        feedback_payload=_build_feedback_payload(
+            match_result,
+            action="confirm",
+            review_note=review_note or "",
+        ),
+    )
+
+
+async def _apply_corrected_result(
+    *,
+    match_result: MatchResult,
+    task,
+    corrected_quotas: list[dict],
+    review_note: str,
+    reason_prefix: str,
+) -> None:
+    match_result.corrected_quotas = corrected_quotas
+    match_result.review_status = "corrected"
+    match_result.review_note = review_note
+
+    await store_experience(
+        name=match_result.bill_name,
+        desc=match_result.bill_description or "",
+        quota_ids=[q["quota_id"] for q in corrected_quotas if q.get("quota_id")],
+        quota_names=[q.get("name", "") for q in corrected_quotas],
+        reason=f"{reason_prefix}: {review_note or ''}",
+        specialty=match_result.specialty or "",
+        province=task.province,
+        confirmed=False,
+        feedback_payload=_build_feedback_payload(
+            match_result,
+            action="correct",
+            review_note=review_note or "",
+            corrected_quotas=corrected_quotas,
+        ),
+    )
+
+    if match_result.match_source and "experience" in match_result.match_source:
+        await flag_disputed_experience(
+            bill_name=match_result.bill_name,
+            province=task.province,
+            reason=f"被纠正为 {[q['quota_id'] for q in corrected_quotas if q.get('quota_id')]}; {review_note or ''}",
+        )
+
+
 def _strip_material_rows(source_path: str, task_id: str) -> str:
     """去掉Excel中的主材行，返回处理后的文件路径
 

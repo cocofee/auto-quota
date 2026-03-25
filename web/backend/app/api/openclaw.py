@@ -7,9 +7,11 @@ This router exposes a stable subset of auto-quota APIs for OpenClaw, plus the
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.openapi.utils import get_openapi
@@ -72,6 +74,27 @@ def _mask_key(value: str) -> str:
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
 
 
+def _get_staging():
+    from src.knowledge_staging import KnowledgeStaging
+
+    return KnowledgeStaging()
+
+
+def _resolve_promotion_target(
+    candidate_type: str,
+    target_layer: str | None,
+) -> str:
+    expected = PROMOTION_TARGET_BY_TYPE.get(candidate_type)
+    if not expected:
+        raise HTTPException(status_code=422, detail="unsupported candidate_type")
+    if target_layer and target_layer != expected:
+        raise HTTPException(
+            status_code=422,
+            detail=f"candidate_type={candidate_type} 只能进入 {expected}",
+        )
+    return target_layer or expected
+
+
 class OpenClawKeyStatusResponse(BaseModel):
     configured: bool
     masked_key: str = ""
@@ -93,6 +116,38 @@ class OpenClawKeySuggestionResponse(BaseModel):
 
 class OpenClawKeySuggestionRequest(BaseModel):
     prefix: str = Field(default="oc_", max_length=24)
+
+
+class OpenClawPromotionCardCreateRequest(BaseModel):
+    card_id: str = Field(min_length=1, description="OpenClaw 侧独立卡片 ID")
+    candidate_type: Literal["rule", "method", "universal", "experience"]
+    target_layer: Literal["RuleKnowledge", "MethodCards", "UniversalKB", "ExperienceDB"] | None = None
+    candidate_title: str = Field(min_length=1, description="卡片标题")
+    candidate_summary: str = Field(default="", description="卡片摘要")
+    candidate_payload: dict[str, Any] = Field(default_factory=dict, description="结构化卡片内容")
+    evidence_ref: str = Field(default="", description="证据链接或引用")
+    owner: str = Field(default="", description="来源作者")
+    priority: int = Field(default=50, ge=0, le=100)
+    approval_required: bool = True
+    source_type: str = Field(default="openclaw_manual_card")
+
+
+class OpenClawPromotionCardCreateResponse(BaseModel):
+    id: int
+    source_table: str
+    source_record_id: str
+    target_layer: str
+    status: str
+    review_status: str
+
+
+PROMOTION_TARGET_BY_TYPE = {
+    "rule": "RuleKnowledge",
+    "method": "MethodCards",
+    "universal": "UniversalKB",
+    "experience": "ExperienceDB",
+}
+OPENCLAW_MANUAL_CARD_SOURCE_TABLE = "openclaw_manual_cards"
 
 
 def _build_result_list_response(items: list[MatchResult]) -> ResultListResponse:
@@ -285,6 +340,51 @@ async def generate_key_suggestion(
             "确认 application.public_path 已放行 /api/openclaw/",
             "重新部署或重启服务后，再让 OpenClaw 用新 key 调 /api/openclaw/openapi.json",
         ],
+    )
+
+
+@router.post("/promotion-cards", response_model=OpenClawPromotionCardCreateResponse, status_code=201)
+async def create_promotion_card(
+    req: OpenClawPromotionCardCreateRequest,
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    target_layer = _resolve_promotion_target(req.candidate_type, req.target_layer)
+    payload = {
+        "source_id": req.card_id,
+        "source_type": req.source_type or "openclaw_manual_card",
+        "source_table": OPENCLAW_MANUAL_CARD_SOURCE_TABLE,
+        "source_record_id": req.card_id,
+        "owner": req.owner or _service_actor(service_user),
+        "evidence_ref": req.evidence_ref,
+        "status": "draft",
+        "candidate_type": req.candidate_type,
+        "target_layer": target_layer,
+        "candidate_title": req.candidate_title,
+        "candidate_summary": req.candidate_summary,
+        "candidate_payload": req.candidate_payload,
+        "priority": req.priority,
+        "approval_required": req.approval_required,
+    }
+    try:
+        record_id = await asyncio.to_thread(
+            lambda: _get_staging().enqueue_promotion(payload)
+        )
+        record = await asyncio.to_thread(lambda: _get_staging().get_promotion(record_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"create promotion card failed: {e}") from e
+
+    if not record:
+        raise HTTPException(status_code=500, detail="promotion card created but record lookup failed")
+
+    return OpenClawPromotionCardCreateResponse(
+        id=int(record["id"]),
+        source_table=str(record.get("source_table") or OPENCLAW_MANUAL_CARD_SOURCE_TABLE),
+        source_record_id=str(record.get("source_record_id") or req.card_id),
+        target_layer=str(record.get("target_layer") or target_layer),
+        status=str(record.get("status") or "draft"),
+        review_status=str(record.get("review_status") or "unreviewed"),
     )
 
 

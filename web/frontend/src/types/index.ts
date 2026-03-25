@@ -145,6 +145,15 @@ export interface MatchResult {
   review_status: ReviewStatus;
   corrected_quotas: QuotaItem[] | null;
   review_note: string;
+  openclaw_review_status: string;
+  openclaw_suggested_quotas: QuotaItem[] | null;
+  openclaw_review_note: string;
+  openclaw_review_confidence: number | null;
+  openclaw_review_actor: string;
+  openclaw_review_time: string | null;
+  openclaw_review_confirm_status: string;
+  openclaw_review_confirmed_by: string;
+  openclaw_review_confirm_time: string | null;
   created_at: string;
 }
 
