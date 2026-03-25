@@ -52,15 +52,15 @@ export default function OverviewTab() {
 
   // 置信度饼图数据
   const pieData = overview ? [
-    { type: '高置信度(≥85%)', value: overview.high_confidence },
-    { type: '中置信度(70-84%)', value: overview.mid_confidence },
+    { type: `高置信度(≥${GREEN_THRESHOLD}%)`, value: overview.high_confidence },
+    { type: `中置信度(${YELLOW_THRESHOLD}-${GREEN_THRESHOLD - 1}%)`, value: overview.mid_confidence },
     { type: '低置信度(<70%)', value: overview.low_confidence },
   ] : [];
 
   // 颜色映射
   const colorMap: Record<string, string> = {
-    '高置信度(≥85%)': COLORS.greenSolid,
-    '中置信度(70-84%)': COLORS.yellowSolid,
+    [`高置信度(≥${GREEN_THRESHOLD}%)`]: COLORS.greenSolid,
+    [`中置信度(${YELLOW_THRESHOLD}-${GREEN_THRESHOLD - 1}%)`]: COLORS.yellowSolid,
     '低置信度(<70%)': COLORS.redSolid,
   };
 

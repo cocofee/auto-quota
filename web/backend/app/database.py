@@ -144,6 +144,16 @@ async def init_db():
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS confidence_score INTEGER DEFAULT 0",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS review_risk VARCHAR(20) DEFAULT 'low'",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS light_status VARCHAR(20) DEFAULT 'red'",
+            # 2026-03-22: match_results 表新增 OpenClaw 审核建议层字段
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_status VARCHAR(20) DEFAULT 'pending'",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_suggested_quotas JSON",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_note TEXT DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confidence INTEGER",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_actor VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_time TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirm_status VARCHAR(20) DEFAULT 'pending'",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirmed_by VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirm_time TIMESTAMP WITH TIME ZONE",
         ]
         from sqlalchemy import text
         for sql in migrations:

@@ -86,7 +86,11 @@ class RuleKnowledge:
                     content_hash TEXT UNIQUE,        -- 内容哈希（去重用）
                     source_file TEXT DEFAULT '',     -- 来源文件路径
                     keywords TEXT DEFAULT '',        -- 提取的关键词（空格分隔）
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active INTEGER DEFAULT 1,
+                    invalidated_at REAL,
+                    invalidated_reason TEXT DEFAULT '',
+                    invalidated_by TEXT DEFAULT ''
                 )
             """)
 
@@ -99,6 +103,17 @@ class RuleKnowledge:
                 CREATE INDEX IF NOT EXISTS idx_rules_specialty
                 ON rules(province, specialty)
             """)
+
+            for ddl in (
+                "ALTER TABLE rules ADD COLUMN is_active INTEGER DEFAULT 1",
+                "ALTER TABLE rules ADD COLUMN invalidated_at REAL",
+                "ALTER TABLE rules ADD COLUMN invalidated_reason TEXT DEFAULT ''",
+                "ALTER TABLE rules ADD COLUMN invalidated_by TEXT DEFAULT ''",
+            ):
+                try:
+                    cursor.execute(ddl)
+                except Exception:
+                    pass
 
             conn.commit()
         finally:
@@ -121,6 +136,16 @@ class RuleKnowledge:
                 logger.warning(f"ChromaDB初始化失败: {e}")
                 self._collection = False  # 标记不可用
         return self._collection if self._collection is not False else None
+
+    def _remove_from_vector_index(self, rule_id: int) -> None:
+        """Best-effort removal from vector index for soft-disabled rules."""
+        collection = self.collection
+        if not collection:
+            return
+        try:
+            collection.delete(ids=[f"rule_{int(rule_id)}"])
+        except Exception as e:
+            logger.debug(f"规则向量索引删除失败 #{rule_id}: {e}")
 
     def import_file(self, file_path: str, province: str,
                     specialty: str = "", chapter: str = "") -> dict:
@@ -217,6 +242,160 @@ class RuleKnowledge:
             self._update_vector_index()
 
         return stats
+
+    def add_rule_text(self, content: str, province: str,
+                      specialty: str = "", chapter: str = "",
+                      section: str = "", source_file: str = "") -> dict:
+        """
+        Add a single rule text segment directly.
+
+        This is the staging promotion path used by P0.
+
+        Returns:
+            {
+                "added": bool,
+                "skipped": bool,
+                "rule_id": int | None,
+                "content_hash": str,
+            }
+        """
+        content = (content or "").strip()
+        province = (province or "").strip()
+        specialty = (specialty or "").strip()
+        chapter = (chapter or "").strip()
+        section = (section or "").strip()
+        source_file = (source_file or "").strip()
+
+        if not content or not province:
+            return {
+                "added": False,
+                "skipped": True,
+                "rule_id": None,
+                "content_hash": "",
+            }
+
+        content_hash = hashlib.md5(
+            f"{province}:{specialty}:{content}".encode()
+        ).hexdigest()
+        keywords = self._extract_keywords(content)
+
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, COALESCE(is_active, 1) FROM rules WHERE content_hash = ?",
+                (content_hash,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                rule_id = int(existing[0])
+                is_active = int(existing[1] or 0) == 1
+                if not is_active:
+                    cursor.execute("""
+                        UPDATE rules
+                        SET province = ?,
+                            specialty = ?,
+                            chapter = ?,
+                            section = ?,
+                            content = ?,
+                            source_file = ?,
+                            keywords = ?,
+                            is_active = 1,
+                            invalidated_at = NULL,
+                            invalidated_reason = '',
+                            invalidated_by = ''
+                        WHERE id = ?
+                    """, (
+                        province,
+                        specialty,
+                        chapter,
+                        section,
+                        content,
+                        source_file,
+                        " ".join(keywords),
+                        rule_id,
+                    ))
+                    conn.commit()
+                    self._update_vector_index()
+                    return {
+                        "added": True,
+                        "skipped": False,
+                        "reactivated": True,
+                        "rule_id": rule_id,
+                        "content_hash": content_hash,
+                    }
+                return {
+                    "added": False,
+                    "skipped": True,
+                    "reactivated": False,
+                    "rule_id": rule_id,
+                    "content_hash": content_hash,
+                }
+
+            cursor.execute("""
+                INSERT INTO rules (province, specialty, chapter, section, content,
+                                   content_hash, source_file, keywords)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                province,
+                specialty,
+                chapter,
+                section,
+                content,
+                content_hash,
+                source_file,
+                " ".join(keywords),
+            ))
+            rule_id = int(cursor.lastrowid)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        self._update_vector_index()
+        return {
+            "added": True,
+            "skipped": False,
+            "reactivated": False,
+            "rule_id": rule_id,
+            "content_hash": content_hash,
+        }
+
+    def soft_disable_rule(self, rule_id: int, *, reason: str = "", actor: str = "") -> bool:
+        """Soft-disable one rule so it stops participating in retrieval."""
+        ts = time.time()
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE rules
+                SET is_active = 0,
+                    invalidated_at = ?,
+                    invalidated_reason = ?,
+                    invalidated_by = ?
+                WHERE id = ? AND COALESCE(is_active, 1) = 1
+                """,
+                (
+                    ts,
+                    str(reason or "").strip(),
+                    str(actor or "").strip(),
+                    int(rule_id),
+                ),
+            )
+            conn.commit()
+            updated = cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        if updated:
+            self._remove_from_vector_index(int(rule_id))
+        return updated
 
     def import_directory(self, dir_path: str = None) -> dict:
         """
@@ -344,28 +523,59 @@ class RuleKnowledge:
 
         results = self.collection.query(
             query_texts=[query],
-            n_results=top_k,
+            n_results=max(top_k * 5, top_k),
             where=where_filter,
         )
 
         rules = []
-        if results and results["documents"]:
-            for i, doc in enumerate(results["documents"][0]):
-                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+        if results and results["ids"]:
+            scored_ids = []
+            for i, raw_id in enumerate(results["ids"][0]):
                 distance = results["distances"][0][i] if results["distances"] else 1.0
                 similarity = 1 - distance  # cosine距离转相似度
 
                 if similarity < 0.3:  # 相似度太低的不要
                     continue
 
+                try:
+                    rule_id = int(self._normalize_result_id(raw_id))
+                except (TypeError, ValueError):
+                    continue
+                scored_ids.append((rule_id, similarity))
+
+            if not scored_ids:
+                return []
+
+            placeholders = ",".join(["?"] * len(scored_ids))
+            params = [rule_id for rule_id, _ in scored_ids]
+            sql = f"""
+                SELECT id, province, specialty, chapter, content
+                FROM rules
+                WHERE COALESCE(is_active, 1) = 1
+                  AND id IN ({placeholders})
+            """
+            conn = self._connect(row_factory=True)
+            try:
+                row_map = {
+                    int(row["id"]): dict(row)
+                    for row in conn.execute(sql, params).fetchall()
+                }
+            finally:
+                conn.close()
+            for rule_id, similarity in scored_ids:
+                row = row_map.get(rule_id)
+                if not row:
+                    continue
                 rules.append({
-                    "id": results["ids"][0][i],
-                    "province": metadata.get("province", ""),
-                    "specialty": metadata.get("specialty", ""),
-                    "chapter": metadata.get("chapter", ""),
-                    "content": doc,
+                    "id": f"rule_{rule_id}",
+                    "province": row.get("province", ""),
+                    "specialty": row.get("specialty", ""),
+                    "chapter": row.get("chapter", ""),
+                    "content": row.get("content", ""),
                     "similarity": similarity,
                 })
+                if len(rules) >= top_k:
+                    break
 
         return rules
 
@@ -391,8 +601,10 @@ class RuleKnowledge:
             where_clause = " OR ".join(conditions)
             if province:
                 # 同时搜索指定省份和"通用"规则
-                where_clause = f"province IN (?, '通用') AND ({where_clause})"
+                where_clause = f"COALESCE(is_active, 1) = 1 AND province IN (?, '通用') AND ({where_clause})"
                 params.insert(0, province)
+            else:
+                where_clause = f"COALESCE(is_active, 1) = 1 AND ({where_clause})"
 
             sql = f"""
                 SELECT id, province, specialty, chapter, content
@@ -417,7 +629,11 @@ class RuleKnowledge:
         try:
             cursor = conn.cursor()
             # 获取所有规则
-            cursor.execute("SELECT id, province, specialty, chapter, content FROM rules")
+            cursor.execute("""
+                SELECT id, province, specialty, chapter, content
+                FROM rules
+                WHERE COALESCE(is_active, 1) = 1
+            """)
             rows = cursor.fetchall()
         finally:
             conn.close()
@@ -587,16 +803,16 @@ class RuleKnowledge:
         try:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT COUNT(*) FROM rules")
+            cursor.execute("SELECT COUNT(*) FROM rules WHERE COALESCE(is_active, 1) = 1")
             total = cursor.fetchone()[0]
 
             cursor.execute(
-                "SELECT province, COUNT(*) FROM rules GROUP BY province"
+                "SELECT province, COUNT(*) FROM rules WHERE COALESCE(is_active, 1) = 1 GROUP BY province"
             )
             by_province = {row[0]: row[1] for row in cursor.fetchall()}
 
             cursor.execute(
-                "SELECT specialty, COUNT(*) FROM rules GROUP BY specialty"
+                "SELECT specialty, COUNT(*) FROM rules WHERE COALESCE(is_active, 1) = 1 GROUP BY specialty"
             )
             by_specialty = {row[0]: row[1] for row in cursor.fetchall()}
         finally:

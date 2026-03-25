@@ -60,6 +60,7 @@ def get_reference_cases(self, query_text: str, top_k: int = 3,
             quota_strs.append(f"{qid} {name}".strip())
 
         cases.append({
+            "record_id": r.get("id"),
             "bill": r["bill_text"],
             "quotas": quota_strs,
             "confidence": r.get("confidence", 0),

@@ -115,6 +115,24 @@ REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "refresh_toke
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
 
+# ============================================================
+# OpenClaw 自动化接入配置
+# ============================================================
+
+OPENCLAW_API_KEY = os.getenv("OPENCLAW_API_KEY", "").strip()
+OPENCLAW_SERVICE_EMAIL = (
+    os.getenv("OPENCLAW_SERVICE_EMAIL", "openclaw@system.local").strip()
+    or "openclaw@system.local"
+)
+OPENCLAW_SERVICE_NICKNAME = (
+    os.getenv("OPENCLAW_SERVICE_NICKNAME", "OpenClaw").strip()
+    or "OpenClaw"
+)
+OPENCLAW_SERVICE_QUOTA = max(
+    1,
+    int(os.getenv("OPENCLAW_SERVICE_QUOTA", "1000000")),
+)
+
 
 # ============================================================
 # 匹配任务默认配置

@@ -8,6 +8,7 @@
 import axios from 'axios';
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type { ApiError, TokenResponse } from '../types';
+import { repairMojibakeData } from '../utils/text';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
@@ -44,7 +45,13 @@ let pendingRequests: Array<{
 const AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/me'];
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const contentType = String(response.headers?.['content-type'] || '');
+    if (contentType.includes('application/json')) {
+      response.data = repairMojibakeData(response.data, true);
+    }
+    return response;
+  },
   async (error: AxiosError<ApiError>) => {
     const originalRequest = error.config as RetryableRequestConfig | undefined;
     if (!originalRequest) {

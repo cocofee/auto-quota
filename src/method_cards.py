@@ -20,6 +20,7 @@
 """
 
 import json
+import hashlib
 import re
 import sqlite3
 import time
@@ -70,7 +71,11 @@ class MethodCards:
                     source_province TEXT DEFAULT '', -- 生成时用的省份数据
                     version INTEGER DEFAULT 1,       -- 版本号（每次更新+1）
                     created_at REAL,
-                    updated_at REAL
+                    updated_at REAL,
+                    is_active INTEGER DEFAULT 1,
+                    invalidated_at REAL,
+                    invalidated_reason TEXT DEFAULT '',
+                    invalidated_by TEXT DEFAULT ''
                 )
             """)
             # 索引：按专业快速查询
@@ -94,6 +99,16 @@ class MethodCards:
                 )
             except sqlite3.OperationalError:
                 pass  # 字段已存在，忽略
+            for ddl in (
+                "ALTER TABLE method_cards ADD COLUMN is_active INTEGER DEFAULT 1",
+                "ALTER TABLE method_cards ADD COLUMN invalidated_at REAL",
+                "ALTER TABLE method_cards ADD COLUMN invalidated_reason TEXT DEFAULT ''",
+                "ALTER TABLE method_cards ADD COLUMN invalidated_by TEXT DEFAULT ''",
+            ):
+                try:
+                    conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
         finally:
             conn.close()
@@ -128,13 +143,13 @@ class MethodCards:
         try:
             # 检查是否已存在同模式键+同省份+同专业的卡片（精确匹配）
             existing = conn.execute(
-                "SELECT id, version FROM method_cards WHERE pattern_keys = ? AND source_province = ? AND specialty = ?",
+                "SELECT id, version, COALESCE(is_active, 1) FROM method_cards WHERE pattern_keys = ? AND source_province = ? AND specialty = ?",
                 (pattern_keys_json, source_province, specialty or "")
             ).fetchone()
 
             if existing:
                 # 更新已有卡片
-                card_id, old_version = existing
+                card_id, old_version, _is_active = existing
                 conn.execute("""
                     UPDATE method_cards SET
                         category = ?,
@@ -146,6 +161,10 @@ class MethodCards:
                         sample_count = ?,
                         confirm_rate = ?,
                         source_province = ?,
+                        is_active = 1,
+                        invalidated_at = NULL,
+                        invalidated_reason = '',
+                        invalidated_by = '',
                         version = ?,
                         updated_at = ?
                     WHERE id = ?
@@ -176,6 +195,157 @@ class MethodCards:
                 card_id = cursor.lastrowid
                 logger.debug(f"方法卡片已创建 #{card_id}: {category}")
                 return card_id
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def add_method_text(self, *,
+                        category: str,
+                        specialty: str = "",
+                        method_text: str,
+                        keywords: list[str] | None = None,
+                        pattern_keys: list[str] | None = None,
+                        common_errors: str = "",
+                        sample_count: int = 0,
+                        confirm_rate: float = 0,
+                        source_province: str = "",
+                        universal_method: str = "") -> dict:
+        """
+        Minimal write entry for staging promotions.
+
+        This path is intentionally lighter than add_card():
+        - exact duplicate method texts are deduplicated
+        - new method cards can be promoted without forcing pattern-key generation first
+        """
+        category = str(category or "").strip()
+        specialty = str(specialty or "").strip()
+        method_text = str(method_text or "").strip()
+        source_province = str(source_province or "").strip()
+        keywords = [str(item).strip() for item in (keywords or []) if str(item).strip()]
+        pattern_keys = [str(item).strip() for item in (pattern_keys or []) if str(item).strip()]
+        keywords_json = json.dumps(keywords, ensure_ascii=False)
+        pattern_keys_json = json.dumps(pattern_keys, ensure_ascii=False)
+        if not category or not method_text:
+            raise ValueError("category and method_text are required")
+
+        content_hash = hashlib.md5(
+            json.dumps(
+                {
+                    "category": category,
+                    "specialty": specialty,
+                    "method_text": method_text,
+                    "source_province": source_province,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+
+        conn = self._connect()
+        try:
+            existing = conn.execute(
+                """
+                SELECT id, COALESCE(is_active, 1) FROM method_cards
+                WHERE category = ? AND specialty = ? AND source_province = ? AND method_text = ?
+                """,
+                (category, specialty, source_province, method_text),
+            ).fetchone()
+            if existing:
+                card_id = int(existing[0])
+                is_active = int(existing[1] or 0) == 1
+                if not is_active:
+                    conn.execute(
+                        """
+                        UPDATE method_cards
+                        SET keywords = ?,
+                            pattern_keys = ?,
+                            common_errors = ?,
+                            sample_count = ?,
+                            confirm_rate = ?,
+                            universal_method = ?,
+                            is_active = 1,
+                            invalidated_at = NULL,
+                            invalidated_reason = '',
+                            invalidated_by = '',
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            keywords_json,
+                            pattern_keys_json,
+                            common_errors,
+                            sample_count,
+                            confirm_rate,
+                            universal_method or "",
+                            time.time(),
+                            card_id,
+                        ),
+                    )
+                    conn.commit()
+                    return {
+                        "card_id": card_id,
+                        "added": True,
+                        "skipped": False,
+                        "reactivated": True,
+                        "content_hash": content_hash,
+                    }
+                return {
+                    "card_id": card_id,
+                    "added": False,
+                    "skipped": True,
+                    "reactivated": False,
+                    "content_hash": content_hash,
+                }
+
+            card_id = self.add_card(
+                category=category,
+                specialty=specialty,
+                pattern_keys=pattern_keys,
+                keywords=keywords,
+                method_text=method_text,
+                common_errors=common_errors,
+                sample_count=sample_count,
+                confirm_rate=confirm_rate,
+                source_province=source_province,
+                universal_method=universal_method,
+            )
+            return {
+                "card_id": int(card_id),
+                "added": True,
+                "skipped": False,
+                "reactivated": False,
+                "content_hash": content_hash,
+            }
+        finally:
+            conn.close()
+
+    def soft_disable_card(self, card_id: int, *, reason: str = "", actor: str = "") -> bool:
+        """Soft-disable one method card so it no longer participates in retrieval."""
+        now = time.time()
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE method_cards
+                SET is_active = 0,
+                    invalidated_at = ?,
+                    invalidated_reason = ?,
+                    invalidated_by = ?,
+                    updated_at = ?
+                WHERE id = ? AND COALESCE(is_active, 1) = 1
+                """,
+                (
+                    now,
+                    str(reason or "").strip(),
+                    str(actor or "").strip(),
+                    now,
+                    int(card_id),
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
         except Exception:
             conn.rollback()
             raise
@@ -281,7 +451,7 @@ class MethodCards:
         返回:
             评分后的卡片列表（按分数降序）
         """
-        where_parts = []
+        where_parts = ["COALESCE(is_active, 1) = 1"]
         params = []
 
         if scope == "local":
@@ -424,7 +594,7 @@ class MethodCards:
         conn = self._connect(row_factory=True)
         try:
             rows = conn.execute(
-                "SELECT * FROM method_cards ORDER BY specialty, category"
+                "SELECT * FROM method_cards WHERE COALESCE(is_active, 1) = 1 ORDER BY specialty, category"
             ).fetchall()
         finally:
             conn.close()
@@ -447,12 +617,12 @@ class MethodCards:
         """统计信息"""
         conn = self._connect()
         try:
-            total = conn.execute("SELECT COUNT(*) FROM method_cards").fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM method_cards WHERE COALESCE(is_active, 1) = 1").fetchone()[0]
             specialties = conn.execute(
-                "SELECT DISTINCT specialty FROM method_cards WHERE specialty != ''"
+                "SELECT DISTINCT specialty FROM method_cards WHERE specialty != '' AND COALESCE(is_active, 1) = 1"
             ).fetchall()
             avg_samples = conn.execute(
-                "SELECT AVG(sample_count) FROM method_cards"
+                "SELECT AVG(sample_count) FROM method_cards WHERE COALESCE(is_active, 1) = 1"
             ).fetchone()[0] or 0
         finally:
             conn.close()
@@ -471,7 +641,7 @@ class MethodCards:
             conn = kb._connect(row_factory=True)
             rows = conn.execute(
                 "SELECT specialty, content, source_file FROM rules "
-                "WHERE province = '通用' AND chapter = '笔记' "
+                "WHERE province = '通用' AND chapter = '笔记' AND COALESCE(is_active, 1) = 1 "
                 "ORDER BY specialty, id"
             ).fetchall()
             conn.close()

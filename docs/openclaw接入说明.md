@@ -72,6 +72,7 @@ X-OpenClaw-Key: 你配置的 OPENCLAW_API_KEY
 - `GET /api/openclaw/tasks/{task_id}/review-pending`
 - `PUT /api/openclaw/tasks/{task_id}/results/{result_id}/review-draft`
 - `POST /api/openclaw/tasks/{task_id}/results/{result_id}/review-confirm`
+- `POST /api/openclaw/promotion-cards`
 - `POST /api/openclaw/tasks/{task_id}/results/auto-confirm-green`
 - `POST /api/openclaw/tasks/{task_id}/results/confirm`
 - `GET /api/openclaw/tasks/{task_id}/export`
@@ -99,6 +100,14 @@ X-OpenClaw-Key: 你配置的 OPENCLAW_API_KEY
 2. 管理员进入结果页，人工执行 `review-confirm`
 3. 系统自动把这次确认结果写进 `audit_errors / promotion_queue`
 4. 管理员再去 “候选确认与晋升” 页处理晋升
+
+### 3. 直接写独立卡片候选
+
+如果不是基于某条 `task/result`，而是一张已经定案的独立知识卡片，现在可以直接调用：
+
+- `POST /api/openclaw/promotion-cards`
+
+这条接口只会把卡片写进 staging 的 `promotion_queue`，状态是“已定案、待晋升”，不会直接写正式知识层。
 
 ## 当前限制
 

@@ -125,6 +125,37 @@ class MatchResult(Base):
     review_note: Mapped[str] = mapped_column(Text, default="")
 
     # ============================================================
+    # OpenClaw 审核建议层（只存建议，不直接进入正式纠正/经验库）
+    # ============================================================
+
+    # 建议层状态: "pending"=未提交建议, "drafted"=已有建议草稿, "applied"=草稿已转正式纠正
+    openclaw_review_status: Mapped[str] = mapped_column(String(20), default="pending")
+
+    # OpenClaw 建议定额（JSON 格式，结构同 quotas/corrected_quotas）
+    openclaw_suggested_quotas: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
+    # OpenClaw 审核备注
+    openclaw_review_note: Mapped[str] = mapped_column(Text, default="")
+
+    # OpenClaw 对本次建议的置信度（0-100，可为空）
+    openclaw_review_confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # OpenClaw 建议提交者（通常为服务账号邮箱）
+    openclaw_review_actor: Mapped[str] = mapped_column(String(255), default="")
+
+    # OpenClaw 最近一次保存/应用建议的时间
+    openclaw_review_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 人工二次确认状态: "pending" / "approved" / "rejected"
+    openclaw_review_confirm_status: Mapped[str] = mapped_column(String(20), default="pending")
+
+    # 人工二次确认人
+    openclaw_review_confirmed_by: Mapped[str] = mapped_column(String(255), default="")
+
+    # 人工二次确认时间
+    openclaw_review_confirm_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ============================================================
     # 时间戳
     # ============================================================
 

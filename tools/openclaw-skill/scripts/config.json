@@ -2,10 +2,9 @@
     "_说明": "Auto Quota OpenClaw Skill 配置文件",
 
     "api": {
-        "_说明": "Auto Quota API 地址（懒猫外网域名）",
+        "_说明": "Auto Quota OpenClaw 桥接地址与凭证",
         "base_url": "https://autoquota.microfeicat2025.heiyu.space",
-        "email": "41024847@qq.com",
-        "password": "COCOfee2012"
+        "openclaw_api_key": ""
     },
 
     "match": {
