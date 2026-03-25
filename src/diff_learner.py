@@ -55,7 +55,7 @@ class DiffLearner:
         参数:
             original_path: 原始输出Excel路径（系统生成的）
             corrected_path: 修正后Excel路径（用户在广联达里改过的）
-            province: 省份（如"北京2024"），默认使用配置文件中的省份
+            province: 省份（如"北京市建设工程施工消耗量标准(2024)"），默认使用配置文件中的省份
             all_authority: 是否全部存权威层
                 - True:  改过的和没改过的都存权威层（用户逐条确认过）
                 - False: 改过的→权威层(user_correction)，没改过的→候选层(auto_review)

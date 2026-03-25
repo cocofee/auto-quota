@@ -29,7 +29,7 @@ class QuotaDB:
     def __init__(self, province: str = None):
         """
         参数:
-            province: 省份名称，如"北京2024"，默认用config中的配置
+            province: 省份名称，如"北京市建设工程施工消耗量标准(2024)"，默认用config中的配置
         """
         self.province = province or config.get_current_province()
         self.db_path = config.get_quota_db_path(self.province)
