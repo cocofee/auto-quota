@@ -270,10 +270,10 @@ const ERROR_LEVEL_LABELS: Record<string, string> = {
 };
 
 const TARGET_LAYER_LABELS: Record<string, string> = {
-  RuleKnowledge: '规则知识库',
-  MethodCards: '方法卡片库',
-  ExperienceDB: '经验库',
-  UniversalKB: '通用知识库',
+  RuleKnowledge: '规则知识',
+  MethodCards: '方法卡',
+  ExperienceDB: '正式经验库',
+  UniversalKB: '通用知识',
 };
 
 const CANDIDATE_TYPE_LABELS: Record<string, string> = {
@@ -286,7 +286,7 @@ const CANDIDATE_TYPE_LABELS: Record<string, string> = {
 const SOURCE_TABLE_LABELS: Record<string, string> = {
   audit_errors: '错因记录',
   match_results: '匹配结果',
-  openclaw_manual_cards: 'OpenClaw 独立卡片',
+  openclaw_manual_cards: 'OpenClaw 知识卡片',
 };
 
 const MATCH_SOURCE_LABELS: Record<string, string> = {
@@ -320,9 +320,9 @@ const PROMOTION_STATUS_VIEW_OPTIONS = [
 
 const PROMOTION_TARGET_OPTIONS = [
   { label: '全部目标层', value: 'all' },
-  { label: '规则知识库', value: 'RuleKnowledge' },
-  { label: '方法卡片库', value: 'MethodCards' },
-  { label: '经验库', value: 'ExperienceDB' },
+  { label: '规则知识', value: 'RuleKnowledge' },
+  { label: '方法卡', value: 'MethodCards' },
+  { label: '正式经验库', value: 'ExperienceDB' },
 ];
 
 const PROMOTION_TYPE_OPTIONS = [
@@ -337,7 +337,7 @@ const SOURCE_TABLE_OPTIONS = [
   { label: '全部来源', value: 'all' },
   { label: '错因记录', value: 'audit_errors' },
   { label: '匹配结果', value: 'match_results' },
-  { label: 'OpenClaw 独立卡片', value: 'openclaw_manual_cards' },
+  { label: 'OpenClaw 知识卡片', value: 'openclaw_manual_cards' },
 ];
 
 const AUDIT_MATCH_SOURCE_OPTIONS = [
@@ -398,7 +398,7 @@ function buildPromotionEmptyDescription(view: PromotionStatusView) {
   if (view === 'promoted') return '今天暂时没有新晋升记录需要确认';
   if (view === 'rolled_back') return '目前没有回退或污染信号';
   if (view === 'all') return '当前筛选条件下没有候选记录';
-  return '今天暂时没有待你审批的新知识';
+  return '今天暂时没有待你确认的候选知识';
 }
 
 function buildAuditEmptyDescription() {
@@ -1042,7 +1042,7 @@ export default function KnowledgeStagingPage() {
     <>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Card
-          title="候选确认与晋升工作台"
+          title="候选知识晋升工作台"
           extra={(
             <Space>
               <Typography.Text type="secondary">
@@ -1057,14 +1057,14 @@ export default function KnowledgeStagingPage() {
           {health ? (
             <Space direction="vertical" size="small" style={{ width: '100%' }}>
               <Descriptions size="small" column={3}>
-                <Descriptions.Item label="候选 staging 状态">
+                <Descriptions.Item label="候选区状态">
                   <Tag color={health.ok ? 'green' : 'red'}>{health.ok ? '正常' : '异常'}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="Schema 版本">v{health.schema_version || '-'}</Descriptions.Item>
                 <Descriptions.Item label="当前候选数">{items.length}</Descriptions.Item>
               </Descriptions>
               <Typography.Text type="secondary">
-                OpenClaw 或其他业务入口先把候选写进 staging，你在这里确认、驳回，确认通过后再执行正式晋升。
+                这里不是正式知识库，而是待确认候选区。OpenClaw 或其他业务入口先把候选写进 staging，你在这里确认、驳回，确认通过后再晋升到规则知识、方法卡或正式经验库。
               </Typography.Text>
             </Space>
           ) : (
@@ -1075,7 +1075,7 @@ export default function KnowledgeStagingPage() {
         {shouldPrioritizeQueue ? queueCard : summaryCard}
         {shouldPrioritizeQueue ? summaryCard : queueCard}
 
-        <Card title="审批依据">
+        <Card title="候选送审依据">
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Typography.Text type="secondary">审批前先看这里，确认这些候选为什么会被送进来。</Typography.Text>
             <Space wrap>
@@ -1126,8 +1126,8 @@ export default function KnowledgeStagingPage() {
                       <Space wrap>
                         <Tag>{`失活规则: ${healthReport.formal_layer_health.inactive_rules}`}</Tag>
                         <Tag>{`失活方法卡: ${healthReport.formal_layer_health.inactive_method_cards}`}</Tag>
-                        <Tag>{`经验候选: ${healthReport.formal_layer_health.experience_candidate_count}`}</Tag>
-                        <Tag>{`经验争议: ${healthReport.formal_layer_health.experience_disputed_count}`}</Tag>
+                        <Tag>{`待确认经验: ${healthReport.formal_layer_health.experience_candidate_count}`}</Tag>
+                        <Tag>{`争议经验: ${healthReport.formal_layer_health.experience_disputed_count}`}</Tag>
                       </Space>
                     </div>
                   </div>
@@ -1169,7 +1169,7 @@ export default function KnowledgeStagingPage() {
               {showKnowledgeImpact ? (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <div>
-                    <Typography.Text strong>按知识层命中统计</Typography.Text>
+                    <Typography.Text strong>正式知识层命中统计</Typography.Text>
                     <Table rowKey="layer" size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.layer_metrics} columns={knowledgeImpactLayerColumns} pagination={false} scroll={{ x: 900 }} />
                   </div>
                   <div>
