@@ -68,6 +68,8 @@ services:
     build:
       context: .
       dockerfile: web/backend/Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
     container_name: autoquota-backend
     restart: unless-stopped
     # FastAPI 启动命令
@@ -99,6 +101,11 @@ services:
       VERIFY_MODEL: kimi-k2.5
       # 关闭向量搜索（Docker精简镜像没装chromadb/sentence_transformers，纯BM25足够）
       VECTOR_ENABLED: "false"
+      # 已验证的 pure-search 基线：LTR_V2 + genericity stats
+      LTR_V2_ENABLED: "1"
+      LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
+      LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
+      LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
     volumes:
       # 挂载数据目录（定额库数据、上传文件、输出结果）
       - ./data:/app/data
@@ -141,6 +148,11 @@ services:
       VERIFY_MODEL: kimi-k2.5
       # 关闭向量搜索（Docker精简镜像没装chromadb/sentence_transformers，纯BM25足够）
       VECTOR_ENABLED: "false"
+      # 与 backend 保持一致，启用已验证的 LTR_V2 基线
+      LTR_V2_ENABLED: "1"
+      LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
+      LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
+      LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
     volumes:
       - ./data:/app/data
       - ./db:/app/db
@@ -164,6 +176,9 @@ services:
     build:
       context: web/frontend
       dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-docker.1ms.run/node:22-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-docker.1ms.run/nginx:alpine}
     container_name: autoquota-frontend
     restart: unless-stopped
     ports:

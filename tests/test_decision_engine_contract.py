@@ -256,6 +256,73 @@ class TestResolveSearchResult:
 
         assert isinstance(result, dict)
 
+    def test_rule_backup_is_injected_not_overridden(self, monkeypatch):
+        item = {
+            "name": "给水管道DN25",
+            "unit": "m",
+            "params": {"dn": 25},
+            "canonical_query": {
+                "validation_query": "给水管道 DN25",
+                "search_query": "给水管道 DN25",
+            },
+            "canonical_features": {"entity": "管道", "family": "pipe_system"},
+        }
+        candidates = [{
+            "quota_id": "C10-1-1",
+            "name": "给水管道安装 DN20",
+            "unit": "m",
+            "param_match": True,
+            "param_tier": 2,
+            "param_score": 0.80,
+            "logic_score": 0.70,
+            "feature_alignment_score": 0.75,
+            "context_alignment_score": 0.70,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.80,
+            "candidate_canonical_features": {"entity": "管道", "family": "pipe_system"},
+        }]
+        rule_backup = {
+            "quotas": [{
+                "quota_id": "C10-1-2",
+                "name": "给水管道安装 DN25",
+                "unit": "m",
+                "reason": "规则匹配",
+            }],
+            "confidence": 70,
+            "match_source": "rule",
+            "rule_family": "给水管道",
+            "rule_score": 0.88,
+        }
+
+        class _FakeValidator:
+            def validate_candidates(self, query_text, candidates, **kwargs):
+                candidate = dict(candidates[0])
+                candidate.update({
+                    "param_match": True,
+                    "param_tier": 2,
+                    "param_score": 0.92,
+                    "logic_score": 0.86,
+                    "feature_alignment_score": 0.88,
+                    "context_alignment_score": 0.82,
+                    "candidate_canonical_features": {"entity": "管道", "family": "pipe_system"},
+                })
+                return [candidate]
+
+        monkeypatch.setattr("src.match_pipeline._get_rule_injection_validator", lambda: _FakeValidator())
+
+        result, exp_hits, rule_hits = _resolve_search_mode_result(
+            item, candidates,
+            exp_backup={}, rule_backup=rule_backup,
+            exp_hits=0, rule_hits=0,
+        )
+
+        trace_steps = [step.get("stage") for step in (result.get("trace", {}) or {}).get("steps", [])]
+        assert "rule_backup_injected" in trace_steps
+        assert "rule_backup_override" not in trace_steps
+        assert "C10-1-2" in result.get("all_candidate_ids", [])
+        assert isinstance(exp_hits, int)
+        assert isinstance(rule_hits, int)
+
 
 class TestAgentDecision:
     """Agent快速通道判定测试"""

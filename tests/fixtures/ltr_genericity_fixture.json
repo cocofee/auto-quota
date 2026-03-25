@@ -1,0 +1,12 @@
+{
+  "quotas": {
+    "QX": {
+      "retrieval_hits": 10,
+      "positive_hits": 2,
+      "success_ratio": 0.2,
+      "genericity_index": 1.2,
+      "retrieval_popularity": 2.39,
+      "specificity_score": 0.45
+    }
+  }
+}

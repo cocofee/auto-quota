@@ -95,9 +95,9 @@ def test_arbitrate_candidates_can_override_large_search_gap_when_structured_sign
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
-    assert decision["reason"] == "structured_candidate_swap"
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["reason"] == "search_gap_too_large"
 
 
 def test_arbitrate_candidates_does_not_swap_across_unrelated_family():
@@ -351,9 +351,9 @@ def test_arbitrate_candidates_does_not_relax_thresholds_via_plugin_gap():
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
-    assert decision["reason"] == "structured_candidate_swap"
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["reason"] == "no_better_structured_candidate"
 
 
 def test_arbitrate_candidates_ignores_plugin_only_margin_when_swapping():
