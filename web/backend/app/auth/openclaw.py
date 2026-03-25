@@ -1,7 +1,8 @@
 """
-OpenClaw API Key 认证与服务账号。
+OpenClaw authentication helpers.
 
-给 OpenClaw 一套独立的 API Key 入口，避免它依赖网页登录态和 Cookie。
+Machine-to-machine calls use `X-OpenClaw-Key`.
+Intranet admin pages may reuse the same OpenClaw read APIs with admin login state.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.deps import get_optional_current_user
 from app.auth.utils import hash_password
 from app.config import (
     OPENCLAW_API_KEY,
@@ -31,11 +33,18 @@ HARDCODED_OPENCLAW_KEYS = {
 }
 
 
+def _collect_valid_openclaw_keys() -> set[str]:
+    return {item for item in {OPENCLAW_API_KEY, *HARDCODED_OPENCLAW_KEYS} if item}
+
+
+def _validate_openclaw_api_key(api_key: str | None) -> bool:
+    return bool(api_key) and api_key in _collect_valid_openclaw_keys()
+
+
 async def require_openclaw_api_key(
     api_key: str | None = Security(openclaw_key_header),
 ) -> str:
-    """验证 OpenClaw 调用方提供的 API Key。"""
-    valid_keys = {item for item in {OPENCLAW_API_KEY, *HARDCODED_OPENCLAW_KEYS} if item}
+    valid_keys = _collect_valid_openclaw_keys()
     if not valid_keys:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -49,11 +58,7 @@ async def require_openclaw_api_key(
     return api_key
 
 
-async def get_openclaw_service_user(
-    _: str = Depends(require_openclaw_api_key),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    """获取或创建 OpenClaw 专用服务账号。"""
+async def _get_or_create_openclaw_service_user(db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.email == OPENCLAW_SERVICE_EMAIL))
     user = result.scalar_one_or_none()
 
@@ -102,3 +107,30 @@ async def get_openclaw_service_user(
         await db.refresh(user)
 
     return user
+
+
+async def get_openclaw_service_user(
+    _: str = Depends(require_openclaw_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    return await _get_or_create_openclaw_service_user(db)
+
+
+async def get_openclaw_read_user(
+    api_key: str | None = Security(openclaw_key_header),
+    current_user: User | None = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if _validate_openclaw_api_key(api_key):
+        return await _get_or_create_openclaw_service_user(db)
+    if current_user and current_user.is_admin:
+        return current_user
+    if _collect_valid_openclaw_keys():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="需要 X-OpenClaw-Key 或管理员登录态",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="OPENCLAW_API_KEY 未配置，OpenClaw 接口暂不可用",
+    )

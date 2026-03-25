@@ -5,10 +5,11 @@ import {
   App,
   Button,
   Card,
-  Descriptions,
   Empty,
+  Input,
   Select,
   Space,
+  Statistic,
   Table,
   Tag,
   Typography,
@@ -17,48 +18,42 @@ import type { ColumnsType } from 'antd/es/table';
 import { EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { MatchResult, ResultListResponse, TaskInfo, TaskListResponse } from '../../types';
+import { resolveLightStatus } from '../../utils/experience';
 
-
-interface TaskOption {
-  label: string;
-  value: string;
-  task: TaskInfo;
-}
-
-interface OpenClawKeyStatus {
-  configured: boolean;
-  masked_key: string;
-  service_email: string;
-  service_nickname: string;
-  openapi_url: string;
-  public_path: string;
-  sync_targets: string[];
-  update_hint: string;
-}
-
-interface OpenClawKeySuggestion {
-  suggested_key: string;
-  env_name: string;
-  sync_targets: string[];
-  manifest_paths: string[];
-  rollout_steps: string[];
-}
-
-
-const REVIEW_STATUS_MAP: Record<string, { color: string; text: string }> = {
-  pending: { color: 'default', text: '未建议' },
-  reviewed: { color: 'orange', text: '待复核' },
-  approved: { color: 'blue', text: '已通过' },
-  rejected: { color: 'red', text: '已驳回' },
-  applied: { color: 'processing', text: '已应用' },
+const LIGHT_STATUS_MAP: Record<string, { color: string; text: string }> = {
+  green: { color: 'success', text: '绿灯' },
+  yellow: { color: 'warning', text: '黄灯' },
+  red: { color: 'error', text: '红灯' },
 };
 
+const CONFIRM_STATUS_MAP: Record<string, { color: string; text: string }> = {
+  pending: { color: 'orange', text: '待人工确认' },
+  approved: { color: 'blue', text: '已确认通过' },
+  rejected: { color: 'red', text: '已人工驳回' },
+};
 
 function taskLabel(task: TaskInfo): string {
   const user = task.username ? ` / ${task.username}` : '';
   return `${task.name} / ${task.province}${user}`;
 }
 
+function quotaLines(quotas: MatchResult['quotas'] | MatchResult['openclaw_suggested_quotas']) {
+  return (quotas || []).map((item) => `${item.quota_id} ${item.name}`);
+}
+
+function buildKeywordText(item: MatchResult): string {
+  return [
+    item.bill_name,
+    item.bill_description,
+    item.section,
+    item.sheet_name,
+    item.openclaw_review_note,
+    ...quotaLines(item.quotas),
+    ...quotaLines(item.openclaw_suggested_quotas),
+  ]
+    .map((part) => String(part || '').toLowerCase())
+    .join('\n');
+}
 
 export default function OpenClawReviewPage() {
   const { message } = App.useApp();
@@ -67,173 +62,188 @@ export default function OpenClawReviewPage() {
 
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
-  const [loadingKeyStatus, setLoadingKeyStatus] = useState(false);
-  const [generatingKey, setGeneratingKey] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [items, setItems] = useState<MatchResult[]>([]);
-  const [keyStatus, setKeyStatus] = useState<OpenClawKeyStatus | null>(null);
-  const [suggestedKey, setSuggestedKey] = useState<OpenClawKeySuggestion | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string>(searchParams.get('task_id') || '');
+  const [selectedTaskId, setSelectedTaskId] = useState(searchParams.get('task_id') || '');
+  const [lightFilter, setLightFilter] = useState<'all' | 'green' | 'yellow' | 'red'>('all');
+  const [keyword, setKeyword] = useState('');
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) || null,
     [tasks, selectedTaskId],
   );
 
-  const taskOptions: TaskOption[] = useMemo(
-    () => tasks.map((task) => ({ label: taskLabel(task), value: task.id, task })),
-    [tasks],
+  const pendingItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item.openclaw_review_status === 'reviewed' &&
+          item.openclaw_review_confirm_status === 'pending',
+      ),
+    [items],
   );
 
   const loadTasks = useCallback(async () => {
     setLoadingTasks(true);
     try {
-      const { data } = await api.get<TaskListResponse>('/tasks', {
-        params: { all_users: true, page: 1, size: 100, status_filter: 'completed' },
+      const { data } = await api.get<TaskListResponse>('/openclaw/tasks', {
+        params: { page: 1, size: 100, status_filter: 'completed' },
       });
       setTasks(data.items);
       if (!selectedTaskId && data.items.length > 0) {
         setSelectedTaskId(data.items[0].id);
       }
-    } catch {
-      message.error('加载任务列表失败');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '加载 OpenClaw 任务列表失败');
     } finally {
       setLoadingTasks(false);
     }
   }, [message, selectedTaskId]);
 
-  const loadPendingItems = useCallback(async (taskId: string) => {
-    if (!taskId) {
-      setItems([]);
+  const loadReviewItems = useCallback(
+    async (taskId: string) => {
+      if (!taskId) {
+        setItems([]);
+        return;
+      }
+
+      setLoadingItems(true);
+      try {
+        const { data } = await api.get<ResultListResponse>(`/openclaw/tasks/${taskId}/review-items`);
+        setItems(data.items);
+      } catch (error: any) {
+        message.error(error?.response?.data?.detail || '加载 OpenClaw 复核列表失败');
+        setItems([]);
+      } finally {
+        setLoadingItems(false);
+      }
+    },
+    [message],
+  );
+
+  useEffect(() => {
+    void loadTasks();
+  }, [loadTasks]);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
       return;
     }
-
-    setLoadingItems(true);
-    try {
-      const { data } = await api.get<ResultListResponse>(`/openclaw/tasks/${taskId}/review-pending`);
-      setItems(data.items);
-    } catch {
-      message.error('加载 OpenClaw 待复核项失败');
-      setItems([]);
-    } finally {
-      setLoadingItems(false);
-    }
-  }, [message]);
-
-  const loadKeyStatus = useCallback(async () => {
-    setLoadingKeyStatus(true);
-    try {
-      const { data } = await api.get<OpenClawKeyStatus>('/openclaw/admin/key-status');
-      setKeyStatus(data);
-    } catch {
-      message.error('加载 OpenClaw 接入状态失败');
-      setKeyStatus(null);
-    } finally {
-      setLoadingKeyStatus(false);
-    }
-  }, [message]);
-
-  const generateKeySuggestion = useCallback(async () => {
-    setGeneratingKey(true);
-    try {
-      const { data } = await api.post<OpenClawKeySuggestion>('/openclaw/admin/key-suggestion', {
-        prefix: 'oc_',
-      });
-      setSuggestedKey(data);
-      message.success('已生成新的 OpenClaw 建议 key');
-    } catch {
-      message.error('生成 OpenClaw 建议 key 失败');
-    } finally {
-      setGeneratingKey(false);
-    }
-  }, [message]);
-
-  useEffect(() => {
-    loadTasks();
-    loadKeyStatus();
-  }, [loadKeyStatus, loadTasks]);
-
-  useEffect(() => {
-    if (!selectedTaskId) return;
     const next = new URLSearchParams(searchParams);
     next.set('task_id', selectedTaskId);
     setSearchParams(next, { replace: true });
-    loadPendingItems(selectedTaskId);
-  }, [selectedTaskId, searchParams, setSearchParams, loadPendingItems]);
+    void loadReviewItems(selectedTaskId);
+  }, [loadReviewItems, searchParams, selectedTaskId, setSearchParams]);
+
+  const filteredItems = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    return pendingItems.filter((item) => {
+      const lightStatus = resolveLightStatus(item);
+      if (lightFilter !== 'all' && lightStatus !== lightFilter) {
+        return false;
+      }
+      if (!normalizedKeyword) {
+        return true;
+      }
+      return buildKeywordText(item).includes(normalizedKeyword);
+    });
+  }, [keyword, lightFilter, pendingItems]);
+
+  const counts = useMemo(
+    () => ({
+      total: pendingItems.length,
+      green: pendingItems.filter((item) => resolveLightStatus(item) === 'green').length,
+      yellow: pendingItems.filter((item) => resolveLightStatus(item) === 'yellow').length,
+      red: pendingItems.filter((item) => resolveLightStatus(item) === 'red').length,
+    }),
+    [pendingItems],
+  );
 
   const columns: ColumnsType<MatchResult> = [
     {
       title: '序号',
       dataIndex: 'index',
       key: 'index',
-      width: 70,
+      width: 72,
       render: (value: number) => value + 1,
     },
     {
       title: '清单名称',
       dataIndex: 'bill_name',
       key: 'bill_name',
-      width: 220,
+      width: 280,
       render: (_value, record) => (
         <div>
           <div style={{ fontWeight: 600 }}>{record.bill_name}</div>
-          {record.bill_description && (
+          {record.bill_description ? (
             <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>{record.bill_description}</div>
-          )}
+          ) : null}
         </div>
       ),
+    },
+    {
+      title: '灯色',
+      key: 'light_status',
+      width: 100,
+      render: (_value, record) => {
+        const info = LIGHT_STATUS_MAP[resolveLightStatus(record)] || { color: 'default', text: '-' };
+        return (
+          <Tag color={info.color} style={{ margin: 0 }}>
+            {info.text}
+          </Tag>
+        );
+      },
     },
     {
       title: '原始结果',
       dataIndex: 'quotas',
       key: 'quotas',
-      width: 240,
+      width: 260,
       render: (quotas: MatchResult['quotas']) => (
         <div style={{ fontSize: 12 }}>
-          {(quotas || []).length === 0 && <span style={{ color: '#94a3b8' }}>无匹配</span>}
+          {(quotas || []).length === 0 ? <span style={{ color: '#94a3b8' }}>无匹配</span> : null}
           {(quotas || []).map((item) => (
-            <div key={item.quota_id}>{item.quota_id} {item.name}</div>
+            <div key={item.quota_id}>
+              {item.quota_id} {item.name}
+            </div>
           ))}
         </div>
       ),
     },
     {
-      title: 'OpenClaw建议',
+      title: 'OpenClaw 建议',
       dataIndex: 'openclaw_suggested_quotas',
       key: 'openclaw_suggested_quotas',
-      width: 240,
+      width: 260,
       render: (quotas: MatchResult['openclaw_suggested_quotas']) => (
         <div style={{ fontSize: 12 }}>
-          {(quotas || []).length === 0 && <span style={{ color: '#94a3b8' }}>无建议</span>}
+          {(quotas || []).length === 0 ? <span style={{ color: '#94a3b8' }}>暂无建议</span> : null}
           {(quotas || []).map((item) => (
-            <div key={item.quota_id}>{item.quota_id} {item.name}</div>
+            <div key={item.quota_id}>
+              {item.quota_id} {item.name}
+            </div>
           ))}
         </div>
       ),
     },
     {
-      title: '建议状态',
-      key: 'openclaw_status',
+      title: '确认状态',
+      key: 'confirm_status',
       width: 140,
       render: (_value, record) => {
-        const info = REVIEW_STATUS_MAP[record.openclaw_review_status] || {
+        const info = CONFIRM_STATUS_MAP[record.openclaw_review_confirm_status] || {
           color: 'default',
-          text: record.openclaw_review_status || '未知',
+          text: record.openclaw_review_confirm_status || '-',
         };
         return (
-          <Space direction="vertical" size={4}>
-            <Tag color={info.color} style={{ margin: 0 }}>{info.text}</Tag>
-            {record.openclaw_review_actor && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {record.openclaw_review_actor}
-              </Typography.Text>
-            )}
-          </Space>
+          <Tag color={info.color} style={{ margin: 0 }}>
+            {info.text}
+          </Tag>
         );
       },
     },
     {
-      title: '审核备注',
+      title: '建议说明',
       dataIndex: 'openclaw_review_note',
       key: 'openclaw_review_note',
       render: (value: string) => value || <span style={{ color: '#94a3b8' }}>-</span>,
@@ -241,16 +251,16 @@ export default function OpenClawReviewPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 120,
+      width: 132,
       fixed: 'right',
-      render: () => (
+      render: (_value, record) => (
         <Button
           size="small"
           icon={<EyeOutlined />}
-          onClick={() => navigate(`/tasks/${selectedTaskId}/results`)}
+          onClick={() => navigate(`/tasks/${selectedTaskId}/results?result_id=${record.id}`)}
           disabled={!selectedTaskId}
         >
-          去复核
+          定位这条
         </Button>
       ),
     },
@@ -258,135 +268,125 @@ export default function OpenClawReviewPage() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card
-        title="OpenClaw 接入密钥"
-        extra={(
-          <Space>
-            <Button loading={loadingKeyStatus} onClick={loadKeyStatus}>
-              刷新状态
-            </Button>
-            <Button type="primary" loading={generatingKey} onClick={generateKeySuggestion}>
-              生成建议 key
-            </Button>
-          </Space>
-        )}
-      >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Alert
-            type={keyStatus?.configured ? 'success' : 'warning'}
-            showIcon
-            message={keyStatus?.configured ? '当前运行环境已配置 OpenClaw Key' : '当前运行环境还没有配置 OpenClaw Key'}
-            description={keyStatus?.update_hint || '这里只提供查看与生成建议值。真正生效仍然要回到懒猫环境变量里更新，然后重启或重部署服务。'}
-          />
-          <Descriptions size="small" column={2} bordered>
-            <Descriptions.Item label="当前状态">
-              <Tag color={keyStatus?.configured ? 'green' : 'orange'}>
-                {keyStatus?.configured ? '已配置' : '未配置'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="当前 key 掩码">
-              {keyStatus?.masked_key || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="服务账号">
-              {keyStatus ? `${keyStatus.service_nickname} / ${keyStatus.service_email}` : '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="桥接 OpenAPI">
-              {keyStatus?.openapi_url || '/api/openclaw/openapi.json'}
-            </Descriptions.Item>
-            <Descriptions.Item label="懒猫放行路径">
-              {keyStatus?.public_path || '/api/openclaw/'}
-            </Descriptions.Item>
-            <Descriptions.Item label="同步更新目标">
-              {(keyStatus?.sync_targets || []).length > 0 ? keyStatus?.sync_targets.join(' / ') : 'backend / celery-worker'}
-            </Descriptions.Item>
-          </Descriptions>
-
-          {suggestedKey ? (
-            <Card size="small" title="本次建议 key">
-              <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                <Typography.Paragraph
-                  copyable={{ text: suggestedKey.suggested_key }}
-                  style={{ marginBottom: 0, fontFamily: 'monospace', wordBreak: 'break-all' }}
-                >
-                  {suggestedKey.suggested_key}
-                </Typography.Paragraph>
-                <Typography.Text type="secondary">
-                  把它写入 `{suggestedKey.env_name}`，并同步更新 {suggestedKey.sync_targets.join(' / ')}。
-                </Typography.Text>
-                <Typography.Text type="secondary">
-                  推荐修改位置：{suggestedKey.manifest_paths.join('、')}
-                </Typography.Text>
-                <div>
-                  {suggestedKey.rollout_steps.map((step, index) => (
-                    <div key={step} style={{ color: '#475569', fontSize: 13, marginTop: index === 0 ? 0 : 4 }}>
-                      {index + 1}. {step}
-                    </div>
-                  ))}
-                </div>
-              </Space>
-            </Card>
-          ) : null}
+      <Card>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            OpenClaw 复核
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            这里专门处理 OpenClaw 已给出建议、但还没有人工二次确认的结果。先看依据，再决定是否进入结果页确认。
+          </Typography.Text>
         </Space>
       </Card>
 
+      <Alert
+        type="info"
+        showIcon
+        message="当前页面已切到 OpenClaw 内网链路"
+        description="任务列表和复核列表统一走 /api/openclaw/*。待复核项由 review-items 前端过滤：openclaw_review_status = reviewed，且 openclaw_review_confirm_status = pending。"
+      />
+
       <Card
-        title="OpenClaw 待复核"
-        extra={(
+        title="先选任务"
+        extra={
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
-              loadTasks();
-              loadKeyStatus();
-              if (selectedTaskId) loadPendingItems(selectedTaskId);
+              void loadTasks();
+              if (selectedTaskId) {
+                void loadReviewItems(selectedTaskId);
+              }
             }}
           >
             刷新
           </Button>
-        )}
+        }
       >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Alert
-            type="info"
-            showIcon
-            message="这里只显示 OpenClaw 已提交建议、但尚未人工二次确认的结果。正式纠正仍在结果页执行。"
+        <Space wrap>
+          <Typography.Text strong>任务</Typography.Text>
+          <Select
+            showSearch
+            style={{ minWidth: 460 }}
+            placeholder="选择一个已完成任务"
+            loading={loadingTasks}
+            value={selectedTaskId || undefined}
+            onChange={(value) => setSelectedTaskId(value)}
+            options={tasks.map((task) => ({ label: taskLabel(task), value: task.id }))}
+            optionFilterProp="label"
           />
-          <Space wrap>
-            <Typography.Text strong>任务</Typography.Text>
-            <Select
-              showSearch
-              style={{ minWidth: 460 }}
-              placeholder="选择任务"
-              loading={loadingTasks}
-              value={selectedTaskId || undefined}
-              onChange={(value) => setSelectedTaskId(value)}
-              options={taskOptions}
-              optionFilterProp="label"
-            />
-            {selectedTask && (
-              <Button onClick={() => navigate(`/tasks/${selectedTask.id}/results`)}>
-                打开结果页
-              </Button>
-            )}
-          </Space>
+          {selectedTask ? (
+            <Button onClick={() => navigate(`/tasks/${selectedTask.id}/results`)}>
+              打开结果页
+            </Button>
+          ) : null}
         </Space>
       </Card>
 
+      <Space wrap size="middle">
+        <Card size="small">
+          <Statistic title="待复核" value={counts.total} />
+        </Card>
+        <Card size="small">
+          <Statistic title="绿灯" value={counts.green} valueStyle={{ color: '#16a34a' }} />
+        </Card>
+        <Card size="small">
+          <Statistic title="黄灯" value={counts.yellow} valueStyle={{ color: '#d97706' }} />
+        </Card>
+        <Card size="small">
+          <Statistic title="红灯" value={counts.red} valueStyle={{ color: '#dc2626' }} />
+        </Card>
+      </Space>
+
       <Card
         title={selectedTask ? `${selectedTask.name} 的待复核项` : '待复核项'}
-        extra={selectedTask ? `共 ${items.length} 条` : undefined}
+        extra={selectedTask ? `共 ${filteredItems.length} / ${pendingItems.length} 条` : undefined}
       >
         {!selectedTask && !loadingTasks ? (
           <Empty description="先选择一个任务" />
         ) : (
-          <Table
-            rowKey="id"
-            dataSource={items}
-            columns={columns}
-            loading={loadingItems}
-            pagination={{ pageSize: 20, hideOnSinglePage: true }}
-            scroll={{ x: 1200 }}
-            locale={{ emptyText: selectedTask ? '当前任务没有 OpenClaw 待复核项' : '先选择任务' }}
-          />
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Space wrap>
+              <Select
+                value={lightFilter}
+                style={{ width: 180 }}
+                onChange={(value) => setLightFilter(value)}
+                options={[
+                  { label: `全部灯色 (${counts.total})`, value: 'all' },
+                  { label: `绿灯 (${counts.green})`, value: 'green' },
+                  { label: `黄灯 (${counts.yellow})`, value: 'yellow' },
+                  { label: `红灯 (${counts.red})`, value: 'red' },
+                ]}
+              />
+              <Input.Search
+                allowClear
+                style={{ width: 360 }}
+                placeholder="按清单名称、描述、分部、建议内容筛选"
+                value={keyword}
+                onChange={(event) => setKeyword(event.target.value)}
+              />
+            </Space>
+
+            <Alert
+              type="warning"
+              showIcon
+              message="审批前先看这里"
+              description="这里只保留 OpenClaw 已提交建议但尚未人工确认的记录。点击“定位这条”可直接回到原始结果页，看 alternatives、confidence 和上下文后再确认。"
+            />
+
+            <Table
+              rowKey="id"
+              dataSource={filteredItems}
+              columns={columns}
+              loading={loadingItems}
+              pagination={{ pageSize: 20, hideOnSinglePage: true }}
+              scroll={{ x: 1500 }}
+              locale={{
+                emptyText: selectedTask
+                  ? '当前筛选条件下没有待复核项'
+                  : '先选择一个任务',
+              }}
+            />
+          </Space>
         )}
       </Card>
     </Space>
