@@ -1,10 +1,3 @@
-/**
- * 路由配置
- *
- * 定义前端所有页面的 URL 路径和对应组件。
- * 管理员页面用 RequireAdmin 包裹，普通用户访问显示 403。
- */
-
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import MainLayout from '../components/Layout/MainLayout';
 import RequireAuth from '../components/Layout/RequireAuth';
@@ -14,11 +7,9 @@ import DashboardPage from '../pages/Dashboard';
 import TaskCreatePage from '../pages/Task/CreatePage';
 import TaskListPage from '../pages/Task/ListPage';
 import ResultsPage from '../pages/Results';
-// 额度管理页面
 import LogsPage from '../pages/Quota/LogsPage';
 import PurchasePage from '../pages/Quota/PurchasePage';
 import PayResultPage from '../pages/Quota/PayResultPage';
-// 管理员页面
 import TaskListAll from '../pages/Admin/TaskListAll';
 import FeedbackReview from '../pages/Admin/FeedbackReview';
 import UserManage from '../pages/Admin/UserManage';
@@ -27,19 +18,17 @@ import QuotaManage from '../pages/Admin/QuotaManage';
 import LogViewer from '../pages/Admin/LogViewer';
 import BillingAdmin from '../pages/Admin/BillingAdmin';
 import AdminHub from '../pages/Admin/AdminHub';
-// 工具页面
+import OpenClawReviewPage from '../pages/Admin/OpenClawReviewPage';
+import KnowledgeStagingPage from '../pages/Admin/KnowledgeStagingPage';
 import PriceBackfill from '../pages/Tools/PriceBackfill';
 import BillCompiler from '../pages/Tools/BillCompiler';
 import MaterialPrice from '../pages/Tools/MaterialPrice';
 
 const router = createBrowserRouter([
-  // 登录页（不需要布局和登录状态）
   {
     path: '/login',
     element: <LoginPage />,
   },
-
-  // 需要登录的页面（包裹在 MainLayout + RequireAuth 中）
   {
     path: '/',
     element: (
@@ -48,42 +37,120 @@ const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      // 根路径重定向到看板
       { index: true, element: <Navigate to="/dashboard" replace /> },
 
-      // === 所有用户可访问 ===
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'tasks/create', element: <TaskCreatePage /> },
       { path: 'tasks', element: <TaskListPage /> },
       { path: 'tasks/:taskId/results', element: <ResultsPage /> },
 
-      // === 额度相关 ===
       { path: 'quota/logs', element: <LogsPage /> },
-      { path: 'quota/purchase', element: <RequireAdmin><PurchasePage /></RequireAdmin> },
-      { path: 'quota/pay-result', element: <RequireAdmin><PayResultPage /></RequireAdmin> },
+      {
+        path: 'quota/purchase',
+        element: (
+          <RequireAdmin>
+            <PurchasePage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'quota/pay-result',
+        element: (
+          <RequireAdmin>
+            <PayResultPage />
+          </RequireAdmin>
+        ),
+      },
 
-      // === 工具 ===
       { path: 'tools/price-backfill', element: <PriceBackfill /> },
       { path: 'tools/bill-compiler', element: <BillCompiler /> },
       { path: 'tools/material-price', element: <MaterialPrice /> },
 
-      // === 管理员专属页面（RequireAdmin 包裹） ===
-      // 管理中心（合并了批量任务/数据概览/错误分析/准确率分析/经验库）
-      { path: 'admin', element: <RequireAdmin><AdminHub /></RequireAdmin> },
-      // 旧路由重定向到管理中心对应Tab（兼容已有收藏/链接）
+      {
+        path: 'admin',
+        element: (
+          <RequireAdmin>
+            <AdminHub />
+          </RequireAdmin>
+        ),
+      },
       { path: 'admin/batch', element: <Navigate to="/admin?tab=error" replace /> },
       { path: 'admin/data', element: <Navigate to="/admin?tab=error" replace /> },
       { path: 'admin/error-analysis', element: <Navigate to="/admin?tab=error" replace /> },
       { path: 'admin/analytics', element: <Navigate to="/admin?tab=analytics" replace /> },
       { path: 'admin/experience', element: <Navigate to="/admin?tab=experience" replace /> },
-      // 其他管理页面保持独立
-      { path: 'admin/tasks', element: <RequireAdmin><TaskListAll /></RequireAdmin> },
-      { path: 'admin/quotas', element: <RequireAdmin><QuotaManage /></RequireAdmin> },
-      { path: 'admin/feedback', element: <RequireAdmin><FeedbackReview /></RequireAdmin> },
-      { path: 'admin/users', element: <RequireAdmin><UserManage /></RequireAdmin> },
-      { path: 'admin/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
-      { path: 'admin/logs', element: <RequireAdmin><LogViewer /></RequireAdmin> },
-      { path: 'admin/billing', element: <RequireAdmin><BillingAdmin /></RequireAdmin> },
+      {
+        path: 'admin/knowledge-staging',
+        element: (
+          <RequireAdmin>
+            <KnowledgeStagingPage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/tasks',
+        element: (
+          <RequireAdmin>
+            <TaskListAll />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/quotas',
+        element: (
+          <RequireAdmin>
+            <QuotaManage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/feedback',
+        element: (
+          <RequireAdmin>
+            <FeedbackReview />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/openclaw-reviews',
+        element: (
+          <RequireAdmin>
+            <OpenClawReviewPage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/users',
+        element: (
+          <RequireAdmin>
+            <UserManage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/settings',
+        element: (
+          <RequireAdmin>
+            <SettingsPage />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/logs',
+        element: (
+          <RequireAdmin>
+            <LogViewer />
+          </RequireAdmin>
+        ),
+      },
+      {
+        path: 'admin/billing',
+        element: (
+          <RequireAdmin>
+            <BillingAdmin />
+          </RequireAdmin>
+        ),
+      },
     ],
   },
 ]);

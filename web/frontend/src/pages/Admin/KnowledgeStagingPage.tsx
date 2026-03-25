@@ -44,47 +44,12 @@ interface RejectionReasonStat {
   count: number;
 }
 
-interface RecentActivityPoint {
-  date: string;
-  audit_created: number;
-  promotion_created: number;
-  promotion_reviewed: number;
-  promotion_promoted: number;
-}
-
-interface BreakdownItem {
-  bucket: string;
-  draft: number;
-  reviewing: number;
-  approved: number;
-  rejected: number;
-  promoted: number;
-  rolled_back: number;
-  total: number;
-  reviewed_total: number;
-  approved_total: number;
-  rejected_total: number;
-  approval_rate: number;
-  rejection_rate: number;
-  execution_rate: number;
-}
-
-interface RejectionBreakdownItem {
-  bucket: string;
-  rejected_total: number;
-  top_reasons: RejectionReasonStat[];
-}
-
 interface StagingStats {
   audit_total: number;
   promotion_total: number;
   promotion_status_counts: CountMap;
   promotion_target_counts: CountMap;
   promotion_candidate_counts: CountMap;
-  promotion_target_metrics: BreakdownItem[];
-  promotion_candidate_metrics: BreakdownItem[];
-  rejection_reason_by_target: RejectionBreakdownItem[];
-  rejection_reason_by_candidate: RejectionBreakdownItem[];
   audit_review_counts: CountMap;
   audit_match_source_counts: CountMap;
   audit_error_type_counts: CountMap;
@@ -94,7 +59,6 @@ interface StagingStats {
   promotion_approval_rate: number;
   promotion_rejection_rate: number;
   promotion_execution_rate: number;
-  recent_activity: RecentActivityPoint[];
   top_rejection_reasons: RejectionReasonStat[];
 }
 
@@ -109,17 +73,6 @@ interface HealthSummary {
   experience_candidate_count: number;
   experience_disputed_count: number;
   stale_pending_days: number;
-}
-
-interface DuplicateCandidateGroup {
-  target_layer: string;
-  candidate_type: string;
-  candidate_title: string;
-  duplicate_count: number;
-  source_count: number;
-  oldest_created_at: number;
-  latest_created_at: number;
-  sample_ids: string;
 }
 
 interface StalePendingPromotion {
@@ -148,16 +101,6 @@ interface RollbackRecord {
   promoted_target_ref?: string;
 }
 
-interface SourceConflictGroup {
-  source_table: string;
-  source_record_id: string;
-  candidate_count: number;
-  target_layer_count: number;
-  target_layers: string;
-  candidate_types: string;
-  latest_updated_at?: number;
-}
-
 interface FormalLayerHealth {
   inactive_rules: number;
   inactive_method_cards: number;
@@ -168,10 +111,8 @@ interface FormalLayerHealth {
 
 interface StagingHealthReport {
   summary: HealthSummary;
-  duplicate_candidate_groups: DuplicateCandidateGroup[];
   stale_pending_promotions: StalePendingPromotion[];
   recent_rollbacks: RollbackRecord[];
-  source_conflict_groups: SourceConflictGroup[];
   formal_layer_health: FormalLayerHealth;
 }
 
@@ -186,38 +127,17 @@ interface KnowledgeImpactSummary {
 
 interface KnowledgeImpactLayerMetric {
   layer: string;
-  run_count: number;
-  total_results: number;
   hit_count: number;
   direct_count: number;
   assist_count: number;
-  high_conf_count: number;
-  low_risk_count: number;
-  green_count: number;
-  hint_count: number;
   reviewed_count: number;
   confirmed_count: number;
   corrected_count: number;
   pending_count: number;
   hit_rate: number;
-  direct_rate: number;
-  high_conf_rate: number;
-  low_risk_rate: number;
   review_coverage_rate: number;
   confirmed_rate: number;
   corrected_rate: number;
-}
-
-interface KnowledgeImpactRecentItem {
-  date: string;
-  total_results: number;
-  runs: number;
-  experience_hits: number;
-  experience_direct: number;
-  rule_hits: number;
-  rule_direct: number;
-  method_hits: number;
-  method_assist: number;
 }
 
 interface KnowledgeImpactObjectMetric {
@@ -238,7 +158,6 @@ interface KnowledgeImpactObjectMetric {
 interface KnowledgeImpactReport {
   summary: KnowledgeImpactSummary;
   layer_metrics: KnowledgeImpactLayerMetric[];
-  recent_activity: KnowledgeImpactRecentItem[];
   top_objects: KnowledgeImpactObjectMetric[];
 }
 
@@ -255,8 +174,6 @@ interface KnowledgeObjectDetailPromotion {
   review_comment?: string;
   promoted_target_ref?: string;
   promotion_trace?: string;
-  reviewed_at?: number;
-  promoted_at?: number;
 }
 
 interface KnowledgeObjectDetail {
@@ -444,24 +361,24 @@ function statusViewToStatuses(view: PromotionStatusView): string {
   return DEFAULT_PROMOTION_STATUSES;
 }
 
+function getLabel(value: string | undefined, mapping: Record<string, string>) {
+  const normalized = String(value || '').trim();
+  return mapping[normalized] || normalized || '-';
+}
+
 function formatDateTime(ts?: number) {
   if (!ts) return '-';
   return new Date(ts * 1000).toLocaleString();
 }
 
-function sumRecentActivity(points: RecentActivityPoint[], key: keyof RecentActivityPoint) {
-  return points.reduce((sum, item) => sum + (typeof item[key] === 'number' ? Number(item[key]) : 0), 0);
+function formatPercent(value?: number) {
+  return `${Number(value || 0).toFixed(1)}%`;
 }
 
 function getAuditErrorIdFromSource(sourceTable?: string, sourceRecordId?: string) {
   if (sourceTable !== 'audit_errors') return null;
   const auditErrorId = Number(sourceRecordId);
   return Number.isFinite(auditErrorId) ? auditErrorId : null;
-}
-
-function getLabel(value: string | undefined, mapping: Record<string, string>) {
-  const normalized = String(value || '').trim();
-  return mapping[normalized] || normalized || '-';
 }
 
 function renderStatusTag(status?: string) {
@@ -473,43 +390,16 @@ function renderStatusTag(status?: string) {
   );
 }
 
-function renderCountTags(data: CountMap | undefined, emptyText = '暂无数据', mapping?: Record<string, string>) {
-  if (!data || Object.keys(data).length === 0) {
-    return <Typography.Text type="secondary">{emptyText}</Typography.Text>;
-  }
-  return (
-    <Space wrap>
-      {Object.entries(data).map(([key, value]) => (
-        <Tag key={key}>{`${mapping ? getLabel(key, mapping) : key}: ${value}`}</Tag>
-      ))}
-    </Space>
-  );
-}
-
-function formatPercent(value?: number) {
-  return `${Number(value || 0).toFixed(1)}%`;
-}
-
 function buildPromotionEmptyDescription(view: PromotionStatusView) {
-  if (view === 'rejected') return '当前筛选条件下没有已驳回候选';
-  if (view === 'promoted') return '当前筛选条件下没有已晋升候选';
-  if (view === 'rolled_back') return '当前筛选条件下没有已回退候选';
+  if (view === 'rejected') return '今天暂时没有已驳回候选需要回看';
+  if (view === 'promoted') return '今天暂时没有新晋升记录需要确认';
+  if (view === 'rolled_back') return '目前没有回退或污染信号';
   if (view === 'all') return '当前筛选条件下没有候选记录';
-  return '当前没有待处理的晋升候选';
+  return '今天暂时没有待你审批的新知识';
 }
 
 function buildAuditEmptyDescription() {
-  return '当前筛选条件下没有错因记录';
-}
-
-function renderSecondaryPlaceholder(loading: boolean, errorMessage: string, loadingText: string) {
-  if (loading) {
-    return <Typography.Text type="secondary">{loadingText}</Typography.Text>;
-  }
-  if (errorMessage) {
-    return <Typography.Text type="secondary">{errorMessage}</Typography.Text>;
-  }
-  return <Typography.Text type="secondary">暂无数据</Typography.Text>;
+  return '当前没有发现需要你处理的错因';
 }
 
 export default function KnowledgeStagingPage() {
@@ -519,6 +409,8 @@ export default function KnowledgeStagingPage() {
   const [primaryLoading, setPrimaryLoading] = useState(false);
   const [secondaryLoading, setSecondaryLoading] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [showHealthDetails, setShowHealthDetails] = useState(false);
+  const [showKnowledgeImpact, setShowKnowledgeImpact] = useState(false);
 
   const [health, setHealth] = useState<StagingHealth | null>(null);
   const [stats, setStats] = useState<StagingStats | null>(null);
@@ -559,9 +451,7 @@ export default function KnowledgeStagingPage() {
     if (context?.candidateTitle) params.set('candidate_title', context.candidateTitle);
     if (context?.candidateType) params.set('candidate_type', context.candidateType);
     if (context?.errorType) params.set('error_type', context.errorType);
-    const query = params.toString();
-    const url = query ? `/tasks/${taskId}/results?${query}` : `/tasks/${taskId}/results`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    window.open(`/tasks/${taskId}/results?${params.toString()}`, '_blank', 'noopener,noreferrer');
   };
 
   const loadPrimaryData = async (requestId: number) => {
@@ -607,19 +497,16 @@ export default function KnowledgeStagingPage() {
     setSecondaryLoading(true);
     setSecondaryError('');
     try {
-      const { data: healthReportData } = await api.get<StagingHealthReport>('/admin/knowledge-staging/health-report');
+      const [{ data: healthReportData }, { data: knowledgeImpactData }] = await Promise.all([
+        api.get<StagingHealthReport>('/admin/knowledge-staging/health-report'),
+        api.get<KnowledgeImpactReport>('/admin/knowledge-staging/knowledge-impact', { params: { days: 7 } }),
+      ]);
       if (requestId !== requestRef.current) return;
       setHealthReport(healthReportData);
-
-      const { data: knowledgeImpactData } = await api.get<KnowledgeImpactReport>(
-        '/admin/knowledge-staging/knowledge-impact',
-        { params: { days: 7 } },
-      );
-      if (requestId !== requestRef.current) return;
       setKnowledgeImpact(knowledgeImpactData);
     } catch {
       if (requestId === requestRef.current) {
-        setSecondaryError('深度报表暂时未加载成功，不影响首屏处理。');
+        setSecondaryError('深度分析暂时没有加载完成，不影响你先处理候选。');
       }
     } finally {
       if (requestId === requestRef.current) {
@@ -634,11 +521,12 @@ export default function KnowledgeStagingPage() {
     setPrimaryLoading(true);
     try {
       await loadPrimaryData(requestId);
-      if (requestId !== requestRef.current) return;
-      void loadSecondaryData(requestId);
+      if (requestId === requestRef.current) {
+        void loadSecondaryData(requestId);
+      }
     } catch {
       if (requestId === requestRef.current) {
-        message.error('加载晋升工作台首屏数据失败');
+        message.error('加载知识晋升工作台失败');
       }
     } finally {
       if (requestId === requestRef.current) {
@@ -685,11 +573,6 @@ export default function KnowledgeStagingPage() {
     if (cached?.root_cause) return cached;
     try {
       const { data } = await api.get<AuditErrorItem>(`/admin/knowledge-staging/audit-errors/${auditErrorId}`);
-      setAuditErrors((current) =>
-        current.some((item) => item.id === data.id)
-          ? current.map((item) => (item.id === data.id ? data : item))
-          : [data, ...current],
-      );
       return data;
     } catch {
       message.error('反查错因详情失败');
@@ -771,24 +654,20 @@ export default function KnowledgeStagingPage() {
     }
   };
 
-  const recentActivity = stats?.recent_activity || [];
-  const recentPromotionCreatedTotal = sumRecentActivity(recentActivity, 'promotion_created');
-  const recentPromotionReviewedTotal = sumRecentActivity(recentActivity, 'promotion_reviewed');
   const pendingCount = (stats?.promotion_status_counts.draft || 0) + (stats?.promotion_status_counts.reviewing || 0);
   const approvedCount = stats?.promotion_status_counts.approved || 0;
-  const promotedCount = stats?.promotion_status_counts.promoted || 0;
   const rolledBackCount = stats?.promotion_status_counts.rolled_back || 0;
   const rejectedCount = stats?.promotion_status_counts.rejected || 0;
+  const shouldPrioritizeQueue = pendingCount > 0;
 
   const promotionColumns: ColumnsType<PromotionItem> = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 72 },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
     {
       title: '候选内容',
-      dataIndex: 'candidate_title',
-      key: 'candidate_title',
-      render: (value: string, record) => (
+      key: 'candidate',
+      render: (_value, record) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{value || '-'}</div>
+          <div style={{ fontWeight: 600 }}>{record.candidate_title || '-'}</div>
           <Space wrap size={4} style={{ marginTop: 4 }}>
             <Tag>{getLabel(record.candidate_type, CANDIDATE_TYPE_LABELS)}</Tag>
             <Tag>{getLabel(record.target_layer, TARGET_LAYER_LABELS)}</Tag>
@@ -803,7 +682,7 @@ export default function KnowledgeStagingPage() {
       ),
     },
     {
-      title: '当前状态',
+      title: '状态',
       key: 'status',
       width: 150,
       render: (_value, record) => (
@@ -817,105 +696,58 @@ export default function KnowledgeStagingPage() {
     },
     {
       title: '审核结果',
-      key: 'review_result',
-      width: 280,
-      render: (_value, record) => {
-        const promotedResult = record.promoted_target_ref || record.promoted_target_id || '';
-        return (
-          <Space direction="vertical" size={4}>
-            <Typography.Text style={{ fontSize: 12 }}>驳回原因：{record.rejection_reason || '-'}</Typography.Text>
-            <Typography.Text style={{ fontSize: 12 }}>审核备注：{record.review_comment || '-'}</Typography.Text>
-            <Typography.Text style={{ fontSize: 12 }}>晋升结果：{promotedResult || '-'}</Typography.Text>
-          </Space>
-        );
-      },
+      key: 'result',
+      width: 260,
+      render: (_value, record) => (
+        <Space direction="vertical" size={4}>
+          <Typography.Text style={{ fontSize: 12 }}>驳回原因：{record.rejection_reason || '-'}</Typography.Text>
+          <Typography.Text style={{ fontSize: 12 }}>审核备注：{record.review_comment || '-'}</Typography.Text>
+          <Typography.Text style={{ fontSize: 12 }}>晋升结果：{record.promoted_target_ref || record.promoted_target_id || '-'}</Typography.Text>
+        </Space>
+      ),
     },
     {
       title: '来源',
       key: 'source',
-      width: 220,
-      render: (_value, record) => {
-        const linkedAuditId = getAuditErrorIdFromSource(record.source_table, record.source_record_id);
-        return (
-          <Space direction="vertical" size={4}>
-            <div style={{ fontSize: 12 }}>
-              <div>{getLabel(record.source_table, SOURCE_TABLE_LABELS)}</div>
-              <div style={{ color: '#64748b' }}>{record.source_record_id || '-'}</div>
-            </div>
-            {linkedAuditId !== null ? (
-              <Button
-                size="small"
-                type="link"
-                style={{ padding: 0, height: 'auto' }}
-                icon={<EyeOutlined />}
-                onClick={() => openAuditErrorDetail(linkedAuditId)}
-              >
-                查看错因
-              </Button>
-            ) : null}
-          </Space>
-        );
-      },
+      width: 180,
+      render: (_value, record) => (
+        <div style={{ fontSize: 12 }}>
+          <div>{getLabel(record.source_table, SOURCE_TABLE_LABELS)}</div>
+          <div style={{ color: '#64748b' }}>{record.source_record_id || '-'}</div>
+        </div>
+      ),
     },
     {
       title: '操作',
       key: 'actions',
       width: 340,
-      render: (_value, record) => (
-        <Space wrap>
-          <Button
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => {
-              const linkedAuditId = getAuditErrorIdFromSource(record.source_table, record.source_record_id);
-              if (linkedAuditId !== null) {
-                void openAuditErrorDetail(linkedAuditId);
-              } else {
-                message.warning('这条候选没有关联错因记录');
-              }
-            }}
-          >
-            看依据
-          </Button>
-          <Button
-            size="small"
-            icon={<CheckOutlined />}
-            disabled={record.status !== 'draft' && record.status !== 'reviewing'}
-            onClick={() => reviewPromotion(record, 'approved')}
-          >
-            通过
-          </Button>
-          <Button
-            size="small"
-            icon={<StopOutlined />}
-            disabled={record.status !== 'draft' && record.status !== 'reviewing'}
-            onClick={() => reviewPromotion(record, 'rejected')}
-          >
-            驳回
-          </Button>
-          <Button
-            size="small"
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            disabled={record.status !== 'approved' || !EXECUTABLE_TARGET_LAYERS.has(record.target_layer)}
-            onClick={() => executePromotion(record)}
-          >
-            晋升入库
-          </Button>
-          <Button
-            size="small"
-            disabled={!(record.status === 'promoted' && ROLLBACK_TARGET_LAYERS.has(record.target_layer))}
-            onClick={() => rollbackPromotion(record)}
-          >
-            回退
-          </Button>
-        </Space>
-      ),
+      render: (_value, record) => {
+        const linkedAuditId = getAuditErrorIdFromSource(record.source_table, record.source_record_id);
+        return (
+          <Space wrap>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => linkedAuditId ? void openAuditErrorDetail(linkedAuditId) : message.warning('这条候选没有关联错因记录')}>
+              看依据
+            </Button>
+            <Button size="small" icon={<CheckOutlined />} disabled={record.status !== 'draft' && record.status !== 'reviewing'} onClick={() => reviewPromotion(record, 'approved')}>
+              通过
+            </Button>
+            <Button size="small" icon={<StopOutlined />} disabled={record.status !== 'draft' && record.status !== 'reviewing'} onClick={() => reviewPromotion(record, 'rejected')}>
+              驳回
+            </Button>
+            <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={record.status !== 'approved' || !EXECUTABLE_TARGET_LAYERS.has(record.target_layer)} onClick={() => executePromotion(record)}>
+              晋升入库
+            </Button>
+            <Button size="small" disabled={!(record.status === 'promoted' && ROLLBACK_TARGET_LAYERS.has(record.target_layer))} onClick={() => rollbackPromotion(record)}>
+              回退
+            </Button>
+          </Space>
+        );
+      },
     },
   ];
 
   const auditErrorColumns: ColumnsType<AuditErrorItem> = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 72 },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
     {
       title: '清单与修正',
       key: 'bill',
@@ -928,12 +760,10 @@ export default function KnowledgeStagingPage() {
             </Typography.Text>
           ) : null}
           <div style={{ marginTop: 6, fontSize: 12 }}>
-            原匹配：{record.predicted_quota_name || '-'}
-            {record.predicted_quota_code ? `（${record.predicted_quota_code}）` : ''}
+            原匹配：{record.predicted_quota_name || '-'}{record.predicted_quota_code ? `（${record.predicted_quota_code}）` : ''}
           </div>
           <div style={{ fontSize: 12 }}>
-            修正后：{record.corrected_quota_name || '-'}
-            {record.corrected_quota_code ? `（${record.corrected_quota_code}）` : ''}
+            修正后：{record.corrected_quota_name || '-'}{record.corrected_quota_code ? `（${record.corrected_quota_code}）` : ''}
           </div>
         </div>
       ),
@@ -941,7 +771,7 @@ export default function KnowledgeStagingPage() {
     {
       title: '错因信息',
       key: 'error',
-      width: 260,
+      width: 240,
       render: (_value, record) => (
         <Space direction="vertical" size={4}>
           <Space wrap>
@@ -984,22 +814,13 @@ export default function KnowledgeStagingPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 210,
       render: (_value, record) => (
         <Space wrap>
           <Button size="small" icon={<EyeOutlined />} onClick={() => openAuditErrorDetail(record.id)}>
             详情
           </Button>
-          <Button
-            size="small"
-            icon={<LinkOutlined />}
-            onClick={() =>
-              openTaskResultPage(record.task_id, record.result_id, {
-                sourceLabel: '错因审核',
-                errorType: getLabel(record.error_type, ERROR_TYPE_LABELS),
-              })
-            }
-          >
+          <Button size="small" icon={<LinkOutlined />} onClick={() => openTaskResultPage(record.task_id, record.result_id, { sourceLabel: '错因审核', errorType: getLabel(record.error_type, ERROR_TYPE_LABELS) })}>
             任务结果
           </Button>
         </Space>
@@ -1007,29 +828,10 @@ export default function KnowledgeStagingPage() {
     },
   ];
 
-  const duplicateCandidateColumns: ColumnsType<DuplicateCandidateGroup> = [
-    {
-      title: '候选内容',
-      key: 'candidate',
-      render: (_value, record) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{record.candidate_title || '-'}</div>
-          <Space wrap size={4} style={{ marginTop: 4 }}>
-            <Tag>{getLabel(record.candidate_type, CANDIDATE_TYPE_LABELS)}</Tag>
-            <Tag>{getLabel(record.target_layer, TARGET_LAYER_LABELS)}</Tag>
-          </Space>
-        </div>
-      ),
-    },
-    { title: '重复数', dataIndex: 'duplicate_count', key: 'duplicate_count', width: 100 },
-    { title: '来源数', dataIndex: 'source_count', key: 'source_count', width: 90 },
-    { title: '最近时间', dataIndex: 'latest_created_at', key: 'latest_created_at', width: 180, render: (value: number) => formatDateTime(value) },
-  ];
-
   const stalePendingColumns: ColumnsType<StalePendingPromotion> = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 72 },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
     {
-      title: '候选内容',
+      title: '候选',
       key: 'candidate',
       render: (_value, record) => (
         <div>
@@ -1043,21 +845,10 @@ export default function KnowledgeStagingPage() {
       ),
     },
     { title: '滞留天数', dataIndex: 'age_days', key: 'age_days', width: 100, render: (value: number) => value.toFixed(1) },
-    {
-      title: '来源',
-      key: 'source',
-      width: 220,
-      render: (_value, record) => (
-        <div style={{ fontSize: 12 }}>
-          <div>{getLabel(record.source_table, SOURCE_TABLE_LABELS)}</div>
-          <div style={{ color: '#64748b' }}>{record.source_record_id || '-'}</div>
-        </div>
-      ),
-    },
   ];
 
   const rollbackColumns: ColumnsType<RollbackRecord> = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 72 },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
     {
       title: '回退对象',
       key: 'target',
@@ -1075,100 +866,26 @@ export default function KnowledgeStagingPage() {
     { title: '回退时间', dataIndex: 'reviewed_at', key: 'reviewed_at', width: 180, render: (value?: number) => formatDateTime(value) },
   ];
 
-  const sourceConflictColumns: ColumnsType<SourceConflictGroup> = [
-    {
-      title: '来源',
-      key: 'source',
-      render: (_value, record) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{getLabel(record.source_table, SOURCE_TABLE_LABELS)}</div>
-          <div style={{ color: '#64748b', fontSize: 12 }}>{record.source_record_id || '-'}</div>
-        </div>
-      ),
-    },
-    {
-      title: '目标层',
-      dataIndex: 'target_layers',
-      key: 'target_layers',
-      render: (value: string) => (
-        <Space wrap>
-          {String(value || '')
-            .split(',')
-            .filter(Boolean)
-            .map((item) => (
-              <Tag key={`${value}-${item}`}>{getLabel(item, TARGET_LAYER_LABELS)}</Tag>
-            ))}
-        </Space>
-      ),
-    },
-    {
-      title: '候选类型',
-      dataIndex: 'candidate_types',
-      key: 'candidate_types',
-      render: (value: string) => (
-        <Space wrap>
-          {String(value || '')
-            .split(',')
-            .filter(Boolean)
-            .map((item) => (
-              <Tag key={`${value}-${item}`}>{getLabel(item, CANDIDATE_TYPE_LABELS)}</Tag>
-            ))}
-        </Space>
-      ),
-    },
-    { title: '数量', dataIndex: 'candidate_count', key: 'candidate_count', width: 90 },
-  ];
-
   const knowledgeImpactLayerColumns: ColumnsType<KnowledgeImpactLayerMetric> = [
     { title: '知识层', dataIndex: 'layer', key: 'layer', width: 140, render: (value: string) => getLabel(value, TARGET_LAYER_LABELS) },
     { title: '命中数', dataIndex: 'hit_count', key: 'hit_count', width: 90 },
     { title: '直接命中', dataIndex: 'direct_count', key: 'direct_count', width: 90 },
     { title: '辅助命中', dataIndex: 'assist_count', key: 'assist_count', width: 90 },
-    { title: '已审核', dataIndex: 'reviewed_count', key: 'reviewed_count', width: 90 },
-    { title: '已确认', dataIndex: 'confirmed_count', key: 'confirmed_count', width: 90 },
-    { title: '已修正', dataIndex: 'corrected_count', key: 'corrected_count', width: 90 },
-    { title: '待审核', dataIndex: 'pending_count', key: 'pending_count', width: 90 },
-    { title: '高置信', dataIndex: 'high_conf_count', key: 'high_conf_count', width: 90 },
-    { title: '低风险', dataIndex: 'low_risk_count', key: 'low_risk_count', width: 90 },
-    { title: '规则提示', dataIndex: 'hint_count', key: 'hint_count', width: 90 },
-    { title: '命中率', dataIndex: 'hit_rate', key: 'hit_rate', width: 90, render: (value: number) => formatPercent(value) },
     { title: '审核率', dataIndex: 'review_coverage_rate', key: 'review_coverage_rate', width: 90, render: (value: number) => formatPercent(value) },
     { title: '确认率', dataIndex: 'confirmed_rate', key: 'confirmed_rate', width: 90, render: (value: number) => formatPercent(value) },
     { title: '修正率', dataIndex: 'corrected_rate', key: 'corrected_rate', width: 90, render: (value: number) => formatPercent(value) },
-    { title: '直命率', dataIndex: 'direct_rate', key: 'direct_rate', width: 90, render: (value: number) => formatPercent(value) },
-    { title: '高置信率', dataIndex: 'high_conf_rate', key: 'high_conf_rate', width: 90, render: (value: number) => formatPercent(value) },
-    { title: '低风险率', dataIndex: 'low_risk_rate', key: 'low_risk_rate', width: 90, render: (value: number) => formatPercent(value) },
-  ];
-
-  const knowledgeImpactRecentColumns: ColumnsType<KnowledgeImpactRecentItem> = [
-    { title: '日期', dataIndex: 'date', key: 'date', width: 120 },
-    { title: '任务数', dataIndex: 'runs', key: 'runs', width: 90 },
-    { title: '结果数', dataIndex: 'total_results', key: 'total_results', width: 90 },
-    { title: '经验命中', dataIndex: 'experience_hits', key: 'experience_hits', width: 100 },
-    { title: '经验直命', dataIndex: 'experience_direct', key: 'experience_direct', width: 100 },
-    { title: '规则命中', dataIndex: 'rule_hits', key: 'rule_hits', width: 100 },
-    { title: '规则直命', dataIndex: 'rule_direct', key: 'rule_direct', width: 100 },
-    { title: '方法命中', dataIndex: 'method_hits', key: 'method_hits', width: 100 },
-    { title: '方法辅助', dataIndex: 'method_assist', key: 'method_assist', width: 100 },
   ];
 
   const knowledgeImpactObjectColumns: ColumnsType<KnowledgeImpactObjectMetric> = [
     { title: '知识层', dataIndex: 'layer', key: 'layer', width: 140, render: (value: string) => getLabel(value, TARGET_LAYER_LABELS) },
-    { title: '对象引用', dataIndex: 'object_ref', key: 'object_ref', width: 220, render: (value: string) => value || '-' },
-    { title: '命中数', dataIndex: 'hit_count', key: 'hit_count', width: 80 },
+    { title: '对象引用', dataIndex: 'object_ref', key: 'object_ref', width: 220 },
+    { title: '命中数', dataIndex: 'hit_count', key: 'hit_count', width: 90 },
     { title: '直接命中', dataIndex: 'direct_count', key: 'direct_count', width: 90 },
-    { title: '辅助命中', dataIndex: 'assist_count', key: 'assist_count', width: 90 },
-    { title: '已审核', dataIndex: 'reviewed_count', key: 'reviewed_count', width: 90 },
-    { title: '已确认', dataIndex: 'confirmed_count', key: 'confirmed_count', width: 90 },
-    { title: '已修正', dataIndex: 'corrected_count', key: 'corrected_count', width: 90 },
-    { title: '待审核', dataIndex: 'pending_count', key: 'pending_count', width: 90 },
     { title: '审核率', dataIndex: 'review_coverage_rate', key: 'review_coverage_rate', width: 90, render: (value: number) => formatPercent(value) },
-    { title: '确认率', dataIndex: 'confirmed_rate', key: 'confirmed_rate', width: 90, render: (value: number) => formatPercent(value) },
-    { title: '修正率', dataIndex: 'corrected_rate', key: 'corrected_rate', width: 90, render: (value: number) => formatPercent(value) },
     {
       title: '操作',
       key: 'actions',
-      width: 100,
+      width: 90,
       render: (_value, record) => (
         <Button size="small" icon={<EyeOutlined />} onClick={() => openKnowledgeObjectDetail(record.object_ref)}>
           打开
@@ -1177,15 +894,91 @@ export default function KnowledgeStagingPage() {
     },
   ];
 
+  const queueCard = (
+    <Card title={shouldPrioritizeQueue ? '今天先处理这些候选' : '候选晋升队列'}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space wrap>
+          <Tag color="blue">先看依据，再决定通过或驳回</Tag>
+          <Tag color="green">审核通过后，再执行正式入库</Tag>
+          <Tag color="orange">如发现污染，可直接回退</Tag>
+          {shouldPrioritizeQueue ? <Tag color="red">今天有 {pendingCount} 条候选待你确认</Tag> : null}
+        </Space>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={10}>
+            <Segmented options={PROMOTION_STATUS_VIEW_OPTIONS} value={promotionStatusView} onChange={(value) => setPromotionStatusView(value as PromotionStatusView)} block />
+          </Col>
+          <Col xs={24} md={14}>
+            <Space wrap>
+              <Select style={{ minWidth: 180 }} value={promotionTargetLayer} options={PROMOTION_TARGET_OPTIONS} onChange={setPromotionTargetLayer} />
+              <Select style={{ minWidth: 180 }} value={promotionCandidateType} options={PROMOTION_TYPE_OPTIONS} onChange={setPromotionCandidateType} />
+              <Select style={{ minWidth: 180 }} value={promotionSourceTable} options={SOURCE_TABLE_OPTIONS} onChange={setPromotionSourceTable} />
+            </Space>
+          </Col>
+        </Row>
+        {items.length === 0 && !primaryLoading ? (
+          <Empty description={buildPromotionEmptyDescription(promotionStatusView)} />
+        ) : (
+          <Table
+            rowKey="id"
+            dataSource={items}
+            columns={promotionColumns}
+            loading={primaryLoading}
+            pagination={{ pageSize: 20, hideOnSinglePage: true }}
+          />
+        )}
+      </Space>
+    </Card>
+  );
+
+  const summaryCard = (
+    <Card title="今日待办">
+      {stats ? (
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Row gutter={[16, 16]}>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic title="待处理候选" value={pendingCount} />
+                <Typography.Text type="secondary">先审批</Typography.Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic title="已通过待晋升" value={approvedCount} />
+                <Typography.Text type="secondary">可执行入库</Typography.Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic title="已回退" value={rolledBackCount} />
+                <Typography.Text type="secondary">复查污染</Typography.Text>
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic title="已驳回候选" value={rejectedCount} />
+                <Typography.Text type="secondary">看是否误杀</Typography.Text>
+              </Card>
+            </Col>
+          </Row>
+          <Typography.Text type="secondary">
+            近 7 天新增、驳回原因和命中统计已经降到下层分析里，需要复盘时再展开看。
+          </Typography.Text>
+        </Space>
+      ) : (
+        <Typography.Text type="secondary">正在加载今日待办...</Typography.Text>
+      )}
+    </Card>
+  );
+
   return (
     <>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Card
-          title="知识晋升工作台"
+          title="候选确认与晋升工作台"
           extra={(
             <Space>
               <Typography.Text type="secondary">
-                {secondaryLoading ? '首屏已到位，正在补充深度报表' : '首屏优先加载'}
+                {secondaryLoading ? '首屏已到位，正在补充深度分析' : '首屏优先加载'}
               </Typography.Text>
               <Button icon={<ReloadOutlined />} onClick={loadData} loading={primaryLoading || secondaryLoading}>
                 刷新工作台
@@ -1194,260 +987,134 @@ export default function KnowledgeStagingPage() {
           )}
         >
           {health ? (
-            <Descriptions size="small" column={3}>
-              <Descriptions.Item label="staging 状态">
-                <Tag color={health.ok ? 'green' : 'red'}>{health.ok ? '正常' : '异常'}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Schema 版本">v{health.schema_version || '-'}</Descriptions.Item>
-              <Descriptions.Item label="首屏候选数">{items.length}</Descriptions.Item>
-            </Descriptions>
+            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+              <Descriptions size="small" column={3}>
+                <Descriptions.Item label="候选 staging 状态">
+                  <Tag color={health.ok ? 'green' : 'red'}>{health.ok ? '正常' : '异常'}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Schema 版本">v{health.schema_version || '-'}</Descriptions.Item>
+                <Descriptions.Item label="当前候选数">{items.length}</Descriptions.Item>
+              </Descriptions>
+              <Typography.Text type="secondary">
+                OpenClaw 或其他业务入口先把候选写进 staging，你在这里确认、驳回，确认通过后再执行正式晋升。
+              </Typography.Text>
+            </Space>
           ) : (
             <Typography.Text type="secondary">正在加载首屏状态...</Typography.Text>
           )}
         </Card>
 
-        <Card title="今日先看这些">
-          {stats ? (
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <Row gutter={[16, 16]}>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="待处理候选" value={pendingCount} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="已通过待晋升" value={approvedCount} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="已晋升" value={promotedCount} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="已回退" value={rolledBackCount} /></Card></Col>
-              </Row>
-              <Row gutter={[16, 16]}>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="错因记录" value={stats.audit_total} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="已驳回候选" value={rejectedCount} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="7天新增候选" value={recentPromotionCreatedTotal} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="7天已审核" value={recentPromotionReviewedTotal} /></Card></Col>
-              </Row>
-              <Space wrap>
-                <Tag color="blue">通过率 {formatPercent(stats.promotion_approval_rate)}</Tag>
-                <Tag color="red">驳回率 {formatPercent(stats.promotion_rejection_rate)}</Tag>
-                <Tag color="green">执行率 {formatPercent(stats.promotion_execution_rate)}</Tag>
-              </Space>
-              <div>
-                <Typography.Text strong>目标层分布</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  {renderCountTags(stats.promotion_target_counts, '暂无候选', TARGET_LAYER_LABELS)}
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>候选类型分布</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  {renderCountTags(stats.promotion_candidate_counts, '暂无候选', CANDIDATE_TYPE_LABELS)}
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>错因来源分布</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  {renderCountTags(stats.audit_match_source_counts, '暂无错因', MATCH_SOURCE_LABELS)}
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>主要驳回原因</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  {stats.top_rejection_reasons.length > 0 ? (
-                    <Space wrap>
-                      {stats.top_rejection_reasons.map((item) => (
-                        <Tag key={item.reason}>{`${item.reason}: ${item.count}`}</Tag>
-                      ))}
-                    </Space>
-                  ) : (
-                    <Typography.Text type="secondary">目前还没有驳回原因统计</Typography.Text>
-                  )}
-                </div>
-              </div>
-            </Space>
-          ) : (
-            <Typography.Text type="secondary">正在加载首屏指标...</Typography.Text>
-          )}
-        </Card>
+        {shouldPrioritizeQueue ? queueCard : summaryCard}
+        {shouldPrioritizeQueue ? summaryCard : queueCard}
 
-        <Card title="晋升队列">
+        <Card title="审批依据">
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Typography.Text type="secondary">审批前先看这里，确认这些候选为什么会被送进来。</Typography.Text>
             <Space wrap>
-              <Tag color="blue">先看依据，再决定通过或驳回</Tag>
-              <Tag color="green">通过后再执行晋升入库</Tag>
-              <Tag color="orange">如发现污染，可直接回退</Tag>
+              <Select style={{ minWidth: 180 }} value={auditMatchSource} options={AUDIT_MATCH_SOURCE_OPTIONS} onChange={setAuditMatchSource} />
+              <Select style={{ minWidth: 200 }} value={auditErrorType} options={AUDIT_ERROR_TYPE_OPTIONS} onChange={setAuditErrorType} />
+              <Select style={{ minWidth: 180 }} value={auditSourceTable} options={SOURCE_TABLE_OPTIONS} onChange={setAuditSourceTable} />
             </Space>
-            <Row gutter={[12, 12]}>
-              <Col xs={24} md={10}>
-                <Segmented
-                  options={PROMOTION_STATUS_VIEW_OPTIONS}
-                  value={promotionStatusView}
-                  onChange={(value) => setPromotionStatusView(value as PromotionStatusView)}
-                  block
-                />
-              </Col>
-              <Col xs={24} md={14}>
-                <Space wrap>
-                  <Select style={{ minWidth: 180 }} value={promotionTargetLayer} options={PROMOTION_TARGET_OPTIONS} onChange={setPromotionTargetLayer} />
-                  <Select style={{ minWidth: 180 }} value={promotionCandidateType} options={PROMOTION_TYPE_OPTIONS} onChange={setPromotionCandidateType} />
-                  <Select style={{ minWidth: 180 }} value={promotionSourceTable} options={SOURCE_TABLE_OPTIONS} onChange={setPromotionSourceTable} />
-                </Space>
-              </Col>
-            </Row>
-            <Row gutter={[12, 12]}>
-              <Col xs={12} md={6}><Card size="small"><Statistic title="待处理" value={pendingCount} /></Card></Col>
-              <Col xs={12} md={6}><Card size="small"><Statistic title="已通过待晋升" value={approvedCount} /></Card></Col>
-              <Col xs={12} md={6}><Card size="small"><Statistic title="已晋升" value={promotedCount} /></Card></Col>
-              <Col xs={12} md={6}><Card size="small"><Statistic title="已回退" value={rolledBackCount} /></Card></Col>
-            </Row>
-            {items.length === 0 && !primaryLoading ? (
-              <Empty description={buildPromotionEmptyDescription(promotionStatusView)} />
+            {auditErrors.length === 0 && !primaryLoading ? (
+              <Empty description={buildAuditEmptyDescription()} />
             ) : (
               <Table
                 rowKey="id"
-                dataSource={items}
-                columns={promotionColumns}
+                dataSource={auditErrors}
+                columns={auditErrorColumns}
                 loading={primaryLoading}
-                pagination={{ pageSize: 20, hideOnSinglePage: true }}
-                expandable={{
-                  expandedRowRender: (record) => (
-                    <div style={{ display: 'grid', gap: 12 }}>
-                      <div>
-                        <Typography.Text strong>候选载荷</Typography.Text>
-                        <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>
-                          {JSON.stringify(record.candidate_payload || {}, null, 2)}
-                        </pre>
-                      </div>
-                      {record.promotion_trace ? (
-                        <div>
-                          <Typography.Text strong>晋升轨迹</Typography.Text>
-                          <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{record.promotion_trace}</pre>
-                        </div>
-                      ) : null}
-                      {record.source_table === 'audit_errors' && record.source_record_id ? (
-                        <Space wrap>
-                          <Button size="small" icon={<EyeOutlined />} onClick={() => openAuditErrorDetail(Number(record.source_record_id))}>
-                            打开错因
-                          </Button>
-                          {(() => {
-                            const linkedAudit = auditErrors.find((item) => item.id === Number(record.source_record_id));
-                            if (!linkedAudit?.task_id) return null;
-                            return (
-                              <Button
-                                size="small"
-                                icon={<LinkOutlined />}
-                                onClick={() =>
-                                  openTaskResultPage(linkedAudit.task_id, linkedAudit.result_id, {
-                                    sourceLabel: '晋升候选审核',
-                                    candidateTitle: record.candidate_title,
-                                    candidateType: getLabel(record.candidate_type, CANDIDATE_TYPE_LABELS),
-                                    errorType: getLabel(linkedAudit.error_type, ERROR_TYPE_LABELS),
-                                  })
-                                }
-                              >
-                                打开任务结果
-                              </Button>
-                            );
-                          })()}
-                        </Space>
-                      ) : null}
-                    </div>
-                  ),
-                }}
+                pagination={{ pageSize: 10, hideOnSinglePage: true }}
               />
             )}
           </Space>
         </Card>
 
-        <Card title="最近错因记录">
-          <Space wrap style={{ marginBottom: 16 }}>
-            <Select style={{ minWidth: 180 }} value={auditMatchSource} options={AUDIT_MATCH_SOURCE_OPTIONS} onChange={setAuditMatchSource} />
-            <Select style={{ minWidth: 200 }} value={auditErrorType} options={AUDIT_ERROR_TYPE_OPTIONS} onChange={setAuditErrorType} />
-            <Select style={{ minWidth: 180 }} value={auditSourceTable} options={SOURCE_TABLE_OPTIONS} onChange={setAuditSourceTable} />
-          </Space>
-          {auditErrors.length === 0 && !primaryLoading ? (
-            <Empty description={buildAuditEmptyDescription()} />
-          ) : (
-            <Table
-              rowKey="id"
-              dataSource={auditErrors}
-              columns={auditErrorColumns}
-              loading={primaryLoading}
-              pagination={{ pageSize: 10, hideOnSinglePage: true }}
-            />
+        <Card
+          title="有没有脏数据 / 异常"
+          extra={(
+            <Button type="link" onClick={() => setShowHealthDetails((value) => !value)}>
+              {showHealthDetails ? '收起详细体检' : '展开详细体检'}
+            </Button>
           )}
-        </Card>
-
-        <Card title="健康体检">
+        >
           {healthReport ? (
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <Row gutter={[16, 16]}>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="重复候选组" value={healthReport.summary.duplicate_candidate_groups} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title={`滞留候选（${healthReport.summary.stale_pending_days}天+）`} value={healthReport.summary.stale_pending_promotions} /></Card></Col>
+                <Col xs={12} md={6}><Card size="small"><Statistic title="滞留候选" value={healthReport.summary.stale_pending_promotions} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="已回退" value={healthReport.summary.rolled_back_promotions} /></Card></Col>
+                <Col xs={12} md={6}><Card size="small"><Statistic title="来源冲突组" value={healthReport.summary.source_conflict_groups} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="正式层失活" value={healthReport.summary.inactive_formal_total} /></Card></Col>
               </Row>
-              <Row gutter={[16, 16]}>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="来源冲突组" value={healthReport.summary.source_conflict_groups} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="失活规则" value={healthReport.summary.inactive_rules} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="失活方法卡" value={healthReport.summary.inactive_method_cards} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="争议经验" value={healthReport.summary.experience_disputed_count} /></Card></Col>
-              </Row>
-              <div>
-                <Typography.Text strong>正式层健康概览</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  <Space wrap>
-                    <Tag>{`失活规则: ${healthReport.formal_layer_health.inactive_rules}`}</Tag>
-                    <Tag>{`失活方法卡: ${healthReport.formal_layer_health.inactive_method_cards}`}</Tag>
-                    <Tag>{`经验候选: ${healthReport.formal_layer_health.experience_candidate_count}`}</Tag>
-                    <Tag>{`经验争议: ${healthReport.formal_layer_health.experience_disputed_count}`}</Tag>
-                  </Space>
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>重复候选组</Typography.Text>
-                <Table rowKey={(record) => `${record.target_layer}-${record.candidate_type}-${record.candidate_title}`} size="small" style={{ marginTop: 8 }} dataSource={healthReport.duplicate_candidate_groups} columns={duplicateCandidateColumns} pagination={false} />
-              </div>
-              <div>
-                <Typography.Text strong>滞留待处理候选</Typography.Text>
-                <Table rowKey="id" size="small" style={{ marginTop: 8 }} dataSource={healthReport.stale_pending_promotions} columns={stalePendingColumns} pagination={false} />
-              </div>
-              <div>
-                <Typography.Text strong>最近回退记录</Typography.Text>
-                <Table rowKey="id" size="small" style={{ marginTop: 8 }} dataSource={healthReport.recent_rollbacks} columns={rollbackColumns} pagination={false} />
-              </div>
-              <div>
-                <Typography.Text strong>来源冲突</Typography.Text>
-                <Table rowKey={(record) => `${record.source_table}-${record.source_record_id}`} size="small" style={{ marginTop: 8 }} dataSource={healthReport.source_conflict_groups} columns={sourceConflictColumns} pagination={false} />
-              </div>
+              <Typography.Text type="secondary">
+                {healthReport.summary.rolled_back_promotions > 0 || healthReport.summary.source_conflict_groups > 0
+                  ? '目前有回退或冲突信号，建议先处理队列，再回来复查这里。'
+                  : '目前没有明显污染信号，这里按需查看即可。'}
+              </Typography.Text>
+              {showHealthDetails ? (
+                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                  <div>
+                    <Typography.Text strong>正式层健康概览</Typography.Text>
+                    <div style={{ marginTop: 8 }}>
+                      <Space wrap>
+                        <Tag>{`失活规则: ${healthReport.formal_layer_health.inactive_rules}`}</Tag>
+                        <Tag>{`失活方法卡: ${healthReport.formal_layer_health.inactive_method_cards}`}</Tag>
+                        <Tag>{`经验候选: ${healthReport.formal_layer_health.experience_candidate_count}`}</Tag>
+                        <Tag>{`经验争议: ${healthReport.formal_layer_health.experience_disputed_count}`}</Tag>
+                      </Space>
+                    </div>
+                  </div>
+                  <div>
+                    <Typography.Text strong>滞留待处理候选</Typography.Text>
+                    <Table rowKey="id" size="small" style={{ marginTop: 8 }} dataSource={healthReport.stale_pending_promotions} columns={stalePendingColumns} pagination={false} />
+                  </div>
+                  <div>
+                    <Typography.Text strong>最近回退记录</Typography.Text>
+                    <Table rowKey="id" size="small" style={{ marginTop: 8 }} dataSource={healthReport.recent_rollbacks} columns={rollbackColumns} pagination={false} />
+                  </div>
+                </Space>
+              ) : null}
             </Space>
           ) : (
-            renderSecondaryPlaceholder(secondaryLoading, secondaryError, '正在补充健康体检报表...')
+            <Typography.Text type="secondary">
+              {secondaryLoading ? '正在补充异常分析...' : secondaryError || '目前没有需要你优先关注的异常信号。'}
+            </Typography.Text>
           )}
         </Card>
 
-        <Card title="知识影响分析">
+        <Card
+          title="最近有没有真正帮上忙"
+          extra={(
+            <Button type="link" onClick={() => setShowKnowledgeImpact((value) => !value)}>
+              {showKnowledgeImpact ? '收起详细分析' : '展开详细分析'}
+            </Button>
+          )}
+        >
           {knowledgeImpact ? (
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <Row gutter={[16, 16]}>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="纳入跟踪任务" value={knowledgeImpact.summary.tracked_runs} /></Card></Col>
-                <Col xs={12} md={6}><Card size="small"><Statistic title="纳入跟踪结果" value={knowledgeImpact.summary.tracked_results} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天命中" value={knowledgeImpact.summary.last_7d_hits} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天直接命中" value={knowledgeImpact.summary.last_7d_direct} /></Card></Col>
+                <Col xs={12} md={6}><Card size="small"><Statistic title="7天任务数" value={knowledgeImpact.summary.last_7d_runs} /></Card></Col>
+                <Col xs={12} md={6}><Card size="small"><Statistic title="7天结果数" value={knowledgeImpact.summary.last_7d_results} /></Card></Col>
               </Row>
-              <Row gutter={[16, 16]}>
-                <Col xs={12}><Card size="small"><Statistic title="7天任务数" value={knowledgeImpact.summary.last_7d_runs} /></Card></Col>
-                <Col xs={12}><Card size="small"><Statistic title="7天结果数" value={knowledgeImpact.summary.last_7d_results} /></Card></Col>
-              </Row>
-              <div>
-                <Typography.Text strong>按知识层命中统计</Typography.Text>
-                <Table rowKey="layer" size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.layer_metrics} columns={knowledgeImpactLayerColumns} pagination={false} scroll={{ x: 1500 }} />
-              </div>
-              <div>
-                <Typography.Text strong>近 7 天知识使用情况</Typography.Text>
-                <Table rowKey="date" size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.recent_activity} columns={knowledgeImpactRecentColumns} pagination={false} scroll={{ x: 900 }} />
-              </div>
-              <div>
-                <Typography.Text strong>命中最多的对象</Typography.Text>
-                <Table rowKey={(record) => `${record.layer}-${record.object_ref}`} size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.top_objects || []} columns={knowledgeImpactObjectColumns} pagination={false} scroll={{ x: 1300 }} />
-              </div>
+              <Typography.Text type="secondary">这块更像分析层，不是第一操作层。需要复盘时再展开看。</Typography.Text>
+              {showKnowledgeImpact ? (
+                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                  <div>
+                    <Typography.Text strong>按知识层命中统计</Typography.Text>
+                    <Table rowKey="layer" size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.layer_metrics} columns={knowledgeImpactLayerColumns} pagination={false} scroll={{ x: 900 }} />
+                  </div>
+                  <div>
+                    <Typography.Text strong>命中最多的对象</Typography.Text>
+                    <Table rowKey={(record) => `${record.layer}-${record.object_ref}`} size="small" style={{ marginTop: 8 }} dataSource={knowledgeImpact.top_objects || []} columns={knowledgeImpactObjectColumns} pagination={false} scroll={{ x: 900 }} />
+                  </div>
+                </Space>
+              ) : null}
             </Space>
           ) : (
-            renderSecondaryPlaceholder(secondaryLoading, secondaryError, '正在补充知识影响报表...')
+            <Typography.Text type="secondary">
+              {secondaryLoading ? '正在补充使用效果分析...' : secondaryError || '目前还没有足够的使用效果数据。'}
+            </Typography.Text>
           )}
         </Card>
       </Space>
@@ -1457,16 +1124,7 @@ export default function KnowledgeStagingPage() {
         width={760}
         open={auditDrawerOpen}
         extra={selectedAuditError ? (
-          <Button
-            size="small"
-            icon={<LinkOutlined />}
-            onClick={() =>
-              openTaskResultPage(selectedAuditError.task_id, selectedAuditError.result_id, {
-                sourceLabel: '错因审核',
-                errorType: getLabel(selectedAuditError.error_type, ERROR_TYPE_LABELS),
-              })
-            }
-          >
+          <Button size="small" icon={<LinkOutlined />} onClick={() => openTaskResultPage(selectedAuditError.task_id, selectedAuditError.result_id, { sourceLabel: '错因审核', errorType: getLabel(selectedAuditError.error_type, ERROR_TYPE_LABELS) })}>
             打开任务结果
           </Button>
         ) : null}
@@ -1524,9 +1182,7 @@ export default function KnowledgeStagingPage() {
             </Descriptions>
             <div>
               <Typography.Text strong>正式层详情</Typography.Text>
-              <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>
-                {JSON.stringify(knowledgeObjectDetail?.formal_detail || {}, null, 2)}
-              </pre>
+              <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{JSON.stringify(knowledgeObjectDetail?.formal_detail || {}, null, 2)}</pre>
             </div>
             <div>
               <Typography.Text strong>晋升来源</Typography.Text>
@@ -1537,40 +1193,11 @@ export default function KnowledgeStagingPage() {
                 dataSource={knowledgeObjectDetail?.promotion_sources || []}
                 pagination={false}
                 columns={[
-                  { title: 'ID', dataIndex: 'id', key: 'id', width: 72 },
+                  { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
                   { title: '候选标题', dataIndex: 'candidate_title', key: 'candidate_title' },
-                  {
-                    title: '目标层',
-                    dataIndex: 'target_layer',
-                    key: 'target_layer',
-                    width: 150,
-                    render: (value: string) => getLabel(value, TARGET_LAYER_LABELS),
-                  },
-                  {
-                    title: '状态',
-                    dataIndex: 'status',
-                    key: 'status',
-                    width: 100,
-                    render: (value: string) => renderStatusTag(value),
-                  },
-                  {
-                    title: '来源',
-                    key: 'source',
-                    width: 160,
-                    render: (_value, record) => (
-                      <div>
-                        <div>{getLabel(record.source_table, SOURCE_TABLE_LABELS)}</div>
-                        <div style={{ color: '#64748b', fontSize: 12 }}>{record.source_record_id || '-'}</div>
-                      </div>
-                    ),
-                  },
-                  {
-                    title: '审核备注',
-                    dataIndex: 'review_comment',
-                    key: 'review_comment',
-                    width: 220,
-                    render: (value?: string) => <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{value || '-'}</div>,
-                  },
+                  { title: '目标层', dataIndex: 'target_layer', key: 'target_layer', width: 150, render: (value: string) => getLabel(value, TARGET_LAYER_LABELS) },
+                  { title: '状态', dataIndex: 'status', key: 'status', width: 100, render: (value: string) => renderStatusTag(value) },
+                  { title: '审核备注', dataIndex: 'review_comment', key: 'review_comment', width: 220, render: (value?: string) => <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{value || '-'}</div> },
                   {
                     title: '操作',
                     key: 'actions',
@@ -1580,12 +1207,8 @@ export default function KnowledgeStagingPage() {
                       if (linkedAuditId === null) return '-';
                       return (
                         <Space wrap>
-                          <Button size="small" icon={<EyeOutlined />} onClick={() => openAuditErrorDetail(linkedAuditId)}>
-                            打开错因
-                          </Button>
-                          <Button size="small" icon={<LinkOutlined />} onClick={() => openTaskResultFromPromotionSource(record)}>
-                            打开任务结果
-                          </Button>
+                          <Button size="small" icon={<EyeOutlined />} onClick={() => openAuditErrorDetail(linkedAuditId)}>打开错因</Button>
+                          <Button size="small" icon={<LinkOutlined />} onClick={() => openTaskResultFromPromotionSource(record)}>打开任务结果</Button>
                         </Space>
                       );
                     },
