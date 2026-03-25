@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.102';
+export const APP_VERSION = '0.2.103';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.103',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: '收口 OpenClaw 复核页数据语义' },
+    ],
+  },
   {
     version: '0.2.102',
     date: '2026-03-25',
