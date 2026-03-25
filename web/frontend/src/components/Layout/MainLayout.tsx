@@ -1,36 +1,28 @@
-/**
- * 主布局组件
- *
- * 登录后的页面框架：左侧菜单栏 + 顶部用户信息栏 + 中间内容区。
- * 菜单根据用户角色动态显示：
- * - 普通用户：首页、新建任务、我的任务
- * - 管理员：额外显示 所有任务、经验库、反馈审核、准确率分析、用户管理、系统设置
- */
-
-import { useState, useMemo } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Dropdown, Tag, Modal, Timeline } from 'antd';
+import { useMemo, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Button, Dropdown, Layout, Menu, Modal, Tag, Timeline } from 'antd';
 import type { MenuProps } from 'antd';
 import {
-  DashboardOutlined,
-  UnorderedListOutlined,
-  LogoutOutlined,
-  UserOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  DatabaseOutlined,
-  TeamOutlined,
-  SettingOutlined,
-  BookOutlined,
-  FileTextOutlined,
-  GoldOutlined,
   AimOutlined,
   BarChartOutlined,
+  BookOutlined,
+  DashboardOutlined,
+  DatabaseOutlined,
   FileSearchOutlined,
+  FileTextOutlined,
+  GoldOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  TeamOutlined,
+  UnorderedListOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
-import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION, CHANGELOG } from '../../constants/changelog';
 import type { ChangelogEntry } from '../../constants/changelog';
+import { useAuthStore } from '../../stores/auth';
 
 const { Header, Sider, Content } = Layout;
 
@@ -41,20 +33,18 @@ export default function MainLayout() {
   const location = useLocation();
   const { user, logout } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
-  const adminTaskMenu = isAdmin ? [{
-    key: '/admin/tasks',
-    icon: <UnorderedListOutlined />,
-    label: '鎵€鏈変换鍔?',
-  }] : [];
+  const adminTab = new URLSearchParams(location.search).get('tab');
+  const selectedMenuKey =
+    location.pathname === '/admin' && adminTab === 'staging'
+      ? '/admin/knowledge-staging'
+      : location.pathname;
 
-  // 根据角色动态生成菜单（按改版方案v0.3.0重构）
   const menuItems: MenuProps['items'] = useMemo(() => {
-    // 四功能色值（文档07章）
     const toolColors = {
-      bill: '#1a56db',     // 编清单-蓝
-      quota: '#16a34a',    // 套定额-绿
-      material: '#ea580c', // 填主材-橙
-      backfill: '#7c3aed', // 填价-紫
+      bill: '#1a56db',
+      quota: '#16a34a',
+      material: '#ea580c',
+      backfill: '#7c3aed',
     };
 
     const base: MenuProps['items'] = [
@@ -64,7 +54,6 @@ export default function MainLayout() {
         label: '首页',
       },
       { type: 'divider' },
-      // ── 智能工具 ──
       {
         key: 'tools-group',
         type: 'group',
@@ -83,7 +72,7 @@ export default function MainLayout() {
           {
             key: '/tools/material-price',
             icon: <GoldOutlined style={{ color: toolColors.material }} />,
-            label: '智能填主材',
+            label: '智能查主材',
           },
           {
             key: '/tools/price-backfill',
@@ -93,7 +82,6 @@ export default function MainLayout() {
         ],
       },
       { type: 'divider' },
-      // ── 任务 ──
       {
         key: 'tasks-group',
         type: 'group',
@@ -110,21 +98,29 @@ export default function MainLayout() {
 
     if (!isAdmin) return base;
 
-    // 管理员额外菜单
-    const adminItems: MenuProps['items'] = [
+    return [
+      ...base,
       { type: 'divider' },
-      ...adminTaskMenu,
+      {
+        key: '/admin/tasks',
+        icon: <UnorderedListOutlined />,
+        label: '全部任务',
+      },
       { type: 'divider' },
-      // ── 数据 ──
       {
         key: 'admin-data-group',
         type: 'group',
-        label: '数据',
+        label: '数据与治理',
         children: [
           {
             key: '/admin',
             icon: <DatabaseOutlined />,
             label: '管理中心',
+          },
+          {
+            key: '/admin/knowledge-staging',
+            icon: <SafetyCertificateOutlined />,
+            label: '候选确认与晋升',
           },
           {
             key: '/admin/quotas',
@@ -134,11 +130,10 @@ export default function MainLayout() {
         ],
       },
       { type: 'divider' },
-      // ── 管理 ──
       {
         key: 'admin-system-group',
         type: 'group',
-        label: '管理',
+        label: '系统管理',
         children: [
           {
             key: '/admin/users',
@@ -158,16 +153,12 @@ export default function MainLayout() {
         ],
       },
     ];
-
-    return [...base, ...adminItems];
   }, [isAdmin]);
 
-  // 菜单点击跳转
   const onMenuClick = ({ key }: { key: string }) => {
     navigate(key);
   };
 
-  // 用户下拉菜单
   const userMenuItems = [
     {
       key: 'logout',
@@ -182,7 +173,6 @@ export default function MainLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      {/* 左侧菜单栏 */}
       <Sider
         trigger={null}
         collapsible
@@ -197,7 +187,6 @@ export default function MainLayout() {
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          {/* 品牌Logo区域 */}
           <div
             style={{
               height: 64,
@@ -207,26 +196,28 @@ export default function MainLayout() {
               borderBottom: '1px solid #f1f5f9',
             }}
           >
-            <span style={{
-              fontSize: collapsed ? 18 : 20,
-              fontWeight: 700,
-              color: '#2563eb',
-              letterSpacing: collapsed ? 0 : 2,
-            }}>
+            <span
+              style={{
+                fontSize: collapsed ? 18 : 20,
+                fontWeight: 700,
+                color: '#2563eb',
+                letterSpacing: collapsed ? 0 : 2,
+              }}
+            >
               {collapsed ? 'J' : 'J.A.R.V.I.S'}
             </span>
           </div>
-          {/* 菜单区域（占满剩余空间） */}
+
           <div style={{ flex: 1, overflow: 'auto' }}>
             <Menu
               mode="inline"
-              selectedKeys={[location.pathname]}
+              selectedKeys={[selectedMenuKey]}
               items={menuItems}
               onClick={onMenuClick}
               style={{ borderRight: 0, padding: '8px 0' }}
             />
           </div>
-          {/* 底部版本号入口 */}
+
           <div
             onClick={() => setChangelogOpen(true)}
             style={{
@@ -238,17 +229,23 @@ export default function MainLayout() {
               fontSize: 12,
               transition: 'color 0.2s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#2563eb')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#94a3b8')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#2563eb';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#94a3b8';
+            }}
           >
             <div>{collapsed ? `v${APP_VERSION.split('.').pop()}` : `v${APP_VERSION}`}</div>
             {!collapsed && (
-              <div style={{
-                marginTop: 4,
-                fontSize: 11,
-                lineHeight: 1.4,
-              }}>
-                更新日志
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                }}
+              >
+                版本说明
               </div>
             )}
           </div>
@@ -256,7 +253,6 @@ export default function MainLayout() {
       </Sider>
 
       <Layout>
-        {/* 顶部栏 */}
         <Header
           style={{
             padding: '0 24px',
@@ -277,20 +273,22 @@ export default function MainLayout() {
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
             <Button type="text" icon={<UserOutlined />} style={{ color: '#334155' }}>
               {user?.nickname || user?.email || '用户'}
-              {isAdmin && <Tag color="blue" style={{ marginLeft: 8 }}>管理员</Tag>}
+              {isAdmin && (
+                <Tag color="blue" style={{ marginLeft: 8 }}>
+                  管理员
+                </Tag>
+              )}
             </Button>
           </Dropdown>
         </Header>
 
-        {/* 内容区 */}
         <Content style={{ margin: 24, minHeight: 280 }}>
           <Outlet />
         </Content>
       </Layout>
 
-      {/* 更新日志弹窗 */}
       <Modal
-        title={isAdmin ? '更新日志（完整）' : '更新日志'}
+        title={isAdmin ? '版本说明（完整）' : '版本说明'}
         open={changelogOpen}
         onCancel={() => setChangelogOpen(false)}
         footer={null}
@@ -298,55 +296,50 @@ export default function MainLayout() {
       >
         <Timeline
           style={{ marginTop: 20 }}
-          items={
-            // 按角色过滤：普通用户只看 user 类型，管理员看全部
-            CHANGELOG
-              .map((entry): ChangelogEntry => {
-                if (isAdmin) return entry;
-                // 普通用户：只保留 type='user' 的条目
-                return { ...entry, changes: entry.changes.filter(c => c.type === 'user') };
-              })
-              .filter(entry => entry.changes.length > 0) // 整版无可见条目则跳过
-              .map((entry, i) => ({
-                color: i === 0 ? 'blue' : 'gray',
-                children: (
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      v{entry.version}
-                      <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>
-                        {entry.date}
-                      </span>
-                    </div>
-                    <ul style={{ margin: 0, paddingLeft: 18, color: '#475569' }}>
-                      {entry.changes.map((c, j) => (
-                        <li key={j} style={{ marginBottom: 2 }}>
-                          {/* 管理员模式下，admin 条目加 [系统] 标签 + 灰色 */}
-                          {isAdmin && c.type === 'admin' ? (
-                            <span style={{ color: '#94a3b8' }}>
-                              <Tag
-                                style={{
-                                  fontSize: 10,
-                                  lineHeight: '16px',
-                                  padding: '0 4px',
-                                  marginRight: 4,
-                                  borderColor: '#e2e8f0',
-                                  color: '#94a3b8',
-                                }}
-                              >
-                                系统
-                              </Tag>
-                              {c.text}
-                            </span>
-                          ) : (
-                            c.text
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+          items={CHANGELOG
+            .map((entry): ChangelogEntry => {
+              if (isAdmin) return entry;
+              return { ...entry, changes: entry.changes.filter((change) => change.type === 'user') };
+            })
+            .filter((entry) => entry.changes.length > 0)
+            .map((entry, index) => ({
+              color: index === 0 ? 'blue' : 'gray',
+              children: (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                    v{entry.version}
+                    <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>
+                      {entry.date}
+                    </span>
                   </div>
-                ),
-              }))
-          }
+                  <ul style={{ margin: 0, paddingLeft: 18, color: '#475569' }}>
+                    {entry.changes.map((change, changeIndex) => (
+                      <li key={changeIndex} style={{ marginBottom: 2 }}>
+                        {isAdmin && change.type === 'admin' ? (
+                          <span style={{ color: '#94a3b8' }}>
+                            <Tag
+                              style={{
+                                fontSize: 10,
+                                lineHeight: '16px',
+                                padding: '0 4px',
+                                marginRight: 4,
+                                borderColor: '#e2e8f0',
+                                color: '#94a3b8',
+                              }}
+                            >
+                              系统
+                            </Tag>
+                            {change.text}
+                          </span>
+                        ) : (
+                          change.text
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ),
+            }))}
         />
       </Modal>
     </Layout>
