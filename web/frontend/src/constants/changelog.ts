@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.101';
+export const APP_VERSION = '0.2.102';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.102',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: '收口 OpenClaw 内网复核链路' },
+      { type: 'admin', text: '补齐知识晋升与 OpenClaw 接入链路' },
+      { type: 'admin', text: '前端统一知识入口并补治理中心主入口卡' },
+    ],
+  },
   {
     version: '0.2.101',
     date: '2026-03-25',
