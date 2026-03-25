@@ -10,6 +10,8 @@ application:
   subdomain: autoquota
   routes:
     - /=http://frontend.cloud.lazycat.app.autoquota.lzcapp:80/
+  public_path:
+    - /api/openclaw/
 
 services:
   frontend:
@@ -29,6 +31,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       AGENT_LLM: qwen
       MATCH_LLM: qwen
       QWEN_API_KEY: "改成你的通义千问API Key"
@@ -61,6 +64,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
+      OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       AGENT_LLM: qwen
       MATCH_LLM: qwen
       QWEN_API_KEY: "改成你的通义千问API Key"

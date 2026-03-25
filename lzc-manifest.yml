@@ -32,7 +32,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      OPENCLAW_API_KEY: "un_MwK3PEcof0eSWKu7jni3ik8nf2tTmi108ZQkNvU4"
+      OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       # 远程模式不需要向量搜索和大模型（全部在本地电脑上）
       VECTOR_ENABLED: "false"
       # Cookie安全配置（懒猫微服通过HTTPS提供服务）
@@ -59,7 +59,7 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      OPENCLAW_API_KEY: "un_MwK3PEcof0eSWKu7jni3ik8nf2tTmi108ZQkNvU4"
+      OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       # 远程模式不需要向量搜索和大模型
       VECTOR_ENABLED: "false"
       # 远程匹配模式（和backend保持一致）
