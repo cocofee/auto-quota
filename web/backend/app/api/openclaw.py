@@ -1,12 +1,15 @@
 """
-OpenClaw 专用桥接 API。
+OpenClaw bridge API.
 
-这组接口只做一件事：给 OpenClaw 暴露一套更稳定、无需网页登录态的工具接口。
+This router exposes a stable subset of auto-quota APIs for OpenClaw, plus the
+"review draft + human second confirmation" workflow.
 """
 
 from __future__ import annotations
 
+import secrets
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.openapi.utils import get_openapi
@@ -14,11 +17,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.shared import get_user_task
 from app.api import quota_search as quota_search_api
 from app.api import results as results_api
 from app.api import tasks as tasks_api
+from app.api.shared import get_user_task
 from app.auth.openclaw import get_openclaw_service_user
+from app.auth.permissions import require_admin
+from app.config import OPENCLAW_API_KEY, OPENCLAW_SERVICE_EMAIL, OPENCLAW_SERVICE_NICKNAME
 from app.database import get_db
 from app.models.result import MatchResult
 from app.models.user import User
@@ -26,17 +31,100 @@ from app.schemas.result import (
     ConfirmResultsRequest,
     CorrectResultRequest,
     MatchResultResponse,
+    OpenClawReviewConfirmRequest,
+    OpenClawReviewDraftRequest,
     ResultListResponse,
 )
 from app.schemas.task import TaskListResponse, TaskResponse
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 GREEN_THRESHOLD = results_api._GREEN_THRESHOLD
 YELLOW_THRESHOLD = results_api._YELLOW_THRESHOLD
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _openclaw_policy_bucket(result_or_confidence) -> str:
     return results_api._resolve_light_status(result_or_confidence)
+
+
+def _human_actor(user: User) -> str:
+    return (getattr(user, "nickname", None) or getattr(user, "email", None) or str(user.id)).strip()
+
+
+def _service_actor(user: User) -> str:
+    return (getattr(user, "email", None) or getattr(user, "nickname", None) or "openclaw").strip()
+
+
+def _merge_review_notes(*parts: str) -> str:
+    merged = "\n".join(part.strip() for part in parts if part and part.strip())
+    return merged[:500]
+
+
+def _mask_key(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return "*" * len(value)
+    return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
+
+
+class OpenClawKeyStatusResponse(BaseModel):
+    configured: bool
+    masked_key: str = ""
+    service_email: str
+    service_nickname: str
+    openapi_url: str
+    public_path: str
+    sync_targets: list[str]
+    update_hint: str
+
+
+class OpenClawKeySuggestionResponse(BaseModel):
+    suggested_key: str
+    env_name: str
+    sync_targets: list[str]
+    manifest_paths: list[str]
+    rollout_steps: list[str]
+
+
+class OpenClawKeySuggestionRequest(BaseModel):
+    prefix: str = Field(default="oc_", max_length=24)
+
+
+def _build_result_list_response(items: list[MatchResult]) -> ResultListResponse:
+    total = len(items)
+    high_conf = sum(1 for item in items if results_api._resolve_light_status(item) == "green")
+    mid_conf = sum(1 for item in items if results_api._resolve_light_status(item) == "yellow")
+    low_conf = sum(1 for item in items if results_api._resolve_light_status(item) == "red")
+    no_match = sum(1 for item in items if not item.quotas)
+    confirmed = sum(1 for item in items if item.review_status == "confirmed")
+    corrected = sum(1 for item in items if item.review_status == "corrected")
+    review_pending = sum(
+        1
+        for item in items
+        if item.openclaw_review_status == "reviewed"
+        and item.openclaw_review_confirm_status == "pending"
+    )
+
+    return ResultListResponse(
+        items=[results_api._to_result_response(item) for item in items],
+        total=total,
+        summary={
+            "total": total,
+            "high_confidence": high_conf,
+            "mid_confidence": mid_conf,
+            "low_confidence": low_conf,
+            "no_match": no_match,
+            "confirmed": confirmed,
+            "corrected": corrected,
+            "pending": total - confirmed - corrected,
+            "openclaw_review_pending": review_pending,
+        },
+    )
 
 
 async def _get_match_result(
@@ -44,9 +132,9 @@ async def _get_match_result(
     task_id: uuid.UUID,
     result_id: uuid.UUID,
     db: AsyncSession,
-    service_user: User,
+    owner: User,
 ) -> tuple[object, MatchResult]:
-    task = await get_user_task(task_id, service_user, db)
+    task = await get_user_task(task_id, owner, db)
     result = await db.execute(
         select(MatchResult).where(
             MatchResult.id == result_id,
@@ -75,13 +163,56 @@ async def _collect_green_result_ids(
             MatchResult.review_status,
         ).where(MatchResult.task_id == task_id)
     )
-    ids = []
+    ids: list[uuid.UUID] = []
     for row in result.all():
         if row.review_status in {"confirmed", "corrected"}:
             continue
         if _openclaw_policy_bucket(row) == "green":
             ids.append(row.id)
     return ids
+
+
+def _ensure_openclaw_reviewable(bucket: str) -> None:
+    if bucket == "red":
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前结果为红灯(<{YELLOW_THRESHOLD})，保持现有规则不变，OpenClaw 不能提交审核建议。",
+        )
+    if bucket == "green":
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前结果为绿灯(>={GREEN_THRESHOLD})，保持现有规则不变，应直接走确认而不是提交审核建议。",
+        )
+
+
+async def _save_review_draft(
+    *,
+    task_id: uuid.UUID,
+    result_id: uuid.UUID,
+    req: OpenClawReviewDraftRequest,
+    db: AsyncSession,
+    service_user: User,
+) -> MatchResultResponse:
+    _, match_result = await _get_match_result(
+        task_id=task_id,
+        result_id=result_id,
+        db=db,
+        owner=service_user,
+    )
+    _ensure_openclaw_reviewable(_openclaw_policy_bucket(match_result))
+
+    match_result.openclaw_review_status = "reviewed"
+    match_result.openclaw_suggested_quotas = [item.model_dump() for item in req.openclaw_suggested_quotas]
+    match_result.openclaw_review_note = req.openclaw_review_note or ""
+    match_result.openclaw_review_confidence = req.openclaw_review_confidence
+    match_result.openclaw_review_actor = _service_actor(service_user)
+    match_result.openclaw_review_time = _utcnow()
+    match_result.openclaw_review_confirm_status = "pending"
+    match_result.openclaw_review_confirmed_by = ""
+    match_result.openclaw_review_confirm_time = None
+
+    await db.flush()
+    return results_api._to_result_response(match_result)
 
 
 def _build_openclaw_openapi(request: Request) -> dict:
@@ -96,10 +227,10 @@ def _build_openclaw_openapi(request: Request) -> dict:
 
     schema = get_openapi(
         title="auto-quota OpenClaw API",
-        version="1.0.0",
+        version="1.1.0",
         description=(
-            "给 OpenClaw 使用的精简接口。"
-            "所有业务接口统一使用请求头 X-OpenClaw-Key 做认证。"
+            "OpenClaw 使用的精简桥接接口。"
+            "结果正式纠正采用 review draft + human confirm 两段式机制。"
         ),
         routes=routes,
     )
@@ -109,13 +240,11 @@ def _build_openclaw_openapi(request: Request) -> dict:
 
 @router.get("/openapi.json", include_in_schema=False)
 async def openclaw_openapi(request: Request):
-    """返回 OpenClaw 专用精简 OpenAPI 文档。"""
     return JSONResponse(_build_openclaw_openapi(request))
 
 
 @router.get("/health")
 async def health(service_user: User = Depends(get_openclaw_service_user)):
-    """OpenClaw 接口健康检查。"""
     return {
         "status": "ok",
         "service": "auto-quota-openclaw",
@@ -124,9 +253,43 @@ async def health(service_user: User = Depends(get_openclaw_service_user)):
     }
 
 
+@router.get("/admin/key-status", response_model=OpenClawKeyStatusResponse)
+async def key_status(admin: User = Depends(require_admin)):
+    return OpenClawKeyStatusResponse(
+        configured=bool(OPENCLAW_API_KEY),
+        masked_key=_mask_key(OPENCLAW_API_KEY),
+        service_email=OPENCLAW_SERVICE_EMAIL,
+        service_nickname=OPENCLAW_SERVICE_NICKNAME,
+        openapi_url="/api/openclaw/openapi.json",
+        public_path="/api/openclaw/",
+        sync_targets=["backend", "celery-worker"],
+        update_hint="这是运行时环境变量方案。修改 OPENCLAW_API_KEY 后，需要同步更新 backend 和 celery-worker，并重新部署或重启服务。",
+    )
+
+
+@router.post("/admin/key-suggestion", response_model=OpenClawKeySuggestionResponse)
+async def generate_key_suggestion(
+    req: OpenClawKeySuggestionRequest,
+    admin: User = Depends(require_admin),
+):
+    prefix = (req.prefix or "oc_").strip()[:24]
+    suggested_key = f"{prefix}{secrets.token_urlsafe(32)}"
+    return OpenClawKeySuggestionResponse(
+        suggested_key=suggested_key,
+        env_name="OPENCLAW_API_KEY",
+        sync_targets=["backend", "celery-worker"],
+        manifest_paths=["lzc-manifest.yml", "deploy/lazycat/lzc-manifest.yml"],
+        rollout_steps=[
+            "把新 key 填到 backend.environment.OPENCLAW_API_KEY",
+            "把同一个 key 填到 celery-worker.environment.OPENCLAW_API_KEY",
+            "确认 application.public_path 已放行 /api/openclaw/",
+            "重新部署或重启服务后，再让 OpenClaw 用新 key 调 /api/openclaw/openapi.json",
+        ],
+    )
+
+
 @router.get("/provinces")
 async def list_provinces(service_user: User = Depends(get_openclaw_service_user)):
-    """获取可用定额库列表。"""
     return await quota_search_api.list_search_provinces(user=service_user)
 
 
@@ -134,12 +297,11 @@ async def list_provinces(service_user: User = Depends(get_openclaw_service_user)
 async def search_quotas(
     keyword: str = Query(description="搜索关键词"),
     province: str = Query(description="省份定额库名称"),
-    book: str | None = Query(default=None, description="大册编号"),
+    book: str | None = Query(default=None, description="册号"),
     chapter: str | None = Query(default=None, description="章节"),
     limit: int = Query(default=20, ge=1, le=100, description="最大返回条数"),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """按关键词搜索定额。"""
     return await quota_search_api.search_quotas(
         keyword=keyword,
         province=province,
@@ -156,7 +318,6 @@ async def get_quota_by_id(
     province: str = Query(description="省份定额库名称"),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """按定额编号精确查询。"""
     return await quota_search_api.get_quota_by_id(
         quota_id=quota_id,
         province=province,
@@ -173,7 +334,6 @@ async def smart_search(
     limit: int = Query(default=10, ge=1, le=50, description="最大返回条数"),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """按清单原文做智能搜索。"""
     return await quota_search_api.smart_search(
         name=name,
         province=province,
@@ -188,14 +348,13 @@ async def smart_search(
 async def create_task(
     file: UploadFile = File(description="清单 Excel 文件"),
     province: str = Form(description="省份定额库名称"),
-    mode: str | None = Form(default=None, description="匹配模式：search 或 agent"),
+    mode: str | None = Form(default=None, description="匹配模式"),
     sheet: str | None = Form(default=None, description="指定 Sheet"),
     limit_count: int | None = Form(default=None, description="限制处理条数"),
     use_experience: bool = Form(default=True, description="是否使用经验库"),
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """创建匹配任务。"""
     return await tasks_api.create_task(
         file=file,
         province=province,
@@ -217,7 +376,6 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """查询 OpenClaw 服务账号下的任务列表。"""
     return await tasks_api.list_tasks(
         page=page,
         size=size,
@@ -235,7 +393,6 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """查询任务状态。"""
     return await tasks_api.get_task(
         task_id=task_id,
         db=db,
@@ -249,12 +406,45 @@ async def list_results(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """查询任务结果列表。"""
     return await results_api.list_results(
         task_id=task_id,
         db=db,
         user=service_user,
     )
+
+
+@router.get("/tasks/{task_id}/review-items", response_model=ResultListResponse)
+async def list_review_items(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    await get_user_task(task_id, service_user, db)
+    result = await db.execute(
+        select(MatchResult)
+        .where(MatchResult.task_id == task_id)
+        .order_by(MatchResult.index)
+    )
+    return _build_result_list_response(result.scalars().all())
+
+
+@router.get("/tasks/{task_id}/review-pending", response_model=ResultListResponse)
+async def list_review_pending(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    await get_user_task(task_id, user, db)
+    result = await db.execute(
+        select(MatchResult)
+        .where(
+            MatchResult.task_id == task_id,
+            MatchResult.openclaw_review_status == "reviewed",
+            MatchResult.openclaw_review_confirm_status == "pending",
+        )
+        .order_by(MatchResult.index)
+    )
+    return _build_result_list_response(result.scalars().all())
 
 
 @router.get("/tasks/{task_id}/results/{result_id}", response_model=MatchResultResponse)
@@ -264,7 +454,6 @@ async def get_result(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """查询单条结果详情。"""
     return await results_api.get_result(
         task_id=task_id,
         result_id=result_id,
@@ -273,60 +462,121 @@ async def get_result(
     )
 
 
-@router.put("/tasks/{task_id}/results/{result_id}", response_model=MatchResultResponse)
-async def correct_result(
+@router.put("/tasks/{task_id}/results/{result_id}", response_model=MatchResultResponse, deprecated=True)
+async def legacy_save_review_draft(
     task_id: uuid.UUID,
     result_id: uuid.UUID,
     req: CorrectResultRequest,
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """按 OpenClaw 审核策略确认或纠正单条结果。"""
+    if not req.corrected_quotas:
+        raise HTTPException(
+            status_code=409,
+            detail="OpenClaw 直接正式操作已禁用。绿灯请走确认接口，黄灯请改用 /review-draft 保存审核建议。",
+        )
+    return await _save_review_draft(
+        task_id=task_id,
+        result_id=result_id,
+        req=OpenClawReviewDraftRequest(
+            openclaw_suggested_quotas=req.corrected_quotas,
+            openclaw_review_note=req.review_note or "",
+            openclaw_review_confidence=None,
+        ),
+        db=db,
+        service_user=service_user,
+    )
+
+
+@router.put("/tasks/{task_id}/results/{result_id}/review-draft", response_model=MatchResultResponse)
+async def save_review_draft(
+    task_id: uuid.UUID,
+    result_id: uuid.UUID,
+    req: OpenClawReviewDraftRequest,
+    db: AsyncSession = Depends(get_db),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    return await _save_review_draft(
+        task_id=task_id,
+        result_id=result_id,
+        req=req,
+        db=db,
+        service_user=service_user,
+    )
+
+
+@router.post("/tasks/{task_id}/results/{result_id}/review-confirm", response_model=MatchResultResponse)
+async def review_confirm(
+    task_id: uuid.UUID,
+    result_id: uuid.UUID,
+    req: OpenClawReviewConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
     task, match_result = await _get_match_result(
         task_id=task_id,
         result_id=result_id,
         db=db,
-        service_user=service_user,
+        owner=user,
     )
-    bucket = _openclaw_policy_bucket(match_result)
 
-    if not req.corrected_quotas:
-        if bucket != "green":
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"当前结果为{bucket}档，OpenClaw 仅允许自动确认绿灯(>={GREEN_THRESHOLD})结果。"
-                ),
+    decision = (req.decision or "").strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(status_code=422, detail="decision 仅支持 approve 或 reject")
+    if not match_result.openclaw_suggested_quotas:
+        raise HTTPException(status_code=409, detail="当前结果还没有 OpenClaw 审核建议")
+    if match_result.openclaw_review_status == "applied":
+        raise HTTPException(status_code=409, detail="当前建议已经正式应用，无需再次确认")
+
+    actor = _human_actor(user)
+    now = _utcnow()
+
+    if decision == "reject":
+        match_result.openclaw_review_status = "rejected"
+        match_result.openclaw_review_confirm_status = "rejected"
+        match_result.openclaw_review_confirmed_by = actor
+        match_result.openclaw_review_confirm_time = now
+        if req.review_note.strip():
+            match_result.openclaw_review_note = _merge_review_notes(
+                match_result.openclaw_review_note,
+                f"人工驳回: {req.review_note.strip()}",
             )
-        return await results_api.correct_result(
-            task_id=task_id,
-            result_id=result_id,
-            req=req,
-            db=db,
-            user=service_user,
-        )
+        await db.flush()
+        return results_api._to_result_response(match_result)
 
-    if bucket == "red":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"当前结果为红灯(<{YELLOW_THRESHOLD})，OpenClaw 只允许诊断，不允许提交修正。"
-            ),
-        )
-    if bucket == "green":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"当前结果为绿灯(>={GREEN_THRESHOLD})，应直接确认，不应提交修正。"
-            ),
-        )
+    final_review_note = _merge_review_notes(
+        match_result.openclaw_review_note,
+        f"人工二次确认: {req.review_note.strip()}" if req.review_note.strip() else "",
+    )
+    await results_api.correct_result(
+        task_id=task_id,
+        result_id=result_id,
+        req=CorrectResultRequest(
+            corrected_quotas=match_result.openclaw_suggested_quotas,
+            review_note=final_review_note,
+        ),
+        db=db,
+        user=user,
+    )
 
-    corrected_quotas = [q.model_dump() for q in req.corrected_quotas]
-    match_result.corrected_quotas = corrected_quotas
-    match_result.review_status = "corrected"
-    match_result.review_note = req.review_note or "OpenClaw yellow correction"
+    match_result.openclaw_review_status = "applied"
+    match_result.openclaw_review_confirm_status = "approved"
+    match_result.openclaw_review_confirmed_by = actor
+    match_result.openclaw_review_confirm_time = now
+    if final_review_note:
+        match_result.openclaw_review_note = final_review_note
     await db.flush()
-    return match_result
+
+    # Best-effort: map real approved OpenClaw review results into staging.
+    # This must not block the formal correction flow.
+    from app.services.openclaw_staging import record_openclaw_approved_review_async
+    await record_openclaw_approved_review_async(
+        task,
+        match_result,
+        actor=actor,
+        review_note=req.review_note or "",
+    )
+    return results_api._to_result_response(match_result)
 
 
 @router.post("/tasks/{task_id}/results/auto-confirm-green")
@@ -335,7 +585,6 @@ async def auto_confirm_green(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """自动确认当前任务里全部待确认绿灯结果。"""
     green_ids = await _collect_green_result_ids(
         task_id=task_id,
         db=db,
@@ -363,7 +612,6 @@ async def confirm_results(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """按 OpenClaw 审核策略批量确认结果，只确认绿灯。"""
     await get_user_task(task_id, service_user, db)
     result = await db.execute(
         select(
@@ -381,6 +629,7 @@ async def confirm_results(
     green_ids: list[uuid.UUID] = []
     skipped_corrected = 0
     skipped_non_green = 0
+
     for row in rows:
         if row.review_status == "corrected":
             skipped_corrected += 1
@@ -417,7 +666,6 @@ async def export_results(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """导出当前匹配结果 Excel。"""
     return await results_api.export_results(
         task_id=task_id,
         materials=materials,
@@ -433,7 +681,6 @@ async def export_final(
     db: AsyncSession = Depends(get_db),
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    """导出最终版 Excel。"""
     return await results_api.export_final(
         task_id=task_id,
         materials=materials,
