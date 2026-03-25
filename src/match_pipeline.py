@@ -21,11 +21,13 @@ from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
 from src.candidate_scoring import compute_candidate_rank_score, compute_candidate_sort_key
 from src.context_builder import build_context_prior, summarize_batch_context_for_trace
+from src.ltr_ranker import rerank_candidates_with_ltr
 from src.province_plugins import resolve_plugin_hints
 from src.text_parser import parser as text_parser, normalize_bill_text
 from src.query_router import build_query_route_profile
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
 from src.specialty_classifier import BORROW_PRIORITY, classify as classify_specialty
+from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
 from src.match_core import (
     calculate_confidence,
@@ -164,15 +166,12 @@ def _safe_candidate_hybrid_score(candidate: dict | None) -> float:
         return 0.0
 
 
-def _guard_explicit_candidate(top_candidate: dict, explicit_candidate: dict | None, hybrid_margin: float = 0.005) -> dict | None:
+def _guard_explicit_candidate(item: dict,
+                              top_candidate: dict,
+                              explicit_candidate: dict | None,
+                              hybrid_margin: float = 0.005) -> dict | None:
     if explicit_candidate is None:
         return None
-    if not top_candidate:
-        return explicit_candidate
-    top_hybrid = _safe_candidate_hybrid_score(top_candidate)
-    pick_hybrid = _safe_candidate_hybrid_score(explicit_candidate)
-    if top_hybrid - pick_hybrid > hybrid_margin:
-        return top_candidate
     return explicit_candidate
 
 
@@ -196,43 +195,43 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     cable_candidate = _pick_explicit_cable_family_candidate(bill_text, candidates)
     if cable_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, cable_candidate)
+        return _guard_explicit_candidate(item, top_candidate, cable_candidate)
 
     wiring_candidate = _pick_explicit_wiring_family_candidate(bill_text, candidates)
     if wiring_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, wiring_candidate)
+        return _guard_explicit_candidate(item, top_candidate, wiring_candidate)
 
     cast_iron_pipe_candidate = _pick_explicit_cast_iron_pipe_candidate(bill_text, candidates)
     if cast_iron_pipe_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, cast_iron_pipe_candidate)
+        return _guard_explicit_candidate(item, top_candidate, cast_iron_pipe_candidate)
 
     sleeve_candidate = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
     if sleeve_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, sleeve_candidate)
+        return _guard_explicit_candidate(item, top_candidate, sleeve_candidate)
 
     general_sleeve_candidate = _pick_explicit_sleeve_family_candidate(bill_text, candidates)
     if general_sleeve_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, general_sleeve_candidate)
+        return _guard_explicit_candidate(item, top_candidate, general_sleeve_candidate)
 
     conduit_candidate = _pick_explicit_conduit_family_candidate(bill_text, candidates)
     if conduit_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, conduit_candidate)
+        return _guard_explicit_candidate(item, top_candidate, conduit_candidate)
 
     bridge_candidate = _pick_explicit_bridge_family_candidate(bill_text, candidates)
     if bridge_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, bridge_candidate)
+        return _guard_explicit_candidate(item, top_candidate, bridge_candidate)
 
     distribution_box_candidate = _pick_explicit_distribution_box_candidate(bill_text, candidates)
     if distribution_box_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, distribution_box_candidate)
+        return _guard_explicit_candidate(item, top_candidate, distribution_box_candidate)
 
     ventilation_candidate = _pick_explicit_ventilation_family_candidate(bill_text, candidates)
     if ventilation_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, ventilation_candidate)
+        return _guard_explicit_candidate(item, top_candidate, ventilation_candidate)
 
     support_candidate = _pick_explicit_support_family_candidate(bill_text, candidates)
     if support_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, support_candidate)
+        return _guard_explicit_candidate(item, top_candidate, support_candidate)
     if _should_force_conservative_support_fallback(item, bill_text):
         support_fallback_candidate = _pick_safe_support_fallback_candidate(item, candidates)
         if support_fallback_candidate is not None:
@@ -241,39 +240,39 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     insulation_candidate = _pick_explicit_insulation_family_candidate(bill_text, candidates)
     if insulation_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, insulation_candidate)
+        return _guard_explicit_candidate(item, top_candidate, insulation_candidate)
 
     motor_candidate = _pick_explicit_motor_family_candidate(bill_text, candidates)
     if motor_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, motor_candidate)
+        return _guard_explicit_candidate(item, top_candidate, motor_candidate)
 
     sanitary_candidate = _pick_explicit_sanitary_family_candidate(bill_text, candidates)
     if sanitary_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, sanitary_candidate)
+        return _guard_explicit_candidate(item, top_candidate, sanitary_candidate)
 
     lamp_candidate = _pick_explicit_lamp_family_candidate(bill_text, candidates)
     if lamp_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, lamp_candidate)
+        return _guard_explicit_candidate(item, top_candidate, lamp_candidate)
 
     button_broadcast_candidate = _pick_explicit_button_broadcast_candidate(bill_text, candidates)
     if button_broadcast_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, button_broadcast_candidate)
+        return _guard_explicit_candidate(item, top_candidate, button_broadcast_candidate)
 
     plumbing_accessory_candidate = _pick_explicit_plumbing_accessory_candidate(bill_text, candidates)
     if plumbing_accessory_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, plumbing_accessory_candidate)
+        return _guard_explicit_candidate(item, top_candidate, plumbing_accessory_candidate)
 
     valve_candidate = _pick_explicit_valve_family_candidate(bill_text, candidates)
     if valve_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, valve_candidate)
+        return _guard_explicit_candidate(item, top_candidate, valve_candidate)
 
     fire_candidate = _pick_explicit_fire_device_candidate(bill_text, candidates)
     if fire_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, fire_candidate)
+        return _guard_explicit_candidate(item, top_candidate, fire_candidate)
 
     network_candidate = _pick_explicit_network_device_candidate(bill_text, candidates)
     if network_candidate is not None:
-        return _guard_explicit_candidate(top_candidate, network_candidate)
+        return _guard_explicit_candidate(item, top_candidate, network_candidate)
 
     for cand in candidates[:5]:
         quota_name = cand.get("name", "")
@@ -2818,8 +2817,39 @@ def _prepare_rule_match(rule_validator: RuleValidator, full_query: str, item: di
 # 结果构建
 # ============================================================
 
+DEFAULT_ALTERNATIVE_COUNT = 9
+
+
+def _build_ranked_candidate_snapshots(candidates: list[dict], top_n: int = 20) -> list[dict]:
+    snapshots = []
+    for candidate in list(candidates or [])[:top_n]:
+        snapshots.append({
+            "quota_id": str(candidate.get("quota_id", "") or ""),
+            "name": str(candidate.get("name", "") or ""),
+            "unit": str(candidate.get("unit", "") or ""),
+            "param_match": bool(candidate.get("param_match", True)),
+            "param_tier": int(candidate.get("param_tier", 1) or 1),
+            "bm25_score": candidate.get("bm25_score"),
+            "vector_score": candidate.get("vector_score"),
+            "hybrid_score": candidate.get("hybrid_score"),
+            "rerank_score": candidate.get("rerank_score"),
+            "semantic_rerank_score": candidate.get("semantic_rerank_score"),
+            "spec_rerank_score": candidate.get("spec_rerank_score"),
+            "param_score": candidate.get("param_score"),
+            "logic_score": candidate.get("logic_score"),
+            "feature_alignment_score": candidate.get("feature_alignment_score"),
+            "manual_structured_score": candidate.get("manual_structured_score"),
+            "ltr_score": candidate.get("ltr_score"),
+            "candidate_canonical_features": dict(
+                candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
+            ),
+            "ltr_feature_snapshot": dict(candidate.get("ltr_feature_snapshot") or {}),
+        })
+    return snapshots
+
+
 def _build_alternatives(candidates: list[dict], selected_ids: set = None,
-                        skip_obj=None, top_n: int = 3) -> list[dict]:
+                        skip_obj=None, top_n: int = DEFAULT_ALTERNATIVE_COUNT) -> list[dict]:
     """从候选中构建备选定额列表。"""
     if not candidates:
         return []
@@ -2892,9 +2922,160 @@ def _build_empty_match_result(item: dict, reason: str, source: str = "search") -
     return result
 
 
+def _result_top1_id(result: dict | None) -> str:
+    quotas = (result or {}).get("quotas") or []
+    if not quotas:
+        return ""
+    return str(quotas[0].get("quota_id", "") or "").strip()
+
+
+def _carry_ranking_snapshot(target: dict, source: dict, *, changed_by: str = ""):
+    if not isinstance(target, dict) or not isinstance(source, dict):
+        return
+    for key in (
+        "pre_ltr_top1_id",
+        "post_ltr_top1_id",
+        "post_arbiter_top1_id",
+        "candidate_count",
+        "candidates_count",
+        "ltr_rerank",
+    ):
+        if not target.get(key):
+            target[key] = source.get(key)
+    if changed_by and _result_top1_id(target) != _result_top1_id(source):
+        target["final_changed_by"] = target.get("final_changed_by") or changed_by
+    target["post_final_top1_id"] = _result_top1_id(target)
+
+
 # ============================================================
 # 兜底策略
 # ============================================================
+
+_RULE_INJECTION_VALIDATOR: ParamValidator | None = None
+
+
+def _get_rule_injection_validator() -> ParamValidator:
+    global _RULE_INJECTION_VALIDATOR
+    if _RULE_INJECTION_VALIDATOR is None:
+        _RULE_INJECTION_VALIDATOR = ParamValidator()
+    return _RULE_INJECTION_VALIDATOR
+
+
+def _rule_backup_primary_quota(rule_backup: dict) -> dict:
+    quotas = (rule_backup or {}).get("quotas") or []
+    if not quotas:
+        return {}
+    quota = quotas[0] or {}
+    return quota if isinstance(quota, dict) else {}
+
+
+def _promote_rule_candidate_prior(candidate: dict, candidates: list[dict]) -> dict:
+    peers = list(candidates or [])
+    def _median(values: list[float], default: float) -> float:
+        if not values:
+            return default
+        values = sorted(values)
+        return values[len(values) // 2]
+
+    median_rerank = _median(
+        [float(c.get("rerank_score", c.get("hybrid_score", 0.0)) or 0.0) for c in peers],
+        float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0)) or 0.0),
+    )
+    median_hybrid = _median(
+        [float(c.get("hybrid_score", c.get("rerank_score", 0.0)) or 0.0) for c in peers],
+        float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0)) or 0.0),
+    )
+    median_semantic = _median(
+        [float(c.get("semantic_rerank_score", c.get("rerank_score", 0.0)) or 0.0) for c in peers],
+        float(candidate.get("semantic_rerank_score", candidate.get("rerank_score", 0.0)) or 0.0),
+    )
+    median_spec = _median(
+        [float(c.get("spec_rerank_score", c.get("rerank_score", 0.0)) or 0.0) for c in peers],
+        float(candidate.get("spec_rerank_score", candidate.get("rerank_score", 0.0)) or 0.0),
+    )
+    candidate["rerank_score"] = median_rerank
+    candidate["hybrid_score"] = median_hybrid
+    candidate["semantic_rerank_score"] = median_semantic
+    candidate["spec_rerank_score"] = median_spec
+    candidate["active_rerank_score"] = candidate["rerank_score"]
+    return candidate
+
+
+def _materialize_rule_backup_candidate(item: dict, rule_backup: dict, candidates: list[dict]) -> dict | None:
+    quota = _rule_backup_primary_quota(rule_backup)
+    quota_id = str(quota.get("quota_id", "") or "").strip()
+    quota_name = str(quota.get("name", "") or "").strip()
+    if not quota_id or not quota_name:
+        return None
+
+    canonical_query = (item or {}).get("canonical_query") or {}
+    validation_query = str(canonical_query.get("validation_query") or item.get("name") or "").strip()
+    search_query = str(canonical_query.get("search_query") or validation_query).strip()
+
+    candidate = {
+        "quota_id": quota_id,
+        "name": quota_name,
+        "unit": str(quota.get("unit", "") or ""),
+        "id": quota.get("db_id"),
+        "db_id": quota.get("db_id"),
+        "match_source": "rule_injected",
+        "is_rule_candidate": 1,
+        "rule_confidence": float(rule_backup.get("confidence", 0) or 0.0),
+        "rule_prior_score": float(rule_backup.get("confidence", 0) or 0.0) / 100.0,
+        "rule_family": rule_backup.get("rule_family", ""),
+        "rule_score": rule_backup.get("rule_score", 0.0),
+        "rule_reason": quota.get("reason", rule_backup.get("explanation", "")),
+        "candidate_canonical_features": text_parser.parse_canonical(quota_name),
+    }
+    candidate = _promote_rule_candidate_prior(candidate, candidates)
+    validated = _get_rule_injection_validator().validate_candidates(
+        validation_query,
+        [candidate],
+        supplement_query=search_query or None,
+        bill_params=item.get("params"),
+        canonical_features=item.get("canonical_features"),
+        context_prior=item.get("context_prior"),
+    )
+    if not validated:
+        return None
+    injected = validated[0]
+    injected["match_source"] = "rule_injected"
+    injected["is_rule_candidate"] = 1
+    injected["rule_confidence"] = candidate["rule_confidence"]
+    injected["rule_prior_score"] = candidate["rule_prior_score"]
+    injected["rule_family"] = candidate["rule_family"]
+    injected["rule_score"] = candidate["rule_score"]
+    injected["rule_reason"] = candidate["rule_reason"]
+    return _promote_rule_candidate_prior(injected, candidates)
+
+
+def _inject_rule_backup_candidate(item: dict, candidates: list[dict], rule_backup: dict) -> tuple[list[dict], str]:
+    if not rule_backup:
+        return list(candidates or []), ""
+    quota = _rule_backup_primary_quota(rule_backup)
+    quota_id = str(quota.get("quota_id", "") or "").strip()
+    if not quota_id:
+        return list(candidates or []), ""
+
+    working = list(candidates or [])
+    for idx, existing in enumerate(working):
+        if str(existing.get("quota_id", "") or "").strip() != quota_id:
+            continue
+        merged = dict(existing)
+        merged["match_source"] = "rule_injected"
+        merged["is_rule_candidate"] = 1
+        merged["rule_confidence"] = float(rule_backup.get("confidence", 0) or 0.0)
+        merged["rule_prior_score"] = float(rule_backup.get("confidence", 0) or 0.0) / 100.0
+        merged["rule_family"] = rule_backup.get("rule_family", "")
+        merged["rule_score"] = rule_backup.get("rule_score", 0.0)
+        merged["rule_reason"] = quota.get("reason", rule_backup.get("explanation", ""))
+        merged = _promote_rule_candidate_prior(merged, working)
+        return [merged] + [c for j, c in enumerate(working) if j != idx], quota_id
+
+    injected = _materialize_rule_backup_candidate(item, rule_backup, working)
+    if not injected:
+        return working, ""
+    return [injected] + working, quota_id
 
 def _apply_rule_backup(result: dict, rule_backup: dict, rule_hits: int,
                        prefer_label: str) -> tuple[dict, int]:
@@ -2906,6 +3087,7 @@ def _apply_rule_backup(result: dict, rule_backup: dict, rule_hits: int,
     if not rule_backup:
         return result, rule_hits
     if rule_backup.get("confidence", 0) > result.get("confidence", 0):
+        _carry_ranking_snapshot(rule_backup, result, changed_by="rule_backup")
         _append_trace_step(
             rule_backup,
             "rule_backup_override",
@@ -2934,6 +3116,7 @@ def _apply_similar_exp_backup(result: dict, exp_backup: dict, exp_hits: int,
         return result, exp_hits
     # 严格大于才替换（等分时保持当前结果，因为搜索+参数验证更针对当前query）
     if exp_backup.get("confidence", 0) > result.get("confidence", 0):
+        _carry_ranking_snapshot(exp_backup, result, changed_by="experience_backup")
         _append_trace_step(
             exp_backup,
             "experience_backup_override",
@@ -2994,6 +3177,7 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
         result["explanation"] = f"经验库+搜索一致: {result.get('explanation', '')}"
         if exp_backup.get("materials"):
             result["materials"] = exp_backup.get("materials")
+        result["post_final_top1_id"] = _result_top1_id(result)
         _append_trace_step(
             result,
             "experience_search_confirmed",
@@ -3009,6 +3193,7 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
         # 严格大于才替换（与相似匹配一致，等分时信任搜索+参数验证）
         if exp_conf > search_conf:
             exp_backup["confidence"] = exp_conf
+            _carry_ranking_snapshot(exp_backup, result, changed_by="experience_exact")
             _append_trace_step(
                 exp_backup,
                 "experience_exact_degraded_override",
@@ -3193,6 +3378,15 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     explanation = ""
     arbitration = {}
     reasoning_decision = {}
+    ranking_meta = {
+        "pre_ltr_top1_id": "",
+        "post_ltr_top1_id": "",
+        "post_arbiter_top1_id": "",
+        "post_final_top1_id": "",
+        "final_changed_by": "",
+        "candidate_count": 0,
+        "ltr": {},
+    }
 
     valid_candidates = [
         c for c in (candidates or [])
@@ -3200,17 +3394,33 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     ]
     valid_candidates, plugin_route_gate = _apply_plugin_route_gate(item, valid_candidates)
     valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
+    ranking_meta["candidate_count"] = len(valid_candidates)
     if candidates and not valid_candidates:
         logger.warning("候选列表存在，但全部缺少quota_id/name，按无匹配处理")
 
     if valid_candidates:
         matched_candidates = [c for c in valid_candidates if c.get("param_match", True)]
         if matched_candidates:
+            ranking_meta["pre_ltr_top1_id"] = str(matched_candidates[0].get("quota_id", "") or "")
+            matched_candidates, ltr_meta = rerank_candidates_with_ltr(item, matched_candidates, {"item": item})
+            ranking_meta["ltr"] = ltr_meta
+            ranking_meta["post_ltr_top1_id"] = str(
+                (ltr_meta.get("post_ltr_top1_id") or (matched_candidates[0].get("quota_id", "") if matched_candidates else "")) or ""
+            )
+            ranking_meta["post_cgr_top1_id"] = str(
+                (ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or ""
+            )
             matched_candidates, arbitration = arbitrate_candidates(
                 item, matched_candidates, route_profile=item.get("query_route")
             )
+            ranking_meta["post_arbiter_top1_id"] = str(
+                (matched_candidates[0].get("quota_id", "") if matched_candidates else "") or ""
+            )
             matched_candidates = _promote_explicit_distribution_box_candidate(
                 item, matched_candidates
+            )
+            ranking_meta["post_arbiter_top1_id"] = str(
+                (matched_candidates[0].get("quota_id", "") if matched_candidates else "") or ""
             )
             # 规则审核前置：跳过类别明显不匹配的候选
             best = matched_candidates[0] if matched_candidates else None
@@ -3245,6 +3455,16 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
                 "route": str((item.get("query_route") or {}).get("route") or ""),
                 "reason": "no_param_matched_candidates",
             }
+            ranking_meta["pre_ltr_top1_id"] = str(valid_candidates[0].get("quota_id", "") or "")
+            valid_candidates, ltr_meta = rerank_candidates_with_ltr(item, valid_candidates, {"item": item})
+            ranking_meta["ltr"] = ltr_meta
+            ranking_meta["post_ltr_top1_id"] = str(
+                (ltr_meta.get("post_ltr_top1_id") or (valid_candidates[0].get("quota_id", "") if valid_candidates else "")) or ""
+            )
+            ranking_meta["post_cgr_top1_id"] = str(
+                (ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or ""
+            )
+            ranking_meta["post_arbiter_top1_id"] = ranking_meta["post_ltr_top1_id"]
             best = valid_candidates[0] if valid_candidates else None
             if not best:
                 best = _pick_category_safe_candidate(item, valid_candidates)
@@ -3301,13 +3521,21 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         "confidence": confidence,
         "explanation": explanation,
         "candidates_count": len(valid_candidates),
+        "candidate_count": len(valid_candidates),
         "all_candidate_ids": all_candidate_ids,
+        "candidate_snapshots": _build_ranked_candidate_snapshots(valid_candidates, top_n=20),
         "match_source": "search",
         "arbitration": arbitration,
         "plugin_route_gate": plugin_route_gate,
         "reasoning_decision": reasoning_decision,
         "needs_reasoning": bool(reasoning_decision.get("is_ambiguous")),
         "require_final_review": bool(reasoning_decision.get("require_final_review")),
+        "pre_ltr_top1_id": ranking_meta["pre_ltr_top1_id"],
+        "post_ltr_top1_id": ranking_meta["post_ltr_top1_id"],
+        "post_arbiter_top1_id": ranking_meta["post_arbiter_top1_id"],
+        "post_final_top1_id": str((quotas[0].get("quota_id", "") if quotas else "") or ""),
+        "final_changed_by": "",
+        "ltr_rerank": ranking_meta["ltr"],
     }
     input_gate = item.get("_input_gate") or {}
     if best and valid_candidates and any(c.get("param_match", True) for c in valid_candidates):
@@ -3360,18 +3588,22 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         "search_select",
         selected_quota=best.get("quota_id") if best else "",
         selected_reasoning=summarize_candidate_reasoning(best) if best else {},
+        pre_ltr_top1_id=result.get("pre_ltr_top1_id", ""),
+        post_ltr_top1_id=result.get("post_ltr_top1_id", ""),
+        post_arbiter_top1_id=result.get("post_arbiter_top1_id", ""),
         arbitration=arbitration,
         plugin_route_gate=plugin_route_gate,
         reasoning_decision=reasoning_decision,
         query_route=item.get("query_route") or {},
         batch_context=summarize_batch_context_for_trace(item),
+        ltr_rerank=result.get("ltr_rerank", {}),
         candidates_count=len(valid_candidates),
         candidates=_summarize_candidates_for_trace(candidates),
     )
 
     if best and valid_candidates:
         result["alternatives"] = _build_alternatives(
-            valid_candidates, skip_obj=best, top_n=3)
+            valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
     if not best:
         result["no_match_reason"] = explanation or "搜索无匹配结果"
     return result
@@ -3381,10 +3613,33 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
                                 exp_backup: dict, rule_backup: dict,
                                 exp_hits: int, rule_hits: int):
     """search模式统一结果决策：搜索结果 + 经验/规则兜底。"""
-    result = _build_search_result_from_candidates(item, candidates)
+    active_candidates = list(candidates or [])
+    injected_rule_qid = ""
+    if rule_backup:
+        active_candidates, injected_rule_qid = _inject_rule_backup_candidate(
+            item, active_candidates, rule_backup
+        )
+    result = _build_search_result_from_candidates(item, active_candidates)
     result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
-    result, rule_hits = _apply_rule_backup(
-        result, rule_backup, rule_hits, prefer_label="搜索/经验")
+    if injected_rule_qid:
+        selected_qid = str((result.get("quotas") or [{}])[0].get("quota_id", "") or "").strip()
+        if selected_qid == injected_rule_qid:
+            result["match_source"] = "rule_injected"
+            rule_hits += 1
+        _append_trace_step(
+            result,
+            "rule_backup_injected",
+            injected_quota_id=injected_rule_qid,
+            backup_confidence=rule_backup.get("confidence", 0),
+            selected_rule_candidate=bool(selected_qid and selected_qid == injected_rule_qid),
+        )
+    elif rule_backup:
+        _append_trace_step(
+            result,
+            "rule_backup_rejected",
+            backup_confidence=rule_backup.get("confidence", 0),
+            current_confidence=result.get("confidence", 0),
+        )
     _append_trace_step(
         result,
         "search_mode_final",

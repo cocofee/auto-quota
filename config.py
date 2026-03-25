@@ -761,6 +761,28 @@ LTR_FEATURE_LOGGING = os.getenv("LTR_FEATURE_LOGGING", "0").strip().lower() not 
 )
 LTR_FEATURE_LOG_TOPK = int(os.getenv("LTR_FEATURE_LOG_TOPK", "3"))
 
+CONSTRAINED_GATED_RANKER_ENABLED = os.getenv(
+    "CONSTRAINED_GATED_RANKER_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+CGR_ACCEPT_HEAD_ENABLED = os.getenv(
+    "CGR_ACCEPT_HEAD_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+CGR_TEMPERATURE = max(0.2, float(os.getenv("CGR_TEMPERATURE", "0.85")))
+CGR_ACCEPT_THRESHOLD = max(
+    0.0, min(1.0, float(os.getenv("CGR_ACCEPT_THRESHOLD", "0.62")))
+)
+CGR_MIN_TOP1_PROB = max(
+    0.0, min(1.0, float(os.getenv("CGR_MIN_TOP1_PROB", "0.45")))
+)
+CGR_MODEL_PATH = Path(os.getenv(
+    "CGR_MODEL_PATH",
+    str(DATA_DIR / "cgr_model.json"),
+))
+
 CONFIDENCE_CALIBRATOR_ENABLED = os.getenv(
     "CONFIDENCE_CALIBRATOR_ENABLED", "0"
 ).strip().lower() not in (

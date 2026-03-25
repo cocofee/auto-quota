@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Iterable
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,8 @@ CONFIG_PATH = PROJECT_ROOT / "tests" / "benchmark_config.json"  # Excel数据集
 BASELINE_PATH = PROJECT_ROOT / "tests" / "benchmark_baseline.json"
 HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"
 PAPER_OVERRIDES_PATH = PAPERS_DIR / "_paper_overrides.json"
+BENCHMARK_ASSET_ROOT = PROJECT_ROOT / "output" / "benchmark_assets"
+BENCHMARK_ASSET_ALT_LIMIT = 9
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -300,6 +303,11 @@ def run_json_paper(province: str, items: list[dict],
     correct = 0
     wrong = 0
     diagnosis = Counter()
+    recall_miss_count = 0
+    rank_miss_count = 0
+    post_rank_miss_count = 0
+    in_pool_total = 0
+    in_pool_correct = 0
     # oracle统计：错误中，正确答案是否在候选列表里（排序问题 vs 召回问题）
     oracle_in_candidates = 0  # 正确答案在候选中（排序问题）
     oracle_not_in_candidates = 0  # 正确答案不在候选中（召回问题）
@@ -327,17 +335,42 @@ def run_json_paper(province: str, items: list[dict],
         # 检查正确答案是否在候选列表中（oracle诊断）
         all_cand_ids = result.get('all_candidate_ids', [])
         oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
+        pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
+        post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
+        post_arbiter_top1_id = str(result.get('post_arbiter_top1_id', '') or '')
+        post_final_top1_id = str(result.get('post_final_top1_id', algo_id) or algo_id or '')
+        final_changed_by = str(result.get('final_changed_by', '') or '')
+
+        if oracle_found:
+            in_pool_total += 1
+            if is_match:
+                in_pool_correct += 1
 
         if is_match:
             correct += 1
+            cause = ""
         else:
             wrong += 1
             cause = _diagnose_cause(card, algo_id, algo_name, quotas)
             diagnosis[cause] += 1
             if oracle_found:
                 oracle_in_candidates += 1
+                if post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_final_top1_id not in stored_ids:
+                    post_rank_miss_count += 1
+                else:
+                    rank_miss_count += 1
             else:
                 oracle_not_in_candidates += 1
+                recall_miss_count += 1
+
+        miss_stage = ""
+        if not is_match:
+            if not oracle_found:
+                miss_stage = "recall_miss"
+            elif post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_final_top1_id not in stored_ids:
+                miss_stage = "post_rank_miss"
+            else:
+                miss_stage = "rank_miss"
 
         details.append({
             'bill_name': card['bill_name'][:30],
@@ -347,8 +380,24 @@ def run_json_paper(province: str, items: list[dict],
             'stored_ids': stored_ids[:2],
             'stored_names': card['quota_names'][:1],
             'confidence': confidence,
+            'cause': cause,
             'oracle_in_candidates': oracle_found,
             'all_candidate_ids': all_cand_ids[:10],
+            'bill_text': card['bill_text'],
+            'specialty': card.get('specialty', ''),
+            'match_source': result.get('match_source', ''),
+            'no_match_reason': result.get('no_match_reason', ''),
+            'reasoning_decision': result.get('reasoning_decision', {}),
+            'alternatives': result.get('alternatives', [])[:BENCHMARK_ASSET_ALT_LIMIT],
+            'candidate_snapshots': result.get('candidate_snapshots', [])[:20],
+            'trace_path': list((result.get('trace') or {}).get('path') or []),
+            'candidate_count': result.get('candidate_count', result.get('candidates_count', len(all_cand_ids))),
+            'pre_ltr_top1_id': pre_ltr_top1_id,
+            'post_ltr_top1_id': post_ltr_top1_id,
+            'post_arbiter_top1_id': post_arbiter_top1_id,
+            'post_final_top1_id': post_final_top1_id,
+            'final_changed_by': final_changed_by,
+            'miss_stage': miss_stage,
         })
 
     total = correct + wrong
@@ -363,6 +412,10 @@ def run_json_paper(province: str, items: list[dict],
         'diagnosis': dict(diagnosis),
         'oracle_in_candidates': oracle_in_candidates,
         'oracle_not_in_candidates': oracle_not_in_candidates,
+        'in_pool_top1_acc': round(in_pool_correct / max(in_pool_total, 1), 4),
+        'recall_miss_count': recall_miss_count,
+        'rank_miss_count': rank_miss_count,
+        'post_rank_miss_count': post_rank_miss_count,
         'elapsed': round(elapsed, 1),
         'details': details,
     }
@@ -406,6 +459,22 @@ def _diagnose_cause(card, algo_id, algo_name, quotas):
         return 'wrong_tier'
 
     return 'synonym_gap'
+
+
+def _get_quota_book(qid: str) -> str:
+    qid = str(qid or "").strip()
+    if len(qid) >= 2 and qid[0] == 'C' and qid[1].isalpha():
+        letter_map = {'A': 'C1', 'B': 'C2', 'C': 'C3', 'D': 'C4',
+                      'E': 'C5', 'F': 'C6', 'G': 'C7', 'H': 'C8',
+                      'I': 'C9', 'J': 'C10', 'K': 'C11', 'L': 'C12'}
+        return letter_map.get(qid[1], '')
+    match = re.match(r'(C\d+)-', qid)
+    if match:
+        return match.group(1)
+    match = re.match(r'(\d+)-', qid)
+    if match:
+        return f'C{match.group(1)}'
+    return ''
 
 
 # ============================================================
@@ -483,6 +552,184 @@ def _compute_excel_metrics(results: list[dict], elapsed: float) -> dict:
         "red_rate": round(low / denom, 4),
         "exp_hit_rate": round(exp_hits / total_all, 4),
         "avg_time_sec": round(elapsed / total_all, 2),
+    }
+
+
+def _normalize_asset_candidates(selected_id: str, selected_name: str,
+                                alternatives: Iterable[dict] | None) -> list[dict]:
+    candidates: list[dict] = []
+    if selected_id or selected_name:
+        candidates.append({
+            "quota_id": str(selected_id or ""),
+            "name": str(selected_name or ""),
+            "is_selected": True,
+        })
+    for alt in list(alternatives or [])[:BENCHMARK_ASSET_ALT_LIMIT]:
+        candidates.append({
+            "quota_id": str(alt.get("quota_id", "") or ""),
+            "name": str(alt.get("name", "") or ""),
+            "is_selected": False,
+            "reasoning": alt.get("reasoning", {}),
+        })
+    return candidates
+
+
+def _iter_benchmark_error_records(json_results: list[dict]) -> Iterable[dict]:
+    for province_result in json_results or []:
+        province = province_result.get("province", "")
+        for detail in province_result.get("details", []) or []:
+            if detail.get("is_match"):
+                continue
+            stored_ids = list(detail.get("stored_ids") or [])
+            stored_names = list(detail.get("stored_names") or [])
+            algo_id = str(detail.get("algo_id", "") or "")
+            algo_name = str(detail.get("algo_name", "") or "")
+            cause = str(detail.get("cause", "") or "")
+            yield {
+                "province": province,
+                "cause": cause,
+                "bill_name": str(detail.get("bill_name", "") or ""),
+                "bill_text": str(detail.get("bill_text", "") or ""),
+                "specialty": str(detail.get("specialty", "") or ""),
+                "expected_quota_ids": stored_ids,
+                "expected_quota_names": stored_names,
+                "expected_book": _get_quota_book(stored_ids[0]) if stored_ids else "",
+                "predicted_quota_id": algo_id,
+                "predicted_quota_name": algo_name,
+                "predicted_book": _get_quota_book(algo_id),
+                "confidence": float(detail.get("confidence", 0) or 0),
+                "oracle_in_candidates": bool(detail.get("oracle_in_candidates", False)),
+                "all_candidate_ids": list(detail.get("all_candidate_ids") or []),
+                "retrieved_candidates": _normalize_asset_candidates(
+                    algo_id,
+                    algo_name,
+                    detail.get("alternatives") or [],
+                ),
+                "candidate_snapshots": list(detail.get("candidate_snapshots") or []),
+                "reasoning_decision": detail.get("reasoning_decision", {}),
+                "trace_path": list(detail.get("trace_path") or []),
+                "match_source": str(detail.get("match_source", "") or ""),
+                "no_match_reason": str(detail.get("no_match_reason", "") or ""),
+                "candidate_count": int(detail.get("candidate_count", 0) or 0),
+                "pre_ltr_top1_id": str(detail.get("pre_ltr_top1_id", "") or ""),
+                "post_ltr_top1_id": str(detail.get("post_ltr_top1_id", "") or ""),
+                "post_arbiter_top1_id": str(detail.get("post_arbiter_top1_id", "") or ""),
+                "post_final_top1_id": str(detail.get("post_final_top1_id", "") or ""),
+                "final_changed_by": str(detail.get("final_changed_by", "") or ""),
+                "miss_stage": str(detail.get("miss_stage", "") or ""),
+            }
+
+
+def _build_benchmark_asset_buckets(json_results: list[dict]) -> dict[str, list[dict]]:
+    buckets: dict[str, list[dict]] = {
+        "all_errors": [],
+        "rerank_pairs": [],
+        "synonym_gaps": [],
+        "route_errors": [],
+        "tier_errors": [],
+    }
+    for record in _iter_benchmark_error_records(json_results):
+        buckets["all_errors"].append(record)
+
+        if record["oracle_in_candidates"]:
+            buckets["rerank_pairs"].append({
+                "province": record["province"],
+                "bill_name": record["bill_name"],
+                "bill_text": record["bill_text"],
+                "specialty": record["specialty"],
+                "positive_quota_ids": record["expected_quota_ids"],
+                "positive_quota_names": record["expected_quota_names"],
+                "negative_quota_id": record["predicted_quota_id"],
+                "negative_quota_name": record["predicted_quota_name"],
+                "cause": record["cause"],
+                "retrieved_candidates": record["retrieved_candidates"],
+            })
+
+        if record["cause"] == "synonym_gap":
+            buckets["synonym_gaps"].append(record)
+        elif record["cause"] == "wrong_book":
+            buckets["route_errors"].append(record)
+        elif record["cause"] == "wrong_tier":
+            buckets["tier_errors"].append(record)
+    return buckets
+
+
+def export_benchmark_assets(json_results: list[dict], output_dir: str = "") -> Path | None:
+    if not json_results:
+        return None
+
+    buckets = _build_benchmark_asset_buckets(json_results)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    asset_dir = Path(output_dir) if output_dir else (BENCHMARK_ASSET_ROOT / timestamp)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    file_map = {
+        "all_errors": "all_errors.jsonl",
+        "rerank_pairs": "rerank_pairs.jsonl",
+        "synonym_gaps": "synonym_gaps.jsonl",
+        "route_errors": "route_errors.jsonl",
+        "tier_errors": "tier_errors.jsonl",
+    }
+    manifest = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "output_dir": str(asset_dir),
+        "counts": {},
+        "files": {},
+    }
+
+    for bucket_name, filename in file_map.items():
+        records = buckets.get(bucket_name, [])
+        path = asset_dir / filename
+        with path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        manifest["counts"][bucket_name] = len(records)
+        manifest["files"][bucket_name] = str(path)
+
+    (asset_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return asset_dir
+
+
+def materialize_benchmark_learning_outputs(
+    asset_dir: str | Path,
+    *,
+    knowledge_out: str | Path | None = None,
+    digest_out: str | Path | None = None,
+    digest_md_out: str | Path | None = None,
+    training_out_root: str | Path | None = None,
+) -> dict[str, str]:
+    """将 benchmark 资产同步产出为运行时知识和训练数据。"""
+    from tools.build_benchmark_knowledge import (
+        DEFAULT_DIGEST_MD_OUT_PATH,
+        DEFAULT_DIGEST_OUT_PATH,
+        DEFAULT_OUT_PATH,
+        build_knowledge_digest,
+        build_knowledge_from_asset_root,
+        write_digest,
+        write_digest_markdown,
+        write_knowledge,
+    )
+    from tools.export_benchmark_training_data import (
+        DEFAULT_OUT_ROOT as DEFAULT_TRAIN_OUT_ROOT,
+        export_training_datasets,
+    )
+
+    asset_dir = Path(asset_dir)
+    knowledge = build_knowledge_from_asset_root(asset_dir)
+    knowledge_path = write_knowledge(knowledge, knowledge_out or DEFAULT_OUT_PATH)
+    digest = build_knowledge_digest(knowledge)
+    digest_path = write_digest(digest, digest_out or DEFAULT_DIGEST_OUT_PATH)
+    digest_md_path = write_digest_markdown(digest, digest_md_out or DEFAULT_DIGEST_MD_OUT_PATH)
+    training_manifest_path, _ = export_training_datasets(asset_dir, training_out_root or DEFAULT_TRAIN_OUT_ROOT)
+
+    return {
+        "knowledge_path": str(knowledge_path),
+        "digest_path": str(digest_path),
+        "digest_md_path": str(digest_md_path),
+        "training_manifest_path": str(training_manifest_path),
     }
 
 
@@ -613,11 +860,23 @@ def load_baseline() -> dict | None:
 def _build_json_overall(json_results: list[dict]) -> dict:
     total_items = sum(r.get('total', 0) for r in json_results)
     total_correct = sum(r.get('correct', 0) for r in json_results)
+    total_recall_miss = sum(r.get('recall_miss_count', 0) for r in json_results)
+    total_rank_miss = sum(r.get('rank_miss_count', 0) for r in json_results)
+    total_post_rank_miss = sum(r.get('post_rank_miss_count', 0) for r in json_results)
+    total_oracle_in = sum(r.get('oracle_in_candidates', 0) for r in json_results)
+    weighted_in_pool_num = sum(
+        float(r.get('in_pool_top1_acc', 0.0)) * float(r.get('oracle_in_candidates', 0))
+        for r in json_results
+    )
     hit_rate = round(total_correct / max(total_items, 1) * 100, 1)
     return {
         "total": total_items,
         "correct": total_correct,
         "hit_rate": hit_rate,
+        "recall_miss_count": total_recall_miss,
+        "rank_miss_count": total_rank_miss,
+        "post_rank_miss_count": total_post_rank_miss,
+        "in_pool_top1_acc": round(weighted_in_pool_num / max(total_oracle_in, 1), 4),
     }
 
 
@@ -646,6 +905,10 @@ def _build_by_province_summary(json_results: list[dict],
             "hit_rate": result['hit_rate'],
             "total": result['total'],
             "correct": result['correct'],
+            "in_pool_top1_acc": result.get('in_pool_top1_acc', 0.0),
+            "recall_miss_count": result.get('recall_miss_count', 0),
+            "rank_miss_count": result.get('rank_miss_count', 0),
+            "post_rank_miss_count": result.get('post_rank_miss_count', 0),
             "status": previous_status,
         }
     return summary
@@ -811,6 +1074,8 @@ def main():
     parser.add_argument("--note", default="", help="跑分备注")
     parser.add_argument("--summary-json-out", default="",
                         help="把机器可读摘要写到指定 JSON 文件，供 loop runner 使用")
+    parser.add_argument("--asset-out-dir", default="",
+                        help="export benchmark error assets as JSONL")
     args = parser.parse_args()
 
     if args.show_baseline:
@@ -949,6 +1214,13 @@ def main():
 
     # 保存详细结果（每次都存）
     if json_results:
+        asset_dir = export_benchmark_assets(json_results, args.asset_out_dir)
+        if asset_dir:
+            print(f"\n[ASSET] benchmark assets exported to: {asset_dir}")
+            learning_outputs = materialize_benchmark_learning_outputs(asset_dir)
+            print(f"[ASSET] benchmark knowledge updated: {learning_outputs['knowledge_path']}")
+            print(f"[ASSET] benchmark digest updated: {learning_outputs['digest_path']}")
+            print(f"[ASSET] benchmark training manifest: {learning_outputs['training_manifest_path']}")
         result_file = PAPERS_DIR / '_latest_result.json'
         result_file.write_text(json.dumps({
             'run_time': datetime.now().strftime('%Y-%m-%d %H:%M'),

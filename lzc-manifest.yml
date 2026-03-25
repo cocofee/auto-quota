@@ -35,6 +35,11 @@ services:
       OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       # 远程模式不需要向量搜索和大模型（全部在本地电脑上）
       VECTOR_ENABLED: "false"
+      # 与本机已验证基线保持一致；当前 remote 模式下实际由本机匹配服务生效
+      LTR_V2_ENABLED: "1"
+      LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
+      LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
+      LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
       # Cookie安全配置（懒猫微服通过HTTPS提供服务）
       COOKIE_SECURE: "true"
       COOKIE_SAMESITE: "lax"
@@ -62,6 +67,11 @@ services:
       OPENCLAW_API_KEY: "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
       # 远程模式不需要向量搜索和大模型
       VECTOR_ENABLED: "false"
+      # 与 backend 保持一致，避免后续切回本地匹配模式时配置漂移
+      LTR_V2_ENABLED: "1"
+      LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
+      LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
+      LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
       # 远程匹配模式（和backend保持一致）
       MATCH_BACKEND: "remote"
       LOCAL_MATCH_URL: "http://192.168.1.175:9100"

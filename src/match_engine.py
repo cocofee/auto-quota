@@ -86,6 +86,24 @@ def _log_exp_rule_summary(exp_hits: int, rule_hits: int, total: int):
 # 循环辅助
 # ============================================================
 
+def _top_quota_id(result: dict) -> str:
+    quotas = (result or {}).get("quotas") or []
+    if not quotas:
+        return ""
+    return str(quotas[0].get("quota_id", "") or "").strip()
+
+
+def _mark_stage_top1_change(results: list[dict], stage_name: str):
+    for result in results or []:
+        base_top1 = str(result.get("post_arbiter_top1_id", "") or "")
+        current_top1 = _top_quota_id(result)
+        if not base_top1 or not current_top1 or base_top1 == current_top1:
+            continue
+        if result.get("final_changed_by"):
+            continue
+        result["final_changed_by"] = stage_name
+
+
 def _consume_early_result(results: list[dict], early_result: dict, early_type: str,
                           idx: int, total: int, interval: int,
                           exp_hits: int, rule_hits: int,
@@ -319,8 +337,11 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         "agent_llm",
         candidates=_summarize_candidates_for_trace(candidates),
         reference_cases_count=len(reference_cases or []),
+        reference_case_ids=[str(c.get("record_id", "")) for c in (reference_cases or []) if c.get("record_id") not in (None, "")],
         rules_context_count=len(rules_context or []),
+        rule_context_ids=[str(r.get("id", "")) for r in (rules_context or []) if r.get("id") not in (None, "")],
         method_cards_count=len(relevant_cards or []),
+        method_card_ids=[str(c.get("id", "")) for c in (relevant_cards or []) if c.get("id") not in (None, "")],
         method_card_categories=[c.get("category", "") for c in (relevant_cards or [])],
         reasoning_engaged=bool(reasoning_packet.get("engaged")),
         reasoning_conflicts=reasoning_packet.get("conflict_summaries", []),
@@ -632,6 +653,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
     # 规则后置校验：对搜索出来的结果校验档位，纠正选错的档位
     rule_validator.validate_results(results)
+    _mark_stage_top1_change(results, "rule_validator")
 
     # L3 一致性反思：同类清单定额一致性检查
     try:
@@ -640,14 +662,19 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
+    _mark_stage_top1_change(results, "consistency_checker")
     FinalValidator(province=province).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator")
 
     for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
         _append_trace_step(
             result,
             "final_validate",
             final_source=result.get("match_source", ""),
             final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
             final_validation=result.get("final_validation", {}),
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
@@ -1216,14 +1243,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
+    _mark_stage_top1_change(results, "consistency_checker")
     FinalValidator(province=province).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator")
 
     for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
         _append_trace_step(
             result,
             "final_validate",
             final_source=result.get("match_source", ""),
             final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
             final_validation=result.get("final_validation", {}),
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
