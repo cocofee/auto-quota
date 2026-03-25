@@ -98,7 +98,7 @@ async def _remote_get(path: str, params: dict, timeout: float = 60.0) -> dict:
 @router.get("")
 async def search_quotas(
     keyword: str = Query(description="搜索关键词，多个词用空格分隔（如'管道安装 DN25'）"),
-    province: str = Query(description="省份定额库名称（如'北京2024'）"),
+    province: str = Query(description="省份定额库名称（如'北京市建设工程施工消耗量标准(2024)'）"),
     book: str | None = Query(default=None, description="限定大册（如'C10'表示给排水）"),
     chapter: str | None = Query(default=None, description="限定章节"),
     limit: int = Query(default=20, ge=1, le=100, description="最大返回条数"),
@@ -110,8 +110,8 @@ async def search_quotas(
     返回匹配的定额列表，包含编号、名称、单位等信息。
 
     用法示例:
-        /api/quota-search?keyword=管道安装&province=北京2024
-        /api/quota-search?keyword=镀锌钢管 DN25&province=北京2024&book=C10
+        /api/quota-search?keyword=管道安装&province=北京市建设工程施工消耗量标准(2024)
+        /api/quota-search?keyword=镀锌钢管 DN25&province=北京市建设工程施工消耗量标准(2024)&book=C10
     """
     province = _validate_province(province)
 
@@ -165,7 +165,7 @@ async def get_quota_by_id(
 ):
     """按定额编号精确查询
 
-    用法: /api/quota-search/by-id?quota_id=C10-1-10&province=北京2024
+    用法: /api/quota-search/by-id?quota_id=C10-1-10&province=北京市建设工程施工消耗量标准(2024)
     """
     province = _validate_province(province)
 
@@ -243,8 +243,8 @@ async def smart_search(
     - 智能搜索直接传清单原文，系统自动做术语转换和级联搜索
 
     用法:
-        /api/quota-search/smart?name=JDG20暗配&province=北京2024
-        /api/quota-search/smart?name=PPR给水管&description=DN25沟槽连接&province=北京2024
+        /api/quota-search/smart?name=JDG20暗配&province=北京市建设工程施工消耗量标准(2024)
+        /api/quota-search/smart?name=PPR给水管&description=DN25沟槽连接&province=北京市建设工程施工消耗量标准(2024)
     """
     province = _validate_province(province)
 

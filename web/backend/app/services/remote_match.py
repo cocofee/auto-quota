@@ -8,7 +8,7 @@
     if not client.check_health():
         raise RuntimeError("本地匹配服务未启动")
 
-    match_id = client.submit_match("/path/to/input.xlsx", {"province": "北京2024"})
+    match_id = client.submit_match("/path/to/input.xlsx", {"province": "北京市建设工程施工消耗量标准(2024)"})
     while True:
         prog = client.poll_progress(match_id)
         if prog["status"] != "running":

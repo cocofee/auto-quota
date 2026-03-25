@@ -713,7 +713,7 @@ def smart_search(
 
     参数:
         name: 清单项目名称（如"JDG20暗配"、"PPR给水管DN25"）
-        province: 省份定额库名称（如"北京2024"）
+        province: 省份定额库名称（如"北京市建设工程施工消耗量标准(2024)"）
         description: 清单特征描述（可选，如"沟槽连接 镀锌钢管"）
         specialty: 专业册号（可选，如"C10"，不传则自动识别）
         limit: 最大返回条数
