@@ -1,10 +1,3 @@
-/**
- * Tab4：跑分趋势（核心重构）
- *
- * 原来 111列×188行 的巨型表格，改为：
- * 筛选器 + 折线图 + 分页汇总表（可展开行看详情）+ 运行跑分按钮
- */
-
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Card, Table, Tag, Space, Select, Button, Modal, Input, App, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -14,7 +7,6 @@ import api from '../../../services/api';
 import { TrendArrow, fmtRate } from './utils';
 import type { BenchmarkRecord, DatasetMetrics } from './utils';
 
-/** 带综合指标的跑分记录 */
 interface EnrichedRecord extends BenchmarkRecord {
   overallGreen: number;
   overallRed: number;
@@ -24,11 +16,7 @@ export default function BenchmarkTab() {
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRecord[]>([]);
-
-  // 筛选器状态
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
-
-  // 跑分相关状态
   const [bmRunning, setBmRunning] = useState(false);
   const [bmProgress, setBmProgress] = useState('');
   const [bmModalOpen, setBmModalOpen] = useState(false);
@@ -36,8 +24,10 @@ export default function BenchmarkTab() {
   const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   useEffect(() => {
-    loadData();
-    return () => { if (pollTimer.current) clearInterval(pollTimer.current); };
+    void loadData();
+    return () => {
+      if (pollTimer.current) clearInterval(pollTimer.current);
+    };
   }, []);
 
   const loadData = async () => {
@@ -52,38 +42,32 @@ export default function BenchmarkTab() {
     }
   };
 
-  // 收集所有出现过的数据集名称（用于筛选器下拉选项）
   const allDatasetNames = useMemo(() => {
     const names = new Set<string>();
     for (const record of benchmarkHistory) {
-      if (record.datasets) {
-        for (const dsName of Object.keys(record.datasets)) {
-          names.add(dsName);
-        }
-      }
+      if (!record.datasets) continue;
+      Object.keys(record.datasets).forEach((name) => names.add(name));
     }
     return Array.from(names);
   }, [benchmarkHistory]);
 
-  // 初始化筛选器：默认全选
   useEffect(() => {
     if (allDatasetNames.length > 0 && selectedDatasets.length === 0) {
       setSelectedDatasets(allDatasetNames);
     }
-  }, [allDatasetNames]);
+  }, [allDatasetNames, selectedDatasets.length]);
 
-  // 折线图数据：按选中的数据集过滤
   const chartData = useMemo(() => {
     const points: { date: string; dataset: string; green_rate: number }[] = [];
     const filterSet = new Set(selectedDatasets);
     for (const record of benchmarkHistory) {
       if (!record.datasets) continue;
-      const dateStr = record.date?.split(' ')[0] || '';
-      for (const [dsName, metrics] of Object.entries(record.datasets)) {
-        if (!filterSet.has(dsName)) continue;
+      const date = record.date?.split(' ')[0] || '';
+      for (const [dataset, metrics] of Object.entries(record.datasets)) {
+        if (!filterSet.has(dataset)) continue;
         points.push({
-          date: dateStr,
-          dataset: dsName,
+          date,
+          dataset,
           green_rate: Math.round(metrics.green_rate * 1000) / 10,
         });
       }
@@ -91,63 +75,60 @@ export default function BenchmarkTab() {
     return points;
   }, [benchmarkHistory, selectedDatasets]);
 
-  // 为每条记录计算综合绿率和红率（按 total 加权平均）
   const enrichedHistory = useMemo<EnrichedRecord[]>(() => {
-    return benchmarkHistory.map(record => {
+    return benchmarkHistory.map((record) => {
       const entries = Object.values(record.datasets || {});
-      const totalItems = entries.reduce((s, m) => s + m.total, 0);
-      if (totalItems === 0) return { ...record, overallGreen: 0, overallRed: 0 };
-      const weightedGreen = entries.reduce((s, m) => s + m.green_rate * m.total, 0) / totalItems;
-      const weightedRed = entries.reduce((s, m) => s + m.red_rate * m.total, 0) / totalItems;
+      const totalItems = entries.reduce((sum, item) => sum + item.total, 0);
+      if (totalItems === 0) {
+        return { ...record, overallGreen: 0, overallRed: 0 };
+      }
+      const weightedGreen = entries.reduce((sum, item) => sum + item.green_rate * item.total, 0) / totalItems;
+      const weightedRed = entries.reduce((sum, item) => sum + item.red_rate * item.total, 0) / totalItems;
       return { ...record, overallGreen: weightedGreen, overallRed: weightedRed };
     });
   }, [benchmarkHistory]);
 
-  // 汇总表列定义（精简为5列）
   const summaryColumns: ColumnsType<EnrichedRecord> = [
     {
       title: '#',
       key: '_index',
       width: 50,
       align: 'center',
-      render: (_: unknown, __: EnrichedRecord, index: number) => index + 1,
+      render: (_value, _record, index) => index + 1,
     },
     {
       title: '日期',
       dataIndex: 'date',
       key: 'date',
       width: 120,
-      render: (v: string) => v?.split(' ')[0] || v,
+      render: (value: string) => value?.split(' ')[0] || value,
     },
     {
       title: '备注',
       dataIndex: 'note',
       key: 'note',
       ellipsis: true,
-      render: (v: string) => v || '-',
+      render: (value: string) => value || '-',
     },
     {
       title: '数据集',
       key: 'dsCount',
-      width: 75,
+      width: 80,
       align: 'center',
-      render: (_: unknown, record: EnrichedRecord) => {
-        const count = Object.keys(record.datasets || {}).length;
-        return <Tag>{count}个</Tag>;
-      },
+      render: (_value, record) => <Tag>{Object.keys(record.datasets || {}).length} 个</Tag>,
     },
     {
       title: '综合绿率',
       key: 'overallGreen',
-      width: 110,
+      width: 120,
       align: 'center',
       sorter: (a, b) => a.overallGreen - b.overallGreen,
-      render: (_: unknown, record: EnrichedRecord, index: number) => {
-        const prev = index > 0 ? enrichedHistory[index - 1]?.overallGreen : undefined;
+      render: (_value, record, index) => {
+        const previous = index > 0 ? enrichedHistory[index - 1]?.overallGreen : undefined;
         return (
           <span>
             <Tag color="green" style={{ margin: 0 }}>{fmtRate(record.overallGreen)}</Tag>
-            <TrendArrow current={record.overallGreen} previous={prev} higherIsBetter />
+            <TrendArrow current={record.overallGreen} previous={previous} higherIsBetter />
           </span>
         );
       },
@@ -155,11 +136,11 @@ export default function BenchmarkTab() {
     {
       title: '综合红率',
       key: 'overallRed',
-      width: 110,
+      width: 120,
       align: 'center',
       sorter: (a, b) => a.overallRed - b.overallRed,
-      render: (_: unknown, record: EnrichedRecord, index: number) => {
-        const prev = index > 0 ? enrichedHistory[index - 1]?.overallRed : undefined;
+      render: (_value, record, index) => {
+        const previous = index > 0 ? enrichedHistory[index - 1]?.overallRed : undefined;
         return (
           <span>
             <Tag
@@ -168,14 +149,13 @@ export default function BenchmarkTab() {
             >
               {fmtRate(record.overallRed)}
             </Tag>
-            <TrendArrow current={record.overallRed} previous={prev} higherIsBetter={false} />
+            <TrendArrow current={record.overallRed} previous={previous} higherIsBetter={false} />
           </span>
         );
       },
     },
   ];
 
-  // 展开行：该次跑分各数据集的详细指标
   const expandedRowRender = (record: EnrichedRecord) => {
     const datasets = Object.entries(record.datasets || {}).map(([name, metrics]) => ({
       key: name,
@@ -187,26 +167,46 @@ export default function BenchmarkTab() {
       { title: '数据集', dataIndex: 'name', key: 'name', width: 200 },
       { title: '条数', dataIndex: 'total', key: 'total', width: 70, align: 'center' },
       {
-        title: '绿率', dataIndex: 'green_rate', key: 'green_rate', width: 80, align: 'center',
-        render: (v: number) => <Tag color="green">{fmtRate(v)}</Tag>,
+        title: '绿率',
+        dataIndex: 'green_rate',
+        key: 'green_rate',
+        width: 80,
+        align: 'center',
+        render: (value: number) => <Tag color="green">{fmtRate(value)}</Tag>,
       },
       {
-        title: '黄率', dataIndex: 'yellow_rate', key: 'yellow_rate', width: 80, align: 'center',
-        render: (v: number) => <Tag color="orange">{fmtRate(v)}</Tag>,
+        title: '黄率',
+        dataIndex: 'yellow_rate',
+        key: 'yellow_rate',
+        width: 80,
+        align: 'center',
+        render: (value: number) => <Tag color="orange">{fmtRate(value)}</Tag>,
       },
       {
-        title: '红率', dataIndex: 'red_rate', key: 'red_rate', width: 80, align: 'center',
-        render: (v: number) => (
-          <Tag color={v > 0.05 ? 'red' : v > 0 ? 'orange' : 'green'}>{fmtRate(v)}</Tag>
+        title: '红率',
+        dataIndex: 'red_rate',
+        key: 'red_rate',
+        width: 80,
+        align: 'center',
+        render: (value: number) => (
+          <Tag color={value > 0.05 ? 'red' : value > 0 ? 'orange' : 'green'}>{fmtRate(value)}</Tag>
         ),
       },
       {
-        title: '经验命中', dataIndex: 'exp_hit_rate', key: 'exp_hit_rate', width: 90, align: 'center',
-        render: (v: number) => fmtRate(v),
+        title: '经验命中',
+        dataIndex: 'exp_hit_rate',
+        key: 'exp_hit_rate',
+        width: 90,
+        align: 'center',
+        render: (value: number) => fmtRate(value),
       },
       {
-        title: '耗时', dataIndex: 'avg_time_sec', key: 'avg_time_sec', width: 80, align: 'center',
-        render: (v: number) => v ? `${v.toFixed(1)}s` : '-',
+        title: '平均耗时',
+        dataIndex: 'avg_time_sec',
+        key: 'avg_time_sec',
+        width: 90,
+        align: 'center',
+        render: (value: number) => (value ? `${value.toFixed(1)}s` : '-'),
       },
     ];
 
@@ -221,33 +221,31 @@ export default function BenchmarkTab() {
     );
   };
 
-  /** 轮询跑分任务状态 */
   const pollBenchmarkStatus = useCallback((taskId: string) => {
     pollTimer.current = setInterval(async () => {
       try {
         const res = await api.get(`/admin/analytics/benchmark-status/${taskId}`);
         const { state, progress, result, error } = res.data;
         if (state === 'PROGRESS' && progress) {
-          setBmProgress(`正在跑 ${progress.dataset} (${progress.current + 1}/${progress.total})`);
+          setBmProgress(`正在跑 ${progress.dataset}（${progress.current + 1}/${progress.total}）`);
         } else if (state === 'SUCCESS') {
           clearInterval(pollTimer.current!);
           setBmRunning(false);
           setBmProgress('');
           message.success(result?.message || '跑分完成');
-          loadData(); // 重新加载跑分历史
+          void loadData();
         } else if (state === 'FAILURE') {
           clearInterval(pollTimer.current!);
           setBmRunning(false);
           setBmProgress('');
-          message.error(`跑分失败: ${error || '未知错误'}`);
+          message.error(`跑分失败：${error || '未知错误'}`);
         }
       } catch {
-        // 网络错误不终止轮询
+        // 保持轮询，忽略瞬时网络错误
       }
     }, 3000);
   }, [message]);
 
-  /** 确认并启动跑分 */
   const startBenchmark = async () => {
     setBmModalOpen(false);
     setBmRunning(true);
@@ -268,7 +266,6 @@ export default function BenchmarkTab() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {/* 筛选器 */}
       <Card size="small">
         <Space wrap>
           <span style={{ color: '#666' }}>数据集筛选：</span>
@@ -276,10 +273,10 @@ export default function BenchmarkTab() {
             mode="multiple"
             value={selectedDatasets}
             onChange={setSelectedDatasets}
-            style={{ minWidth: 300 }}
+            style={{ minWidth: 320 }}
             maxTagCount={3}
             placeholder="选择要对比的数据集"
-            options={allDatasetNames.map(name => ({ value: name, label: name }))}
+            options={allDatasetNames.map((name) => ({ value: name, label: name }))}
             allowClear
           />
         </Space>
@@ -288,7 +285,7 @@ export default function BenchmarkTab() {
       {benchmarkHistory.length === 0 ? (
         <Card
           loading={loading}
-          extra={
+          extra={(
             <Button
               type="primary"
               icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
@@ -298,17 +295,16 @@ export default function BenchmarkTab() {
             >
               {bmRunning ? '跑分中...' : '运行跑分'}
             </Button>
-          }
+          )}
         >
           <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>
-            暂无跑分历史数据
+            还没有跑分历史
             <br />
-            <span style={{ fontSize: 12 }}>点击右上角"运行跑分"按钮开始第一次跑分</span>
+            <span style={{ fontSize: 12 }}>需要时再运行一次跑分，这里才会开始显示趋势。</span>
           </div>
         </Card>
       ) : (
         <>
-          {/* 折线图：各数据集绿率趋势 */}
           <Card title="绿率趋势" loading={loading}>
             <Line
               data={chartData}
@@ -319,11 +315,11 @@ export default function BenchmarkTab() {
               axis={{
                 x: {
                   labelAutoRotate: true,
-                  label: { formatter: (v: string) => v.slice(5) },
+                  label: { formatter: (value: string) => value.slice(5) },
                 },
                 y: {
                   title: '绿率 %',
-                  labelFormatter: (v: number) => `${v}%`,
+                  labelFormatter: (value: number) => `${value}%`,
                 },
               }}
               style={{ lineWidth: 2 }}
@@ -333,18 +329,17 @@ export default function BenchmarkTab() {
             />
           </Card>
 
-          {/* 汇总表格（精简5列 + 可展开行） */}
           <Card
             title="跑分明细"
             loading={loading}
-            extra={
+            extra={(
               <Space>
-                {bmRunning && (
+                {bmRunning ? (
                   <span style={{ fontSize: 12, color: '#1677ff' }}>
                     <LoadingOutlined style={{ marginRight: 4 }} />
                     {bmProgress}
                   </span>
-                )}
+                ) : null}
                 <Button
                   type="primary"
                   icon={bmRunning ? <LoadingOutlined /> : <PlayCircleOutlined />}
@@ -355,14 +350,14 @@ export default function BenchmarkTab() {
                   {bmRunning ? '跑分中...' : '运行跑分'}
                 </Button>
               </Space>
-            }
+            )}
           >
             <Table
-              rowKey={(_, index) => String(index)}
+              rowKey={(_record, index) => String(index)}
               dataSource={enrichedHistory}
               columns={summaryColumns}
               size="small"
-              pagination={{ pageSize: 20, showSizeChanger: true, showTotal: total => `共 ${total} 条` }}
+              pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
               expandable={{
                 expandedRowRender,
                 rowExpandable: (record) => Object.keys(record.datasets || {}).length > 0,
@@ -371,18 +366,17 @@ export default function BenchmarkTab() {
                     <Tooltip title="点击查看各数据集详情">
                       <InfoCircleOutlined
                         style={{ color: expanded ? '#1677ff' : '#999', cursor: 'pointer' }}
-                        onClick={e => onExpand(record, e)}
+                        onClick={(event) => onExpand(record, event)}
                       />
                     </Tooltip>
                   ) : null,
               }}
-              locale={{ emptyText: '暂无数据' }}
+              locale={{ emptyText: '暂时没有可展示的跑分记录' }}
             />
           </Card>
         </>
       )}
 
-      {/* 跑分确认弹窗 */}
       <Modal
         title="运行跑分"
         open={bmModalOpen}
@@ -392,12 +386,12 @@ export default function BenchmarkTab() {
         cancelText="取消"
       >
         <p style={{ color: '#666', marginBottom: 12 }}>
-          将对所有可用的测试数据集运行一次完整跑分，耗时约5-15分钟。
+          将对所有可用测试数据集运行一次完整跑分，通常需要 5 到 15 分钟。
         </p>
         <Input
-          placeholder="这次改了什么？（选填，如：优化了管道参数匹配）"
+          placeholder="这次改了什么？可选，例如：优化了管道参数匹配"
           value={bmNote}
-          onChange={e => setBmNote(e.target.value)}
+          onChange={(event) => setBmNote(event.target.value)}
           onPressEnter={startBenchmark}
         />
       </Modal>

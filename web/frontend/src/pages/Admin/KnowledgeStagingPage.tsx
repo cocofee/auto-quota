@@ -27,6 +27,7 @@ import {
   StopOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { repairMojibakeText } from '../../utils/text';
 
 interface StagingHealth {
   ok: boolean;
@@ -366,7 +367,7 @@ function statusViewToStatuses(view: PromotionStatusView): string {
 
 function getLabel(value: string | undefined, mapping: Record<string, string>) {
   const normalized = String(value || '').trim();
-  return mapping[normalized] || normalized || '-';
+  return repairMojibakeText(mapping[normalized] || normalized || '-', true) || '-';
 }
 
 function formatDateTime(ts?: number) {
@@ -418,10 +419,10 @@ function getPayloadValue(payload: Record<string, unknown> | undefined, keys: str
 
 function toDisplayText(value: unknown) {
   if (value === undefined || value === null || value === '') return '-';
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return repairMojibakeText(value, true) || value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   try {
-    return JSON.stringify(value, null, 2);
+    return repairMojibakeText(JSON.stringify(value, null, 2), true) || JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
@@ -1038,6 +1039,16 @@ export default function KnowledgeStagingPage() {
     </Card>
   );
 
+  const healthSummaryText = healthReport
+    ? (healthReport.summary.rolled_back_promotions > 0 || healthReport.summary.source_conflict_groups > 0
+      ? `目前有 ${healthReport.summary.rolled_back_promotions} 条回退、${healthReport.summary.source_conflict_groups} 组冲突，建议先处理队列，再回来看异常。`
+      : `目前没有明显污染信号。还有 ${healthReport.summary.stale_pending_promotions} 条滞留候选、${healthReport.summary.inactive_formal_total} 条正式层失活项，按需查看即可。`)
+    : (secondaryLoading ? '正在补充异常分析...' : secondaryError || '目前没有需要你优先关注的异常信号。');
+
+  const knowledgeImpactSummaryText = knowledgeImpact
+    ? `近 7 天共命中 ${knowledgeImpact.summary.last_7d_hits} 次，直接命中 ${knowledgeImpact.summary.last_7d_direct} 次，覆盖 ${knowledgeImpact.summary.last_7d_runs} 个任务。`
+    : (secondaryLoading ? '正在补充使用效果分析...' : secondaryError || '目前还没有足够的使用效果数据。');
+
   return (
     <>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -1107,7 +1118,10 @@ export default function KnowledgeStagingPage() {
         >
           {healthReport ? (
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <Row gutter={[16, 16]}>
+              <Typography.Text type="secondary">{healthSummaryText}</Typography.Text>
+              {showHealthDetails ? (
+                <>
+                  <Row gutter={[16, 16]}>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="滞留候选" value={healthReport.summary.stale_pending_promotions} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="已回退" value={healthReport.summary.rolled_back_promotions} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="来源冲突组" value={healthReport.summary.source_conflict_groups} /></Card></Col>
@@ -1118,6 +1132,8 @@ export default function KnowledgeStagingPage() {
                   ? '目前有回退或冲突信号，建议先处理队列，再回来复查这里。'
                   : '目前没有明显污染信号，这里按需查看即可。'}
               </Typography.Text>
+                </>
+              ) : null}
               {showHealthDetails ? (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <div>
@@ -1159,13 +1175,18 @@ export default function KnowledgeStagingPage() {
         >
           {knowledgeImpact ? (
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <Row gutter={[16, 16]}>
+              <Typography.Text type="secondary">{knowledgeImpactSummaryText}</Typography.Text>
+              {showKnowledgeImpact ? (
+                <>
+                  <Row gutter={[16, 16]}>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天命中" value={knowledgeImpact.summary.last_7d_hits} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天直接命中" value={knowledgeImpact.summary.last_7d_direct} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天任务数" value={knowledgeImpact.summary.last_7d_runs} /></Card></Col>
                 <Col xs={12} md={6}><Card size="small"><Statistic title="7天结果数" value={knowledgeImpact.summary.last_7d_results} /></Card></Col>
               </Row>
               <Typography.Text type="secondary">这块更像分析层，不是第一操作层。需要复盘时再展开看。</Typography.Text>
+                </>
+              ) : null}
               {showKnowledgeImpact ? (
                 <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                   <div>

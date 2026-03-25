@@ -74,9 +74,9 @@ const router = createBrowserRouter([
           </RequireAdmin>
         ),
       },
-      { path: 'admin/batch', element: <Navigate to="/admin?tab=error" replace /> },
-      { path: 'admin/data', element: <Navigate to="/admin?tab=error" replace /> },
-      { path: 'admin/error-analysis', element: <Navigate to="/admin?tab=error" replace /> },
+      { path: 'admin/batch', element: <Navigate to="/admin?tab=analytics" replace /> },
+      { path: 'admin/data', element: <Navigate to="/admin?tab=analytics" replace /> },
+      { path: 'admin/error-analysis', element: <Navigate to="/admin?tab=analytics" replace /> },
       { path: 'admin/analytics', element: <Navigate to="/admin?tab=analytics" replace /> },
       { path: 'admin/experience', element: <Navigate to="/admin?tab=experience" replace /> },
       {
