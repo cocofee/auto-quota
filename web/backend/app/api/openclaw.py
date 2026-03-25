@@ -23,7 +23,7 @@ from app.api import quota_search as quota_search_api
 from app.api import results as results_api
 from app.api import tasks as tasks_api
 from app.api.shared import get_user_task
-from app.auth.openclaw import get_openclaw_service_user
+from app.auth.openclaw import get_openclaw_read_user, get_openclaw_service_user
 from app.auth.permissions import require_admin
 from app.config import OPENCLAW_API_KEY, OPENCLAW_SERVICE_EMAIL, OPENCLAW_SERVICE_NICKNAME
 from app.database import get_db
@@ -389,8 +389,8 @@ async def create_promotion_card(
 
 
 @router.get("/provinces")
-async def list_provinces(service_user: User = Depends(get_openclaw_service_user)):
-    return await quota_search_api.list_search_provinces(user=service_user)
+async def list_provinces(reader: User = Depends(get_openclaw_read_user)):
+    return await quota_search_api.list_search_provinces(user=reader)
 
 
 @router.get("/quota-search")
@@ -400,7 +400,7 @@ async def search_quotas(
     book: str | None = Query(default=None, description="册号"),
     chapter: str | None = Query(default=None, description="章节"),
     limit: int = Query(default=20, ge=1, le=100, description="最大返回条数"),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await quota_search_api.search_quotas(
         keyword=keyword,
@@ -408,7 +408,7 @@ async def search_quotas(
         book=book,
         chapter=chapter,
         limit=limit,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -416,12 +416,12 @@ async def search_quotas(
 async def get_quota_by_id(
     quota_id: str = Query(description="定额编号"),
     province: str = Query(description="省份定额库名称"),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await quota_search_api.get_quota_by_id(
         quota_id=quota_id,
         province=province,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -432,7 +432,7 @@ async def smart_search(
     description: str = Query(default="", description="补充描述"),
     specialty: str = Query(default="", description="专业册号"),
     limit: int = Query(default=10, ge=1, le=50, description="最大返回条数"),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await quota_search_api.smart_search(
         name=name,
@@ -440,7 +440,7 @@ async def smart_search(
         description=description,
         specialty=specialty,
         limit=limit,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -474,16 +474,16 @@ async def list_tasks(
     status_filter: str | None = Query(default=None),
     created_after: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await tasks_api.list_tasks(
         page=page,
         size=size,
         status_filter=status_filter,
         created_after=created_after,
-        all_users=False,
+        all_users=True,
         db=db,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -491,12 +491,12 @@ async def list_tasks(
 async def get_task(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await tasks_api.get_task(
         task_id=task_id,
         db=db,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -504,12 +504,12 @@ async def get_task(
 async def list_results(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await results_api.list_results(
         task_id=task_id,
         db=db,
-        user=service_user,
+        user=reader,
     )
 
 
@@ -517,9 +517,9 @@ async def list_results(
 async def list_review_items(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
-    await get_user_task(task_id, service_user, db)
+    await get_user_task(task_id, reader, db)
     result = await db.execute(
         select(MatchResult)
         .where(MatchResult.task_id == task_id)
@@ -552,13 +552,13 @@ async def get_result(
     task_id: uuid.UUID,
     result_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    service_user: User = Depends(get_openclaw_service_user),
+    reader: User = Depends(get_openclaw_read_user),
 ):
     return await results_api.get_result(
         task_id=task_id,
         result_id=result_id,
         db=db,
-        user=service_user,
+        user=reader,
     )
 
 
