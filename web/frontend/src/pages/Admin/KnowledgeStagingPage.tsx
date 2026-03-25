@@ -286,6 +286,7 @@ const CANDIDATE_TYPE_LABELS: Record<string, string> = {
 const SOURCE_TABLE_LABELS: Record<string, string> = {
   audit_errors: '错因记录',
   match_results: '匹配结果',
+  openclaw_manual_cards: 'OpenClaw 独立卡片',
 };
 
 const MATCH_SOURCE_LABELS: Record<string, string> = {
@@ -329,12 +330,14 @@ const PROMOTION_TYPE_OPTIONS = [
   { label: '规则', value: 'rule' },
   { label: '方法', value: 'method' },
   { label: '经验', value: 'experience' },
+  { label: '通用知识', value: 'universal' },
 ];
 
 const SOURCE_TABLE_OPTIONS = [
   { label: '全部来源', value: 'all' },
   { label: '错因记录', value: 'audit_errors' },
   { label: '匹配结果', value: 'match_results' },
+  { label: 'OpenClaw 独立卡片', value: 'openclaw_manual_cards' },
 ];
 
 const AUDIT_MATCH_SOURCE_OPTIONS = [
@@ -402,6 +405,46 @@ function buildAuditEmptyDescription() {
   return '当前没有发现需要你处理的错因';
 }
 
+function getPayloadValue(payload: Record<string, unknown> | undefined, keys: string[]) {
+  if (!payload) return undefined;
+  for (const key of keys) {
+    const value = payload[key];
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function toDisplayText(value: unknown) {
+  if (value === undefined || value === null || value === '') return '-';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toDisplayList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    return trimmed
+      .split(/[\n,，;；]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (value === undefined || value === null) return [];
+  return [String(value)];
+}
+
 export default function KnowledgeStagingPage() {
   const { message } = App.useApp();
   const requestRef = useRef(0);
@@ -422,6 +465,8 @@ export default function KnowledgeStagingPage() {
   const [auditErrors, setAuditErrors] = useState<AuditErrorItem[]>([]);
   const [selectedAuditError, setSelectedAuditError] = useState<AuditErrorItem | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
+  const [selectedPromotion, setSelectedPromotion] = useState<PromotionItem | null>(null);
+  const [promotionDrawerOpen, setPromotionDrawerOpen] = useState(false);
   const [knowledgeObjectDetail, setKnowledgeObjectDetail] = useState<KnowledgeObjectDetail | null>(null);
   const [knowledgeObjectDrawerOpen, setKnowledgeObjectDrawerOpen] = useState(false);
   const [knowledgeObjectLoading, setKnowledgeObjectLoading] = useState(false);
@@ -637,8 +682,9 @@ export default function KnowledgeStagingPage() {
       });
       message.success('已执行晋升');
       await loadData();
-    } catch {
-      message.error('执行晋升失败');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      message.error(detail ? `执行晋升失败：${detail}` : '执行晋升失败');
     }
   };
 
@@ -654,11 +700,30 @@ export default function KnowledgeStagingPage() {
     }
   };
 
+  const openPromotionDetail = (record: PromotionItem) => {
+    setSelectedPromotion(record);
+    setPromotionDrawerOpen(true);
+  };
+
   const pendingCount = (stats?.promotion_status_counts.draft || 0) + (stats?.promotion_status_counts.reviewing || 0);
   const approvedCount = stats?.promotion_status_counts.approved || 0;
   const rolledBackCount = stats?.promotion_status_counts.rolled_back || 0;
   const rejectedCount = stats?.promotion_status_counts.rejected || 0;
   const shouldPrioritizeQueue = pendingCount > 0;
+  const selectedPromotionPayload = selectedPromotion?.candidate_payload || {};
+  const selectedPromotionOriginalProblem = getPayloadValue(selectedPromotionPayload, ['original_problem', 'originalProblem', 'question', 'problem', 'raw_problem']);
+  const selectedPromotionConclusion = getPayloadValue(selectedPromotionPayload, ['final_conclusion', 'finalConclusion', 'conclusion', 'answer', 'decision']);
+  const selectedPromotionJudgmentBasis = getPayloadValue(selectedPromotionPayload, ['judgment_basis', 'judgmentBasis', 'basis', 'rationale', 'decision_basis']);
+  const selectedPromotionExclusionReasons = toDisplayList(
+    getPayloadValue(selectedPromotionPayload, ['exclusion_reasons', 'exclusionReasons', 'excluded_reasons', 'rejected_reasons', 'exclude_reasons']),
+  );
+  const selectedPromotionKnowledgePoints = toDisplayList(
+    getPayloadValue(selectedPromotionPayload, ['core_knowledge_points', 'coreKnowledgePoints', 'knowledge_points', 'key_points', 'points']),
+  );
+  const selectedPromotionSuggestedType = getPayloadValue(selectedPromotionPayload, ['suggested_promotion_type', 'suggestedPromotionType', 'promotion_type', 'suggested_type']);
+  const selectedPromotionTags = toDisplayList(getPayloadValue(selectedPromotionPayload, ['tags', 'labels']));
+  const selectedPromotionSource = getPayloadValue(selectedPromotionPayload, ['source', 'source_name', 'source_label']);
+  const selectedPromotionCardId = getPayloadValue(selectedPromotionPayload, ['card_id', 'cardId', 'id']);
 
   const promotionColumns: ColumnsType<PromotionItem> = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 70 },
@@ -725,6 +790,9 @@ export default function KnowledgeStagingPage() {
         const linkedAuditId = getAuditErrorIdFromSource(record.source_table, record.source_record_id);
         return (
           <Space wrap>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => openPromotionDetail(record)}>
+              详情
+            </Button>
             <Button size="small" icon={<EyeOutlined />} onClick={() => linkedAuditId ? void openAuditErrorDetail(linkedAuditId) : message.warning('这条候选没有关联错因记录')}>
               看依据
             </Button>
@@ -1118,6 +1186,131 @@ export default function KnowledgeStagingPage() {
           )}
         </Card>
       </Space>
+
+      <Drawer
+        title={selectedPromotion ? `候选详情 #${selectedPromotion.id}` : '候选详情'}
+        width={860}
+        open={promotionDrawerOpen}
+        onClose={() => {
+          setPromotionDrawerOpen(false);
+          setSelectedPromotion(null);
+        }}
+      >
+        {!selectedPromotion ? (
+          <Empty description="暂无可查看的候选详情" />
+        ) : (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Descriptions column={2} bordered size="small">
+              <Descriptions.Item label="候选标题" span={2}>
+                {selectedPromotion.candidate_title || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="候选类型">
+                <Tag>{getLabel(selectedPromotion.candidate_type, CANDIDATE_TYPE_LABELS)}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="目标层">
+                <Tag>{getLabel(selectedPromotion.target_layer, TARGET_LAYER_LABELS)}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="当前状态">
+                {renderStatusTag(selectedPromotion.status)}
+              </Descriptions.Item>
+              <Descriptions.Item label="审核状态">
+                {renderStatusTag(selectedPromotion.review_status)}
+              </Descriptions.Item>
+              <Descriptions.Item label="来源">
+                {getLabel(selectedPromotion.source_table, SOURCE_TABLE_LABELS)}
+              </Descriptions.Item>
+              <Descriptions.Item label="card_id">
+                {toDisplayText(selectedPromotionCardId !== undefined ? selectedPromotionCardId : selectedPromotion.source_record_id)}
+              </Descriptions.Item>
+              <Descriptions.Item label="source">
+                {toDisplayText(selectedPromotionSource !== undefined ? selectedPromotionSource : selectedPromotion.source_table)}
+              </Descriptions.Item>
+              <Descriptions.Item label="evidence_ref">
+                {toDisplayText(getPayloadValue(selectedPromotionPayload, ['evidence_ref']) ?? '-')}
+              </Descriptions.Item>
+              <Descriptions.Item label="审核备注" span={2}>
+                {selectedPromotion.review_comment || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Card size="small" title="原始问题">
+              <div style={{ whiteSpace: 'pre-wrap' }}>
+                {toDisplayText(selectedPromotionOriginalProblem !== undefined ? selectedPromotionOriginalProblem : selectedPromotion.candidate_summary)}
+              </div>
+            </Card>
+
+            <Card size="small" title="定案结论">
+              <div style={{ whiteSpace: 'pre-wrap' }}>
+                {toDisplayText(selectedPromotionConclusion !== undefined ? selectedPromotionConclusion : selectedPromotion.candidate_summary)}
+              </div>
+            </Card>
+
+            <Card size="small" title="判断依据">
+              <div style={{ whiteSpace: 'pre-wrap' }}>
+                {toDisplayText(selectedPromotionJudgmentBasis)}
+              </div>
+            </Card>
+
+            <Card size="small" title="排除理由">
+              {selectedPromotionExclusionReasons.length > 0 ? (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {selectedPromotionExclusionReasons.map((item, index) => (
+                    <div key={`${item}-${index}`} style={{ whiteSpace: 'pre-wrap' }}>
+                      {index + 1}. {item}
+                    </div>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">暂无排除理由</Typography.Text>
+              )}
+            </Card>
+
+            <Card size="small" title="核心知识点">
+              {selectedPromotionKnowledgePoints.length > 0 ? (
+                <Space wrap>
+                  {selectedPromotionKnowledgePoints.map((item) => (
+                    <Tag key={item} color="blue">
+                      {item}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">暂无核心知识点</Typography.Text>
+              )}
+            </Card>
+
+            <Card size="small" title="建议晋升类型">
+              <Space wrap>
+                <Tag color="purple">
+                  {toDisplayText(selectedPromotionSuggestedType !== undefined ? selectedPromotionSuggestedType : getLabel(selectedPromotion.candidate_type, CANDIDATE_TYPE_LABELS))}
+                </Tag>
+                <Tag color="geekblue">{getLabel(selectedPromotion.target_layer, TARGET_LAYER_LABELS)}</Tag>
+              </Space>
+            </Card>
+
+            <Card size="small" title="标签">
+              {selectedPromotionTags.length > 0 ? (
+                <Space wrap>
+                  {selectedPromotionTags.map((tag) => (
+                    <Tag key={tag}>{tag}</Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">暂无标签</Typography.Text>
+              )}
+            </Card>
+
+            <Card size="small" title="查看原始 JSON">
+              <details>
+                <summary style={{ cursor: 'pointer', color: '#2563eb' }}>展开原始 candidate_payload</summary>
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
+                  {JSON.stringify(selectedPromotion.candidate_payload || {}, null, 2)}
+                </pre>
+              </details>
+            </Card>
+          </Space>
+        )}
+      </Drawer>
 
       <Drawer
         title={selectedAuditError ? `错因 #${selectedAuditError.id}` : '错因详情'}
