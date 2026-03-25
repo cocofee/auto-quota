@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -61,6 +62,80 @@ def _heuristic_bucket(case: dict) -> str:
     return "other_recall"
 
 
+_PARAM_RE = re.compile(
+    r"(DN\d+|\d+(?:\.\d+)?\s*(?:mm|mm2|mm²|m2|m²|m|kV|KV|kW|KW|A|台|个|点|回路|kg|t|吨))",
+    re.IGNORECASE,
+)
+_LATIN_OR_DIGIT_RE = re.compile(r"[A-Za-z]+|\d+")
+_NONSTANDARD_HINT_RE = re.compile(
+    r"\b(?:PVC|UPVC|PE|PPR|JDG|KBG|SC|RC|WC|BV|BVR|YJV|86盒|86)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_name(text: str) -> str:
+    text = str(text or "").lower()
+    text = _PARAM_RE.sub(" ", text)
+    text = re.sub(r"[\(\)\[\]（）【】/\\,，、;；:+*×xX\-_.]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _char_bigrams(text: str) -> set[str]:
+    compact = re.sub(r"\s+", "", _normalize_name(text))
+    if len(compact) < 2:
+        return {compact} if compact else set()
+    return {compact[i : i + 2] for i in range(len(compact) - 1)}
+
+
+def _bigram_jaccard(left: str, right: str) -> float:
+    lset = _char_bigrams(left)
+    rset = _char_bigrams(right)
+    if not lset or not rset:
+        return 0.0
+    return len(lset & rset) / len(lset | rset)
+
+
+def _token_count(text: str) -> int:
+    normalized = _normalize_name(text)
+    latin_or_digit = _LATIN_OR_DIGIT_RE.findall(normalized)
+    chinese_parts = re.findall(r"[\u4e00-\u9fff]+", normalized)
+    chinese_tokens = []
+    for part in chinese_parts:
+        if len(part) <= 2:
+            chinese_tokens.append(part)
+        else:
+            chinese_tokens.extend([part[i : i + 2] for i in range(0, len(part), 2)])
+    return len([token for token in [*latin_or_digit, *chinese_tokens] if token])
+
+
+def _has_param_signal(text: str) -> bool:
+    return bool(_PARAM_RE.search(str(text or "")))
+
+
+def _synonym_subtype(case: dict) -> str:
+    bill_name = str(case.get("bill_name") or case.get("bill_text") or "")
+    expected_names = case.get("expected_quota_names") or []
+    oracle_name = str(expected_names[0] if expected_names else "")
+    jaccard = _bigram_jaccard(bill_name, oracle_name)
+    token_count = _token_count(bill_name)
+    has_param = _has_param_signal(bill_name) or _has_param_signal(case.get("bill_text"))
+
+    if token_count <= 3 and not has_param:
+        return "type3_too_generic"
+    if jaccard > 0.30:
+        return "type2_hypernym_standard"
+    if jaccard < 0.08 and (
+        _NONSTANDARD_HINT_RE.search(bill_name)
+        or bool(_LATIN_OR_DIGIT_RE.search(bill_name))
+        or any(ch in bill_name for ch in ("#", "@", "㎡", "Φ"))
+    ):
+        return "type4_nonstandard_alias"
+    if jaccard < 0.08:
+        return "type1_pure_synonym"
+    return "mixed_or_unclear"
+
+
 def _sample_cases(cases: list[dict], sample_size: int, seed: int) -> list[dict]:
     if len(cases) <= sample_size:
         return list(cases)
@@ -103,6 +178,10 @@ def main() -> None:
     count_bucket_counter = Counter(_candidate_count_bucket(case) for case in recall_misses)
     heuristic_counter = Counter(_heuristic_bucket(case) for case in recall_misses)
     specialty_counter = Counter(str(case.get("specialty") or "") for case in recall_misses)
+    synonym_cases = [case for case in recall_misses if str(case.get("cause") or "") == "synonym_gap"]
+    synonym_subtype_counter = Counter(_synonym_subtype(case) for case in synonym_cases)
+    path_hijack_cases = [case for case in recall_misses if _heuristic_bucket(case) == "path_hijack"]
+    path_hijack_trace_counter = Counter(_trace_key(case) for case in path_hijack_cases)
 
     _print_counter("By Province", province_counter, len(recall_misses), limit=20)
     _print_counter("By Cause", cause_counter, len(recall_misses))
@@ -110,6 +189,8 @@ def main() -> None:
     _print_counter("By Candidate Count", count_bucket_counter, len(recall_misses))
     _print_counter("By Heuristic Bucket", heuristic_counter, len(recall_misses))
     _print_counter("By Specialty", specialty_counter, len(recall_misses), limit=20)
+    _print_counter("Synonym Gap Subtypes", synonym_subtype_counter, len(synonym_cases))
+    _print_counter("Path Hijack Trace", path_hijack_trace_counter, len(path_hijack_cases))
 
     bucketed_cases: dict[str, list[dict]] = defaultdict(list)
     for case in recall_misses:
