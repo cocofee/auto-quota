@@ -10,9 +10,9 @@
  */
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination,
+  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -28,7 +28,7 @@ import {
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import {
-  COLORS, GREEN_THRESHOLD, YELLOW_THRESHOLD,
+  COLORS, GREEN_THRESHOLD,
   resolveLightStatus,
   getBillRowBgColor as _getBillRowBgColor,
   getConfidenceTextColor,
@@ -48,6 +48,14 @@ const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
   pending: { color: 'default', text: '待审核' },
   confirmed: { color: 'success', text: '已确认' },
   corrected: { color: 'processing', text: '已纠正' },
+};
+
+const OPENCLAW_REVIEW_MAP: Record<string, { color: string; text: string }> = {
+  pending: { color: 'default', text: 'OpenClaw 未提交建议' },
+  reviewed: { color: 'orange', text: 'OpenClaw 已提交建议，待人工确认' },
+  approved: { color: 'blue', text: 'OpenClaw 建议已确认通过' },
+  rejected: { color: 'red', text: 'OpenClaw 建议已人工驳回' },
+  applied: { color: 'processing', text: 'OpenClaw 建议已应用' },
 };
 
 // ============================================================
@@ -188,9 +196,21 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
 export default function ResultsPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { message, modal } = App.useApp();
   const { user } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
+  const targetResultId = searchParams.get('result_id') || '';
+  const stagingContext = useMemo(() => {
+    if (searchParams.get('source') !== 'knowledge-staging') return null;
+    return {
+      sourceLabel: searchParams.get('source_label') || '知识晋升候选',
+      candidateTitle: searchParams.get('candidate_title') || '',
+      candidateType: searchParams.get('candidate_type') || '',
+      errorType: searchParams.get('error_type') || '',
+      returnTo: searchParams.get('return_to') || '/admin?tab=staging',
+    };
+  }, [searchParams]);
 
   const [loading, setLoading] = useState(false);
   const [task, setTask] = useState<TaskInfo | null>(null);
@@ -207,6 +227,7 @@ export default function ResultsPage() {
 
   // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
   const [confFilter, setConfFilter] = useState<'all' | 'green' | 'yellow' | 'red'>('all');
+  const [showOpenClawPendingOnly, setShowOpenClawPendingOnly] = useState(false);
 
   // 分页状态（以清单项为单位）
   const [page, setPage] = useState(1);
@@ -234,16 +255,45 @@ export default function ResultsPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!targetResultId || results.length === 0) return;
+    if (confFilter !== 'all') {
+      setConfFilter('all');
+      return;
+    }
+    if (showOpenClawPendingOnly) {
+      setShowOpenClawPendingOnly(false);
+      return;
+    }
+    const targetIndex = results.findIndex((item) => item.id === targetResultId);
+    if (targetIndex < 0) return;
+    const targetPage = Math.floor(targetIndex / pageSize) + 1;
+    if (page !== targetPage) {
+      setPage(targetPage);
+    }
+  }, [targetResultId, results, confFilter, showOpenClawPendingOnly, pageSize, page]);
+
   // 置信度筛选 → 分页 → 展平
   const filteredResults = useMemo(() => {
-    if (confFilter === 'all') return results;
-    return results.filter((r) => {
-      const light = resolveLightStatus(r);
-      if (confFilter === 'green') return light === 'green';
-      if (confFilter === 'yellow') return light === 'yellow';
-      return light === 'red';
-    });
-  }, [results, confFilter]);
+    let next = results;
+    if (confFilter !== 'all') {
+      next = next.filter((r) => {
+        const light = resolveLightStatus(r);
+        if (confFilter === 'green') return light === 'green';
+        if (confFilter === 'yellow') return light === 'yellow';
+        return light === 'red';
+      });
+    }
+    if (showOpenClawPendingOnly) {
+      next = next.filter((r) => r.openclaw_review_status === 'reviewed' && r.openclaw_review_confirm_status === 'pending');
+    }
+    return next;
+  }, [results, confFilter, showOpenClawPendingOnly]);
+
+  const openClawPendingCount = useMemo(
+    () => results.filter((r) => r.openclaw_review_status === 'reviewed' && r.openclaw_review_confirm_status === 'pending').length,
+    [results],
+  );
 
   const pagedResults = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -322,6 +372,19 @@ export default function ResultsPage() {
     return result;
   }, [displayRows, collapsedSections]);
 
+  useEffect(() => {
+    if (!targetResultId || visibleRows.length === 0) return;
+    const targetVisible = visibleRows.some(
+      (row) => row._rowType === 'bill' && row._result.id === targetResultId,
+    );
+    if (!targetVisible) return;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(`result-row-${targetResultId}`);
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [targetResultId, visibleRows]);
+
   // 每个分部小节包含的清单条数（显示在标题后面）
   const sectionBillCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -397,6 +460,33 @@ export default function ResultsPage() {
           message.error('确认失败');
         } finally {
           setConfirmLoading(false);
+        }
+      },
+    });
+  };
+
+  const confirmOpenClawReview = (result: MatchResult, decision: 'approve' | 'reject') => {
+    const draftQuotas = result.openclaw_suggested_quotas || [];
+    const actionText = decision === 'approve' ? '采纳' : '驳回';
+    const detailText = draftQuotas.map((item) => `${item.quota_id} ${item.name}`).join('；');
+
+    modal.confirm({
+      title: `${actionText} OpenClaw 审核建议`,
+      content: decision === 'approve'
+        ? `将把建议定额应用为正式纠正：${detailText || '无建议定额'}`
+        : `将驳回该条 OpenClaw 审核建议：${detailText || '无建议定额'}`,
+      okText: actionText,
+      okButtonProps: decision === 'reject' ? { danger: true } : undefined,
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await api.post(`/openclaw/tasks/${taskId}/results/${result.id}/review-confirm`, {
+            decision,
+          });
+          message.success(`OpenClaw 审核建议已${actionText}`);
+          loadData();
+        } catch {
+          message.error(`${actionText} OpenClaw 审核建议失败`);
         }
       },
     });
@@ -798,24 +888,80 @@ export default function ResultsPage() {
     ...(isAdmin ? [{
       title: '审核',
       key: 'review',
-      width: 120,
+      width: 240,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
           const status = row._result.review_status;
           const info = REVIEW_MAP[status] || { color: 'default', text: status };
+          const openclawStatus = row._result.openclaw_review_status || 'pending';
+          const openclawInfo = OPENCLAW_REVIEW_MAP[openclawStatus] || { color: 'default', text: openclawStatus };
+          const hasOpenClawDraft = (row._result.openclaw_suggested_quotas || []).length > 0;
+          const openclawPending = openclawStatus === 'reviewed' && row._result.openclaw_review_confirm_status === 'pending';
+          const openclawDraftText = (row._result.openclaw_suggested_quotas || [])
+            .map((item) => `${item.quota_id} ${item.name}`)
+            .join('\n');
           return (
-            <Space size={2}>
-              <Tag color={info.color} style={{ margin: 0 }}>{info.text}</Tag>
-              {status === 'pending' && (
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<CheckOutlined />}
-                  onClick={(e) => { e.stopPropagation(); confirmSingle(row._result.id); }}
-                  style={{ padding: 0 }}
-                />
+            <Space size={2} direction="vertical">
+              <Space size={2} wrap>
+                <Tag color={info.color} style={{ margin: 0 }}>{info.text}</Tag>
+                {status === 'pending' && (
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<CheckOutlined />}
+                    onClick={(e) => { e.stopPropagation(); confirmSingle(row._result.id); }}
+                    style={{ padding: 0 }}
+                  />
+                )}
+              </Space>
+              {hasOpenClawDraft && (
+                <Space size={2} wrap>
+                  <Tooltip
+                    title={(
+                      <div style={{ maxWidth: 360 }}>
+                        <div><strong>建议定额</strong></div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{openclawDraftText || '-'}</div>
+                        {row._result.openclaw_review_note && (
+                          <div style={{ marginTop: 8 }}>
+                            <strong>审核备注</strong>
+                            <div style={{ whiteSpace: 'pre-wrap' }}>{row._result.openclaw_review_note}</div>
+                          </div>
+                        )}
+                        {(row._result.openclaw_review_actor || row._result.openclaw_review_confidence != null) && (
+                          <div style={{ marginTop: 8 }}>
+                            {row._result.openclaw_review_actor || '-'}
+                            {row._result.openclaw_review_confidence != null ? ` | 置信度 ${row._result.openclaw_review_confidence}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  >
+                    <Tag color={openclawInfo.color} style={{ margin: 0 }}>{openclawInfo.text}</Tag>
+                  </Tooltip>
+                  {openclawPending && (
+                    <>
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={(e) => { e.stopPropagation(); confirmOpenClawReview(row._result, 'approve'); }}
+                        style={{ padding: 0 }}
+                      >
+                        采纳
+                      </Button>
+                      <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={(e) => { e.stopPropagation(); confirmOpenClawReview(row._result, 'reject'); }}
+                        style={{ padding: 0 }}
+                      >
+                        驳回
+                      </Button>
+                    </>
+                  )}
+                </Space>
               )}
             </Space>
           );
@@ -885,6 +1031,35 @@ export default function ResultsPage() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {stagingContext && (
+        <Alert
+          type="info"
+          showIcon
+          message="当前结果来自知识晋升审核链路"
+          description={(
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Space wrap>
+                <Typography.Text>来源：{stagingContext.sourceLabel}</Typography.Text>
+                {stagingContext.candidateTitle ? (
+                  <Typography.Text>候选标题：{stagingContext.candidateTitle}</Typography.Text>
+                ) : null}
+                {stagingContext.candidateType ? (
+                  <Typography.Text>候选类型：{stagingContext.candidateType}</Typography.Text>
+                ) : null}
+                {stagingContext.errorType ? (
+                  <Typography.Text>来源错因：{stagingContext.errorType}</Typography.Text>
+                ) : null}
+              </Space>
+              <Space wrap>
+                <Button size="small" onClick={() => navigate(stagingContext.returnTo)}>
+                  回到 staging 候选页
+                </Button>
+              </Space>
+            </Space>
+          )}
+        />
+      )}
+
       {/* 顶部操作栏 */}
       <Card size="small">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -983,6 +1158,18 @@ export default function ResultsPage() {
               {label} {count > 0 && `(${count})`}
             </Button>
           ))}
+          {isAdmin && (
+            <Button
+              size="small"
+              type={showOpenClawPendingOnly ? 'primary' : 'default'}
+              onClick={() => {
+                setShowOpenClawPendingOnly((prev) => !prev);
+                setPage(1);
+              }}
+            >
+              待确认的 OpenClaw 建议 {openClawPendingCount > 0 && `(${openClawPendingCount})`}
+            </Button>
+          )}
         </div>
       </Card>
 
@@ -1087,10 +1274,13 @@ export default function ResultsPage() {
               const r = row._result;
               const quotas = r.corrected_quotas || r.quotas || [];
               return {
-                className: 'bill-row',
+                className: r.id === targetResultId ? 'bill-row target-result-row' : 'bill-row',
+                id: `result-row-${r.id}`,
                 style: {
                   backgroundColor: getBillRowBgColor(r, quotas.length > 0),
                   fontWeight: 500,
+                  outline: r.id === targetResultId ? '2px solid #1677ff' : undefined,
+                  outlineOffset: r.id === targetResultId ? '-2px' : undefined,
                 },
               };
             }

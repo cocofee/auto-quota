@@ -73,7 +73,7 @@ export default function OpenClawReviewPage() {
     [tasks, selectedTaskId],
   );
 
-  const pendingItems = useMemo(
+  const pendingSuggestionItems = useMemo(
     () =>
       items.filter(
         (item) =>
@@ -112,7 +112,7 @@ export default function OpenClawReviewPage() {
         const { data } = await api.get<ResultListResponse>(`/openclaw/tasks/${taskId}/review-items`);
         setItems(data.items);
       } catch (error: any) {
-        message.error(error?.response?.data?.detail || '加载 OpenClaw 复核列表失败');
+        message.error(error?.response?.data?.detail || '加载 OpenClaw 建议列表失败');
         setItems([]);
       } finally {
         setLoadingItems(false);
@@ -137,7 +137,7 @@ export default function OpenClawReviewPage() {
 
   const filteredItems = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
-    return pendingItems.filter((item) => {
+    return pendingSuggestionItems.filter((item) => {
       const lightStatus = resolveLightStatus(item);
       if (lightFilter !== 'all' && lightStatus !== lightFilter) {
         return false;
@@ -147,16 +147,16 @@ export default function OpenClawReviewPage() {
       }
       return buildKeywordText(item).includes(normalizedKeyword);
     });
-  }, [keyword, lightFilter, pendingItems]);
+  }, [keyword, lightFilter, pendingSuggestionItems]);
 
   const counts = useMemo(
     () => ({
-      total: pendingItems.length,
-      green: pendingItems.filter((item) => resolveLightStatus(item) === 'green').length,
-      yellow: pendingItems.filter((item) => resolveLightStatus(item) === 'yellow').length,
-      red: pendingItems.filter((item) => resolveLightStatus(item) === 'red').length,
+      total: pendingSuggestionItems.length,
+      green: pendingSuggestionItems.filter((item) => resolveLightStatus(item) === 'green').length,
+      yellow: pendingSuggestionItems.filter((item) => resolveLightStatus(item) === 'yellow').length,
+      red: pendingSuggestionItems.filter((item) => resolveLightStatus(item) === 'red').length,
     }),
-    [pendingItems],
+    [pendingSuggestionItems],
   );
 
   const columns: ColumnsType<MatchResult> = [
@@ -271,10 +271,10 @@ export default function OpenClawReviewPage() {
       <Card>
         <Space direction="vertical" size="small" style={{ width: '100%' }}>
           <Typography.Title level={4} style={{ margin: 0 }}>
-            OpenClaw 复核
+            待确认的 OpenClaw 建议
           </Typography.Title>
           <Typography.Text type="secondary">
-            这里专门处理 OpenClaw 已给出建议、但还没有人工二次确认的结果。先看依据，再决定是否进入结果页确认。
+            这里不是“所有待审核结果”，这里只显示 OpenClaw 已经给出建议、但还没有人工二次确认的记录。
           </Typography.Text>
         </Space>
       </Card>
@@ -282,8 +282,8 @@ export default function OpenClawReviewPage() {
       <Alert
         type="info"
         showIcon
-        message="当前页面已切到 OpenClaw 内网链路"
-        description="任务列表和复核列表统一走 /api/openclaw/*。待复核项由 review-items 前端过滤：openclaw_review_status = reviewed，且 openclaw_review_confirm_status = pending。"
+        message="当前页面看的不是主链待审核总量"
+        description="结果页里的“待审核”表示主链结果还没正式确认；这里的“待确认建议”只表示 OpenClaw 已经提交建议，且还没有人工二次确认。两者不是同一个池子。"
       />
 
       <Card
@@ -324,7 +324,7 @@ export default function OpenClawReviewPage() {
 
       <Space wrap size="middle">
         <Card size="small">
-          <Statistic title="待复核" value={counts.total} />
+          <Statistic title="待确认建议" value={counts.total} />
         </Card>
         <Card size="small">
           <Statistic title="绿灯" value={counts.green} valueStyle={{ color: '#16a34a' }} />
@@ -338,8 +338,8 @@ export default function OpenClawReviewPage() {
       </Space>
 
       <Card
-        title={selectedTask ? `${selectedTask.name} 的待复核项` : '待复核项'}
-        extra={selectedTask ? `共 ${filteredItems.length} / ${pendingItems.length} 条` : undefined}
+        title={selectedTask ? `${selectedTask.name} 的待确认建议` : '待确认建议'}
+        extra={selectedTask ? `共 ${filteredItems.length} / ${pendingSuggestionItems.length} 条` : undefined}
       >
         {!selectedTask && !loadingTasks ? (
           <Empty description="先选择一个任务" />
@@ -370,7 +370,7 @@ export default function OpenClawReviewPage() {
               type="warning"
               showIcon
               message="审批前先看这里"
-              description="这里只保留 OpenClaw 已提交建议但尚未人工确认的记录。点击“定位这条”可直接回到原始结果页，看 alternatives、confidence 和上下文后再确认。"
+              description="这里保留的是 OpenClaw 已提交建议、但还没有人工拍板的记录。点击“定位这条”可回到原始结果页，看 alternatives、confidence 和上下文后再决定。"
             />
 
             <Table
@@ -382,7 +382,7 @@ export default function OpenClawReviewPage() {
               scroll={{ x: 1500 }}
               locale={{
                 emptyText: selectedTask
-                  ? '当前筛选条件下没有待复核项'
+                  ? '当前任务还没有 OpenClaw 已提交建议的待确认项。结果页里的“待审核”不等于这里的“待确认建议”。'
                   : '先选择一个任务',
               }}
             />
