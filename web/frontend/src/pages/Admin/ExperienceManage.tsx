@@ -33,6 +33,8 @@ import api from '../../services/api';
 import { extractRegion } from '../../utils/region';
 import {
   COLORS,
+  GREEN_THRESHOLD,
+  YELLOW_THRESHOLD,
   getBillRowBgColor,
   sourceToLabel,
   specialtyLabel,
@@ -264,8 +266,8 @@ function buildDisplayRows(records: ExperienceRecord[]): DisplayRow[] {
 
 function confidenceColor(confidence?: number): string {
   if (confidence == null) return '#999';
-  if (confidence >= 85) return COLORS.greenSolid;
-  if (confidence >= 60) return COLORS.yellowSolid;
+  if (confidence >= GREEN_THRESHOLD) return COLORS.greenSolid;
+  if (confidence >= YELLOW_THRESHOLD) return COLORS.yellowSolid;
   return COLORS.redSolid;
 }
 
@@ -798,6 +800,14 @@ export default function ExperienceManage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Card size="small">
+        <div style={{ display: 'grid', gap: 6, color: '#475569', fontSize: 13, lineHeight: 1.7 }}>
+          <div style={{ fontWeight: 600, color: '#0f172a' }}>这里是人工维护的正式经验库。</div>
+          <div>你在这里看到的是 ExperienceDB 中已经导入、确认或人工整理过的经验记录，不等同于系统自动学习出的全部知识。</div>
+          <div>系统新产出的候选知识，请到“候选知识晋升”页面确认后，再决定是否写入正式层。</div>
+        </div>
+      </Card>
+
       <style>{`
         .exp-preview-table .ant-table {
           border-radius: 8px;
@@ -832,7 +842,7 @@ export default function ExperienceManage() {
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
             <Statistic
-              title="总记录"
+              title="经验记录总数"
               value={stats?.total || 0}
               prefix={<DatabaseOutlined />}
               valueStyle={{ fontSize: 28 }}
@@ -842,7 +852,7 @@ export default function ExperienceManage() {
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
             <Statistic
-              title="权威层"
+              title="正式经验"
               value={stats?.authority || 0}
               prefix={<SafetyOutlined />}
               valueStyle={{ fontSize: 28, color: COLORS.greenSolid }}
@@ -852,7 +862,7 @@ export default function ExperienceManage() {
         <Col xs={12} sm={6}>
           <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
             <Statistic
-              title="候选层"
+              title="待确认经验"
               value={stats?.candidate || 0}
               prefix={<InboxOutlined />}
               valueStyle={{ fontSize: 28, color: COLORS.yellowSolid }}
@@ -885,11 +895,11 @@ export default function ExperienceManage() {
                 { value: 'all', label: `全部 ${stats?.total?.toLocaleString() || 0}` },
                 {
                   value: 'authority',
-                  label: <span style={{ color: COLORS.greenSolid }}>权威 {stats?.authority?.toLocaleString() || 0}</span>,
+                  label: <span style={{ color: COLORS.greenSolid }}>正式经验 {stats?.authority?.toLocaleString() || 0}</span>,
                 },
                 {
                   value: 'candidate',
-                  label: <span style={{ color: COLORS.yellowSolid }}>候选 {stats?.candidate?.toLocaleString() || 0}</span>,
+                  label: <span style={{ color: COLORS.yellowSolid }}>待确认 {stats?.candidate?.toLocaleString() || 0}</span>,
                 },
               ]}
               size="small"
@@ -925,7 +935,7 @@ export default function ExperienceManage() {
             />
 
             <Input
-              placeholder="搜索清单名称 / 文本"
+              placeholder="搜索清单名称 / 经验文本"
               prefix={<SearchOutlined />}
               value={searchKeyword}
               onChange={(event) => setSearchKeyword(event.target.value)}
@@ -998,7 +1008,7 @@ export default function ExperienceManage() {
               style: { backgroundColor: '#fffbeb', fontSize: 13 },
             };
           }}
-          locale={{ emptyText: '暂无经验记录（可能经验库未连接）' }}
+          locale={{ emptyText: '暂无经验记录（可能正式经验库尚未接入）' }}
         />
 
         {!searchMode && totalRecords > 0 && (
@@ -1019,7 +1029,7 @@ export default function ExperienceManage() {
         )}
       </Card>
 
-      <Card title="批量操作" size="small" styles={{ body: { padding: '12px 20px' } }}>
+      <Card title="批量晋升到正式经验" size="small" styles={{ body: { padding: '12px 20px' } }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <EnvironmentOutlined style={{ fontSize: 16 }} />
           <span>晋升范围：</span>

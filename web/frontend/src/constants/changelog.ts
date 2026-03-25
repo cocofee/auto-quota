@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.98';
+export const APP_VERSION = '0.2.101';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,27 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.101',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: 'v0.2.101 更新' },
+    ],
+  },
+  {
+    version: '0.2.100',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: '治理中心首屏补成三张主入口卡，突出候选知识晋升、OpenClaw 复核和正式经验库。' },
+    ],
+  },
+  {
+    version: '0.2.99',
+    date: '2026-03-25',
+    changes: [
+      { type: 'admin', text: '统一前端知识入口术语，明确区分正式经验库与候选知识晋升页面。' },
+    ],
+  },
   {
     version: '0.2.98',
     date: '2026-03-25',

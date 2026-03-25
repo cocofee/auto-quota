@@ -8,7 +8,7 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
-import { Card, Tabs, Typography } from 'antd';
+import { Button, Card, Col, Row, Space, Tabs, Tag, Typography } from 'antd';
 import type { TabsProps } from 'antd';
 import AnalyticsPage from './AnalyticsPage';
 import ErrorAnalysis from './ErrorAnalysis';
@@ -28,6 +28,15 @@ interface AdminTabDefinition {
   children: ReactNode;
 }
 
+interface QuickEntryDefinition {
+  key: Extract<AdminTabKey, 'staging' | 'openclaw' | 'experience'>;
+  title: string;
+  description: string;
+  actionLabel: string;
+  accentColor: string;
+  icon: ReactNode;
+}
+
 const TAB_DEFINITIONS: AdminTabDefinition[] = [
   {
     key: 'error',
@@ -45,9 +54,9 @@ const TAB_DEFINITIONS: AdminTabDefinition[] = [
   },
   {
     key: 'experience',
-    label: '经验管理',
+    label: '正式经验库',
     icon: <ExperimentOutlined />,
-    description: '管理 ExperienceDB 的候选与权威经验。',
+    description: '管理 ExperienceDB 中已确认的正式经验，以及待确认的经验记录。',
     children: <ExperienceManage />,
   },
   {
@@ -59,14 +68,41 @@ const TAB_DEFINITIONS: AdminTabDefinition[] = [
   },
   {
     key: 'staging',
-    label: '候选确认与晋升',
+    label: '候选知识晋升',
     icon: <SafetyCertificateOutlined />,
-    description: '查看业务已写入的候选，并决定确认、驳回或执行晋升。',
+    description: '查看 OpenClaw 和其他业务入口写入的候选知识，并决定确认、驳回或执行晋升。',
     children: <KnowledgeStagingPage />,
   },
 ];
 
 const VALID_TABS = new Set<string>(TAB_DEFINITIONS.map((item) => item.key));
+
+const QUICK_ENTRIES: QuickEntryDefinition[] = [
+  {
+    key: 'staging',
+    title: '候选知识晋升',
+    description: '先看这里。OpenClaw 和其他业务入口写进来的候选知识，会在这里等待你确认、驳回或晋升。',
+    actionLabel: '进入候选区',
+    accentColor: '#2563eb',
+    icon: <SafetyCertificateOutlined />,
+  },
+  {
+    key: 'openclaw',
+    title: 'OpenClaw 复核',
+    description: '这里处理待人工二次确认的 OpenClaw 审核结果，适合先做复核，再决定是否转成候选知识。',
+    actionLabel: '进入复核区',
+    accentColor: '#7c3aed',
+    icon: <RobotOutlined />,
+  },
+  {
+    key: 'experience',
+    title: '正式经验库',
+    description: '这里查看和维护 ExperienceDB 中已经导入、确认或人工整理过的正式经验记录。',
+    actionLabel: '进入经验库',
+    accentColor: '#059669',
+    icon: <ExperimentOutlined />,
+  },
+];
 
 export default function AdminHub() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -102,11 +138,89 @@ export default function AdminHub() {
   };
 
   return (
-    <Tabs
-      activeKey={activeTab}
-      items={items}
-      onChange={handleTabChange}
-      destroyInactiveTabPane={false}
-    />
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              治理中心
+            </Typography.Title>
+            <Tag color="blue">先处理候选，再看分析</Tag>
+          </div>
+          <Typography.Text type="secondary">
+            这里把知识治理入口集中在一起。优先看候选知识晋升和 OpenClaw 复核，分析类页面放在下面标签里按需查看。
+          </Typography.Text>
+        </Space>
+      </Card>
+
+      <Row gutter={[16, 16]}>
+        {QUICK_ENTRIES.map((entry) => {
+          const isActive = activeTab === entry.key;
+          return (
+            <Col xs={24} md={8} key={entry.key}>
+              <Card
+                hoverable
+                style={{
+                  height: '100%',
+                  borderColor: isActive ? entry.accentColor : '#e2e8f0',
+                  boxShadow: isActive ? `0 0 0 1px ${entry.accentColor} inset` : undefined,
+                }}
+                styles={{
+                  body: {
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    minHeight: 190,
+                  },
+                }}
+                onClick={() => handleTabChange(entry.key)}
+              >
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 12,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: entry.accentColor,
+                    background: `${entry.accentColor}14`,
+                    fontSize: 18,
+                  }}
+                >
+                  {entry.icon}
+                </div>
+                <div>
+                  <Typography.Title level={5} style={{ margin: 0 }}>
+                    {entry.title}
+                  </Typography.Title>
+                  <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0 0' }}>
+                    {entry.description}
+                  </Typography.Paragraph>
+                </div>
+                <div style={{ marginTop: 'auto' }}>
+                  <Button
+                    type={isActive ? 'primary' : 'default'}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleTabChange(entry.key);
+                    }}
+                  >
+                    {entry.actionLabel}
+                  </Button>
+                </div>
+              </Card>
+            </Col>
+          );
+        })}
+      </Row>
+
+      <Tabs
+        activeKey={activeTab}
+        items={items}
+        onChange={handleTabChange}
+        destroyInactiveTabPane={false}
+      />
+    </Space>
   );
 }
