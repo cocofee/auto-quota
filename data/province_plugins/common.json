@@ -1,0 +1,265 @@
+{
+  "national": {
+    "synonyms": {
+      "配电箱": {
+        "aliases": [
+          "成套配电箱安装",
+          "照明配电箱安装",
+          "动力照明配电箱安装"
+        ],
+        "count": 1
+      },
+      "配管": {
+        "aliases": [
+          "钢管敷设",
+          "JDG敷设",
+          "镀锌钢导管敷设",
+          "套接紧定式镀锌钢导管敷设"
+        ],
+        "count": 1
+      },
+      "配线": {
+        "aliases": [
+          "管内穿线",
+          "线槽配线",
+          "桥架内布放"
+        ],
+        "count": 1
+      },
+      "桥架": {
+        "aliases": [
+          "钢制桥架安装",
+          "钢制槽式桥架安装",
+          "钢制托盘式桥架安装"
+        ],
+        "count": 1
+      },
+      "桥架支架": {
+        "aliases": [
+          "电缆桥架支撑架制作",
+          "桥架支撑架制作安装"
+        ],
+        "count": 1
+      },
+      "电力电缆": {
+        "aliases": [
+          "电力电缆敷设",
+          "铜芯电力电缆敷设",
+          "铝芯电力电缆敷设"
+        ],
+        "count": 1
+      },
+      "电力电缆头": {
+        "aliases": [
+          "电力电缆终端头制作与安装",
+          "中间头制作与安装"
+        ],
+        "count": 1
+      },
+      "KL": {
+        "aliases": [
+          "控制电缆敷设",
+          "控制电缆"
+        ],
+        "count": 1
+      },
+      "管道支架": {
+        "aliases": [
+          "管道支架制作安装",
+          "室内管道管道支架制作安装"
+        ],
+        "count": 1
+      },
+      "阀门": {
+        "aliases": [
+          "螺纹阀门安装",
+          "法兰阀门安装",
+          "碳钢阀门安装"
+        ],
+        "count": 1
+      },
+      "碳钢阀门": {
+        "aliases": [
+          "螺纹阀门安装",
+          "法兰阀门安装",
+          "碳钢阀门安装"
+        ],
+        "count": 1
+      }
+    },
+    "route_biases": {
+      "配电箱": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "配管": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "配线": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "桥架": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "桥架支架": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "电力电缆": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "电力电缆头": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "KL": {
+        "preferred_books": [
+          "C4"
+        ],
+        "preferred_specialties": [
+          "C4"
+        ],
+        "count": 1
+      },
+      "管道支架": {
+        "preferred_books": [
+          "C10"
+        ],
+        "preferred_specialties": [
+          "C10"
+        ],
+        "count": 1
+      },
+      "阀门": {
+        "preferred_books": [
+          "C10"
+        ],
+        "preferred_specialties": [
+          "C10"
+        ],
+        "count": 1
+      },
+      "碳钢阀门": {
+        "preferred_books": [
+          "C10"
+        ],
+        "preferred_specialties": [
+          "C10"
+        ],
+        "count": 1
+      }
+    },
+    "tier_hints": {
+      "配线": {
+        "avoided_quota_names": [
+          "电力电缆敷设",
+          "控制电缆敷设"
+        ],
+        "count": 1
+      },
+      "桥架": {
+        "avoided_quota_names": [
+          "电缆桥架支撑架",
+          "支架制作与安装"
+        ],
+        "count": 1
+      },
+      "桥架支架": {
+        "avoided_quota_names": [
+          "钢制桥架安装",
+          "钢制槽式桥架安装"
+        ],
+        "count": 1
+      },
+      "电力电缆": {
+        "avoided_quota_names": [
+          "中间头制作与安装",
+          "终端头制作与安装"
+        ],
+        "count": 1
+      },
+      "电力电缆头": {
+        "preferred_quota_names": [
+          "电力电缆终端头制作与安装",
+          "中间头制作与安装"
+        ],
+        "avoided_quota_names": [
+          "电力电缆敷设",
+          "控制电缆敷设"
+        ],
+        "count": 1
+      },
+      "KL": {
+        "preferred_quota_names": [
+          "控制电缆敷设"
+        ],
+        "avoided_quota_names": [
+          "中间头制作与安装",
+          "终端头制作与安装",
+          "电力电缆敷设"
+        ],
+        "count": 1
+      },
+      "管道支架": {
+        "avoided_quota_names": [
+          "电缆桥架支撑架制作"
+        ],
+        "count": 1
+      },
+      "阀门": {
+        "avoided_quota_names": [
+          "风管调节阀",
+          "风管防火阀"
+        ],
+        "count": 1
+      },
+      "碳钢阀门": {
+        "avoided_quota_names": [
+          "风管调节阀",
+          "风管防火阀"
+        ],
+        "count": 1
+      }
+    }
+  },
+  "provinces": {}
+}

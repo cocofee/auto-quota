@@ -705,19 +705,12 @@ def _derive_hard_book_constraints(section_title: str,
 
     section_book = parse_section_title(section_title) if section_title else None
     sheet_book = parse_section_title(sheet_name) if sheet_name else None
-    bill_title_book = parse_section_title(str(context_prior.get("bill_name") or "").strip())
-    project_title_book = parse_section_title(str(context_prior.get("project_name") or "").strip())
     batch_context = dict(context_prior.get("batch_context") or {})
     system_candidates = [
         detect_system_hint(section_title or ""),
         detect_system_hint(sheet_name or ""),
-        str(context_prior.get("bill_name") or ""),
-        str(context_prior.get("project_name") or ""),
-        context_prior.get("system_hint", ""),
         batch_context.get("section_system_hint", ""),
         batch_context.get("sheet_system_hint", ""),
-        batch_context.get("neighbor_system_hint", ""),
-        batch_context.get("project_system_hint", ""),
     ]
     system_book = next(
         (
@@ -732,7 +725,7 @@ def _derive_hard_book_constraints(section_title: str,
     family = str(canonical_features.get("family") or context_prior.get("prior_family") or "").strip()
     family_allowed = list(FAMILY_ALLOWED_BOOKS.get(family, ()))
 
-    anchor_book = section_book or sheet_book or bill_title_book or project_title_book or system_book
+    anchor_book = section_book or sheet_book or system_book
     if anchor_book:
         return _constrain_books_with_family(anchor_book, family_allowed)
     if system_book:
@@ -1112,24 +1105,6 @@ def _classify_v2(bill_name: str,
             f"sheet:{sheet_name}",
         )
 
-    if bill_title_book:
-        _add_book_score(
-            scores,
-            routing_evidence,
-            bill_title_book,
-            2.8,
-            f"bill_title:{bill_title}",
-        )
-
-    if project_title_book:
-        _add_book_score(
-            scores,
-            routing_evidence,
-            project_title_book,
-            2.4,
-            f"project_title:{project_title}",
-        )
-
     if bill_code:
         code_book = classify_by_bill_code(bill_code)
         if code_book and code_book in BOOKS:
@@ -1272,7 +1247,7 @@ def _classify_v2(bill_name: str,
             )
 
     route_mode = "open"
-    if override_book or section_book or sheet_book or bill_title_book or project_title_book:
+    if override_book or section_book or sheet_book:
         route_mode = "strict"
     elif hard_constraints and len(hard_constraints) <= 3:
         route_mode = "strict"

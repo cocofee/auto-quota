@@ -130,25 +130,43 @@ def detect_system_hint(*texts: str) -> str:
     return ""
 
 
+def _detect_item_system_hint(item: dict[str, Any]) -> str:
+    return detect_system_hint(
+        str(item.get("section") or ""),
+        str(item.get("sheet_name") or ""),
+        str(item.get("name") or ""),
+        str(item.get("description") or ""),
+    )
+
+
+def _detect_title_system_hint(item: dict[str, Any]) -> str:
+    return detect_system_hint(
+        str(item.get("project_name") or ""),
+        str(item.get("bill_name") or ""),
+        str(item.get("source_file_title") or item.get("source_file_stem") or ""),
+        str(item.get("source_file_name") or ""),
+    )
+
+
 def build_project_context(items: list[dict[str, Any]]) -> dict[str, Any]:
     specialty_counter: Counter[str] = Counter()
     system_counter: Counter[str] = Counter()
     section_system_counter: dict[str, Counter[str]] = {}
     sheet_system_counter: dict[str, Counter[str]] = {}
+    file_system_counter: Counter[str] = Counter()
 
     for item in items or []:
         specialty = str(item.get("specialty") or "").strip()
         if specialty:
             specialty_counter[specialty] += 1
 
-        system_hint = detect_system_hint(
-            str(item.get("section") or ""),
-            str(item.get("sheet_name") or ""),
-            str(item.get("name") or ""),
-            str(item.get("description") or ""),
-        )
+        item_system_hint = _detect_item_system_hint(item)
+        title_system_hint = _detect_title_system_hint(item)
+        system_hint = item_system_hint or title_system_hint
         if system_hint:
             system_counter[system_hint] += 1
+        if title_system_hint:
+            file_system_counter[title_system_hint] += 1
 
         section = str(item.get("section") or "").strip()
         if section and system_hint:
@@ -159,14 +177,14 @@ def build_project_context(items: list[dict[str, Any]]) -> dict[str, Any]:
             sheet_system_counter.setdefault(sheet, Counter())[system_hint] += 1
 
     primary_specialty = specialty_counter.most_common(1)[0][0] if specialty_counter else ""
-    system_hint = system_counter.most_common(1)[0][0] if system_counter else ""
-    context_hints: list[str] = []
-    if system_hint:
-        context_hints.append(system_hint)
+    file_system_hint = file_system_counter.most_common(1)[0][0] if file_system_counter else ""
+    system_hint = system_counter.most_common(1)[0][0] if system_counter else file_system_hint
+    context_hints = _dedupe_keep_order([file_system_hint, system_hint])
 
     return {
         "primary_specialty": primary_specialty,
         "system_hint": system_hint,
+        "file_system_hint": file_system_hint,
         "context_hints": context_hints,
         "batch_size": len(items or []),
         "section_system_hints": {
@@ -194,6 +212,7 @@ def apply_batch_context(items: list[dict[str, Any]],
         item["_batch_index"] = index
         item["_batch_context"] = {
             "project_system_hint": str(project_context.get("system_hint") or ""),
+            "file_system_hint": str(project_context.get("file_system_hint") or ""),
             "section_system_hint": str(
                 (project_context.get("section_system_hints") or {}).get(str(item.get("section") or "").strip()) or ""
             ),
@@ -277,18 +296,37 @@ def build_context_prior(item: dict[str, Any],
     item = dict(item or {})
     project_context = dict(project_context or {})
     batch_context = dict(item.get("_batch_context") or {})
+    project_name = str(
+        item.get("project_name")
+        or item.get("source_file_title")
+        or item.get("source_file_stem")
+        or ""
+    ).strip()
+    bill_name = str(
+        item.get("bill_name")
+        or item.get("source_file_title")
+        or item.get("source_file_stem")
+        or ""
+    ).strip()
 
     context_prior = {
         "specialty": item.get("specialty", ""),
         "specialty_name": item.get("specialty_name", ""),
-        "project_name": str(item.get("project_name") or "").strip(),
-        "bill_name": str(item.get("bill_name") or "").strip(),
+        "project_name": project_name,
+        "bill_name": bill_name,
+        "source_file_name": str(item.get("source_file_name") or "").strip(),
+        "source_file_stem": str(
+            item.get("source_file_title")
+            or item.get("source_file_stem")
+            or ""
+        ).strip(),
     }
 
     context_hints = _dedupe_keep_order(list(item.get("_context_hints") or []))
     batch_hints = _dedupe_keep_order(list(batch_context.get("neighbor_system_hints") or []))
     section_hint = str(batch_context.get("section_system_hint") or "").strip()
     sheet_hint = str(batch_context.get("sheet_system_hint") or "").strip()
+    file_hint = str(batch_context.get("file_system_hint") or project_context.get("file_system_hint") or "").strip()
     project_hints = _dedupe_keep_order(list(project_context.get("context_hints") or []))
 
     merged_hints = context_hints + batch_hints
@@ -296,6 +334,8 @@ def build_context_prior(item: dict[str, Any],
         merged_hints.append(section_hint)
     if sheet_hint and sheet_hint != section_hint:
         merged_hints.append(sheet_hint)
+    if file_hint and file_hint not in {section_hint, sheet_hint}:
+        merged_hints.append(file_hint)
     if project_hints:
         merged_hints.extend(project_hints[:2])
     merged_hints = _dedupe_keep_order(merged_hints)
@@ -307,16 +347,13 @@ def build_context_prior(item: dict[str, Any],
     if item.get("cable_type"):
         context_prior["cable_type"] = item["cable_type"]
 
-    system_hint = detect_system_hint(
-        item.get("section", ""),
-        item.get("sheet_name", ""),
-        item.get("name", ""),
-        item.get("description", ""),
-    )
+    system_hint = _detect_item_system_hint(item)
+    if not system_hint:
+        system_hint = _detect_title_system_hint(item)
     if not system_hint:
         system_hint = str(batch_context.get("neighbor_system_hint") or "")
     if not system_hint:
-        system_hint = section_hint or sheet_hint
+        system_hint = section_hint or sheet_hint or file_hint
     if not system_hint:
         system_hint = str(project_context.get("system_hint") or "")
     if system_hint:
@@ -331,6 +368,7 @@ def build_context_prior(item: dict[str, Any],
 
     context_prior["batch_context"] = {
         "project_system_hint": str(batch_context.get("project_system_hint") or project_context.get("system_hint") or ""),
+        "file_system_hint": file_hint,
         "section_system_hint": section_hint,
         "sheet_system_hint": sheet_hint,
         "neighbor_system_hint": str(batch_context.get("neighbor_system_hint") or ""),

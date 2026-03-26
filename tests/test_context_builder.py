@@ -3,6 +3,7 @@ from src.context_builder import (
     build_context_prior,
     build_project_context,
     format_overview_context,
+    detect_system_hint,
 )
 
 
@@ -38,6 +39,33 @@ def test_build_project_context_detects_primary_specialty_and_system():
     assert context["section_system_hints"]["\u7535\u6c14\u5de5\u7a0b"] == "\u7535\u6c14"
 
 
+def test_build_project_context_uses_file_title_as_soft_anchor():
+    context = build_project_context([
+        {
+            "specialty": "C4",
+            "name": "\u652f\u67b6",
+            "description": "",
+            "section": "",
+            "sheet_name": "",
+            "source_file_name": "[\u91cd\u5e86]S7\u680b\u7535\u6c14\u5de5\u7a0b_wx_zip.xlsx",
+            "source_file_stem": "S7\u680b\u7535\u6c14\u5de5\u7a0b",
+        },
+        {
+            "specialty": "C4",
+            "name": "\u5957\u7ba1",
+            "description": "",
+            "section": "",
+            "sheet_name": "",
+            "source_file_name": "[\u91cd\u5e86]S7\u680b\u7535\u6c14\u5de5\u7a0b_wx_zip.xlsx",
+            "source_file_stem": "S7\u680b\u7535\u6c14\u5de5\u7a0b",
+        },
+    ])
+
+    assert context["file_system_hint"] == "\u7535\u6c14"
+    assert context["system_hint"] == "\u7535\u6c14"
+    assert context["context_hints"][0] == "\u7535\u6c14"
+
+
 def test_apply_batch_context_adds_neighbor_and_section_system_hints():
     items = [
         {"name": "\u6865\u67b6", "description": "", "section": "\u7535\u6c14\u5de5\u7a0b", "sheet_name": "\u5b89\u88c5", "specialty": "C4"},
@@ -65,6 +93,23 @@ def test_apply_batch_context_adds_neighbor_and_section_system_hints():
     assert "\u7535\u6c14" in context_prior["context_hints"]
     assert context_prior["batch_context"]["section_system_hint"] == "\u7535\u6c14"
     assert context_prior["batch_context"]["batch_size"] == 3
+
+
+def test_build_context_prior_backfills_source_file_titles():
+    item = {
+        "name": "\u590d\u5408\u7ba1",
+        "description": "",
+        "source_file_name": "[\u5b89\u5fbd]4-2\u5355\u5143-\u7ed9\u6392\u6c34\u5de5\u7a0b(\u5355\u4f4d\u5de5\u7a0b)_wx_zip(2).xls",
+        "source_file_stem": "4-2\u5355\u5143-\u7ed9\u6392\u6c34\u5de5\u7a0b(\u5355\u4f4d\u5de5\u7a0b)",
+    }
+    project_context = build_project_context([item])
+    context = build_context_prior(item, project_context=project_context)
+
+    assert context["project_name"] == "4-2\u5355\u5143-\u7ed9\u6392\u6c34\u5de5\u7a0b(\u5355\u4f4d\u5de5\u7a0b)"
+    assert context["bill_name"] == "4-2\u5355\u5143-\u7ed9\u6392\u6c34\u5de5\u7a0b(\u5355\u4f4d\u5de5\u7a0b)"
+    assert context["source_file_stem"] == "4-2\u5355\u5143-\u7ed9\u6392\u6c34\u5de5\u7a0b(\u5355\u4f4d\u5de5\u7a0b)"
+    assert context["system_hint"] == "\u7ed9\u6392\u6c34"
+    assert context["batch_context"]["file_system_hint"] == "\u7ed9\u6392\u6c34"
 
 
 def test_apply_batch_context_falls_back_to_short_name_priors():
@@ -142,3 +187,10 @@ def test_format_overview_context_includes_canonical_query_summary():
     assert "RouteQuery:" in text
     assert "ValidationQuery:" in text
     assert "SearchQuery:" in text
+
+
+def test_detect_system_hint_supports_nonstandard_section_and_sheet_aliases():
+    assert detect_system_hint("重力排水系统", "", "", "") == "给排水"
+    assert detect_system_hint("", "08A分部分项工程量清单与计价表-生活给水", "", "") == "给排水"
+    assert detect_system_hint("", "", "风机盘管", "空调水系统") == "通风空调"
+    assert detect_system_hint("", "", "末端试水装置", "") == "消防"

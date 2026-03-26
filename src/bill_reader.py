@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import json
 from pathlib import Path
 
 import openpyxl
@@ -65,6 +66,83 @@ def _is_material_code(code: str) -> bool:
     if c == "主":
         return True
     return False
+
+
+def parse_sheet_selection(sheet_value: str | None) -> list[str]:
+    """Parse explicit sheet selection from JSON array or legacy comma-separated text."""
+    if not isinstance(sheet_value, str):
+        return []
+
+    text = sheet_value.strip()
+    if not text:
+        return []
+
+    if text.startswith("["):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, list):
+            names: list[str] = []
+            for item in data:
+                if not isinstance(item, str):
+                    continue
+                name = item.strip()
+                if name and name not in names:
+                    names.append(name)
+            return names
+
+    names = []
+    for item in text.split(","):
+        name = item.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _normalize_source_file_stem(stem: str) -> str:
+    text = str(stem or "").strip()
+    if not text:
+        return ""
+
+    text = re.sub(r"^\[[^\]]+\]\s*", "", text)
+    text = re.sub(r"^【[^】]+】\s*", "", text)
+    text = re.sub(r"_(?:wx_)?zip(?:[\(（]\d+[\)）])?$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[\s_-]*(?:copy|COPY|副本)(?:[\(（]\d+[\)）])?$", "", text)
+    text = re.sub(r"[\s_-]*[\(（]\d+[\)）]$", "", text)
+    text = text.strip(" _-")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _build_source_file_metadata(file_path: str | Path) -> dict[str, str]:
+    path = Path(file_path)
+    source_title = _normalize_source_file_stem(path.stem) or path.stem
+    return {
+        "source_file_name": path.name,
+        "source_file_stem": source_title,
+        "source_file_title": source_title,
+        "project_name": source_title,
+        "bill_name": source_title,
+    }
+
+
+def _attach_source_file_metadata(items: list[dict], file_path: str | Path) -> list[dict]:
+    if not items:
+        return items
+
+    metadata = _build_source_file_metadata(file_path)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item.setdefault("source_file_name", metadata["source_file_name"])
+        item.setdefault("source_file_stem", metadata["source_file_stem"])
+        item.setdefault("source_file_title", metadata["source_file_title"])
+        if metadata["project_name"]:
+            item.setdefault("project_name", metadata["project_name"])
+        if metadata["bill_name"]:
+            item.setdefault("bill_name", metadata["bill_name"])
+    return items
 
 
 class BillReader:
@@ -208,7 +286,7 @@ class BillReader:
         try:
             # 支持逗号分隔的多个Sheet名（前端多选时传 "给排水,电气,消防"）
             if sheet_name:
-                sheets_to_read = [s.strip() for s in sheet_name.split(",") if s.strip()]
+                sheets_to_read = parse_sheet_selection(sheet_name)
             else:
                 sheets_to_read = self._filter_bill_sheets(wb.sheetnames)
             for sn in sheets_to_read:
@@ -232,6 +310,7 @@ class BillReader:
             logger.warning("未读取到任何清单项目，请检查文件格式")
 
         logger.info(f"清单读取完成: 共 {len(all_items)} 条项目")
+        _attach_source_file_metadata(all_items, file_path)
         return all_items
 
     def read_file(self, file_path: str, sheet_name: str = None) -> list[dict]:
