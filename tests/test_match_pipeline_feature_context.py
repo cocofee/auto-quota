@@ -127,9 +127,11 @@ def test_build_item_context_backfills_project_and_bill_titles_into_context_prior
 
     assert context["context_prior"]["project_name"] == "4-2单元-给排水工程"
     assert context["context_prior"]["bill_name"] == "给排水工程(单位工程)"
+    assert context["context_prior"]["unified_plan"]["primary_book"] == "C10"
+    assert context["context_prior"]["unified_plan"]["hard_books"] == []
 
 
-def test_build_classification_uses_project_and_bill_titles_for_strict_book_routing():
+def test_build_classification_uses_project_and_bill_titles_for_soft_book_routing():
     item = {
         "name": "复合管",
         "description": "介质:给水 材质、规格:钢塑复合压力给水管 1.6MPA DN25",
@@ -147,14 +149,38 @@ def test_build_classification_uses_project_and_bill_titles_for_strict_book_routi
         name=item["name"],
         desc=item["description"],
         section="",
-        sheet_name="表08 分部分项工程量清单与计价表",
+        sheet_name="",
     )
 
     assert classification["primary"] == "C10"
-    assert classification["route_mode"] == "strict"
-    assert classification["allow_cross_book_escape"] is False
+    assert classification["route_mode"] == "moderate"
+    assert classification["allow_cross_book_escape"] is True
     assert "C10" in classification["hard_book_constraints"]
     assert classification["search_books"][0] == "C10"
+
+
+def test_build_item_context_exposes_unified_plan_aliases(monkeypatch):
+    def fake_plan(**kwargs):
+        return {
+            "primary_book": "C10",
+            "preferred_books": ["C10", "C9"],
+            "hard_books": ["C10"],
+            "route_mode": "strict",
+            "search_aliases": ["排气阀安装"],
+        }
+
+    monkeypatch.setattr(match_pipeline, "build_unified_search_plan", fake_plan)
+
+    context = _build_item_context(
+        {
+            "name": "自动排气阀",
+            "description": "型号、规格：DN25",
+            "context_prior": {},
+        }
+    )
+
+    assert context["unified_plan"]["primary_book"] == "C10"
+    assert context["unified_plan"]["search_aliases"] == ["排气阀安装"]
 
 
 def test_build_classification_can_override_seeded_specialty_with_strong_evidence(monkeypatch):
@@ -211,5 +237,34 @@ def test_build_classification_keeps_seeded_specialty_without_strong_override(mon
     )
 
     assert classification["primary"] == "C10"
+    assert classification["route_mode"] == "moderate"
+    assert classification["allow_cross_book_escape"] is True
+    assert classification["hard_book_constraints"] == []
+
+
+def test_build_classification_relaxes_bare_seeded_specialty_without_supporting_context():
+    classification = _build_classification(
+        {"specialty": "C8"},
+        name="自动排气阀",
+        desc="型号、规格：DN25",
+        section="",
+    )
+
+    assert classification["primary"] == "C8"
+    assert classification["route_mode"] == "moderate"
+    assert classification["allow_cross_book_escape"] is True
+    assert classification["hard_book_constraints"] == []
+    assert classification["routing_evidence"]["C8"] == ["soft_item_specialty"]
+
+
+def test_build_classification_drops_nonstandard_seeded_specialty_without_support():
+    classification = _build_classification(
+        {"specialty": "A"},
+        name="防潮层、保护层",
+        desc="材料:压延膜 层数:一道（镀锌铁丝绑扎）",
+        section="",
+    )
+
+    assert classification["primary"] == "C12"
     assert classification["route_mode"] == "strict"
-    assert classification["hard_book_constraints"] == ["C10"]
+    assert classification["hard_book_constraints"] == ["C12"]

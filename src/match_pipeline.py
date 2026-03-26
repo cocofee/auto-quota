@@ -27,6 +27,7 @@ from src.text_parser import parser as text_parser, normalize_bill_text
 from src.query_router import build_query_route_profile
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
 from src.specialty_classifier import BORROW_PRIORITY, classify as classify_specialty
+from src.unified_planner import build_unified_search_plan
 from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
 from src.match_core import (
@@ -2767,14 +2768,26 @@ def _build_item_context(item: dict) -> dict:
         item=item,
         canonical_features=canonical_features,
     )
+    unified_plan = build_unified_search_plan(
+        province=str(item.get("_resolved_province") or item.get("province") or ""),
+        item=item,
+        context_prior=context_prior,
+        canonical_features=canonical_features,
+        plugin_hints=plugin_hints,
+    )
     if plugin_hints:
         context_prior = dict(context_prior)
         merged_context_hints = list(context_prior.get("context_hints") or [])
         merged_context_hints.extend(plugin_hints.get("preferred_specialties", []) or [])
-        context_prior["context_hints"] = list(dict.fromkeys(
+        merged_context_hints = list(dict.fromkeys(
             str(value).strip() for value in merged_context_hints if str(value).strip()
         ))[:5]
+        if merged_context_hints:
+            context_prior["context_hints"] = merged_context_hints
         context_prior["plugin_hints"] = plugin_hints
+    if unified_plan:
+        context_prior = dict(context_prior)
+        context_prior["unified_plan"] = unified_plan
     input_gate = _evaluate_input_gate(name, desc)
     query_name = input_gate.get("query_name", name)
     search_query = text_parser.build_quota_query(query_name, desc,
@@ -2839,6 +2852,7 @@ def _build_item_context(item: dict) -> dict:
         "canonical_features": canonical_features,
         "context_prior": context_prior,
         "plugin_hints": plugin_hints,
+        "unified_plan": unified_plan,
         "query_route": query_route,
         "item": item,  # L5：供跨省预热读取 _cross_province_hints
         "input_gate": input_gate,
@@ -2862,6 +2876,66 @@ def _has_strong_routing_evidence(classification: dict) -> bool:
         "project_title_system_hint:",
     )
     return any(str(reason).startswith(strong_prefixes) for reason in reasons)
+
+
+def _is_standard_seeded_specialty(seed_primary: str) -> bool:
+    seed_primary = str(seed_primary or "").strip().upper()
+    return bool(re.fullmatch(r"C\d+", seed_primary))
+
+
+def _is_seeded_specialty_trustworthy(item: dict, seed_primary: str, section: str, sheet_name: str) -> bool:
+    seed_primary = str(seed_primary or "").strip()
+    if not seed_primary:
+        return False
+    if seed_primary not in BORROW_PRIORITY or not _is_standard_seeded_specialty(seed_primary):
+        return False
+
+    item = dict(item or {})
+    context_prior = dict(item.get("context_prior") or {})
+    batch_context = dict(context_prior.get("batch_context") or {})
+    supportive_fields = (
+        section,
+        sheet_name,
+        item.get("section"),
+        item.get("sheet_name"),
+        item.get("specialty_name"),
+        context_prior.get("project_name"),
+        context_prior.get("bill_name"),
+        context_prior.get("system_hint"),
+        batch_context.get("section_system_hint"),
+        batch_context.get("sheet_system_hint"),
+        batch_context.get("project_system_hint"),
+        batch_context.get("neighbor_system_hint"),
+    )
+    if any(str(value or "").strip() for value in supportive_fields):
+        return True
+
+    fallbacks = [
+        str(book).strip()
+        for book in (item.get("specialty_fallbacks") or [])
+        if str(book).strip()
+    ]
+    return bool(fallbacks)
+
+
+def _build_seeded_specialty_classification(primary: str, fallbacks: list[str], *, strict: bool) -> dict:
+    candidate_books = [primary] + [book for book in fallbacks if book != primary]
+    classification = {
+        "primary": primary,
+        "fallbacks": list(fallbacks),
+        "candidate_books": candidate_books,
+        "search_books": list(candidate_books),
+        "routing_evidence": {
+            primary: ["item_specialty"] if strict else ["soft_item_specialty"]
+        },
+        "book_scores": {primary: 10.0 if strict else 1.2},
+        "confidence": "high" if strict else "medium",
+        "reason": "item_specialty" if strict else "soft_item_specialty",
+        "route_mode": "strict" if strict else "moderate",
+        "allow_cross_book_escape": not strict,
+        "hard_book_constraints": [primary] if strict else [],
+    }
+    return classification
 
 
 def _should_override_seeded_specialty(seed_primary: str, inferred: dict) -> bool:
@@ -2894,17 +2968,6 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         "primary": primary,
         "fallbacks": fallbacks,
     }
-    if primary:
-        candidate_books = [primary] + [book for book in fallbacks if book != primary]
-        classification["confidence"] = "high"
-        classification["reason"] = "item_specialty"
-        classification["candidate_books"] = candidate_books
-        classification["search_books"] = list(candidate_books)
-        classification["hard_book_constraints"] = [primary]
-        classification["routing_evidence"] = {primary: ["item_specialty"]}
-        classification["route_mode"] = "strict"
-        classification["allow_cross_book_escape"] = False
-        classification["book_scores"] = {primary: 10.0}
     inferred = classify_specialty(
         name, desc, section_title=section, province=province,
         bill_code=item.get("code"),
@@ -2912,6 +2975,13 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         canonical_features=item.get("canonical_features"),
         sheet_name=sheet_name or item.get("sheet_name"),
     )
+    if primary:
+        if _is_seeded_specialty_trustworthy(item, primary, section, sheet_name):
+            classification = _build_seeded_specialty_classification(primary, fallbacks, strict=True)
+        elif primary in BORROW_PRIORITY and _is_standard_seeded_specialty(primary):
+            classification = _build_seeded_specialty_classification(primary, fallbacks, strict=False)
+        else:
+            classification = {"primary": None, "fallbacks": []}
     if not classification["primary"] or _should_override_seeded_specialty(primary, inferred):
         classification = inferred
     return _normalize_classification(classification)
@@ -3851,6 +3921,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     ctx = _build_item_context(item)
     item["query_route"] = ctx.get("query_route")
     item["plugin_hints"] = ctx.get("plugin_hints") or {}
+    item["unified_plan"] = ctx.get("unified_plan") or {}
     item["context_prior"] = ctx.get("context_prior") or item.get("context_prior") or {}
     item["canonical_query"] = ctx.get("canonical_query") or {}
     name = ctx["name"]
