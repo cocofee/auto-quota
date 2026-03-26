@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 from loguru import logger
 
+from src.context_builder import detect_system_hint, normalize_system_hint
+
 
 # ================================================================
 # 12大册定义（北京2024安装工程定额）+ 土建等其他专业
@@ -292,6 +294,10 @@ ITEM_BOOK_OVERRIDES = [
     ("桥架", "C4"),
     # 防水套管（C10） —— 属于给排水
     ("防水套管", "C10"),
+    ("防结露保温", "C12"),
+    ("管道绝热", "C12"),
+    ("防潮层、保护层", "C12"),
+    ("金属结构刷油", "C12"),
     # 土建类（A册） —— 不管出现在哪个Sheet，土方/混凝土/钢筋等永远归土建
     ("土方", "A"),
     ("挖沟槽", "A"),
@@ -327,6 +333,36 @@ BORROW_PRIORITY = {
     "A":   [],                          # 土建 → 单册，不需要借用
     "D":   [],                          # 市政 → 单册，不需要借用
     "E":   [],                          # 园林 → 单册，不需要借用
+}
+
+SYSTEM_HINT_TO_BOOK = {
+    "娑堥槻": "C9",
+    "缁欐帓姘?": "C10",
+    "鐢垫皵": "C4",
+    "閫氶绌鸿皟": "C7",
+}
+
+SYSTEM_HINT_TO_BOOK = {
+    "\u6d88\u9632": "C9",
+    "\u7ed9\u6392\u6c34": "C10",
+    "\u7535\u6c14": "C4",
+    "\u901a\u98ce\u7a7a\u8c03": "C7",
+}
+
+FAMILY_ALLOWED_BOOKS = {
+    "air_device": ("C7", "C12", "C13"),
+    "air_terminal": ("C7", "C12"),
+    "air_valve": ("C7", "C12"),
+    "bridge_raceway": ("C4", "C11"),
+    "bridge_support": ("C4", "C11", "C12", "C13"),
+    "cable_family": ("C4", "C11"),
+    "conduit_raceway": ("C4",),
+    "electrical_box": ("C4",),
+    "pipe_support": ("C10", "C9", "C8", "C7", "C12", "C13"),
+    "plumbing_accessory": ("C10", "C9", "C12", "C13"),
+    "sanitary_fixture": ("C10", "C9", "C12"),
+    "valve_accessory": ("C10", "C9", "C8", "C12"),
+    "valve_body": ("C10", "C9", "C8", "C12"),
 }
 
 
@@ -600,9 +636,128 @@ def _resolve_code_text_conflict(code_book: str | None,
 
     return None, ""
 
-def classify(bill_name: str, bill_desc: str = "",
-             section_title: str = None, province: str = None,
-             bill_code: str = None) -> dict:
+
+def _normalize_books(books) -> list[str]:
+    if isinstance(books, str):
+        raw_items = [books]
+    else:
+        raw_items = list(books or [])
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def _add_book_score(scores: dict[str, float],
+                    evidence: dict[str, list[str]],
+                    book: str | None,
+                    delta: float,
+                    reason: str) -> None:
+    book = str(book or "").strip()
+    if not book or book not in BOOKS:
+        return
+    scores[book] = scores.get(book, 0.0) + float(delta)
+    evidence.setdefault(book, []).append(reason)
+
+
+def _book_from_system_hint(system_hint: str) -> str | None:
+    text = normalize_system_hint(str(system_hint or "").strip())
+    if not text:
+        return None
+    direct = SYSTEM_HINT_TO_BOOK.get(text)
+    if direct:
+        return direct
+    detected = normalize_system_hint(detect_system_hint(text))
+    if not detected:
+        return None
+    return SYSTEM_HINT_TO_BOOK.get(detected)
+
+
+def _constrain_books_with_family(anchor_book: str | None,
+                                 family_allowed: list[str]) -> list[str]:
+    anchor_book = str(anchor_book or "").strip()
+    family_allowed = _normalize_books(family_allowed)
+    if not anchor_book:
+        return list(family_allowed)
+    if not family_allowed:
+        return _normalize_books([anchor_book] + BORROW_PRIORITY.get(anchor_book, [])[:2])
+
+    constrained = [
+        book for book in family_allowed
+        if book == anchor_book or book in BORROW_PRIORITY.get(anchor_book, [])
+    ]
+    if anchor_book not in constrained:
+        constrained.insert(0, anchor_book)
+    return _normalize_books(constrained)
+
+
+def _derive_hard_book_constraints(section_title: str,
+                                  sheet_name: str | None = None,
+                                  context_prior: dict | None = None,
+                                  canonical_features: dict | None = None) -> list[str]:
+    context_prior = dict(context_prior or {})
+    canonical_features = dict(canonical_features or {})
+
+    section_book = parse_section_title(section_title) if section_title else None
+    sheet_book = parse_section_title(sheet_name) if sheet_name else None
+    bill_title_book = parse_section_title(str(context_prior.get("bill_name") or "").strip())
+    project_title_book = parse_section_title(str(context_prior.get("project_name") or "").strip())
+    batch_context = dict(context_prior.get("batch_context") or {})
+    system_candidates = [
+        detect_system_hint(section_title or ""),
+        detect_system_hint(sheet_name or ""),
+        str(context_prior.get("bill_name") or ""),
+        str(context_prior.get("project_name") or ""),
+        context_prior.get("system_hint", ""),
+        batch_context.get("section_system_hint", ""),
+        batch_context.get("sheet_system_hint", ""),
+        batch_context.get("neighbor_system_hint", ""),
+        batch_context.get("project_system_hint", ""),
+    ]
+    system_book = next(
+        (
+            book for book in (
+                _book_from_system_hint(candidate)
+                for candidate in system_candidates
+            )
+            if book
+        ),
+        None,
+    )
+    family = str(canonical_features.get("family") or context_prior.get("prior_family") or "").strip()
+    family_allowed = list(FAMILY_ALLOWED_BOOKS.get(family, ()))
+
+    anchor_book = section_book or sheet_book or bill_title_book or project_title_book or system_book
+    if anchor_book:
+        return _constrain_books_with_family(anchor_book, family_allowed)
+    if system_book:
+        return _normalize_books([system_book] + BORROW_PRIORITY.get(system_book, [])[:2])
+    if family_allowed:
+        return _normalize_books(family_allowed)
+    return []
+
+
+def _merge_book_candidates(primary: str | None,
+                           scored_books: list[str],
+                           hard_constraints: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for book in [primary] + list(scored_books) + list(hard_constraints):
+        text = str(book or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+def _classify_legacy(bill_name: str, bill_desc: str = "",
+                     section_title: str = None, province: str = None,
+                     bill_code: str = None) -> dict:
     """
     判断一条清单项属于哪个专业（册）
 
@@ -743,6 +898,415 @@ def classify(bill_name: str, bill_desc: str = "",
         "confidence": "low",
         "reason": "无法判断专业，将全库搜索",
     }
+
+
+def _score_to_confidence(route_mode: str,
+                         top_score: float,
+                         second_score: float,
+                         hard_constraints: list[str]) -> str:
+    if route_mode == "strict":
+        return "high"
+    if top_score >= 4.0:
+        return "high"
+    if hard_constraints and top_score >= 2.0:
+        return "medium"
+    if top_score - second_score >= 1.2 and top_score >= 1.5:
+        return "medium"
+    if top_score > 0:
+        return "low"
+    return "low"
+
+
+def _render_routing_evidence(reason: str) -> str:
+    text = str(reason or "").strip()
+    if not text:
+        return ""
+    if text.startswith("item_override:"):
+        return f"项目级覆盖: {text.split(':', 1)[1]}"
+    if text.startswith("section:"):
+        return f"分部标题: {text.split(':', 1)[1]}"
+    if text.startswith("sheet:"):
+        return f"工作表标题: {text.split(':', 1)[1]}"
+    if text.startswith("bill_title:"):
+        return f"清单标题: {text.split(':', 1)[1]}"
+    if text.startswith("project_title:"):
+        return f"项目标题: {text.split(':', 1)[1]}"
+    if text.startswith("category_route:"):
+        return f"品类词路由({text.split(':', 1)[1]})"
+    if text.startswith("keyword:"):
+        return f"关键字匹配: {text.split(':', 1)[1]}"
+    if text.startswith("context_specialty:"):
+        return f"上下文专业: {text.split(':', 1)[1]}"
+    if text.startswith("system_hint:"):
+        return f"系统提示: {text.split(':', 1)[1]}"
+    if text.startswith("section_system_hint:"):
+        return f"分部系统提示: {text.split(':', 1)[1]}"
+    if text.startswith("sheet_system_hint:"):
+        return f"工作表系统提示: {text.split(':', 1)[1]}"
+    if text.startswith("bill_system_hint:"):
+        return f"清单标题系统提示: {text.split(':', 1)[1]}"
+    if text.startswith("project_title_system_hint:"):
+        return f"项目标题系统提示: {text.split(':', 1)[1]}"
+    return text
+
+
+def _finalize_routing_result(book_scores: dict[str, float],
+                             routing_evidence: dict[str, list[str]],
+                             *,
+                             hard_constraints: list[str],
+                             route_mode: str,
+                             allow_cross_book_escape: bool) -> dict:
+    normalized_constraints = _normalize_books(hard_constraints)
+    if normalized_constraints:
+        scored_items = [
+            (book, score)
+            for book, score in book_scores.items()
+            if book in normalized_constraints
+        ]
+    else:
+        scored_items = list(book_scores.items())
+    scored_items.sort(key=lambda item: item[1], reverse=True)
+
+    primary = scored_items[0][0] if scored_items else None
+    primary_score = float(scored_items[0][1]) if scored_items else 0.0
+    second_score = float(scored_items[1][1]) if len(scored_items) > 1 else 0.0
+
+    if not primary and normalized_constraints:
+        primary = normalized_constraints[0]
+
+    scored_books = [book for book, _score in scored_items]
+    candidate_books = _merge_book_candidates(primary, scored_books, normalized_constraints)
+    search_books = (
+        [book for book in candidate_books if book in normalized_constraints]
+        if normalized_constraints else
+        list(candidate_books)
+    )
+    if not search_books and normalized_constraints:
+        search_books = list(normalized_constraints)
+
+    if primary and primary not in search_books:
+        search_books.insert(0, primary)
+    search_books = _normalize_books(search_books[:6])
+
+    fallback_books = [
+        book for book in _merge_book_candidates(
+            None,
+            BORROW_PRIORITY.get(primary or "", []),
+            candidate_books,
+        )
+        if book != primary
+    ]
+
+    reason_parts = [
+        rendered for rendered in (
+            _render_routing_evidence(reason)
+            for reason in routing_evidence.get(primary or "", [])[:3]
+        )
+        if rendered
+    ]
+    if not reason_parts and primary:
+        reason_parts = [f"book_score:{primary_score:.2f}"]
+
+    confidence = _score_to_confidence(
+        route_mode,
+        primary_score,
+        second_score,
+        normalized_constraints,
+    )
+
+    return {
+        "primary": primary,
+        "primary_name": BOOKS.get(primary or "", {}).get("name") if primary else None,
+        "fallbacks": fallback_books,
+        "confidence": confidence,
+        "reason": " | ".join(reason_parts) if reason_parts else "unclassified",
+        "candidate_books": candidate_books,
+        "search_books": search_books,
+        "hard_book_constraints": normalized_constraints,
+        "routing_evidence": {
+            book: list(reasons[:5])
+            for book, reasons in routing_evidence.items()
+            if reasons
+        },
+        "route_mode": route_mode,
+        "allow_cross_book_escape": bool(allow_cross_book_escape),
+        "book_scores": {
+            book: round(float(score), 4)
+            for book, score in sorted(
+                book_scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        },
+    }
+
+
+def _classify_v2(bill_name: str,
+                 bill_desc: str = "",
+                 section_title: str = None,
+                 province: str = None,
+                 bill_code: str = None,
+                 context_prior: dict | None = None,
+                 canonical_features: dict | None = None,
+                 sheet_name: str | None = None) -> dict:
+    context_prior = dict(context_prior or {})
+    canonical_features = dict(canonical_features or {})
+    text = f"{bill_name} {bill_desc}".strip()
+
+    scores: dict[str, float] = {}
+    routing_evidence: dict[str, list[str]] = {}
+
+    override_book = _check_item_override(bill_name)
+    section_book = parse_section_title(section_title) if section_title else None
+    sheet_book = parse_section_title(sheet_name) if sheet_name else None
+    bill_title = str(context_prior.get("bill_name") or "").strip()
+    project_title = str(context_prior.get("project_name") or "").strip()
+    bill_title_book = parse_section_title(bill_title)
+    project_title_book = parse_section_title(project_title)
+    section_system_hint = detect_system_hint(section_title or "")
+    sheet_system_hint = detect_system_hint(sheet_name or "")
+    bill_system_hint = detect_system_hint(bill_title)
+    project_system_hint = detect_system_hint(project_title)
+    desc_system_hint = detect_system_hint(bill_desc or "")
+    item_system_hint = detect_system_hint(bill_name or "", bill_desc or "")
+    family = str(
+        canonical_features.get("family")
+        or context_prior.get("prior_family")
+        or ""
+    ).strip()
+    family_allowed = _normalize_books(FAMILY_ALLOWED_BOOKS.get(family, ()))
+
+    hard_constraints = _derive_hard_book_constraints(
+        section_title,
+        sheet_name=sheet_name,
+        context_prior=context_prior,
+        canonical_features=canonical_features,
+    )
+    if override_book:
+        hard_constraints = [override_book]
+
+    if override_book:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            override_book,
+            6.0,
+            f"item_override:{bill_name}",
+        )
+
+    if section_book:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            section_book,
+            4.0,
+            f"section:{section_title}",
+        )
+
+    if sheet_book:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            sheet_book,
+            3.2,
+            f"sheet:{sheet_name}",
+        )
+
+    if bill_title_book:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            bill_title_book,
+            2.8,
+            f"bill_title:{bill_title}",
+        )
+
+    if project_title_book:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            project_title_book,
+            2.4,
+            f"project_title:{project_title}",
+        )
+
+    if bill_code:
+        code_book = classify_by_bill_code(bill_code)
+        if code_book and code_book in BOOKS:
+            preferred_book, preferred_reason = _resolve_code_text_conflict(
+                code_book,
+                bill_name,
+                bill_desc,
+            )
+            if preferred_book and preferred_book in BOOKS:
+                _add_book_score(
+                    scores,
+                    routing_evidence,
+                    preferred_book,
+                    3.4,
+                    preferred_reason,
+                )
+                _add_book_score(
+                    scores,
+                    routing_evidence,
+                    code_book,
+                    0.6,
+                    f"清单编码回退:{bill_code[:4]}",
+                )
+            else:
+                _add_book_score(
+                    scores,
+                    routing_evidence,
+                    code_book,
+                    3.0,
+                    f"清单编码匹配:{bill_code[:4]}",
+                )
+
+    cat_book, cat_tier = classify_by_category_words(bill_name)
+    if cat_book and cat_book in BOOKS:
+        cat_delta = 2.8 if cat_tier == "tier1" else 1.6
+        _add_book_score(
+            scores,
+            routing_evidence,
+            cat_book,
+            cat_delta,
+            f"category_route:{cat_tier}",
+        )
+
+    if text:
+        keyword_book, keyword_score, matched_keyword = _keyword_match(text)
+        if keyword_book and keyword_book in BOOKS and keyword_score > 0:
+            _add_book_score(
+                scores,
+                routing_evidence,
+                keyword_book,
+                min(2.4, 0.55 * float(keyword_score)),
+                f"keyword:{matched_keyword or keyword_book}",
+            )
+
+        try:
+            from src.book_classifier import BookClassifier
+            data_result = BookClassifier.get_instance(province).classify(text)
+        except Exception as e:
+            data_result = None
+            logger.debug(f"book classifier routing skipped: {e}")
+
+        if data_result and data_result.get("primary") in BOOKS:
+            confidence = str(data_result.get("confidence") or "low").lower()
+            delta = {
+                "high": 2.6,
+                "medium": 1.8,
+                "low": 0.7,
+            }.get(confidence, 0.7)
+            primary_book = str(data_result.get("primary") or "").strip()
+            _add_book_score(
+                scores,
+                routing_evidence,
+                primary_book,
+                delta,
+                f"tfidf:{confidence}",
+            )
+            for fallback_book in _normalize_books(data_result.get("fallbacks", []))[:2]:
+                _add_book_score(
+                    scores,
+                    routing_evidence,
+                    fallback_book,
+                    max(delta * 0.25, 0.2),
+                    f"tfidf_fallback:{primary_book}",
+                )
+
+    if context_prior.get("specialty") in BOOKS:
+        _add_book_score(
+            scores,
+            routing_evidence,
+            context_prior.get("specialty"),
+            1.2,
+            f"context_specialty:{context_prior.get('specialty')}",
+        )
+
+    batch_context = dict(context_prior.get("batch_context") or {})
+    system_evidence = [
+        ("section_system_hint", section_system_hint, 1.9),
+        ("sheet_system_hint", sheet_system_hint, 1.7),
+        ("bill_system_hint", bill_system_hint, 1.5),
+        ("project_title_system_hint", project_system_hint, 1.2),
+        ("desc_system_hint", desc_system_hint, 1.4),
+        ("item_system_hint", item_system_hint, 0.9),
+        ("system_hint", context_prior.get("system_hint"), 2.2),
+        ("batch_section_system_hint", batch_context.get("section_system_hint"), 1.3),
+        ("batch_sheet_system_hint", batch_context.get("sheet_system_hint"), 1.1),
+        ("neighbor_system_hint", batch_context.get("neighbor_system_hint"), 1.1),
+        ("project_system_hint", batch_context.get("project_system_hint"), 0.9),
+    ]
+    for label, hint_value, delta in system_evidence:
+        system_book = _book_from_system_hint(str(hint_value or ""))
+        if system_book:
+            _add_book_score(
+                scores,
+                routing_evidence,
+                system_book,
+                delta,
+                f"{label}:{hint_value}",
+            )
+
+    for hint in _normalize_books(context_prior.get("context_hints", []))[:3]:
+        hinted_book = _book_from_system_hint(hint)
+        if hinted_book:
+            _add_book_score(
+                scores,
+                routing_evidence,
+                hinted_book,
+                0.7,
+                f"context_hint:{hint}",
+            )
+
+    if family_allowed:
+        family_bias = 0.8 if len(family_allowed) <= 2 else 0.45
+        for book in family_allowed:
+            _add_book_score(
+                scores,
+                routing_evidence,
+                book,
+                family_bias,
+                f"family:{family}",
+            )
+
+    route_mode = "open"
+    if override_book or section_book or sheet_book or bill_title_book or project_title_book:
+        route_mode = "strict"
+    elif hard_constraints and len(hard_constraints) <= 3:
+        route_mode = "strict"
+    elif hard_constraints or scores:
+        route_mode = "moderate"
+
+    allow_cross_book_escape = route_mode != "strict"
+
+    return _finalize_routing_result(
+        scores,
+        routing_evidence,
+        hard_constraints=hard_constraints,
+        route_mode=route_mode,
+        allow_cross_book_escape=allow_cross_book_escape,
+    )
+
+
+def classify(bill_name: str, bill_desc: str = "",
+             section_title: str = None, province: str = None,
+             bill_code: str = None,
+             context_prior: dict | None = None,
+             canonical_features: dict | None = None,
+             sheet_name: str | None = None) -> dict:
+    """Route a bill item to candidate books with routing constraints."""
+    return _classify_v2(
+        bill_name,
+        bill_desc=bill_desc,
+        section_title=section_title,
+        province=province,
+        bill_code=bill_code,
+        context_prior=context_prior,
+        canonical_features=canonical_features,
+        sheet_name=sheet_name,
+    )
 
 
 def get_book_from_quota_id(quota_id: str) -> str | None:

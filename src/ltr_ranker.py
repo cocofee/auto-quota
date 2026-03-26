@@ -6,7 +6,10 @@ from pathlib import Path
 from loguru import logger
 
 import config
-from src.candidate_scoring import compute_candidate_structured_score
+from src.candidate_scoring import (
+    compute_candidate_stage_rank_key,
+    compute_candidate_structured_score,
+)
 from src.constrained_ranker import apply_constrained_gated_ranker
 from src.ltr_feature_extractor import extract_group_features
 
@@ -49,6 +52,91 @@ class LTRRanker:
             logger.warning(f"LTR v2 model load failed, fallback to manual scoring: {exc}")
         return cls._model, list(cls._feature_names or [])
 
+    @staticmethod
+    def _annotate_manual_stage(candidates: list[dict]) -> None:
+        for candidate in candidates:
+            candidate["manual_structured_score"] = compute_candidate_structured_score(candidate)
+            candidate["_rank_score_source"] = "manual"
+
+    @staticmethod
+    def _sort_with_stage_priority(
+        candidates: list[dict],
+        *,
+        stage: str,
+        primary_score_field: str,
+    ) -> list[dict]:
+        ranked = list(candidates)
+        ranked.sort(
+            key=lambda candidate: compute_candidate_stage_rank_key(
+                candidate,
+                primary_score=float(candidate.get(primary_score_field, 0.0) or 0.0),
+            ),
+            reverse=True,
+        )
+        for candidate in ranked:
+            candidate["rank_stage"] = stage
+            candidate["rank_score"] = float(candidate.get(primary_score_field, 0.0) or 0.0)
+        return ranked
+
+    @staticmethod
+    def _find_candidate_by_quota_id(candidates: list[dict], quota_id: str) -> dict | None:
+        target = str(quota_id or "").strip()
+        if not target:
+            return None
+        for candidate in candidates:
+            if str(candidate.get("quota_id", "") or "").strip() == target:
+                return candidate
+        return None
+
+    @staticmethod
+    def _should_allow_cgr_override(incumbent: dict | None, challenger: dict | None, cgr_meta: dict) -> tuple[bool, str]:
+        if challenger is None:
+            return False, "missing_challenger"
+        if incumbent is None:
+            return False, "missing_incumbent"
+        incumbent_id = str(incumbent.get("quota_id", "") or "").strip()
+        challenger_id = str(challenger.get("quota_id", "") or "").strip()
+        if incumbent_id == challenger_id:
+            return True, "same_top1"
+        if bool(cgr_meta.get("empty_feasible_set")):
+            return False, "empty_feasible_set"
+        if not bool(challenger.get("cgr_feasible", True)):
+            return False, "challenger_not_feasible"
+        if bool(incumbent.get("cgr_fatal_hard_conflict")):
+            return True, "incumbent_fatal_hard_conflict"
+        if bool(incumbent.get("cgr_high_conf_wrong_book")):
+            return True, "incumbent_high_conf_wrong_book"
+        return False, "incumbent_protected"
+
+    @classmethod
+    def _apply_cgr_shadow_guard(
+        cls,
+        ltr_ranked: list[dict],
+        cgr_ranked: list[dict],
+        cgr_meta: dict,
+    ) -> tuple[list[dict], dict]:
+        if not cgr_ranked:
+            cgr_meta["override_allowed"] = False
+            cgr_meta["override_reason"] = "empty_cgr_ranked"
+            return ltr_ranked, cgr_meta
+        incumbent_id = str((ltr_ranked[0].get("quota_id", "") if ltr_ranked else "") or "")
+        challenger_id = str((cgr_ranked[0].get("quota_id", "") if cgr_ranked else "") or "")
+        cgr_meta["suggested_top1_id"] = challenger_id
+        incumbent = cls._find_candidate_by_quota_id(cgr_ranked, incumbent_id)
+        challenger = cgr_ranked[0]
+        allow_override, reason = cls._should_allow_cgr_override(incumbent, challenger, cgr_meta)
+        cgr_meta["override_allowed"] = allow_override
+        cgr_meta["override_reason"] = reason
+        cgr_meta["incumbent_top1_id"] = incumbent_id
+        if allow_override:
+            return cgr_ranked, cgr_meta
+        guarded = list(cgr_ranked)
+        if incumbent is not None:
+            guarded = [incumbent] + [candidate for candidate in guarded if candidate is not incumbent]
+        else:
+            guarded = list(ltr_ranked)
+        return guarded, cgr_meta
+
     @classmethod
     def rerank_candidates_with_ltr(
         cls,
@@ -62,18 +150,23 @@ class LTRRanker:
             "applied": False,
             "fallback_reason": "",
             "pre_ltr_top1_id": str((candidates or [{}])[0].get("quota_id", "") or "") if candidates else "",
+            "post_manual_top1_id": str((candidates or [{}])[0].get("quota_id", "") or "") if candidates else "",
             "post_ltr_top1_id": str((candidates or [{}])[0].get("quota_id", "") or "") if candidates else "",
             "post_cgr_top1_id": str((candidates or [{}])[0].get("quota_id", "") or "") if candidates else "",
             "feature_count": 0,
             "cgr": {},
+            "primary_stage": "manual",
         }
         if not candidates:
             meta["fallback_reason"] = "no_candidates"
             return candidates, meta
-        for candidate in candidates:
-            candidate["manual_structured_score"] = compute_candidate_structured_score(candidate)
-            candidate["_rank_score_source"] = "manual"
-        ranked = list(candidates)
+        cls._annotate_manual_stage(candidates)
+        ranked = cls._sort_with_stage_priority(
+            candidates,
+            stage="manual",
+            primary_score_field="manual_structured_score",
+        )
+        meta["post_manual_top1_id"] = str(ranked[0].get("quota_id", "") or "") if ranked else ""
         if not config.LTR_V2_ENABLED:
             meta["fallback_reason"] = "disabled"
             if config.CONSTRAINED_GATED_RANKER_ENABLED:
@@ -103,18 +196,17 @@ class LTRRanker:
             for candidate, score in zip(ranked, predictions):
                 candidate["ltr_score"] = float(score)
                 candidate["_rank_score_source"] = "ltr"
-            ranked.sort(
-                key=lambda candidate: (
-                    float(candidate.get("ltr_score", 0.0)),
-                    float(candidate.get("manual_structured_score", 0.0)),
-                    float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0)) or 0.0),
-                ),
-                reverse=True,
+            ranked = cls._sort_with_stage_priority(
+                ranked,
+                stage="ltr",
+                primary_score_field="ltr_score",
             )
             meta["applied"] = True
+            meta["primary_stage"] = "ltr"
             meta["post_ltr_top1_id"] = str(ranked[0].get("quota_id", "") or "") if ranked else ""
             if config.CONSTRAINED_GATED_RANKER_ENABLED:
-                ranked, cgr_meta = apply_constrained_gated_ranker(item, ranked, context)
+                cgr_ranked, cgr_meta = apply_constrained_gated_ranker(item, ranked, context)
+                ranked, cgr_meta = cls._apply_cgr_shadow_guard(ranked, cgr_ranked, cgr_meta)
                 meta["cgr"] = cgr_meta
                 meta["post_cgr_top1_id"] = str((ranked[0].get("quota_id", "") if ranked else "") or "")
             if config.LTR_FEATURE_LOGGING:
