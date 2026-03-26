@@ -6,12 +6,98 @@ import re
 
 
 _SYSTEM_HINT_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("消防", ("消防", "喷淋", "消火栓", "火灾报警")),
-    ("给排水", ("给水", "排水", "污水", "雨水", "中水")),
-    ("电气", ("电气", "桥架", "电缆", "配线", "配管", "照明", "动力")),
-    ("通风空调", ("通风", "空调", "风管", "风阀", "风口")),
+    (
+        "消防",
+        (
+            "消防", "消防水", "消火栓", "喷淋", "喷洒", "火灾报警", "报警阀",
+            "湿式报警", "末端试水", "消防泵", "消防箱",
+        ),
+    ),
+    (
+        "给排水",
+        (
+            "给排水", "生活给水", "生产给水", "给水系统", "给水管", "给水",
+            "排水系统", "重力排水", "污水系统", "污废水", "废水", "污水",
+            "雨水系统", "虹吸雨水", "雨水", "中水", "冷凝水", "排水", "水暖",
+        ),
+    ),
+    (
+        "电气",
+        (
+            "电气", "强电", "弱电", "机电", "供配电", "配电", "动力", "照明",
+            "防雷", "接地", "桥架", "电缆", "配线", "配管", "导管", "线槽",
+            "母线", "开关", "插座",
+        ),
+    ),
+    (
+        "通风空调",
+        (
+            "通风空调", "暖通", "空调水", "空调", "通风", "新风", "送风", "排风",
+            "排烟", "补风", "风管", "风阀", "风口", "盘管", "风机盘管",
+        ),
+    ),
 ]
 
+_SYSTEM_NORMALIZE_MAP: dict[str, str] = {
+    "给水": "给排水",
+    "排水": "给排水",
+    "污水": "给排水",
+    "雨水": "给排水",
+    "中水": "给排水",
+    "消防水": "消防",
+    "暖通": "通风空调",
+}
+
+
+_SYSTEM_HINT_RULES = [
+    (
+        "\u6d88\u9632",
+        (
+            "\u6d88\u9632", "\u6d88\u9632\u6c34", "\u6d88\u706b\u6813", "\u55b7\u6dcb", "\u55b7\u6d12",
+            "\u706b\u707e\u62a5\u8b66", "\u62a5\u8b66\u9600", "\u6e7f\u5f0f\u62a5\u8b66",
+            "\u672b\u7aef\u8bd5\u6c34", "\u6d88\u9632\u6cf5", "\u6d88\u9632\u7ba1",
+        ),
+    ),
+    (
+        "\u7ed9\u6392\u6c34",
+        (
+            "\u7ed9\u6392\u6c34", "\u751f\u6d3b\u7ed9\u6c34", "\u751f\u4ea7\u7ed9\u6c34",
+            "\u7ed9\u6c34\u7cfb\u7edf", "\u7ed9\u6c34\u7ba1", "\u7ed9\u6c34",
+            "\u6392\u6c34\u7cfb\u7edf", "\u91cd\u529b\u6392\u6c34", "\u6c61\u6c34\u7cfb\u7edf",
+            "\u6c61\u5e9f\u6c34", "\u5e9f\u6c34", "\u6c61\u6c34", "\u96e8\u6c34\u7cfb\u7edf",
+            "\u8679\u5438\u96e8\u6c34", "\u96e8\u6c34", "\u4e2d\u6c34", "\u51b7\u51dd\u6c34",
+            "\u6392\u6c34", "\u6c34\u6696",
+        ),
+    ),
+    (
+        "\u7535\u6c14",
+        (
+            "\u7535\u6c14", "\u5f3a\u7535", "\u5f31\u7535", "\u673a\u7535", "\u4f9b\u914d\u7535",
+            "\u914d\u7535", "\u52a8\u529b", "\u7167\u660e", "\u9632\u96f7", "\u63a5\u5730",
+            "\u6865\u67b6", "\u7535\u7f06", "\u914d\u7ebf", "\u914d\u7ba1", "\u5bfc\u7ba1",
+            "\u7ebf\u69fd", "\u6bcd\u7ebf", "\u5f00\u5173", "\u63d2\u5ea7",
+        ),
+    ),
+    (
+        "\u901a\u98ce\u7a7a\u8c03",
+        (
+            "\u901a\u98ce\u7a7a\u8c03", "\u6696\u901a", "\u7a7a\u8c03\u6c34", "\u7a7a\u8c03",
+            "\u901a\u98ce", "\u65b0\u98ce", "\u9001\u98ce", "\u6392\u98ce", "\u6392\u70df",
+            "\u8865\u98ce", "\u98ce\u7ba1", "\u98ce\u9600", "\u98ce\u53e3", "\u76d8\u7ba1",
+            "\u98ce\u673a\u76d8\u7ba1",
+        ),
+    ),
+]
+
+_SYSTEM_NORMALIZE_MAP = {
+    "\u7ed9\u6c34": "\u7ed9\u6392\u6c34",
+    "\u6392\u6c34": "\u7ed9\u6392\u6c34",
+    "\u6c61\u6c34": "\u7ed9\u6392\u6c34",
+    "\u96e8\u6c34": "\u7ed9\u6392\u6c34",
+    "\u4e2d\u6c34": "\u7ed9\u6392\u6c34",
+    "\u6d88\u9632\u6c34": "\u6d88\u9632",
+    "\u6696\u901a": "\u901a\u98ce\u7a7a\u8c03",
+}
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
     result: list[str] = []
@@ -29,11 +115,18 @@ def _item_text(item: dict[str, Any], *fields: str) -> str:
     return " ".join(str(item.get(field) or "") for field in fields).strip()
 
 
+def normalize_system_hint(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return _SYSTEM_NORMALIZE_MAP.get(text, text)
+
+
 def detect_system_hint(*texts: str) -> str:
     merged = " ".join(str(text or "") for text in texts)
     for system, keywords in _SYSTEM_HINT_RULES:
         if any(keyword in merged for keyword in keywords):
-            return system
+            return normalize_system_hint(system)
     return ""
 
 
@@ -188,6 +281,8 @@ def build_context_prior(item: dict[str, Any],
     context_prior = {
         "specialty": item.get("specialty", ""),
         "specialty_name": item.get("specialty_name", ""),
+        "project_name": str(item.get("project_name") or "").strip(),
+        "bill_name": str(item.get("bill_name") or "").strip(),
     }
 
     context_hints = _dedupe_keep_order(list(item.get("_context_hints") or []))

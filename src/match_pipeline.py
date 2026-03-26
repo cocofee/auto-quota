@@ -205,6 +205,10 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     if cast_iron_pipe_candidate is not None:
         return _guard_explicit_candidate(item, top_candidate, cast_iron_pipe_candidate)
 
+    pipe_run_candidate = _pick_explicit_pipe_run_candidate(bill_text, candidates)
+    if pipe_run_candidate is not None:
+        return _guard_explicit_candidate(item, top_candidate, pipe_run_candidate)
+
     sleeve_candidate = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
     if sleeve_candidate is not None:
         return _guard_explicit_candidate(item, top_candidate, sleeve_candidate)
@@ -774,6 +778,123 @@ def _pick_explicit_cast_iron_pipe_candidate(bill_text: str,
                     score += 3
                 else:
                     score -= 6
+        if score <= 0:
+            continue
+        scored.append((
+            (
+                score,
+                float(cand.get("param_score", 0.0)),
+                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
+            ),
+            cand,
+        ))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def _normalize_pipe_material_hint(text: str, material: str = "") -> str:
+    combined = f"{text or ''} {material or ''}"
+    if any(keyword in combined for keyword in ("PSP钢塑复合管", "钢塑复合压力给水管", "钢塑复合给水管", "钢塑复合管", "钢塑复合")):
+        return "钢塑复合管"
+    if any(keyword in combined for keyword in ("钢骨架塑料复合管", "金属骨架塑料复合管")):
+        return "钢骨架塑料复合管"
+    if "金属骨架复合管" in combined:
+        return "金属骨架复合管"
+    if "铝塑复合" in combined:
+        return "铝塑复合管"
+    if "衬塑钢管" in combined:
+        return "衬塑钢管"
+    if "涂塑钢管" in combined:
+        return "涂塑钢管"
+    if "复合管" in combined:
+        return "复合管"
+    return material or ""
+
+
+def _pick_explicit_pipe_run_candidate(bill_text: str,
+                                      candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if not text:
+        return None
+
+    if any(word in text for word in ("电气配管", "配管", "导管", "穿线管", "桥架", "线槽", "金属软管", "可挠金属套管")):
+        return None
+
+    accessory_words = (
+        "管件", "弯头", "三通", "异径", "法兰", "接头", "阀", "套管", "地漏", "雨水斗",
+        "水表", "过滤器", "除污器", "补偿器", "软接头", "伸缩节", "支架", "吊架",
+    )
+    if any(word in text for word in accessory_words):
+        return None
+    if not any(word in text for word in ("管", "给水", "排水", "污水", "废水", "雨水", "复合管", "钢管", "塑料管", "铸铁管")):
+        return None
+
+    bill_params = text_parser.parse(text)
+    bill_dn = bill_params.get("dn")
+    bill_connection = str(bill_params.get("connection") or "")
+    bill_material = _normalize_pipe_material_hint(text, str(bill_params.get("material") or ""))
+    usage_words = [word for word in ("给水", "排水", "污水", "废水", "雨水", "消防") if word in text]
+    location_words = [word for word in ("室内", "室外") if word in text]
+    forbidden_words = (
+        "管件", "弯头", "三通", "异径", "法兰安装", "接头", "套管", "水表", "过滤器",
+        "除污器", "补偿器", "软接头", "伸缩节", "低压管件",
+    )
+    electrical_quota_words = (
+        "敷设", "暗配", "明配", "砖、混凝土结构", "钢导管", "紧定式",
+    )
+    pipe_anchor_words = (
+        "管道", "给水管", "排水管", "钢塑复合管", "复合管", "塑料给水管", "塑料排水管",
+        "铸铁管", "钢管", "管安装",
+    )
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for cand in candidates:
+        quota_name = cand.get("name", "") or ""
+        if any(word in quota_name for word in forbidden_words):
+            continue
+        if not any(word in quota_name for word in pipe_anchor_words):
+            continue
+
+        cand_params = text_parser.parse(quota_name)
+        cand_connection = str(cand_params.get("connection") or "")
+        score = 12
+        if "给排水管道" in quota_name:
+            score += 10
+        elif any(word in quota_name for word in ("给水", "排水", "室内", "室外")):
+            score += 4
+        score -= sum(8 for word in electrical_quota_words if word in quota_name)
+        score += sum(8 for word in usage_words if word and word in quota_name)
+        score += sum(3 for word in location_words if word and word in quota_name)
+
+        if bill_material:
+            if bill_material in quota_name:
+                score += 10
+            elif bill_material == "钢塑复合管" and any(word in quota_name for word in ("钢塑复合管", "PSP", "衬塑钢管")):
+                score += 8
+            elif "复合管" in bill_material and "复合管" in quota_name:
+                score += 4
+
+        if bill_connection and cand_connection:
+            if bill_connection == cand_connection:
+                score += 6
+            elif connections_compatible(bill_connection, cand_connection):
+                score += 4
+            else:
+                score -= 6
+
+        if bill_dn is not None:
+            cand_dn = cand_params.get("dn")
+            if cand_dn is not None:
+                if cand_dn == bill_dn:
+                    score += 8
+                elif cand_dn > bill_dn:
+                    score += 2
+                else:
+                    score -= 8
+
         if score <= 0:
             continue
         scored.append((
@@ -2637,6 +2758,7 @@ def _build_item_context(item: dict) -> dict:
     name = item.get("name", "")
     desc = item.get("description", "") or ""
     section = item.get("section", "") or ""
+    sheet_name = item.get("sheet_name", "") or ""
     original_name = item.get("original_name", name)
     canonical_features = item.get("canonical_features") or {}
     context_prior = item.get("context_prior") or {}
@@ -2707,6 +2829,7 @@ def _build_item_context(item: dict) -> dict:
         "name": name,
         "desc": desc,
         "section": section,
+        "sheet_name": sheet_name,
         "unit": item.get("unit"),
         "quantity": item.get("quantity"),
         "canonical_query": canonical_query,
@@ -2722,7 +2845,41 @@ def _build_item_context(item: dict) -> dict:
     }
 
 
+def _has_strong_routing_evidence(classification: dict) -> bool:
+    primary = str((classification or {}).get("primary") or "").strip()
+    if not primary:
+        return False
+    reasons = ((classification or {}).get("routing_evidence") or {}).get(primary) or []
+    strong_prefixes = (
+        "item_override:",
+        "section:",
+        "sheet:",
+        "bill_title:",
+        "project_title:",
+        "section_system_hint:",
+        "sheet_system_hint:",
+        "bill_system_hint:",
+        "project_title_system_hint:",
+    )
+    return any(str(reason).startswith(strong_prefixes) for reason in reasons)
+
+
+def _should_override_seeded_specialty(seed_primary: str, inferred: dict) -> bool:
+    seed_primary = str(seed_primary or "").strip()
+    inferred = dict(inferred or {})
+    inferred_primary = str(inferred.get("primary") or "").strip()
+    if not seed_primary or not inferred_primary or inferred_primary == seed_primary:
+        return False
+    hard_constraints = [str(book).strip() for book in (inferred.get("hard_book_constraints") or []) if str(book).strip()]
+    if seed_primary in hard_constraints:
+        return False
+    if _has_strong_routing_evidence(inferred):
+        return True
+    return False
+
+
 def _build_classification(item: dict, name: str, desc: str, section: str,
+                          sheet_name: str = "",
                           province: str = None) -> dict:
     """获取并标准化专业分类结果。"""
     primary = str(item.get("specialty") or "").strip()
@@ -2738,13 +2895,25 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         "fallbacks": fallbacks,
     }
     if primary:
+        candidate_books = [primary] + [book for book in fallbacks if book != primary]
         classification["confidence"] = "high"
         classification["reason"] = "item_specialty"
-    if not classification["primary"]:
-        classification = classify_specialty(
-            name, desc, section_title=section, province=province,
-            bill_code=item.get("code")
-        )
+        classification["candidate_books"] = candidate_books
+        classification["search_books"] = list(candidate_books)
+        classification["hard_book_constraints"] = [primary]
+        classification["routing_evidence"] = {primary: ["item_specialty"]}
+        classification["route_mode"] = "strict"
+        classification["allow_cross_book_escape"] = False
+        classification["book_scores"] = {primary: 10.0}
+    inferred = classify_specialty(
+        name, desc, section_title=section, province=province,
+        bill_code=item.get("code"),
+        context_prior=item.get("context_prior"),
+        canonical_features=item.get("canonical_features"),
+        sheet_name=sheet_name or item.get("sheet_name"),
+    )
+    if not classification["primary"] or _should_override_seeded_specialty(primary, inferred):
+        classification = inferred
     return _normalize_classification(classification)
 
 
@@ -2840,6 +3009,21 @@ def _build_ranked_candidate_snapshots(candidates: list[dict], top_n: int = 20) -
             "feature_alignment_score": candidate.get("feature_alignment_score"),
             "manual_structured_score": candidate.get("manual_structured_score"),
             "ltr_score": candidate.get("ltr_score"),
+            "rank_stage": str(candidate.get("rank_stage", "") or ""),
+            "rank_score_source": str(candidate.get("_rank_score_source", "") or ""),
+            "rank_score": candidate.get("rank_score"),
+            "cgr_score": candidate.get("cgr_score"),
+            "cgr_probability": candidate.get("cgr_probability"),
+            "cgr_feasible": candidate.get("cgr_feasible"),
+            "cgr_fatal_hard_conflict": candidate.get("cgr_fatal_hard_conflict"),
+            "cgr_high_conf_wrong_book": candidate.get("cgr_high_conf_wrong_book"),
+            "cgr_high_conf_family_book_conflict": candidate.get("cgr_high_conf_family_book_conflict"),
+            "cgr_sem_score": candidate.get("cgr_sem_score"),
+            "cgr_str_score": candidate.get("cgr_str_score"),
+            "cgr_prior_score": candidate.get("cgr_prior_score"),
+            "cgr_tier_penalty": candidate.get("cgr_tier_penalty"),
+            "cgr_generic_penalty": candidate.get("cgr_generic_penalty"),
+            "cgr_soft_conflict_penalty": candidate.get("cgr_soft_conflict_penalty"),
             "candidate_canonical_features": dict(
                 candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
             ),
@@ -3706,7 +3890,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         item["_input_gate"] = current_gate
 
     classification = _build_classification(
-        item, name, desc, ctx["section"], province=province
+        item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
     )
     context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
     if context_gate.get("should_abstain"):
