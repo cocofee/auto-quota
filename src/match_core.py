@@ -19,12 +19,16 @@ import re
 
 from loguru import logger
 
+from src.utils import safe_float
+
 import config
 from src.ambiguity_gate import analyze_ambiguity
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 from src.policy_engine import PolicyEngine
+from src.specialty_classifier import detect_db_type
+from src.candidate_scoring import sort_candidates_with_stage_priority
 
 
 # ============================================================
@@ -251,15 +255,15 @@ def infer_confidence_family_alignment(candidate: dict) -> bool:
     if bool(candidate.get("logic_hard_conflict", False)):
         return False
 
-    if _safe_float_value(candidate.get("family_gate_score"), 0.0) >= 1.0:
+    if safe_float(candidate.get("family_gate_score"), 0.0) >= 1.0:
         return True
 
-    param_score = _safe_float_value(candidate.get("param_score"), 0.0)
-    name_bonus = _safe_float_value(candidate.get("name_bonus"), 0.0)
-    feature_score = _safe_float_value(candidate.get("feature_alignment_score"), 0.0)
+    param_score = safe_float(candidate.get("param_score"), 0.0)
+    name_bonus = safe_float(candidate.get("name_bonus"), 0.0)
+    feature_score = safe_float(candidate.get("feature_alignment_score"), 0.0)
     feature_comp = int(candidate.get("feature_alignment_comparable_count", 0) or 0)
     feature_anchors = int(candidate.get("feature_alignment_exact_anchor_count", 0) or 0)
-    context_score = _safe_float_value(candidate.get("context_alignment_score"), 0.0)
+    context_score = safe_float(candidate.get("context_alignment_score"), 0.0)
     context_comp = int(candidate.get("context_alignment_comparable_count", 0) or 0)
 
     if param_score < 0.55 or name_bonus < 0.20:
@@ -269,13 +273,6 @@ def infer_confidence_family_alignment(candidate: dict) -> bool:
     if feature_score >= 0.84 and feature_comp >= 2:
         return context_comp <= 0 or context_score >= 0.65
     return False
-
-
-def _safe_float_value(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _safe_json_materials(raw_value) -> list[dict]:
@@ -300,8 +297,8 @@ def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> l
             "quota_id": c.get("quota_id", ""),
             "name": c.get("name", ""),
             "param_match": bool(c.get("param_match", True)),
-            "param_score": _safe_float_value(c.get("param_score"), 0.0),
-            "rerank_score": _safe_float_value(
+            "param_score": safe_float(c.get("param_score"), 0.0),
+            "rerank_score": safe_float(
                 c.get("rerank_score", c.get("hybrid_score", 0)), 0.0
             ),
             "reasoning": summarize_candidate_reasoning(c),
@@ -314,10 +311,10 @@ def summarize_candidate_reasoning(candidate: dict) -> dict:
     candidate = candidate or {}
     reasoning = {
         "param_match": bool(candidate.get("param_match", True)),
-        "param_score": _safe_float_value(candidate.get("param_score"), 0.0),
+        "param_score": safe_float(candidate.get("param_score"), 0.0),
         "param_tier": int(candidate.get("param_tier", 1) or 1),
-        "name_bonus": _safe_float_value(candidate.get("name_bonus"), 0.0),
-        "rerank_score": _safe_float_value(
+        "name_bonus": safe_float(candidate.get("name_bonus"), 0.0),
+        "rerank_score": safe_float(
             candidate.get("rerank_score", candidate.get("hybrid_score", 0)), 0.0
         ),
     }
@@ -335,7 +332,7 @@ def summarize_candidate_reasoning(candidate: dict) -> dict:
         if score is None and not detail and comparable_count <= 0 and not hard_conflict:
             continue
         layers[key] = {
-            "score": _safe_float_value(score, 0.0),
+            "score": safe_float(score, 0.0),
             "detail": detail,
             "comparable_count": comparable_count,
             "hard_conflict": hard_conflict,
@@ -370,7 +367,7 @@ def _append_trace_step(result: dict, stage: str, **fields):
     trace["steps"] = steps
     trace["path"] = [s.get("stage", "") for s in steps if s.get("stage")]
     trace["final_source"] = result.get("match_source", "")
-    trace["final_confidence"] = _safe_float_value(result.get("confidence"), 0.0)
+    trace["final_confidence"] = safe_float(result.get("confidence"), 0.0)
     result["trace"] = trace
 
 
@@ -386,7 +383,7 @@ def _finalize_trace(result: dict):
     if not isinstance(trace.get("path"), list):
         trace["path"] = [s.get("stage", "") for s in trace["steps"] if s.get("stage")]
     trace["final_source"] = result.get("match_source", "")
-    trace["final_confidence"] = _safe_float_value(result.get("confidence"), 0.0)
+    trace["final_confidence"] = safe_float(result.get("confidence"), 0.0)
     result["trace"] = trace
 
 
@@ -412,7 +409,7 @@ def _normalize_fallbacks(value) -> list[str]:
     return cleaned
 
 
-def _normalize_classification(classification: dict) -> dict:
+def _normalize_classification_legacy(classification: dict) -> dict:
     """标准化专业分类结果，避免fallback类型异常导致后续崩溃。"""
     base = dict(classification) if isinstance(classification, dict) else {}
 
@@ -427,6 +424,107 @@ def _normalize_classification(classification: dict) -> dict:
     base["primary"] = primary
     base["fallbacks"] = fallbacks
     return base
+
+
+def _normalize_routing_classification(classification: dict) -> dict:
+    """Normalize routing output into a stable search contract."""
+    base = dict(classification) if isinstance(classification, dict) else {}
+
+    primary = base.get("primary")
+    primary = str(primary).strip() if primary is not None else ""
+    primary = primary or None
+
+    fallbacks = _normalize_fallbacks(base.get("fallbacks", []))
+    if primary:
+        fallbacks = [b for b in fallbacks if b != primary]
+
+    candidate_books = _normalize_fallbacks(base.get("candidate_books", []))
+    search_books = _normalize_fallbacks(base.get("search_books", []))
+    hard_book_constraints = _normalize_fallbacks(base.get("hard_book_constraints", []))
+    hard_search_books = _normalize_fallbacks(base.get("hard_search_books", []))
+    advisory_search_books = _normalize_fallbacks(base.get("advisory_search_books", []))
+
+    if primary and primary not in candidate_books:
+        candidate_books.insert(0, primary)
+    for book in fallbacks:
+        if book not in candidate_books:
+            candidate_books.append(book)
+
+    if not search_books:
+        search_books = list(candidate_books)
+    elif primary and primary not in search_books:
+        search_books.insert(0, primary)
+
+    route_mode = str(base.get("route_mode") or "").strip().lower()
+    if route_mode not in {"strict", "moderate", "open"}:
+        route_mode = "moderate" if primary else "open"
+
+    allow_cross_book_escape = base.get("allow_cross_book_escape")
+    if allow_cross_book_escape is None:
+        allow_cross_book_escape = route_mode != "strict"
+    allow_cross_book_escape = bool(allow_cross_book_escape)
+
+    if not hard_search_books:
+        hard_search_books = [
+            book for book in search_books
+            if book in hard_book_constraints
+        ] if hard_book_constraints else []
+    else:
+        hard_search_books = [
+            book for book in hard_search_books
+            if not hard_book_constraints or book in hard_book_constraints
+        ]
+
+    if not advisory_search_books:
+        advisory_search_books = [
+            book for book in search_books
+            if book not in hard_search_books
+        ]
+    else:
+        advisory_search_books = [
+            book for book in advisory_search_books
+            if book not in hard_search_books
+        ]
+
+    search_books = _normalize_fallbacks(hard_search_books + advisory_search_books)
+
+    raw_evidence = base.get("routing_evidence") or {}
+    routing_evidence = {}
+    if isinstance(raw_evidence, dict):
+        for book, reasons in raw_evidence.items():
+            book_key = str(book).strip()
+            if not book_key:
+                continue
+            routing_evidence[book_key] = _normalize_fallbacks(reasons)
+
+    raw_scores = base.get("book_scores") or {}
+    book_scores = {}
+    if isinstance(raw_scores, dict):
+        for book, score in raw_scores.items():
+            book_key = str(book).strip()
+            if not book_key:
+                continue
+            try:
+                book_scores[book_key] = float(score)
+            except (TypeError, ValueError):
+                continue
+
+    base["primary"] = primary
+    base["fallbacks"] = fallbacks
+    base["candidate_books"] = candidate_books
+    base["search_books"] = search_books
+    base["hard_book_constraints"] = hard_book_constraints
+    base["hard_search_books"] = hard_search_books
+    base["advisory_search_books"] = advisory_search_books
+    base["route_mode"] = route_mode
+    base["allow_cross_book_escape"] = allow_cross_book_escape
+    base["routing_evidence"] = routing_evidence
+    base["book_scores"] = book_scores
+    return base
+
+
+def _normalize_classification(classification: dict) -> dict:
+    return _normalize_routing_classification(classification)
 
 
 def _validate_candidates_with_context(validator: ParamValidator,
@@ -452,6 +550,8 @@ def _validate_candidates_with_context(validator: ParamValidator,
         kwargs["canonical_features"] = canonical_features
     if "context_prior" in param_names:
         kwargs["context_prior"] = context_prior
+    if "reorder_candidates" in param_names:
+        kwargs["reorder_candidates"] = False
     return validator.validate_candidates(full_query, candidates, **kwargs)
 
 
@@ -612,7 +712,7 @@ def try_experience_match(query: str, item: dict, experience_db,
     if best is None:
         logger.debug(f"经验库命中但版本均过期，不直通: {query[:50]}")
         return None
-    similarity = _safe_float_value(best.get("similarity"), 0.0)
+    similarity = safe_float(best.get("similarity"), 0.0)
     exp_materials = _safe_json_materials(best.get("materials"))
 
     # 精确匹配（完全相同的清单文本）→ 构建结果
@@ -772,69 +872,346 @@ def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
             aux_seen[key] = (score, r)
 
     merged.extend(v[1] for v in aux_seen.values())
-    merged.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
+    merged.sort(key=HybridSearcher._stable_result_identity)
+    merged.sort(key=HybridSearcher._hybrid_result_sort_key)
     return merged[:top_k]
 
 
-def cascade_search(searcher: HybridSearcher, search_query: str,
-                   classification: dict, top_k: int = None) -> list[dict]:
-    """
-    级联搜索：主专业+借用专业一起搜 → 不够则全库搜索
+def _normalize_route_book_code(value: object) -> str:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+    match = re.match(r"^C0*(\d+)$", raw)
+    if match:
+        return f"C{int(match.group(1))}"
+    match = re.match(r"^0*(\d+)$", raw)
+    if match:
+        return f"C{int(match.group(1))}"
+    return raw
 
-    设计思想：不要只搜主专业（太窄，容易漏掉正确答案），
-    直接在"主专业+借用专业"范围内搜索，让Reranker和参数验证来挑最好的。
 
-    辅助定额库：
-    无论清单专业是什么（C/A/D/E），都同时搜索所有辅助库，
-    结果与主库合并后按 hybrid_score 统一排序。
+def _candidate_book_code(candidate: dict) -> str:
+    quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
+    if not quota_id:
+        return ""
+    match = re.match(r"^(C\d+)-", quota_id, re.IGNORECASE)
+    if match:
+        return _normalize_route_book_code(match.group(1))
+    match = re.match(r"^(\d+)-", quota_id)
+    if match:
+        return _normalize_route_book_code(match.group(1))
+    match = re.match(r"^([A-Z]{1,3}\d*)-", quota_id)
+    if match:
+        return _normalize_route_book_code(match.group(1))
+    return ""
 
-    参数:
-        searcher: 混合搜索引擎实例（可能挂载了 aux_searchers）
-        search_query: 搜索文本
-        classification: specialty_classifier.classify() 的返回值
-        top_k: 返回候选数量
 
-    返回:
-        候选定额列表
-    """
+def _effective_route_scope_books(classification: dict | None) -> list[str]:
+    raw = dict(classification or {}) if isinstance(classification, dict) else {}
+    normalized = _normalize_classification(classification)
+    route_mode = str(normalized.get("route_mode") or "open").strip().lower()
+    allow_cross_book_escape = bool(
+        normalized.get("allow_cross_book_escape", route_mode != "strict")
+    )
+    if allow_cross_book_escape:
+        return []
+
+    def _normalized_books(values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            book = _normalize_route_book_code(value)
+            if not book or book in seen:
+                continue
+            seen.add(book)
+            normalized.append(book)
+        return normalized
+
+    resolution = dict(raw.get("retrieval_resolution") or normalized.get("retrieval_resolution") or {})
+    main_calls = [
+        call for call in list(resolution.get("calls") or [])
+        if str((call or {}).get("target") or "").strip() == "main"
+    ]
+    if main_calls:
+        resolved_books = _normalize_fallbacks([
+            book
+            for call in main_calls
+            for book in list((call or {}).get("resolved_books") or [])
+        ])
+        if resolved_books:
+            return _normalized_books(resolved_books)
+        return []
+
+    hard_books = _normalize_fallbacks(
+        list(normalized.get("hard_search_books") or [])
+        or list(normalized.get("hard_book_constraints") or [])
+    )
+    if hard_books:
+        return _normalized_books(hard_books)
+    return _normalized_books(_normalize_fallbacks(list(normalized.get("search_books") or [])))
+
+
+def _filter_candidates_to_route_scope(
+    candidates: list[dict],
+    classification: dict | None,
+) -> tuple[list[dict], dict]:
+    allowed_books = _effective_route_scope_books(classification)
+    meta = {
+        "applied": False,
+        "allowed_books": list(allowed_books),
+        "dropped_count": 0,
+        "dropped_quota_ids": [],
+        "reason": "",
+    }
+    if not candidates or not allowed_books:
+        return list(candidates or []), meta
+
+    allowed_set = {str(book).strip().upper() for book in allowed_books if str(book).strip()}
+    kept: list[dict] = []
+    dropped_quota_ids: list[str] = []
+    for candidate in candidates or []:
+        book_code = _candidate_book_code(candidate)
+        quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
+        if not book_code or book_code in allowed_set:
+            kept.append(candidate)
+            continue
+        if quota_id:
+            dropped_quota_ids.append(quota_id)
+
+    if not dropped_quota_ids:
+        return list(candidates or []), meta
+    if not kept:
+        meta["reason"] = "empty_after_filter"
+        meta["dropped_count"] = len(dropped_quota_ids)
+        meta["dropped_quota_ids"] = dropped_quota_ids[:20]
+        return list(candidates or []), meta
+
+    meta["applied"] = True
+    meta["reason"] = "strict_route_scope"
+    meta["dropped_count"] = len(dropped_quota_ids)
+    meta["dropped_quota_ids"] = dropped_quota_ids[:20]
+    return kept, meta
+
+
+def _effective_candidate_guard_books(classification: dict | None) -> list[str]:
+    raw = dict(classification or {}) if isinstance(classification, dict) else {}
+    normalized = _normalize_classification(classification)
+    resolution = dict(raw.get("retrieval_resolution") or normalized.get("retrieval_resolution") or {})
+    main_calls = [
+        call for call in list(resolution.get("calls") or [])
+        if str((call or {}).get("target") or "").strip() == "main"
+    ]
+    if any(str((call or {}).get("stage") or "").strip() in {"open", "escape"} for call in main_calls):
+        return []
+
+    books: list[str] = []
+    seen: set[str] = set()
+    for value in list(normalized.get("search_books") or []):
+        book = _normalize_route_book_code(value)
+        if not book or book in seen:
+            continue
+        seen.add(book)
+        books.append(book)
+    for call in main_calls:
+        for value in list((call or {}).get("resolved_books") or []):
+            book = _normalize_route_book_code(value)
+            if not book or book in seen:
+                continue
+            seen.add(book)
+            books.append(book)
+    return books
+
+
+def _filter_candidates_to_effective_guard_scope(
+    candidates: list[dict],
+    classification: dict | None,
+) -> tuple[list[dict], dict]:
+    allowed_books = _effective_candidate_guard_books(classification)
+    meta = {
+        "applied": False,
+        "allowed_books": list(allowed_books),
+        "dropped_count": 0,
+        "dropped_quota_ids": [],
+        "reason": "",
+    }
+    if not candidates or not allowed_books:
+        return list(candidates or []), meta
+
+    allowed_set = {str(book).strip().upper() for book in allowed_books if str(book).strip()}
+    kept: list[dict] = []
+    dropped_quota_ids: list[str] = []
+    for candidate in candidates or []:
+        book_code = _candidate_book_code(candidate)
+        quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
+        if not book_code or book_code in allowed_set:
+            kept.append(candidate)
+            continue
+        if quota_id:
+            dropped_quota_ids.append(quota_id)
+
+    if not dropped_quota_ids:
+        return list(candidates or []), meta
+    if not kept:
+        meta["reason"] = "empty_after_guard"
+        meta["dropped_count"] = len(dropped_quota_ids)
+        meta["dropped_quota_ids"] = dropped_quota_ids[:20]
+        return list(candidates or []), meta
+
+    meta["applied"] = True
+    meta["reason"] = "effective_scope_guard"
+    meta["dropped_count"] = len(dropped_quota_ids)
+    meta["dropped_quota_ids"] = dropped_quota_ids[:20]
+    return kept, meta
+
+
+def _resolve_search_books_for_target(target_searcher, search_query: str,
+                                     c_books: list[str],
+                                     allow_classifier_fallback: bool = True) -> list[str]:
+    if not c_books:
+        return []
+    resolved = list(c_books)
+    uses_standard_books = getattr(target_searcher, "uses_standard_books", True)
+    if uses_standard_books:
+        return resolved
+
+    bm25_engine = getattr(target_searcher, "bm25_engine", None)
+    quota_books = getattr(bm25_engine, "quota_books", {})
+    if isinstance(quota_books, dict):
+        available_books = set(quota_books.values())
+    else:
+        available_books = set(quota_books or [])
+
+    normalized = HybridSearcher._normalize_requested_books_for_nonstandard_db(
+        resolved,
+        available_books,
+    )
+    broad_groups = {"A", "D", "E"}
+    has_unresolved_broad_group = normalized is None and any(
+        str(book or "").strip().upper() in broad_groups
+        for book in resolved
+    )
+    if has_unresolved_broad_group:
+        return []
+
+    translated = list(normalized or (_translate_books_for_industry(resolved, quota_books) or []))
+    classify_to_books = getattr(bm25_engine, "classify_to_books", None)
+    fallback_books = []
+    if allow_classifier_fallback and callable(classify_to_books):
+        fallback_books = classify_to_books(search_query, top_k=3) or []
+
+    if translated and fallback_books:
+        return _normalize_fallbacks(list(fallback_books) + list(translated))
+    if fallback_books:
+        return fallback_books
+    if translated:
+        return translated
+    return resolved
+
+
+def _should_search_target_for_books(target_searcher, requested_books: list[str] | None) -> bool:
+    requested = [
+        str(book or "").strip().upper()
+        for book in (requested_books or [])
+        if str(book or "").strip()
+    ]
+    if not requested:
+        return True
+
+    broad_route_books = {"A", "D", "E"}
+    broad_only = [book for book in requested if book in broad_route_books]
+    if not broad_only or len(broad_only) != len(requested):
+        return True
+
+    target_province = str(getattr(target_searcher, "province", "") or "").strip()
+    target_db_type = detect_db_type(target_province)
+    db_type_to_book = {
+        "civil": "A",
+        "municipal": "D",
+        "landscape": "E",
+    }
+    target_book = db_type_to_book.get(target_db_type, "")
+    return bool(target_book) and target_book in broad_only
+
+
+def _record_retrieval_resolution_call(
+    resolution_trace: dict | None,
+    *,
+    target: str,
+    stage: str,
+    requested_books: list[str] | None,
+    resolved_books: list[str] | None,
+    source_province: str = "",
+    uses_standard_books: bool | None = None,
+) -> None:
+    if not isinstance(resolution_trace, dict):
+        return
+    calls = resolution_trace.setdefault("calls", [])
+    calls.append({
+        "target": str(target or "").strip(),
+        "stage": str(stage or "").strip(),
+        "source_province": str(source_province or "").strip(),
+        "requested_books": list(requested_books or []),
+        "resolved_books": list(resolved_books or []),
+        "open_search": not bool(resolved_books),
+        "uses_standard_books": (
+            None if uses_standard_books is None else bool(uses_standard_books)
+        ),
+    })
+
+
+def _search_with_optional_context(searcher, search_query: str, *,
+                                  top_k: int,
+                                  books,
+                                  item: dict | None = None,
+                                  context_prior: dict | None = None):
+    try:
+        return searcher.search(
+            search_query,
+            top_k=top_k,
+            books=books,
+            item=item,
+            context_prior=context_prior,
+        )
+    except TypeError:
+        return searcher.search(search_query, top_k=top_k, books=books)
+
+
+def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
+                           classification: dict, top_k: int = None,
+                           item: dict | None = None,
+                           context_prior: dict | None = None) -> list[dict]:
+    """Staged search that honors book-routing constraints before escaping."""
     top_k = top_k or config.HYBRID_TOP_K
+    raw_classification = classification if isinstance(classification, dict) else None
     classification = _normalize_classification(classification)
+    retrieval_resolution = {"calls": []}
+    if raw_classification is not None:
+        raw_classification["retrieval_resolution"] = retrieval_resolution
+    classification["retrieval_resolution"] = retrieval_resolution
+
     primary = classification.get("primary")
     fallbacks = classification.get("fallbacks", [])
+    candidate_books = classification.get("candidate_books", [])
+    search_books = classification.get("search_books", [])
+    hard_book_constraints = classification.get("hard_book_constraints", [])
+    route_mode = classification.get("route_mode", "open")
+    allow_cross_book_escape = bool(
+        classification.get("allow_cross_book_escape", route_mode != "strict")
+    )
 
-    # 如果无法判断专业（primary=None），直接全库搜索
-    if not primary:
-        return searcher.search(search_query, top_k=top_k, books=None)
+    expanded_books = search_books or candidate_books or (
+        [primary] + fallbacks if primary else []
+    )
+    expanded_books = _normalize_fallbacks(expanded_books)
+    if hard_book_constraints:
+        constrained_books = [
+            book for book in expanded_books
+            if book in hard_book_constraints
+        ]
+        expanded_books = constrained_books or list(hard_book_constraints)
 
-    # ---- 辅助定额库搜索（与主库并行，不互斥） ----
-    # 无论清单是什么专业（C/A/D/E），都搜索所有辅助库
-    # 辅助库结果在最后与主库结果合并排序，不提前return
-    aux_searchers = getattr(searcher, 'aux_searchers', [])
-    aux_candidates = []
-    if aux_searchers:
-        for aux in aux_searchers:
-            try:
-                results = aux.search(search_query, top_k=top_k, books=None)
-                # 给每条结果打上来源库标记，用于后续去重时区分不同库的同编号定额
-                for r in results:
-                    r["_source_province"] = aux.province
-                aux_candidates.extend(results)
-            except (KeyError, TypeError, ValueError, AttributeError,
-                    OSError, RuntimeError, ImportError) as e:
-                logger.warning(f"辅助库 {aux.province} 搜索失败: {e}")
-    def _resolve_search_books(c_books: list[str]) -> list[str]:
-        if not c_books:
-            return []
-        resolved = list(c_books)
-        if not searcher.uses_standard_books:
-            translated = _translate_books_for_industry(
-                resolved, searcher.bm25_engine.quota_books
-            )
-            if translated:
-                return translated
-            fallback_books = searcher.bm25_engine.classify_to_books(search_query, top_k=3)
-            return fallback_books or resolved
-        return resolved
+    primary_stage_books = [primary] if primary else expanded_books[:1]
+    expanded_stage_books = expanded_books
 
     def _search_is_good_enough(found: list[dict]) -> bool:
         if len(found) < CASCADE_MIN_CANDIDATES:
@@ -848,30 +1225,188 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
         if top_score > 0 and (top_score - third_score) / top_score >= quality_threshold:
             return True
         logger.debug(
-            f"主册搜{len(found)}条但质量不足"
-            f"(分差比{(top_score - third_score) / max(top_score, 1e-9):.2f}"
-            f"<{quality_threshold})，继续扩大搜索"
+            f"cascade quality insufficient: len={len(found)} "
+            f"gap_ratio={(top_score - third_score) / max(top_score, 1e-9):.2f}"
         )
         return False
 
-    # 先只搜主册，避免借用册候选过早把主册结果顶掉。
-    primary_candidates = searcher.search(
-        search_query,
-        top_k=top_k * 2,
-        books=_resolve_search_books([primary]),
+    aux_searchers = getattr(searcher, "aux_searchers", [])
+    aux_candidates = []
+    aux_books = expanded_stage_books or primary_stage_books
+    for aux in aux_searchers:
+        try:
+            if not _should_search_target_for_books(aux, aux_books):
+                _record_retrieval_resolution_call(
+                    retrieval_resolution,
+                    target="aux",
+                    stage="aux_skipped",
+                    requested_books=aux_books,
+                    resolved_books=[],
+                    source_province=str(getattr(aux, "province", "") or ""),
+                    uses_standard_books=getattr(aux, "uses_standard_books", None),
+                )
+                continue
+            resolved_aux_books = _resolve_search_books_for_target(aux, search_query, aux_books) or []
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="aux",
+                stage="aux",
+                requested_books=aux_books,
+                resolved_books=resolved_aux_books,
+                source_province=str(getattr(aux, "province", "") or ""),
+                uses_standard_books=getattr(aux, "uses_standard_books", None),
+            )
+            aux_results = _search_with_optional_context(
+                aux,
+                search_query,
+                top_k=top_k,
+                books=resolved_aux_books or None,
+                item=item,
+                context_prior=context_prior,
+            )
+            for result in aux_results:
+                result["_source_province"] = aux.province
+            aux_candidates.extend(aux_results)
+        except (KeyError, TypeError, ValueError, AttributeError,
+                OSError, RuntimeError, ImportError) as e:
+            logger.warning(f"aux search failed: {getattr(aux, 'province', '')}: {e}")
+
+    if not primary_stage_books and not expanded_stage_books:
+        _record_retrieval_resolution_call(
+            retrieval_resolution,
+            target="main",
+            stage="open",
+            requested_books=[],
+            resolved_books=[],
+            source_province=str(getattr(searcher, "province", "") or ""),
+            uses_standard_books=getattr(searcher, "uses_standard_books", None),
+        )
+        candidates = _search_with_optional_context(
+            searcher,
+            search_query,
+            top_k=top_k,
+            books=None,
+            item=item,
+            context_prior=context_prior,
+        )
+        return _merge_with_aux(candidates, aux_candidates, top_k)
+
+    best_candidates: list[dict] = []
+    if primary_stage_books:
+        if not _should_search_target_for_books(searcher, primary_stage_books):
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage="primary_skipped",
+                requested_books=primary_stage_books,
+                resolved_books=[],
+                source_province=str(getattr(searcher, "province", "") or ""),
+                uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            )
+        else:
+            resolved_primary_books = _resolve_search_books_for_target(
+                searcher,
+                search_query,
+                primary_stage_books,
+                allow_classifier_fallback=False,
+            ) or []
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage="primary",
+                requested_books=primary_stage_books,
+                resolved_books=resolved_primary_books,
+                source_province=str(getattr(searcher, "province", "") or ""),
+                uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            )
+            best_candidates = _search_with_optional_context(
+                searcher,
+                search_query,
+                top_k=top_k * 2,
+                books=resolved_primary_books or None,
+                item=item,
+                context_prior=context_prior,
+            )
+            if _search_is_good_enough(best_candidates):
+                return _merge_with_aux(best_candidates, aux_candidates, top_k * 2)
+
+    if expanded_stage_books and expanded_stage_books != primary_stage_books:
+        if not _should_search_target_for_books(searcher, expanded_stage_books):
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage="expanded_skipped",
+                requested_books=expanded_stage_books,
+                resolved_books=[],
+                source_province=str(getattr(searcher, "province", "") or ""),
+                uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            )
+        else:
+            resolved_expanded_books = _resolve_search_books_for_target(
+                searcher,
+                search_query,
+                expanded_stage_books,
+                allow_classifier_fallback=False,
+            ) or []
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage="expanded",
+                requested_books=expanded_stage_books,
+                resolved_books=resolved_expanded_books,
+                source_province=str(getattr(searcher, "province", "") or ""),
+                uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            )
+            expanded_candidates = _search_with_optional_context(
+                searcher,
+                search_query,
+                top_k=top_k * 2,
+                books=resolved_expanded_books or None,
+                item=item,
+                context_prior=context_prior,
+            )
+            if expanded_candidates:
+                best_candidates = expanded_candidates
+            if _search_is_good_enough(expanded_candidates):
+                return _merge_with_aux(expanded_candidates, aux_candidates, top_k * 2)
+
+    if not allow_cross_book_escape:
+        return _merge_with_aux(best_candidates, aux_candidates, top_k)
+
+    _record_retrieval_resolution_call(
+        retrieval_resolution,
+        target="main",
+        stage="escape",
+        requested_books=[],
+        resolved_books=[],
+        source_province=str(getattr(searcher, "province", "") or ""),
+        uses_standard_books=getattr(searcher, "uses_standard_books", None),
     )
-    if _search_is_good_enough(primary_candidates):
-        return _merge_with_aux(primary_candidates, aux_candidates, top_k * 2)
+    candidates = _search_with_optional_context(
+        searcher,
+        search_query,
+        top_k=top_k,
+        books=None,
+        item=item,
+        context_prior=context_prior,
+    )
+    if candidates:
+        best_candidates = candidates
+    return _merge_with_aux(best_candidates, aux_candidates, top_k)
 
-    # 主册候选不足时，再放开到借用册。
-    search_books = _resolve_search_books([primary] + fallbacks)
-    candidates = searcher.search(search_query, top_k=top_k * 2, books=search_books)
-    if _search_is_good_enough(candidates):
-        return _merge_with_aux(candidates, aux_candidates, top_k * 2)
 
-    # 第2步：兜底全库搜索
-    candidates = searcher.search(search_query, top_k=top_k, books=None)
-    return _merge_with_aux(candidates, aux_candidates, top_k)
+def cascade_search(searcher: HybridSearcher, search_query: str,
+                   classification: dict, top_k: int = None,
+                   item: dict | None = None,
+                   context_prior: dict | None = None) -> list[dict]:
+    return _cascade_search_legacy(
+        searcher,
+        search_query,
+        classification,
+        top_k=top_k,
+        item=item,
+        context_prior=context_prior,
+    )
 
 
 def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
@@ -942,9 +1477,34 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         bill_params: dict = None,
                         canonical_features: dict = None,
                         context_prior: dict = None,
-                        route_profile=None) -> list[dict]:
+                        route_profile=None,
+                        item: dict | None = None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
-    candidates = cascade_search(searcher, search_query, classification)
+    try:
+        candidates = cascade_search(
+            searcher,
+            search_query,
+            classification,
+            item=item,
+            context_prior=context_prior,
+        )
+    except TypeError:
+        candidates = cascade_search(searcher, search_query, classification)
+    prior_candidates = _collect_all_prior_candidates(
+        searcher,
+        search_query=search_query,
+        full_query=full_query,
+        classification=classification,
+        item=item,
+    )
+    if prior_candidates:
+        candidates = _merge_prior_candidates(candidates, prior_candidates)
+    candidates, route_scope_filter = _filter_candidates_to_route_scope(candidates, classification)
+    if isinstance(classification, dict):
+        classification["route_scope_filter"] = route_scope_filter
+    candidates, candidate_scope_guard = _filter_candidates_to_effective_guard_scope(candidates, classification)
+    if isinstance(classification, dict):
+        classification["candidate_scope_guard"] = candidate_scope_guard
 
     # 按 (quota_id + 来源库) 去重：RRF融合后同一定额可能因不同查询变体出现多次
     # 保留hybrid_score最高的那条，避免浪费reranker和LLM的处理资源
@@ -964,10 +1524,12 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                 seen_ids[dedup_key] = c
         candidates = list(seen_ids.values())
         # 去重后重新按 hybrid_score 排序（防御性：覆盖替换可能打乱插入顺序）
-        candidates.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
+        candidates.sort(key=HybridSearcher._stable_result_identity)
+        candidates.sort(key=HybridSearcher._hybrid_result_sort_key)
 
     # 单候选时重排无意义，可直接跳过提升速度
     if candidates and len(candidates) > 1:
+        prerank_candidates = list(candidates)
         try:
             candidates = reranker.rerank(
                 search_query,
@@ -976,6 +1538,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             )
         except TypeError:
             candidates = reranker.rerank(search_query, candidates)
+        candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
     if candidates:
         # 从classification中提取search_books（用于v3 LTR特征book_match）
         search_books = classification.get("search_books", []) if classification else []
@@ -989,7 +1552,162 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             canonical_features=canonical_features,
             context_prior=context_prior,
         )
+        if len(candidates) > 1:
+            candidates = sort_candidates_with_stage_priority(candidates)
     return candidates
+
+
+def _collect_all_prior_candidates(searcher: HybridSearcher, *,
+                                  search_query: str,
+                                  full_query: str,
+                                  classification: dict | None,
+                                  item: dict | None) -> list[dict]:
+    prior_candidates: list[dict] = []
+    classification = dict(classification or {})
+    base_books = list(classification.get("search_books", []) or [])
+
+    def _collect_from(search_target, books: list[str] | None, *, source_province: str = "") -> None:
+        collector = getattr(search_target, "collect_prior_candidates", None)
+        if not callable(collector):
+            return
+        try:
+            rows = collector(
+                search_query,
+                full_query=full_query,
+                books=books,
+                item=item,
+                exact_only=bool(source_province),
+            )
+        except TypeError:
+            try:
+                rows = collector(
+                    search_query,
+                    full_query=full_query,
+                    books=books,
+                    item=item,
+                )
+            except Exception as e:
+                logger.debug(
+                    f"prior candidate collect failed: "
+                    f"{getattr(search_target, 'province', source_province) or 'unknown'} {e}"
+                )
+                return
+        except Exception as e:
+            logger.debug(
+                f"prior candidate collect failed: "
+                f"{getattr(search_target, 'province', source_province) or 'unknown'} {e}"
+            )
+            return
+        for row in rows or []:
+            candidate = dict(row)
+            if source_province and not candidate.get("_source_province"):
+                candidate["_source_province"] = source_province
+            prior_candidates.append(candidate)
+
+    if _should_search_target_for_books(searcher, base_books):
+        _collect_from(searcher, base_books)
+
+    aux_books = _normalize_fallbacks(
+        base_books
+        or list(classification.get("candidate_books", []) or [])
+        or (
+            ([classification.get("primary")] if classification.get("primary") else [])
+            + list(classification.get("fallbacks", []) or [])
+        )
+    )
+    for aux in list(getattr(searcher, "aux_searchers", []) or []):
+        if not _should_search_target_for_books(aux, aux_books):
+            continue
+        resolved_books = _resolve_search_books_for_target(aux, search_query, aux_books) or None
+        _collect_from(aux, resolved_books, source_province=str(getattr(aux, "province", "") or ""))
+
+    return prior_candidates
+
+
+def _merge_prior_candidates(candidates: list[dict], prior_candidates: list[dict]) -> list[dict]:
+    working = list(candidates or [])
+
+    def _median(values: list[float], default: float = 0.0) -> float:
+        if not values:
+            return default
+        values = sorted(values)
+        return values[len(values) // 2]
+
+    def _promote(candidate: dict, peers: list[dict]) -> dict:
+        candidate = dict(candidate)
+        candidate["hybrid_score"] = _median(
+            [float(c.get("hybrid_score", c.get("rerank_score", 0.0)) or 0.0) for c in peers],
+            float(candidate.get("knowledge_prior_score", 0.0) or 0.0),
+        )
+        candidate["rerank_score"] = _median(
+            [float(c.get("rerank_score", c.get("hybrid_score", 0.0)) or 0.0) for c in peers],
+            candidate["hybrid_score"],
+        )
+        candidate["semantic_rerank_score"] = float(candidate.get("semantic_rerank_score", candidate["rerank_score"]) or candidate["rerank_score"])
+        candidate["spec_rerank_score"] = float(candidate.get("spec_rerank_score", candidate["rerank_score"]) or candidate["rerank_score"])
+        candidate["active_rerank_score"] = candidate["rerank_score"]
+        return candidate
+
+    for prior in prior_candidates or []:
+        quota_id = str(prior.get("quota_id", "") or "").strip()
+        quota_name = str(prior.get("name", "") or "").strip()
+        prior_source_province = str(prior.get("_source_province", "") or "").strip()
+        if not quota_id or not quota_name:
+            continue
+        merged = False
+        for idx, existing in enumerate(working):
+            if str(existing.get("quota_id", "") or "").strip() != quota_id:
+                continue
+            if str(existing.get("_source_province", "") or "").strip() != prior_source_province:
+                continue
+            updated = dict(existing)
+            for field, value in prior.items():
+                if field in {"quota_id", "name", "unit"}:
+                    continue
+                if field == "knowledge_prior_sources":
+                    updated[field] = list(set(updated.get(field) or []) | set(value or []))
+                    continue
+                if field not in updated or updated.get(field) in (None, "", 0):
+                    updated[field] = value
+            if prior.get("knowledge_prior_score"):
+                updated["knowledge_prior_score"] = max(
+                    float(updated.get("knowledge_prior_score", 0.0) or 0.0),
+                    float(prior.get("knowledge_prior_score", 0.0) or 0.0),
+                )
+            working[idx] = updated
+            merged = True
+            break
+        if merged:
+            continue
+        working.append(_promote(prior, working))
+
+    working.sort(key=HybridSearcher._stable_result_identity)
+    working.sort(
+        key=lambda candidate: (
+            float(candidate.get("hybrid_score", 0.0) or 0.0),
+            float(candidate.get("knowledge_prior_score", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    return working
+
+
+def _retain_knowledge_prior_candidates(candidates: list[dict],
+                                       prerank_candidates: list[dict]) -> list[dict]:
+    retained = list(candidates or [])
+    retained_keys = {
+        HybridSearcher._stable_result_identity(candidate)
+        for candidate in retained
+    }
+    for candidate in prerank_candidates or []:
+        if not candidate.get("knowledge_prior_sources"):
+            continue
+        identity = HybridSearcher._stable_result_identity(candidate)
+        if identity in retained_keys:
+            continue
+        retained.append(candidate)
+        retained_keys.add(identity)
+    return retained
 
 
 def _parse_chinese_count_token(token: str) -> int:
@@ -1200,6 +1918,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         canonical_features=ctx.get("canonical_features"),
         context_prior=ctx.get("context_prior"),
         route_profile=item.get("query_route") if isinstance(item, dict) else None,
+        item=item if isinstance(item, dict) else None,
     )
     if isinstance(item, dict):
         item["_supplemental_quotas"] = _build_support_surface_process_quotas(
@@ -1244,7 +1963,7 @@ def _has_fastpath_conflict(candidates: list[dict],
     for backup in (exp_backup, rule_backup):
         if not backup:
             continue
-        backup_conf = _safe_float_value(backup.get("confidence"), 0.0)
+        backup_conf = safe_float(backup.get("confidence"), 0.0)
         if backup_conf < config.CONFIDENCE_YELLOW:
             continue
         backup_sig = _result_quota_signature(backup)
@@ -1293,7 +2012,7 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
         return False
 
     policy = PolicyEngine.get_route_policy(route_profile)
-    top_score = _safe_float_value(top.get("param_score"), 0.0)
+    top_score = safe_float(top.get("param_score"), 0.0)
     if top_score < policy.agent_fastpath_score:
         return False
 
@@ -1316,9 +2035,9 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
     # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
     score_gap_threshold = policy.agent_fastpath_score_gap
     if score_gap_threshold > 0:
-        top1_rs = _safe_float_value(
+        top1_rs = safe_float(
             candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0)), 0.0)
-        top2_rs = _safe_float_value(
+        top2_rs = safe_float(
             candidates[1].get("rerank_score", candidates[1].get("hybrid_score", 0)), 0.0)
         gap = top1_rs - top2_rs
         logger.debug(f"FastPath分差: top1={top1_rs:.3f} top2={top2_rs:.3f} gap={gap:.3f} "
@@ -1354,7 +2073,7 @@ def _should_skip_agent_llm(candidates: list[dict],
 
 def _should_audit_fastpath() -> bool:
     """按配置比例抽检快速通道结果。"""
-    rate = _safe_float_value(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
+    rate = safe_float(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
     if rate <= 0:
         return False
     if rate >= 1:
