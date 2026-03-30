@@ -1,7 +1,7 @@
 lzc-sdk-version: "0.1"
 name: Auto Quota
 package: cloud.lazycat.app.autoquota
-version: 0.2.109
+version: 0.2.110
 description: Auto quota web service
 license: https://choosealicense.com/licenses/mit/
 homepage:
