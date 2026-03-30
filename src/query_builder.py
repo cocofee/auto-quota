@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from loguru import logger
+from src.subject_family_guard import is_family_hint_term, should_suppress_family_hint
 
 _LAMP_RULE_EXCLUDE_PATTERN = r"灯杆|灯塔|路灯基础|灯槽|灯箱|灯带槽"
 
@@ -350,6 +351,80 @@ def _dedupe_terms(terms: list[str]) -> list[str]:
     return deduped
 
 
+_CONDUIT_PLUGIN_FAMILY_KEYWORDS = (
+    "波纹电线管",
+    "镀锌电线管",
+    "镀锌钢导管",
+    "电线管",
+    "钢导管",
+)
+
+
+def _is_explicit_electrical_conduit_context(name: str,
+                                            full_text: str,
+                                            specialty: str = "",
+                                            canonical_features: dict | None = None,
+                                            context_prior: dict | None = None) -> bool:
+    text = f"{name or ''} {full_text or ''}".strip()
+    if not text:
+        return False
+
+    if any(keyword in text for keyword in ("电气配管", "电线管", "穿线管", "金属软管", "可挠金属套管")):
+        return True
+    if "导管" in text and "电缆" not in text:
+        return True
+
+    canonical_features = canonical_features or {}
+    context_prior = context_prior or {}
+    system_hint = str(canonical_features.get("system") or context_prior.get("system_hint") or "").strip()
+    entity_hint = str(canonical_features.get("entity") or "").strip()
+    specialty_hint = str(
+        specialty
+        or canonical_features.get("specialty")
+        or context_prior.get("specialty")
+        or ""
+    ).strip().upper()
+
+    return "配管" in text and (
+        system_hint == "电气"
+        or entity_hint == "配管"
+        or specialty_hint == "C4"
+    )
+
+
+def _extract_conduit_plugin_family_terms(context_prior: dict | None = None) -> list[str]:
+    plugin_hints = dict((context_prior or {}).get("plugin_hints") or {})
+    raw_terms = list(plugin_hints.get("preferred_quota_names") or [])[:2]
+    raw_terms.extend(list(plugin_hints.get("synonym_aliases") or [])[:2])
+
+    family_terms: list[str] = []
+    for text in raw_terms:
+        clean = str(text or "").strip()
+        if not clean:
+            continue
+        for keyword in _CONDUIT_PLUGIN_FAMILY_KEYWORDS:
+            if keyword in clean:
+                family_terms.append(keyword)
+                break
+    return _dedupe_terms(family_terms)[:2]
+
+
+def _build_ambiguous_electrical_conduit_query(conduit_code: str = "",
+                                              context_prior: dict | None = None) -> str:
+    material_hints = {
+        "RC": "镀锌电线管",
+        "MT": "金属电线管",
+    }
+    parts = ["电线管敷设", "配管", "导管"]
+    if conduit_code:
+        parts.append(conduit_code)
+        material_hint = material_hints.get(conduit_code)
+        if material_hint:
+            parts.append(material_hint)
+    parts.extend(_extract_conduit_plugin_family_terms(context_prior))
+    return " ".join(_dedupe_terms(parts))
+
+
 def _build_decor_finish_query(name: str, full_text: str) -> str:
     text = str(full_text or "")
     clean_name = str(name or "")
@@ -396,6 +471,20 @@ def _build_feature_alignment_terms(canonical_features: dict | None = None,
     canonical_features = canonical_features or {}
     context_prior = context_prior or {}
 
+    family = str(canonical_features.get("family") or "").strip()
+    entity = str(canonical_features.get("entity") or "").strip()
+    system = str(canonical_features.get("system") or "").strip()
+    conduit_type = str(canonical_features.get("conduit_type") or "").strip().upper()
+    canonical_name = str(canonical_features.get("canonical_name") or "").strip()
+    suppress_conduit_canonical_name = (
+        family == "conduit_raceway"
+        and entity == "配管"
+        and system == "电气"
+        and conduit_type in {"SC", "G", "DG", "RC", "MT"}
+        and any(token in canonical_name for token in ("钢管", "电线管"))
+    )
+
+    suppress_family_alignment = should_suppress_family_hint(family, context_prior)
     terms: list[str] = []
     for key in (
         "canonical_name",
@@ -422,6 +511,10 @@ def _build_feature_alignment_terms(canonical_features: dict | None = None,
     ):
         value = canonical_features.get(key)
         if value:
+            if key == "canonical_name" and suppress_conduit_canonical_name:
+                continue
+            if suppress_family_alignment and is_family_hint_term(str(value), family):
+                continue
             terms.append(str(value))
 
     cable_bundle = canonical_features.get("cable_bundle") or []
@@ -432,13 +525,18 @@ def _build_feature_alignment_terms(canonical_features: dict | None = None,
             terms.append(f"{cores}x{_format_number_for_query(float(section))}")
 
     for hint in (context_prior.get("context_hints") or [])[:2]:
-        terms.append(str(hint))
+        hint_text = str(hint)
+        if suppress_family_alignment and is_family_hint_term(hint_text, family):
+            continue
+        terms.append(hint_text)
 
     prior_family = context_prior.get("prior_family")
-    if prior_family:
+    if prior_family and not (suppress_family_alignment and str(prior_family).strip() == family):
         terms.append(str(prior_family))
 
-    return _dedupe_terms(terms)
+    terms = _dedupe_terms(terms)
+    terms = [t for t in terms if not re.match(r'^[A-Z]?\d+[A-Za-z]?$', t)]
+    return terms
 
 
 def _finalize_query(query: str,
@@ -447,10 +545,8 @@ def _finalize_query(query: str,
                     context_prior: dict | None = None,
                     apply_synonyms: bool = True) -> str:
     final_query = _apply_synonyms(query, specialty) if apply_synonyms else (query or "")
-    extras = [
-        term for term in _build_feature_alignment_terms(canonical_features, context_prior)
-        if term and term not in final_query
-    ]
+    feature_terms = _build_feature_alignment_terms(canonical_features, context_prior)
+    extras = [term for term in feature_terms if term and term not in final_query]
     if extras:
         final_query = f"{final_query} {' '.join(extras)}".strip()
     return re.sub(r"\s+", " ", final_query).strip()
@@ -482,7 +578,771 @@ def extract_description_fields(description: str) -> dict:
             value = match.group(2).strip()
             if value:
                 fields[label] = value
+    if description:
+        inline_pattern = re.compile(
+            r'(?P<label>[\u4e00-\u9fffA-Za-z0-9()（）/\-]{2,18})\s*[:：]\s*'
+            r'(?P<value>.*?)(?=(?:\s+[\u4e00-\u9fffA-Za-z0-9()（）/\-]{2,18}\s*[:：])|//|$)'
+        )
+        for match in inline_pattern.finditer(description):
+            label = match.group("label").strip()
+            value = match.group("value").strip()
+            if value:
+                fields[label] = value
     return fields
+
+
+_PRIMARY_HARD_NOISE_MARKERS = (
+    "综合单价中含",
+    "工作内容：",
+    "工作内容:",
+    "其他说明：",
+    "其他说明:",
+    "其他：",
+    "其他:",
+    "未尽事宜",
+    "满足规范",
+    "满足设计",
+    "详见设计",
+    "详见图纸",
+    "详见招标",
+    "详见相关",
+    "符合设计",
+    "按规范要求",
+    "由投标人自行考虑",
+    "具体详见",
+    "应符合",
+    "综合考虑完成该工艺",
+    "配套",
+)
+_PRIMARY_SOFT_NOISE_MARKERS = ("含", "包含", "包括")
+_PRIMARY_BRACKET_PATTERN = re.compile(r'[（(][^（）()]{0,30}[）)]')
+_PRIMARY_TAIL_NOISE_PHRASES = (
+    "支架制作安装",
+    "支吊架制作安装",
+    "套管制作及安装",
+    "套管制作安装",
+    "防火封堵",
+    "采购并安装",
+)
+_PRIMARY_SUBJECT_SPLIT_PATTERN = re.compile(r'[，,；;。/\|]+')
+_PRIMARY_SUBJECT_GENERIC_NAMES = {
+    "管道",
+    "设备",
+    "材料",
+    "项目",
+    "构件",
+    "其他构件",
+    "其他项目",
+    "成品",
+    "配件",
+    "辅材",
+    "零星项目",
+}
+_PRIMARY_SUBJECT_OVERRIDE_SUFFIXES = (
+    "阀门",
+    "管道",
+    "设备",
+    "项目",
+    "构件",
+    "材料",
+)
+_PRIMARY_SUBJECT_NOISE_TOKENS = (
+    "支架",
+    "吊架",
+    "支吊架",
+    "套管",
+    "封堵",
+    "堵洞",
+    "除锈",
+    "刷油",
+    "油漆",
+    "防锈漆",
+    "采购",
+    "安装",
+    "制作",
+)
+_PRIMARY_SUBJECT_BREAK_TOKENS = (
+    "挡水条",
+    "锁具",
+    "把手",
+    "五金",
+    "五金配件",
+    "连接片",
+    "紧固件",
+    "接地编织带",
+    "活接头",
+    "零部件",
+    "配件",
+    "附件",
+)
+_PRIMARY_SPEC_PATTERNS = (
+    r'DN\d+(?:\.\d+)?',
+    r'De\d+(?:\.\d+)?',
+    r'Φ\d+(?:\.\d+)?',
+    r'φ\d+(?:\.\d+)?',
+    r'\d+(?:\.\d+)?\s*(?:mm|MM)',
+    r'\d+(?:\.\d+)?\s*[x×X*]\s*\d+(?:\.\d+)?(?:\s*[x×X*]\s*\d+(?:\.\d+)?)?',
+)
+_PRIMARY_CONNECTION_TOKENS = (
+    "焊接连接",
+    "焊接",
+    "螺纹连接",
+    "法兰连接",
+    "热熔连接",
+    "电熔连接",
+    "卡压连接",
+    "沟槽连接",
+    "承插连接",
+    "粘接",
+)
+
+
+def _normalize_primary_guard_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).strip(" ,，;；。")
+
+
+def _find_primary_noise_marker(text: str) -> tuple[int, str]:
+    best_idx = -1
+    best_marker = ""
+    for marker in _PRIMARY_HARD_NOISE_MARKERS + _PRIMARY_SOFT_NOISE_MARKERS:
+        idx = text.find(marker)
+        if idx < 0 or idx <= 6:
+            continue
+        if marker in _PRIMARY_SOFT_NOISE_MARKERS:
+            prev = text[idx - 1] if idx > 0 else ""
+            if prev not in {" ", "，", ",", "；", ";", "。", ")", "）"}:
+                continue
+        if best_idx < 0 or idx < best_idx:
+            best_idx = idx
+            best_marker = marker
+    return best_idx, best_marker
+
+
+def _build_primary_guard_text(name: str, description: str) -> dict:
+    full_text = _normalize_primary_guard_text(f"{name or ''} {description or ''}")
+    if not full_text:
+        return {"full_text": "", "primary_text": "", "noise_marker": ""}
+
+    noise_idx, noise_marker = _find_primary_noise_marker(full_text)
+    primary_text = full_text[:noise_idx] if noise_idx >= 0 else full_text
+    primary_text = _normalize_primary_guard_text(primary_text)
+    primary_text = _normalize_primary_guard_text(
+        _PRIMARY_BRACKET_PATTERN.sub(" ", primary_text)
+    )
+    for phrase in _PRIMARY_TAIL_NOISE_PHRASES:
+        idx = primary_text.find(phrase)
+        if idx >= 8:
+            primary_text = _normalize_primary_guard_text(primary_text[:idx])
+    if not primary_text:
+        primary_text = full_text
+    return {
+        "full_text": full_text,
+        "primary_text": primary_text,
+        "noise_marker": noise_marker,
+    }
+
+
+def _truncate_subject_phrase(value: str, max_len: int = 28) -> str:
+    text = _normalize_primary_guard_text(value)
+    if not text:
+        return ""
+    pieces = [piece.strip() for piece in _PRIMARY_SUBJECT_SPLIT_PATTERN.split(text) if piece.strip()]
+    if pieces:
+        text = pieces[0]
+    tokens = [token.strip() for token in text.split() if token.strip()]
+    if len(tokens) > 1:
+        kept: list[str] = []
+        for token in tokens:
+            if not kept:
+                kept.append(token)
+                continue
+            if ":" in token or "：" in token:
+                break
+            if any(marker in token for marker in _PRIMARY_HARD_NOISE_MARKERS + _PRIMARY_SOFT_NOISE_MARKERS):
+                break
+            if any(phrase in token for phrase in _PRIMARY_TAIL_NOISE_PHRASES):
+                break
+            if any(noise in token for noise in _PRIMARY_SUBJECT_BREAK_TOKENS):
+                break
+            if re.search(r"\d", token):
+                break
+            next_text = " ".join(kept + [token])
+            if len(next_text) > max_len:
+                break
+            kept.append(token)
+        if kept:
+            text = " ".join(kept)
+    for phrase in _PRIMARY_TAIL_NOISE_PHRASES:
+        idx = text.find(phrase)
+        if idx >= 2:
+            text = text[:idx]
+    if any(keyword in text for keyword in ("送风口", "回风口", "风口", "散流器", "喷口")):
+        head = text.split(" ", 1)[0].strip()
+        if head and any(keyword in head for keyword in ("送风口", "回风口", "风口", "散流器", "喷口")):
+            text = head
+        for tail_marker in ("检修口", "活动板", "套口"):
+            idx = text.find(tail_marker)
+            if idx >= 4:
+                text = text[:idx]
+                break
+    text = _normalize_primary_guard_text(text)
+    return text[:max_len].strip()
+
+
+def _extract_primary_specs(text: str) -> list[str]:
+    clean = _normalize_primary_guard_text(text)
+    specs: list[str] = []
+    for value in re.findall(r'\d+(?:\.\d+)?\s*[x×X*脳]\s*\d+(?:\.\d+)?(?:\s*[x×X*脳]\s*\d+(?:\.\d+)?)?', clean):
+        token = _normalize_primary_guard_text(value)
+        if token and token not in specs:
+            specs.append(token)
+    for pattern in _PRIMARY_SPEC_PATTERNS:
+        for value in re.findall(pattern, clean):
+            token = _normalize_primary_guard_text(value)
+            if token and token not in specs and not any(token != existing and token in existing for existing in specs):
+                specs.append(token)
+    for token in _PRIMARY_CONNECTION_TOKENS:
+        if token in clean and token not in specs:
+            specs.append(token)
+    return specs[:4]
+
+
+def _extract_subject_from_generic_prefix(prefix: str, guarded_text: str) -> str:
+    prefix = _normalize_primary_guard_text(prefix)
+    guarded_text = _normalize_primary_guard_text(guarded_text)
+    if not prefix or not guarded_text or not guarded_text.startswith(prefix):
+        return ""
+
+    tail = _normalize_primary_guard_text(guarded_text[len(prefix):])
+    if not tail:
+        return ""
+    if ":" in tail[:16] or "：" in tail[:16]:
+        return ""
+    while tail.startswith(prefix):
+        tail = _normalize_primary_guard_text(tail[len(prefix):])
+        if not tail:
+            return ""
+
+    tail = re.sub(r'^[A-Za-z]{1,4}-?\d{1,4}', '', tail).strip()
+    tail = re.sub(r'^[0-9]+(?:\.[0-9]+)?', '', tail).strip()
+    tail = _normalize_primary_guard_text(tail)
+    if not tail:
+        return ""
+
+    candidate = _truncate_subject_phrase(tail, max_len=20)
+    if not candidate or candidate in _PRIMARY_SUBJECT_GENERIC_NAMES:
+        return ""
+    if any(noise in candidate for noise in ("厚度", "配合比", "工程部位", "部位", "材料种类", "规格型号")):
+        return ""
+    if len(re.findall(r'[\u4e00-\u9fff]', candidate)) < 3:
+        return ""
+    return candidate
+
+
+def _clean_primary_field_value(label: str, value: str) -> str:
+    cleaned = _normalize_primary_guard_text(value)
+    cleaned = _normalize_primary_guard_text(_PRIMARY_BRACKET_PATTERN.sub(" ", cleaned))
+    if label in {
+        "宸ヤ綔鍐呭",
+        "鏈敖浜嬪疁",
+        "鍏朵粬",
+        "鍏朵粬璇存槑",
+        "澶囨敞",
+        "鍘嬪姏璇曢獙鍙婂惞銆佹礂璁捐瑕佹眰",
+    }:
+        return ""
+    return cleaned
+
+
+def _score_primary_subject(candidate: str, *, source: str, name: str, guarded_text: str) -> float:
+    text = _truncate_subject_phrase(candidate)
+    if not text:
+        return -1e9
+
+    score = 0.0
+    if source == "field_name":
+        score += 7.0
+    elif source == "name":
+        score += 4.0
+    elif source == "front":
+        score += 3.0
+    elif source == "field_type":
+        score += 2.5
+
+    if text in (name or ""):
+        score += 1.5
+    if guarded_text.startswith(text):
+        score += 1.0
+    if len(text) <= 2:
+        score -= 2.0
+    if len(text) > 20:
+        score -= 1.5
+    if text in _PRIMARY_SUBJECT_GENERIC_NAMES:
+        score -= 2.5
+    if any(token in text for token in _PRIMARY_SUBJECT_NOISE_TOKENS):
+        score -= 3.0
+    if re.search(r'^[A-Za-z]{1,3}-?\d+$', text):
+        score -= 4.0
+    return score
+
+
+def _looks_like_generic_install_title(subject: str) -> bool:
+    text = _normalize_primary_guard_text(subject)
+    if not text:
+        return False
+
+    hard_suffixes = (
+        "\u7cfb\u7edf\u5b89\u88c5",
+        "\u88c5\u7f6e\u5b89\u88c5",
+        "\u8bbe\u5907\u5b89\u88c5",
+        "\u673a\u7ec4\u5b89\u88c5",
+        "\u7cfb\u7edf\u8c03\u8bd5",
+        "\u88c5\u7f6e\u8c03\u8bd5",
+        "\u8bbe\u5907\u8c03\u8bd5",
+        "\u673a\u7ec4\u8c03\u8bd5",
+    )
+    if any(text.endswith(suffix) for suffix in hard_suffixes):
+        return True
+
+    soft_suffixes = ("\u5b89\u88c5", "\u8c03\u8bd5")
+    generic_hints = (
+        "\u7cfb\u7edf",
+        "\u88c5\u7f6e",
+        "\u8bbe\u5907",
+        "\u673a\u7ec4",
+        "\u673a\u623f",
+        "\u673a\u68b0",
+    )
+    return text.endswith(soft_suffixes) and any(hint in text for hint in generic_hints)
+
+
+def _looks_like_pipe_or_support_subject(text: str) -> bool:
+    normalized = _normalize_primary_guard_text(text)
+    if not normalized:
+        return False
+    keywords = (
+        "\u7ba1",
+        "\u5957\u7ba1",
+        "\u9600",
+        "\u652f\u67b6",
+        "\u540a\u67b6",
+        "\u7ba1\u67b6",
+        "\u6865\u67b6",
+        "\u7ebf\u69fd",
+        "\u914d\u7ba1",
+        "\u7a7f\u7ebf",
+        "\u7535\u7f06",
+        "\u5bfc\u7ba1",
+    )
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _should_guard_primary_subject_from_route_hijack(raw_input_name: str, subject_info: dict) -> bool:
+    raw_name = _normalize_primary_guard_text(raw_input_name)
+    primary_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
+    if not primary_subject or primary_subject in _PRIMARY_SUBJECT_GENERIC_NAMES:
+        return False
+    if _looks_like_pipe_or_support_subject(raw_name) or _looks_like_pipe_or_support_subject(primary_subject):
+        return False
+    if _looks_like_generic_install_title(raw_name):
+        return True
+
+    equipment_hints = (
+        "\u5668",
+        "\u673a",
+        "\u673a\u7ec4",
+        "\u7ec8\u7aef",
+        "\u4ea4\u6362\u5668",
+        "\u52a0\u70ed\u5668",
+        "\u51b7\u5374\u5668",
+        "\u907f\u96f7\u5668",
+        "\u670d\u52a1\u5668",
+        "\u63a7\u5236\u5668",
+    )
+    combined = f"{raw_name} {primary_subject}".strip()
+    if any(hint in combined for hint in equipment_hints):
+        return True
+    return primary_subject != raw_name and len(primary_subject) >= 4
+
+
+def _sanitize_feature_alignment_for_protected_subject(canonical_features: dict | None = None) -> dict:
+    sanitized = dict(canonical_features or {})
+    for key in (
+        "canonical_name",
+        "entity",
+        "system",
+        "family",
+        "conduit_type",
+        "box_mount_mode",
+        "support_scope",
+        "support_action",
+        "voltage_level",
+    ):
+        sanitized[key] = ""
+    return sanitized
+
+
+def discover_primary_subject(name: str, description: str = "", fields: dict | None = None) -> dict:
+    fields = dict(fields or {})
+    guard = _build_primary_guard_text(name, description)
+    guarded_text = str(guard.get("primary_text") or "")
+
+    candidates: list[tuple[str, str]] = []
+    if name:
+        candidates.append(("name", name))
+    field_name = str(fields.get("名称") or fields.get("鍚嶇О") or "")
+    if field_name:
+        candidates.append(("field_name", field_name))
+    field_type = str(fields.get("类型") or fields.get("绫诲瀷") or "")
+    if field_type:
+        candidates.append(("field_type", field_type))
+    if guarded_text:
+        candidates.append(("front", guarded_text))
+
+    best_subject = _truncate_subject_phrase(name)
+    best_score = -1e9
+    subject_aliases: list[str] = []
+    for source, raw in candidates:
+        subject = _truncate_subject_phrase(raw)
+        if not subject:
+            continue
+        score = _score_primary_subject(subject, source=source, name=name or "", guarded_text=guarded_text)
+        if subject not in subject_aliases:
+            subject_aliases.append(subject)
+        if score > best_score:
+            best_subject = subject
+            best_score = score
+
+    is_generic_subject = (
+        best_subject in _PRIMARY_SUBJECT_GENERIC_NAMES
+        or (
+            len(best_subject) <= 8
+            and any(best_subject.endswith(suffix) for suffix in _PRIMARY_SUBJECT_OVERRIDE_SUFFIXES)
+        )
+        or _looks_like_generic_install_title(best_subject)
+    )
+    if is_generic_subject:
+        generic_prefix = best_subject
+        if " " in generic_prefix:
+            lead_prefix = generic_prefix.split(" ", 1)[0].strip()
+            if (
+                lead_prefix in _PRIMARY_SUBJECT_GENERIC_NAMES
+                or _looks_like_generic_install_title(lead_prefix)
+            ):
+                generic_prefix = lead_prefix
+        generic_tail_subject = _extract_subject_from_generic_prefix(generic_prefix, guarded_text)
+        if generic_tail_subject:
+            if generic_tail_subject not in subject_aliases:
+                subject_aliases.append(generic_tail_subject)
+            best_subject = generic_tail_subject
+
+    suppressed_terms: list[str] = []
+    noise_marker = str(guard.get("noise_marker") or "")
+    if noise_marker:
+        suppressed_terms.append(noise_marker)
+    tail_text = str(guard.get("full_text") or "")
+    if guarded_text and tail_text.startswith(guarded_text):
+        tail_text = tail_text[len(guarded_text):]
+    for phrase in _PRIMARY_TAIL_NOISE_PHRASES:
+        if phrase in (description or "") and phrase not in suppressed_terms:
+            suppressed_terms.append(phrase)
+
+    return {
+        "primary_subject": best_subject or _normalize_primary_guard_text(name),
+        "subject_aliases": subject_aliases[:3],
+        "key_specs": _extract_primary_specs(guarded_text or description or name),
+        "suppressed_terms": suppressed_terms[:6],
+        "noise_marker": noise_marker,
+        "guarded_text": guarded_text,
+    }
+
+
+def _build_primary_subject_quota_aliases(primary_subject: str,
+                                         *,
+                                         name: str = "",
+                                         description: str = "",
+                                         key_specs: list[str] | None = None) -> list[str]:
+    subject = str(primary_subject or "").strip()
+    combined = " ".join(str(part or "").strip() for part in (subject, name, description) if str(part or "").strip())
+    combined_upper = combined.upper()
+    specs = _dedupe_terms([str(value).strip() for value in (key_specs or []) if str(value).strip()])[:2]
+    if not specs:
+        for pattern in (
+            r"DN\s*\d+",
+            r"\d+(?:\.\d+)?\s*(?:kVA|KVA|kW|KW|kv|KV|A|a)",
+            r"φ\s*\d+(?:\.\d+)?",
+        ):
+            for match in re.finditer(pattern, combined, flags=re.IGNORECASE):
+                token = str(match.group(0) or "").strip()
+                if token and token not in specs:
+                    specs.append(token)
+                if len(specs) >= 2:
+                    break
+            if len(specs) >= 2:
+                break
+
+    aliases: list[str] = []
+
+    def _push(alias: str, *, with_specs: bool = False):
+        clean = str(alias or "").strip()
+        if not clean or clean == subject:
+            return
+        if with_specs and specs:
+            aliases.append(f"{clean} {specs[0]}")
+        aliases.append(clean)
+
+    if "逆变器" in combined:
+        power_spec = next((spec for spec in specs if re.search(r"(?:kW|KW)$", spec)), "")
+        power_value = None
+        if power_spec:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*(?:kW|KW)$", power_spec)
+            if match:
+                try:
+                    power_value = float(match.group(1))
+                except ValueError:
+                    power_value = None
+        if any(token in combined for token in ("光伏", "组串式")):
+            if power_spec:
+                _push(f"光伏逆变器安装 功率{power_spec}")
+                if power_value is not None:
+                    for bucket in (250, 1000):
+                        if power_value <= bucket:
+                            _push(f"光伏逆变器安装 功率≤{int(bucket)}kW")
+            _push("光伏逆变器安装", with_specs=True)
+            _push("光伏逆变器")
+        if power_spec:
+            _push(f"逆变器安装 功率{power_spec}")
+        _push("逆变器安装", with_specs=True)
+
+    if "UPS" in combined_upper or "不间断电源" in combined or "不停电装置" in combined:
+        kva_spec = next((spec for spec in specs if re.search(r"(?:kVA|KVA)$", spec)), "")
+        if any(token in combined for token in ("调试", "试运行", "系统")):
+            if kva_spec:
+                _push(f"保安电源系统调试 不间断电源容量{kva_spec}")
+            _push("保安电源系统调试", with_specs=True)
+            if kva_spec:
+                _push(f"UPS不停电装置调试 不间断电源容量{kva_spec}")
+            _push("UPS不停电装置调试", with_specs=True)
+        _push("UPS不停电装置")
+
+    if "清扫口" in combined:
+        _push("地面扫除口安装", with_specs=True)
+        _push("扫除口")
+
+    if "地漏" in combined:
+        if any(token in combined for token in ("防爆", "防爆型")):
+            _push("防爆地漏", with_specs=True)
+        _push("地漏安装", with_specs=True)
+        _push("地漏")
+
+    if "冲洗管" in combined and "大便槽" in combined:
+        _push("大便冲洗管", with_specs=True)
+        _push("大便冲洗管")
+
+    if "衬塑钢管" in combined:
+        _push("钢塑复合管", with_specs=True)
+
+    if any(token in combined for token in ("热镀锌钢管", "热镀锌")):
+        dn_spec = next((spec for spec in specs if spec.upper().startswith("DN")), "")
+        if any(token in combined for token in ("沟槽", "卡箍")) and dn_spec:
+            _push(f"热浸锌镀锌钢管 沟槽连接 {dn_spec}")
+        _push("热浸锌镀锌钢管", with_specs=True)
+
+    if "UPVC" in combined_upper and "排水管" in combined:
+        outer_diameter = ""
+        diameter_match = re.search(r"[φΦ]\s*(\d+(?:\.\d+)?)", combined)
+        if diameter_match:
+            outer_diameter = diameter_match.group(1)
+        if outer_diameter:
+            _push(f"硬塑(UPVC)管铺设 外径{outer_diameter}mm")
+        _push("硬塑(UPVC)管铺设", with_specs=True)
+
+    return _dedupe_terms(aliases)[:6]
+
+
+def build_primary_query_profile(name: str, description: str = "", fields: dict | None = None) -> dict:
+    normalized_fields = dict(fields or {})
+    if not normalized_fields and description:
+        normalized_fields = extract_description_fields(description)
+
+    guard = _build_primary_guard_text(name, description)
+    subject_info = discover_primary_subject(name, description, normalized_fields)
+    primary_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
+
+    field_aliases = (
+        ("名称", ("名称", "鍚嶇О")),
+        ("材质", ("材质", "鏉愯川")),
+        ("规格", ("规格", "瑙勬牸")),
+        ("连接形式", ("连接形式", "杩炴帴褰㈠紡")),
+        ("连接方式", ("连接方式", "杩炴帴鏂瑰紡")),
+        ("安装部位", ("安装部位", "瀹夎閮ㄤ綅")),
+        ("介质", ("介质", "浠嬭川")),
+        ("类型", ("类型", "绫诲瀷")),
+        ("配置形式", ("配置形式", "閰嶇疆褰㈠紡")),
+        ("敷设方式", ("敷设方式", "鏁疯鏂瑰紡")),
+        ("管径", ("管径", "绠″緞")),
+        ("型号", ("型号", "鍨嬪彿")),
+    )
+    has_decisive_fields = any(
+        any(alias in normalized_fields for alias in aliases)
+        for _, aliases in field_aliases
+    )
+
+    decisive_terms: list[str] = []
+    used_fields: list[str] = []
+    if has_decisive_fields:
+        name_value = ""
+        for alias in ("名称", "鍚嶇О"):
+            if normalized_fields.get(alias):
+                name_value = normalized_fields.get(alias, "")
+                break
+        name_term = _clean_primary_field_value("名称", name_value) or primary_subject
+        if name_term:
+            decisive_terms.append(name_term)
+        for label, aliases in field_aliases:
+            raw_value = ""
+            for alias in aliases:
+                if normalized_fields.get(alias):
+                    raw_value = normalized_fields.get(alias, "")
+                    break
+            if not raw_value:
+                continue
+            value = _clean_primary_field_value(label, raw_value)
+            if not value or value == name_term:
+                continue
+            if value not in decisive_terms:
+                decisive_terms.append(value)
+                used_fields.append(label)
+
+    quota_aliases = _build_primary_subject_quota_aliases(
+        primary_subject,
+        name=name,
+        description=description,
+        key_specs=list(subject_info.get("key_specs") or []),
+    )
+
+    return {
+        "full_text": str(guard.get("full_text") or ""),
+        "primary_text": str(guard.get("primary_text") or ""),
+        "noise_marker": str(guard.get("noise_marker") or ""),
+        "primary_subject": primary_subject,
+        "subject_aliases": list(subject_info.get("subject_aliases") or []),
+        "key_specs": list(subject_info.get("key_specs") or []),
+        "suppressed_terms": list(subject_info.get("suppressed_terms") or []),
+        "guarded_text": str(subject_info.get("guarded_text") or ""),
+        "strategy": "fields" if has_decisive_fields else "front_segment",
+        "fields": normalized_fields,
+        "decisive_terms": decisive_terms[:6],
+        "quota_aliases": quota_aliases,
+        "used_fields": used_fields[:6],
+    }
+
+
+def _take_primary_query_front_segment(text: str, max_chars: int = 48) -> str:
+    clean = _normalize_primary_guard_text(text)
+    if len(clean) <= max_chars:
+        return clean
+    for punct in ("。", "；", ";", "，", ","):
+        idx = clean.find(punct)
+        if 8 <= idx <= max_chars:
+            return clean[:idx]
+    return clean[:max_chars]
+
+
+def _build_query_subject_seed_terms(raw_input_name: str, primary_profile: dict) -> list[str]:
+    raw_subject = _normalize_primary_guard_text(raw_input_name)
+    primary_subject = _normalize_primary_guard_text(primary_profile.get("primary_subject", ""))
+    primary_text = _normalize_primary_guard_text(primary_profile.get("primary_text", ""))
+    preferred_subject = primary_subject or raw_subject
+
+    seeds: list[str] = []
+    for term in list(primary_profile.get("decisive_terms") or [])[:3]:
+        token = _normalize_primary_guard_text(term)
+        if token and token not in seeds:
+            seeds.append(token)
+
+    if (
+        not seeds
+        and preferred_subject
+        and preferred_subject not in _PRIMARY_SUBJECT_GENERIC_NAMES
+        and len(preferred_subject) > 1
+    ):
+        seeds.append(preferred_subject)
+
+    if not seeds and (not raw_subject or raw_subject in _PRIMARY_SUBJECT_GENERIC_NAMES):
+        front_term = _truncate_subject_phrase(primary_text, max_len=28)
+        if not front_term:
+            front_term = _take_primary_query_front_segment(primary_text)
+        if front_term and front_term not in seeds:
+            seeds.append(front_term)
+
+    if (
+        not seeds
+        and primary_subject
+        and primary_subject not in _PRIMARY_SUBJECT_GENERIC_NAMES
+        and primary_subject != raw_subject
+        and primary_subject not in seeds
+    ):
+        seeds.append(primary_subject)
+
+    for spec in list(primary_profile.get("key_specs") or [])[:2]:
+        token = _normalize_primary_guard_text(spec)
+        if token and not any(token in existing for existing in seeds):
+            seeds.append(token)
+
+    return seeds[:4]
+
+
+def _build_query_quota_alias_seed_terms(raw_input_name: str, primary_profile: dict) -> list[str]:
+    raw_subject = _normalize_primary_guard_text(raw_input_name)
+    primary_subject = _normalize_primary_guard_text(primary_profile.get("primary_subject", ""))
+    decisive_terms = list(primary_profile.get("decisive_terms") or [])
+    quota_aliases = list(primary_profile.get("quota_aliases") or [])
+    key_specs = list(primary_profile.get("key_specs") or [])
+
+    if decisive_terms or not quota_aliases:
+        return []
+
+    subject = primary_subject or raw_subject
+    if not subject or subject in _PRIMARY_SUBJECT_GENERIC_NAMES or len(subject) > 12:
+        return []
+
+    strong_spec = any(
+        re.search(
+            r"(?:^DN\s*\d+|^De\s*\d+|^\d+(?:\.\d+)?\s*(?:kVA|KVA|kW|KW|A|mm|mm2|mm²)$)",
+            str(spec or ""),
+            flags=re.IGNORECASE,
+        )
+        for spec in key_specs
+    )
+    if not strong_spec:
+        return []
+
+    selected: list[str] = []
+    for alias in quota_aliases:
+        token = _normalize_primary_guard_text(alias)
+        if not token or token in selected or token == subject or token == raw_subject:
+            continue
+        selected.append(token)
+        if len(selected) >= 2:
+            break
+    return selected
+
+
+def _should_apply_discovered_subject(name: str, fields: dict, subject_info: dict) -> bool:
+    raw_name = _normalize_primary_guard_text(name)
+    primary_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
+    if not primary_subject or primary_subject == raw_name:
+        return False
+    if not raw_name or len(raw_name) <= 2:
+        return True
+    if raw_name in _PRIMARY_SUBJECT_GENERIC_NAMES:
+        return True
+    if _looks_like_generic_install_title(raw_name):
+        return True
+    if any(raw_name.endswith(suffix) for suffix in _PRIMARY_SUBJECT_OVERRIDE_SUFFIXES):
+        return bool(fields.get("名称") or fields.get("鍚嶇О"))
+    return False
 
 
 def _extract_distribution_box_fields(description: str) -> dict:
@@ -1452,6 +2312,80 @@ def _normalize_bill_name(name: str) -> str:
     return name
 
 
+def _normalize_explicit_pipe_material(text: str, material: str = "") -> str:
+    combined = f"{text or ''} {material or ''}"
+    if any(keyword in combined for keyword in ("PSP钢塑复合管", "钢塑复合压力给水管", "钢塑复合给水管", "钢塑复合管", "钢塑复合")):
+        return "钢塑复合管"
+    if any(keyword in combined for keyword in ("钢骨架塑料复合管", "金属骨架塑料复合管")):
+        return "钢骨架塑料复合管"
+    if "金属骨架复合管" in combined:
+        return "金属骨架复合管"
+    if "铝塑复合" in combined:
+        return "铝塑复合管"
+    if "衬塑钢管" in combined:
+        return "衬塑钢管"
+    if "涂塑钢管" in combined:
+        return "涂塑钢管"
+    if any(keyword in combined for keyword in ("PP-R管", "PPR管", "PPR复合管", "PP-R", "PPR")):
+        return "PPR管"
+    if "复合管" in combined:
+        return "复合管"
+    return material or ""
+
+
+def _build_explicit_pipe_run_query(name: str,
+                                   full_text: str,
+                                   location: str,
+                                   usage: str,
+                                   material: str,
+                                   connection: str,
+                                   dn: int | None) -> str | None:
+    text = full_text or ""
+    if not text:
+        return None
+
+    if any(word in text for word in ("绝热", "保温", "保冷", "电气配管", "导管", "穿线管", "桥架", "线槽")):
+        return None
+
+    accessory_words = (
+        "管件", "弯头", "三通", "异径", "法兰", "接头", "阀", "套管", "地漏", "雨水斗",
+        "水表", "过滤器", "除污器", "补偿器", "软接头", "伸缩节", "支架", "吊架",
+    )
+    if any(word in text for word in accessory_words):
+        return None
+
+    if not any(word in text for word in ("复合管", "钢塑", "衬塑", "涂塑", "金属骨架", "钢骨架")):
+        return None
+
+    normalized_material = _normalize_explicit_pipe_material(text, material)
+    if not normalized_material:
+        return None
+
+    route_prefix = "管道"
+    if usage in {"给水", "冷水", "热水", "排水"}:
+        route_prefix = "给排水管道"
+    elif usage == "消防":
+        route_prefix = "消防管道"
+    elif usage == "采暖":
+        route_prefix = "采暖管道"
+
+    parts = [route_prefix]
+    if location in {"室内", "室外"}:
+        parts.append(location)
+    if normalized_material:
+        parts.append(normalized_material)
+    elif "复合管" in text:
+        parts.append("复合管")
+    if connection:
+        parts.append(connection)
+    if dn is not None:
+        parts.append(f"DN{int(dn)}")
+    if usage in {"给水", "冷水", "热水"} and "给水" not in "".join(parts):
+        parts.append("给水")
+
+    return " ".join(dict.fromkeys(part for part in parts if part))
+
+
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
                       bill_params: dict = None,
@@ -1485,6 +2419,7 @@ def build_quota_query(parser, name: str, description: str = "",
     # 过滤清单编码（如 WMSGCS001001、HJBHCS001001、050402001001 等）
     # 这些编码混在特征描述中会污染搜索词，导致BM25搜不到正确定额
     original_name = name
+    raw_input_name = name or ""
     name = _BILL_CODE_PATTERN.sub('', name or '').strip() or original_name
     # 过滤装修材料代号（CT-03、MT-01、M-03 等室内设计图纸编号）
     name = _DECO_CODE_PATTERN.sub('', name).strip() or name
@@ -1494,6 +2429,7 @@ def build_quota_query(parser, name: str, description: str = "",
     description = description or ""
 
     full_text = f"{name} {description}".strip()
+    guarded_full_text = full_text
     # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
     params = bill_params if bill_params is not None else parser.parse(full_text)
     use_feature_alignment = bool(canonical_features or context_prior)
@@ -1512,6 +2448,37 @@ def build_quota_query(parser, name: str, description: str = "",
 
     # 提前提取描述字段（管道路由和通用路由都需要用）
     fields = extract_description_fields(description) if description else {}
+    if fields:
+        normalized_fields = dict(fields)
+        compound_name = _get_desc_field(fields, "鍚嶇О")
+        compound_type = _get_desc_field(fields, "绫诲瀷")
+        if compound_name:
+            compound_name = re.split(r'[;；]|\s+\S{2,8}[：:]', compound_name)[0].strip()
+        if compound_type:
+            compound_type = re.split(r'[;；]|\s+\S{2,8}[：:]', compound_type)[0].strip()
+        if compound_name and "鍚嶇О" not in normalized_fields:
+            normalized_fields["鍚嶇О"] = compound_name
+        if compound_type and "绫诲瀷" not in normalized_fields:
+            normalized_fields["绫诲瀷"] = compound_type
+        fields = normalized_fields
+    primary_profile = build_primary_query_profile(name, description, fields)
+    guarded_full_text = primary_profile.get("primary_text") or guarded_full_text
+    subject_info = primary_profile
+    protect_primary_subject = _should_guard_primary_subject_from_route_hijack(
+        raw_input_name,
+        subject_info,
+    )
+    if protect_primary_subject:
+        canonical_features = _sanitize_feature_alignment_for_protected_subject(canonical_features)
+    subject_seed_terms = _build_query_subject_seed_terms(raw_input_name, subject_info)
+    quota_alias_seed_terms = _build_query_quota_alias_seed_terms(raw_input_name, subject_info)
+    discovered_routing_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
+    if (
+        not _normalize_primary_guard_text(raw_input_name)
+        and len(discovered_routing_subject) > 2
+        and discovered_routing_subject not in _PRIMARY_SUBJECT_GENERIC_NAMES
+    ):
+        name = discovered_routing_subject
 
     # 提取安装部位（室内/室外）
     location = ""
@@ -1631,7 +2598,10 @@ def build_quota_query(parser, name: str, description: str = "",
             apply_synonyms=False,
         )
 
-    support_query = _build_support_query(name, full_text, params)
+    support_route_text = full_text
+    if not any(keyword in (name or "") for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+        support_route_text = guarded_full_text
+    support_query = None if protect_primary_subject else _build_support_query(name, support_route_text, params)
     if support_query:
         return _finalize_query(
             support_query,
@@ -1641,7 +2611,27 @@ def build_quota_query(parser, name: str, description: str = "",
             apply_synonyms=False,
         )
 
-    pipe_insulation_query = _build_pipe_insulation_query(name, full_text, params)
+    explicit_pipe_query = None
+    if not protect_primary_subject:
+        explicit_pipe_query = _build_explicit_pipe_run_query(
+            name=name,
+            full_text=full_text,
+            location=location,
+            usage=usage,
+            material=material,
+            connection=connection,
+            dn=dn,
+        )
+    if explicit_pipe_query:
+        return _finalize_query(
+            explicit_pipe_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
+    pipe_insulation_query = None if protect_primary_subject else _build_pipe_insulation_query(name, full_text, params)
     if pipe_insulation_query:
         return _finalize_query(
             pipe_insulation_query,
@@ -1651,12 +2641,12 @@ def build_quota_query(parser, name: str, description: str = "",
             apply_synonyms=False,
         )
 
-    sleeve_text = f"{name} {description}"
+    sleeve_text = guarded_full_text
     is_explicit_sleeve = (
         any(keyword in sleeve_text for keyword in ("套管", "堵洞", "封堵"))
         and not any(keyword in sleeve_text for keyword in ("可挠金属套管", "电气配管", "导管", "穿线管"))
     )
-    if is_explicit_sleeve:
+    if is_explicit_sleeve and not protect_primary_subject:
         sleeve_parts = []
         if any(keyword in sleeve_text for keyword in ("堵洞", "封堵")):
             sleeve_parts.append("堵洞")
@@ -1695,7 +2685,14 @@ def build_quota_query(parser, name: str, description: str = "",
     # 风口/喷口/散流器的φ值是开口直径，不是管道DN，不走管道路由
     is_wind_outlet = any(kw in name for kw in ("风口", "喷口", "散流器"))
     is_window_item = "窗" in name or "百叶" in name
-    if (material or dn) and not is_electrical and not is_lamp and not is_wind_outlet and not is_window_item:
+    if (
+        (material or dn)
+        and not protect_primary_subject
+        and not is_electrical
+        and not is_lamp
+        and not is_wind_outlet
+        and not is_window_item
+    ):
         # 阀门类清单名称规范化：清单常写"碳钢阀门"/"不锈钢阀门"等材质+阀门泛称，
         # 但定额名统一叫"法兰阀门安装"/"螺纹阀门安装"。直接在路由中替换，
         # 避免依赖_apply_synonyms（可能被其他同义词抢先匹配导致失效）
@@ -1824,10 +2821,14 @@ def build_quota_query(parser, name: str, description: str = "",
         else:
             core = f"{location}{usage}{name}"
 
-        query_parts = []
+        query_parts = list(subject_seed_terms[:2])
+        for alias_term in quota_alias_seed_terms:
+            if alias_term not in query_parts:
+                query_parts.append(alias_term)
         if connection:
             core += f"({connection})"
-        query_parts.append(core)
+        if core not in query_parts:
+            query_parts.append(core)
 
         # 风管形状：加入"矩形风管"或"圆形风管"帮助BM25区分
         if shape and "风管" in name:
@@ -1891,7 +2892,7 @@ def build_quota_query(parser, name: str, description: str = "",
             context_prior=context_prior,
         )
 
-    switchgear_query = _build_switchgear_query(name, description, full_text, params)
+    switchgear_query = None if protect_primary_subject else _build_switchgear_query(name, description, full_text, params)
     if switchgear_query:
         return _finalize_query(
             switchgear_query,
@@ -1946,14 +2947,16 @@ def build_quota_query(parser, name: str, description: str = "",
     # ===== 非管道类：从描述中提取关键信息构建query =====
     # 电气设备、灯具、电缆、配管、配线等
 
-    distribution_box_query = _build_distribution_box_query(
-        name=name,
-        description=description,
-        full_text=full_text,
-        fields=fields,
-        params=params,
-        specialty=specialty,
-    )
+    distribution_box_query = None
+    if not protect_primary_subject:
+        distribution_box_query = _build_distribution_box_query(
+            name=name,
+            description=description,
+            full_text=full_text,
+            fields=fields,
+            params=params,
+            specialty=specialty,
+        )
     if distribution_box_query:
         return _finalize_query(
             distribution_box_query,
@@ -1996,8 +2999,40 @@ def build_quota_query(parser, name: str, description: str = "",
 
     # 清单名称 → 定额搜索名称的规范化映射
     # 清单用的名称和定额用的名称经常不一样
-    normalized_name = _normalize_bill_name(name)
-    query_parts = [normalized_name]
+    subject_name = str(name or "")
+    apply_discovered_subject = _should_apply_discovered_subject(raw_input_name, fields, subject_info)
+    if apply_discovered_subject:
+        subject_name = str(subject_info.get("primary_subject") or subject_name)
+    normalized_name = _normalize_bill_name(subject_name)
+    query_parts = list(subject_seed_terms[:2])
+    for alias_term in quota_alias_seed_terms:
+        if alias_term not in query_parts:
+            query_parts.append(alias_term)
+    if (
+        not list(subject_info.get("decisive_terms") or [])
+        and query_parts
+        and normalized_name
+        and normalized_name not in query_parts[0]
+    ):
+        query_parts = []
+    if normalized_name not in query_parts:
+        query_parts.append(normalized_name)
+    raw_subject_name = _normalize_primary_guard_text(raw_input_name)
+    primary_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
+    should_append_subject_specs = (
+        (apply_discovered_subject or not raw_subject_name or raw_subject_name in _PRIMARY_SUBJECT_GENERIC_NAMES)
+        and len(primary_subject) > 2
+    )
+    if should_append_subject_specs:
+        for spec in list(subject_info.get("key_specs") or [])[:2]:
+            token = _normalize_primary_guard_text(spec)
+            if token and token not in query_parts:
+                query_parts.append(token)
+    if should_append_subject_specs:
+        for term in list(subject_info.get("decisive_terms") or [])[:3]:
+            token = _normalize_primary_guard_text(term)
+            if token and token not in query_parts:
+                query_parts.append(token)
 
     # --- 门窗类：将“金属（塑钢、断桥）窗/门”归一到定额常用的铝合金/塑钢窗门名称 ---
     # 典型题面只给泛称，具体材质与开启方式藏在描述里；不归一时 BM25 容易误打到“塑钢固定窗”。
@@ -2039,7 +3074,17 @@ def build_quota_query(parser, name: str, description: str = "",
     # --- 桥架类：清理尺寸噪声，构建桥架安装搜索词 ---
     # 清单写"热镀锌桥架100*50"，定额叫"钢制槽式桥架(宽+高)(mm以下) 200"
     # 100*50 的数字噪声会让 BM25 匹配到含"100×140"的混凝土结构定额
-    if "桥架" in name and "配线" not in name and "穿线" not in name and "电缆" not in name:
+    canonical_family = str((canonical_features or {}).get("family") or "").strip()
+    laying_method_hint = str((canonical_features or {}).get("laying_method") or "").strip()
+    bridge_object_name = "桥架" in name or canonical_family == "bridge_raceway"
+    explicit_cable_laying_name = any(keyword in name for keyword in ("桥架配线", "桥架敷设", "沿桥架", "桥架内配线"))
+    if (
+        bridge_object_name
+        and "配线" not in name
+        and "穿线" not in name
+        and not explicit_cable_laying_name
+        and not (canonical_family == "cable_family" and "桥架" in laying_method_hint)
+    ):
         # 去掉尺寸数字（如"100*50"、"200*100"）和尾部连字符
         clean = re.sub(r'\d+\s*[*×xX]\s*\d+', '', name).strip()
         clean = re.sub(r'[-—_]+$', '', clean).strip()
@@ -2088,9 +3133,16 @@ def build_quota_query(parser, name: str, description: str = "",
         )
 
         # --- 配管材质+配置形式+管径：fields.get经常失败，统一用正则从全文提取 ---
-        if is_conduit:
+        if is_conduit and not protect_primary_subject:
             full_text = f"{name} {description}"
             normalized_conduit_text = full_text.upper().replace("KJG", "KBG")
+            explicit_electrical_conduit = _is_explicit_electrical_conduit_context(
+                name,
+                full_text,
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+            )
 
             # 1. 材质型号：从全文提取SC/JDG/KBG/PC等代号
             conduit_code = conduit_type or None
@@ -2116,6 +3168,15 @@ def build_quota_query(parser, name: str, description: str = "",
                 query_parts[0] = "PVC阻燃塑料管敷设"
             elif conduit_code == "FPC":
                 query_parts[0] = "半硬质阻燃管敷设"
+            elif explicit_electrical_conduit and conduit_code in ("SC", "G", "DG", "RC", "MT"):
+                query_parts[0] = _build_ambiguous_electrical_conduit_query(
+                    conduit_code,
+                    context_prior=context_prior,
+                )
+            elif explicit_electrical_conduit and not conduit_code:
+                query_parts[0] = _build_ambiguous_electrical_conduit_query(
+                    context_prior=context_prior,
+                )
             else:
                 # SC=焊接钢管, G/DG=镀锌钢管, 分开写让BM25能精准命中
                 if conduit_code == "SC":
@@ -2442,7 +3503,7 @@ def build_quota_query(parser, name: str, description: str = "",
             query_parts.append(circuits)
 
     # 从描述字段补充设备具体类型（清单名泛称时帮助BM25精准命中）
-    desc_type = _extract_desc_equipment_type(fields, name)
+    desc_type = _extract_desc_equipment_type(fields, subject_name or name)
     if desc_type:
         query_parts.append(desc_type)
 
