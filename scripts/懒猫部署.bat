@@ -272,7 +272,7 @@ echo.
 
 echo [1/4] Build frontend...
 
-docker build -t %FRONTEND_IMAGE% web/frontend/
+docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t %FRONTEND_IMAGE% web/frontend/
 
 if !errorlevel! neq 0 (
 
@@ -330,7 +330,7 @@ echo.
 
 echo [1/2] Build frontend...
 
-docker build -t %FRONTEND_IMAGE% web/frontend/
+docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t %FRONTEND_IMAGE% web/frontend/
 
 if !errorlevel! neq 0 (
 
