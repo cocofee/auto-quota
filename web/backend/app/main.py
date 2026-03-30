@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.config import CORS_ORIGINS, LOG_DIR
+from app.services.local_http import local_match_request
 
 # 把项目根目录加入Python路径，这样后端代码可以直接 import main, config, src.* 等
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -155,6 +156,18 @@ app.include_router(quota_search_router, prefix="/api/quota-search", tags=["定�
 from app.api.material_price import router as material_price_router
 app.include_router(material_price_router, prefix="/api/tools", tags=["工具-智能填主材"])
 
+from app.api.file_intake import router as file_intake_router
+app.include_router(file_intake_router, prefix="/api/file-intake", tags=["统一文件入口"])
+
+from app.api.reference import router as reference_router
+app.include_router(reference_router, prefix="/api/reference", tags=["价格参考"])
+
+from app.api.price_documents import router as price_documents_router
+app.include_router(price_documents_router, prefix="/api/price-documents", tags=["历史价格文档"])
+
+from app.api.bill_price_documents import router as bill_price_documents_router
+app.include_router(bill_price_documents_router, prefix="/api/bill-price-documents", tags=["综合单价文档"])
+
 from app.api.openclaw import router as openclaw_router
 app.include_router(openclaw_router, prefix="/api/openclaw", tags=["OpenClaw"])
 
@@ -184,8 +197,8 @@ async def list_provinces():
 
         if MATCH_BACKEND == "remote" and LOCAL_MATCH_URL:
             # 远程模式：从本地匹配服务的 /health 接口获取省份列表
-            import httpx
-            resp = httpx.get(
+            resp = local_match_request(
+                "GET",
                 f"{LOCAL_MATCH_URL}/health",
                 headers={"X-API-Key": LOCAL_MATCH_API_KEY or ""},
                 timeout=10,
