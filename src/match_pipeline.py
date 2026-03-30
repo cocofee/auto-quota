@@ -19,14 +19,27 @@ from loguru import logger
 from src.compat_primitives import connections_compatible
 from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
-from src.candidate_scoring import compute_candidate_rank_score, compute_candidate_sort_key
+from src.candidate_scoring import (
+    compute_candidate_rank_score,
+    compute_candidate_sort_key,
+    explain_candidate_rank_score,
+    has_exact_experience_anchor,
+    has_exact_universal_kb_anchor,
+    sort_candidates_with_stage_priority,
+)
 from src.context_builder import build_context_prior, summarize_batch_context_for_trace
 from src.ltr_ranker import rerank_candidates_with_ltr
 from src.province_plugins import resolve_plugin_hints
+from src.query_builder import build_primary_query_profile
 from src.text_parser import parser as text_parser, normalize_bill_text
 from src.query_router import build_query_route_profile
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
-from src.specialty_classifier import BORROW_PRIORITY, classify as classify_specialty
+from src.specialty_classifier import (
+    BORROW_PRIORITY,
+    book_matches_province_scope,
+    classify as classify_specialty,
+    province_uses_standard_route_books,
+)
 from src.unified_planner import build_unified_search_plan
 from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
@@ -85,20 +98,33 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
     if not quota_name:
         return None
 
-    desc = item.get("description", "") or ""
+    review_item = dict(item or {})
+    canonical_query = dict(review_item.get("canonical_query") or {})
+    primary_query_profile = dict(canonical_query.get("primary_query_profile") or {})
+    context_prior = dict(review_item.get("context_prior") or {})
+    primary_subject = str(
+        primary_query_profile.get("primary_subject")
+        or review_item.get("primary_subject")
+        or context_prior.get("primary_subject")
+        or ""
+    ).strip()
+    if primary_subject:
+        review_item["name"] = primary_subject
+
+    desc = review_item.get("description", "") or ""
     desc_lines = extract_description_lines(desc)
 
     # 运行所有审核检查器，收集全部错误（不再短路）
     checkers = [
-        check_category_mismatch(item, quota_name, desc_lines),
-        check_sleeve_mismatch(item, quota_name, desc_lines),
-        check_material_mismatch(item, quota_name, desc_lines),
-        check_connection_mismatch(item, quota_name, desc_lines),
-        check_pipe_usage(item, quota_name, desc_lines),
-        check_parameter_deviation(item, quota_name, desc_lines),
-        check_electric_pair(item, quota_name, desc_lines),
-        check_elevator_type(item, quota_name, desc_lines),
-        check_elevator_floor(item, quota_name, desc_lines, quota_id=quota_id),
+        check_category_mismatch(review_item, quota_name, desc_lines),
+        check_sleeve_mismatch(review_item, quota_name, desc_lines),
+        check_material_mismatch(review_item, quota_name, desc_lines),
+        check_connection_mismatch(review_item, quota_name, desc_lines),
+        check_pipe_usage(review_item, quota_name, desc_lines),
+        check_parameter_deviation(review_item, quota_name, desc_lines),
+        check_electric_pair(review_item, quota_name, desc_lines),
+        check_elevator_type(review_item, quota_name, desc_lines),
+        check_elevator_floor(review_item, quota_name, desc_lines, quota_id=quota_id),
     ]
     errors = [e for e in checkers if e is not None]
 
@@ -111,6 +137,34 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
         error["all_errors"] = errors  # 纠正步骤可以读取全部错误
 
     return error
+
+
+def _append_item_review_rejection_trace(result: dict, item: dict | None) -> None:
+    """Carry pre-search experience review rejections onto the final result trace."""
+    if not isinstance(result, dict) or not isinstance(item, dict):
+        return
+
+    rejection = item.get("_experience_review_rejection")
+    if not isinstance(rejection, dict):
+        return
+
+    trace = result.get("trace") or {}
+    for step in trace.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("stage") != "experience_review_rejected":
+            continue
+        if str(step.get("quota_id", "") or "") == str(rejection.get("quota_id", "") or ""):
+            return
+
+    _append_trace_step(
+        result,
+        "experience_review_rejected",
+        error_type=rejection.get("type"),
+        error_reason=rejection.get("reason"),
+        experience_source=rejection.get("match_source"),
+        quota_id=rejection.get("quota_id"),
+    )
 
 
 # 品类子类型互斥词表：清单含左侧关键词时，定额名也必须含该词
@@ -1830,9 +1884,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
 
 
 def _promote_explicit_distribution_box_candidate(item: dict,
-                                                 candidates: list[dict]) -> list[dict]:
+                                                 candidates: list[dict]) -> tuple[list[dict], dict]:
     if not candidates:
-        return []
+        return [], {}
 
     bill_text = " ".join(
         part for part in (
@@ -1842,22 +1896,43 @@ def _promote_explicit_distribution_box_candidate(item: dict,
     )
     picked = _pick_explicit_distribution_box_candidate(bill_text, candidates)
     if not picked:
-        return list(candidates)
+        return list(candidates), {
+            "applied": False,
+            "advisory_applied": False,
+            "reason": "no_explicit_distribution_box_match",
+            "recommended_quota_id": "",
+        }
 
     picked_id = str(picked.get("quota_id", "")).strip()
     if not picked_id:
-        return list(candidates)
+        return list(candidates), {
+            "applied": False,
+            "advisory_applied": False,
+            "reason": "missing_recommended_quota_id",
+            "recommended_quota_id": "",
+        }
 
-    reordered: list[dict] = []
     chosen = None
     for candidate in candidates:
         if str(candidate.get("quota_id", "")).strip() == picked_id:
             chosen = candidate
-        else:
-            reordered.append(candidate)
+            break
     if chosen is None:
-        return list(candidates)
-    return [chosen, *reordered]
+        return list(candidates), {
+            "applied": False,
+            "advisory_applied": False,
+            "reason": "recommended_candidate_not_in_pool",
+            "recommended_quota_id": picked_id,
+        }
+
+    # Explicit distribution-box logic is advisory only in the main architecture.
+    # It records a recommendation for diagnostics but does not reorder candidates.
+    return list(candidates), {
+        "applied": False,
+        "advisory_applied": True,
+        "reason": "distribution_box_explicit_advisory",
+        "recommended_quota_id": picked_id,
+    }
 
 
 def _pick_explicit_insulation_family_candidate(bill_text: str,
@@ -2763,6 +2838,24 @@ def _build_item_context(item: dict) -> dict:
     original_name = item.get("original_name", name)
     canonical_features = item.get("canonical_features") or {}
     context_prior = item.get("context_prior") or {}
+    input_gate = _evaluate_input_gate(name, desc)
+    query_name = input_gate.get("query_name", name)
+    primary_query_profile = build_primary_query_profile(query_name, desc)
+    context_prior = dict(context_prior)
+    context_prior["primary_query_profile"] = primary_query_profile
+    primary_subject = str(primary_query_profile.get("primary_subject") or "").strip()
+    if primary_subject and not context_prior.get("primary_subject"):
+        context_prior["primary_subject"] = primary_subject
+    decisive_terms = [
+        str(value).strip()
+        for value in list(primary_query_profile.get("decisive_terms") or [])
+        if str(value).strip()
+    ]
+    if decisive_terms:
+        context_prior["decisive_terms"] = decisive_terms[:4]
+    noise_marker = str(primary_query_profile.get("noise_marker") or "").strip()
+    if noise_marker:
+        context_prior["noise_marker"] = noise_marker
     plugin_hints = resolve_plugin_hints(
         province=str(item.get("_resolved_province") or item.get("province") or ""),
         item=item,
@@ -2775,6 +2868,8 @@ def _build_item_context(item: dict) -> dict:
         canonical_features=canonical_features,
         plugin_hints=plugin_hints,
     )
+    if unified_plan and unified_plan.get("plugin_hints"):
+        plugin_hints = dict(unified_plan.get("plugin_hints") or {})
     if plugin_hints:
         context_prior = dict(context_prior)
         merged_context_hints = list(context_prior.get("context_hints") or [])
@@ -2788,8 +2883,6 @@ def _build_item_context(item: dict) -> dict:
     if unified_plan:
         context_prior = dict(context_prior)
         context_prior["unified_plan"] = unified_plan
-    input_gate = _evaluate_input_gate(name, desc)
-    query_name = input_gate.get("query_name", name)
     search_query = text_parser.build_quota_query(query_name, desc,
                                                   specialty=item.get("specialty", ""),
                                                   bill_params=item.get("params"),
@@ -2828,6 +2921,7 @@ def _build_item_context(item: dict) -> dict:
         "validation_query": validation_query,
         "search_query": search_query.strip(),
         "normalized_query": normalize_bill_text(original_name, desc),
+        "primary_query_profile": primary_query_profile,
     }
 
     query_route = build_query_route_profile(
@@ -2883,11 +2977,22 @@ def _is_standard_seeded_specialty(seed_primary: str) -> bool:
     return bool(re.fullmatch(r"C\d+", seed_primary))
 
 
-def _is_seeded_specialty_trustworthy(item: dict, seed_primary: str, section: str, sheet_name: str) -> bool:
+def _is_seeded_specialty_trustworthy(
+    item: dict,
+    seed_primary: str,
+    section: str,
+    sheet_name: str,
+    *,
+    province: str | None = None,
+) -> bool:
     seed_primary = str(seed_primary or "").strip()
     if not seed_primary:
         return False
     if seed_primary not in BORROW_PRIORITY or not _is_standard_seeded_specialty(seed_primary):
+        return False
+    if province and not province_uses_standard_route_books(province):
+        return False
+    if province and not book_matches_province_scope(seed_primary, province):
         return False
 
     item = dict(item or {})
@@ -2899,8 +3004,6 @@ def _is_seeded_specialty_trustworthy(item: dict, seed_primary: str, section: str
         item.get("section"),
         item.get("sheet_name"),
         item.get("specialty_name"),
-        context_prior.get("project_name"),
-        context_prior.get("bill_name"),
         context_prior.get("system_hint"),
         batch_context.get("section_system_hint"),
         batch_context.get("sheet_system_hint"),
@@ -2952,6 +3055,208 @@ def _should_override_seeded_specialty(seed_primary: str, inferred: dict) -> bool
     return False
 
 
+def _drop_incompatible_standard_classification(classification: dict, province: str | None) -> dict:
+    classification = dict(classification or {})
+    province = str(province or "").strip()
+    primary = str(classification.get("primary") or "").strip()
+    if not province or not primary or primary not in BORROW_PRIORITY or not _is_standard_seeded_specialty(primary):
+        return classification
+    if not province_uses_standard_route_books(province):
+        return {"primary": None, "fallbacks": []}
+    if not book_matches_province_scope(primary, province):
+        return {"primary": None, "fallbacks": []}
+    return classification
+
+
+def _build_unified_plan_fallback_classification(item: dict, province: str | None) -> dict | None:
+    unified_plan = dict((item or {}).get("unified_plan") or {})
+    if not unified_plan:
+        return None
+    plugin_hints = dict(unified_plan.get("plugin_hints") or (item or {}).get("plugin_hints") or {})
+    plugin_source = str(plugin_hints.get("source") or "").strip()
+    preferred_books = []
+    for value in list(unified_plan.get("preferred_books") or []):
+        book = str(value or "").strip()
+        if book and book not in preferred_books:
+            preferred_books.append(book)
+    if not preferred_books:
+        return None
+    reason_tags = [
+        str(value).strip()
+        for value in list(unified_plan.get("reason_tags") or [])
+        if str(value).strip()
+    ]
+    non_seed_reason_tags = [tag for tag in reason_tags if tag != "seed_specialty"]
+    if not non_seed_reason_tags:
+        return None
+    primary = str(unified_plan.get("primary_book") or "").strip()
+    if not primary:
+        primary = preferred_books[0]
+    province = str(province or "").strip()
+    if (
+        province
+        and primary
+        and primary in BORROW_PRIORITY
+        and _is_standard_seeded_specialty(primary)
+        and (
+            (not province_uses_standard_route_books(province))
+            or (not book_matches_province_scope(primary, province))
+        )
+    ):
+        return None
+    fallbacks = [book for book in preferred_books if book != primary]
+    route_mode = str(unified_plan.get("route_mode") or "moderate").strip().lower()
+    if route_mode not in {"strict", "moderate", "open"}:
+        route_mode = "moderate"
+    hard_book_constraints = []
+    for value in list(unified_plan.get("hard_books") or []):
+        book = str(value or "").strip()
+        if book and book not in hard_book_constraints:
+            hard_book_constraints.append(book)
+    strong_reason_tags = {
+        "explicit_book_anchor",
+        "strong_system_anchor",
+        "family_cluster",
+    }
+    if (
+        not hard_book_constraints
+        and plugin_source == "generated_benchmark_knowledge"
+        and not any(tag in strong_reason_tags for tag in non_seed_reason_tags)
+    ):
+        return None
+    routing_reason = "unified_plan"
+    if non_seed_reason_tags:
+        routing_reason = f"unified_plan:{'+'.join(non_seed_reason_tags[:2])}"
+    return {
+        "primary": primary,
+        "fallbacks": fallbacks,
+        "candidate_books": list(preferred_books),
+        "search_books": list(preferred_books),
+        "routing_evidence": {
+            book: [routing_reason]
+            for book in preferred_books
+        },
+        "book_scores": {
+            book: (2.0 if book == primary else 1.0)
+            for book in preferred_books
+        },
+        "confidence": "medium",
+        "reason": routing_reason,
+        "route_mode": route_mode,
+        "allow_cross_book_escape": bool(
+            unified_plan.get("allow_cross_book_escape", route_mode != "strict")
+        ),
+        "hard_book_constraints": hard_book_constraints,
+    }
+
+
+def _build_broad_group_unified_plan_override(item: dict | None) -> dict | None:
+    unified_plan = dict((item or {}).get("unified_plan") or {})
+    if not unified_plan:
+        return None
+    preferred_books = []
+    for value in list(unified_plan.get("preferred_books") or []):
+        book = str(value or "").strip()
+        if book and book not in preferred_books:
+            preferred_books.append(book)
+    if not preferred_books:
+        return None
+
+    broad_route_books = {"A", "D", "E"}
+    if not all(book in broad_route_books for book in preferred_books):
+        return None
+
+    plugin_hints = dict(unified_plan.get("plugin_hints") or (item or {}).get("plugin_hints") or {})
+    if str(plugin_hints.get("source") or "").strip() != "generated_benchmark_knowledge":
+        return None
+
+    reason_tags = [
+        str(value).strip()
+        for value in list(unified_plan.get("reason_tags") or [])
+        if str(value).strip()
+    ]
+    non_seed_reason_tags = [tag for tag in reason_tags if tag != "seed_specialty"]
+    if "province_plugin" not in non_seed_reason_tags:
+        return None
+
+    primary = str(unified_plan.get("primary_book") or "").strip() or preferred_books[0]
+    fallbacks = [book for book in preferred_books if book != primary]
+    route_mode = str(unified_plan.get("route_mode") or "moderate").strip().lower()
+    if route_mode not in {"strict", "moderate", "open"}:
+        route_mode = "moderate"
+    routing_reason = "unified_plan:province_plugin"
+    return {
+        "primary": primary,
+        "fallbacks": fallbacks,
+        "candidate_books": list(preferred_books),
+        "search_books": list(preferred_books),
+        "routing_evidence": {
+            book: [routing_reason]
+            for book in preferred_books
+        },
+        "book_scores": {
+            book: (2.0 if book == primary else 1.0)
+            for book in preferred_books
+        },
+        "confidence": "medium",
+        "reason": routing_reason,
+        "route_mode": route_mode,
+        "allow_cross_book_escape": bool(
+            unified_plan.get("allow_cross_book_escape", route_mode != "strict")
+        ),
+        "hard_book_constraints": [],
+    }
+
+
+def _should_prefer_unified_plan_fallback(
+    current: dict | None,
+    fallback: dict | None,
+    item: dict | None,
+) -> bool:
+    current = dict(current or {})
+    fallback = dict(fallback or {})
+    current_primary = str(current.get("primary") or "").strip()
+    if not current_primary:
+        return True
+
+    current_route_mode = str(current.get("route_mode") or "").strip().lower()
+    if current_route_mode == "strict" or list(current.get("hard_book_constraints") or []):
+        return False
+
+    fallback_books = [
+        str(book).strip()
+        for book in (
+            list(fallback.get("search_books") or [])
+            or list(fallback.get("candidate_books") or [])
+        )
+        if str(book).strip()
+    ]
+    if not fallback_books or current_primary in fallback_books:
+        return False
+
+    broad_route_books = {"A", "D", "E"}
+    broad_fallback_only = all(book in broad_route_books for book in fallback_books)
+    current_is_standard_book = (
+        current_primary in BORROW_PRIORITY and _is_standard_seeded_specialty(current_primary)
+    )
+    if not (broad_fallback_only and current_is_standard_book):
+        return False
+
+    unified_plan = dict((item or {}).get("unified_plan") or {})
+    plugin_hints = dict(unified_plan.get("plugin_hints") or (item or {}).get("plugin_hints") or {})
+    plugin_source = str(plugin_hints.get("source") or "").strip()
+    reason_tags = [
+        str(value).strip()
+        for value in list(unified_plan.get("reason_tags") or [])
+        if str(value).strip()
+    ]
+    non_seed_reason_tags = [tag for tag in reason_tags if tag != "seed_specialty"]
+
+    if plugin_source == "generated_benchmark_knowledge":
+        return "province_plugin" in non_seed_reason_tags
+    return True
+
+
 def _build_classification(item: dict, name: str, desc: str, section: str,
                           sheet_name: str = "",
                           province: str = None) -> dict:
@@ -2975,15 +3280,29 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         canonical_features=item.get("canonical_features"),
         sheet_name=sheet_name or item.get("sheet_name"),
     )
+    inferred = _drop_incompatible_standard_classification(inferred, province)
     if primary:
-        if _is_seeded_specialty_trustworthy(item, primary, section, sheet_name):
+        if _is_seeded_specialty_trustworthy(item, primary, section, sheet_name, province=province):
             classification = _build_seeded_specialty_classification(primary, fallbacks, strict=True)
-        elif primary in BORROW_PRIORITY and _is_standard_seeded_specialty(primary):
+        elif (
+            primary in BORROW_PRIORITY
+            and _is_standard_seeded_specialty(primary)
+            and (not province or province_uses_standard_route_books(province))
+            and (not province or book_matches_province_scope(primary, province))
+        ):
             classification = _build_seeded_specialty_classification(primary, fallbacks, strict=False)
         else:
             classification = {"primary": None, "fallbacks": []}
     if not classification["primary"] or _should_override_seeded_specialty(primary, inferred):
         classification = inferred
+    unified_plan_fallback = _build_unified_plan_fallback_classification(item, province)
+    if not unified_plan_fallback and classification.get("primary"):
+        unified_plan_fallback = _build_broad_group_unified_plan_override(item)
+    if unified_plan_fallback and (
+        not classification.get("primary")
+        or _should_prefer_unified_plan_fallback(classification, unified_plan_fallback, item)
+    ):
+        classification = unified_plan_fallback
     return _normalize_classification(classification)
 
 
@@ -3081,7 +3400,8 @@ def _build_ranked_candidate_snapshots(candidates: list[dict], top_n: int = 20) -
             "ltr_score": candidate.get("ltr_score"),
             "rank_stage": str(candidate.get("rank_stage", "") or ""),
             "rank_score_source": str(candidate.get("_rank_score_source", "") or ""),
-            "rank_score": candidate.get("rank_score"),
+            "rank_score": candidate.get("rank_score", compute_candidate_rank_score(candidate)),
+            "rank_score_breakdown": explain_candidate_rank_score(candidate),
             "cgr_score": candidate.get("cgr_score"),
             "cgr_probability": candidate.get("cgr_probability"),
             "cgr_feasible": candidate.get("cgr_feasible"),
@@ -3094,6 +3414,10 @@ def _build_ranked_candidate_snapshots(candidates: list[dict], top_n: int = 20) -
             "cgr_tier_penalty": candidate.get("cgr_tier_penalty"),
             "cgr_generic_penalty": candidate.get("cgr_generic_penalty"),
             "cgr_soft_conflict_penalty": candidate.get("cgr_soft_conflict_penalty"),
+            "candidate_major_prefix": str(candidate.get("candidate_major_prefix", "") or ""),
+            "target_db_type": str(candidate.get("target_db_type", "") or ""),
+            "candidate_scope_match": candidate.get("candidate_scope_match"),
+            "candidate_scope_conflict": candidate.get("candidate_scope_conflict"),
             "candidate_canonical_features": dict(
                 candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
             ),
@@ -3621,134 +3945,428 @@ def _apply_plugin_route_gate(item: dict, candidates: list[dict]) -> tuple[list[d
     }
 
 
-def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> dict:
-    """
-    search模式下，根据候选结果构建基础匹配结果。
+def _top_candidate_id(candidates: list[dict]) -> str:
+    if not candidates:
+        return ""
+    first = candidates[0]
+    if not isinstance(first, dict):
+        return ""
+    return str(first.get("quota_id", "") or "")
 
-    优先取 param_match=True 的首项；若全部不匹配，则降权回退到首候选。
-    """
-    best = None
-    confidence = 0
-    explanation = ""
-    arbitration = {}
-    reasoning_decision = {}
-    ranking_meta = {
+
+_TARGET_MAJOR_PREFIXES_BY_DB_TYPE = {
+    "install": {"03"},
+    "civil": {"01", "02"},
+    "municipal": {"04"},
+    "landscape": {"05"},
+}
+
+
+def _detect_target_db_type(province: str) -> str:
+    province = str(province or "").strip()
+    if not province:
+        return ""
+    if "安装" in province:
+        return "install"
+    if "市政" in province:
+        return "municipal"
+    if "园林" in province or "绿化" in province:
+        return "landscape"
+    if any(
+        keyword in province
+        for keyword in ("建筑和装饰", "建筑装饰", "装饰工程", "建筑工程", "房屋建筑", "房建")
+    ):
+        return "civil"
+    return ""
+
+
+def _quota_major_prefix(quota_id: str) -> str:
+    quota_id = str(quota_id or "").strip()
+    if not quota_id:
+        return ""
+    prefix = quota_id.split("-", 1)[0].strip()
+    if not prefix:
+        return ""
+    if prefix.isdigit():
+        return prefix[:2].zfill(2)
+    return ""
+
+
+def _annotate_candidate_scope_signals(item: dict, candidates: list[dict]) -> list[dict]:
+    province = str((item or {}).get("_resolved_province") or (item or {}).get("province") or "").strip()
+    target_db_type = _detect_target_db_type(province)
+    target_prefixes = _TARGET_MAJOR_PREFIXES_BY_DB_TYPE.get(target_db_type) or set()
+    if not candidates or not target_prefixes:
+        return [dict(candidate) for candidate in (candidates or [])]
+
+    annotated: list[dict] = []
+    for candidate in candidates:
+        updated = dict(candidate)
+        major_prefix = _quota_major_prefix(updated.get("quota_id", ""))
+        updated["candidate_major_prefix"] = major_prefix
+        updated["target_db_type"] = target_db_type
+        if not major_prefix:
+            updated["candidate_scope_match"] = 0.0
+            updated["candidate_scope_conflict"] = False
+        else:
+            updated["candidate_scope_match"] = 1.0 if major_prefix in target_prefixes else 0.0
+            updated["candidate_scope_conflict"] = major_prefix not in target_prefixes
+        annotated.append(updated)
+    return annotated
+
+
+def _merge_arbiter_annotations(base_candidates: list[dict], arbiter_candidates: list[dict]) -> list[dict]:
+    ordered = [dict(candidate) for candidate in (base_candidates or [])]
+    if not ordered or not arbiter_candidates:
+        return ordered
+
+    arbiter_by_quota_id: dict[str, dict] = {}
+    for candidate in arbiter_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        if quota_id:
+            arbiter_by_quota_id[quota_id] = candidate
+
+    if not arbiter_by_quota_id:
+        return ordered
+
+    for candidate in ordered:
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        advised = arbiter_by_quota_id.get(quota_id)
+        if not advised:
+            continue
+        if "arbiter_signals" in advised:
+            candidate["arbiter_signals"] = list(advised.get("arbiter_signals") or [])
+        if "arbiter_recommended" in advised:
+            candidate["arbiter_recommended"] = bool(advised.get("arbiter_recommended"))
+    return ordered
+
+
+def _merge_explicit_annotations(base_candidates: list[dict], explicit_candidates: list[dict]) -> list[dict]:
+    ordered = [dict(candidate) for candidate in (base_candidates or [])]
+    if not ordered or not explicit_candidates:
+        return ordered
+
+    explicit_by_quota_id: dict[str, dict] = {}
+    for candidate in explicit_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        if quota_id:
+            explicit_by_quota_id[quota_id] = candidate
+
+    if not explicit_by_quota_id:
+        return ordered
+
+    for candidate in ordered:
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        hinted = explicit_by_quota_id.get(quota_id)
+        if not hinted:
+            continue
+        if "explicit_signals" in hinted:
+            candidate["explicit_signals"] = list(hinted.get("explicit_signals") or [])
+        if "explicit_recommended" in hinted:
+            candidate["explicit_recommended"] = bool(hinted.get("explicit_recommended"))
+    return ordered
+
+
+def _init_ranking_meta() -> dict:
+    return {
         "pre_ltr_top1_id": "",
         "post_ltr_top1_id": "",
+        "post_cgr_top1_id": "",
         "post_arbiter_top1_id": "",
+        "post_explicit_top1_id": "",
+        "post_anchor_top1_id": "",
+        "selected_top1_id": "",
         "post_final_top1_id": "",
         "final_changed_by": "",
         "candidate_count": 0,
         "ltr": {},
+        "explicit_override": {},
     }
 
-    valid_candidates = [
-        c for c in (candidates or [])
-        if str(c.get("quota_id", "")).strip() and str(c.get("name", "")).strip()
-    ]
-    valid_candidates, plugin_route_gate = _apply_plugin_route_gate(item, valid_candidates)
-    valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
-    ranking_meta["candidate_count"] = len(valid_candidates)
-    if candidates and not valid_candidates:
-        logger.warning("候选列表存在，但全部缺少quota_id/name，按无匹配处理")
+def _build_parser_trace_diagnostics(item: dict) -> dict:
+    canonical_query = item.get("canonical_query") or {}
+    primary_query_profile = dict(canonical_query.get("primary_query_profile") or {})
+    return {
+        "search_query": str(canonical_query.get("search_query") or item.get("search_query") or item.get("name") or ""),
+        "validation_query": str(canonical_query.get("validation_query") or ""),
+        "route_query": str(canonical_query.get("normalized_query") or ""),
+        "primary_subject": str(primary_query_profile.get("primary_subject") or ""),
+        "decisive_terms": list(primary_query_profile.get("decisive_terms") or []),
+        "quota_aliases": list(primary_query_profile.get("quota_aliases") or []),
+        "noise_marker": str(primary_query_profile.get("noise_marker") or ""),
+        "query_route": dict(item.get("query_route") or {}),
+    }
 
-    if valid_candidates:
-        matched_candidates = [c for c in valid_candidates if c.get("param_match", True)]
-        if matched_candidates:
-            ranking_meta["pre_ltr_top1_id"] = str(matched_candidates[0].get("quota_id", "") or "")
-            matched_candidates, ltr_meta = rerank_candidates_with_ltr(item, matched_candidates, {"item": item})
-            ranking_meta["ltr"] = ltr_meta
-            ranking_meta["post_ltr_top1_id"] = str(
-                (ltr_meta.get("post_ltr_top1_id") or (matched_candidates[0].get("quota_id", "") if matched_candidates else "")) or ""
-            )
-            ranking_meta["post_cgr_top1_id"] = str(
-                (ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or ""
-            )
-            matched_candidates, arbitration = arbitrate_candidates(
-                item, matched_candidates, route_profile=item.get("query_route")
-            )
-            ranking_meta["post_arbiter_top1_id"] = str(
-                (matched_candidates[0].get("quota_id", "") if matched_candidates else "") or ""
-            )
-            matched_candidates = _promote_explicit_distribution_box_candidate(
-                item, matched_candidates
-            )
-            ranking_meta["post_arbiter_top1_id"] = str(
-                (matched_candidates[0].get("quota_id", "") if matched_candidates else "") or ""
-            )
-            # 规则审核前置：跳过类别明显不匹配的候选
-            best = matched_candidates[0] if matched_candidates else None
-            if not best:
-                best = _pick_category_safe_candidate(item, matched_candidates)
-            if best:
-                decision_candidates = [best] + [c for c in matched_candidates if c is not best]
-                param_score = best.get("param_score", 0.5)
-                best_composite = compute_candidate_rank_score(best)
-                others = [c for c in matched_candidates if c is not best]
-                second_composite = max((compute_candidate_rank_score(c) for c in others), default=0)
-                score_gap = best_composite - second_composite
-                confidence = calculate_confidence(
-                    param_score, param_match=True,
-                    name_bonus=best.get("name_bonus", 0.0),
-                    score_gap=score_gap,
-                    rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
-                    candidates_count=len(valid_candidates),
-                    is_ambiguous_short=item.get("_is_ambiguous_short", False),
-                )
-                explanation = best.get("param_detail", "")
-                reasoning_decision = analyze_ambiguity(
-                    decision_candidates,
-                    route_profile=item.get("query_route"),
-                    arbitration=arbitration,
-                ).as_dict()
-            else:
-                explanation = "显式支架项未找到安全近邻候选，转未匹配"
-        else:
+
+def _build_router_trace_diagnostics(item: dict) -> dict:
+    classification = dict(item.get("classification") or {})
+    search_books = [
+        str(book).strip()
+        for book in list(classification.get("search_books") or [])
+        if str(book).strip()
+    ]
+    hard_search_books = [
+        str(book).strip()
+        for book in list(
+            classification.get("hard_search_books")
+            or classification.get("hard_book_constraints")
+            or []
+        )
+        if str(book).strip()
+    ]
+    advisory_search_books = [
+        book for book in search_books
+        if book not in hard_search_books
+    ]
+    unified_plan = dict(item.get("unified_plan") or {})
+    plugin_hints = dict(item.get("plugin_hints") or {})
+    classification_reason = str(classification.get("reason") or "").strip()
+    if classification_reason.startswith("unified_plan"):
+        effective_owner = "unified_plan"
+    elif classification_reason in {"item_specialty", "soft_item_specialty"}:
+        effective_owner = "seeded_specialty"
+    elif classification.get("primary"):
+        effective_owner = "specialty_classifier"
+    else:
+        effective_owner = "open_search"
+
+    advisory_owner = ""
+    if unified_plan and (
+        unified_plan.get("preferred_books")
+        or unified_plan.get("hard_books")
+        or unified_plan.get("search_aliases")
+    ):
+        advisory_owner = "unified_plan"
+    elif plugin_hints and (
+        plugin_hints.get("preferred_books")
+        or plugin_hints.get("preferred_specialties")
+        or plugin_hints.get("synonym_aliases")
+    ):
+        advisory_owner = "province_plugin"
+    elif item.get("specialty"):
+        advisory_owner = "seeded_specialty"
+
+    return {
+        "query_route": dict(item.get("query_route") or {}),
+        "plugin_hints": plugin_hints,
+        "unified_plan": unified_plan,
+        "advisory_owner": advisory_owner,
+        "effective_owner": effective_owner,
+        "effective_reason": classification_reason,
+        "classification": {
+            "primary": str(classification.get("primary") or ""),
+            "fallbacks": list(classification.get("fallbacks") or []),
+            "candidate_books": list(classification.get("candidate_books") or []),
+            "search_books": search_books,
+            "hard_book_constraints": list(classification.get("hard_book_constraints") or []),
+            "hard_search_books": hard_search_books,
+            "advisory_search_books": advisory_search_books,
+            "route_mode": str(classification.get("route_mode") or ""),
+        },
+    }
+
+
+def _build_retriever_trace_diagnostics(item: dict,
+                                       valid_candidates: list[dict],
+                                       matched_candidates: list[dict],
+                                       router_diagnostics: dict | None = None) -> dict:
+    classification = dict(item.get("classification") or {})
+    resolution = dict(classification.get("retrieval_resolution") or {})
+    calls = list(resolution.get("calls") or [])
+    main_calls = [call for call in calls if str(call.get("target") or "").strip() == "main"]
+    escape_used = any(str(call.get("stage") or "").strip() == "escape" for call in main_calls)
+    open_used = any(
+        str(call.get("stage") or "").strip() in {"escape", "open"}
+        for call in main_calls
+    )
+    resolved_main_books = []
+    for call in main_calls:
+        resolved_books = [
+            str(book).strip()
+            for book in list(call.get("resolved_books") or [])
+            if str(book).strip()
+        ]
+        if resolved_books:
+            resolved_main_books = resolved_books
+            break
+    router_effective_owner = str((router_diagnostics or {}).get("effective_owner") or "")
+    scope_owner = "retriever_main_escape" if escape_used else (router_effective_owner or "router")
+    return {
+        "candidate_count": len(valid_candidates or []),
+        "matched_candidate_count": len(matched_candidates or []),
+        "candidate_ids": [
+            str(candidate.get("quota_id", "") or "").strip()
+            for candidate in (valid_candidates or [])
+            if str(candidate.get("quota_id", "") or "").strip()
+        ],
+        "authority_hit": any(has_exact_experience_anchor(candidate) for candidate in (valid_candidates or [])),
+        "kb_hit": any(has_exact_universal_kb_anchor(candidate) for candidate in (valid_candidates or [])),
+        "scope_owner": scope_owner,
+        "escape_owner": "retriever_main_escape" if escape_used else "",
+        "used_open_search": open_used,
+        "resolved_main_books": resolved_main_books,
+        "route_scope_filter": dict(classification.get("route_scope_filter") or {}),
+        "candidate_scope_guard": dict(classification.get("candidate_scope_guard") or {}),
+        "search_resolution": resolution,
+    }
+
+
+def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, ranking_meta: dict, arbitration: dict) -> dict:
+    ordered = list(candidates or [])
+    selected = best or (ordered[0] if ordered else None)
+    second = ordered[1] if len(ordered) > 1 else None
+    selected_score = compute_candidate_rank_score(selected) if selected else 0.0
+    second_score = compute_candidate_rank_score(second) if second else 0.0
+
+    timeline = [
+        {"stage": "pre_ltr_seed", "quota_id": str(ranking_meta.get("pre_ltr_top1_id", "") or "")},
+        {"stage": "ltr", "quota_id": str(ranking_meta.get("post_ltr_top1_id", "") or "")},
+        {"stage": "cgr_ranker", "quota_id": str(ranking_meta.get("post_cgr_top1_id", "") or "")},
+        {"stage": "candidate_arbiter", "quota_id": str(ranking_meta.get("post_arbiter_top1_id", "") or "")},
+        {"stage": "explicit_override", "quota_id": str(ranking_meta.get("post_explicit_top1_id", "") or "")},
+        {"stage": "experience_anchor", "quota_id": str(ranking_meta.get("post_anchor_top1_id", "") or "")},
+        {"stage": "selected", "quota_id": str(ranking_meta.get("selected_top1_id", "") or "")},
+    ]
+
+    rank_timeline_changes = []
+    prev_quota_id = ""
+    decision_owner = "pre_ltr_seed"
+    for entry in timeline:
+        quota_id = str(entry.get("quota_id", "") or "")
+        if not quota_id:
+            continue
+        if not prev_quota_id:
+            prev_quota_id = quota_id
+            continue
+        if quota_id != prev_quota_id:
+            rank_timeline_changes.append({
+                "stage": entry["stage"],
+                "from_quota_id": prev_quota_id,
+                "to_quota_id": quota_id,
+            })
+            decision_owner = entry["stage"]
+            prev_quota_id = quota_id
+
+    if decision_owner == "selected":
+        decision_owner = rank_timeline_changes[-1]["stage"] if rank_timeline_changes else "pre_ltr_seed"
+
+    return {
+        "selected_quota": str((selected or {}).get("quota_id", "") or ""),
+        "selected_rank_score": selected_score,
+        "second_rank_score": second_score,
+        "score_gap": max(selected_score - second_score, 0.0),
+        "selected_rank_breakdown": explain_candidate_rank_score(selected or {}),
+        "second_rank_breakdown": explain_candidate_rank_score(second or {}) if second else {"rank_score": 0.0, "stage_priority": {}},
+        "decision_owner": decision_owner,
+        "top1_flip_count": len(rank_timeline_changes),
+        "rank_timeline": timeline,
+        "rank_timeline_changes": rank_timeline_changes,
+        "arbitration": dict(arbitration or {}),
+    }
+
+
+def _run_rank_pipeline(item: dict,
+                       decision_candidates: list[dict],
+                       *,
+                       reservoir: list[dict],
+                       allow_arbiter: bool,
+                       allow_explicit: bool) -> tuple[list[dict], dict, dict, dict, dict | None]:
+    ordered = list(decision_candidates or [])
+    ranking_meta = _init_ranking_meta()
+    ranking_meta["candidate_count"] = len(reservoir or [])
+    arbitration: dict = {}
+    explicit_override: dict = {}
+
+    if not ordered:
+        return ordered, ranking_meta, arbitration, explicit_override, None
+
+    ranking_meta["pre_ltr_top1_id"] = _top_candidate_id(ordered)
+    ordered, ltr_meta = rerank_candidates_with_ltr(item, ordered, {"item": item})
+    ranking_meta["ltr"] = ltr_meta
+    ranking_meta["post_ltr_top1_id"] = str((ltr_meta.get("post_ltr_top1_id") or _top_candidate_id(ordered)) or "")
+    ranking_meta["post_cgr_top1_id"] = str((ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or "")
+
+    if allow_arbiter:
+        arbiter_candidates, arbitration = arbitrate_candidates(item, ordered, route_profile=item.get("query_route"))
+        ordered = _merge_arbiter_annotations(ordered, arbiter_candidates)
+        if arbitration.get("applied"):
             arbitration = {
+                **dict(arbitration or {}),
                 "applied": False,
-                "route": str((item.get("query_route") or {}).get("route") or ""),
-                "reason": "no_param_matched_candidates",
+                "reason": str(arbitration.get("reason") or "structured_candidate_swap_advisory"),
+                "reorder_ignored_by_pipeline": True,
             }
-            ranking_meta["pre_ltr_top1_id"] = str(valid_candidates[0].get("quota_id", "") or "")
-            valid_candidates, ltr_meta = rerank_candidates_with_ltr(item, valid_candidates, {"item": item})
-            ranking_meta["ltr"] = ltr_meta
-            ranking_meta["post_ltr_top1_id"] = str(
-                (ltr_meta.get("post_ltr_top1_id") or (valid_candidates[0].get("quota_id", "") if valid_candidates else "")) or ""
-            )
-            ranking_meta["post_cgr_top1_id"] = str(
-                (ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or ""
-            )
-            ranking_meta["post_arbiter_top1_id"] = ranking_meta["post_ltr_top1_id"]
-            best = valid_candidates[0] if valid_candidates else None
-            if not best:
-                best = _pick_category_safe_candidate(item, valid_candidates)
-            if best:
-                decision_candidates = [best] + [c for c in valid_candidates if c is not best]
-                param_score = best.get("param_score", 0.0)
-                confidence = calculate_confidence(
-                    param_score, param_match=False,
-                    name_bonus=best.get("name_bonus", 0.0),
-                    rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
-                    family_aligned=infer_confidence_family_alignment(best),
-                    family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
-                    candidates_count=len(valid_candidates),
-                    is_ambiguous_short=item.get("_is_ambiguous_short", False),
-                )
-                explanation = f"参数不完全匹配(回退候选): {best.get('param_detail', '')}"
-                reasoning_decision = analyze_ambiguity(
-                    decision_candidates,
-                    route_profile=item.get("query_route"),
-                    arbitration=arbitration,
-                ).as_dict()
-            else:
-                explanation = "显式支架项未找到安全近邻候选，转未匹配"
+        ranking_meta["post_arbiter_top1_id"] = _top_candidate_id(ordered)
+    else:
+        arbitration = {
+            "applied": False,
+            "advisory_applied": False,
+            "route": str((item.get("query_route") or {}).get("route") or ""),
+            "reason": "no_param_matched_candidates",
+        }
+        ranking_meta["post_arbiter_top1_id"] = ranking_meta["post_ltr_top1_id"]
 
-    # 收集所有候选定额ID（供benchmark统计"正确答案是否在候选中"）
+    if allow_explicit:
+        explicit_result = _promote_explicit_distribution_box_candidate(item, ordered)
+        if isinstance(explicit_result, tuple) and len(explicit_result) == 2:
+            explicit_candidates, explicit_override = explicit_result
+        else:
+            explicit_candidates = list(explicit_result or [])
+            explicit_override = {}
+        ordered = _merge_explicit_annotations(ordered, explicit_candidates)
+        if explicit_override.get("applied"):
+            explicit_override = {
+                **dict(explicit_override or {}),
+                "applied": False,
+                "reason": str(explicit_override.get("reason") or "explicit_advisory"),
+                "reorder_ignored_by_pipeline": True,
+            }
+        ranking_meta["explicit_override"] = explicit_override
+        ranking_meta["post_explicit_top1_id"] = _top_candidate_id(ordered)
+    else:
+        ranking_meta["post_explicit_top1_id"] = ranking_meta["post_arbiter_top1_id"]
+
+    ranking_meta["post_anchor_top1_id"] = _top_candidate_id(ordered)
+
+    best = ordered[0] if ordered else None
+    if not best:
+        best = _pick_category_safe_candidate(item, ordered)
+    if best:
+        ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
+    return ordered, ranking_meta, arbitration, explicit_override, best
+
+
+def _assemble_search_result_payload(item: dict,
+                                    *,
+                                    candidates: list[dict],
+                                    valid_candidates: list[dict],
+                                    matched_candidates: list[dict],
+                                    best: dict | None,
+                                    confidence: float,
+                                    explanation: str,
+                                    arbitration: dict,
+                                    explicit_override: dict,
+                                    plugin_route_gate: dict,
+                                    reasoning_decision: dict,
+                                    ranking_meta: dict) -> dict:
     all_candidate_ids = [
-        str(c.get("quota_id", "")).strip()
-        for c in valid_candidates
-        if str(c.get("quota_id", "")).strip()
+        str(candidate.get("quota_id", "")).strip()
+        for candidate in valid_candidates
+        if str(candidate.get("quota_id", "")).strip()
     ]
+    parser_diagnostics = _build_parser_trace_diagnostics(item)
+    router_diagnostics = _build_router_trace_diagnostics(item)
+    retriever_diagnostics = _build_retriever_trace_diagnostics(
+        item,
+        valid_candidates,
+        matched_candidates if valid_candidates else [],
+        router_diagnostics,
+    )
+    ranker_diagnostics = _build_ranker_trace_diagnostics(matched_candidates if matched_candidates else valid_candidates, best, ranking_meta, arbitration)
 
     quotas = [{
         "quota_id": best["quota_id"],
@@ -3780,46 +4398,72 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         "candidate_snapshots": _build_ranked_candidate_snapshots(valid_candidates, top_n=20),
         "match_source": "search",
         "arbitration": arbitration,
+        "explicit_override": explicit_override,
         "plugin_route_gate": plugin_route_gate,
         "reasoning_decision": reasoning_decision,
         "needs_reasoning": bool(reasoning_decision.get("is_ambiguous")),
         "require_final_review": bool(reasoning_decision.get("require_final_review")),
         "pre_ltr_top1_id": ranking_meta["pre_ltr_top1_id"],
         "post_ltr_top1_id": ranking_meta["post_ltr_top1_id"],
+        "post_cgr_top1_id": ranking_meta["post_cgr_top1_id"],
         "post_arbiter_top1_id": ranking_meta["post_arbiter_top1_id"],
+        "post_explicit_top1_id": ranking_meta["post_explicit_top1_id"],
+        "post_anchor_top1_id": ranking_meta["post_anchor_top1_id"],
+        "selected_top1_id": ranking_meta["selected_top1_id"],
         "post_final_top1_id": str((quotas[0].get("quota_id", "") if quotas else "") or ""),
         "final_changed_by": "",
         "ltr_rerank": ranking_meta["ltr"],
+        "rank_decision_owner": ranker_diagnostics.get("decision_owner", ""),
+        "rank_top1_flip_count": ranker_diagnostics.get("top1_flip_count", 0),
     }
+
+    _append_trace_step(
+        result,
+        "search_select",
+        selected_quota=best.get("quota_id") if best else "",
+        selected_reasoning=summarize_candidate_reasoning(best) if best else {},
+        pre_ltr_top1_id=result.get("pre_ltr_top1_id", ""),
+        post_ltr_top1_id=result.get("post_ltr_top1_id", ""),
+        post_cgr_top1_id=result.get("post_cgr_top1_id", ""),
+        post_arbiter_top1_id=result.get("post_arbiter_top1_id", ""),
+        post_explicit_top1_id=result.get("post_explicit_top1_id", ""),
+        post_anchor_top1_id=result.get("post_anchor_top1_id", ""),
+        selected_top1_id=result.get("selected_top1_id", ""),
+        arbitration=arbitration,
+        explicit_override=explicit_override,
+        plugin_route_gate=plugin_route_gate,
+        reasoning_decision=reasoning_decision,
+        parser=parser_diagnostics,
+        router=router_diagnostics,
+        retriever=retriever_diagnostics,
+        ranker=ranker_diagnostics,
+        query_route=item.get("query_route") or {},
+        batch_context=summarize_batch_context_for_trace(item),
+        ltr_rerank=result.get("ltr_rerank", {}),
+        candidates_count=len(valid_candidates),
+        candidates=_summarize_candidates_for_trace(candidates),
+    )
+    return result
+
+
+def _finalize_search_result_payload(result: dict,
+                                    *,
+                                    item: dict,
+                                    candidates: list[dict],
+                                    valid_candidates: list[dict],
+                                    best: dict | None,
+                                    explanation: str,
+                                    reasoning_decision: dict) -> dict:
     input_gate = item.get("_input_gate") or {}
-    if best and valid_candidates and any(c.get("param_match", True) for c in valid_candidates):
-        _set_result_reason(
-            result,
-            "structured_selection",
-            ["retrieved", "validated"],
-            explanation or "候选已召回，按结构化参数与重排结果选定",
-        )
+    if best and valid_candidates and any(candidate.get("param_match", True) for candidate in valid_candidates):
+        _set_result_reason(result, "structured_selection", ["retrieved", "validated"], explanation or "selected from structured candidates")
     elif best and valid_candidates:
-        _set_result_reason(
-            result,
-            "param_conflict",
-            ["retrieved", "param_conflict", "manual_review"],
-            explanation or "召回到候选，但未发现完全参数一致项",
-        )
+        _set_result_reason(result, "param_conflict", ["retrieved", "param_conflict", "manual_review"], explanation or "fallback to best candidate")
     elif candidates and not valid_candidates:
-        _set_result_reason(
-            result,
-            "candidate_invalid",
-            ["retrieved", "candidate_invalid", "manual_review"],
-            "搜索返回了候选，但缺少有效定额编号或名称",
-        )
+        _set_result_reason(result, "candidate_invalid", ["retrieved", "candidate_invalid", "manual_review"], "candidates missing quota_id/name")
     else:
-        _set_result_reason(
-            result,
-            "recall_failure",
-            ["recall_failure", "no_candidates"],
-            "搜索无匹配结果",
-        )
+        _set_result_reason(result, "recall_failure", ["recall_failure", "no_candidates"], "search found no candidates")
+
     if input_gate:
         _set_result_reason(
             result,
@@ -3831,38 +4475,137 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         ambiguity_tags = ["ambiguous_candidates"]
         if reasoning_decision.get("require_final_review"):
             ambiguity_tags.append("manual_review")
-        _set_result_reason(
-            result,
-            result.get("primary_reason", ""),
-            ambiguity_tags,
-            result.get("reason_detail", "") or explanation,
-        )
-    _append_trace_step(
-        result,
-        "search_select",
-        selected_quota=best.get("quota_id") if best else "",
-        selected_reasoning=summarize_candidate_reasoning(best) if best else {},
-        pre_ltr_top1_id=result.get("pre_ltr_top1_id", ""),
-        post_ltr_top1_id=result.get("post_ltr_top1_id", ""),
-        post_arbiter_top1_id=result.get("post_arbiter_top1_id", ""),
-        arbitration=arbitration,
-        plugin_route_gate=plugin_route_gate,
-        reasoning_decision=reasoning_decision,
-        query_route=item.get("query_route") or {},
-        batch_context=summarize_batch_context_for_trace(item),
-        ltr_rerank=result.get("ltr_rerank", {}),
-        candidates_count=len(valid_candidates),
-        candidates=_summarize_candidates_for_trace(candidates),
-    )
+        _set_result_reason(result, result.get("primary_reason", ""), ambiguity_tags, result.get("reason_detail", "") or explanation)
 
     if best and valid_candidates:
-        result["alternatives"] = _build_alternatives(
-            valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
+        result["alternatives"] = _build_alternatives(valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
     if not best:
-        result["no_match_reason"] = explanation or "搜索无匹配结果"
+        result["no_match_reason"] = explanation or "search found no candidates"
     return result
 
 
+def _build_ranked_selection_decision(item: dict,
+                                     *,
+                                     best: dict | None,
+                                     decision_candidates: list[dict],
+                                     candidates_count: int,
+                                     param_match: bool,
+                                     arbitration: dict) -> tuple[float, str, dict]:
+    if not best:
+        return 0.0, "no safe candidate selected", {}
+
+    if param_match:
+        best_composite = compute_candidate_rank_score(best)
+        others = [candidate for candidate in decision_candidates if candidate is not best]
+        second_composite = max((compute_candidate_rank_score(candidate) for candidate in others), default=0)
+        confidence = calculate_confidence(
+            best.get("param_score", 0.5),
+            param_match=True,
+            name_bonus=best.get("name_bonus", 0.0),
+            score_gap=best_composite - second_composite,
+            rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+            candidates_count=candidates_count,
+            is_ambiguous_short=item.get("_is_ambiguous_short", False),
+        )
+        explanation = best.get("param_detail", "")
+    else:
+        confidence = calculate_confidence(
+            best.get("param_score", 0.0),
+            param_match=False,
+            name_bonus=best.get("name_bonus", 0.0),
+            rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+            family_aligned=infer_confidence_family_alignment(best),
+            family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
+            candidates_count=candidates_count,
+            is_ambiguous_short=item.get("_is_ambiguous_short", False),
+        )
+        explanation = f"fallback_to_candidate: {best.get('param_detail', '')}"
+
+    reasoning_decision = analyze_ambiguity(
+        decision_candidates,
+        route_profile=item.get("query_route"),
+        arbitration=arbitration,
+    ).as_dict()
+    return confidence, explanation, reasoning_decision
+
+
+def _build_search_result_from_candidates_legacy(item: dict, candidates: list[dict]) -> dict:
+    return _build_search_result_from_candidates(item, candidates)
+
+
+def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> dict:
+    best = None
+    confidence = 0.0
+    explanation = ""
+    arbitration: dict = {}
+    explicit_override: dict = {}
+    reasoning_decision: dict = {}
+    matched_candidates: list[dict] = []
+    ranking_meta = _init_ranking_meta()
+
+    valid_candidates = [
+        candidate
+        for candidate in (candidates or [])
+        if str(candidate.get("quota_id", "")).strip() and str(candidate.get("name", "")).strip()
+    ]
+    valid_candidates, plugin_route_gate = _apply_plugin_route_gate(item, valid_candidates)
+    valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
+    valid_candidates = _annotate_candidate_scope_signals(item, valid_candidates)
+    ranking_meta["candidate_count"] = len(valid_candidates)
+    if candidates and not valid_candidates:
+        logger.warning("candidate list exists but all items miss quota_id/name; treat as no-match")
+
+    if valid_candidates:
+        matched_candidates = [candidate for candidate in valid_candidates if candidate.get("param_match", True)]
+        decision_candidates = matched_candidates if matched_candidates else valid_candidates
+        ranked_candidates, ranking_meta, arbitration, explicit_override, best = _run_rank_pipeline(
+            item,
+            decision_candidates,
+            reservoir=valid_candidates,
+            allow_arbiter=bool(matched_candidates),
+            allow_explicit=bool(matched_candidates),
+        )
+        if matched_candidates:
+            matched_candidates = ranked_candidates
+        else:
+            valid_candidates = ranked_candidates
+
+        if best:
+            ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
+            confidence, explanation, reasoning_decision = _build_ranked_selection_decision(
+                item,
+                best=best,
+                decision_candidates=ranked_candidates,
+                candidates_count=len(valid_candidates),
+                param_match=bool(matched_candidates),
+                arbitration=arbitration,
+            )
+        else:
+            explanation = "no safe candidate selected from ranked results"
+
+    result = _assemble_search_result_payload(
+        item,
+        candidates=candidates,
+        valid_candidates=valid_candidates,
+        matched_candidates=matched_candidates,
+        best=best,
+        confidence=confidence,
+        explanation=explanation,
+        arbitration=arbitration,
+        explicit_override=explicit_override,
+        plugin_route_gate=plugin_route_gate,
+        reasoning_decision=reasoning_decision,
+        ranking_meta=ranking_meta,
+    )
+    return _finalize_search_result_payload(
+        result,
+        item=item,
+        candidates=candidates,
+        valid_candidates=valid_candidates,
+        best=best,
+        explanation=explanation,
+        reasoning_decision=reasoning_decision,
+    )
 def _resolve_search_mode_result(item: dict, candidates: list[dict],
                                 exp_backup: dict, rule_backup: dict,
                                 exp_hits: int, rule_hits: int):
@@ -3874,6 +4617,7 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
             item, active_candidates, rule_backup
         )
     result = _build_search_result_from_candidates(item, active_candidates)
+    _append_item_review_rejection_trace(result, item)
     result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
     if injected_rule_qid:
         selected_qid = str((result.get("quotas") or [{}])[0].get("quota_id", "") or "").strip()
@@ -3963,6 +4707,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     classification = _build_classification(
         item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
     )
+    item["classification"] = classification
     context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
     if context_gate.get("should_abstain"):
         return {
@@ -3996,6 +4741,13 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         if review_error:
             # 在 item 上标记审核拦截（后续统计时从 result.bill_item 中读取）
             item["_review_rejected"] = True
+            top_quota = ((exp_result.get("quotas") or [{}])[0] or {})
+            item["_experience_review_rejection"] = {
+                "type": review_error.get("type"),
+                "reason": review_error.get("reason"),
+                "match_source": exp_result.get("match_source", ""),
+                "quota_id": str(top_quota.get("quota_id", "") or ""),
+            }
             bill_name = item.get("name", "")
             logger.warning(
                 f"经验库匹配被审核规则拦截: '{bill_name[:40]}' "
