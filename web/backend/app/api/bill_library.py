@@ -23,6 +23,7 @@ from loguru import logger
 from app.auth.deps import get_current_user
 from app.config import UPLOAD_MAX_MB
 from app.models.user import User
+from app.services.local_http import local_match_async_client
 from src.excel_compat import ExcelFormatInfo, validate_excel_upload
 from src.output_writer import safe_excel_text
 
@@ -216,7 +217,7 @@ async def _forward_to_local_service(endpoint: str, file_content: bytes,
     url = f"{LOCAL_MATCH_URL}/compile-bill/{endpoint}"
     logger.info(f"编清单转发到本地服务: {url}")
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with local_match_async_client(timeout=120) as client:
         try:
             resp = await client.post(
                 url,

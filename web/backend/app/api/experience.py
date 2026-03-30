@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.auth.permissions import require_admin
 from app.config import LOCAL_MATCH_API_KEY, LOCAL_MATCH_URL, MATCH_BACKEND
 from app.models.user import User
+from app.services.local_http import local_match_async_client
 
 router = APIRouter()
 
@@ -187,7 +188,7 @@ async def _remote_request(
     headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with local_match_async_client(timeout=timeout) as client:
             resp = await client.request(
                 method,
                 url,

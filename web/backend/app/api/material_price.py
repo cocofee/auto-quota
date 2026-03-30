@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse
 from loguru import logger
 
 from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+from app.services.local_http import local_match_async_client
 
 router = APIRouter()
 
@@ -55,7 +56,7 @@ async def _remote_get(path: str, params: dict = None) -> dict:
     url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
     headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with local_match_async_client(timeout=30.0) as client:
             resp = await client.get(url, headers=headers, params=params)
         if resp.status_code == 200:
             return resp.json()
@@ -72,7 +73,7 @@ async def _remote_post(path: str, payload: dict) -> dict:
     url = f"{LOCAL_MATCH_URL.rstrip('/')}{path}"
     headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with local_match_async_client(timeout=60.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code == 200:
             return resp.json()
@@ -973,7 +974,7 @@ async def gldjc_lookup(body: dict):
         url = f"{LOCAL_MATCH_URL.rstrip('/')}/material-price/gldjc-lookup"
         headers = {"X-API-Key": LOCAL_MATCH_API_KEY}
         try:
-            async with httpx.AsyncClient(timeout=600.0) as client:
+            async with local_match_async_client(timeout=600.0) as client:
                 resp = await client.post(url, headers=headers, json={
                     "materials": materials, "cookie": cookie,
                 })

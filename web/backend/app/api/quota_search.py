@@ -21,6 +21,7 @@ from loguru import logger
 from app.models.user import User
 from app.auth.deps import get_current_user
 from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+from app.services.local_http import local_match_async_client
 
 router = APIRouter()
 
@@ -56,7 +57,7 @@ async def _remote_get(path: str, params: dict, timeout: float = 60.0) -> dict:
     last_exc = None
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with local_match_async_client(timeout=timeout) as client:
                 resp = await client.get(url, headers=headers, params=params)
 
             if resp.status_code == 200:
