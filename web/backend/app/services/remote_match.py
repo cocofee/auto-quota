@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import time
 from pathlib import Path
 
@@ -48,6 +50,14 @@ class RemoteMatchClient:
         if not file_path.exists():
             raise FileNotFoundError(f"Excel file not found: {file_path}")
 
+        payload = {
+            "province": params.get("province", ""),
+            "mode": params.get("mode"),
+            "sheet": params.get("sheet"),
+            "limit": params.get("limit"),
+            "no_experience": bool(params.get("no_experience")),
+            "agent_llm": params.get("agent_llm"),
+        }
         form_data = {"province": params.get("province", "")}
         if params.get("mode"):
             form_data["mode"] = params["mode"]
@@ -59,6 +69,10 @@ class RemoteMatchClient:
             form_data["no_experience"] = "true"
         if params.get("agent_llm"):
             form_data["agent_llm"] = params["agent_llm"]
+        # Use an ASCII-safe payload to avoid Windows multipart form mojibake on Chinese fields.
+        form_data["params_payload"] = base64.b64encode(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        ).decode("ascii")
 
         try:
             with open(file_path, "rb") as f:

@@ -11,6 +11,7 @@
 端口：9100（默认，可通过 LOCAL_MATCH_PORT 环境变量修改）
 """
 
+import base64
 import json
 import os
 import re
@@ -242,6 +243,20 @@ def _sanitize_client_filename(filename: str | None, default: str = "input.xlsx")
     return raw or default
 
 
+def _decode_params_payload(payload: str | None) -> dict:
+    """Decode ASCII-safe match params sent by the web backend."""
+    if not payload:
+        return {}
+    try:
+        raw = base64.b64decode(payload).decode("utf-8")
+        data = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"params_payload 解码失败: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="params_payload 必须是对象")
+    return data
+
+
 def _safe_join_under(base_dir: Path, filename: str) -> Path:
     candidate = (base_dir / filename).resolve()
     base_resolved = base_dir.resolve()
@@ -299,6 +314,7 @@ async def create_match(
     limit: int = Form(default=None),
     no_experience: bool = Form(default=False),
     agent_llm: str = Form(default=None),
+    params_payload: str = Form(default=None),
     x_api_key: str = Header(default=""),
 ):
     """提交匹配任务 — 上传Excel+参数，异步执行，返回match_id"""
@@ -338,6 +354,15 @@ async def create_match(
             }
 
         # 组装匹配参数
+        decoded_payload = _decode_params_payload(params_payload)
+        if decoded_payload:
+            province = str(decoded_payload.get("province") or province)
+            mode = str(decoded_payload.get("mode") or mode)
+            sheet = decoded_payload.get("sheet") or sheet
+            limit = decoded_payload.get("limit", limit)
+            no_experience = bool(decoded_payload.get("no_experience", no_experience))
+            agent_llm = decoded_payload.get("agent_llm") or agent_llm
+
         params = {
             "input_file": str(input_path),
             "province": province,
