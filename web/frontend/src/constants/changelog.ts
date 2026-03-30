@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.107';
+export const APP_VERSION = '0.2.109';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,28 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.109',
+    date: '2026-03-30',
+    changes: [
+      { type: 'admin', text: 'Tighten primary subject query guards' },
+      { type: 'admin', text: 'Close wrong_book scope leakage path' },
+      { type: 'admin', text: 'Align real eval context and soften title routing' },
+      { type: 'admin', text: 'Tighten install routing and guard CGR overrides' },
+      { type: 'admin', text: '收口定额检索里的北京2024旧简称' },
+    ],
+  },
+  {
+    version: '0.2.108',
+    date: '2026-03-30',
+    changes: [
+      { type: 'admin', text: 'Tighten primary subject query guards' },
+      { type: 'admin', text: 'Close wrong_book scope leakage path' },
+      { type: 'admin', text: 'Align real eval context and soften title routing' },
+      { type: 'admin', text: 'Tighten install routing and guard CGR overrides' },
+      { type: 'admin', text: '收口定额检索里的北京2024旧简称' },
+    ],
+  },
   {
     version: '0.2.107',
     date: '2026-03-25',
