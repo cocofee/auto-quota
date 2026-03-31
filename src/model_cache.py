@@ -156,6 +156,10 @@ class ModelCache:
                 return None
 
             model_name = config.RERANKER_MODEL_NAME
+            model_path = Path(str(model_name)).expanduser()
+            if any(sep in str(model_name) for sep in ("\\", "/")) and not model_path.exists():
+                logger.error(f"[ModelCache] Reranker本地路径不存在: {model_name}")
+                return None
             logger.info(f"[ModelCache] 加载Reranker模型: {model_name}")
             try:
                 from sentence_transformers import CrossEncoder
