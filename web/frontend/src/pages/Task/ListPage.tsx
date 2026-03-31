@@ -221,7 +221,7 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   /** 下载Excel结果 */
   const downloadExcel = async (taskId: string, filename: string) => {
     try {
-      const response = await api.get(`/tasks/${taskId}/export?materials=true`, {
+      const response = await api.get(`/tasks/${taskId}/export-final?materials=true`, {
         responseType: 'blob',
       });
       // 创建下载链接
@@ -355,6 +355,28 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
               {record.progress_message && (
                 <span style={{ fontSize: 11, color: '#999' }}>{record.progress_message}</span>
               )}
+            </Space>
+          );
+        }
+        if ((status === 'failed' || status === 'cancelled') && record.error_message) {
+          return (
+            <Space direction="vertical" size={0} style={{ width: '100%' }}>
+              <Tag color={info.color}>{info.text}</Tag>
+              <Tooltip title={record.error_message}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: '#cf1322',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: 'block',
+                    maxWidth: '100%',
+                  }}
+                >
+                  {record.error_message}
+                </span>
+              </Tooltip>
             </Space>
           );
         }
