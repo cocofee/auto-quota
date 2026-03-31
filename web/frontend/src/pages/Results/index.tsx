@@ -30,18 +30,44 @@ import { useAuthStore } from '../../stores/auth';
 import {
   COLORS, GREEN_THRESHOLD,
   resolveLightStatus,
-  getBillRowBgColor as _getBillRowBgColor,
-  getConfidenceTextColor,
   confidenceToStars,
 } from '../../utils/experience';
+import { getErrorMessage } from '../../utils/error';
 import type {
   MatchResult, ResultListResponse, TaskInfo, ReviewStatus, QuotaItem,
 } from '../../types';
 
+function getResultLightStatus(result: MatchResult): 'green' | 'yellow' | 'red' {
+  if (result.review_status === 'corrected' && (result.corrected_quotas?.length || 0) > 0) {
+    return 'green';
+  }
+  return resolveLightStatus(result);
+}
+
+function getResultConfidenceTextColor(result: MatchResult): string {
+  const colorMap = {
+    green: COLORS.greenText,
+    yellow: COLORS.yellowText,
+    red: COLORS.redText,
+  };
+  return colorMap[getResultLightStatus(result)];
+}
+
+function getResultConfidenceText(result: MatchResult, hasQuotas: boolean): string {
+  if (!hasQuotas) return confidenceToStars(result, false);
+  if (result.review_status === 'corrected') return '已纠正';
+  return confidenceToStars(result, true);
+}
+
 // 包一层兼容 hasQuotas 参数
 function getBillRowBgColor(result: MatchResult, hasQuotas: boolean): string {
   if (!hasQuotas) return '#F5F5F5';
-  return _getBillRowBgColor(result);
+  const colorMap = {
+    green: COLORS.greenBg,
+    yellow: COLORS.yellowBg,
+    red: COLORS.redBg,
+  };
+  return colorMap[getResultLightStatus(result)];
 }
 
 const REVIEW_MAP: Record<ReviewStatus, { color: string; text: string }> = {
@@ -237,8 +263,8 @@ export default function ResultsPage() {
       setTask(taskRes.data);
       setResults(resultsRes.data.items);
       setSummary(resultsRes.data.summary);
-    } catch {
-      message.error('加载匹配结果失败');
+    } catch (err: unknown) {
+      message.error(getErrorMessage(err, '加载匹配结果失败'));
     } finally {
       setLoading(false);
     }
@@ -272,8 +298,8 @@ export default function ResultsPage() {
     let next = results;
     if (confFilter !== 'all') {
       next = next.filter((r) => {
-        const light = resolveLightStatus(r);
-        if (confFilter === 'need_review') return light === 'yellow' || light === 'red';
+        const light = getResultLightStatus(r);
+        if (confFilter === 'need_review') return r.review_status === 'pending' && (light === 'yellow' || light === 'red');
         if (confFilter === 'green') return light === 'green';
         if (confFilter === 'yellow') return light === 'yellow';
         return light === 'red';
@@ -283,8 +309,8 @@ export default function ResultsPage() {
   }, [results, confFilter]);
   const reviewFocusCount = useMemo(
     () => results.filter((r) => {
-      const light = resolveLightStatus(r);
-      return light === 'yellow' || light === 'red';
+      const light = getResultLightStatus(r);
+      return r.review_status === 'pending' && (light === 'yellow' || light === 'red');
     }).length,
     [results],
   );
@@ -491,7 +517,7 @@ export default function ResultsPage() {
   /** 下载Excel */
   const downloadExcel = async () => {
     try {
-      const response = await api.get(`/tasks/${taskId}/export?materials=true`, { responseType: 'blob' });
+      const response = await api.get(`/tasks/${taskId}/export-final?materials=true`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -674,15 +700,15 @@ export default function ResultsPage() {
         const r = row._result;
         const quotas = r.corrected_quotas || r.quotas || [];
         const hasQuotas = quotas.length > 0;
-        const stars = confidenceToStars(r, hasQuotas);
-        const textColor = hasQuotas ? getConfidenceTextColor(r) : '#999';
+        const stars = getResultConfidenceText(r, hasQuotas);
+        const textColor = hasQuotas ? getResultConfidenceTextColor(r) : '#999';
         // 星级标签用更醒目的颜色：绿底/黄底/红底
         const starBgMap: Record<string, string> = {
           green: '#b7eb8f',   // 亮绿
           yellow: '#ffe58f',  // 亮黄
           red: '#ffa39e',     // 亮红
         };
-        const level = !hasQuotas ? 'none' : resolveLightStatus(r);
+        const level = !hasQuotas ? 'none' : getResultLightStatus(r);
         const bgColor = level === 'none' ? 'transparent' : starBgMap[level];
         return (
           <span style={{
@@ -772,7 +798,7 @@ export default function ResultsPage() {
 
         // 低置信度行：展开Top3候选
         const alts = r.alternatives as { quota_id: string; name: string; unit: string; confidence: number; reason?: string }[] | null;
-        const isLow = resolveLightStatus(r) === 'red';
+        const isLow = r.review_status === 'pending' && getResultLightStatus(r) === 'red';
         const isExpanded = expandedAlts.has(r.id);
         const hasAlts = alts && alts.length > 0;
 
@@ -1001,7 +1027,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.greenSolid, borderColor: COLORS.greenSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => resolveLightStatus(r) === 'green' && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => getResultLightStatus(r) === 'green' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -1011,7 +1037,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.yellowSolid, borderColor: COLORS.yellowSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => resolveLightStatus(r) === 'yellow' && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => getResultLightStatus(r) === 'yellow' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -1021,7 +1047,7 @@ export default function ResultsPage() {
                   size="small"
                   style={{ color: COLORS.redSolid, borderColor: COLORS.redSolid }}
                   onClick={() => {
-                    const ids = results.filter(r => resolveLightStatus(r) === 'red' && r.review_status === 'pending').map(r => r.id);
+                    const ids = results.filter(r => getResultLightStatus(r) === 'red' && r.review_status === 'pending').map(r => r.id);
                     setSelectedRowKeys(ids);
                   }}
                 >
@@ -1045,6 +1071,15 @@ export default function ResultsPage() {
             </Button>
           </Space>
         </div>
+        {task?.status === 'failed' && task.error_message && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="任务执行失败"
+            description={task.error_message}
+          />
+        )}
         {/* 置信度快捷筛选 */}
         <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
           {([

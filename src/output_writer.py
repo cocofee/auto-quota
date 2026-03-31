@@ -439,6 +439,22 @@ class OutputWriter:
         return safe_excel_text(explanation[:80] if explanation else "")
 
     @staticmethod
+    def _brief_knowledge_evidence(result: dict) -> str:
+        evidence = result.get("knowledge_evidence")
+        if not isinstance(evidence, dict):
+            return ""
+        parts = []
+        if evidence.get("quota_rules"):
+            parts.append(f"规则{len(evidence.get('quota_rules') or [])}")
+        if evidence.get("quota_explanations"):
+            parts.append(f"解释{len(evidence.get('quota_explanations') or [])}")
+        if evidence.get("method_cards"):
+            parts.append(f"方法卡{len(evidence.get('method_cards') or [])}")
+        if not parts:
+            return ""
+        return f"[知识]{'/'.join(parts)}"
+
+    @staticmethod
     def _check_review_needed(confidence: int, quotas: list,
                              match_source: str) -> bool:
         """判断该条清单是否需要人工复核
@@ -778,35 +794,55 @@ class OutputWriter:
             if _is_bill_serial(a_val):
                 bill_rows.append(row_idx)
 
-        # 第3步：构建“清单行 -> 结果”映射
-        # 优先使用 sheet_bill_seq 精准回写（支持 filter-code/limit 等子集输出）
+        # Step 3: map each result back to the original bill row.
+        # Prefer source_row because it is the absolute Excel row number.
+        # sheet_bill_seq is only a sheet-local sequence and may become subset-relative.
+        # For filtered exports, source_row is the safest locator when present.
         row_result_pairs = []
-        used_seq = set()
-        can_use_seq_map = True
+        used_rows = set()
+        bill_row_set = set(bill_rows)
+        can_use_source_row_map = True
         for result in results:
             bill_item = result.get("bill_item", {})
-            seq = bill_item.get("sheet_bill_seq")
-            if not isinstance(seq, int):
-                can_use_seq_map = False
+            source_row = bill_item.get("source_row")
+            if not isinstance(source_row, int):
+                can_use_source_row_map = False
                 break
-            if seq <= 0 or seq > len(bill_rows) or seq in used_seq:
-                can_use_seq_map = False
+            if source_row not in bill_row_set or source_row in used_rows:
+                can_use_source_row_map = False
                 break
-            used_seq.add(seq)
-            row_result_pairs.append((bill_rows[seq - 1], result))
+            used_rows.add(source_row)
+            row_result_pairs.append((source_row, result))
 
-        # 兼容旧结果格式：无序号映射时退回 bill_code 匹配 → 顺序匹配
-        if not can_use_seq_map:
-            # 回退方案A：按 bill_code（12位清单编码）精准匹配
+        can_use_seq_map = False
+        if not can_use_source_row_map:
+            row_result_pairs = []
+            used_seq = set()
+            can_use_seq_map = True
+            for result in results:
+                bill_item = result.get("bill_item", {})
+                seq = bill_item.get("sheet_bill_seq")
+                if not isinstance(seq, int):
+                    can_use_seq_map = False
+                    break
+                if seq <= 0 or seq > len(bill_rows) or seq in used_seq:
+                    can_use_seq_map = False
+                    break
+                used_seq.add(seq)
+                row_result_pairs.append((bill_rows[seq - 1], result))
+
+        # Fallbacks: bill_code exact match, then positional match as last resort.
+        if not can_use_source_row_map and not can_use_seq_map:
+            # Fallback A: match by bill_code from column B.
             code_pairs = []
             if results:
-                # 构建 Excel 中 {B列编码: row_idx} 映射
+                # Build {bill_code -> row_idx} from the Excel sheet.
                 row_code_map = {}
                 for row_idx in bill_rows:
                     b_val = ws.cell(row=row_idx, column=2).value
                     if b_val:
                         b_str = str(b_val).strip()
-                        if b_str not in row_code_map:  # 同编码取第一个行
+                        if b_str not in row_code_map:  # first occurrence wins
                             row_code_map[b_str] = row_idx
 
                 used_rows = set()
@@ -823,26 +859,29 @@ class OutputWriter:
                 unmatched_count = len(results) - len(code_pairs)
                 if unmatched_count > 0:
                     logger.warning(
-                        f"Sheet [{ws.title}]: bill_code匹配模式下 "
-                        f"{unmatched_count}/{len(results)}条结果无法映射到Excel行"
-                        f"（bill_code在Excel中找不到对应行），这些结果将不会回写")
+                        f"Sheet [{ws.title}]: bill_code fallback left "
+                        f"{unmatched_count}/{len(results)} results unmapped")
                 else:
                     logger.info(
-                        f"Sheet [{ws.title}]: sheet_bill_seq不可用，"
-                        f"改用bill_code精准匹配 ({len(code_pairs)}/{len(bill_rows)})")
+                        f"Sheet [{ws.title}]: source_row/sheet_bill_seq unavailable, "
+                        f"used bill_code fallback ({len(code_pairs)}/{len(bill_rows)})")
             else:
-                # 回退方案B：顺序匹配（最后兜底）
+                # Fallback B: preserve original order and align positionally.
                 if len(bill_rows) != len(results):
                     logger.warning(
-                        f"Sheet [{ws.title}]: 清单行数({len(bill_rows)}) != "
-                        f"结果数({len(results)}), 且缺少可用定位信息，按顺序匹配")
+                        f"Sheet [{ws.title}]: bill row count ({len(bill_rows)}) != "
+                        f"result count ({len(results)}), falling back to positional mapping")
                 num_to_process = min(len(bill_rows), len(results))
                 row_result_pairs = [
                     (bill_rows[i], results[i]) for i in range(num_to_process)
                 ]
+        elif can_use_source_row_map and len(bill_rows) != len(results):
+            logger.info(
+                f"Sheet [{ws.title}]: subset export mapped by source_row "
+                f"({len(results)}/{len(bill_rows)})")
         elif len(bill_rows) != len(results):
             logger.info(
-                f"Sheet [{ws.title}]: 结果为清单子集，按sheet_bill_seq精准回写 "
+                f"Sheet [{ws.title}]: subset export mapped by sheet_bill_seq "
                 f"({len(results)}/{len(bill_rows)})")
 
         # 第3.5步：保存所有行的原始行高（包括 None = 自动高度）
@@ -1175,6 +1214,9 @@ class OutputWriter:
         rule_hints = result.get("rule_hints", "")
         if rule_hints:
             brief = f"{brief} [规则]{rule_hints}" if brief else f"[规则]{rule_hints}"
+        knowledge_brief = self._brief_knowledge_evidence(result)
+        if knowledge_brief:
+            brief = f"{brief} {knowledge_brief}".strip() if brief else knowledge_brief
         cell_k = _safe_write_cell(ws, row_idx, extra_start + 1, brief)
         if cell_k:
             cell_k.font = BILL_FONT
