@@ -170,7 +170,7 @@ class TestPrepareItemContract:
         assert "specialty_missing" in result["reason_tags"]
         assert "weak_text" in result["reason_tags"]
 
-    def test_context_missing_but_rich_desc_keeps_search_mode_with_tags(self):
+    def test_context_missing_but_rich_desc_keeps_search_mode_with_inferred_context(self):
         rule_validator = MagicMock()
         rule_validator.match_by_rules.return_value = {"quotas": [], "confidence": 0}
         rule_validator.rules = True
@@ -186,7 +186,9 @@ class TestPrepareItemContract:
         )
 
         assert prepared.get("early_result") is None
-        assert "specialty_missing" in item.get("_input_gate", {}).get("reason_tags", [])
+        assert item.get("query_route", {}).get("route") in {"semantic_description", "balanced"}
+        assert item.get("_trace_classification", {}).get("primary") == "C4"
+        assert "C4" in (item.get("plugin_hints", {}) or {}).get("preferred_books", [])
 
     def test_review_rejected_rule_direct_does_not_fall_back_to_rule_backup(self):
         """已被审核规则拦截的 rule_direct 不能再降级成 rule_backup 回流覆盖搜索结果"""
@@ -320,6 +322,73 @@ class TestResolveSearchResult:
         assert "rule_backup_injected" in trace_steps
         assert "rule_backup_override" not in trace_steps
         assert "C10-1-2" in result.get("all_candidate_ids", [])
+        assert isinstance(exp_hits, int)
+        assert isinstance(rule_hits, int)
+
+    def test_experience_backup_becomes_advisory_not_override(self):
+        item = {"name": "给水管道DN25", "unit": "m"}
+        candidates = [{
+            "quota_id": "C10-1-1",
+            "name": "给水管道安装 DN25",
+            "unit": "m",
+            "param_match": True,
+            "param_score": 0.88,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.82,
+        }]
+        exp_backup = {
+            "match_source": "experience_similar",
+            "confidence": 95,
+            "quotas": [{"quota_id": "C10-1-9", "name": "给水管道安装 DN32", "unit": "m"}],
+        }
+
+        result, exp_hits, rule_hits = _resolve_search_mode_result(
+            item, candidates,
+            exp_backup=exp_backup, rule_backup={},
+            exp_hits=0, rule_hits=0,
+        )
+
+        assert result["quotas"][0]["quota_id"] == "C10-1-1"
+        assert exp_hits == 0
+        assert isinstance(rule_hits, int)
+        trace_steps = [step.get("stage") for step in (result.get("trace", {}) or {}).get("steps", [])]
+        assert "experience_similar_advisory" in trace_steps
+        assert result["backup_advisories"][0]["type"] == "experience_similar"
+        assert result["backup_advisories"][0]["quota_id"] == "C10-1-9"
+
+    def test_review_rejected_experience_is_carried_to_final_trace(self):
+        item = {
+            "name": "组串式逆变器",
+            "unit": "台",
+            "_experience_review_rejection": {
+                "type": "category_mismatch",
+                "reason": "review rejected experience direct hit",
+                "match_source": "experience_exact",
+                "quota_id": "Q-EXP-1",
+            },
+        }
+        candidates = [{
+            "quota_id": "Q-S-1",
+            "name": "光伏逆变器安装",
+            "unit": "台",
+            "param_match": True,
+            "param_score": 0.91,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.88,
+        }]
+
+        result, exp_hits, rule_hits = _resolve_search_mode_result(
+            item, candidates,
+            exp_backup={}, rule_backup={},
+            exp_hits=0, rule_hits=0,
+        )
+
+        steps = (result.get("trace", {}) or {}).get("steps", [])
+        review_step = next(step for step in steps if step.get("stage") == "experience_review_rejected")
+        assert review_step["error_type"] == "category_mismatch"
+        assert review_step["error_reason"] == "review rejected experience direct hit"
+        assert review_step["experience_source"] == "experience_exact"
+        assert review_step["quota_id"] == "Q-EXP-1"
         assert isinstance(exp_hits, int)
         assert isinstance(rule_hits, int)
 

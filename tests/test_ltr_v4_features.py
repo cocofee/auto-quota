@@ -14,6 +14,8 @@ import sys
 sys.path.insert(0, ".")
 
 from src.ltr_features import compute_within_tier_features, V4_FEATURE_NAMES
+from src.candidate_scoring import compute_candidate_rank_score
+from src.param_validator import ParamValidator
 
 
 class TestComputeWithinTierFeatures:

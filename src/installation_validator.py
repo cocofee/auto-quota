@@ -68,6 +68,7 @@ class InstallationValidator:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("electrical_box", "protection_device")),
         frozenset(("cable_head_accessory", "cable_family")),
     }
     _TRAIT_CONFLICT_GROUPS = (

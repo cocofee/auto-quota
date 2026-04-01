@@ -70,6 +70,22 @@ class RuleKnowledge:
         """统一SQLite连接参数"""
         return _db_connect(self.db_path, row_factory=row_factory)
 
+    @staticmethod
+    def _patch_chroma_default_onnx_cache_dir() -> None:
+        """将 Chroma 默认 ONNX 模型缓存重定向到项目内可写目录。"""
+        try:
+            from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+        except Exception as e:
+            logger.debug(f"规则知识库 ONNX embedding patch 跳过: {e}")
+            return
+
+        target_dir = config.get_chroma_onnx_cache_dir(ONNXMiniLM_L6_V2.MODEL_NAME)
+        current_dir = Path(str(ONNXMiniLM_L6_V2.DOWNLOAD_PATH))
+        if current_dir != target_dir:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            ONNXMiniLM_L6_V2.DOWNLOAD_PATH = target_dir
+            logger.debug(f"规则知识库 ONNX 缓存目录已重定向到: {target_dir}")
+
     def _init_db(self):
         """初始化SQLite数据库表结构"""
         conn = _db_connect_init(self.db_path)
@@ -124,6 +140,7 @@ class RuleKnowledge:
         """延迟初始化ChromaDB集合"""
         if self._collection is None:
             try:
+                self._patch_chroma_default_onnx_cache_dir()
                 import chromadb
                 client = chromadb.PersistentClient(
                     path=str(self.chroma_dir)

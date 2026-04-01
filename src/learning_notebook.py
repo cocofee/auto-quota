@@ -22,6 +22,7 @@ from collections import Counter
 from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
+from src.utils import safe_json_list
 
 import config
 
@@ -104,31 +105,12 @@ class LearningNotebook:
         return _db_connect(self.db_path, row_factory=row_factory)
 
     @staticmethod
-    def _safe_json_list(raw):
-        if raw is None:
-            return []
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, tuple):
-            return list(raw)
-        if not isinstance(raw, str):
-            return []
-        raw = raw.strip()
-        if not raw:
-            return []
-        try:
-            value = json.loads(raw)
-            return value if isinstance(value, list) else []
-        except Exception:
-            return []
-
-    @staticmethod
     def _as_json_list_text(value):
         """把任意输入归一化为 JSON 数组文本，避免脏数据进入库。"""
         if isinstance(value, (list, tuple)):
             return json.dumps(list(value), ensure_ascii=False)
         if isinstance(value, str):
-            return json.dumps(LearningNotebook._safe_json_list(value), ensure_ascii=False)
+            return json.dumps(safe_json_list(value), ensure_ascii=False)
         return "[]"
 
     def record_note(self, note: dict) -> int:
@@ -314,7 +296,7 @@ class LearningNotebook:
 
                 family_counter = Counter()
                 for r in rows:
-                    ids = self._safe_json_list(r["result_quota_ids"])
+                    ids = safe_json_list(r["result_quota_ids"])
                     if not ids:
                         continue
                     # 取主定额的家族前缀（如 C10-1-80 → C10-1-）
@@ -379,7 +361,7 @@ class LearningNotebook:
         d = dict(row)
         # 解析JSON字段
         for key in ["result_quota_ids", "result_quota_names", "corrected_quota_ids"]:
-            d[key] = self._safe_json_list(d.get(key))
+            d[key] = safe_json_list(d.get(key))
         return d
 
 

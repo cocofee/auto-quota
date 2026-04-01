@@ -27,6 +27,7 @@ from pathlib import Path
 from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
+from src.utils import safe_json_list
 import config
 
 
@@ -108,17 +109,6 @@ class UniversalKB:
         conn.commit()
         conn.close()
         logger.debug(f"通用知识库已初始化: {self.db_path}")
-
-    @staticmethod
-    def _safe_json_list(raw):
-        """安全解析JSON数组，异常时返回空列表。"""
-        if not raw:
-            return []
-        try:
-            value = json.loads(raw)
-            return value if isinstance(value, list) else []
-        except Exception:
-            return []
 
     @staticmethod
     def _safe_json_dict(raw):
@@ -276,7 +266,7 @@ class UniversalKB:
         if similar:
             # 合并定额模式：把新的quota_patterns并入已有记录（去重）
             merged_quotas = self._merge_patterns(
-                self._safe_json_list(similar.get("quota_patterns")),
+                safe_json_list(similar.get("quota_patterns")),
                 quota_patterns
             )
             return self._update_knowledge(
@@ -347,7 +337,7 @@ class UniversalKB:
             current = dict(current_row)
 
             # 更新省份列表（去重）
-            province_list = self._safe_json_list(current.get("province_list"))
+            province_list = safe_json_list(current.get("province_list"))
             if source_province and source_province not in province_list:
                 province_list.append(source_province)
 
@@ -674,14 +664,14 @@ class UniversalKB:
         return {
             "id": record["id"],
             "bill_pattern": record["bill_pattern"],
-            "quota_patterns": self._safe_json_list(record.get("quota_patterns")),
-            "associated_patterns": self._safe_json_list(record.get("associated_patterns")),
+            "quota_patterns": safe_json_list(record.get("quota_patterns")),
+            "associated_patterns": safe_json_list(record.get("associated_patterns")),
             "param_hints": self._safe_json_dict(record.get("param_hints")),
             "similarity": similarity,
             "confidence": record.get("confidence", 0),
             "confirm_count": record.get("confirm_count", 0),
             "layer": record.get("layer", "candidate"),
-            "province_list": self._safe_json_list(record.get("province_list")),
+            "province_list": safe_json_list(record.get("province_list")),
         }
 
     # ================================================================
@@ -816,7 +806,7 @@ class UniversalKB:
         if existing:
             # 合并定额模式
             merged_quotas = self._merge_patterns(
-                self._safe_json_list(existing.get("quota_patterns")),
+                safe_json_list(existing.get("quota_patterns")),
                 quota_patterns
             )
             self._update_knowledge(
@@ -949,7 +939,7 @@ class UniversalKB:
             all_provinces = set()
             for row in cursor.fetchall():
                 try:
-                    provinces = self._safe_json_list(row[0])
+                    provinces = safe_json_list(row[0])
                     all_provinces.update(provinces)
                 except Exception as e:
                     logger.debug(f"通用知识库省份列表解析失败，跳过该记录: {e}")

@@ -33,3 +33,38 @@ def test_build_quota_query_prefers_metal_hose_family_for_explicit_conduit_name()
     )
 
     assert query == "金属软管敷设 公称直径 25"
+
+
+def test_build_quota_query_builds_wire_query_with_pipe_laying():
+    query = build_quota_query(
+        parser,
+        "配线",
+        "配线形式:管内穿线 型号:WDZN-BYJ-3x4+2x2.5",
+    )
+
+    assert "管内穿线" in query
+    assert "导线截面 4" in query
+
+
+def test_build_quota_query_builds_power_cable_query_with_dual_laying():
+    query = build_quota_query(
+        parser,
+        "电力电缆",
+        "型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位:室内穿管或桥架",
+    )
+
+    assert "电力电缆" in query
+    assert "桥架" in query
+    assert "穿管" in query
+    assert "240" in query
+
+
+def test_build_quota_query_normalizes_bridge_cm_size():
+    query = build_quota_query(
+        parser,
+        "桥架",
+        "名称:钢制槽式桥架 规格:20x10",
+    )
+
+    assert "槽式桥架 安装" in query
+    assert "宽+高 300" in query

@@ -53,3 +53,25 @@ def test_build_quota_query_keeps_explicit_distribution_cabinet_family_and_model(
     )
 
     assert query == "成套配电柜安装 ALzm1"
+
+
+def test_build_quota_query_routes_control_box_to_distribution_box_template():
+    query = build_quota_query(
+        parser,
+        "控制箱",
+        "名称:控制箱//型号规格:AC-B1-WS1~4//安装方式:明装",
+        specialty="C4",
+    )
+
+    assert query == "成套配电箱安装 悬挂、嵌入式"
+
+
+def test_build_quota_query_keeps_known_control_cabinet_model():
+    query = build_quota_query(
+        parser,
+        "控制柜",
+        "型号:GGD//安装方式:落地式",
+        specialty="C4",
+    )
+
+    assert query == "配电柜 GGD"

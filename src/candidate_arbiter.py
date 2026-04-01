@@ -11,22 +11,19 @@ from src.candidate_scoring import (
 )
 from src.query_router import normalize_query_route
 from src.text_parser import parser as text_parser
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+from src.utils import safe_float
 
 
 @dataclass(frozen=True)
 class ArbitrationDecision:
     applied: bool
+    advisory_applied: bool
+    reorder_enabled: bool
     route: str
     reason: str
     original_top_quota_id: str
     selected_quota_id: str
+    recommended_quota_id: str
     structured_gap: float
     search_gap: float
     compared_count: int
@@ -77,6 +74,55 @@ _MAIN_PARAM_KEYS = (
     "large_side",
     "switch_gangs",
 )
+_ARBITER_REORDER_ENABLED = False
+
+
+def _reset_arbiter_signals(candidates: list[dict]) -> None:
+    for candidate in candidates or []:
+        candidate["arbiter_signals"] = []
+        candidate["arbiter_recommended"] = False
+
+
+def _record_arbiter_signal(candidates: list[dict], decision: ArbitrationDecision) -> None:
+    if not candidates or not decision.advisory_applied:
+        return
+
+    top1 = candidates[0]
+    recommended_id = str(decision.recommended_quota_id or "").strip()
+    if not recommended_id:
+        return
+
+    winner = next(
+        (candidate for candidate in candidates if str(candidate.get("quota_id", "")).strip() == recommended_id),
+        None,
+    )
+    if winner is None or winner is top1:
+        return
+
+    signal = {
+        "reason": decision.reason,
+        "route": decision.route,
+        "original_top_quota_id": decision.original_top_quota_id,
+        "recommended_quota_id": decision.recommended_quota_id,
+        "structured_gap": decision.structured_gap,
+        "search_gap": decision.search_gap,
+        "main_param_key": decision.main_param_key,
+        "target_param_value": decision.target_param_value,
+        "top_band_score": decision.top_band_score,
+        "selected_band_score": decision.selected_band_score,
+        "applied": decision.applied,
+        "advisory_applied": decision.advisory_applied,
+        "reorder_enabled": decision.reorder_enabled,
+    }
+    winner["arbiter_recommended"] = True
+    winner.setdefault("arbiter_signals", []).append({
+        **signal,
+        "role": "recommended",
+    })
+    top1.setdefault("arbiter_signals", []).append({
+        **signal,
+        "role": "current_top1",
+    })
 
 
 def _item_main_param(item: dict) -> tuple[str, float] | tuple[None, None]:
@@ -180,36 +226,44 @@ def _route_ready(route_profile, route: str) -> bool:
 
 
 def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None) -> tuple[list[dict], dict]:
+    resolved_candidates = list(candidates or [])
+    _reset_arbiter_signals(resolved_candidates)
     route = normalize_query_route(route_profile or (item or {}).get("query_route"))
     main_param_key, target_param_value = _item_main_param(item or {})
-    if not _route_enabled(route) or len(candidates or []) < 2:
-        return candidates, ArbitrationDecision(
+    if not _route_enabled(route) or len(resolved_candidates) < 2:
+        return resolved_candidates, ArbitrationDecision(
             applied=False,
+            advisory_applied=False,
+            reorder_enabled=_ARBITER_REORDER_ENABLED,
             route=route,
             reason="route_disabled" if not _route_enabled(route) else "insufficient_candidates",
             original_top_quota_id="",
             selected_quota_id="",
+            recommended_quota_id="",
             structured_gap=0.0,
             search_gap=0.0,
-            compared_count=len(candidates or []),
+            compared_count=len(resolved_candidates),
             main_param_key=main_param_key or "",
             target_param_value=target_param_value or 0.0,
         ).as_dict()
     if not _route_ready(route_profile or (item or {}).get("query_route"), route):
-        return candidates, ArbitrationDecision(
+        return resolved_candidates, ArbitrationDecision(
             applied=False,
+            advisory_applied=False,
+            reorder_enabled=_ARBITER_REORDER_ENABLED,
             route=route,
             reason="route_not_ready",
             original_top_quota_id="",
             selected_quota_id="",
+            recommended_quota_id="",
             structured_gap=0.0,
             search_gap=0.0,
-            compared_count=len(candidates or []),
+            compared_count=len(resolved_candidates),
             main_param_key=main_param_key or "",
             target_param_value=target_param_value or 0.0,
         ).as_dict()
 
-    top = candidates[0]
+    top = resolved_candidates[0]
     original_top_id = str(top.get("quota_id", "")).strip()
     top_structured = _structured_score(top)
     top_search = _search_score(top)
@@ -223,7 +277,7 @@ def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None)
     best_idx = -1
     best_score = top_total
     best_band_score = top_band_score
-    for idx, candidate in enumerate(candidates[1:5], start=1):
+    for idx, candidate in enumerate(resolved_candidates[1:5], start=1):
         if not candidate.get("param_match", True):
             continue
         if int(candidate.get("param_tier", 1) or 1) < top_tier:
@@ -244,22 +298,25 @@ def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None)
             best_band_score = band_score
 
     if best_idx <= 0:
-        return candidates, ArbitrationDecision(
+        return resolved_candidates, ArbitrationDecision(
             applied=False,
+            advisory_applied=False,
+            reorder_enabled=_ARBITER_REORDER_ENABLED,
             route=route,
             reason="no_better_structured_candidate",
             original_top_quota_id=original_top_id,
             selected_quota_id=original_top_id,
+            recommended_quota_id="",
             structured_gap=0.0,
             search_gap=0.0,
-            compared_count=min(len(candidates), 5),
+            compared_count=min(len(resolved_candidates), 5),
             main_param_key=main_param_key or "",
             target_param_value=target_param_value or 0.0,
             top_band_score=top_band_score,
             selected_band_score=top_band_score,
         ).as_dict()
 
-    challenger = candidates[best_idx]
+    challenger = resolved_candidates[best_idx]
     challenger_id = str(challenger.get("quota_id", "")).strip()
     challenger_structured = _structured_score(challenger)
     challenger_search = _search_score(challenger)
@@ -286,15 +343,18 @@ def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None)
         elif band_gap < 0.12:
             min_structured_gap = max(min_structured_gap, 0.14)
     if structured_gap < min_structured_gap:
-        return candidates, ArbitrationDecision(
+        return resolved_candidates, ArbitrationDecision(
             applied=False,
+            advisory_applied=False,
+            reorder_enabled=_ARBITER_REORDER_ENABLED,
             route=route,
             reason="structured_gap_too_small",
             original_top_quota_id=original_top_id,
             selected_quota_id=original_top_id,
+            recommended_quota_id="",
             structured_gap=structured_gap,
             search_gap=search_gap,
-            compared_count=min(len(candidates), 5),
+            compared_count=min(len(resolved_candidates), 5),
             main_param_key=main_param_key or "",
             target_param_value=target_param_value or 0.0,
             top_band_score=top_band_score,
@@ -302,34 +362,40 @@ def arbitrate_candidates(item: dict, candidates: list[dict], route_profile=None)
         ).as_dict()
 
     if search_gap > max_search_gap:
-        return candidates, ArbitrationDecision(
+        return resolved_candidates, ArbitrationDecision(
             applied=False,
+            advisory_applied=False,
+            reorder_enabled=_ARBITER_REORDER_ENABLED,
             route=route,
             reason="search_gap_too_large",
             original_top_quota_id=original_top_id,
             selected_quota_id=original_top_id,
+            recommended_quota_id="",
             structured_gap=structured_gap,
             search_gap=search_gap,
-            compared_count=min(len(candidates), 5),
+            compared_count=min(len(resolved_candidates), 5),
             main_param_key=main_param_key or "",
             target_param_value=target_param_value or 0.0,
             top_band_score=top_band_score,
             selected_band_score=challenger_band_score,
         ).as_dict()
 
-    reordered = list(candidates)
-    reordered.insert(0, reordered.pop(best_idx))
-    return reordered, ArbitrationDecision(
-        applied=True,
+    decision = ArbitrationDecision(
+        applied=False,
+        advisory_applied=True,
+        reorder_enabled=_ARBITER_REORDER_ENABLED,
         route=route,
-        reason="structured_candidate_swap",
+        reason="structured_candidate_swap_advisory",
         original_top_quota_id=original_top_id,
-        selected_quota_id=challenger_id,
+        selected_quota_id=original_top_id,
+        recommended_quota_id=challenger_id,
         structured_gap=structured_gap,
         search_gap=search_gap,
-        compared_count=min(len(candidates), 5),
+        compared_count=min(len(resolved_candidates), 5),
         main_param_key=main_param_key or "",
         target_param_value=target_param_value or 0.0,
         top_band_score=top_band_score,
         selected_band_score=best_band_score,
-    ).as_dict()
+    )
+    _record_arbiter_signal(resolved_candidates, decision)
+    return resolved_candidates, decision.as_dict()

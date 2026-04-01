@@ -4,7 +4,7 @@ from src.final_validator import FinalValidator
 def test_unit_conflict_marks_red_light_without_capping_score():
     result = {
         "bill_item": {"name": "给水管道", "description": "", "unit": "m"},
-        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "个"}],
+        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "台"}],
         "confidence": 91,
         "match_source": "search",
     }
@@ -15,74 +15,62 @@ def test_unit_conflict_marks_red_light_without_capping_score():
     assert result["confidence_score"] == 91
     assert result["review_risk"] == "high"
     assert result["light_status"] == "red"
-    assert result["final_validation"]["status"] == "manual_review"
+    assert result["final_validation"]["status"] == "vetoed"
     assert result["final_validation"]["issues"][0]["type"] == "unit_conflict"
 
 
-def test_review_conflict_can_auto_correct(monkeypatch):
+def test_unit_conflict_pure_veto_does_not_recommend_next_candidate():
     result = {
-        "bill_item": {"name": "镀锌钢管", "description": "", "unit": "m"},
-        "quotas": [{"quota_id": "Q1", "name": "阀门安装", "unit": "个"}],
+        "bill_item": {"name": "给水管道", "description": "", "unit": "m"},
+        "quotas": [{"quota_id": "Q1", "name": "给水阀门安装", "unit": "台"}],
+        "candidate_snapshots": [
+            {"quota_id": "Q1", "name": "给水阀门安装", "unit": "台"},
+            {"quota_id": "Q2", "name": "镀锌钢管安装", "unit": "m"},
+        ],
         "confidence": 88,
         "match_source": "search",
     }
 
-    monkeypatch.setattr(
-        FinalValidator,
-        "_check_review_error",
-        lambda self, item, current_result: {"type": "category_mismatch", "reason": "类别冲突"},
-    )
-    monkeypatch.setattr(
-        "src.final_validator.correct_error",
-        lambda item, error, dn, province=None: {
-            "quota_id": "Q2",
-            "quota_name": "镀锌钢管安装",
-            "province": province,
-        },
-    )
-    monkeypatch.setattr(
-        "src.final_validator.search_by_id",
-        lambda quota_id, province=None: (quota_id, "镀锌钢管安装", "m"),
-    )
+    FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
 
-    FinalValidator(province="测试省份", auto_correct=True).validate_result(result)
-
-    assert result["quotas"][0]["quota_id"] == "Q2"
-    assert result["quotas"][0]["unit"] == "m"
-    assert result["confidence"] == 88
-    assert result["confidence_score"] == 88
-    assert result["review_risk"] == "medium"
-    assert result["light_status"] == "yellow"
-    assert result["final_validation"]["status"] == "corrected"
-    assert result["final_review_correction"]["quota_id"] == "Q2"
+    assert result["quotas"][0]["quota_id"] == "Q1"
+    assert result["quotas"][0]["unit"] == "台"
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
+    assert result["final_validation"]["status"] == "vetoed"
+    assert result["final_validation"]["vetoed"] is True
+    assert result["final_validation"]["advisory_applied"] is False
+    assert result["final_validation"]["recommended_fallback_quota_id"] == ""
+    assert result["final_review_correction"] == {}
 
 
-def test_review_conflict_without_correction_stays_manual_review(monkeypatch):
+def test_review_conflict_without_veto_stays_manual_review():
     result = {
         "bill_item": {"name": "镀锌钢管", "description": "", "unit": "m"},
         "quotas": [{"quota_id": "Q1", "name": "阀门安装", "unit": "m"}],
+        "candidate_snapshots": [
+            {"quota_id": "Q1", "name": "阀门安装", "unit": "m"},
+            {"quota_id": "Q2", "name": "法兰阀门安装", "unit": "m"},
+        ],
         "confidence": 80,
         "match_source": "search",
     }
 
-    monkeypatch.setattr(
-        FinalValidator,
-        "_check_review_error",
-        lambda self, item, current_result: {"type": "category_mismatch", "reason": "类别冲突"},
-    )
-    monkeypatch.setattr("src.final_validator.correct_error", lambda *args, **kwargs: None)
+    validator = FinalValidator(province="测试省份", auto_correct=False)
+    validator._collect_review_errors_for_quota = lambda item, quota_name, quota_id="": [  # type: ignore[method-assign]
+        {"type": "category_mismatch", "reason": "类别冲突"}
+    ]
+    validator.validate_result(result)
 
-    FinalValidator(province="测试省份", auto_correct=True).validate_result(result)
-
+    assert result["quotas"][0]["quota_id"] == "Q1"
     assert result["confidence"] == 80
-    assert result["confidence_score"] == 80
     assert result["review_risk"] == "high"
     assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"
     assert result["final_validation"]["issues"][0]["type"] == "category_mismatch"
 
 
-def test_anchor_conflict_marks_manual_review_and_red_light(monkeypatch):
+def test_anchor_conflict_marks_manual_review_and_red_light():
     result = {
         "bill_item": {
             "name": "桥架安装",
@@ -106,15 +94,15 @@ def test_anchor_conflict_marks_manual_review_and_red_light(monkeypatch):
         "match_source": "search",
     }
 
-    monkeypatch.setattr(FinalValidator, "_check_review_error", lambda self, item, current_result: None)
-
-    FinalValidator(province="测试省份", auto_correct=False).validate_result(result)
+    validator = FinalValidator(province="测试省份", auto_correct=False)
+    validator._collect_review_errors_for_quota = lambda item, quota_name, quota_id="": []  # type: ignore[method-assign]
+    validator.validate_result(result)
 
     assert result["confidence"] == 89
     assert result["confidence_score"] == 89
     assert result["review_risk"] == "high"
     assert result["light_status"] == "red"
-    assert result["final_validation"]["status"] == "manual_review"
+    assert result["final_validation"]["status"] == "vetoed"
     assert result["final_validation"]["issues"][0]["type"] == "anchor_conflict"
 
 

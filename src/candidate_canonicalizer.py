@@ -12,8 +12,12 @@ _PARAM_KEYS = (
     "kva", "kw", "kv", "ampere", "circuits", "port_count", "weight_t",
     "perimeter", "half_perimeter", "large_side", "ground_bar_width",
     "elevator_stops", "elevator_speed", "switch_gangs", "shape",
-    "elevator_type", "cable_type", "material", "connection",
-    "install_method",
+    "elevator_type", "cable_type", "cable_head_type", "conduit_type",
+    "wire_type", "box_mount_mode", "bridge_type", "valve_connection_family",
+    "support_scope", "support_action", "sanitary_mount_mode",
+    "sanitary_flush_mode", "sanitary_water_mode", "sanitary_nozzle_mode",
+    "sanitary_tank_mode", "lamp_type", "outlet_grounding",
+    "material", "connection", "install_method", "laying_method",
 )
 
 

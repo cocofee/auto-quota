@@ -218,6 +218,78 @@ def _is_bill_serial(a_val) -> bool:
     return bool(re.fullmatch(r"\d+\.0+", text))
 
 
+def _normalize_locator_text(value) -> str:
+    """Normalize locator text for robust row/result matching."""
+    if value is None:
+        return ""
+    return re.sub(r"\s+", "", str(value).strip())
+
+
+def _normalize_locator_quantity(value) -> str:
+    """Normalize quantities so Excel cells and result payloads compare stably."""
+    if value in (None, ""):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _normalize_locator_text(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _build_locator_key(code, name, unit, quantity) -> tuple[str, str, str, str]:
+    return (
+        _normalize_locator_text(code),
+        _normalize_locator_text(name),
+        _normalize_locator_text(unit),
+        _normalize_locator_quantity(quantity),
+    )
+
+
+def _build_row_locator(ws, row_idx: int, unit_col: int, qty_col: int) -> dict:
+    primary = _build_locator_key(
+        ws.cell(row=row_idx, column=2).value,
+        ws.cell(row=row_idx, column=3).value,
+        ws.cell(row=row_idx, column=unit_col).value,
+        ws.cell(row=row_idx, column=qty_col).value,
+    )
+    return {
+        "primary": primary,
+        "fallback": primary[1:],
+        "code": primary[0],
+    }
+
+
+def _build_result_locator(result: dict) -> dict:
+    bill_item = result.get("bill_item", {}) or {}
+    primary = _build_locator_key(
+        bill_item.get("code"),
+        bill_item.get("name"),
+        bill_item.get("unit"),
+        bill_item.get("quantity"),
+    )
+    return {
+        "primary": primary,
+        "fallback": primary[1:],
+        "code": primary[0],
+    }
+
+
+def _locator_matches(row_locator: dict, result_locator: dict) -> bool:
+    if not row_locator or not result_locator:
+        return False
+    if result_locator["primary"] == ("", "", "", ""):
+        return False
+    return (
+        row_locator["primary"] == result_locator["primary"]
+        or (
+            result_locator["fallback"] != ("", "", "")
+            and row_locator["fallback"] == result_locator["fallback"]
+        )
+    )
+
+
 def _resolve_output_materials(result: dict) -> list[dict]:
     """获取要输出的主材行列表
 
@@ -795,94 +867,121 @@ class OutputWriter:
                 bill_rows.append(row_idx)
 
         # Step 3: map each result back to the original bill row.
-        # Prefer source_row because it is the absolute Excel row number.
-        # sheet_bill_seq is only a sheet-local sequence and may become subset-relative.
-        # For filtered exports, source_row is the safest locator when present.
+        # Prefer validated source_row. If it is missing or stale, fall back to
+        # exact row locators (code/name/unit/quantity), then validated
+        # sheet_bill_seq, and only then positional mapping as a last resort.
         row_result_pairs = []
         used_rows = set()
         bill_row_set = set(bill_rows)
-        can_use_source_row_map = True
+        row_locators = {
+            row_idx: _build_row_locator(ws, row_idx, unit_col, qty_col)
+            for row_idx in bill_rows
+        }
+        rows_by_primary = {}
+        rows_by_fallback = {}
+        rows_by_code = {}
+        for row_idx, locator in row_locators.items():
+            rows_by_primary.setdefault(locator["primary"], []).append(row_idx)
+            rows_by_fallback.setdefault(locator["fallback"], []).append(row_idx)
+            if locator["code"]:
+                rows_by_code.setdefault(locator["code"], []).append(row_idx)
+
+        def _pick_unused_row(candidates: list[int]) -> int | None:
+            for candidate in candidates:
+                if candidate not in used_rows:
+                    return candidate
+            return None
+
+        unresolved = []
+        source_row_matches = 0
         for result in results:
-            bill_item = result.get("bill_item", {})
+            locator = _build_result_locator(result)
+            bill_item = result.get("bill_item", {}) or {}
             source_row = bill_item.get("source_row")
-            if not isinstance(source_row, int):
-                can_use_source_row_map = False
-                break
-            if source_row not in bill_row_set or source_row in used_rows:
-                can_use_source_row_map = False
-                break
-            used_rows.add(source_row)
-            row_result_pairs.append((source_row, result))
+            if (
+                isinstance(source_row, int)
+                and source_row in bill_row_set
+                and source_row not in used_rows
+                and _locator_matches(row_locators[source_row], locator)
+            ):
+                row_result_pairs.append((source_row, result))
+                used_rows.add(source_row)
+                source_row_matches += 1
+                continue
+            unresolved.append((result, locator))
 
-        can_use_seq_map = False
-        if not can_use_source_row_map:
-            row_result_pairs = []
-            used_seq = set()
-            can_use_seq_map = True
-            for result in results:
-                bill_item = result.get("bill_item", {})
-                seq = bill_item.get("sheet_bill_seq")
-                if not isinstance(seq, int):
-                    can_use_seq_map = False
-                    break
-                if seq <= 0 or seq > len(bill_rows) or seq in used_seq:
-                    can_use_seq_map = False
-                    break
-                used_seq.add(seq)
-                row_result_pairs.append((bill_rows[seq - 1], result))
-
-        # Fallbacks: bill_code exact match, then positional match as last resort.
-        if not can_use_source_row_map and not can_use_seq_map:
-            # Fallback A: match by bill_code from column B.
-            code_pairs = []
-            if results:
-                # Build {bill_code -> row_idx} from the Excel sheet.
-                row_code_map = {}
-                for row_idx in bill_rows:
-                    b_val = ws.cell(row=row_idx, column=2).value
-                    if b_val:
-                        b_str = str(b_val).strip()
-                        if b_str not in row_code_map:  # first occurrence wins
-                            row_code_map[b_str] = row_idx
-
-                used_rows = set()
-                for result in results:
-                    bill_code = result.get("bill_item", {}).get("code", "")
-                    if bill_code and bill_code in row_code_map:
-                        target_row = row_code_map[bill_code]
-                        if target_row not in used_rows:
-                            code_pairs.append((target_row, result))
-                            used_rows.add(target_row)
-
-            if code_pairs:
-                row_result_pairs = code_pairs
-                unmatched_count = len(results) - len(code_pairs)
-                if unmatched_count > 0:
-                    logger.warning(
-                        f"Sheet [{ws.title}]: bill_code fallback left "
-                        f"{unmatched_count}/{len(results)} results unmapped")
-                else:
-                    logger.info(
-                        f"Sheet [{ws.title}]: source_row/sheet_bill_seq unavailable, "
-                        f"used bill_code fallback ({len(code_pairs)}/{len(bill_rows)})")
-            else:
-                # Fallback B: preserve original order and align positionally.
-                if len(bill_rows) != len(results):
-                    logger.warning(
-                        f"Sheet [{ws.title}]: bill row count ({len(bill_rows)}) != "
-                        f"result count ({len(results)}), falling back to positional mapping")
-                num_to_process = min(len(bill_rows), len(results))
-                row_result_pairs = [
-                    (bill_rows[i], results[i]) for i in range(num_to_process)
+        locator_matches = 0
+        still_unresolved = []
+        for result, locator in unresolved:
+            target_row = _pick_unused_row(rows_by_primary.get(locator["primary"], []))
+            if target_row is None and locator["fallback"] != ("", "", ""):
+                target_row = _pick_unused_row(rows_by_fallback.get(locator["fallback"], []))
+            if target_row is None and locator["code"]:
+                unused_code_rows = [
+                    row_idx for row_idx in rows_by_code.get(locator["code"], [])
+                    if row_idx not in used_rows
                 ]
-        elif can_use_source_row_map and len(bill_rows) != len(results):
+                if len(unused_code_rows) == 1:
+                    target_row = unused_code_rows[0]
+            if target_row is not None:
+                row_result_pairs.append((target_row, result))
+                used_rows.add(target_row)
+                locator_matches += 1
+                continue
+            still_unresolved.append((result, locator))
+
+        seq_matches = 0
+        final_unresolved = []
+        for result, locator in still_unresolved:
+            seq = (result.get("bill_item", {}) or {}).get("sheet_bill_seq")
+            if isinstance(seq, int) and 0 < seq <= len(bill_rows):
+                target_row = bill_rows[seq - 1]
+                if (
+                    target_row not in used_rows
+                    and _locator_matches(row_locators[target_row], locator)
+                ):
+                    row_result_pairs.append((target_row, result))
+                    used_rows.add(target_row)
+                    seq_matches += 1
+                    continue
+            final_unresolved.append((result, locator))
+
+        positional_matches = 0
+        if final_unresolved:
+            available_rows = [row_idx for row_idx in bill_rows if row_idx not in used_rows]
+            num_to_process = min(len(available_rows), len(final_unresolved))
+            if num_to_process > 0:
+                positional_matches = num_to_process
+                row_result_pairs.extend(
+                    (available_rows[i], final_unresolved[i][0])
+                    for i in range(num_to_process)
+                )
+            logger.warning(
+                f"Sheet [{ws.title}]: locator recovery missed "
+                f"{len(final_unresolved)}/{len(results)} results; "
+                f"used positional fallback for {num_to_process}"
+            )
+
+        if source_row_matches == len(results) and len(bill_rows) != len(results):
             logger.info(
                 f"Sheet [{ws.title}]: subset export mapped by source_row "
                 f"({len(results)}/{len(bill_rows)})")
-        elif len(bill_rows) != len(results):
+        elif (
+            source_row_matches + locator_matches == len(results)
+            and locator_matches > 0
+            and len(bill_rows) != len(results)
+        ):
             logger.info(
-                f"Sheet [{ws.title}]: subset export mapped by sheet_bill_seq "
+                f"Sheet [{ws.title}]: subset export mapped by validated locators "
                 f"({len(results)}/{len(bill_rows)})")
+        elif seq_matches == len(results) and len(bill_rows) != len(results):
+            logger.info(
+                f"Sheet [{ws.title}]: subset export mapped by validated sheet_bill_seq "
+                f"({len(results)}/{len(bill_rows)})")
+        elif positional_matches > 0 and len(bill_rows) != len(results):
+            logger.warning(
+                f"Sheet [{ws.title}]: subset export still required positional mapping "
+                f"({positional_matches}/{len(results)})")
 
         # 第3.5步：保存所有行的原始行高（包括 None = 自动高度）
         # insert_rows 不会正确移动 row_dimensions 的键，需要手动保存/恢复

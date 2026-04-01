@@ -224,8 +224,11 @@ def test_param_validator_uses_surface_process_as_soft_sort_signal():
         ],
     )
 
-    assert results[0]["quota_id"] == "B"
-    assert next(item for item in results if item["quota_id"] == "B")["param_score"] > next(
+    assert results[0]["quota_id"] == "A"
+    best = next(item for item in results if item["quota_id"] == "B")
+    assert best["param_rectify_selected"] is True
+    assert "feature_rectify" in best["param_rectify_selected_rules"]
+    assert best["param_score"] > next(
         item for item in results if item["quota_id"] == "A"
     )["param_score"]
 

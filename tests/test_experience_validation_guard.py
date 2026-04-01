@@ -17,7 +17,7 @@
   5. 审核规则网关正确调用检查器链
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from src import match_core
 from src.match_pipeline import _review_check_match_result
 

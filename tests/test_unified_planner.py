@@ -24,6 +24,63 @@ def test_unified_planner_builds_soft_plan_from_titles():
     assert "C10" in plan["preferred_books"]
 
 
+def test_unified_planner_suppresses_generated_support_bias_for_device_subject():
+    plan = build_unified_search_plan(
+        province="上海市园林工程预算定额(2016)",
+        item={
+            "name": "组串式逆变器",
+            "description": "规格型号:150KW 安装点离地高度:屋面支架安装 布置场地:光伏场区",
+        },
+        context_prior={
+            "primary_subject": "组串式逆变器",
+            "primary_query_profile": {
+                "primary_subject": "组串式逆变器",
+                "primary_text": "组串式逆变器 规格型号:150KW",
+            },
+        },
+        canonical_features={"family": "pipe_support", "entity": "支吊架", "system": "给排水"},
+        plugin_hints={
+            "source": "generated_benchmark_knowledge",
+            "preferred_books": ["C10"],
+            "preferred_specialties": ["C10"],
+            "synonym_aliases": ["侧向支撑 KZS-DN100-T"],
+            "matched_terms": ["支吊架"],
+        },
+    )
+
+    assert plan["family"] == ""
+    assert plan["search_aliases"] == []
+    assert "family_cluster" not in plan["reason_tags"]
+    assert "primary_subject_guard" in plan["reason_tags"]
+
+
+def test_unified_planner_keeps_explicit_pipe_support_subject_family():
+    plan = build_unified_search_plan(
+        province="云南省通用安装工程计价标准(2020)",
+        item={
+            "name": "管道支架",
+            "description": "材质:型钢 管架形式:一般管架",
+        },
+        context_prior={
+            "primary_subject": "管道支架",
+            "primary_query_profile": {
+                "primary_subject": "管道支架",
+                "primary_text": "管道支架 材质:型钢",
+            },
+        },
+        canonical_features={"family": "pipe_support", "entity": "支吊架", "system": "给排水"},
+        plugin_hints={
+            "source": "generated_benchmark_knowledge",
+            "preferred_books": ["C10"],
+            "synonym_aliases": ["管道支架制作安装"],
+        },
+    )
+
+    assert plan["family"] == "pipe_support"
+    assert "family_cluster" in plan["reason_tags"]
+    assert plan["search_aliases"] == ["管道支架制作安装"]
+
+
 def test_unified_planner_uses_plugin_aliases_and_family_cluster_as_soft_plan():
     plan = build_unified_search_plan(
         province="重庆市通用安装工程计价定额(2018)",

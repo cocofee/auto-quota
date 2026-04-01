@@ -38,6 +38,18 @@ class VectorEngine:
         self._collection = None
         self._chroma_client = None
 
+    @staticmethod
+    def _stable_result_identity(candidate: dict) -> tuple[str, str, str]:
+        return (
+            str(candidate.get("quota_id", "") or "").strip(),
+            str(candidate.get("name", "") or "").strip(),
+            str(candidate.get("id", "") or "").strip(),
+        )
+
+    @classmethod
+    def _vector_result_sort_key(cls, candidate: dict) -> tuple:
+        return (float(candidate.get("vector_score", 0.0) or 0.0),)
+
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
         return _db_connect(self.db_path, row_factory=row_factory)
@@ -190,9 +202,14 @@ class VectorEngine:
             匹配结果列表，每条包含 {id, quota_id, name, unit, vector_score, ...}
         """
         top_k = top_k or config.VECTOR_TOP_K
+        collection_size = self.collection.count()
+        fetch_k = min(
+            max(int(top_k), max(int(top_k) * 10, int(top_k) + 32, 64)),
+            max(collection_size, int(top_k)),
+        )
 
         # 检查索引是否存在（Web端可能没有GPU构建索引，静默降级到纯BM25）
-        if self.collection.count() == 0:
+        if collection_size == 0:
             logger.debug("向量索引为空，跳过向量搜索（纯BM25模式）")
             return []
 
@@ -232,7 +249,7 @@ class VectorEngine:
         try:
             results = self.collection.query(
                 query_embeddings=query_embedding.tolist(),
-                n_results=top_k,
+                n_results=fetch_k,
                 where=where_filter,
             )
         except Exception as e:
@@ -241,7 +258,7 @@ class VectorEngine:
                 logger.warning(f"向量搜索按册过滤失败({e})，降级为全库搜索（旧索引兼容）")
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
-                    n_results=top_k,
+                    n_results=fetch_k,
                 )
             else:
                 raise
@@ -267,7 +284,7 @@ class VectorEngine:
                 logger.warning("旧索引缺少book metadata，降级为全库搜索")
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
-                    n_results=top_k,
+                    n_results=fetch_k,
                 )
             else:
                 # 正常情况：该册确实没有匹配结果，保持空（不跨专业污染）
@@ -326,10 +343,11 @@ class VectorEngine:
                 result["vector_score"] = score_map[db_id]
                 results.append(result)
 
-        # 按相似度降序排序
-        results.sort(key=lambda x: x["vector_score"], reverse=True)
+        # 先按身份排序，再按分数排序，保证同分截断稳定。
+        results.sort(key=self._stable_result_identity)
+        results.sort(key=self._vector_result_sort_key, reverse=True)
 
-        return results
+        return results[:top_k]
 
     def get_index_count(self) -> int:
         """获取向量索引中的文档数量"""

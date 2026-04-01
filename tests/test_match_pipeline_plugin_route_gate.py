@@ -1,29 +1,12 @@
 from src.match_pipeline import _apply_plugin_candidate_biases, _apply_plugin_route_gate
 
 
-def test_plugin_route_gate_prefers_matching_books_but_keeps_small_fallback():
+def test_plugin_route_gate_never_prunes_candidates_even_when_strict_requested():
     candidates = [
-        {"quota_id": "C10-1-1", "name": "给排水管道"},
-        {"quota_id": "C4-1-1", "name": "成套配电箱安装 悬挂、嵌入式"},
-        {"quota_id": "C4-1-2", "name": "成套配电箱安装 落地式"},
-        {"quota_id": "C8-1-1", "name": "市政配电设施"},
-    ]
-
-    gated, meta = _apply_plugin_route_gate(
-        {"plugin_hints": {"preferred_books": ["C4"], "strict_preferred_books": True}},
-        candidates,
-    )
-
-    assert meta["applied"] is True
-    assert meta["reason"] == "preferred_books_gate"
-    assert [item["quota_id"] for item in gated[:2]] == ["C4-1-1", "C4-1-2"]
-    assert len(gated) == 4
-
-
-def test_plugin_route_gate_skips_when_no_matching_book_candidates():
-    candidates = [
-        {"quota_id": "C10-1-1", "name": "给排水管道"},
-        {"quota_id": "C8-1-1", "name": "市政配电设施"},
+        {"quota_id": "C10-1-1", "name": "water_pipe"},
+        {"quota_id": "C4-1-1", "name": "power_box_wall"},
+        {"quota_id": "C4-1-2", "name": "power_box_floor"},
+        {"quota_id": "C8-1-1", "name": "municipal_power"},
     ]
 
     gated, meta = _apply_plugin_route_gate(
@@ -32,14 +15,35 @@ def test_plugin_route_gate_skips_when_no_matching_book_candidates():
     )
 
     assert meta["applied"] is False
-    assert meta["reason"] == "no_matching_book_candidates"
-    assert gated == candidates
+    assert meta["reason"] == "strict_preferred_books_disabled"
+    assert meta["preferred_count"] == 2
+    assert meta["strict_requested"] is True
+    assert [item["quota_id"] for item in gated] == [item["quota_id"] for item in candidates]
+    assert [item["plugin_route_book"] for item in gated] == ["C10", "C4", "C4", "C8"]
+
+
+def test_plugin_route_gate_reports_zero_matches_without_pruning():
+    candidates = [
+        {"quota_id": "C10-1-1", "name": "water_pipe"},
+        {"quota_id": "C8-1-1", "name": "municipal_power"},
+    ]
+
+    gated, meta = _apply_plugin_route_gate(
+        {"plugin_hints": {"preferred_books": ["C4"], "strict_preferred_books": True}},
+        candidates,
+    )
+
+    assert meta["applied"] is False
+    assert meta["reason"] == "strict_preferred_books_disabled"
+    assert meta["preferred_count"] == 0
+    assert meta["strict_requested"] is True
+    assert [item["quota_id"] for item in gated] == [item["quota_id"] for item in candidates]
 
 
 def test_plugin_route_gate_defaults_to_soft_mode():
     candidates = [
-        {"quota_id": "C10-1-1", "name": "给排水管道"},
-        {"quota_id": "C4-1-1", "name": "成套配电箱安装 悬挂、嵌入式"},
+        {"quota_id": "C10-1-1", "name": "water_pipe"},
+        {"quota_id": "C4-1-1", "name": "power_box_wall"},
     ]
 
     gated, meta = _apply_plugin_route_gate(
@@ -49,20 +53,21 @@ def test_plugin_route_gate_defaults_to_soft_mode():
 
     assert meta["applied"] is False
     assert meta["reason"] == "soft_preferred_books_only"
-    assert gated == candidates
+    assert meta["preferred_count"] == 1
+    assert [item["quota_id"] for item in gated] == [item["quota_id"] for item in candidates]
 
 
 def test_plugin_candidate_biases_remain_soft_signal():
     candidates = [
         {
             "quota_id": "C10-1-1",
-            "name": "给排水管道",
+            "name": "water_pipe",
             "param_score": 0.95,
             "rerank_score": 0.90,
         },
         {
             "quota_id": "C4-1-1",
-            "name": "成套配电箱安装 悬挂、嵌入式",
+            "name": "power_box_wall",
             "param_score": 0.20,
             "rerank_score": 0.20,
         },

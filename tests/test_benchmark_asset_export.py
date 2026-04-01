@@ -42,6 +42,8 @@ def _sample_json_results():
                     "post_final_top1_id": "C4-1-2",
                     "final_changed_by": "arbiter",
                     "miss_stage": "post_rank_miss",
+                    "error_stage": "candidate_arbiter",
+                    "error_type": "post_ltr_correct_but_arbiter_changed",
                     "candidate_snapshots": [
                         {"quota_id": "C4-1-2", "name": "错误档位定额"},
                         {"quota_id": "C4-1-1", "name": "正确定额"},
@@ -67,6 +69,8 @@ def _sample_json_results():
                     "trace_path": ["canonical", "retriever"],
                     "match_source": "search",
                     "no_match_reason": "synonym gap",
+                    "error_stage": "retriever",
+                    "error_type": "oracle_not_in_candidates",
                 },
                 {
                     "is_match": False,
@@ -86,6 +90,8 @@ def _sample_json_results():
                     "trace_path": ["router", "retriever"],
                     "match_source": "search",
                     "no_match_reason": "wrong specialty",
+                    "error_stage": "retriever",
+                    "error_type": "oracle_not_in_candidates",
                 },
                 {
                     "is_match": True,
@@ -174,6 +180,8 @@ def test_export_benchmark_assets_writes_manifest_and_jsonl():
         assert tier_record["trace_path"] == ["canonical", "retriever", "validator"]
         assert tier_record["post_ltr_top1_id"] == "C4-1-1"
         assert tier_record["candidate_count"] == 2
+        assert tier_record["error_stage"] == "candidate_arbiter"
+        assert tier_record["error_type"] == "post_ltr_correct_but_arbiter_changed"
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
 

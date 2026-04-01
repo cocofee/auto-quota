@@ -51,6 +51,31 @@ class FeedbackLearner:
         except Exception as e:
             logger.debug(f"L5通用知识库同步跳过（不影响经验库）: {e}")
 
+    @staticmethod
+    def _build_learning_record(bill: dict, quotas: list[dict],
+                               materials: list[dict] | None = None,
+                               *,
+                               confidence: int = 95,
+                               specialty: str = "") -> dict | None:
+        from src.text_parser import normalize_bill_text
+        bill_text = normalize_bill_text(bill.get('name', ''), bill.get('description', ''))
+        quota_ids = [q["quota_id"] for q in quotas if q.get("quota_id")]
+        quota_names = [q.get("name", "") for q in quotas if q.get("quota_id")]
+        if not bill_text or not quota_ids:
+            return None
+        return {
+            "bill_text": bill_text,
+            "bill_name": bill.get("name"),
+            "bill_code": bill.get("code"),
+            "bill_unit": bill.get("unit"),
+            "quota_ids": quota_ids,
+            "quota_names": quota_names,
+            "materials": materials or [],
+            "specialty": specialty or "",
+            "confidence": confidence,
+            "parse_status": "parsed",
+        }
+
     def learn_from_corrections(self, original_results: list[dict],
                                 corrected_results: list[dict]) -> dict:
         """
@@ -247,34 +272,164 @@ class FeedbackLearner:
     def _save_bill_quota_pair(self, bill: dict, quotas: list[dict],
                               materials: list[dict] = None) -> bool:
         """保存一条清单→定额的对应关系到经验库，返回是否写入成功。"""
-        from src.text_parser import normalize_bill_text
-        bill_text = normalize_bill_text(bill.get('name', ''), bill.get('description', ''))
-        if not bill_text:
-            return False
-
-        quota_ids = [q["quota_id"] for q in quotas if q.get("quota_id")]
-        quota_names = [q.get("name", "") for q in quotas]
-
-        if not quota_ids:
+        record = self._build_learning_record(bill, quotas, materials, confidence=95)
+        if not record:
             return False
 
         record_id = self.experience_db.add_experience(
-            bill_text=bill_text,
-            quota_ids=quota_ids,
-            quota_names=quota_names,
-            bill_name=bill.get("name"),
-            bill_code=bill.get("code"),
-            bill_unit=bill.get("unit"),
+            bill_text=record["bill_text"],
+            quota_ids=record["quota_ids"],
+            quota_names=record["quota_names"],
+            bill_name=record["bill_name"],
+            bill_code=record["bill_code"],
+            bill_unit=record["bill_unit"],
             source="user_correction",
             confidence=95,
-            materials=materials or [],
+            materials=record["materials"],
+            parse_status="parsed",
         )
         if record_id <= 0:
-            logger.warning(f"Excel学习写入被拦截: {bill_text[:60]} -> {quota_ids}")
+            logger.warning(f"Excel学习写入被拦截: {record['bill_text'][:60]} -> {record['quota_ids']}")
             return False
         # L5：同步到通用知识库（跨省迁移）
-        self._sync_to_universal_kb(bill_text, quota_names)
+        self._sync_to_universal_kb(record["bill_text"], record["quota_names"])
         return True
+
+    def extract_learning_records_from_corrected_excel(self, corrected_excel_path: str) -> dict:
+        path = Path(corrected_excel_path)
+        if not path.exists():
+            logger.error(f"文件不存在: {path}")
+            return {"total": 0, "records": []}
+
+        wb = openpyxl.load_workbook(str(path), data_only=True)
+        try:
+            stats = {"total": 0, "records": []}
+            quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
+
+            for ws in wb.worksheets:
+                if ws.title in {"待审核", "统计汇总"}:
+                    continue
+
+                current_bill = None
+                current_quotas = []
+                current_materials = []
+
+                for row in ws.iter_rows(min_row=1, values_only=True):
+                    cells = list(row) if row else []
+                    a = str(cells[0]).strip() if len(cells) > 0 and cells[0] is not None else ""
+                    b = str(cells[1]).strip() if len(cells) > 1 and cells[1] is not None else ""
+                    c = str(cells[2]).strip() if len(cells) > 2 and cells[2] is not None else ""
+                    d = str(cells[3]).strip() if len(cells) > 3 and cells[3] is not None else ""
+                    e = str(cells[4]).strip() if len(cells) > 4 and cells[4] is not None else ""
+                    f = str(cells[5]).strip() if len(cells) > 5 and cells[5] is not None else ""
+
+                    is_labeled_bill = (a == "清单")
+                    is_labeled_quota = (a == "定额")
+                    is_numbered_bill = (a.isdigit() and bool(c))
+                    is_quota_row = bool(current_bill) and (
+                        is_labeled_quota or ((not a) and bool(quota_id_pattern.match(b)))
+                    )
+                    is_material_row = (
+                        bool(current_bill) and (not a) and
+                        (not is_quota_row) and bool(b) and bool(c) and
+                        _is_material_code(b)
+                    )
+
+                    if is_labeled_bill or is_numbered_bill:
+                        if current_bill and current_quotas:
+                            record = self._build_learning_record(current_bill, current_quotas, current_materials, confidence=95)
+                            if record:
+                                stats["records"].append(record)
+
+                        if is_labeled_bill:
+                            current_bill = {"name": c, "code": b, "unit": d, "description": e}
+                        else:
+                            current_bill = {"name": c, "code": b, "unit": e, "description": d}
+                        current_quotas = []
+                        current_materials = []
+                        stats["total"] += 1
+                    elif is_quota_row:
+                        if b:
+                            current_quotas.append({"quota_id": b, "name": c})
+                    elif is_material_row:
+                        current_materials.append({"code": b, "name": c, "unit": e, "qty": f})
+
+                if current_bill and current_quotas:
+                    record = self._build_learning_record(current_bill, current_quotas, current_materials, confidence=95)
+                    if record:
+                        stats["records"].append(record)
+        finally:
+            wb.close()
+
+        return stats
+
+    def extract_completed_project_records(self, excel_path: str, project_name: str = None) -> dict:
+        path = Path(excel_path)
+        if not path.exists():
+            logger.error(f"文件不存在: {path}")
+            return {"total": 0, "records": []}
+
+        wb = openpyxl.load_workbook(str(path), data_only=True)
+        try:
+            stats = {"total": 0, "records": []}
+            quota_id_pattern = re.compile(r'^[A-Za-z]?\d{1,2}-\d+')
+            for ws in wb.worksheets:
+                if ws.title in {"待审核", "统计汇总"}:
+                    continue
+                current_bill = None
+                current_quotas = []
+
+                for row in ws.iter_rows(min_row=1, values_only=True):
+                    if not row or not any(row):
+                        continue
+
+                    first_cell = str(row[0]).strip() if row[0] is not None else ""
+                    code_cell = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+                    name_cell = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
+
+                    is_labeled_bill = (first_cell == "清单")
+                    is_labeled_quota = (first_cell == "定额")
+                    is_numbered_bill = first_cell.isdigit() and bool(name_cell)
+                    is_quota_row = bool(current_bill) and (
+                        is_labeled_quota or ((not first_cell) and bool(quota_id_pattern.match(code_cell)))
+                    )
+
+                    if is_labeled_bill or is_numbered_bill:
+                        if current_bill and current_quotas:
+                            record = self._build_learning_record(current_bill, current_quotas, confidence=90)
+                            if record:
+                                record["project_name"] = project_name or path.stem
+                                stats["records"].append(record)
+
+                        if is_labeled_bill:
+                            current_bill = {
+                                "name": name_cell,
+                                "code": code_cell,
+                                "unit": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
+                                "description": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
+                            }
+                        else:
+                            current_bill = {
+                                "name": name_cell,
+                                "code": code_cell,
+                                "unit": str(row[4]).strip() if len(row) > 4 and row[4] is not None else "",
+                                "description": str(row[3]).strip() if len(row) > 3 and row[3] is not None else "",
+                            }
+                        current_quotas = []
+                        stats["total"] += 1
+                    elif is_quota_row:
+                        if code_cell:
+                            current_quotas.append({"quota_id": code_cell, "name": name_cell})
+
+                if current_bill and current_quotas:
+                    record = self._build_learning_record(current_bill, current_quotas, confidence=90)
+                    if record:
+                        record["project_name"] = project_name or path.stem
+                        stats["records"].append(record)
+        finally:
+            wb.close()
+
+        return stats
 
     def import_completed_project(self, excel_path: str,
                                   project_name: str = None) -> dict:

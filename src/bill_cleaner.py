@@ -38,6 +38,60 @@ AMBIGUOUS_SHORT_NAMES = {
 }
 
 
+NON_MATCHABLE_TITLE_PATTERNS = (
+    r"系统$",
+    r"工程$",
+    r"工程造价$",
+    r"造价$",
+    r"计日工$",
+    r"其它项目费$",
+    r"总承包服务费$",
+    r"发包人供应材料费$",
+    r"不含税建安工程造价$",
+    r"含税建安工程造价$",
+    r"应纳税费$",
+    r"增值税应纳税额$",
+    r"履约担保手续费.*",
+    r"城市维护建设税.*",
+    r"其中：.*",
+    r"询价材料$",
+)
+
+
+def _looks_like_bill_code(code: str) -> bool:
+    return bool(re.fullmatch(r"\d{9,12}", str(code or "").strip()))
+
+
+def _is_non_matchable_title_item(item: dict) -> bool:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return True
+
+    if _looks_like_bill_code(item.get("code")):
+        return False
+
+    desc = str(item.get("description") or "").strip()
+    unit = str(item.get("unit") or "").strip()
+    quantity = item.get("quantity")
+    has_quantity = quantity not in (None, "", 0, "0")
+    has_measure_signal = bool(unit) or has_quantity
+    sheet_name = str(item.get("sheet_name") or "").strip()
+
+    if parse_section_title(name) is not None and not desc and not has_measure_signal:
+        return True
+
+    normalized = re.sub(r"\s+", "", name)
+    if "汇总表" in sheet_name and any(
+        re.search(pattern, normalized) for pattern in NON_MATCHABLE_TITLE_PATTERNS
+    ):
+        return True
+
+    if has_measure_signal:
+        return False
+
+    return any(re.search(pattern, normalized) for pattern in NON_MATCHABLE_TITLE_PATTERNS)
+
+
 def is_ambiguous_short_name(item: dict) -> bool:
     """
     判断是否为短名称歧义项（需要上下文补偿）
@@ -109,6 +163,17 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
     返回:
         清洗后的清单项列表（原地修改并返回）
     """
+    filtered_items = []
+    skipped_non_matchable = 0
+    for item in items:
+        if _is_non_matchable_title_item(item):
+            skipped_non_matchable += 1
+            logger.debug(f"跳过非匹配标题行: '{item.get('name', '')}'")
+            continue
+        filtered_items.append(item)
+
+    items = filtered_items
+
     for item in items:
         name = item.get("name", "")
         desc = item.get("description", "") or ""
@@ -122,26 +187,16 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
             logger.debug(f"名称修正: '{name}' → '{real_name}'")
 
         # 第2步：专业分类
-        # 优先用 section_title（分部标题），如果识别不了就用 sheet_name 兜底
-        # 兜底条件：section为空 或 section是中文标题但识别不了专业（如"通头管件"错别字）
-        # 不兜底：section是定额编号格式（如"C10-5-38"），因为"自动加定额"格式文件的
-        #         section就是定额编号，不代表该清单项的专业
-        section_for_classify = section
-        if not _section_has_specialty(section):
-            # section识别不了专业，判断是否该用 sheet_name 兜底
-            # 定额编号格式不用兜底（"自动加定额"格式文件的 section 是定额编号）
-            # 标准格式：C10-5-38；行业格式：4-14-379、SY-3-21 等
-            is_quota_id = bool(
-                section and re.match(r'^(?:C\d+-|[A-Z]{1,3}-?\d+-|\d+-\d+-)', section)
-            )
-            if not is_quota_id:
-                sheet = item.get("sheet_name", "") or ""
-                if sheet and _section_has_specialty(sheet):
-                    section_for_classify = sheet
-
+        # 入口路由统一交给 specialty_classifier 处理：
+        # section / sheet_name / description / batch context 都在同一套证据链里决策，
+        # 避免这里先做一次 sheet fallback、后面主路径又按另一套逻辑重算。
         classification = classify_specialty(
-            item["name"], desc, section_title=section_for_classify,
-            province=province, bill_code=item.get("code")
+            item["name"],
+            desc,
+            section_title=section,
+            province=province,
+            bill_code=item.get("code"),
+            sheet_name=item.get("sheet_name"),
         )
         item["specialty"] = classification.get("primary")
         item["specialty_name"] = classification.get("primary_name")
@@ -175,6 +230,9 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
                 f"有参数{with_params}条, 线缆标签{cable_tagged}条")
 
     # 第二轮：批次上下文构建（邻居提示 + section/sheet 主导系统 + 项目级主题）
+    if skipped_non_matchable:
+        logger.info(f"  过滤非匹配标题/汇总行: {skipped_non_matchable}条")
+
     project_context = external_build_project_context(items)
     _short_name_priors = _load_short_name_priors()
     external_apply_batch_context(
@@ -204,88 +262,6 @@ def clean_bill_items(items: list[dict], province: str = None) -> list[dict]:
         )
 
     return items
-
-
-def _annotate_local_context(items: list[dict]):
-    """
-    第二轮清洗：为短名称歧义项注入局部上下文提示
-
-    核心思路：同一个分部下，"水箱"旁边如果都是"消防泵""喷淋管"，
-    那这个"水箱"大概率是消防水箱。从前后邻居提取关键词作为搜索提示。
-
-    只对 is_ambiguous_short_name() 判定为True的item生效。
-    """
-    for i, item in enumerate(items):
-        if not is_ambiguous_short_name(item):
-            continue
-
-        # 标记为短名称歧义项（后续置信度封顶用）
-        item["_is_ambiguous_short"] = True
-
-        section = item.get("section", "")
-        sheet = item.get("sheet_name", "")
-
-        # section和sheet都为空时，无法判断邻居是否同类，跳过上下文注入
-        if not section and not sheet:
-            continue
-
-        context_keywords = []  # [(关键词, 权重)]
-
-        # 前后各看5条，但只看同section的
-        for offset in range(-5, 6):
-            if offset == 0:
-                continue
-            j = i + offset
-            if j < 0 or j >= len(items):
-                continue
-            neighbor = items[j]
-
-            # 跨section断开（不同分部的信息不可靠）
-            n_section = neighbor.get("section", "")
-            n_sheet = neighbor.get("sheet_name", "")
-            if section and n_section != section:
-                continue
-            if not section and sheet and n_sheet != sheet:
-                continue
-
-            # 邻居自己也是短名称 → 不可靠，跳过
-            if is_ambiguous_short_name(neighbor):
-                continue
-
-            # 距离衰减：越近的邻居权重越高
-            distance = abs(offset)
-            weight = 1.0 / (1 + distance)
-
-            # 从邻居名称提取2-4字中文品类词
-            n_name = neighbor.get("name", "")
-            cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', n_name)
-            for w in cn_words[:2]:  # 每个邻居最多贡献2个词
-                context_keywords.append((w, weight))
-
-        # 汇总关键词：按权重排序，取top3
-        if context_keywords:
-            kw_scores = {}
-            for kw, w in context_keywords:
-                kw_scores[kw] = kw_scores.get(kw, 0) + w
-            sorted_kws = sorted(kw_scores.items(), key=lambda x: -x[1])
-            item["_context_hints"] = [kw for kw, _ in sorted_kws[:3]]
-
-    # 第二轮补充：频率先验兜底（没有邻居上下文的短名称，用历史统计）
-    priors = _load_short_name_priors()
-    if priors:
-        prior_injected = 0
-        for item in items:
-            if (item.get("_is_ambiguous_short")
-                    and not item.get("_context_hints")):
-                prior_key = (item.get("name", "").strip(),
-                             item.get("specialty", ""))
-                prior_family = priors.get(prior_key)
-                if prior_family:
-                    item["_prior_family"] = prior_family
-                    prior_injected += 1
-        if prior_injected:
-            logger.info(f"频率先验兜底: {prior_injected}条短名称获得历史统计提示")
-
 
 # ======== 短名称频率先验加载 ========
 _SHORT_NAME_PRIORS = None  # 懒加载缓存

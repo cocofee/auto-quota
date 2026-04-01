@@ -1,4 +1,5 @@
 from src.bill_cleaner import clean_bill_items
+from src.canonical_features import build_canonical_features
 from src.text_parser import TextParser
 
 
@@ -142,6 +143,17 @@ def test_parse_canonical_extracts_metal_flexible_conduit_and_system():
     assert features["canonical_name"] == "金属软管"
 
 
+def test_parse_canonical_treats_electrical_conduit_terms_as_conduit_family():
+    parser = TextParser()
+    features = parser.parse_canonical("波纹电线管敷设 内径(mm) ≤32", specialty="C4")
+
+    assert features["entity"] == "配管"
+    assert features["family"] == "conduit_raceway"
+    assert features["system"] == "电气"
+    assert features["canonical_name"] == "配管"
+    assert features["cable_type"] == ""
+
+
 def test_parse_canonical_extracts_fire_traits_for_sprinkler_and_alarm_valve():
     parser = TextParser()
 
@@ -279,10 +291,12 @@ def test_text_parser_extracts_named_kg_weight_and_distribution_box_defaults():
 
     heater = parser.parse("暖风机安装 重量(kg以内) 160")
     box = parser.parse_canonical("配电箱 1AP1", specialty="C4")
+    wall_box = parser.parse_canonical("配电箱 安装方式:明装", specialty="C4")
     faucet = parser.parse("感应式水龙头")
 
     assert heater["weight_t"] == 0.16
-    assert box["install_method"] == "落地"
+    assert box["install_method"] == ""
+    assert wall_box["install_method"] == "明装"
     assert faucet["dn"] == 15
 
 
@@ -294,3 +308,35 @@ def test_parse_canonical_distinguishes_pipe_support_and_bridge_support_family():
     assert pipe_support["entity"] == "支吊架"
     assert pipe_support["family"] == "pipe_support"
     assert bridge_support["family"] == "bridge_support"
+
+
+def test_build_canonical_features_unifies_structured_feature_fields():
+    features = build_canonical_features(
+        "电缆敷设 沿桥架及穿管敷设 壁挂接线盒",
+        params={
+            "install_method": "壁挂",
+            "laying_method": "沿桥架及穿管敷设",
+            "box_mount_mode": "壁挂式",
+            "connection": "丝扣连接",
+            "support_action": "制作与安装",
+        },
+        specialty="C4",
+    ).to_dict()
+
+    assert features["install_method"] == "挂壁"
+    assert features["laying_method"] == "桥架/穿管"
+    assert features["box_mount_mode"] == "悬挂/嵌入式"
+    assert features["connection"] == "螺纹连接"
+    assert features["support_action"] == "制作安装"
+    assert "挂壁" in features["traits"]
+    assert "螺纹连接" in features["traits"]
+
+
+def test_build_canonical_features_normalizes_box_mount_from_install_method():
+    features = build_canonical_features(
+        "配电箱 落地安装",
+        params={"install_method": "落地"},
+        specialty="C4",
+    ).to_dict()
+
+    assert features["box_mount_mode"] == "落地式"

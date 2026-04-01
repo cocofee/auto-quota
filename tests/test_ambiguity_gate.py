@@ -111,3 +111,37 @@ def test_arbitrated_candidate_without_gap_still_requires_reasoning():
     assert decision.is_ambiguous is True
     assert decision.reason == "arbitrated_small_gap"
     assert decision.arbitration_applied is True
+
+
+def test_accept_head_can_allow_fastpath_when_enabled(monkeypatch):
+    monkeypatch.setattr("config.CGR_ACCEPT_HEAD_ENABLED", True)
+    monkeypatch.setattr("config.CGR_ACCEPT_THRESHOLD", 0.62)
+    monkeypatch.setattr("config.CGR_MIN_TOP1_PROB", 0.45)
+    decision = analyze_ambiguity(
+        [
+            {
+                "quota_id": "C10-1-1",
+                "param_match": True,
+                "param_score": 0.81,
+                "rerank_score": 0.70,
+                "cgr_accept_score": 0.88,
+                "cgr_accept": True,
+                "cgr_probability": 0.71,
+                "cgr_prob_gap_top2": 0.42,
+            },
+            {
+                "quota_id": "C10-1-2",
+                "param_match": True,
+                "param_score": 0.72,
+                "rerank_score": 0.69,
+                "cgr_accept_score": 0.88,
+                "cgr_accept": True,
+                "cgr_probability": 0.29,
+            },
+        ],
+        route_profile={"route": "semantic_description"},
+    )
+
+    assert decision.can_fastpath is True
+    assert decision.is_ambiguous is False
+    assert decision.reason == "accept_head_confident"

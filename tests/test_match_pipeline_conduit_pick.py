@@ -93,3 +93,69 @@ def test_pick_explicit_plastic_sleeve_candidate_skips_non_sleeve_items():
     picked = _pick_explicit_plastic_sleeve_candidate(bill_text, candidates)
 
     assert picked is None
+
+
+def test_pick_category_safe_candidate_prefers_cast_iron_drain_pipe_over_composite_pipe():
+    item = {
+        "name": "铸铁管",
+        "description": "安装部位:室内 介质:污水、废水 材质、规格:机制铸铁管 Dn65 连接形式:机械接口",
+    }
+    candidates = [
+        {"name": "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 65", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "给排水管道 室内柔性铸铁排水管(机械接口) 公称直径(mm以内) 75", "param_score": 0.7, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert "柔性铸铁排水管" in picked["name"]
+
+
+def test_pick_category_safe_candidate_prefers_general_steel_sleeve_over_waterproof_sleeve():
+    item = {
+        "name": "套管",
+        "description": "名称:钢套管 部位:穿墙钢套管 规格:DN25 其他:套管制作及安装",
+    }
+    candidates = [
+        {"name": "刚性防水套管制作 介质管道公称直径(mm以内) 32", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "一般钢套管制作安装 介质管道公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert "一般钢套管" in picked["name"]
+
+
+def test_pick_category_safe_candidate_prefers_hole_blocking_over_sleeve_family():
+    item = {
+        "name": "套管",
+        "description": "名称:堵洞 规格:介质管径综合考虑",
+    }
+    candidates = [
+        {"name": "刚性防水套管制作 介质管道公称直径(mm以内) 200", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "堵洞(公称直径200mm以内)", "param_score": 0.7, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert "堵洞" in picked["name"]
+
+
+def test_pick_category_safe_candidate_prefers_pipe_run_over_pipe_fitting():
+    item = {
+        "name": "复合管",
+        "description": (
+            "1.安装部位:室内 "
+            "2.介质:给水 "
+            "3.材质、规格:钢塑复合压力给水管 DN25 "
+            "4.连接形式:电磁感应热熔"
+        ),
+    }
+    candidates = [
+        {"name": "低压管件 金属骨架复合管件（热熔焊） 管外径（mm以内） 25", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "给排水管道 室内钢塑复合管(热熔连接) 公称直径(mm以内) 25", "param_score": 0.8, "rerank_score": 0.6},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert "钢塑复合管" in picked["name"]
+    assert "管件" not in picked["name"]

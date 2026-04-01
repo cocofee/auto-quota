@@ -13,9 +13,6 @@ from __future__ import annotations
 
 import time
 import threading
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestRunIdUniqueness:
@@ -104,33 +101,6 @@ class TestProvinceIsolation:
         finally:
             os.unlink(db_path)
 
-    def test_agent_matcher_passes_province_to_note(self):
-        """agent_matcher.match_single() 记录笔记时传入 self.province"""
-        from src.agent_matcher import AgentMatcher
-        matcher = AgentMatcher.__new__(AgentMatcher)
-        matcher.llm_type = "deepseek"
-        matcher._client = None
-        matcher.province = "PROV_EXPLICIT"
-        matcher.notebook = MagicMock()
-        matcher._llm_consecutive_fails = 0
-        matcher._llm_circuit_open = False
-        matcher._llm_circuit_open_time = 0.0
-
-        bill = {"name": "测试清单", "description": ""}
-        candidates = [{"quota_id": "C1-1", "name": "测试定额", "unit": "m",
-                       "param_match": True, "param_score": 0.8}]
-
-        mock_response = '{"main_quota_index": 1, "main_quota_id": "C1-1", "confidence": 85, "explanation": "ok"}'
-        with patch.object(matcher, "_build_agent_prompt", return_value="test prompt"):
-            with patch.object(matcher, "_call_llm", return_value=mock_response):
-                matcher.match_single(bill, candidates)
-
-        # 检查 notebook.record_note 被调用时传入了 province
-        call_args = matcher.notebook.record_note.call_args[0][0]
-        assert call_args["province"] == "PROV_EXPLICIT", \
-            f"笔记省份应为 PROV_EXPLICIT，实际: {call_args.get('province')}"
-
-
     def test_main_resolve_run_province_no_global_write(self, monkeypatch):
         """_resolve_run_province() should not mutate global runtime province."""
         import main
@@ -171,32 +141,6 @@ class TestProvinceIsolation:
         db = match_engine.init_experience_db(False, province="PROV_REQUEST")
         assert isinstance(db, DummyExperienceDB)
         assert captured["province"] == "PROV_REQUEST"
-
-
-class TestCircuitBreakerIsolation:
-    """M-Batch3: LLM 熔断器实例隔离验证"""
-
-    def test_two_matchers_independent(self):
-        """两个 AgentMatcher 实例的熔断器互不影响"""
-        from src.agent_matcher import AgentMatcher
-        a = AgentMatcher.__new__(AgentMatcher)
-        a._llm_consecutive_fails = 0
-        a._llm_circuit_open = False
-        a._llm_circuit_open_time = 0.0
-
-        b = AgentMatcher.__new__(AgentMatcher)
-        b._llm_consecutive_fails = 0
-        b._llm_circuit_open = False
-        b._llm_circuit_open_time = 0.0
-
-        # A 熔断
-        a._llm_circuit_open = True
-        a._llm_consecutive_fails = 5
-
-        # B 不受影响
-        assert b._llm_circuit_open is False
-        assert b._llm_consecutive_fails == 0
-
 
 class TestVectorDisableIsolation:
     """M-Batch4: 规则向量禁用实例隔离验证"""

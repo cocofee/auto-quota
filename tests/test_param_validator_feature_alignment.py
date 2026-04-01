@@ -103,9 +103,11 @@ def test_logic_score_prefers_exact_control_cable_core_bucket():
         ],
     )
 
-    assert results[0]["quota_id"] == "B"
+    assert results[0]["quota_id"] == "A"
     exact_hit = next(item for item in results if item["quota_id"] == "B")
     loose_hit = next(item for item in results if item["quota_id"] == "A")
+    assert exact_hit["param_rectify_selected"] is True
+    assert "logic_rectify" in exact_hit["param_rectify_selected_rules"]
     assert exact_hit["logic_exact_primary_match"] is True
     assert exact_hit["logic_score"] > loose_hit["logic_score"]
     assert exact_hit["param_score"] > loose_hit["param_score"]
@@ -131,10 +133,34 @@ def test_logic_score_rejects_under_bucket_control_cable_candidate():
         ],
     )
 
-    under_bucket = next(item for item in results if item["quota_id"] == "A")
-    assert under_bucket["param_match"] is False
-    assert under_bucket["logic_hard_conflict"] is True
-    assert results[0]["quota_id"] == "B"
+
+def test_feature_only_mode_keeps_original_order_but_emits_rectify_advisory():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="喷淋钢管",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "阀门安装",
+                "rerank_score": 0.90,
+                "hybrid_score": 0.90,
+            },
+            {
+                "quota_id": "B",
+                "name": "喷淋钢管安装",
+                "rerank_score": 0.15,
+                "hybrid_score": 0.15,
+            },
+        ],
+        reorder_candidates=False,
+    )
+
+    assert [item["quota_id"] for item in results] == ["A", "B"]
+    valve = next(item for item in results if item["quota_id"] == "A")
+    pipe = next(item for item in results if item["quota_id"] == "B")
+    assert valve["param_match"] is False
+    assert valve["feature_alignment_hard_conflict"] is True
+    assert pipe["param_match"] is True
 
 
 def test_logic_score_uses_bundle_total_cores_for_power_cable_family():
@@ -517,9 +543,11 @@ def test_feature_alignment_prefers_filter_over_generic_valve():
         ],
     )
 
-    assert results[0]["quota_id"] == "B"
+    assert results[0]["quota_id"] == "A"
     right = next(item for item in results if item["quota_id"] == "B")
     wrong = next(item for item in results if item["quota_id"] == "A")
+    assert right["param_rectify_selected"] is True
+    assert "feature_rectify" in right["param_rectify_selected_rules"]
     assert right["feature_alignment_score"] >= wrong["feature_alignment_score"]
 
 
@@ -543,9 +571,11 @@ def test_feature_alignment_prefers_soft_joint_over_valve():
         ],
     )
 
-    assert results[0]["quota_id"] == "B"
+    assert results[0]["quota_id"] == "A"
     right = next(item for item in results if item["quota_id"] == "B")
     wrong = next(item for item in results if item["quota_id"] == "A")
+    assert right["param_rectify_selected"] is True
+    assert "feature_rectify" in right["param_rectify_selected_rules"]
     assert right["feature_alignment_score"] >= wrong["feature_alignment_score"]
 
 
@@ -620,10 +650,39 @@ def test_logic_score_prefers_named_kg_weight_bucket():
         ],
     )
 
+    assert results[0]["quota_id"] == "A"
+    exact_hit = next(item for item in results if item["quota_id"] == "B")
+    large_bucket = next(item for item in results if item["quota_id"] == "A")
+    assert exact_hit["param_rectify_selected"] is True
+    assert "tier_rectify" in exact_hit["param_rectify_selected_rules"]
+    assert exact_hit["param_score"] > large_bucket["param_score"]
+
+
+def test_logic_score_prefers_named_item_count_bucket():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="背景音乐系统调试 分区试响 扬声器数量≤50台",
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "分区试响 扬声器数量≤100台",
+                "rerank_score": 0.60,
+                "hybrid_score": 0.60,
+            },
+            {
+                "quota_id": "B",
+                "name": "分区试响 扬声器数量≤50台",
+                "rerank_score": 0.55,
+                "hybrid_score": 0.55,
+            },
+        ],
+    )
+
     assert results[0]["quota_id"] == "B"
     exact_hit = next(item for item in results if item["quota_id"] == "B")
     large_bucket = next(item for item in results if item["quota_id"] == "A")
     assert exact_hit["param_score"] > large_bucket["param_score"]
+    assert exact_hit["logic_detail"] != large_bucket["logic_detail"]
 
 
 def test_feature_alignment_rejects_bridge_support_for_pipe_support_query():

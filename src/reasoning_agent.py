@@ -3,13 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from src.ambiguity_gate import analyze_ambiguity
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+from src.utils import safe_float
 
 
 def _normalize_text(value) -> str:
@@ -122,10 +116,10 @@ class ReasoningAgent:
                 quota_id=_normalize_text(candidate.get("quota_id")),
                 name=_normalize_text(candidate.get("name")),
                 unit=_normalize_text(candidate.get("unit")),
-                param_score=_safe_float(candidate.get("param_score"), 0.0),
-                rerank_score=_safe_float(
+                param_score=safe_float(candidate.get("param_score"), 0.0),
+                rerank_score=safe_float(
                     candidate.get("rerank_score", candidate.get("hybrid_score", 0.0)), 0.0),
-                logic_score=_safe_float(candidate.get("logic_score"), 0.0),
+                logic_score=safe_float(candidate.get("logic_score"), 0.0),
                 entity=_normalize_text(features.get("entity")),
                 canonical_name=_normalize_text(features.get("canonical_name")),
                 system=_normalize_text(features.get("system")),

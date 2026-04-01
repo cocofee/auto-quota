@@ -1,8 +1,10 @@
 from pathlib import Path
 import uuid
+import json
 
 from src.candidate_feature_store import CandidateFeatureStore
 from src.candidate_canonicalizer import build_candidate_canonical_features
+from db.sqlite import connect as _db_connect
 
 
 def _make_test_db_path() -> Path:
@@ -54,3 +56,36 @@ def test_build_candidate_canonical_features_uses_store_cache():
 
     assert loaded["entity"] == "桥架"
     assert loaded["system"] == "电气"
+
+
+def test_candidate_feature_store_ignores_legacy_cache_keys():
+    db_path = _make_test_db_path()
+    store = CandidateFeatureStore(db_path=db_path)
+    candidate = {
+        "quota_id": "C4-12-177",
+        "name": "波纹电线管敷设 内径(mm) ≤32",
+    }
+    conn = _db_connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO candidate_features (
+                province, cache_key, quota_id, name, description,
+                canonical_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "测试省",
+                "quota:C4-12-177",
+                candidate["quota_id"],
+                candidate["name"],
+                "",
+                json.dumps({"entity": "电缆", "family": "cable_family"}, ensure_ascii=False),
+                0.0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert store.get("测试省", candidate) is None

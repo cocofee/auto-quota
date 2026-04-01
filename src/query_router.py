@@ -106,6 +106,9 @@ def build_query_route_profile(
             canonical_features.get("entity"),
             canonical_features.get("canonical_name"),
             canonical_features.get("system"),
+            context_prior.get("primary_subject"),
+            " ".join(context_prior.get("decisive_terms", []) or []),
+            context_prior.get("noise_marker"),
             " ".join(context_prior.get("context_hints", []) or []),
         )
         if v
@@ -153,5 +156,8 @@ def build_query_route_profile(
         "is_material_query": is_material_query,
         "is_ambiguous_short": is_ambiguous_short,
         "chinese_len": chinese_len,
+        "primary_subject": str(context_prior.get("primary_subject") or ""),
+        "decisive_terms": list(context_prior.get("decisive_terms", []) or [])[:4],
+        "noise_marker": str(context_prior.get("noise_marker") or ""),
         "context": context_text[:120],
     }

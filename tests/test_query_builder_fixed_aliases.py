@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 
-from src.query_builder import _apply_synonyms, build_primary_query_profile, build_quota_query
+from src.query_builder import (
+    _append_terms_with_budget,
+    _apply_synonyms,
+    _query_text_len,
+    build_primary_query_profile,
+    build_quota_query,
+)
 from src.text_parser import TextParser
 
 
@@ -82,3 +88,18 @@ def test_build_quota_query_keeps_short_subject_ahead_of_spec_token():
 
     assert query.split()[0] != "DN32"
     assert "大便槽冲洗管" in query or "大便冲洗管" in query
+
+
+def test_append_terms_with_budget_skips_low_value_terms_and_caps_growth():
+    base = "背景音乐系统调试"
+    result = _append_terms_with_budget(
+        base,
+        ["安装", "含", "综合", "附件", "扬声器数量≤50台", "电气", "分区试响"],
+        budget_chars=4,
+    )
+
+    assert "安装" not in result
+    assert "含" not in result
+    assert "综合" not in result
+    assert "附件" not in result
+    assert _query_text_len(result) - _query_text_len(base) <= 4

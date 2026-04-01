@@ -3,13 +3,7 @@ from dataclasses import asdict, dataclass
 import config
 
 from src.policy_engine import PolicyEngine
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+from src.utils import safe_float
 
 
 def _result_quota_signature(result: dict | None) -> tuple[str, ...]:
@@ -48,7 +42,7 @@ def _has_backup_conflict(candidates: list[dict],
     for backup in (exp_backup, rule_backup):
         if not backup:
             continue
-        backup_conf = _safe_float(backup.get("confidence"), 0.0)
+        backup_conf = safe_float(backup.get("confidence"), 0.0)
         if backup_conf < config.CONFIDENCE_YELLOW:
             continue
         backup_sig = _result_quota_signature(backup)
@@ -99,7 +93,7 @@ def analyze_ambiguity(candidates: list[dict],
 
     top = candidates[0]
     top_id = str(top.get("quota_id", "")).strip()
-    top_score = _safe_float(top.get("param_score"), 0.0)
+    top_score = safe_float(top.get("param_score"), 0.0)
     top_has_hard_conflict = bool(
         top.get("feature_alignment_hard_conflict") or top.get("logic_hard_conflict")
     )
@@ -170,6 +164,48 @@ def analyze_ambiguity(candidates: list[dict],
             arbitration_applied=arbitration_applied,
         )
 
+    if (
+        config.CGR_ACCEPT_HEAD_ENABLED
+        and top.get("cgr_accept_score") is not None
+        and top.get("cgr_probability") is not None
+    ):
+        accept_score = safe_float(top.get("cgr_accept_score"), 0.0)
+        top_probability = safe_float(top.get("cgr_probability"), 0.0)
+        gap = safe_float(top.get("cgr_prob_gap_top2"), 0.0)
+        if (
+            bool(top.get("cgr_accept"))
+            and accept_score >= config.CGR_ACCEPT_THRESHOLD
+            and top_probability >= config.CGR_MIN_TOP1_PROB
+        ):
+            return AmbiguityDecision(
+                can_fastpath=True,
+                is_ambiguous=False,
+                reason="accept_head_confident",
+                top_quota_id=top_id,
+                top_param_score=top_score,
+                top_score_gap=gap,
+                candidates_count=len(candidates),
+                conflict_with_backup=False,
+                route=route,
+                require_final_review=arbitration_applied,
+                risk_level="medium" if arbitration_applied else "low",
+                arbitration_applied=arbitration_applied,
+            )
+        return AmbiguityDecision(
+            can_fastpath=False,
+            is_ambiguous=True,
+            reason="accept_head_reject",
+            top_quota_id=top_id,
+            top_param_score=top_score,
+            top_score_gap=gap,
+            candidates_count=len(candidates),
+            conflict_with_backup=False,
+            route=route,
+            require_final_review=True,
+            risk_level="high",
+            arbitration_applied=arbitration_applied,
+        )
+
     if top_score < policy.agent_fastpath_score:
         return AmbiguityDecision(
             can_fastpath=False,
@@ -220,9 +256,9 @@ def analyze_ambiguity(candidates: list[dict],
             arbitration_applied=arbitration_applied,
         )
 
-    top1_rs = _safe_float(
+    top1_rs = safe_float(
         candidates[0].get("rerank_score", candidates[0].get("hybrid_score", 0.0)), 0.0)
-    top2_rs = _safe_float(
+    top2_rs = safe_float(
         candidates[1].get("rerank_score", candidates[1].get("hybrid_score", 0.0)), 0.0)
     gap = top1_rs - top2_rs
     if gap < policy.agent_fastpath_score_gap:

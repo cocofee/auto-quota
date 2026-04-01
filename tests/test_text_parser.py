@@ -16,6 +16,18 @@ from src.text_parser import TextParser
 parser = TextParser()
 
 
+def test_parse_canonical_distribution_box_with_spd_note_stays_distribution_box():
+    result = parser.parse_canonical(
+        "落地式配电箱 名称：水泵控制箱；型号规格：箱体外壳采用2mm厚304不锈钢材质，"
+        "浪涌保护器应符合当地气象部门要求；安装方式：落地安装。"
+    )
+
+    assert result["entity"] == "配电箱"
+    assert "配电箱" in result["canonical_name"]
+    assert "浪涌保护器" not in result["canonical_name"]
+    assert result["family"] == "electrical_box"
+
+
 class TestExtractDN:
     """DN（公称直径）提取测试"""
 
@@ -247,6 +259,93 @@ class TestExtractMaterial:
         result = parser.parse("矿物绝缘电力电缆 型号:BTLY-3x185+2x95")
         assert result["material"] == "矿物绝缘电缆"
 
+    def test_extract_power_cable_type_and_model(self):
+        """电力电缆应能提取家族、基础型号和复合敷设方式"""
+        result = parser.parse("阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位:室内穿管或桥架")
+        assert result["cable_type"] == "电力电缆"
+        assert result["wire_type"] == "BPYJV"
+        assert result["laying_method"] == "桥架/穿管"
+
+    def test_extract_conduit_type_and_layout_from_config_form(self):
+        result = parser.parse("配管 材质:JDG 规格:20 配置形式:暗敷")
+        assert result["conduit_type"] == "JDG"
+        assert result["laying_method"] == "暗配"
+
+    def test_extract_control_cable_head_type_and_model(self):
+        """控制电缆头应区分中间头/终端头并保留基础型号"""
+        result = parser.parse("控制电缆头制作安装 NH-KVV-3x1.5 中间头")
+        assert result["cable_type"] == "控制电缆"
+        assert result["cable_head_type"] == "中间头"
+        assert result["wire_type"] == "KVV"
+
+    def test_extract_mineral_cable_type_and_model(self):
+        """矿物绝缘电缆应保留线缆家族锚点"""
+        result = parser.parse("矿物绝缘电力电缆 型号:BTLY-3x185+2x95")
+        assert result["cable_type"] == "矿物绝缘电缆"
+        assert result["wire_type"] == "BTLY"
+
+    def test_extract_conduit_type_code(self):
+        """配管应识别导管类型代号"""
+        result = parser.parse("套接紧定式镀锌钢导管(JDG)敷设 JDG20")
+        assert result["conduit_type"] == "JDG"
+        assert result["conduit_dn"] == 20
+
+    def test_extract_electrical_conduit_noun_does_not_trigger_cable_type(self):
+        result = parser.parse("波纹电线管敷设 内径(mm) ≤32")
+        assert result["dn"] == 32
+        assert "cable_type" not in result
+
+    def test_extract_conduit_type_ignores_pvc_accessory_noise_without_conduit_context(self):
+        result = parser.parse_canonical(
+            "玻璃隔断 钢化夹胶玻璃 PVC挡水条 包含门及加工、运输、安装、锁具、把手、五金配件等全部施工内容"
+        )
+        assert result["conduit_type"] == ""
+
+    def test_extract_distribution_box_mount_mode(self):
+        """配电箱应区分落地式和悬挂/嵌入式"""
+        wall_box = parser.parse("成套配电箱安装 悬挂、嵌入式(半周长) 1.5m")
+        floor_box = parser.parse("控制柜 GGD 落地式")
+        ambiguous_box = parser.parse("配电箱 1AP1")
+        assert wall_box["box_mount_mode"] == "悬挂/嵌入式"
+        assert floor_box["box_mount_mode"] == "落地式"
+        assert "box_mount_mode" not in ambiguous_box
+
+    def test_extract_outlet_grounding(self):
+        grounded = parser.parse("单相二三孔安全型暗装插座")
+        plain = parser.parse("单相两孔插座")
+        weak_current = parser.parse("信息插座 单口")
+        assert grounded["outlet_grounding"] == "带接地"
+        assert plain["outlet_grounding"] == "不带接地"
+        assert "outlet_grounding" not in weak_current
+
+    def test_extract_outlet_gangs(self):
+        combo = parser.parse("插座 名称:单相两孔加三孔插座 安装方式:暗装")
+        triple = parser.parse("插座暗装 单相 三联")
+        aircon = parser.parse("单相三孔安全型挂机空调暗装插座")
+        weak_current = parser.parse("信息插座 单口")
+        assert combo["switch_gangs"] == 2
+        assert triple["switch_gangs"] == 3
+        assert "switch_gangs" not in aircon
+        assert "switch_gangs" not in weak_current
+
+    def test_extract_switch_gangs_from_short_switch_control_phrases(self):
+        single = parser.parse("单联单控 安装方式:墙面暗装")
+        double = parser.parse("双联单控 安装方式:墙面暗装")
+        dual = parser.parse("双联双控 安装方式:墙面暗装")
+
+        assert single["switch_gangs"] == 1
+        assert double["switch_gangs"] == 2
+        assert dual["switch_gangs"] == 2
+
+    def test_extract_bridge_type_and_valve_connection_family(self):
+        """桥架细类和阀门连接家族应可结构化提取"""
+        bridge = parser.parse("钢制槽式桥架 规格:200x100")
+        valve = parser.parse("螺纹法兰阀门 类型:软密封闸阀 规格:DN100")
+        assert bridge["bridge_type"] == "槽式"
+        assert bridge["bridge_wh_sum"] == 300.0
+        assert "cable_section" not in bridge
+        assert valve["valve_connection_family"] == "螺纹法兰阀"
+
 
 class TestExtractConnection:
     """连接方式提取测试"""
@@ -294,6 +393,11 @@ class TestEdgeCases:
         """规格：65 无管道上下文时不提取"""
         result = parser.parse("配电箱 规格：65")
         assert result.get("dn") is None
+
+    def test_non_cable_text_should_not_get_cable_cores(self):
+        """非电缆文本不应出现默认芯数污染。"""
+        result = parser.parse("风机盘管安装 吊顶式")
+        assert result.get("cable_cores") is None
 
     def test_exclude_3d_dimension(self):
         """排除三维尺寸 600x800x300（不是截面）"""
@@ -368,6 +472,20 @@ class TestHalfPerimeter:
         result = parser.parse("成套配电箱安装 嵌入式(半周长m以内) 1.5")
         assert result["half_perimeter"] == 1500.0
 
+
+class TestThirdBatchAnchors:
+    def test_extract_third_batch_installation_anchors(self):
+        support = parser.parse("管道支架 详见图集03S402-77~79 单件重量5kg")
+        sanitary = parser.parse("感应式小便器 壁挂式 埋入式感应开关")
+        lamp = parser.parse("LED线形灯 嵌入式安装")
+
+        assert support["support_scope"] == "管道支架"
+        assert support["support_action"] == "制作"
+        assert sanitary["sanitary_subtype"] == "小便器"
+        assert sanitary["sanitary_mount_mode"] == "挂墙式"
+        assert sanitary["sanitary_flush_mode"] == "感应"
+        assert lamp["lamp_type"] == "灯带"
+
     def test_guangdong_mm_format(self):
         """广东mm格式：接线箱半周长(mm以内) 700 → 700mm"""
         result = parser.parse("接线箱明装 接线箱半周长(mm以内) 700")
@@ -434,6 +552,98 @@ class TestHalfPerimeter:
     # --- 默认值 ---
 
     def test_default_value(self):
-        """无规格的配电箱默认1500mm"""
+        """无规格的配电箱不再默认套半周长1500mm。"""
         result = parser.parse("照明配电箱安装")
-        assert result["half_perimeter"] == 1500.0
+        assert "half_perimeter" not in result
+
+
+def test_parse_explicit_composite_pipe_material_and_connection():
+    text = (
+        "复合管 "
+        "1.安装部位:室内 "
+        "2.介质:给水 "
+        "3.材质、规格:钢塑复合压力给水管 1.6MPA DN25 "
+        "4.连接形式:电磁感应热熔"
+    )
+    result = parser.parse(text)
+
+    assert result.get("dn") == 25
+    assert result.get("material") == "钢塑复合管"
+    assert result.get("connection") == "热熔连接"
+
+
+def test_parse_pipe_hot_melt_does_not_trigger_sanitary_sensor_mode():
+    text = (
+        "复合管 "
+        "材质、规格:钢塑复合压力给水管 DN25 "
+        "连接形式:电磁感应热熔"
+    )
+    result = parser.parse(text)
+
+    assert result.get("sanitary_flush_mode") is None
+
+
+def test_parse_extracts_dn_from_jdg_spec_context():
+    result = parser.parse("配管 材质：JDG 规格：20 配置形式:暗敷")
+
+    assert result.get("dn") == 20
+
+
+def test_parse_extracts_cable_section_from_negative_spec_format():
+    result = parser.parse("配线 材质:铜芯 规格:-2.5 名称:电气配线 型号:ZB-BYJ 配线形式:管内配线")
+
+    assert result.get("cable_section") == 2.5
+
+
+def test_parse_extracts_item_length_from_foundation_elevation():
+    result = parser.parse("整体塔器安装 5m3不锈钢废水罐 基础标高10m以内 设备重量2t")
+
+    assert result.get("item_length") == 10.0
+
+
+def test_parse_extracts_item_length_from_inner_perimeter():
+    result = parser.parse("暗敷管道补贴人工 区域：卫生间（内周长在 12m 以下）")
+
+    assert result.get("item_length") == 12.0
+
+
+def test_parse_extracts_large_side_from_direct_threshold_format():
+    result = parser.parse("碳钢通风管道 形状：矩形风管 规格：大边长mm≤320")
+
+    assert result.get("large_side") == 320.0
+
+
+def test_parse_extracts_half_perimeter_from_box_size_label():
+    result = parser.parse("配电箱移位 箱体尺寸：450*380*90 包含拆除及恢复")
+
+    assert result.get("half_perimeter") == 830.0
+
+
+def test_parse_extracts_item_length_from_eave_height_with_floor_count():
+    result = parser.parse("垂直运输 建筑物檐口高度、层数:58.5m、16层")
+
+    assert result.get("item_length") == 58.5
+
+
+def test_parse_extracts_item_length_from_average_well_depth():
+    result = parser.parse("混凝土井 φ1800 预制装配式混凝土雨水检查井；平均井深2.898m；")
+
+    assert result.get("item_length") == 2.898
+
+
+def test_parse_extracts_item_length_from_spray_radius_range():
+    result = parser.parse("喷泉设备 喷洒半径:0.15-0.3m")
+
+    assert result.get("item_length") == 0.3
+
+
+def test_parse_extracts_item_length_from_pole_height_slash_format():
+    result = parser.parse("常规照明灯 灯杆材质、高度:杆高10/8m Q235钢")
+
+    assert result.get("item_length") == 10.0
+
+
+def test_parse_does_not_infer_item_length_from_plain_mm_height_without_cue():
+    result = parser.parse("石材栏杆、扶手 栏杆的规格:栓船柱，G603荔枝面φ450*900mm高")
+
+    assert result.get("item_length") is None
