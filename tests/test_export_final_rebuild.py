@@ -27,6 +27,17 @@ def _build_source_workbook(path: Path) -> None:
     wb.save(path)
 
 
+def _build_duplicate_code_workbook(path: Path) -> None:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Fire"
+    ws.append(["序号", "编码", "名称", "项目特征", "单位", "工程量"])
+    ws.append([1, "030109001001", "泵1", "", "台", 2])
+    ws.append([2, "030408002001", "控制电缆A", "", "m", 119.3])
+    ws.append([3, "030408002001", "控制电缆B", "", "m", 60])
+    wb.save(path)
+
+
 def test_build_rebuilt_results_from_source_file_recovers_source_row_for_subset(tmp_path):
     source_path = tmp_path / "input.xlsx"
     _build_source_workbook(source_path)
@@ -64,15 +75,13 @@ def test_build_rebuilt_results_from_source_file_recovers_source_row_for_subset(t
     assert rebuilt[0]["bill_item"]["sheet_name"] == "Fire"
 
 
-def test_output_writer_rebuilds_correctly_from_preexisting_wrong_output_template(tmp_path):
+def test_output_writer_ignores_stale_subset_relative_sheet_bill_seq(tmp_path):
     source_path = tmp_path / "input.xlsx"
-    bad_output_path = tmp_path / "bad_output.xlsx"
-    fixed_output_path = tmp_path / "fixed_output.xlsx"
+    output_path = tmp_path / "output.xlsx"
     _build_source_workbook(source_path)
 
     writer = OutputWriter()
-
-    wrong_subset_results = [{
+    subset_results = [{
         "bill_item": {
             "sheet_name": "Fire",
             "sheet_bill_seq": 1,
@@ -90,37 +99,68 @@ def test_output_writer_rebuilds_correctly_from_preexisting_wrong_output_template
         "explanation": "subset old mapping",
         "alternatives": [],
     }]
-    writer.write_results(wrong_subset_results, str(bad_output_path), original_file=str(source_path))
 
-    bad_ws = openpyxl.load_workbook(bad_output_path)["Fire"]
-    assert bad_ws.cell(row=3, column=2).value == "4-4-16"
+    writer.write_results(subset_results, str(output_path), original_file=str(source_path))
 
-    fixed_subset_results = [{
-        "bill_item": {
-            "sheet_name": "Fire",
-            "sheet_bill_seq": 1,
-            "source_row": 6,
-            "code": "030404032001",
-            "name": "端子箱",
-            "unit": "台",
-            "quantity": 17,
+    ws = openpyxl.load_workbook(output_path)["Fire"]
+    assert ws.cell(row=2, column=3).value == "泵1"
+    assert ws.cell(row=3, column=3).value == "泵2"
+    assert ws.cell(row=4, column=3).value == "泵3"
+    assert ws.cell(row=5, column=3).value == "配电箱"
+    assert ws.cell(row=6, column=3).value == "端子箱"
+    assert ws.cell(row=7, column=2).value == "4-4-16"
+    assert ws.cell(row=7, column=3).value == "端子箱安装 户内"
+
+
+def test_output_writer_locator_matching_handles_duplicate_codes_without_source_row(tmp_path):
+    source_path = tmp_path / "input_dup.xlsx"
+    output_path = tmp_path / "output_dup.xlsx"
+    _build_duplicate_code_workbook(source_path)
+
+    writer = OutputWriter()
+    subset_results = [
+        {
+            "bill_item": {
+                "sheet_name": "Fire",
+                "sheet_bill_seq": 1,
+                "code": "030408002001",
+                "name": "控制电缆A",
+                "unit": "m",
+                "quantity": 119.3,
+            },
+            "quotas": [{
+                "quota_id": "4-9-382",
+                "name": "控制缆终端头≤24芯",
+                "unit": "m",
+            }],
+            "confidence": 88,
+            "explanation": "duplicate code A",
+            "alternatives": [],
         },
-        "quotas": [{
-            "quota_id": "4-4-16",
-            "name": "端子箱安装 户内",
-            "unit": "台",
-        }],
-        "confidence": 95,
-        "explanation": "source row rebuild",
-        "alternatives": [],
-    }]
-    writer.write_results(fixed_subset_results, str(fixed_output_path), original_file=str(bad_output_path))
+        {
+            "bill_item": {
+                "sheet_name": "Fire",
+                "sheet_bill_seq": 2,
+                "code": "030408002001",
+                "name": "控制电缆B",
+                "unit": "m",
+                "quantity": 60,
+            },
+            "quotas": [{
+                "quota_id": "4-9-388",
+                "name": "矿物绝缘控制电缆 终端头≤7芯",
+                "unit": "m",
+            }],
+            "confidence": 87,
+            "explanation": "duplicate code B",
+            "alternatives": [],
+        },
+    ]
 
-    fixed_ws = openpyxl.load_workbook(fixed_output_path)["Fire"]
-    assert fixed_ws.cell(row=2, column=3).value == "泵1"
-    assert fixed_ws.cell(row=3, column=3).value == "泵2"
-    assert fixed_ws.cell(row=4, column=3).value == "泵3"
-    assert fixed_ws.cell(row=5, column=3).value == "配电箱"
-    assert fixed_ws.cell(row=6, column=3).value == "端子箱"
-    assert fixed_ws.cell(row=7, column=2).value == "4-4-16"
-    assert fixed_ws.cell(row=7, column=3).value == "端子箱安装 户内"
+    writer.write_results(subset_results, str(output_path), original_file=str(source_path))
+
+    ws = openpyxl.load_workbook(output_path)["Fire"]
+    assert ws.cell(row=3, column=3).value == "控制电缆A"
+    assert ws.cell(row=4, column=2).value == "4-9-382"
+    assert ws.cell(row=5, column=3).value == "控制电缆B"
+    assert ws.cell(row=6, column=2).value == "4-9-388"

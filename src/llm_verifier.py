@@ -624,9 +624,9 @@ class LLMVerifier:
 
     def _confidence_text(self, confidence: int) -> str:
         """生成置信度文本"""
-        if confidence >= 85:
+        if confidence >= config.CONFIDENCE_GREEN:
             return f"★★★推荐({confidence}%)"
-        elif confidence >= 60:
+        elif confidence >= config.CONFIDENCE_YELLOW:
             return f"★★参考({confidence}%)"
         else:
             return f"★待审({confidence}%)"

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+from loguru import logger
 
 
 @dataclass
@@ -75,8 +76,7 @@ def get_active_profile() -> VectorModelProfile:
 
     if key not in _PROFILES:
         # 未知的key，回退到BGE
-        import logging
-        logging.getLogger(__name__).warning(
+        logger.warning(
             f"未知的VECTOR_MODEL_KEY={key}，回退到bge"
         )
         key = "bge"

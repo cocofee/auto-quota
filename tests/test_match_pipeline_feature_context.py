@@ -183,6 +183,27 @@ def test_build_item_context_exposes_unified_plan_aliases(monkeypatch):
     assert context["unified_plan"]["search_aliases"] == ["排气阀安装"]
 
 
+def test_build_item_context_passes_primary_subject_into_unified_planner(monkeypatch):
+    captured = {}
+
+    def fake_plan(**kwargs):
+        captured["context_prior"] = dict(kwargs.get("context_prior") or {})
+        return {"primary_book": "", "preferred_books": [], "hard_books": [], "route_mode": "open"}
+
+    monkeypatch.setattr(match_pipeline, "resolve_plugin_hints", lambda **kwargs: {})
+    monkeypatch.setattr(match_pipeline, "build_unified_search_plan", fake_plan)
+
+    _build_item_context(
+        {
+            "name": "组串式逆变器",
+            "description": "规格型号:150KW 安装点离地高度:屋面支架安装 布置场地:光伏场区 其他技术要求:符合设计及施工规范要求",
+            "context_prior": {},
+        }
+    )
+
+    assert captured["context_prior"]["primary_subject"] == "组串式逆变器"
+
+
 def test_build_classification_can_override_seeded_specialty_with_strong_evidence(monkeypatch):
     def fake_classify(name, desc, section_title=None, province=None, bill_code=None,
                       context_prior=None, canonical_features=None, sheet_name=None):
@@ -210,6 +231,159 @@ def test_build_classification_can_override_seeded_specialty_with_strong_evidence
     assert classification["primary"] == "C12"
     assert classification["route_mode"] == "strict"
     assert classification["hard_book_constraints"] == ["C12"]
+
+
+def test_annotate_candidate_scope_signals_marks_main_install_book():
+    candidates = match_pipeline._annotate_candidate_scope_signals(
+        {"province": "上海市安装工程预算定额(2016)"},
+        [
+            {"quota_id": "03-2-5-38", "name": "衬微晶板"},
+            {"quota_id": "01-12-7-12", "name": "墙饰面 基层 细木工板"},
+        ],
+    )
+
+    assert candidates[0]["candidate_scope_match"] == 1.0
+    assert candidates[0]["candidate_scope_conflict"] is False
+    assert candidates[1]["candidate_scope_match"] == 0.0
+    assert candidates[1]["candidate_scope_conflict"] is True
+
+
+def test_build_classification_backfills_search_books_from_unified_plan_when_classification_is_empty(monkeypatch):
+    def fake_classify(*args, **kwargs):
+        return {"primary": None, "fallbacks": []}
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    classification = _build_classification(
+        {
+            "specialty": "A",
+            "unified_plan": {
+                "primary_book": "A",
+                "preferred_books": ["A"],
+                "hard_books": [],
+                "route_mode": "moderate",
+                "allow_cross_book_escape": True,
+                "reason_tags": ["province_plugin", "seed_specialty"],
+                "plugin_hints": {"source": "manual_curated"},
+            },
+        },
+        name="墙面装饰板",
+        desc="轻钢龙骨 木饰面",
+        section="",
+        province="上海市安装工程预算定额(2016)",
+    )
+
+    assert classification["primary"] == "A"
+    assert classification["candidate_books"] == ["A"]
+    assert classification["search_books"] == ["A"]
+    assert classification["hard_search_books"] == []
+    assert classification["advisory_search_books"] == ["A"]
+    assert classification["route_mode"] == "moderate"
+    assert classification["allow_cross_book_escape"] is True
+    assert classification["routing_evidence"]["A"] == ["unified_plan:province_plugin"]
+
+
+def test_build_classification_does_not_backfill_from_generated_benchmark_plan_only(monkeypatch):
+    def fake_classify(*args, **kwargs):
+        return {"primary": None, "fallbacks": []}
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    classification = _build_classification(
+        {
+            "specialty": "A",
+            "unified_plan": {
+                "primary_book": "A",
+                "preferred_books": ["A"],
+                "hard_books": [],
+                "route_mode": "moderate",
+                "allow_cross_book_escape": True,
+                "reason_tags": ["province_plugin", "seed_specialty"],
+                "plugin_hints": {"source": "generated_benchmark_knowledge"},
+            },
+        },
+        name="墙面装饰板",
+        desc="轻钢龙骨 木饰面",
+        section="",
+        province="上海市安装工程预算定额(2016)",
+    )
+
+    assert classification["primary"] in {"", None}
+    assert classification["search_books"] == []
+
+
+def test_build_classification_prefers_broad_unified_plan_over_soft_standard_route(monkeypatch):
+    def fake_classify(*args, **kwargs):
+        return {
+            "primary": "C11",
+            "fallbacks": ["C4", "C13"],
+            "search_books": ["C11", "C4", "C13"],
+            "route_mode": "moderate",
+            "allow_cross_book_escape": True,
+            "hard_book_constraints": [],
+        }
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    classification = _build_classification(
+        {
+            "unified_plan": {
+                "primary_book": "A",
+                "preferred_books": ["A"],
+                "hard_books": [],
+                "route_mode": "moderate",
+                "allow_cross_book_escape": True,
+                "reason_tags": ["province_plugin", "seed_specialty"],
+                "plugin_hints": {"source": "generated_benchmark_knowledge"},
+            },
+        },
+        name="石材零星项目",
+        desc="灰色石材门槛石",
+        section="",
+        province="上海市安装工程预算定额(2016)",
+    )
+
+    assert classification["primary"] == "A"
+    assert classification["candidate_books"] == ["A"]
+    assert classification["search_books"] == ["A"]
+    assert classification["route_mode"] == "moderate"
+
+
+def test_build_classification_keeps_strict_standard_route_over_broad_unified_plan(monkeypatch):
+    def fake_classify(*args, **kwargs):
+        return {
+            "primary": "C11",
+            "fallbacks": ["C4", "C13"],
+            "search_books": ["C11", "C4", "C13"],
+            "route_mode": "strict",
+            "allow_cross_book_escape": False,
+            "hard_book_constraints": ["C11"],
+        }
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    classification = _build_classification(
+        {
+            "unified_plan": {
+                "primary_book": "A",
+                "preferred_books": ["A"],
+                "hard_books": [],
+                "route_mode": "moderate",
+                "allow_cross_book_escape": True,
+                "reason_tags": ["province_plugin", "seed_specialty"],
+                "plugin_hints": {"source": "generated_benchmark_knowledge"},
+            },
+        },
+        name="石材零星项目",
+        desc="灰色石材门槛石",
+        section="",
+        province="上海市安装工程预算定额(2016)",
+    )
+
+    assert classification["primary"] == "C11"
+    assert classification["search_books"][0] == "C11"
+    assert classification["hard_book_constraints"] == ["C11"]
+    assert classification["hard_search_books"] == ["C11"]
 
 
 def test_build_classification_keeps_seeded_specialty_without_strong_override(monkeypatch):
@@ -255,6 +429,50 @@ def test_build_classification_relaxes_bare_seeded_specialty_without_supporting_c
     assert classification["allow_cross_book_escape"] is True
     assert classification["hard_book_constraints"] == []
     assert classification["routing_evidence"]["C8"] == ["soft_item_specialty"]
+
+
+def test_build_classification_does_not_treat_project_name_as_seed_support():
+    classification = _build_classification(
+        {
+            "specialty": "C8",
+            "context_prior": {
+                "project_name": "普通项目名称",
+                "bill_name": "普通清单标题",
+            },
+        },
+        name="自动排气阀",
+        desc="型号、规格：DN25",
+        section="",
+    )
+
+    assert classification["primary"] == "C8"
+    assert classification["route_mode"] == "moderate"
+    assert classification["hard_book_constraints"] == []
+    assert classification["routing_evidence"]["C8"] == ["soft_item_specialty"]
+
+
+def test_build_classification_drops_incompatible_seeded_specialty_for_province():
+    classification = _build_classification(
+        {"specialty": "C10"},
+        name="给水管",
+        desc="DN32",
+        section="",
+        province="上海市园林工程预算定额(2016)",
+    )
+
+    assert classification["primary"] != "C10"
+
+
+def test_build_classification_drops_standard_seed_in_power_sequence_province():
+    classification = _build_classification(
+        {"specialty": "C4"},
+        name="母线试运",
+        desc="母线电压等级:35kV 电气 高压",
+        section="",
+        province="电力技改序列定额（2020）",
+    )
+
+    assert classification["primary"] in {"", None}
 
 
 def test_build_classification_drops_nonstandard_seeded_specialty_without_support():

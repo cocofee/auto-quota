@@ -47,7 +47,7 @@ ENTITY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("桥架附件", ("桥架弯头", "桥架三通", "桥架四通", "桥架附件")),
     ("桥架", ("桥架", "线槽", "电缆桥架")),
     ("电缆", ("电缆", "电线", "导线", "配线", "电力电缆", "控制电缆", "光缆")),
-    ("配管", ("配管", "钢管敷设", "JDG", "KBG", "SC", "PC", "PVC管", "线管")),
+    ("配管", ("配管", "电气配管", "钢管敷设", "JDG", "KBG", "SC", "PC", "PVC管", "线管", "电线管", "钢导管")),
     ("喷头", ("喷头", "喷淋头")),
     ("报警阀组", ("报警阀组", "报警阀")),
     ("水流指示器", ("水流指示器",)),
@@ -144,6 +144,7 @@ ENTITY_TO_SYSTEM = {
     "电缆": "电气",
     "配管": "电气",
     "配电箱": "电气",
+    "浪涌保护器": "电气",
     "开关插座": "电气",
     "网络设备": "电气",
     "喷头": "消防",
@@ -245,6 +246,8 @@ TRAIT_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("感应开关", ("感应开关", "感应式", "感应")),
     ("脚踏开关", ("脚踏开关", "脚踏式")),
     ("自闭阀", ("自闭阀",)),
+    ("带接地", ("带接地", "带保护极", "保护极", "接地极", "二三极", "二、三极", "二三孔", "二、三孔", "三孔", "五孔", "四孔")),
+    ("不带接地", ("两孔", "二孔", "二极")),
     ("冷水", ("冷水",)),
     ("冷热水", ("冷热水",)),
     ("单嘴", ("单嘴",)),
@@ -307,6 +310,35 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+_SURGE_PROTECTOR_ENTITY_PATTERN = re.compile(
+    r"(?:^|[\s(（\[【])(?:信号|电源|计算机|网络|用户分)?(?:电涌保护器|浪涌保护器|防雷器|避雷器|SPD)(?:安装|调试)?(?:$|[\s)）\]】,，;；])",
+    re.IGNORECASE,
+)
+_SURGE_PROTECTOR_BLOCK_WORDS = (
+    "避雷网",
+    "避雷针",
+    "避雷引下线",
+    "避雷带",
+    "接闪",
+    "避雷装置",
+)
+
+
+def _looks_like_surge_protector_subject(text: str) -> bool:
+    text = (text or "").strip()
+    if not text:
+        return False
+    if any(marker in text for marker in _SURGE_PROTECTOR_BLOCK_WORDS):
+        return False
+    if any(keyword in text for keyword in ("电涌保护器", "浪涌保护器", "信号避雷器", "电源避雷器", "防雷器")):
+        return True
+    if "SPD" in text.upper():
+        return True
+    if "避雷器" in text:
+        return True
+    return bool(_SURGE_PROTECTOR_ENTITY_PATTERN.search(text))
+
+
 def _pick_by_rules(text: str, rules: list[tuple[str, tuple[str, ...]]]) -> str:
     if not text:
         return ""
@@ -331,6 +363,27 @@ def _normalize_by_rules(value: str, text: str,
 
 def detect_entity(text: str) -> str:
     text = text or ""
+    if any(
+        keyword in text
+        for keyword in (
+            "波纹电线管", "镀锌电线管", "金属电线管", "PVC电线管",
+            "电线管", "钢导管", "紧定式钢导管", "扣压式钢导管",
+        )
+    ):
+        return "配管"
+    # 给排水清单经常写成"PVC-U塑料管/PP-R压力管/静音管/防水套管"，
+    # 如果 bill 侧实体为空，后续 family/entity gate 无法生效。
+    if any(keyword in text for keyword in ("防水套管", "刚性防水套管", "柔性防水套管", "穿墙管", "套管")):
+        return "套管"
+    if any(
+        keyword in text
+        for keyword in (
+            "给水管", "排水管", "雨水管", "冷凝水管", "污、废水管", "污废水管",
+            "PVC-U塑料管", "PPR管", "PP-R", "塑料管", "复合静音管", "静音管",
+            "内螺旋管", "压力管",
+        )
+    ):
+        return "管道"
     if ("消火栓" in text or "消防栓" in text) and not any(
         keyword in text for keyword in ("钢管", "管道", "立管", "支管")
     ):
@@ -340,6 +393,8 @@ def detect_entity(text: str) -> str:
         text,
         maxsplit=1,
     )[0].strip()
+    if _looks_like_surge_protector_subject(primary_text):
+        return "浪涌保护器"
     picked = _pick_by_rules(primary_text, ENTITY_RULES)
     if picked:
         return picked
@@ -448,6 +503,12 @@ def detect_family(text: str,
     if entity in {"过滤器", "水表", "倒流防止器", "软接头", "减压器"}:
         return "valve_accessory"
 
+    if entity == "管道":
+        return "pipe_run"
+
+    if entity == "套管":
+        return "pipe_sleeve"
+
     if entity == "风口":
         return "air_terminal"
 
@@ -465,6 +526,9 @@ def detect_family(text: str,
 
     if entity == "配电箱":
         return "electrical_box"
+
+    if entity == "浪涌保护器":
+        return "protection_device"
 
     if entity in {"配管", "金属软管", "接线盒"}:
         return "conduit_raceway"
@@ -494,8 +558,13 @@ def build_specs(params: dict[str, Any] | None) -> dict[str, Any]:
     params = params or {}
     keys = (
         "cable_bundle", "shape", "elevator_type", "cable_type",
+        "cable_head_type", "conduit_type", "wire_type",
+        "box_mount_mode", "bridge_type", "valve_connection_family",
         "conduit_dn", "install_method", "laying_method", "voltage_level",
-        "valve_type", "support_material", "surface_process", "sanitary_subtype",
+        "valve_type", "support_material", "support_scope", "support_action",
+        "surface_process", "sanitary_subtype", "sanitary_mount_mode",
+        "sanitary_flush_mode", "sanitary_water_mode", "sanitary_nozzle_mode",
+        "sanitary_tank_mode", "lamp_type", "outlet_grounding",
     )
     return {key: params[key] for key in keys if params.get(key) not in (None, "", [])}
 
@@ -510,12 +579,27 @@ def collect_traits(params: dict[str, Any] | None,
         "shape",
         "elevator_type",
         "cable_type",
+        "cable_head_type",
+        "conduit_type",
+        "wire_type",
+        "box_mount_mode",
+        "bridge_type",
+        "valve_connection_family",
         "voltage_level",
         "laying_method",
         "valve_type",
         "support_material",
+        "support_scope",
+        "support_action",
         "surface_process",
         "sanitary_subtype",
+        "sanitary_mount_mode",
+        "sanitary_flush_mode",
+        "sanitary_water_mode",
+        "sanitary_nozzle_mode",
+        "sanitary_tank_mode",
+        "lamp_type",
+        "outlet_grounding",
     ):
         value = params.get(key)
         if value:

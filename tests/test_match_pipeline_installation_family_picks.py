@@ -486,3 +486,28 @@ def test_pick_explicit_network_device_candidate_prefers_exact_large_port_bucket(
     )
 
     assert picked["name"] == "交换机设备安装、调试 交换机 固定配置 48口"
+
+
+def test_pick_explicit_distribution_box_candidate_rejects_junction_box_and_box_wiring():
+    picked = _pick_explicit_distribution_box_candidate(
+        "\u914d\u7535\u7bb1 \u5b89\u88c5\u65b9\u5f0f:\u660e\u88c5 \u89c4\u683c:600*900*220 8\u56de\u8def",
+        [
+            {
+                "name": "\u63a5\u7ebf\u7bb1\u660e\u88c5 \u534a\u5468\u957f(mm\u4ee5\u5185) 1500",
+                "param_score": 0.99,
+                "rerank_score": 0.99,
+            },
+            {
+                "name": "\u76d8\u3001\u67dc\u3001\u7bb1\u3001\u677f\u914d\u7ebf \u5bfc\u7ebf\u622a\u9762(mm2\u4ee5\u5185) 25",
+                "param_score": 0.98,
+                "rerank_score": 0.98,
+            },
+            {
+                "name": "\u6210\u5957\u914d\u7535\u7bb1\u5b89\u88c5 \u60ac\u6302\u3001\u5d4c\u5165\u5f0f \u534a\u5468\u957f1.5m \u89c4\u683c(\u56de\u8def\u4ee5\u5185) 8",
+                "param_score": 0.65,
+                "rerank_score": 0.55,
+            },
+        ],
+    )
+
+    assert picked["name"] == "\u6210\u5957\u914d\u7535\u7bb1\u5b89\u88c5 \u60ac\u6302\u3001\u5d4c\u5165\u5f0f \u534a\u5468\u957f1.5m \u89c4\u683c(\u56de\u8def\u4ee5\u5185) 8"

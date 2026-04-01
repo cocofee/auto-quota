@@ -15,6 +15,8 @@ def test_section_and_family_build_strict_book_constraints():
     assert result["allow_cross_book_escape"] is False
     assert result["search_books"][0] == "C10"
     assert "C10" in result["hard_book_constraints"]
+    assert "C10" in result["hard_search_books"]
+    assert result["advisory_search_books"] == []
 
 
 def test_sheet_name_and_description_can_anchor_book_without_section():
@@ -35,6 +37,8 @@ def test_sheet_name_and_description_can_anchor_book_without_section():
     assert result["allow_cross_book_escape"] is False
     assert result["search_books"][0] == "C10"
     assert "C10" in result["hard_book_constraints"]
+    assert "C10" in result["hard_search_books"]
+    assert result["advisory_search_books"] == []
     assert any(reason.startswith("sheet:") for reason in result["routing_evidence"]["C10"])
     assert any("desc_system_hint" in reason for reason in result["routing_evidence"]["C10"])
 
@@ -50,3 +54,36 @@ def test_insulation_keywords_can_anchor_c12_without_section():
     assert result["allow_cross_book_escape"] is False
     assert result["search_books"][0] == "C12"
     assert "C12" in result["hard_book_constraints"]
+    assert "C12" in result["hard_search_books"]
+    assert result["advisory_search_books"] == []
+
+
+def test_install_province_filters_out_civil_route_output():
+    result = classify(
+        "墙面装饰板",
+        "木饰面",
+        province="上海市安装工程预算定额(2016)",
+    )
+
+    assert result["primary"] in {"", None}
+    assert result["route_mode"] == "open"
+    assert result["allow_cross_book_escape"] is True
+    assert result["search_books"] == []
+    assert result["hard_search_books"] == []
+    assert result["advisory_search_books"] == []
+
+
+def test_power_sequence_province_rejects_standard_route_books():
+    result = classify(
+        "母线试运",
+        "母线电压等级:35kV 电气 高压",
+        province="电力技改序列定额（2020）",
+        context_prior={"specialty": "C4"},
+    )
+
+    assert result["primary"] in {"", None}
+    assert result["route_mode"] == "open"
+    assert result["allow_cross_book_escape"] is True
+    assert result["search_books"] == []
+    assert result["hard_search_books"] == []
+    assert result["advisory_search_books"] == []

@@ -227,6 +227,81 @@ BOOK_TO_DB_TYPE = {
 }
 
 
+def province_uses_standard_route_books(province_name: str | None) -> bool:
+    province_name = str(province_name or "").strip()
+    db_type = detect_db_type(province_name)
+    if db_type in {"install", "civil", "municipal", "landscape", "comprehensive"}:
+        return True
+    custom_tokens = ("电力", "火电", "风电", "配网", "电网", "技改", "序列")
+    if any(token in province_name for token in custom_tokens):
+        return False
+    return True
+
+
+def get_province_route_scope(province_name: str | None) -> list[str]:
+    """Return the broad route books compatible with the current province db type."""
+    db_type = detect_db_type(province_name or "")
+    if db_type == "install":
+        return [book for book, kind in BOOK_TO_DB_TYPE.items() if kind == "install"]
+    if db_type == "civil":
+        return ["A"]
+    if db_type == "municipal":
+        return ["D"]
+    if db_type == "landscape":
+        return ["E"]
+    return []
+
+
+def book_matches_province_scope(book: str | None, province_name: str | None) -> bool:
+    book = str(book or "").strip()
+    if not book:
+        return False
+    allowed = get_province_route_scope(province_name)
+    if not allowed:
+        return True
+    return book in allowed
+
+
+def _filter_routing_by_province_scope(
+    scores: dict[str, float],
+    routing_evidence: dict[str, list[str]],
+    hard_constraints: list[str],
+    province_name: str | None,
+) -> tuple[dict[str, float], dict[str, list[str]], list[str]]:
+    if not province_uses_standard_route_books(province_name):
+        filtered_scores = {
+            book: score for book, score in scores.items()
+            if book not in BOOK_TO_DB_TYPE
+        }
+        filtered_evidence = {
+            book: reasons for book, reasons in routing_evidence.items()
+            if book not in BOOK_TO_DB_TYPE
+        }
+        filtered_constraints = [
+            book for book in hard_constraints
+            if book not in BOOK_TO_DB_TYPE
+        ]
+        return filtered_scores, filtered_evidence, filtered_constraints
+
+    allowed = set(get_province_route_scope(province_name))
+    if not allowed:
+        return scores, routing_evidence, hard_constraints
+
+    filtered_scores = {
+        book: score for book, score in scores.items()
+        if book in allowed
+    }
+    filtered_evidence = {
+        book: reasons for book, reasons in routing_evidence.items()
+        if book in allowed
+    }
+    filtered_constraints = [
+        book for book in hard_constraints
+        if book in allowed
+    ]
+    return filtered_scores, filtered_evidence, filtered_constraints
+
+
 def detect_db_type(province_name: str) -> str:
     """从定额库名称检测其类型
 
@@ -336,13 +411,6 @@ BORROW_PRIORITY = {
 }
 
 SYSTEM_HINT_TO_BOOK = {
-    "娑堥槻": "C9",
-    "缁欐帓姘?": "C10",
-    "鐢垫皵": "C4",
-    "閫氶绌鸿皟": "C7",
-}
-
-SYSTEM_HINT_TO_BOOK = {
     "\u6d88\u9632": "C9",
     "\u7ed9\u6392\u6c34": "C10",
     "\u7535\u6c14": "C4",
@@ -358,6 +426,7 @@ FAMILY_ALLOWED_BOOKS = {
     "cable_family": ("C4", "C11"),
     "conduit_raceway": ("C4",),
     "electrical_box": ("C4",),
+    "protection_device": ("C4", "C11"),
     "pipe_support": ("C10", "C9", "C8", "C7", "C12", "C13"),
     "plumbing_accessory": ("C10", "C9", "C12", "C13"),
     "sanitary_fixture": ("C10", "C9", "C12"),
@@ -747,152 +816,6 @@ def _merge_book_candidates(primary: str | None,
         seen.add(text)
         ordered.append(text)
     return ordered
-
-def _classify_legacy(bill_name: str, bill_desc: str = "",
-                     section_title: str = None, province: str = None,
-                     bill_code: str = None) -> dict:
-    """
-    判断一条清单项属于哪个专业（册）
-
-    优先级：
-    0. 项目级覆盖（硬规则，如"配管"永远归C4电气）
-    1. 分部标题（最可靠，直接从Excel结构来的）
-    1.5. 清单编码（GB 50500国标，前缀直接对应专业，有编码时用编码辅助判断）
-    1.8. 品类词路由（从9.8万条经验库挖掘的品类词→册号映射）
-    2. 数据驱动分类（从定额库学习的TF-IDF模型，像老造价师的经验）
-    3. 关键词匹配（手写规则，兜底）
-    4. 默认返回None（无法判断，全库搜索）
-
-    参数:
-        bill_name: 清单项目名称（如"室内给水管道安装"）
-        bill_desc: 清单特征描述（如"材质：镀锌钢管\\nDN25\\n丝接"）
-        section_title: 清单所在的分部标题（如"给排水工程"），最可靠的来源
-        province: 省份名称（数据驱动分类需要知道读哪个定额库），为None时用默认省份
-        bill_code: 清单项目编码（如"030801001001"），GB 50500国标12位编码
-
-    返回:
-        {
-            "primary": "C10",              # 主专业册号（可能为None）
-            "primary_name": "给排水采暖燃气", # 主专业名称（可能为None）
-            "fallbacks": ["C8", "C12"],    # 借用专业列表
-            "confidence": "high/medium/low", # 分类置信度
-            "reason": "分部标题匹配: 给排水工程", # 判断依据
-        }
-    """
-    # 第0优先：项目级覆盖（基础设施项目的定额归属不随系统变化）
-    # 比如"配管"不管在弱电/消防/暖通清单中，永远搜C4电气册
-    override_book = _check_item_override(bill_name)
-    if override_book:
-        fallbacks = BORROW_PRIORITY.get(override_book, ["C12"])
-        return {
-            "primary": override_book,
-            "primary_name": BOOKS[override_book]["name"],
-            "fallbacks": fallbacks,
-            "confidence": "high",
-            "reason": f"项目级覆盖: '{bill_name}' → {BOOKS[override_book]['name']}",
-        }
-
-    # 第1优先：分部标题
-    if section_title:
-        book = parse_section_title(section_title)
-        if book:
-            fallbacks = BORROW_PRIORITY.get(book, ["C12"])
-            return {
-                "primary": book,
-                "primary_name": BOOKS[book]["name"],
-                "fallbacks": fallbacks,
-                "confidence": "high",
-                "reason": f"分部标题匹配: {section_title}",
-            }
-
-    # 第1.5优先：清单编码（GB 50500国标，前缀直接对应专业）
-    if bill_code:
-        code_book = classify_by_bill_code(bill_code)
-        if code_book and code_book in BOOKS:
-            preferred_book, preferred_reason = _resolve_code_text_conflict(
-                code_book,
-                bill_name,
-                bill_desc,
-            )
-            if preferred_book and preferred_book in BOOKS:
-                fallbacks = BORROW_PRIORITY.get(preferred_book, ["C12"])
-                return {
-                    "primary": preferred_book,
-                    "primary_name": BOOKS[preferred_book]["name"],
-                    "fallbacks": fallbacks,
-                    "confidence": "high",
-                    "reason": (
-                        f"{preferred_reason}; 原编码 {bill_code[:4]} → "
-                        f"{BOOKS[code_book]['name']}"
-                    ),
-                }
-            fallbacks = BORROW_PRIORITY.get(code_book, ["C12"])
-            return {
-                "primary": code_book,
-                "primary_name": BOOKS[code_book]["name"],
-                "fallbacks": fallbacks,
-                "confidence": "high",
-                "reason": f"清单编码匹配: {bill_code[:4]} → {BOOKS[code_book]['name']}",
-            }
-
-    # 第1.8优先：品类词路由（从9.8万条经验库挖掘的品类词→册号映射）
-    # 比TF-IDF更稳定——用统计数据直接查表，不依赖定额库是否已导入
-    # tier1(90%+集中度)给medium置信度，tier2(75-90%)给low-medium置信度
-    cat_book, cat_tier = classify_by_category_words(bill_name)
-    if cat_book and cat_book in BOOKS:
-        fallbacks = BORROW_PRIORITY.get(cat_book, ["C12"])
-        # tier1和tier2都给medium置信度（都是经验库统计数据，足够可靠）
-        confidence = "medium"
-        return {
-            "primary": cat_book,
-            "primary_name": BOOKS[cat_book]["name"],
-            "fallbacks": fallbacks,
-            "confidence": confidence,
-            "reason": f"品类词路由({cat_tier}): '{bill_name}' → {BOOKS[cat_book]['name']}",
-        }
-
-    # 第2优先：数据驱动分类（从定额库学习的TF-IDF模型）
-    # 像老造价师一样——看过几万条定额后自然知道"过滤器"属于给排水册
-    text = f"{bill_name} {bill_desc}".strip()
-    if text:
-        try:
-            from src.book_classifier import BookClassifier
-            classifier = BookClassifier.get_instance(province)
-            data_result = classifier.classify(text)
-            if data_result and data_result.get("primary"):
-                # 低置信度时不用数据驱动，让关键词匹配兜底
-                # 例："管道"两个字各册得分接近，数据驱动分不清，关键词更靠谱
-                if data_result.get("confidence") != "low":
-                    return data_result
-        except Exception as e:
-            # 数据驱动不可用（定额库未导入等），降级到关键词匹配
-            logger.debug(f"数据驱动分类跳过: {e}")
-
-    # 第3优先：关键词匹配（手写规则兜底）
-    # 合并名称和描述，在里面找关键词
-    if text:
-        book, score, matched_keyword = _keyword_match(text)
-        if book:
-            fallbacks = BORROW_PRIORITY.get(book, ["C12"])
-            confidence = "high" if score >= 2 else "medium"
-            return {
-                "primary": book,
-                "primary_name": BOOKS[book]["name"],
-                "fallbacks": fallbacks,
-                "confidence": confidence,
-                "reason": f"关键词匹配: '{matched_keyword}' → {BOOKS[book]['name']}",
-            }
-
-    # 无法判断：返回None，表示需要全库搜索
-    return {
-        "primary": None,
-        "primary_name": None,
-        "fallbacks": [],
-        "confidence": "low",
-        "reason": "无法判断专业，将全库搜索",
-    }
-
-
 def _score_to_confidence(route_mode: str,
                          top_score: float,
                          second_score: float,
@@ -981,6 +904,19 @@ def _finalize_routing_result(book_scores: dict[str, float],
         search_books.insert(0, primary)
     search_books = _normalize_books(search_books[:6])
 
+    effective_route_mode = route_mode
+    effective_allow_cross_book_escape = bool(allow_cross_book_escape)
+    # Province-scope filtering may eliminate every routed book. In that case the
+    # router should expose an open search, not a misleading empty strict route.
+    if not primary and not search_books and not normalized_constraints:
+        effective_route_mode = "open"
+        effective_allow_cross_book_escape = True
+
+    hard_search_books = _normalize_books(normalized_constraints)
+    advisory_search_books = _normalize_books(
+        [book for book in search_books if book not in hard_search_books]
+    )
+
     fallback_books = [
         book for book in _merge_book_candidates(
             None,
@@ -1001,7 +937,7 @@ def _finalize_routing_result(book_scores: dict[str, float],
         reason_parts = [f"book_score:{primary_score:.2f}"]
 
     confidence = _score_to_confidence(
-        route_mode,
+        effective_route_mode,
         primary_score,
         second_score,
         normalized_constraints,
@@ -1016,13 +952,15 @@ def _finalize_routing_result(book_scores: dict[str, float],
         "candidate_books": candidate_books,
         "search_books": search_books,
         "hard_book_constraints": normalized_constraints,
+        "hard_search_books": hard_search_books,
+        "advisory_search_books": advisory_search_books,
         "routing_evidence": {
             book: list(reasons[:5])
             for book, reasons in routing_evidence.items()
             if reasons
         },
-        "route_mode": route_mode,
-        "allow_cross_book_escape": bool(allow_cross_book_escape),
+        "route_mode": effective_route_mode,
+        "allow_cross_book_escape": effective_allow_cross_book_escape,
         "book_scores": {
             book: round(float(score), 4)
             for book, score in sorted(
@@ -1245,6 +1183,13 @@ def _classify_v2(bill_name: str,
                 family_bias,
                 f"family:{family}",
             )
+
+    scores, routing_evidence, hard_constraints = _filter_routing_by_province_scope(
+        scores,
+        routing_evidence,
+        hard_constraints,
+        province,
+    )
 
     route_mode = "open"
     if override_book or section_book or sheet_book:

@@ -36,6 +36,7 @@ from src.specialty_classifier import get_book_from_quota_id
 
 class ParamValidator:
     """候选定额的参数验证器"""
+    _RECTIFY_REORDER_ENABLED = False
     TIER_PARAMS = [
         "dn",
         "cable_section",
@@ -44,6 +45,8 @@ class ParamValidator:
         "kw",
         "circuits",
         "port_count",
+        "item_count",
+        "item_length",
         "ampere",
         "weight_t",
         "perimeter",
@@ -57,13 +60,13 @@ class ParamValidator:
     _FEATURE_ALIGNMENT_BLEND = 0.22
     _FEATURE_ALIGNMENT_DEFAULT = 0.5
     _FEATURE_ALIGNMENT_WEIGHTS = {
-        "family": 0.22,
-        "entity": 0.40,
-        "canonical_name": 0.18,
-        "system": 0.12,
-        "material": 0.12,
+        "family": 0.20,
+        "entity": 0.35,
+        "canonical_name": 0.15,
+        "system": 0.10,
+        "material": 0.10,
         "connection": 0.08,
-        "install_method": 0.05,
+        "install_method": 0.12,
         "traits": 0.05,
     }
     _FEATURE_ENTITY_HARD_CONFLICTS = {
@@ -100,8 +103,16 @@ class ParamValidator:
         frozenset(("水泵", "管道")),
         frozenset(("配电箱", "阀门")),
         frozenset(("管道", "阀门")),
+        frozenset(("管道", "闸阀")),
+        frozenset(("管道", "止回阀")),
+        frozenset(("管道", "蝶阀")),
         frozenset(("消火栓", "管道")),
         frozenset(("消火栓", "阀门")),
+        frozenset(("管道", "水表")),
+        frozenset(("管道", "倒流防止器")),
+        frozenset(("管道", "过滤器")),
+        frozenset(("管道", "软接头")),
+        frozenset(("管道", "减压器")),
         frozenset(("水表", "阀门")),
         frozenset(("倒流防止器", "阀门")),
         frozenset(("过滤器", "阀门")),
@@ -167,6 +178,9 @@ class ParamValidator:
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
         frozenset(("cable_head_accessory", "cable_family")),
+        frozenset(("pipe_run", "pipe_sleeve")),
+        frozenset(("pipe_run", "valve_body")),
+        frozenset(("pipe_run", "valve_accessory")),
     }
     _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
         "bridge_raceway",
@@ -198,6 +212,7 @@ class ParamValidator:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("electrical_box", "protection_device")),
         frozenset(("cable_head_accessory", "cable_family")),
     }
     _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
@@ -208,6 +223,7 @@ class ParamValidator:
         "air_device",
         "sanitary_fixture",
         "electrical_box",
+        "protection_device",
         "conduit_raceway",
     }
     _CONTEXT_SYSTEM_HARD_CONFLICTS = {
@@ -226,7 +242,7 @@ class ParamValidator:
     _LOGIC_DEFAULT_UPPER_PARAMS = {
         "dn", "cable_section", "kva", "kw", "circuits", "ampere",
         "half_perimeter", "ground_bar_width", "perimeter", "large_side",
-        "elevator_stops", "switch_gangs", "port_count",
+        "elevator_stops", "switch_gangs", "port_count", "item_count", "item_length",
     }
     _LOGIC_PARAM_WEIGHTS = {
         "dn": 1.00,
@@ -234,6 +250,8 @@ class ParamValidator:
         "cable_cores": 1.00,
         "circuits": 0.85,
         "port_count": 1.00,
+        "item_count": 1.00,
+        "item_length": 1.00,
         "ampere": 0.85,
         "kva": 0.75,
         "kw": 0.75,
@@ -250,6 +268,8 @@ class ParamValidator:
         "cable_cores": "芯数",
         "circuits": "回路",
         "port_count": "口数",
+        "item_count": "数量",
+        "item_length": "长度",
         "ampere": "电流",
         "kva": "容量",
         "kw": "功率",
@@ -298,6 +318,10 @@ class ParamValidator:
         if cls._ltr_model_loaded:
             return
         cls._ltr_model_loaded = True
+        if not getattr(config, "PARAM_VALIDATOR_LEGACY_LTR_ENABLED", False):
+            logger.debug("参数验证器旧版LTR已关闭，回退到手工排序公式")
+            cls._ltr_model = None
+            return
         model_path = Path(__file__).parent.parent / "data" / "ltr_model.txt"
         if model_path.exists():
             try:
@@ -315,9 +339,10 @@ class ParamValidator:
                             bill_params: dict = None,
                             search_books: list[str] = None,
                             canonical_features: dict = None,
-                            context_prior: dict = None) -> list[dict]:
+                            context_prior: dict = None,
+                            reorder_candidates: bool = True) -> list[dict]:
         """
-        对候选定额进行参数验证和重排序
+        对候选定额进行参数验证，并按需要补充排序分数。
 
         参数:
             query_text: 清单项目名称+特征描述（完整原文）
@@ -329,7 +354,8 @@ class ParamValidator:
             search_books: 清单分类的搜索册号列表（用于v3 book_match特征）
 
         返回:
-            验证后的候选列表，每条增加 param_score 和 param_detail 字段
+            验证后的候选列表，每条增加 param_score 和 param_detail 字段。
+            当 reorder_candidates=False 时，只补充校验/特征信号，不在本层改动候选顺序。
         """
         if not candidates:
             return []
@@ -460,10 +486,18 @@ class ParamValidator:
                 c["name_bonus"] = self._bill_keyword_bonus(
                     query_text, c.get("name", ""))
 
-            # 无参数分支：用LTR模型或品类词主导排序
-            self._ltr_sort(candidates, query_text, search_books=search_books)
-            self._logic_rectify(candidates)
-            self._context_rectify(candidates)
+            # 无参数分支：补充排序分数；主链路可选择仅产出特征、不在本层重排
+            self._ltr_sort(
+                candidates,
+                query_text,
+                search_books=search_books,
+                reorder_candidates=reorder_candidates,
+            )
+            self._run_rectify_advisories(
+                candidates,
+                include_logic=True,
+                include_context=True,
+            )
             return candidates
 
         # 逐个验证候选定额
@@ -562,17 +596,108 @@ class ParamValidator:
 
             validated.append(candidate)
 
-        # 有参数分支：用LTR模型或三项融合排序
-        self._ltr_sort(validated, query_text, search_books=search_books)
+        # 有参数分支：补充排序分数；主链路可选择仅产出特征、不在本层重排
+        self._ltr_sort(
+            validated,
+            query_text,
+            search_books=search_books,
+            reorder_candidates=reorder_candidates,
+        )
 
         # M1档位纠偏：LTR排完序后，如果同家族内有参数更匹配的候选，强制提升
-        self._tier_rectify(validated, bill_params)
-        self._logic_rectify(validated)
-        self._context_rectify(validated)
-        self._feature_rectify(validated)
-        self._family_gate_rectify(validated)
+        self._run_rectify_advisories(
+            validated,
+            bill_params=bill_params,
+            include_tier=True,
+            include_logic=True,
+            include_context=True,
+            include_feature=True,
+            include_family_gate=True,
+        )
 
         return validated
+
+    @staticmethod
+    def _reset_rectify_signals(candidates: list[dict]):
+        for candidate in candidates:
+            candidate["param_rectify_signals"] = []
+            candidate["param_rectify_selected"] = False
+            candidate["param_rectify_selected_rules"] = []
+
+    def _run_rectify_advisories(self,
+                                candidates: list[dict],
+                                *,
+                                bill_params: dict | None = None,
+                                include_tier: bool = False,
+                                include_logic: bool = False,
+                                include_context: bool = False,
+                                include_feature: bool = False,
+                                include_family_gate: bool = False):
+        if not candidates:
+            return
+
+        self._reset_rectify_signals(candidates)
+        advisories: list[dict] = []
+
+        if include_tier and bill_params:
+            advice = self._tier_rectify(candidates, bill_params)
+            if advice:
+                advisories.append(advice)
+        if include_logic:
+            advice = self._logic_rectify(candidates)
+            if advice:
+                advisories.append(advice)
+        if include_context:
+            advice = self._context_rectify(candidates)
+            if advice:
+                advisories.append(advice)
+        if include_feature:
+            advice = self._feature_rectify(candidates)
+            if advice:
+                advisories.append(advice)
+        if include_family_gate:
+            advice = self._family_gate_rectify(candidates)
+            if advice:
+                advisories.append(advice)
+
+        for advice in advisories:
+            self._record_rectify_advisory(candidates, advice)
+
+    def _record_rectify_advisory(self, candidates: list[dict], advice: dict):
+        winner_idx = int(advice.get("winner_idx", -1) or -1)
+        if winner_idx <= 0 or winner_idx >= len(candidates):
+            return
+
+        winner = candidates[winner_idx]
+        top1 = candidates[0]
+        signal = {
+            "rule": advice.get("rule", ""),
+            "reason": advice.get("reason", ""),
+            "winner_idx": winner_idx,
+            "winner_quota_id": winner.get("quota_id", ""),
+            "winner_name": winner.get("name", ""),
+            "top1_quota_id": top1.get("quota_id", ""),
+            "top1_name": top1.get("name", ""),
+            "reorder_enabled": self._RECTIFY_REORDER_ENABLED,
+            "reorder_applied": False,
+        }
+        if advice.get("metrics"):
+            signal["metrics"] = dict(advice["metrics"])
+
+        winner["param_rectify_selected"] = True
+        winner.setdefault("param_rectify_selected_rules", []).append(signal["rule"])
+        winner.setdefault("param_rectify_signals", []).append({
+            **signal,
+            "role": "winner",
+        })
+        if winner is not top1:
+            top1.setdefault("param_rectify_signals", []).append({
+                **signal,
+                "role": "displaced_top1",
+            })
+
+        if self._RECTIFY_REORDER_ENABLED:
+            candidates.insert(0, candidates.pop(winner_idx))
 
     # ── M1 档位纠偏器 ──────────────────────────────────────────
 
@@ -672,7 +797,18 @@ class ParamValidator:
                     f"({main_param}={main_value}, "
                     f"分差{best_tier_score - top1_tier_score:.2f})")
                 # 把最佳候选提升到top1（其余顺序不变）
-                candidates.insert(0, candidates.pop(best_idx))
+                return {
+                    "rule": "tier_rectify",
+                    "winner_idx": best_idx,
+                    "reason": f"{main_param}={main_value} tier_score {top1_tier_score:.2f}->{best_tier_score:.2f}",
+                    "metrics": {
+                        "main_param": main_param,
+                        "main_value": main_value,
+                        "top1_tier_score": top1_tier_score,
+                        "winner_tier_score": best_tier_score,
+                        "score_gap": best_tier_score - top1_tier_score,
+                    },
+                }
 
     def _logic_rectify(self, candidates: list[dict]):
         """对显式逻辑精确命中的同家族候选做排序纠偏。"""
@@ -720,7 +856,16 @@ class ParamValidator:
             top1_logic,
             best_logic,
         )
-        candidates.insert(0, candidates.pop(best_idx))
+        return {
+            "rule": "logic_rectify",
+            "winner_idx": best_idx,
+            "reason": f"logic_score {top1_logic:.2f}->{best_logic:.2f}",
+            "metrics": {
+                "top1_logic_score": top1_logic,
+                "winner_logic_score": best_logic,
+                "winner_param_score": float(best.get('param_score', 0.0)),
+            },
+        }
 
     def _context_rectify(self, candidates: list[dict]):
         """瀵逛笂涓嬫枃鍛戒腑鏄庢樉鏇村ソ鐨勫€欓€夊仛淇濆畧绾犲亸銆?"""
@@ -776,7 +921,17 @@ class ParamValidator:
             top1_score,
             best_score,
         )
-        candidates.insert(0, candidates.pop(best_idx))
+        return {
+            "rule": "context_rectify",
+            "winner_idx": best_idx,
+            "reason": f"context_score {top1_score:.2f}->{best_score:.2f}",
+            "metrics": {
+                "top1_context_score": top1_score,
+                "winner_context_score": best_score,
+                "top1_param_score": top1_param,
+                "winner_param_score": best_param,
+            },
+        }
 
     def _feature_rectify(self, candidates: list[dict]):
         """对结构化锚点明显更优的候选做最终纠偏。"""
@@ -840,7 +995,19 @@ class ParamValidator:
             top1_exact,
             best_exact,
         )
-        candidates.insert(0, candidates.pop(best_idx))
+        return {
+            "rule": "feature_rectify",
+            "winner_idx": best_idx,
+            "reason": f"feature_score {top1_score:.2f}->{best_score:.2f}, anchors {top1_exact}->{best_exact}",
+            "metrics": {
+                "top1_feature_score": top1_score,
+                "winner_feature_score": best_score,
+                "top1_exact_anchors": top1_exact,
+                "winner_exact_anchors": best_exact,
+                "top1_param_score": top1_param,
+                "winner_param_score": best_param,
+            },
+        }
 
     def _family_gate_rectify(self, candidates: list[dict]):
         """对家族门控显著更优的候选做保守纠偏。"""
@@ -900,7 +1067,20 @@ class ParamValidator:
             top1_gate,
             best_gate,
         )
-        candidates.insert(0, candidates.pop(best_idx))
+        return {
+            "rule": "family_gate_rectify",
+            "winner_idx": best_idx,
+            "reason": f"family_gate {top1_gate:.2f}->{best_gate:.2f}",
+            "metrics": {
+                "top1_family_gate_score": top1_gate,
+                "winner_family_gate_score": best_gate,
+                "top1_feature_score": top1_feature,
+                "winner_feature_score": best_feature,
+                "top1_param_score": top1_param,
+                "winner_param_score": best_param,
+                "top1_hard_conflict": top1_hard,
+            },
+        }
 
     def _get_candidate_tier_score(self, candidate: dict,
                                    main_param: str, main_value: float) -> float:
@@ -992,7 +1172,9 @@ class ParamValidator:
         return features
 
     def _ltr_sort(self, candidates: list[dict], query_text: str,
-                  search_books: list[str] = None):
+                  search_books: list[str] = None,
+                  *,
+                  reorder_candidates: bool = True):
         """
         用LTR模型排序候选（如果模型可用），否则回退到手工公式。
 
@@ -1018,7 +1200,8 @@ class ParamValidator:
                         c["ltr_score"] = -1e9
                     else:
                         c["ltr_score"] = float(scores[i])
-                candidates.sort(key=lambda x: x.get("ltr_score", 0), reverse=True)
+                if reorder_candidates:
+                    candidates.sort(key=lambda x: x.get("ltr_score", 0), reverse=True)
                 return
             except Exception as e:
                 logger.warning(f"LTR模型预测失败，回退手工公式: {e}")
@@ -1026,10 +1209,23 @@ class ParamValidator:
         # 回退：手工公式排序（有参数分支权重）
         for candidate in candidates:
             candidate["rank_score"] = compute_candidate_rank_score(candidate)
-        candidates.sort(
-            key=compute_candidate_sort_key,
-            reverse=True,
-        )
+        if reorder_candidates:
+            candidates.sort(
+                key=compute_candidate_sort_key,
+                reverse=True,
+            )
+
+    @staticmethod
+    def _final_rank(candidates: list[dict], *, reorder_candidates: bool = True) -> list[dict]:
+        """兼容旧调用入口，统一走当前手工排序口径。"""
+        for candidate in candidates:
+            candidate["rank_score"] = compute_candidate_rank_score(candidate)
+        if reorder_candidates:
+            candidates.sort(
+                key=compute_candidate_sort_key,
+                reverse=True,
+            )
+        return candidates
 
     def _extract_ltr_features(self, candidates: list[dict],
                               query_text: str,
@@ -1161,6 +1357,11 @@ class ParamValidator:
         for book in search_books[1:]:
             if book.upper() == cand_book_upper:
                 return 0.5
+        source_province = str(candidate.get("_source_province", "") or "").strip()
+        if source_province:
+            # 跨兄弟库候选不应被主库 search_books 直接判成错册。
+            # 它已经经过 sibling recall 进入候选池，这里降为“借册中性分”而非 0 分。
+            return 0.5
         return 0.0
 
     @staticmethod
@@ -1213,6 +1414,18 @@ class ParamValidator:
         if not bill_entity or not candidate_entity or bill_entity == candidate_entity:
             return False
         return frozenset((bill_entity, candidate_entity)) in cls._FEATURE_ENTITY_HARD_CONFLICTS
+
+    @classmethod
+    def _entity_soft_match_score(cls, bill_entity: str, candidate_entity: str) -> float | None:
+        if not bill_entity or not candidate_entity:
+            return None
+        if bill_entity == candidate_entity:
+            return 1.0
+        switch_outlet_group = {"开关", "插座", "开关插座"}
+        if bill_entity in switch_outlet_group and candidate_entity in switch_outlet_group:
+            if "开关插座" in {bill_entity, candidate_entity}:
+                return 0.85
+        return None
 
     @classmethod
     def _is_system_hard_conflict(cls, bill_system: str, candidate_system: str) -> bool:
@@ -1335,10 +1548,14 @@ class ParamValidator:
         bill_entity = str(bill_canonical_features.get("entity") or "")
         candidate_entity = str(candidate_features.get("entity") or "")
         if bill_entity and candidate_entity:
-            if bill_entity == candidate_entity:
+            entity_soft_score = self._entity_soft_match_score(bill_entity, candidate_entity)
+            if entity_soft_score == 1.0:
                 components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 1.0))
                 details.append(f"实体:{bill_entity}")
                 exact_anchor_count += 1
+            elif entity_soft_score is not None:
+                components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], entity_soft_score))
+                details.append(f"实体兼容:{bill_entity}~{candidate_entity}")
             elif self._is_entity_hard_conflict(bill_entity, candidate_entity):
                 components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 0.0))
                 details.append(f"实体冲突:{bill_entity}!={candidate_entity}")
@@ -1444,6 +1661,20 @@ class ParamValidator:
                 f"安装:{candidate_install_method}" if install_score == 1.0
                 else f"安装偏差:{bill_install_method}!={candidate_install_method}"
             )
+        elif bill_install_method:
+            components.append((
+                "install_method",
+                self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
+                0.4,
+            ))
+            details.append(f"定额无安装型式(清单:{bill_install_method})")
+        elif candidate_install_method:
+            components.append((
+                "install_method",
+                self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
+                0.4,
+            ))
+            details.append(f"清单无安装型式(定额:{candidate_install_method})")
 
         bill_laying_method = str(bill_canonical_features.get("laying_method") or "")
         candidate_laying_method = str(candidate_features.get("laying_method") or "")
@@ -1465,7 +1696,6 @@ class ParamValidator:
                 self._FEATURE_ALIGNMENT_WEIGHTS["install_method"],
                 laying_score,
             ))
-
         bill_voltage_level = str(bill_canonical_features.get("voltage_level") or "")
         candidate_voltage_level = str(candidate_features.get("voltage_level") or "")
         if bill_voltage_level and candidate_voltage_level:
@@ -1522,6 +1752,25 @@ class ParamValidator:
             score = self._FEATURE_ALIGNMENT_DEFAULT
         else:
             score = sum(weight * value for _, weight, value in components) / total_weight
+
+        candidate_has_specifics = bool(
+            candidate_features.get("install_method")
+            or candidate_features.get("connection")
+            or candidate_traits
+        )
+        bill_has_specifics = bool(
+            bill_canonical_features.get("install_method")
+            or bill_canonical_features.get("connection")
+            or bill_traits
+        )
+        if (
+            bill_has_specifics
+            and not candidate_has_specifics
+            and candidate_canonical_name
+            and len(candidate_canonical_name) <= 6
+        ):
+            score *= 0.85
+            details.append("通用定额降权")
 
         return {
             "score": score,
@@ -2028,6 +2277,10 @@ class ParamValidator:
             params["circuits"] = candidate["circuits"]
         if candidate.get("port_count") is not None:
             params["port_count"] = candidate["port_count"]
+        if candidate.get("item_count") is not None:
+            params["item_count"] = candidate["item_count"]
+        if candidate.get("item_length") is not None:
+            params["item_length"] = candidate["item_length"]
         if candidate.get("shape"):
             params["shape"] = candidate["shape"]
         if candidate.get("perimeter") is not None:
@@ -2917,40 +3170,8 @@ class ParamValidator:
         final_score = score_sum / check_count
         is_match = not has_hard_fail and final_score >= 0.5
         detail_str = "; ".join(details)
-
         return is_match, final_score, detail_str
 
 
-# 模块级单例
+# 妯″潡绾у崟渚?
 validator = ParamValidator()
-
-
-# ================================================================
-# 命令行入口：测试参数验证
-# ================================================================
-
-if __name__ == "__main__":
-    # 测试参数验证
-    v = ParamValidator()
-
-    # 模拟清单+候选
-    query = "镀锌钢管DN150沟槽连接管道安装"
-    candidates = [
-        {"id": 1, "name": "放水管安装 DN150", "quota_id": "C3-3-71", "unit": "个",
-         "dn": 150, "material": None, "connection": None,
-         "cable_section": None, "kva": None, "kv": None, "ampere": None, "weight_t": None},
-        {"id": 2, "name": "放水管安装 DN50", "quota_id": "C3-3-68", "unit": "个",
-         "dn": 50, "material": None, "connection": None,
-         "cable_section": None, "kva": None, "kv": None, "ampere": None, "weight_t": None},
-        {"id": 3, "name": "罐顶接合管 DN250", "quota_id": "C3-3-77", "unit": "个",
-         "dn": 250, "material": None, "connection": None,
-         "cable_section": None, "kva": None, "kv": None, "ampere": None, "weight_t": None},
-    ]
-
-    results = v.validate_candidates(query, candidates)
-    print(f"清单: {query}")
-    bill_params = text_parser.parse(query)
-    print(f"提取参数: {bill_params}")
-    print()
-    for r in results:
-        print(f"  [{r['param_score']:.2f}] {r['param_match']} | {r['quota_id']} {r['name']} | {r['param_detail']}")

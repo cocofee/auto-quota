@@ -60,9 +60,12 @@ def test_arbitrate_candidates_swaps_when_structured_signal_is_clearly_better():
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
-    assert decision["reason"] == "structured_candidate_swap"
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["advisory_applied"] is True
+    assert decision["reason"] == "structured_candidate_swap_advisory"
+    assert decision["recommended_quota_id"] == "Q2"
+    assert reordered[1]["arbiter_recommended"] is True
 
 
 def test_arbitrate_candidates_can_override_large_search_gap_when_structured_signal_is_decisive():
@@ -97,6 +100,7 @@ def test_arbitrate_candidates_can_override_large_search_gap_when_structured_sign
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False
     assert decision["reason"] == "search_gap_too_large"
 
 
@@ -131,6 +135,7 @@ def test_arbitrate_candidates_does_not_swap_across_unrelated_family():
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False
     assert decision["reason"] == "no_better_structured_candidate"
 
 
@@ -166,6 +171,7 @@ def test_arbitrate_candidates_skips_when_route_lacks_enough_spec_signal():
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False
     assert decision["reason"] == "route_not_ready"
 
 
@@ -201,10 +207,12 @@ def test_arbitrate_candidates_prefers_exact_dn_band_when_search_gap_is_acceptabl
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["advisory_applied"] is True
     assert decision["main_param_key"] == "dn"
     assert decision["selected_band_score"] > decision["top_band_score"]
+    assert decision["recommended_quota_id"] == "Q2"
 
 
 def test_arbitrate_candidates_does_not_swap_to_worse_dn_band_even_if_structured_is_higher():
@@ -242,6 +250,7 @@ def test_arbitrate_candidates_does_not_swap_to_worse_dn_band_even_if_structured_
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False
     assert decision["reason"] == "no_better_structured_candidate"
 
 
@@ -277,9 +286,11 @@ def test_arbitrate_candidates_prefers_exact_cable_core_band_for_terminal_head():
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["advisory_applied"] is True
     assert decision["main_param_key"] == "cable_cores"
+    assert decision["recommended_quota_id"] == "Q2"
 
 
 def test_arbitrate_candidates_can_use_family_when_entity_is_missing():
@@ -312,8 +323,10 @@ def test_arbitrate_candidates_can_use_family_when_entity_is_missing():
 
     reordered, decision = arbitrate_candidates(item, candidates, route_profile=item["query_route"])
 
-    assert reordered[0]["quota_id"] == "Q2"
-    assert decision["applied"] is True
+    assert reordered[0]["quota_id"] == "Q1"
+    assert decision["applied"] is False
+    assert decision["advisory_applied"] is True
+    assert decision["recommended_quota_id"] == "Q2"
 
 
 def test_arbitrate_candidates_does_not_relax_thresholds_via_plugin_gap():
@@ -353,6 +366,7 @@ def test_arbitrate_candidates_does_not_relax_thresholds_via_plugin_gap():
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False
     assert decision["reason"] == "no_better_structured_candidate"
 
 
@@ -393,3 +407,4 @@ def test_arbitrate_candidates_ignores_plugin_only_margin_when_swapping():
 
     assert reordered[0]["quota_id"] == "Q1"
     assert decision["applied"] is False
+    assert decision["advisory_applied"] is False

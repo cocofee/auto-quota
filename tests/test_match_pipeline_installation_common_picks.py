@@ -6,7 +6,7 @@ from src.match_pipeline import (
 )
 
 
-def test_distribution_box_ap_code_prefers_floor_candidate():
+def test_distribution_box_ap_code_prefers_wall_candidate():
     picked = _pick_explicit_distribution_box_candidate(
         "配电箱 1AP1",
         [
@@ -15,7 +15,7 @@ def test_distribution_box_ap_code_prefers_floor_candidate():
         ],
     )
 
-    assert "落地" in picked["name"]
+    assert "悬挂" in picked["name"]
 
 
 def test_bridge_picker_prefers_slot_bridge_subtype():
@@ -32,7 +32,7 @@ def test_bridge_picker_prefers_slot_bridge_subtype():
 
 def test_button_broadcast_picker_prefers_wall_speaker():
     picked = _pick_explicit_button_broadcast_candidate(
-        "紧急呼叫扬声器 安装方式:距地2.6米壁装",
+        "紧急呼叫扬声器 安装方式:距地2.6米墙装",
         [
             {"name": "消防广播(扬声器)安装 扬声器 吸顶式(3W~5W)", "param_score": 0.9, "rerank_score": 0.9},
             {"name": "消防广播(扬声器)安装 扬声器 壁挂式(3W~5W)", "param_score": 0.7, "rerank_score": 0.6},

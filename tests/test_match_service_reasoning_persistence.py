@@ -36,6 +36,10 @@ def test_compact_trace_keeps_candidate_snapshot():
                 "stage": "search_select",
                 "selected_quota": "C10-1-1",
                 "selected_reasoning": {"logic_score": 1.0},
+                "parser": {"entity": "阀门"},
+                "router": {"primary_book": "C10"},
+                "retriever": {"candidate_count": 2},
+                "ranker": {"selected_quota": "C10-1-1", "score_gap": 0.2},
                 "candidates": [{"quota_id": "C10-1-1", "reasoning": {"logic_score": 1.0}}],
                 "extra": "drop",
             }
@@ -46,5 +50,9 @@ def test_compact_trace_keeps_candidate_snapshot():
 
     assert compact["final_source"] == "search"
     assert compact["steps"][0]["selected_reasoning"]["logic_score"] == 1.0
+    assert compact["steps"][0]["parser"]["entity"] == "阀门"
+    assert compact["steps"][0]["router"]["primary_book"] == "C10"
+    assert compact["steps"][0]["retriever"]["candidate_count"] == 2
+    assert compact["steps"][0]["ranker"]["selected_quota"] == "C10-1-1"
     assert compact["steps"][0]["candidates"][0]["quota_id"] == "C10-1-1"
     assert "extra" not in compact["steps"][0]

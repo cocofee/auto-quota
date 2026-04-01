@@ -17,11 +17,36 @@ Agent匹配器 - "造价员贾维斯"核心模块
 import json
 import threading
 import time
+from typing import Any
 
 from loguru import logger
 
 import config
 from src.learning_notebook import LearningNotebook, extract_pattern_key
+
+
+_LLM_CONFIGS = {
+    "deepseek": {
+        "key": lambda: config.DEEPSEEK_API_KEY,
+        "url": lambda: config.DEEPSEEK_BASE_URL,
+        "model": lambda: config.DEEPSEEK_MODEL,
+    },
+    "kimi": {
+        "key": lambda: config.KIMI_API_KEY,
+        "url": lambda: config.KIMI_BASE_URL,
+        "model": lambda: config.KIMI_MODEL,
+    },
+    "qwen": {
+        "key": lambda: config.QWEN_API_KEY,
+        "url": lambda: config.QWEN_BASE_URL,
+        "model": lambda: config.QWEN_MODEL,
+    },
+    "openai": {
+        "key": lambda: getattr(config, "OPENAI_API_KEY", ""),
+        "url": lambda: getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        "model": lambda: config.OPENAI_MODEL,
+    },
+}
 
 
 class AgentMatcher:
@@ -37,14 +62,14 @@ class AgentMatcher:
     _LLM_CIRCUIT_THRESHOLD = 5
     _LLM_COOLDOWN_SEC = 60
 
-    def _ensure_client_lock(self):
+    def _ensure_client_lock(self) -> threading.Lock:
         lock = getattr(self, "_client_lock", None)
         if lock is None:
             lock = threading.Lock()
             self._client_lock = lock
         return lock
 
-    def _ensure_circuit_lock(self):
+    def _ensure_circuit_lock(self) -> threading.Lock:
         lock = getattr(self, "_circuit_lock", None)
         if lock is None:
             lock = threading.Lock()
@@ -55,7 +80,7 @@ class AgentMatcher:
         with self._ensure_circuit_lock():
             return bool(self._llm_circuit_open)
 
-    def reset_circuit_breaker(self):
+    def reset_circuit_breaker(self) -> None:
         with self._ensure_circuit_lock():
             self._llm_consecutive_fails = 0
             self._llm_circuit_open = False
@@ -68,7 +93,7 @@ class AgentMatcher:
             elapsed = time.time() - self._llm_circuit_open_time
         return elapsed >= self._LLM_COOLDOWN_SEC
 
-    def __init__(self, llm_type: str = None, province: str = None):
+    def __init__(self, llm_type: str = None, province: str = None) -> None:
         """
         参数:
             llm_type: 使用哪个大模型后端
@@ -88,7 +113,7 @@ class AgentMatcher:
         self._circuit_lock = threading.Lock()
 
     @property
-    def client(self):
+    def client(self) -> Any:
         """延迟初始化API客户端（和 llm_matcher.py 相同的方式）"""
         if self._client is None:
             with self._ensure_client_lock():
@@ -96,7 +121,7 @@ class AgentMatcher:
                     self._client = self._create_client()
         return self._client
 
-    def _create_client(self):
+    def _create_client(self) -> Any:
         """根据 llm_type 创建API客户端"""
         if self.llm_type == "deepseek":
             from openai import OpenAI
@@ -145,8 +170,10 @@ class AgentMatcher:
                      reference_cases: list[dict] = None,
                      rules_context: list[dict] = None,
                      method_cards: list[dict] = None,
+                     knowledge_evidence: dict | None = None,
                      reasoning_packet: dict = None,
                      overview_context: str = "",
+                     canonical_query: dict | None = None,
                      search_query: str = "") -> dict:
         """
         Agent匹配单条清单
@@ -158,6 +185,7 @@ class AgentMatcher:
             rules_context: 规则知识库中的相关规则
             method_cards: 方法论卡片列表（从经验中提炼的选定额方法）
             overview_context: 整表概览上下文
+            canonical_query: 规范化query载荷，供记录和后续重试链路复用
             search_query: 搜索时使用的query（记录到笔记中）
 
         返回:
@@ -183,7 +211,7 @@ class AgentMatcher:
         # 构建造价员Prompt
         prompt = self._build_agent_prompt(
             bill_item, candidates, reference_cases,
-            rules_context, method_cards, reasoning_packet, overview_context
+            rules_context, method_cards, knowledge_evidence, reasoning_packet, overview_context
         )
 
         # 调用大模型
@@ -209,6 +237,12 @@ class AgentMatcher:
 
         # 解析大模型返回
         result = self._parse_response(response_text, bill_item, candidates)
+        if isinstance(knowledge_evidence, dict) and knowledge_evidence:
+            result["knowledge_evidence"] = knowledge_evidence
+        canonical_query = dict(canonical_query or bill_item.get("canonical_query") or {})
+        if canonical_query:
+            result["canonical_query"] = canonical_query
+            result.setdefault("search_query", canonical_query.get("search_query") or search_query)
 
         elapsed = time.time() - start_time
 
@@ -222,6 +256,7 @@ class AgentMatcher:
                 "specialty": bill_item.get("specialty", ""),
                 "reasoning": result.get("explanation", ""),
                 "search_query": search_query,
+                "canonical_query": canonical_query,
                 "result_quota_ids": [q["quota_id"] for q in result.get("quotas", [])],
                 "result_quota_names": [q["name"] for q in result.get("quotas", [])],
                 "confidence": result.get("confidence", 0),
@@ -278,10 +313,89 @@ class AgentMatcher:
             return f"\n{warning}\n"
         return ""
 
+    @staticmethod
+    def _format_reference_cases(reference_cases: list[dict] | None) -> str:
+        if not reference_cases:
+            return ""
+        case_lines = []
+        for i, case in enumerate(reference_cases[:3], start=1):
+            bill = case.get("bill", "")
+            quotas = case.get("quotas", [])
+            quotas_str = ", ".join(quotas) if isinstance(quotas, list) else str(quotas)
+            layer = str(case.get("layer", "") or "").strip()
+            gate = str(case.get("gate", "") or "").strip()
+            tag_parts = [part for part in [layer, gate] if part]
+            tag = f" ({'/'.join(tag_parts)})" if tag_parts else ""
+            case_lines.append(f"  案例{i}{tag}: \"{bill}\" -> {quotas_str}")
+        return "\n## 历史参考案例（类似清单的正确匹配）\n" + "\n".join(case_lines)
+
+    @staticmethod
+    def _format_rule_blocks(knowledge_evidence: dict | None,
+                            rules_context: list[dict] | None) -> tuple[str, str]:
+        evidence = knowledge_evidence if isinstance(knowledge_evidence, dict) else {}
+        quota_rules = evidence.get("quota_rules") or []
+        quota_explanations = evidence.get("quota_explanations") or []
+        if not quota_rules and rules_context:
+            quota_rules = rules_context[:3]
+
+        rules_text = ""
+        if quota_rules:
+            rule_lines = []
+            for rule in quota_rules[:3]:
+                title = str(rule.get("title", "") or rule.get("chapter", "") or "").strip()
+                summary = str(rule.get("summary", "") or rule.get("content", "") or "").strip()[:300]
+                ref_id = str(rule.get("id", "") or "").strip()
+                prefix = f"[{title}]" if title else "[规则]"
+                suffix = f" #{ref_id}" if ref_id else ""
+                rule_lines.append(f"  {prefix}{suffix} {summary}")
+            rules_text = "\n## 相关定额硬规则\n" + "\n".join(rule_lines)
+
+        explanation_text = ""
+        if quota_explanations:
+            explanation_lines = []
+            for rule in quota_explanations[:2]:
+                title = str(rule.get("title", "") or rule.get("chapter", "") or "").strip()
+                summary = str(rule.get("summary", "") or rule.get("content", "") or "").strip()[:240]
+                prefix = f"[{title}]" if title else "[说明]"
+                explanation_lines.append(f"  {prefix} {summary}")
+            explanation_text = "\n## 定额章节说明 / 解释\n" + "\n".join(explanation_lines)
+
+        return rules_text, explanation_text
+
+    @staticmethod
+    def _format_method_cards(method_cards: list[dict] | None) -> str:
+        if not method_cards:
+            return ""
+        card_lines = []
+        for card in method_cards[:2]:
+            category = card.get("category", "")
+            scope = card.get("scope", card.get("_scope", "local"))
+            universal = card.get("universal_method", "")
+            province_ref = card.get("method_text", "")
+            errors = card.get("common_errors", "")
+            source = card.get("source_province", "")
+
+            if scope == "universal":
+                content = universal or province_ref
+                card_block = f"### {category}（通用方法论，来自{source}经验）\n{content}"
+            else:
+                if universal:
+                    card_block = f"### {category}\n{universal}"
+                    if province_ref:
+                        card_block += f"\n\n**本省定额参考：**\n{province_ref}"
+                else:
+                    card_block = f"### {category}\n{province_ref}"
+
+            if errors:
+                card_block += f"\n**常见错误:** {errors}"
+            card_lines.append(card_block)
+        return "\n## 方法论指导（从历史经验中提炼的选定额方法）\n" + "\n\n".join(card_lines)
+
     def _build_agent_prompt(self, bill_item: dict, candidates: list[dict],
                             reference_cases: list[dict] = None,
                             rules_context: list[dict] = None,
                             method_cards: list[dict] = None,
+                            knowledge_evidence: dict | None = None,
                             reasoning_packet: dict = None,
                             overview_context: str = "") -> str:
         """
@@ -323,57 +437,9 @@ class AgentMatcher:
                 candidate_lines.append(f"{i}. [{quota_id}] {quota_name}")
         candidates_text = "\n".join(candidate_lines)
 
-        # 格式化参考案例
-        cases_text = ""
-        if reference_cases:
-            case_lines = []
-            for i, case in enumerate(reference_cases[:3], start=1):
-                bill = case.get("bill", "")
-                quotas = case.get("quotas", [])
-                quotas_str = ", ".join(quotas) if isinstance(quotas, list) else str(quotas)
-                case_lines.append(f"  案例{i}: \"{bill}\" → {quotas_str}")
-            cases_text = "\n## 历史参考案例（类似清单的正确匹配）\n" + "\n".join(case_lines)
-
-        # 格式化规则上下文
-        rules_text = ""
-        if rules_context:
-            rule_lines = []
-            for r in rules_context[:3]:
-                chapter = r.get("chapter", "")
-                content = r.get("content", "")[:300]
-                rule_lines.append(f"  [{chapter}] {content}")
-            rules_text = "\n## 相关定额规则说明\n" + "\n".join(rule_lines)
-
-        # 格式化方法论卡片（从经验中提炼的选定额方法）
-        method_text = ""
-        if method_cards:
-            card_lines = []
-            for card in method_cards[:2]:  # 最多注入2张卡片，避免prompt过长
-                category = card.get("category", "")
-                scope = card.get("_scope", "local")  # local=同省, universal=跨省
-                universal = card.get("universal_method", "")
-                province_ref = card.get("method_text", "")
-                errors = card.get("common_errors", "")
-                source = card.get("source_province", "")
-
-                if scope == "universal":
-                    # 跨省卡片：只注入通用方法论，不含省份编号
-                    content = universal or province_ref  # 降级兜底
-                    card_block = f"### {category}（通用方法论，来自{source}经验）\n{content}"
-                else:
-                    # 同省卡片：注入完整内容
-                    if universal:
-                        card_block = f"### {category}\n{universal}"
-                        if province_ref:
-                            card_block += f"\n\n**本省定额参考：**\n{province_ref}"
-                    else:
-                        # 旧卡片降级：直接用method_text
-                        card_block = f"### {category}\n{province_ref}"
-
-                if errors:
-                    card_block += f"\n**常见错误:** {errors}"
-                card_lines.append(card_block)
-            method_text = "\n## 方法论指导（从历史经验中提炼的选定额方法）\n" + "\n\n".join(card_lines)
+        cases_text = self._format_reference_cases(reference_cases)
+        rules_text, explanation_text = self._format_rule_blocks(knowledge_evidence, rules_context)
+        method_text = self._format_method_cards(method_cards)
 
         # 格式化提取的参数
         params_text = ""
@@ -425,7 +491,7 @@ class AgentMatcher:
 {overview_text}
 ## 候选定额（代码已搜索并按匹配度排序）
 {candidates_text}
-{cases_text}{method_text}{rules_text}{reasoning_text}
+{cases_text}{rules_text}{explanation_text}{method_text}{reasoning_text}
 
 ## 分析要求
 请按以下步骤思考：
@@ -467,7 +533,13 @@ class AgentMatcher:
     ],
     "confidence": 85,
     "explanation": "整体分析说明",
-    "suggested_search": "建议搜索关键词（候选不合适时填写，否则留空）"
+    "suggested_search": "建议搜索关键词（候选不合适时填写，否则留空）",
+    "knowledge_basis": {{
+        "reference_case_ids": ["经验案例ID"],
+        "rule_ids": ["规则ID"],
+        "method_card_ids": ["方法卡ID"],
+        "note": "本次决策主要引用了哪些知识依据"
+    }}
 }}
 ```"""
         return prompt
@@ -485,38 +557,31 @@ class AgentMatcher:
         优先用httpx直接发请求（避免OpenAI SDK在某些Docker环境下的ascii编码bug），
         SDK方式作为降级备选。
         """
-        model_map = {
-            "deepseek": config.DEEPSEEK_MODEL,
-            "kimi": config.KIMI_MODEL,
-            "qwen": config.QWEN_MODEL,
-            "openai": config.OPENAI_MODEL,
-        }
-        model = model_map.get(self.llm_type, config.DEEPSEEK_MODEL)
-
-        # 获取API配置
-        key_map = {
-            "deepseek": config.DEEPSEEK_API_KEY,
-            "kimi": config.KIMI_API_KEY,
-            "qwen": config.QWEN_API_KEY,
-            "openai": getattr(config, "OPENAI_API_KEY", ""),
-        }
-        url_map = {
-            "deepseek": config.DEEPSEEK_BASE_URL,
-            "kimi": config.KIMI_BASE_URL,
-            "qwen": config.QWEN_BASE_URL,
-            "openai": getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        }
-        api_key = key_map.get(self.llm_type, "")
-        base_url = url_map.get(self.llm_type, "")
+        llm_cfg = _LLM_CONFIGS.get(self.llm_type)
+        if llm_cfg:
+            api_key = llm_cfg["key"]()
+            base_url = llm_cfg["url"]()
+            model = llm_cfg["model"]()
+        else:
+            api_key = getattr(config, f"{self.llm_type.upper()}_API_KEY", "")
+            base_url = getattr(config, f"{self.llm_type.upper()}_BASE_URL", "")
+            model = getattr(config, f"{self.llm_type.upper()}_MODEL", "")
 
         # 防御性清洗：去除不可见非ASCII字符（数据库注入的值可能含BOM/零宽空格）
-        def _safe_ascii(val):
+        def _safe_ascii(val) -> str:
             if not val or not isinstance(val, str):
                 return val or ""
             return val.strip().encode("ascii", errors="ignore").decode("ascii")
         api_key = _safe_ascii(api_key)
         base_url = _safe_ascii(base_url)
         model = _safe_ascii(model)
+
+        if not api_key:
+            raise ValueError(f"未配置{self.llm_type.upper()} API Key")
+        if not base_url:
+            raise ValueError(f"未配置{self.llm_type.upper()} Base URL")
+        if not model:
+            raise ValueError(f"未配置{self.llm_type.upper()} 模型名")
 
         # httpx直接调用（绕过SDK编码问题）
         import httpx
@@ -724,11 +789,16 @@ class AgentMatcher:
                 ps = float(c.get("param_score", 0.5))
             except (TypeError, ValueError):
                 ps = 0.5
-            from src.match_core import calculate_confidence as _calc_conf
+            from src.match_core import (
+                calculate_confidence as _calc_conf,
+                infer_confidence_family_alignment,
+            )
             alt_conf = _calc_conf(
                 ps, c.get("param_match", True),
                 name_bonus=c.get("name_bonus", 0.0),
                 rerank_score=c.get("rerank_score", c.get("hybrid_score", 0.0)),
+                family_aligned=infer_confidence_family_alignment(c),
+                family_hard_conflict=bool(c.get("family_gate_hard_conflict", False)),
             )
             alternatives.append({
                 "quota_id": c_quota_id,
@@ -753,6 +823,26 @@ class AgentMatcher:
             "alternatives": alternatives,
             "suggested_search": str(data.get("suggested_search", "")).strip(),
         }
+        knowledge_basis = data.get("knowledge_basis")
+        if isinstance(knowledge_basis, dict):
+            result["knowledge_basis"] = {
+                "reference_case_ids": [
+                    str(item).strip()
+                    for item in (knowledge_basis.get("reference_case_ids") or [])
+                    if str(item).strip()
+                ],
+                "rule_ids": [
+                    str(item).strip()
+                    for item in (knowledge_basis.get("rule_ids") or [])
+                    if str(item).strip()
+                ],
+                "method_card_ids": [
+                    str(item).strip()
+                    for item in (knowledge_basis.get("method_card_ids") or [])
+                    if str(item).strip()
+                ],
+                "note": str(knowledge_basis.get("note", "") or "").strip(),
+            }
 
         # AI推荐的定额不在候选中 — 传递标记给上游触发重搜
         if _ai_recommended_not_found:
@@ -765,7 +855,7 @@ class AgentMatcher:
         return result
 
     @staticmethod
-    def _to_int(value):
+    def _to_int(value) -> int | None:
         """把大模型返回的索引值安全转为int，失败返回None。"""
         try:
             if value is None:
@@ -809,7 +899,7 @@ class AgentMatcher:
                 if not quota_id:
                     continue
                 valid_candidates.append(c)
-            from src.match_core import calculate_confidence
+            from src.match_core import calculate_confidence, infer_confidence_family_alignment
             matched = [c for c in valid_candidates if c.get("param_match", True)]
             if matched:
                 best = matched[0]
@@ -825,6 +915,10 @@ class AgentMatcher:
                 if best:
                     confidence = calculate_confidence(
                         best.get("param_score", 0.0), param_match=False,
+                        name_bonus=best.get("name_bonus", 0.0),
+                        rerank_score=best.get("rerank_score", best.get("hybrid_score", 0.0)),
+                        family_aligned=infer_confidence_family_alignment(best),
+                        family_hard_conflict=bool(best.get("family_gate_hard_conflict", False)),
                         candidates_count=len(valid_candidates),
                         is_ambiguous_short=bill_item.get("_is_ambiguous_short", False),
                     )

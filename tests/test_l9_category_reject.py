@@ -234,3 +234,53 @@ class TestReviewCategoryMismatch:
 
         assert error is not None
         assert error["type"] == "category_mismatch"
+
+    def test_support_composite_item_rejects_process_only_candidate(self):
+        item = {
+            "name": "管道支架\n1.材质:管道支架\n2.管架形式:按需制作\n3.防腐油漆:除锈后刷防锈漆二道,再刷灰色调和漆二道",
+            "description": "管道支架\n1.材质:管道支架\n2.管架形式:按需制作\n3.防腐油漆:除锈后刷防锈漆二道,再刷灰色调和漆二道",
+        }
+
+        error = check_category_mismatch(
+            item,
+            "手工除锈 一般钢结构 轻锈",
+            item["description"].splitlines(),
+        )
+
+        assert error is not None
+        assert error["type"] == "category_mismatch"
+        assert error["core_noun"] == "支撑架"
+
+    def test_support_composite_item_allows_support_candidate(self):
+        item = {
+            "name": "管道支架\n1.材质:管道支架\n2.管架形式:按需制作\n3.防腐油漆:除锈后刷防锈漆二道,再刷灰色调和漆二道",
+            "description": "管道支架\n1.材质:管道支架\n2.管架形式:按需制作\n3.防腐油漆:除锈后刷防锈漆二道,再刷灰色调和漆二道",
+        }
+
+        error = check_category_mismatch(
+            item,
+            "管道支吊架制作与安装 木垫式管架",
+            item["description"].splitlines(),
+        )
+
+        assert error is None
+
+    def test_ancillary_support_noise_does_not_turn_control_box_into_support_item(self):
+        item = {
+            "name": "控制箱 名称:KF1（水泵厂家自带）（含支架） 工作内容：采购并安装",
+            "description": "",
+        }
+
+        error = check_category_mismatch(item, "同期小屏控制箱 安装", [])
+
+        assert error is None
+
+    def test_include_clause_noise_does_not_turn_motor_check_into_pump_item(self):
+        item = {
+            "name": "电机接线检查 规格：3kW以下 包含：风机、水泵、末端设备等 工作内容：满足施工要求",
+            "description": "",
+        }
+
+        error = check_category_mismatch(item, "微型电机检查接线安装", [])
+
+        assert error is None

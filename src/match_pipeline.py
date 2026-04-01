@@ -16,7 +16,6 @@ import re
 
 from loguru import logger
 
-from src.compat_primitives import connections_compatible
 from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
 from src.candidate_scoring import (
@@ -27,8 +26,41 @@ from src.candidate_scoring import (
     has_exact_universal_kb_anchor,
     sort_candidates_with_stage_priority,
 )
+from src.explicit_electrical_family_pickers import (
+    _pick_explicit_cable_family_candidate,
+    _pick_explicit_wiring_family_candidate,
+)
+from src.explicit_equipment_family_pickers import (
+    _pick_explicit_distribution_box_candidate,
+    _pick_explicit_motor_family_candidate,
+    _pick_explicit_valve_family_candidate,
+    _promote_explicit_distribution_box_candidate,
+)
+from src.explicit_misc_family_pickers import (
+    _pick_explicit_fire_device_candidate,
+    _pick_explicit_network_device_candidate,
+    _pick_explicit_plumbing_accessory_candidate,
+)
+from src.explicit_terminal_family_pickers import (
+    _pick_explicit_button_broadcast_candidate,
+    _pick_explicit_lamp_family_candidate,
+    _pick_explicit_sanitary_family_candidate,
+)
 from src.context_builder import build_context_prior, summarize_batch_context_for_trace
 from src.ltr_ranker import rerank_candidates_with_ltr
+from src.explicit_mep_family_pickers import (
+    _pick_explicit_bridge_family_candidate,
+    _pick_explicit_conduit_family_candidate,
+    _pick_explicit_plastic_sleeve_candidate,
+    _pick_explicit_sleeve_family_candidate,
+    _pick_explicit_ventilation_family_candidate,
+)
+from src.explicit_pipe_family_pickers import (
+    _pick_explicit_cast_iron_pipe_candidate,
+    _pick_explicit_insulation_family_candidate,
+    _pick_explicit_pipe_run_candidate,
+    _pick_explicit_support_family_candidate,
+)
 from src.province_plugins import resolve_plugin_hints
 from src.query_builder import build_primary_query_profile
 from src.text_parser import parser as text_parser, normalize_bill_text
@@ -49,6 +81,7 @@ from src.match_core import (
     _append_trace_step,
     _normalize_classification,
     _is_measure_item,
+    try_experience_exact_match,
     try_experience_match,
     _safe_json_materials,
     _summarize_candidates_for_trace,
@@ -467,2179 +500,6 @@ def _pick_safe_support_fallback_candidate(item: dict, candidates: list[dict]) ->
     scored.sort(key=lambda item: item[0], reverse=True)
     return scored[0][1]
 
-
-def _infer_cable_conductor_anchor(text: str, parsed: dict | None = None) -> str:
-    parsed = parsed or {}
-    wire_type = str(parsed.get("wire_type") or "").upper()
-    material = str(parsed.get("material") or "")
-    combined = f"{text or ''} {material}".upper()
-    if "铝合金" in combined:
-        return "铝合金"
-    if any(keyword in combined for keyword in ("铝芯", "压铝", "铝电缆")):
-        return "铝芯"
-    if any(keyword in combined for keyword in ("铜芯", "压铜", "铜电缆")):
-        return "铜芯"
-    if wire_type.startswith(("YJLV", "VLV", "VLL", "YJHLV")):
-        return "铝芯"
-    if wire_type.startswith((
-        "BPYJV", "YJV", "YJY", "VV", "KYJY", "KVV", "KVVP",
-        "BTLY", "BTTRZ", "BTTZ", "YTTW", "BBTRZ",
-    )):
-        return "铜芯"
-    return ""
-
-
-def _extract_cable_head_craft_anchor(text: str) -> str:
-    raw = str(text or "")
-    if any(keyword in raw for keyword in ("热缩", "冷缩", "热(冷)缩", "热（冷）缩")):
-        return "热缩"
-    if "浇注" in raw:
-        return "浇注"
-    if "干包" in raw:
-        return "干包"
-    return ""
-
-
-def _pick_explicit_cable_family_candidate(bill_text: str,
-                                          candidates: list[dict]) -> dict | None:
-    """对明确电缆样本，优先按家族与芯数/截面/终端头类型重选候选。"""
-    text = bill_text or ""
-    upper_text = text.upper()
-    if "电缆" not in text:
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_cores = bill_params.get("cable_cores")
-    bill_section = bill_params.get("cable_section")
-    bill_laying_method = str(bill_params.get("laying_method") or "")
-    bill_wire_type = str(bill_params.get("wire_type") or "")
-    bill_cable_type = str(bill_params.get("cable_type") or "")
-    bill_head_type = str(bill_params.get("cable_head_type") or "")
-    bill_conductor = _infer_cable_conductor_anchor(text, bill_params)
-    bill_craft = _extract_cable_head_craft_anchor(text)
-    bill_voltage = "35kV" if "35KV" in upper_text or "35KV" in upper_text else (
-        "10kV" if "10KV" in upper_text or "10KV" in upper_text else (
-            "1kV" if any(token in upper_text for token in ("0.6/1KV", "1KV")) else ""
-        )
-    )
-
-    is_head = any(keyword in text for keyword in ("终端头", "电缆头", "中间头"))
-    is_middle_head = "中间头" in text
-    is_control = (
-        "控制" in text
-        or bill_cable_type == "控制电缆"
-        or any(keyword in upper_text for keyword in ("KVV", "KVVP", "KVVR", "RVVSP", "RVSP"))
-    )
-    is_power = not is_control
-
-    expected_words: list[str] = []
-    forbidden_words: list[str] = []
-    core_words: list[str] = []
-
-    if is_control:
-        expected_words.append("控制电缆")
-        forbidden_words.append("电力电缆")
-    elif is_power:
-        expected_words.append("电力电缆")
-        forbidden_words.append("控制电缆")
-
-    if is_head:
-        if is_middle_head:
-            expected_words.append("中间头")
-            forbidden_words.extend(["终端头", "电缆头"])
-        else:
-            expected_words.extend(["终端头", "电缆头"])
-            forbidden_words.append("中间头")
-    else:
-        forbidden_words.extend(["终端头", "电缆头", "中间头"])
-
-    if "单芯" in text:
-        core_words.append("单芯")
-    if "四芯" in text or re.search(r"4\s*[×xX*]", text):
-        core_words.append("四芯")
-    if "五芯" in text or re.search(r"5\s*[×xX*]", text):
-        core_words.append("五芯")
-
-    core_count_match = re.search(r"(\d+)\s*[×xX*]\s*\d+(?:\.\d+)?", text)
-    if core_count_match:
-        core_count = int(core_count_match.group(1))
-        if is_control or is_head:
-            core_words.extend([f"<={core_count}", f"{core_count}芯", f"{core_count}"])
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_laying_method = str(cand_params.get("laying_method") or "")
-        cand_wire_type = str(cand_params.get("wire_type") or "")
-        cand_cable_type = str(cand_params.get("cable_type") or "")
-        cand_head_type = str(cand_params.get("cable_head_type") or "")
-        cand_conductor = _infer_cable_conductor_anchor(quota_name, cand_params)
-        cand_craft = _extract_cable_head_craft_anchor(quota_name)
-        score = 0
-        score += sum(8 for word in expected_words if word and word in quota_name)
-        score -= sum(8 for word in forbidden_words if word and word in quota_name)
-        score += sum(4 for word in core_words if word and word in quota_name)
-        if not is_head and any(keyword in quota_name for keyword in ("终端头", "电缆头", "中间头")):
-            score -= 20
-        if is_head and "敷设" in quota_name and not any(keyword in quota_name for keyword in ("终端头", "电缆头", "中间头")):
-            score -= 16
-        cand_cores = cand_params.get("cable_cores")
-        if bill_cores is not None and cand_cores is not None:
-            if bill_cores == cand_cores:
-                score += 8
-            elif bill_cores < cand_cores:
-                score += 4
-            else:
-                score -= 10
-        cand_section = cand_params.get("cable_section")
-        if bill_section is not None and cand_section is not None:
-            if bill_section == cand_section:
-                score += 6
-            elif bill_section < cand_section:
-                score += 3
-            else:
-                score -= 8
-        if bill_laying_method:
-            if (
-                cand_laying_method and (
-                    bill_laying_method == cand_laying_method
-                    or any(token and token in cand_laying_method for token in bill_laying_method.split("/"))
-                )
-            ) or (
-                ("穿管" in bill_laying_method and any(token in quota_name for token in ("穿导管", "穿管", "管内")))
-                or ("桥架" in bill_laying_method and "桥架" in quota_name)
-                or ("线槽" in bill_laying_method and "线槽" in quota_name)
-                or ("排管" in bill_laying_method and "排管" in quota_name)
-                or ("直埋" in bill_laying_method and "埋地" in quota_name)
-            ):
-                score += 6
-            elif cand_laying_method:
-                score -= 6
-        if bill_wire_type and cand_wire_type:
-            score += 4 if bill_wire_type == cand_wire_type else -4
-        if bill_cable_type and cand_cable_type:
-            score += 8 if bill_cable_type == cand_cable_type else -8
-        if bill_head_type and cand_head_type:
-            score += 10 if bill_head_type == cand_head_type else -10
-        if bill_conductor and cand_conductor:
-            score += 8 if bill_conductor == cand_conductor else -10
-        if is_head and bill_craft and cand_craft:
-            score += 6 if bill_craft == cand_craft else -8
-        if is_head and bill_voltage:
-            if bill_voltage in quota_name.upper():
-                score += 4
-            elif any(token in quota_name.upper() for token in ("10KV", "35KV", "1KV")):
-                score -= 6
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_wiring_family_candidate(bill_text: str,
-                                           candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("配线", "电气配线", "线槽配线", "管内穿线", "穿线")):
-        return None
-    if "电缆" in text:
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_cores = bill_params.get("cable_cores")
-    bill_section = bill_params.get("cable_section")
-    bill_laying_method = str(bill_params.get("laying_method") or "")
-    bill_wire_type = str(bill_params.get("wire_type") or "")
-    upper_text = text.upper()
-
-    prefer_words: list[str] = []
-    forbidden_words: list[str] = []
-
-    if any(keyword in text for keyword in ("线槽配线", "线槽", "槽内")):
-        prefer_words.extend(["线槽配线", "线槽"])
-        forbidden_words.extend(["管内穿", "桥架内布放"])
-    elif any(keyword in text for keyword in ("管内", "穿管", "穿线管")):
-        prefer_words.extend(["管内穿", "穿线"])
-        forbidden_words.extend(["线槽配线", "桥架内布放"])
-    else:
-        prefer_words.append("配线")
-
-    if any(keyword in upper_text for keyword in ("RY", "RYS")):
-        prefer_words.extend(["软导线", "多芯软导线"])
-    elif any(keyword in upper_text for keyword in ("BYJ", "BV")):
-        prefer_words.extend(["导线", "铜芯"])
-
-    if bill_cores == 1:
-        prefer_words.append("单芯")
-        forbidden_words.extend(["二芯", "三芯", "多芯"])
-    elif bill_cores is not None and bill_cores > 1:
-        prefer_words.extend(["多芯", f"{int(bill_cores)}芯"])
-        forbidden_words.append("单芯")
-        if bill_cores <= 2:
-            prefer_words.append("二芯")
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_laying_method = str(cand_params.get("laying_method") or "")
-        cand_wire_type = str(cand_params.get("wire_type") or "")
-        score = sum(8 for word in prefer_words if word and word in quota_name)
-        score -= sum(8 for word in forbidden_words if word and word in quota_name)
-        if bill_section is not None:
-            cand_section = cand_params.get("cable_section")
-            if cand_section is not None:
-                if cand_section == bill_section:
-                    score += 6
-                elif cand_section > bill_section:
-                    score += 3
-                else:
-                    score -= 8
-        if bill_laying_method:
-            if (
-                cand_laying_method and (
-                    bill_laying_method == cand_laying_method
-                    or any(token and token in cand_laying_method for token in bill_laying_method.split("/"))
-                )
-            ) or (
-                ("穿管" in bill_laying_method and any(token in quota_name for token in ("管内穿", "穿线", "穿管")))
-                or ("线槽" in bill_laying_method and "线槽" in quota_name)
-                or ("桥架" in bill_laying_method and "桥架" in quota_name)
-            ):
-                score += 6
-            elif cand_laying_method:
-                score -= 6
-        if bill_wire_type and cand_wire_type:
-            score += 4 if bill_wire_type == cand_wire_type else -4
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_plastic_sleeve_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
-    """对明确的 PVC/塑料套管样本，优先选择塑料套管家族。"""
-    text = bill_text or ""
-    if "套管" not in text or not any(keyword in text for keyword in ("PVC", "塑料", "管套")):
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        score = 0
-        if "塑料套管" in quota_name:
-            score += 10
-        if "钢套管" in quota_name:
-            score -= 8
-        if "制作安装" in quota_name:
-            score += 2
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_cast_iron_pipe_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "铸铁" not in text or "管" not in text:
-        return None
-
-    drainage_context = any(keyword in text for keyword in ("排水", "污水", "废水", "污废水", "雨水"))
-    if not drainage_context:
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    expected_words = ["铸铁"]
-    forbidden_words = [
-        "钢塑复合管", "复合管", "塑料给水管", "塑料排水管",
-        "给水管", "PPR", "PP-R", "钢管",
-    ]
-    prefer_words: list[str] = []
-
-    if "雨水" in text:
-        expected_words.append("雨水")
-        forbidden_words.append("排水管")
-    else:
-        expected_words.append("排水")
-        forbidden_words.append("雨水")
-
-    if "室内" in text:
-        prefer_words.append("室内")
-        forbidden_words.append("室外")
-    elif "室外" in text:
-        prefer_words.append("室外")
-        forbidden_words.append("室内")
-
-    if any(keyword in text for keyword in ("机械接口", "机械连接")):
-        prefer_words.extend(["机械接口", "机械连接"])
-        forbidden_words.extend(["卡箍", "胶圈"])
-    elif any(keyword in text for keyword in ("卡箍", "无承口")):
-        prefer_words.extend(["卡箍", "无承口"])
-        forbidden_words.append("机械接口")
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if "铸铁" not in quota_name:
-            continue
-        cand_params = text_parser.parse(quota_name)
-        score = sum(10 for word in expected_words if word and word in quota_name)
-        score -= sum(10 for word in forbidden_words if word and word in quota_name)
-        score += sum(4 for word in prefer_words if word and word in quota_name)
-        if bill_dn is not None:
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 8
-                elif cand_dn > bill_dn:
-                    score += 3
-                else:
-                    score -= 6
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _normalize_pipe_material_hint(text: str, material: str = "") -> str:
-    combined = f"{text or ''} {material or ''}"
-    if any(keyword in combined for keyword in ("PSP钢塑复合管", "钢塑复合压力给水管", "钢塑复合给水管", "钢塑复合管", "钢塑复合")):
-        return "钢塑复合管"
-    if any(keyword in combined for keyword in ("钢骨架塑料复合管", "金属骨架塑料复合管")):
-        return "钢骨架塑料复合管"
-    if "金属骨架复合管" in combined:
-        return "金属骨架复合管"
-    if "铝塑复合" in combined:
-        return "铝塑复合管"
-    if "衬塑钢管" in combined:
-        return "衬塑钢管"
-    if "涂塑钢管" in combined:
-        return "涂塑钢管"
-    if "复合管" in combined:
-        return "复合管"
-    return material or ""
-
-
-def _pick_explicit_pipe_run_candidate(bill_text: str,
-                                      candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not text:
-        return None
-
-    if any(word in text for word in ("电气配管", "配管", "导管", "穿线管", "桥架", "线槽", "金属软管", "可挠金属套管")):
-        return None
-
-    accessory_words = (
-        "管件", "弯头", "三通", "异径", "法兰", "接头", "阀", "套管", "地漏", "雨水斗",
-        "水表", "过滤器", "除污器", "补偿器", "软接头", "伸缩节", "支架", "吊架",
-    )
-    if any(word in text for word in accessory_words):
-        return None
-    if not any(word in text for word in ("管", "给水", "排水", "污水", "废水", "雨水", "复合管", "钢管", "塑料管", "铸铁管")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    bill_connection = str(bill_params.get("connection") or "")
-    bill_material = _normalize_pipe_material_hint(text, str(bill_params.get("material") or ""))
-    usage_words = [word for word in ("给水", "排水", "污水", "废水", "雨水", "消防") if word in text]
-    location_words = [word for word in ("室内", "室外") if word in text]
-    forbidden_words = (
-        "管件", "弯头", "三通", "异径", "法兰安装", "接头", "套管", "水表", "过滤器",
-        "除污器", "补偿器", "软接头", "伸缩节", "低压管件",
-    )
-    electrical_quota_words = (
-        "敷设", "暗配", "明配", "砖、混凝土结构", "钢导管", "紧定式",
-    )
-    pipe_anchor_words = (
-        "管道", "给水管", "排水管", "钢塑复合管", "复合管", "塑料给水管", "塑料排水管",
-        "铸铁管", "钢管", "管安装",
-    )
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if any(word in quota_name for word in forbidden_words):
-            continue
-        if not any(word in quota_name for word in pipe_anchor_words):
-            continue
-
-        cand_params = text_parser.parse(quota_name)
-        cand_connection = str(cand_params.get("connection") or "")
-        score = 12
-        if "给排水管道" in quota_name:
-            score += 10
-        elif any(word in quota_name for word in ("给水", "排水", "室内", "室外")):
-            score += 4
-        score -= sum(8 for word in electrical_quota_words if word in quota_name)
-        score += sum(8 for word in usage_words if word and word in quota_name)
-        score += sum(3 for word in location_words if word and word in quota_name)
-
-        if bill_material:
-            if bill_material in quota_name:
-                score += 10
-            elif bill_material == "钢塑复合管" and any(word in quota_name for word in ("钢塑复合管", "PSP", "衬塑钢管")):
-                score += 8
-            elif "复合管" in bill_material and "复合管" in quota_name:
-                score += 4
-
-        if bill_connection and cand_connection:
-            if bill_connection == cand_connection:
-                score += 6
-            elif connections_compatible(bill_connection, cand_connection):
-                score += 4
-            else:
-                score -= 6
-
-        if bill_dn is not None:
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 8
-                elif cand_dn > bill_dn:
-                    score += 2
-                else:
-                    score -= 8
-
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_sleeve_family_candidate(bill_text: str,
-                                           candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("套管", "堵洞", "封堵")):
-        return None
-    if any(keyword in text for keyword in ("电气配管", "导管", "穿线管", "可挠金属套管")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    expected_words: list[str] = []
-    forbidden_words: list[str] = []
-    prefer_words: list[str] = []
-
-    if any(keyword in text for keyword in ("堵洞", "封堵")):
-        expected_words.extend(["堵洞", "封堵"])
-        forbidden_words.extend(["套管", "钢套管", "防水套管", "管道"])
-    elif any(keyword in text for keyword in ("刚性防水", "刚性防水套管")):
-        expected_words.extend(["刚性防水套管"])
-        forbidden_words.extend(["柔性防水", "一般钢套管", "塑料套管", "堵洞"])
-    elif any(keyword in text for keyword in ("柔性防水", "柔性防水套管")):
-        expected_words.extend(["柔性防水套管"])
-        forbidden_words.extend(["刚性防水", "一般钢套管", "塑料套管", "堵洞"])
-    elif any(keyword in text for keyword in ("密闭", "人防", "防护密闭")):
-        expected_words.extend(["密闭套管", "人防", "防护密闭"])
-        forbidden_words.extend(["一般钢套管", "塑料套管", "堵洞"])
-    else:
-        expected_words.extend(["钢套管", "一般钢套管", "填料套管"])
-        forbidden_words.extend(["刚性防水", "柔性防水", "塑料套管", "成品防火", "堵洞"])
-
-    if "穿墙" in text:
-        prefer_words.append("穿墙")
-    if "穿楼板" in text:
-        prefer_words.append("穿楼板")
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if "套管" not in quota_name and not any(keyword in quota_name for keyword in ("堵洞", "封堵")):
-            continue
-        cand_params = text_parser.parse(quota_name)
-        score = sum(10 for word in expected_words if word and word in quota_name)
-        score -= sum(10 for word in forbidden_words if word and word in quota_name)
-        score += sum(3 for word in prefer_words if word and word in quota_name)
-        if bill_dn is not None:
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 6
-                elif cand_dn > bill_dn:
-                    score += 2
-                else:
-                    score -= 4
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_conduit_family_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
-    """对“明确电气配管语义”的清单，优先在前几名里选对家族。
-
-    只处理非常明确的场景：`电气配管 SC20`、`JDG穿线管`、`电气配管 PC25`、
-    `金属软管`、`可挠金属套管` 等，避免把给排水的 `SC32` 全局误判成电气配管。
-    """
-    if not candidates:
-        return None
-
-    text = bill_text or ""
-    bill_params = text_parser.parse(text)
-    upper_text = text.upper()
-    code_match = re.search(r'(?<![A-Z0-9])(JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G)\s*\d+\b', upper_text)
-    bill_conduit_type = str(bill_params.get("conduit_type") or (code_match.group(1) if code_match else ""))
-    bill_conduit_dn = bill_params.get("conduit_dn")
-    bill_laying_method = str(bill_params.get("laying_method") or "")
-    bill_wire_type = str(bill_params.get("wire_type") or "")
-    bill_cable_type = str(bill_params.get("cable_type") or "")
-    bill_head_type = str(bill_params.get("cable_head_type") or "")
-    explicit_electrical = any(keyword in text for keyword in (
-        "电气配管", "穿线管", "导管", "金属软管", "可挠金属套管",
-    ))
-    if not explicit_electrical and not (bill_conduit_type and "配管" in text):
-        return None
-
-    expected_words: list[str] = []
-    forbidden_words: list[str] = []
-    layout_words: list[str] = []
-    size_tokens: list[str] = []
-
-    if "暗配" in text:
-        layout_words.append("暗配")
-    if "明配" in text:
-        layout_words.append("明配")
-
-    if "金属软管" in text:
-        expected_words = ["金属软管"]
-    elif "可挠" in text:
-        expected_words = ["可挠金属套管"]
-    else:
-        conduit_code = bill_conduit_type
-        if conduit_code in {"JDG", "KBG"}:
-            expected_words = ["JDG", "紧定式", "钢导管"]
-            forbidden_words = ["防爆钢管", "电缆保护"]
-        elif conduit_code in {"PC", "PVC"}:
-            expected_words = ["刚性阻燃管", "PVC阻燃塑料管"]
-            forbidden_words = ["电缆保护", "防爆钢管"]
-        elif conduit_code == "FPC":
-            expected_words = ["半硬质阻燃管", "半硬质塑料管"]
-            forbidden_words = ["电缆保护", "防爆钢管"]
-        elif conduit_code in {"SC", "G", "DG", "RC", "MT"}:
-            expected_words = ["镀锌钢管", "镀锌电线管", "钢管敷设"]
-            forbidden_words = ["防爆钢管", "电缆保护"]
-
-    size_match = re.search(r'(?<![A-Z0-9])(?:JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G|DN|Φ|φ)\s*(\d+)\b', upper_text)
-    if size_match:
-        size = size_match.group(1)
-        size_tokens = [f"{size}", f"≤{size}"]
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_conduit_type = str(cand_params.get("conduit_type") or "")
-        cand_conduit_dn = cand_params.get("conduit_dn")
-        cand_laying_method = str(cand_params.get("laying_method") or "")
-        cand_wire_type = str(cand_params.get("wire_type") or "")
-        cand_cable_type = str(cand_params.get("cable_type") or "")
-        cand_head_type = str(cand_params.get("cable_head_type") or "")
-        family_hits = sum(1 for word in expected_words if word and word in quota_name)
-        family_penalty = sum(1 for word in forbidden_words if word and word in quota_name)
-        layout_hits = sum(1 for word in layout_words if word and word in quota_name)
-        size_hits = sum(1 for token in size_tokens if token and token in quota_name)
-        score = family_hits * 10 + layout_hits * 4 + size_hits * 2 - family_penalty * 8
-        if bill_conduit_type and cand_conduit_type:
-            score += 10 if bill_conduit_type == cand_conduit_type else -10
-        if bill_conduit_dn is not None and cand_conduit_dn is not None:
-            if bill_conduit_dn == cand_conduit_dn:
-                score += 8
-            elif bill_conduit_dn < cand_conduit_dn:
-                score += 2
-            else:
-                score -= 8
-        if bill_laying_method and cand_laying_method:
-            if bill_laying_method == cand_laying_method or any(
-                token and token in cand_laying_method for token in bill_laying_method.split("/")
-            ):
-                score += 6
-            else:
-                score -= 6
-        if bill_wire_type and cand_wire_type:
-            score += 4 if bill_wire_type == cand_wire_type else -4
-        if bill_cable_type and cand_cable_type:
-            score += 8 if bill_cable_type == cand_cable_type else -8
-        if bill_head_type and cand_head_type:
-            score += 10 if bill_head_type == cand_head_type else -10
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    best = scored[0][1]
-    logger.debug(
-        "显式电气配管候选重选: bill={} -> quota={}",
-        bill_text[:80],
-        best.get("name", "")[:80],
-    )
-    return best
-
-
-def _pick_explicit_bridge_family_candidate(bill_text: str,
-                                           candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("桥架", "线槽", "母线槽")):
-        return None
-    if any(keyword in text for keyword in ("电缆", "双绞线", "网线", "光缆", "配线", "布放", "穿线", "导线")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_bridge_wh_sum = bill_params.get("bridge_wh_sum")
-    bill_bridge_type = str(bill_params.get("bridge_type") or "")
-    prefer_bridge = "桥架" in text
-    prefer_trunking = "线槽" in text and "桥架" not in text
-    prefer_busway = "母线槽" in text
-    prefer_slot = "槽式" in text
-    prefer_tray = "托盘式" in text
-    prefer_ladder = "梯式" in text
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        score = 0
-        cand_bridge_type = str(cand_params.get("bridge_type") or "")
-        if prefer_busway:
-            if "母线槽" in quota_name:
-                score += 14
-            if any(word in quota_name for word in ("桥架", "线槽")):
-                score -= 10
-        elif prefer_bridge:
-            if "桥架" in quota_name:
-                score += 12
-            if "支撑架" in quota_name:
-                score -= 10
-            if "线槽配线" in quota_name or "桥架内布放" in quota_name:
-                score -= 12
-            if "线槽" in quota_name and "桥架" not in quota_name:
-                score -= 6
-        elif prefer_trunking:
-            if "线槽" in quota_name:
-                score += 12
-            if "桥架" in quota_name:
-                score -= 8
-            if "线槽配线" in quota_name:
-                score -= 10
-        if prefer_slot:
-            if "槽式" in quota_name:
-                score += 8
-            if any(word in quota_name for word in ("托盘式", "梯式")):
-                score -= 8
-        if prefer_tray:
-            if "托盘式" in quota_name:
-                score += 8
-            if any(word in quota_name for word in ("槽式", "梯式")):
-                score -= 8
-        if prefer_ladder:
-            if "梯式" in quota_name:
-                score += 8
-            if any(word in quota_name for word in ("槽式", "托盘式")):
-                score -= 8
-        if bill_bridge_type and cand_bridge_type:
-            if bill_bridge_type == cand_bridge_type:
-                score += 10
-            else:
-                score -= 10
-        if bill_bridge_wh_sum is not None:
-            cand_bridge_wh_sum = cand_params.get("bridge_wh_sum")
-            if cand_bridge_wh_sum is not None:
-                if cand_bridge_wh_sum == bill_bridge_wh_sum:
-                    score += 6
-                elif cand_bridge_wh_sum > bill_bridge_wh_sum:
-                    score += 3
-                else:
-                    score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_distribution_box_candidate(bill_text: str,
-                                              candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("配电箱", "配电柜", "控制箱", "控制柜", "动力箱", "照明箱", "程序控制箱")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    install_method = str(bill_params.get("install_method") or "")
-    box_mount_mode = str(bill_params.get("box_mount_mode") or "")
-    prefer_floor = any(keyword in text for keyword in ("落地", "柜基础", "基础槽钢"))
-    prefer_wall = any(keyword in text for keyword in ("悬挂", "嵌入", "明装", "暗装", "挂墙", "壁挂", "墙上", "柱上", "距地"))
-    if box_mount_mode == "落地式":
-        prefer_floor = True
-        prefer_wall = False
-    elif box_mount_mode == "悬挂/嵌入式":
-        prefer_wall = True
-    if install_method == "落地":
-        prefer_floor = True
-        prefer_wall = False
-    elif install_method in {"挂墙", "嵌入"} or "明装" in install_method or "暗装" in install_method or "悬挂" in install_method:
-        prefer_wall = True
-    if not prefer_floor and not prefer_wall:
-        if any(keyword in text for keyword in ("配电柜", "控制柜")):
-            prefer_floor = True
-        elif any(keyword in text for keyword in ("配电箱", "控制箱", "动力箱", "照明箱", "程序控制箱")):
-            prefer_wall = True
-    if not prefer_floor and not prefer_wall:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_box_mount_mode = str(cand_params.get("box_mount_mode") or "")
-        cand_half_perimeter = cand_params.get("half_perimeter")
-        cand_circuits = cand_params.get("circuits")
-        candidate_is_junction_box = any(word in quota_name for word in ("接线箱", "接线盒", "分线盒"))
-        candidate_is_box_wiring = "盘、柜、箱、板配线" in quota_name
-        candidate_is_box_install = any(
-            word in quota_name
-            for word in ("配电箱", "配电柜", "控制箱", "控制柜", "动力箱", "照明箱", "程序控制箱", "箱体安装")
-        )
-        score = 0
-        if prefer_floor:
-            if "落地" in quota_name:
-                score += 12
-            if any(word in quota_name for word in ("悬挂", "嵌入", "墙上", "柱上", "挂墙")):
-                score -= 10
-        if prefer_wall:
-            if any(word in quota_name for word in ("悬挂", "嵌入", "墙上", "柱上", "挂墙")):
-                score += 12
-            if "落地" in quota_name:
-                score -= 10
-        if box_mount_mode and cand_box_mount_mode:
-            if box_mount_mode == cand_box_mount_mode:
-                score += 10
-            else:
-                score -= 10
-        if candidate_is_box_install:
-            score += 10
-        if candidate_is_junction_box:
-            score -= 28
-        if candidate_is_box_wiring:
-            score -= 26
-        if "配线" in quota_name and "安装" not in quota_name:
-            score -= 12
-        bill_half_perimeter = bill_params.get("half_perimeter")
-        if bill_half_perimeter is not None:
-            if cand_half_perimeter is None:
-                score -= 6
-            elif cand_half_perimeter < bill_half_perimeter:
-                score -= 18
-            elif cand_half_perimeter == bill_half_perimeter:
-                score += 16
-            elif cand_half_perimeter <= bill_half_perimeter * 1.2:
-                score += 12
-            else:
-                score += 8
-        bill_circuits = bill_params.get("circuits")
-        if bill_circuits is not None:
-            if cand_circuits is None:
-                score -= 4
-            elif cand_circuits < bill_circuits:
-                score -= 16
-            elif cand_circuits == bill_circuits:
-                score += 12
-            elif cand_circuits <= bill_circuits * 1.5:
-                score += 9
-            else:
-                score += 6
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_ventilation_family_candidate(bill_text: str,
-                                                candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    ventilation_entity_keywords = (
-        "风口", "散流器", "百叶", "风机", "排气扇", "换气扇", "通风器", "软风管", "消声器",
-    )
-    ventilation_valve_keywords = (
-        "止回阀", "调节阀", "防火阀", "排烟阀", "定风量阀", "插板阀",
-    )
-    ventilation_context_keywords = (
-        "风管", "通风", "空调", "送风", "回风", "排烟", "风量", "多叶", "对开", "防火",
-    )
-    if not any(keyword in text for keyword in (
-        *ventilation_entity_keywords,
-        *ventilation_valve_keywords,
-    )):
-        return None
-    # 仅含“止回阀/调节阀”等词但没有通风上下文时，不抢占管道阀门家族。
-    if (
-        any(keyword in text for keyword in ventilation_valve_keywords)
-        and not any(keyword in text for keyword in ventilation_context_keywords)
-        and not any(keyword in text for keyword in ventilation_entity_keywords)
-    ):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_features = text_parser.parse_canonical(text, params=bill_params)
-    bill_perimeter = bill_params.get("perimeter")
-    bill_weight = bill_params.get("weight_t")
-    bill_entity = str(bill_features.get("entity") or "")
-    bill_canonical_name = str(bill_features.get("canonical_name") or "")
-    prefer_words: list[str] = []
-    forbidden_words: list[str] = []
-
-    if bill_canonical_name == "卫生间通风器" or any(keyword in text for keyword in ("卫生间通风器", "吊顶式通风器", "吸顶式通风器")):
-        prefer_words.extend(["卫生间通风器", "天花式排气扇", "排气扇"])
-        forbidden_words.extend(["风机安装", "离心式通风机"])
-    elif bill_canonical_name == "暖风机" or bill_entity == "暖风机" or "暖风机" in text:
-        prefer_words.extend(["暖风机"])
-        forbidden_words.extend(["风机安装"])
-    elif "柔性软风管" in text or "软风管" in text:
-        prefer_words.extend(["柔性接口", "伸缩节", "软风管"])
-        forbidden_words.extend(["阀门安装"])
-    elif any(keyword in text for keyword in ("风管止回阀", "止回阀")):
-        prefer_words.extend(["风管止回阀", "止回阀"])
-        forbidden_words.extend(["阀门安装", "柔性软风管", "水流指示器"])
-    elif any(keyword in text for keyword in ("排烟防火阀", "防火阀")):
-        prefer_words.extend(["防火阀"])
-        forbidden_words.extend(["阀门安装", "柔性软风管"])
-        if "排烟" in text or "280" in text:
-            prefer_words.append("排烟")
-    elif any(keyword in text for keyword in ("手动调节阀", "电动调节阀", "风量调节阀", "多叶调节阀", "调节阀")):
-        prefer_words.extend(["调节阀"])
-        forbidden_words.extend(["阀门安装", "柔性软风管"])
-        if any(keyword in text for keyword in ("多叶", "对开多叶")):
-            prefer_words.append("多叶")
-        if "电动" in text:
-            prefer_words.append("电动")
-        if "手动" in text:
-            prefer_words.append("手动")
-    elif any(keyword in text for keyword in ("定风量阀", "风量阀")):
-        prefer_words.extend(["定风量阀", "风量阀"])
-        forbidden_words.extend(["阀门安装"])
-    elif "插板阀" in text:
-        prefer_words.extend(["插板阀"])
-        forbidden_words.extend(["阀门安装"])
-    elif "百叶" in text and any(keyword in text for keyword in ("风口", "散流器", "百叶窗")):
-        prefer_words.extend(["百叶风口"])
-        forbidden_words.extend(["钢百叶窗"])
-    elif any(keyword in text for keyword in ("天花板", "天花式", "管道式换气扇")):
-        prefer_words.extend(["天花式排气扇", "排气扇"])
-        forbidden_words.extend(["壁扇"])
-    elif any(keyword in text for keyword in ("壁式排风机", "壁式")):
-        prefer_words.extend(["排气扇"])
-        forbidden_words.extend(["壁扇"])
-    elif "消声器" in text:
-        prefer_words.extend(["消声器"])
-    else:
-        if "通风器" in text:
-            prefer_words.extend(["卫生间通风器", "天花式排气扇", "排气扇"])
-            forbidden_words.extend(["风机安装"])
-        if "风机" in text:
-            prefer_words.extend(["风机", "通风机"])
-        if "风口" in text or "散流器" in text:
-            prefer_words.extend(["风口", "散流器"])
-        if "阀" in text:
-            prefer_words.extend(["阀"])
-        if not prefer_words:
-            return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_features = text_parser.parse_canonical(quota_name, params=cand_params)
-        cand_entity = str(cand_features.get("entity") or "")
-        cand_canonical_name = str(cand_features.get("canonical_name") or "")
-        score = sum(8 for word in prefer_words if word and word in quota_name)
-        score -= sum(8 for word in forbidden_words if word and word in quota_name)
-        if bill_canonical_name and cand_canonical_name:
-            if bill_canonical_name == cand_canonical_name:
-                score += 12
-            elif bill_canonical_name == "卫生间通风器" and cand_canonical_name == "排气扇":
-                score += 4
-            elif frozenset((bill_entity, cand_entity)) in {
-                frozenset(("卫生间通风器", "风机")),
-                frozenset(("暖风机", "风机")),
-                frozenset(("排气扇", "风机")),
-            }:
-                score -= 12
-        elif bill_entity and cand_entity:
-            if bill_entity == cand_entity:
-                score += 8
-        if "风口" in text and "风口" in quota_name:
-            score += 4
-        if "风机" in text and "风机" in quota_name:
-            score += 4
-        if "阀" in text and "阀" in quota_name:
-            score += 4
-        if bill_perimeter is not None:
-            cand_perimeter = cand_params.get("perimeter")
-            if cand_perimeter is not None:
-                if cand_perimeter == bill_perimeter:
-                    score += 6
-                elif cand_perimeter > bill_perimeter:
-                    score += 3
-                else:
-                    score -= 8
-        if bill_weight is not None:
-            cand_weight = cand_params.get("weight_t")
-            if cand_weight is not None:
-                if cand_weight == bill_weight:
-                    score += 10
-                elif cand_weight > bill_weight:
-                    score += 4
-                else:
-                    score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_support_family_candidate_legacy(bill_text: str,
-                                                   candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    bill_params = text_parser.parse(text)
-    bill_support_scope = str(bill_params.get("support_scope") or "")
-    bill_support_action = str(bill_params.get("support_action") or "")
-    bill_weight = bill_params.get("weight_t")
-    bill_support_material = str(bill_params.get("support_material") or "")
-    prefer_aseismic = "抗震" in text or bill_support_scope == "抗震支架"
-    prefer_side = "侧向" in text
-    prefer_longitudinal = "纵向" in text
-    prefer_single = "单管" in text
-    prefer_multi = "多管" in text
-    prefer_door_frame = "门型" in text
-    generic_pipe_support = any(keyword in text for keyword in ("按需制作", "一般管架"))
-    if not any(keyword in text for keyword in ("支架", "支/吊架", "支吊架")):
-        return None
-
-    prefer_bridge = (
-        bill_support_scope in {"桥架支架", "抗震支架"}
-        or any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向", "抗震支吊架"))
-    )
-    prefer_pipe = (
-        bill_support_scope == "管道支架"
-        or any(keyword in text for keyword in ("管道", "管架", "管道支架"))
-    )
-    prefer_fabrication = (
-        bill_support_action in {"制作", "制作安装"}
-        or any(keyword in text for keyword in ("图集", "详见图集", "制作", "单件重量", "型钢"))
-    )
-    if not prefer_bridge and not prefer_pipe:
-        return None
-    support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
-    surface_process_words = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆")
-    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_support_scope = str(cand_params.get("support_scope") or "")
-        cand_support_action = str(cand_params.get("support_action") or "")
-        cand_support_material = str(cand_params.get("support_material") or "")
-        has_support_anchor = (
-            bool(cand_support_scope)
-            or any(word in quota_name for word in support_anchor_words)
-        )
-        if not has_support_anchor:
-            continue
-        if (
-            any(word in quota_name for word in surface_process_words)
-            and not any(word in text for word in surface_process_words)
-        ):
-            # 清单是支架族但未写除锈/刷油时，压制防腐刷油定额误召回。
-            continue
-        score = 0
-        if bill_support_scope and cand_support_scope:
-            if bill_support_scope == cand_support_scope:
-                score += 12
-            elif (
-                bill_support_scope == "抗震支架"
-                and cand_support_scope in {"桥架支架", "管道支架"}
-            ):
-                score += 2
-            else:
-                score -= 12
-        if bill_support_action and cand_support_action:
-            if bill_support_action == cand_support_action:
-                score += 10
-            elif bill_support_action == "制作" and cand_support_action == "制作安装":
-                score -= 4
-            elif bill_support_action == "安装" and cand_support_action == "制作安装":
-                score -= 2
-            else:
-                score -= 8
-        if bill_support_material and cand_support_material:
-            if bill_support_material == cand_support_material:
-                score += 8
-            else:
-                score -= 8
-        if prefer_aseismic:
-            if "抗震" in quota_name:
-                score += 12
-            elif prefer_bridge and any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
-                score += 2
-            elif any(word in quota_name for word in ("一般管架", "支撑架制作", "桥架支撑架制作")):
-                score -= 4
-        elif "抗震" in quota_name:
-            score -= 8
-        if prefer_bridge:
-            if any(word in quota_name for word in ("桥架支撑架", "电缆桥架")):
-                score += 12
-            if any(word in quota_name for word in ("支架制作", "支架安装")) and "桥架" in quota_name:
-                score += 6
-            if any(word in quota_name for word in ("管架", "管道支架")):
-                score -= 10
-        elif prefer_pipe:
-            if any(word in quota_name for word in ("管架", "管道支架")):
-                score += 8
-            if any(word in quota_name for word in ("桥架支撑架", "电缆桥架", "桥架支架")):
-                score -= 6
-            if generic_pipe_support and "一般管架" in quota_name:
-                score += 10
-            for word in support_special_shape_words:
-                if word in quota_name and word not in text:
-                    score -= 12
-        if prefer_side:
-            if "侧向" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("纵向", "门型")):
-                score -= 8
-        if prefer_longitudinal:
-            if "纵向" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("侧向", "门型")):
-                score -= 8
-        if prefer_door_frame:
-            if "门型" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("侧向", "纵向")):
-                score -= 6
-        if prefer_single:
-            if "单管" in quota_name:
-                score += 6
-            elif "多管" in quota_name:
-                score -= 6
-        if prefer_multi:
-            if "多管" in quota_name:
-                score += 6
-            elif "单管" in quota_name:
-                score -= 6
-        if prefer_fabrication:
-            if "制作" in quota_name:
-                score += 10
-            if any(word in quota_name for word in ("单件重量", "kg", "重量")):
-                score += 6
-            if any(word in quota_name for word in ("安装", "一般管架")):
-                score -= 8
-        if bill_weight is not None:
-            cand_weight = cand_params.get("weight_t")
-            if cand_weight is not None:
-                if cand_weight == bill_weight:
-                    score += 10
-                elif cand_weight > bill_weight:
-                    score += 4
-                else:
-                    score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_support_family_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    bill_params = text_parser.parse(text)
-    bill_support_scope = str(bill_params.get("support_scope") or "")
-    bill_support_action = str(bill_params.get("support_action") or "")
-    bill_weight = bill_params.get("weight_t")
-    bill_support_material = str(bill_params.get("support_material") or "")
-    prefer_aseismic = "抗震" in text or bill_support_scope == "抗震支架"
-    prefer_side = "侧向" in text
-    prefer_longitudinal = "纵向" in text
-    prefer_single = "单管" in text
-    prefer_multi = "多管" in text
-    prefer_door_frame = "门型" in text
-    generic_pipe_support = any(keyword in text for keyword in ("按需制作", "一般管架"))
-    prefer_equipment = bill_support_scope == "设备支架" or any(
-        keyword in text for keyword in ("设备支架", "设备吊架", "设备支吊架")
-    )
-    prefer_duct = any(
-        keyword in text for keyword in ("通风", "空调", "风管", "风口")
-    )
-    if not any(keyword in text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
-        return None
-
-    prefer_bridge = (
-        bill_support_scope == "桥架支架"
-        or any(keyword in text for keyword in ("桥架", "电缆桥架", "桥架支撑架", "桥架侧纵向"))
-    )
-    prefer_pipe = (
-        bill_support_scope == "管道支架"
-        or any(keyword in text for keyword in ("管道", "管架", "管道支架", "给排水", "消防水", "喷淋", "消火栓", "水管"))
-    )
-    prefer_fabrication = (
-        bill_support_action in {"制作", "制作安装"}
-        or any(keyword in text for keyword in ("图集", "详见图集", "制作", "单件重量", "型钢"))
-    )
-    if not prefer_bridge and not prefer_pipe and not prefer_equipment and not prefer_duct and not prefer_aseismic:
-        return None
-
-    support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
-    surface_process_words = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆")
-    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
-    support_action_words = ("制作", "安装", "制作安装", "制安")
-    equipment_support_words = ("设备支架", "设备吊架", "设备及部件支架")
-    bridge_support_words = ("桥架支撑架", "电缆桥架")
-    pipe_support_words = ("管架", "管道支架", "管道支吊架", "吊托支架", "支吊架")
-    instrument_support_words = ("仪表支架", "仪表支吊架")
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_support_scope = str(cand_params.get("support_scope") or "")
-        cand_support_action = str(cand_params.get("support_action") or "")
-        cand_support_material = str(cand_params.get("support_material") or "")
-        has_support_anchor = (
-            bool(cand_support_scope)
-            or any(word in quota_name for word in support_anchor_words)
-        )
-        if not has_support_anchor:
-            continue
-
-        candidate_is_surface_process = (
-            any(word in quota_name for word in surface_process_words)
-            and not any(word in quota_name for word in support_action_words)
-        )
-        if candidate_is_surface_process:
-            continue
-        if (
-            any(word in quota_name for word in surface_process_words)
-            and not any(word in text for word in surface_process_words)
-        ):
-            continue
-
-        score = 0
-        if bill_support_scope and cand_support_scope:
-            if bill_support_scope == cand_support_scope:
-                score += 12
-            elif (
-                bill_support_scope == "抗震支架"
-                and cand_support_scope in {"桥架支架", "管道支架"}
-            ):
-                score += 2
-            else:
-                score -= 12
-        if bill_support_action and cand_support_action:
-            if bill_support_action == cand_support_action:
-                score += 10
-            elif bill_support_action == "制作" and cand_support_action == "制作安装":
-                score -= 4
-            elif bill_support_action == "安装" and cand_support_action == "制作安装":
-                score -= 2
-            else:
-                score -= 8
-        if bill_support_material and cand_support_material:
-            if bill_support_material == cand_support_material:
-                score += 8
-            else:
-                score -= 8
-
-        if prefer_aseismic:
-            if "抗震" in quota_name:
-                score += 12
-            elif prefer_bridge and any(word in quota_name for word in bridge_support_words):
-                score += 2
-            elif (prefer_pipe or prefer_duct) and any(word in quota_name for word in pipe_support_words):
-                score += 2
-            elif any(word in quota_name for word in ("一般管架", "支撑架制作", "桥架支撑架制作")):
-                score -= 4
-        elif "抗震" in quota_name:
-            score -= 8
-
-        if prefer_bridge:
-            if any(word in quota_name for word in bridge_support_words):
-                score += 12
-            if any(word in quota_name for word in ("支架制作", "支架安装")) and "桥架" in quota_name:
-                score += 6
-            if any(word in quota_name for word in pipe_support_words):
-                score -= 10
-            if any(word in quota_name for word in equipment_support_words):
-                score -= 8
-        elif prefer_pipe:
-            if any(word in quota_name for word in pipe_support_words):
-                score += 8
-            if any(word in quota_name for word in bridge_support_words):
-                score -= 10
-            if generic_pipe_support and "一般管架" in quota_name:
-                score += 10
-            for word in support_special_shape_words:
-                if word in quota_name and word not in text:
-                    score -= 12
-            if any(word in quota_name for word in instrument_support_words):
-                score -= 10
-            if any(word in quota_name for word in equipment_support_words):
-                score -= 10
-        elif prefer_duct:
-            if any(word in quota_name for word in ("支吊架", "吊托支架", "风管支吊架")):
-                score += 8
-            if any(word in quota_name for word in bridge_support_words):
-                score -= 10
-            if any(word in quota_name for word in instrument_support_words):
-                score -= 10
-            if any(word in quota_name for word in equipment_support_words):
-                score -= 8
-        elif prefer_equipment:
-            if any(word in quota_name for word in equipment_support_words):
-                score += 12
-            if any(word in quota_name for word in pipe_support_words + bridge_support_words):
-                score -= 10
-            if any(word in quota_name for word in ("单件重量", "每个支架重量", "每组重量", "kg", "重量")):
-                score += 6
-
-        if prefer_side:
-            if "侧向" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("纵向", "门型")):
-                score -= 8
-        if prefer_longitudinal:
-            if "纵向" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("侧向", "门型")):
-                score -= 8
-        if prefer_door_frame:
-            if "门型" in quota_name:
-                score += 8
-            elif any(word in quota_name for word in ("侧向", "纵向")):
-                score -= 6
-        if prefer_single:
-            if "单管" in quota_name:
-                score += 6
-            elif "多管" in quota_name:
-                score -= 6
-        if prefer_multi:
-            if "多管" in quota_name:
-                score += 6
-            elif "单管" in quota_name:
-                score -= 6
-        if prefer_fabrication:
-            if "制作" in quota_name:
-                score += 10
-            if any(word in quota_name for word in ("单件重量", "kg", "重量")):
-                score += 6
-            if any(word in quota_name for word in ("安装", "一般管架")):
-                score -= 8
-        if bill_weight is not None:
-            cand_weight = cand_params.get("weight_t")
-            if cand_weight is not None:
-                if cand_weight == bill_weight:
-                    score += 10
-                elif cand_weight > bill_weight:
-                    score += 4
-                else:
-                    score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _promote_explicit_distribution_box_candidate(item: dict,
-                                                 candidates: list[dict]) -> tuple[list[dict], dict]:
-    if not candidates:
-        return [], {}
-
-    bill_text = " ".join(
-        part for part in (
-            (item or {}).get("name", ""),
-            (item or {}).get("description", ""),
-        ) if part
-    )
-    picked = _pick_explicit_distribution_box_candidate(bill_text, candidates)
-    if not picked:
-        return list(candidates), {
-            "applied": False,
-            "advisory_applied": False,
-            "reason": "no_explicit_distribution_box_match",
-            "recommended_quota_id": "",
-        }
-
-    picked_id = str(picked.get("quota_id", "")).strip()
-    if not picked_id:
-        return list(candidates), {
-            "applied": False,
-            "advisory_applied": False,
-            "reason": "missing_recommended_quota_id",
-            "recommended_quota_id": "",
-        }
-
-    chosen = None
-    for candidate in candidates:
-        if str(candidate.get("quota_id", "")).strip() == picked_id:
-            chosen = candidate
-            break
-    if chosen is None:
-        return list(candidates), {
-            "applied": False,
-            "advisory_applied": False,
-            "reason": "recommended_candidate_not_in_pool",
-            "recommended_quota_id": picked_id,
-        }
-
-    # Explicit distribution-box logic is advisory only in the main architecture.
-    # It records a recommendation for diagnostics but does not reorder candidates.
-    return list(candidates), {
-        "applied": False,
-        "advisory_applied": True,
-        "reason": "distribution_box_explicit_advisory",
-        "recommended_quota_id": picked_id,
-    }
-
-
-def _pick_explicit_insulation_family_candidate(bill_text: str,
-                                               candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("绝热", "保温", "保冷", "防潮层", "保护层")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_thickness = bill_params.get("thickness")
-    prefer_pipe = any(keyword in text for keyword in (
-        "管道", "给水", "排水", "采暖", "消防", "风管", "阀门", "法兰", "弯头",
-    ))
-    prefer_equipment = any(keyword in text for keyword in (
-        "设备", "容器", "储罐", "塔器", "换热器", "机组",
-    ))
-    insulation_words = ("绝热", "保温", "保冷", "防潮层", "保护层")
-    pipe_anchor_words = ("管道", "风管", "管壳", "弯头", "法兰", "阀门", "给排水")
-    equipment_anchor_words = ("设备", "立式设备", "卧式设备", "容器", "储罐", "塔器", "换热器")
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if not any(word in quota_name for word in insulation_words):
-            continue
-        cand_params = text_parser.parse(quota_name)
-        score = sum(5 for word in insulation_words if word in quota_name)
-
-        if prefer_pipe:
-            if any(word in quota_name for word in pipe_anchor_words):
-                score += 12
-            if any(word in quota_name for word in equipment_anchor_words):
-                score -= 12
-        if prefer_equipment:
-            if any(word in quota_name for word in equipment_anchor_words):
-                score += 10
-            if any(word in quota_name for word in pipe_anchor_words):
-                score -= 10
-
-        if "防潮层" in text and "防潮层" in quota_name:
-            score += 6
-        if "保护层" in text and "保护层" in quota_name:
-            score += 6
-
-        if bill_thickness is not None:
-            cand_thickness = cand_params.get("thickness")
-            if cand_thickness is not None:
-                if cand_thickness == bill_thickness:
-                    score += 8
-                elif cand_thickness > bill_thickness:
-                    score += 2
-                else:
-                    score -= 6
-
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_motor_family_candidate(bill_text: str,
-                                          candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "电动机" not in text:
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_kw = bill_params.get("kw")
-    prefer_check = "检查接线" in text
-    prefer_load = "负载调试" in text
-    if not prefer_check and not prefer_load:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        score = 0
-        if prefer_check:
-            if "检查接线" in quota_name:
-                score += 12
-            if "负载调试" in quota_name:
-                score -= 10
-        if prefer_load:
-            if "负载调试" in quota_name:
-                score += 12
-            if "检查接线" in quota_name:
-                score -= 8
-        cand_kw = cand_params.get("kw")
-        if bill_kw is not None and cand_kw is not None:
-            if bill_kw == cand_kw:
-                score += 6
-            elif bill_kw < cand_kw:
-                score += 3
-            else:
-                score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_sanitary_family_candidate(bill_text: str,
-                                             candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("便器", "水龙头", "洗脸盆", "洗涤盆", "水槽", "小便器")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    sanitary_subtype = str(bill_params.get("sanitary_subtype") or "")
-    sanitary_mount_mode = str(bill_params.get("sanitary_mount_mode") or "")
-    sanitary_flush_mode = str(bill_params.get("sanitary_flush_mode") or "")
-    sanitary_water_mode = str(bill_params.get("sanitary_water_mode") or "")
-    sanitary_nozzle_mode = str(bill_params.get("sanitary_nozzle_mode") or "")
-    sanitary_tank_mode = str(bill_params.get("sanitary_tank_mode") or "")
-    expected_words: list[str] = []
-    forbidden_words: list[str] = []
-    prefer_words: list[str] = []
-    if sanitary_subtype == "坐便器":
-        expected_words.extend(["坐式大便器", "坐便器"])
-        forbidden_words.extend(["蹲式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
-    elif sanitary_subtype == "蹲便器":
-        expected_words.extend(["蹲式大便器", "蹲便器"])
-        forbidden_words.extend(["坐式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
-    elif sanitary_subtype == "小便器":
-        expected_words.append("小便器")
-        forbidden_words.extend(["大便器", "洗脸盆", "洗涤盆", "水龙头"])
-    elif sanitary_subtype == "洗脸盆":
-        expected_words.append("洗脸盆")
-        forbidden_words.extend(["洗涤盆", "水龙头", "大便器", "小便器"])
-    elif sanitary_subtype == "洗涤盆":
-        expected_words.append("洗涤盆")
-        forbidden_words.extend(["洗脸盆", "水龙头", "大便器", "小便器"])
-    if any(keyword in text for keyword in ("水龙头", "龙头")):
-        expected_words.append("水龙头")
-        forbidden_words.extend(["控制器", "探测器", "入侵"])
-        if "感应" in text:
-            prefer_words.append("感应")
-        if "脚踏" in text:
-            prefer_words.append("脚踏")
-    if "感应" in text:
-        expected_words.extend(["感应开关", "感应"])
-        forbidden_words.append("脚踏开关")
-    if "脚踏" in text:
-        expected_words.append("脚踏开关")
-        forbidden_words.append("感应开关")
-    if "连体水箱" in text:
-        expected_words.append("连体水箱")
-        forbidden_words.append("隐蔽水箱")
-    if "隐蔽水箱" in text:
-        expected_words.append("隐蔽水箱")
-        forbidden_words.append("连体水箱")
-    if "挂墙" in text:
-        expected_words.append("挂墙式")
-    if "立式" in text:
-        expected_words.append("立式")
-    if "壁挂" in text:
-        expected_words.append("壁挂式")
-    if "埋入" in text:
-        prefer_words.append("埋入式")
-
-    if not expected_words and not forbidden_words:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_mount_mode = str(cand_params.get("sanitary_mount_mode") or "")
-        cand_flush_mode = str(cand_params.get("sanitary_flush_mode") or "")
-        cand_water_mode = str(cand_params.get("sanitary_water_mode") or "")
-        cand_nozzle_mode = str(cand_params.get("sanitary_nozzle_mode") or "")
-        cand_tank_mode = str(cand_params.get("sanitary_tank_mode") or "")
-        score = sum(8 for word in expected_words if word and word in quota_name)
-        score -= sum(8 for word in forbidden_words if word and word in quota_name)
-        score += sum(3 for word in prefer_words if word and word in quota_name)
-        if sanitary_mount_mode and cand_mount_mode:
-            if sanitary_mount_mode == cand_mount_mode:
-                score += 10
-            else:
-                score -= 10
-        if sanitary_flush_mode and cand_flush_mode:
-            if sanitary_flush_mode == cand_flush_mode:
-                score += 10
-            else:
-                score -= 10
-        if sanitary_water_mode and cand_water_mode:
-            if sanitary_water_mode == cand_water_mode:
-                score += 10
-            else:
-                score -= 10
-        if sanitary_nozzle_mode and cand_nozzle_mode:
-            if sanitary_nozzle_mode == cand_nozzle_mode:
-                score += 8
-            else:
-                score -= 8
-        if sanitary_tank_mode and cand_tank_mode:
-            if sanitary_tank_mode == cand_tank_mode:
-                score += 10
-            else:
-                score -= 10
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_lamp_family_candidate(bill_text: str,
-                                         candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "灯" not in text or any(keyword in text for keyword in ("扬声器", "广播")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    lamp_type = str(bill_params.get("lamp_type") or "")
-    install_method = str(bill_params.get("install_method") or "")
-    if not lamp_type and not install_method:
-        return None
-
-    incompatible_map = {
-        "吸顶灯": {"筒灯", "灯带", "壁灯", "标志灯", "应急灯", "轮廓灯", "投光灯"},
-        "筒灯": {"吸顶灯", "灯带", "壁灯", "标志灯", "应急灯", "轮廓灯", "投光灯"},
-        "灯带": {"吸顶灯", "筒灯", "壁灯", "标志灯", "应急灯"},
-        "壁灯": {"吸顶灯", "筒灯", "灯带"},
-        "标志灯": {"吸顶灯", "筒灯", "灯带", "壁灯"},
-        "应急灯": {"吸顶灯", "筒灯", "灯带", "壁灯"},
-        "轮廓灯": {"吸顶灯", "筒灯", "壁灯"},
-        "投光灯": {"吸顶灯", "筒灯", "壁灯"},
-    }
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_lamp_type = str(cand_params.get("lamp_type") or "")
-        cand_install_method = str(cand_params.get("install_method") or "")
-        score = 0
-        if lamp_type and cand_lamp_type:
-            if lamp_type == cand_lamp_type:
-                score += 12
-            elif cand_lamp_type in incompatible_map.get(lamp_type, set()):
-                score -= 10
-        if install_method and cand_install_method:
-            if install_method == cand_install_method:
-                score += 8
-            elif install_method in {"吊装", "吸顶"} and cand_install_method in {"吊装", "吸顶"}:
-                score += 2
-            else:
-                score -= 8
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_button_broadcast_candidate(bill_text: str,
-                                              candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if not any(keyword in text for keyword in ("扬声器", "按钮")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_features = text_parser.parse_canonical(text, params=bill_params)
-    install_method = str(bill_params.get("install_method") or "")
-    bill_entity = str(bill_features.get("entity") or "")
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        cand_features = text_parser.parse_canonical(quota_name, params=cand_params)
-        cand_install_method = str(cand_params.get("install_method") or "")
-        cand_entity = str(cand_features.get("entity") or "")
-        score = 0
-
-        if "扬声器" in text:
-            if "扬声器" in quota_name:
-                score += 10
-            if install_method == "挂墙":
-                if any(word in quota_name for word in ("壁挂", "挂墙", "壁装")):
-                    score += 10
-                if "吸顶" in quota_name:
-                    score -= 10
-            elif install_method == "吸顶":
-                if "吸顶" in quota_name:
-                    score += 10
-                if any(word in quota_name for word in ("壁挂", "挂墙", "壁装")):
-                    score -= 10
-            if install_method and cand_install_method:
-                if install_method == cand_install_method:
-                    score += 8
-                elif {install_method, cand_install_method} == {"挂墙", "吸顶"}:
-                    score -= 8
-            if bill_entity and cand_entity:
-                if bill_entity == cand_entity:
-                    score += 6
-                else:
-                    score -= 6
-
-        if "按钮" in text:
-            if "紧急呼叫" in text and all(word not in text for word in ("消防", "报警", "消火栓")):
-                if "按钮" in quota_name:
-                    score += 8
-                if any(word in quota_name for word in ("报警按钮", "消火栓")):
-                    score -= 10
-            elif any(word in text for word in ("手动报警", "报警按钮", "消火栓")):
-                if any(word in quota_name for word in ("报警按钮", "消火栓")):
-                    score += 10
-                if "普通开关、按钮安装 按钮" in quota_name:
-                    score -= 8
-
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_plumbing_accessory_candidate(bill_text: str,
-                                                candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    prefer_flexible_joint = False
-    prefer_pipe_clamp = False
-
-    expected_words: list[str] = []
-    forbidden_words: list[str] = []
-    prefer_words: list[str] = []
-
-    if any(keyword in text for keyword in ("地漏", "洗衣机地漏", "侧排地漏")):
-        expected_words.extend(["地漏"])
-        forbidden_words.extend(["排水栓", "伸缩器"])
-        if "方形" in text:
-            prefer_words.append("方形")
-        if "侧排" in text:
-            prefer_words.append("侧排")
-    elif any(keyword in text for keyword in ("雨水斗", "87型雨水斗", "侧入雨水斗")):
-        expected_words.extend(["雨水斗"])
-        forbidden_words.extend(["排水塑料管", "排水管"])
-        if "87型" in text:
-            prefer_words.append("87型")
-        if "侧入" in text:
-            prefer_words.append("侧入")
-    elif "水表" in text:
-        expected_words.extend(["水表"])
-        forbidden_words.extend(["阀门", "伸缩器", "支架"])
-    elif any(keyword in text for keyword in ("真空破坏器", "水锤消除器")):
-        if "真空破坏器" in text:
-            expected_words.extend(["真空破坏器"])
-            forbidden_words.extend(["过滤器", "除污器"])
-        if "水锤消除器" in text:
-            expected_words.extend(["水锤消除器"])
-            forbidden_words.extend(["过滤器", "除污器"])
-    elif any(keyword in text for keyword in ("过滤器", "除污器", "Y型过滤器", "管道过滤器")):
-        expected_words.extend(["过滤器", "除污器"])
-        forbidden_words.extend(["水锤消除器"])
-        if "Y型" in text:
-            prefer_words.append("Y型")
-    elif "倒流防止器" in text:
-        expected_words.extend(["倒流防止器"])
-        forbidden_words.extend(["阀门"])
-        if "水表" in text:
-            prefer_words.append("带水表")
-            forbidden_words.append("不带水表")
-        else:
-            prefer_words.append("不带水表")
-            forbidden_words.append("带水表")
-    elif any(keyword in text for keyword in ("软接头", "伸缩节", "柔性接头", "橡胶接头")):
-        prefer_flexible_joint = True
-        expected_words.extend(["软接头", "伸缩节", "柔性接头", "橡胶接头", "柔性接口"])
-        forbidden_words.extend([
-            "法兰安装", "螺纹法兰安装", "法兰阀门",
-            "塑料给水管", "塑料排水管", "给水管", "排水管",
-        ])
-        if "法兰" in text:
-            prefer_words.append("法兰")
-        if "螺纹" in text or "丝扣" in text:
-            prefer_words.append("螺纹")
-    elif any(keyword in text for keyword in ("塑料管卡", "管卡", "管夹", "卡箍", "管箍")):
-        prefer_pipe_clamp = True
-        expected_words.extend(["管卡", "管夹", "卡箍", "管箍"])
-        forbidden_words.extend([
-            "塑料给水管", "塑料排水管", "给水管", "排水管",
-            "钢管", "管道安装",
-        ])
-        if "塑料" in text:
-            prefer_words.append("塑料")
-    elif any(keyword in text for keyword in ("喇叭口", "溢水喇叭口")):
-        expected_words.extend(["喇叭口"])
-        forbidden_words.extend(["广播喇叭", "音箱"])
-    else:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if prefer_flexible_joint and not any(word in quota_name for word in ("软接头", "伸缩节", "柔性", "橡胶接头")):
-            continue
-        if prefer_pipe_clamp and not any(word in quota_name for word in ("管卡", "管夹", "卡箍", "管箍")):
-            continue
-        score = sum(10 for word in expected_words if word and word in quota_name)
-        score -= sum(8 for word in forbidden_words if word and word in quota_name)
-        score += sum(3 for word in prefer_words if word and word in quota_name)
-        if bill_dn is not None:
-            cand_params = text_parser.parse(quota_name)
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 5
-                elif cand_dn > bill_dn:
-                    score += 2
-                else:
-                    score -= 4
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_valve_family_candidate(bill_text: str,
-                                          candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    upper_text = text.upper()
-    if "倒流防止器" in text:
-        return None
-    if not any(keyword in text for keyword in (
-        "螺纹阀门", "焊接法兰阀门", "法兰阀门", "螺纹法兰阀门",
-        "碳钢阀门", "塑料阀门", "PPR阀门", "PP-R阀门",
-    )):
-        return None
-    if any(keyword in text for keyword in (
-        "风阀", "防火阀", "调节阀", "多叶调节阀", "定风量阀", "人防", "密闭阀",
-    )):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    bill_connection = bill_params.get("connection")
-    bill_valve_family = str(bill_params.get("valve_connection_family") or "")
-    bill_valve_type = str(bill_params.get("valve_type") or "")
-
-    prefer_words = []
-    forbidden_words = [
-        "塑料法兰",
-        "风管", "防火阀", "调节阀", "多叶", "排烟阀", "定风量阀",
-        "塑料给水管", "塑料排水管", "给水管", "排水管",
-    ]
-
-    if "碳钢阀门" in text:
-        prefer_words.extend(["阀门", "碳钢"])
-    elif "塑料阀门" in text or (("PPR" in upper_text or "PP-R" in upper_text) and "阀" in text):
-        prefer_words.extend(["阀门", "塑料"])
-        forbidden_words.extend(["法兰安装", "螺纹法兰安装"])
-    elif "螺纹法兰阀门" in text:
-        prefer_words.extend(["法兰阀门", "阀门"])
-        forbidden_words.extend(["法兰安装", "螺纹法兰安装"])
-    elif "焊接法兰阀门" in text or "法兰阀门" in text:
-        prefer_words.extend(["法兰阀门", "阀门"])
-        forbidden_words.extend(["法兰安装", "螺纹法兰安装", "对焊阀门", "对焊阀安装"])
-    elif "螺纹阀门" in text:
-        prefer_words.extend(["螺纹阀", "阀门"])
-        forbidden_words.extend(["法兰安装", "塑料法兰"])
-    else:
-        return None
-
-    for keyword in ("闸阀", "蝶阀", "截止阀", "止回阀", "球阀", "减压阀", "安全阀", "电磁阀"):
-        if keyword in text:
-            prefer_words.append(keyword)
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        if "阀" not in quota_name:
-            continue
-        cand_params = text_parser.parse(quota_name)
-        cand_valve_family = str(cand_params.get("valve_connection_family") or "")
-        cand_valve_type = str(cand_params.get("valve_type") or "")
-        score = 0
-        if "阀门" in quota_name:
-            score += 8
-        if bill_valve_family and cand_valve_family:
-            if bill_valve_family == cand_valve_family:
-                score += 10
-            else:
-                score -= 10
-        score += sum(6 for word in prefer_words if word and word in quota_name)
-        score -= sum(10 for word in forbidden_words if word and word in quota_name)
-        if bill_valve_type and cand_valve_type:
-            if bill_valve_type == cand_valve_type:
-                score += 8
-            else:
-                score -= 8
-        if bill_dn is not None:
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 10
-                elif cand_dn > bill_dn:
-                    gap = cand_dn - bill_dn
-                    score += max(1, 4 - gap / 25)
-                else:
-                    score -= 10
-        if bill_connection:
-            cand_connection = cand_params.get("connection")
-            if cand_connection:
-                if cand_connection == bill_connection:
-                    score += 4
-                elif not connections_compatible(bill_connection, cand_connection):
-                    score -= 5
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_fire_device_candidate(bill_text: str,
-                                         candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "消火栓" not in text or any(keyword in text for keyword in ("钢管", "管道", "立管", "支管")):
-        return None
-    if any(keyword in text for keyword in ("灭火器", "干粉")):
-        return None
-
-    bill_params = text_parser.parse(text)
-    bill_dn = bill_params.get("dn")
-    prefer_words: list[str] = []
-    forbidden_words = ["钢管", "管道"]
-
-    if "试验消火栓" in text:
-        prefer_words.extend(["试验用消火栓", "消火栓"])
-        forbidden_words.extend(["室内消火栓安装"])
-    elif "室内消火栓" in text:
-        prefer_words.extend(["室内消火栓", "消火栓"])
-        for keyword in ("单栓", "双栓", "卷盘", "暗装", "明装"):
-            if keyword in text:
-                prefer_words.append(keyword)
-    else:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        score = sum(8 for word in prefer_words if word and word in quota_name)
-        score -= sum(10 for word in forbidden_words if word and word in quota_name)
-        if bill_dn is not None:
-            cand_dn = cand_params.get("dn")
-            if cand_dn is not None:
-                if cand_dn == bill_dn:
-                    score += 5
-                elif cand_dn > bill_dn:
-                    score += 2
-                else:
-                    score -= 6
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _pick_explicit_network_device_candidate(bill_text: str,
-                                            candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "交换机" not in text:
-        return None
-
-    bill_params = text_parser.parse(text)
-    port_count = bill_params.get("port_count")
-    if port_count is None:
-        port_match = re.search(r"(\d+)\s*口", text)
-        if port_match:
-            port_count = int(port_match.group(1))
-    if port_count is None:
-        return None
-    prefer_small = port_count <= 24
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for cand in candidates:
-        quota_name = cand.get("name", "") or ""
-        cand_params = text_parser.parse(quota_name)
-        score = 0
-        cand_port = cand_params.get("port_count")
-        if cand_port is not None:
-            if port_count == cand_port:
-                score += 12
-            elif port_count < cand_port:
-                score += 7
-            else:
-                score -= 10
-        if prefer_small:
-            if any(word in quota_name for word in ("≤24口", "24口及以下", "24口以内")):
-                score += 12
-            if any(word in quota_name for word in (">24口", "24口以上")):
-                score -= 10
-        else:
-            if any(word in quota_name for word in (">24口", "24口以上")):
-                score += 12
-            if any(word in quota_name for word in ("≤24口", "24口及以下", "24口以内")):
-                score -= 10
-        if score <= 0:
-            continue
-        scored.append((
-            (
-                score,
-                float(cand.get("param_score", 0.0)),
-                float(cand.get("rerank_score", cand.get("hybrid_score", 0.0))),
-            ),
-            cand,
-        ))
-
-    if not scored:
-        return None
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-# ============================================================
-# 前置构建
-# ============================================================
 
 def _extract_usage_from_section(section: str) -> str:
     """从分项标题/Sheet名中提取用途关键词（给水/采暖/消防/排水等）。
@@ -3664,7 +1524,8 @@ def _apply_rule_backup(result: dict, rule_backup: dict, rule_hits: int,
     """
     if not rule_backup:
         return result, rule_hits
-    if rule_backup.get("confidence", 0) > result.get("confidence", 0):
+    has_prior_knowledge = bool((result or {}).get("knowledge_evidence"))
+    if (not has_prior_knowledge) and rule_backup.get("confidence", 0) > result.get("confidence", 0):
         _carry_ranking_snapshot(rule_backup, result, changed_by="rule_backup")
         _append_trace_step(
             rule_backup,
@@ -3673,6 +1534,12 @@ def _apply_rule_backup(result: dict, rule_backup: dict, rule_hits: int,
             replaced_confidence=result.get("confidence", 0),
         )
         return rule_backup, rule_hits + 1
+    _append_backup_advisory(
+        result,
+        advisory_type="rule_backup",
+        backup=rule_backup,
+        stage="rule_backup_advisory",
+    )
     _append_trace_step(
         result,
         "rule_backup_rejected",
@@ -3793,16 +1660,36 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
             f"搜索{search_conf}分 > 经验{exp_conf}分(降级)")
         return result, exp_hits
 
-    # 严格大于才替换（等分时保持当前结果，因为搜索+参数验证更针对当前query）
-    if exp_backup.get("confidence", 0) > result.get("confidence", 0):
+    # search 模式下的 experience_similar 只做 advisory，不覆盖已产出的搜索主结果。
+    # 搜索结果已经经过当前 query 的召回和参数排序，经验相似命中只保留为辅助证据。
+    if not search_qids:
+        if exp_backup.get("confidence", 0) > result.get("confidence", 0):
+            _append_trace_step(
+                exp_backup,
+                "experience_similar_override",
+                search_confidence=result.get("confidence", 0),
+                backup_confidence=exp_backup.get("confidence", 0),
+            )
+            return exp_backup, exp_hits + 1
+
         _append_trace_step(
-            exp_backup,
-            "experience_similar_override",
+            result,
+            "experience_similar_rejected",
             search_confidence=result.get("confidence", 0),
             backup_confidence=exp_backup.get("confidence", 0),
         )
-        return exp_backup, exp_hits + 1
+        logger.debug(
+            f"搜索结果优于经验库相似匹配: "
+            f"搜索{result.get('confidence', 0)}分 > "
+            f"经验库{exp_backup.get('confidence', 0)}分")
+        return result, exp_hits
 
+    _append_backup_advisory(
+        result,
+        advisory_type="experience_similar",
+        backup=exp_backup,
+        stage="experience_similar_advisory",
+    )
     _append_trace_step(
         result,
         "experience_similar_rejected",
@@ -3810,10 +1697,34 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
         backup_confidence=exp_backup.get("confidence", 0),
     )
     logger.debug(
-        f"搜索结果优于经验库相似匹配: "
-        f"搜索{result.get('confidence', 0)}分 > "
+        f"搜索结果保留主选，经验库相似命中仅作参考: "
+        f"搜索{result.get('confidence', 0)}分, "
         f"经验库{exp_backup.get('confidence', 0)}分")
     return result, exp_hits
+
+
+def _append_backup_advisory(result: dict, advisory_type: str, backup: dict, stage: str) -> None:
+    if not result or not backup:
+        return
+
+    quotas = list(backup.get("quotas") or [])
+    top_quota = dict(quotas[0] or {}) if quotas else {}
+    advisories = list(result.get("backup_advisories") or [])
+    advisories.append({
+        "type": str(advisory_type or ""),
+        "match_source": str(backup.get("match_source", "") or ""),
+        "confidence": backup.get("confidence", 0),
+        "quota_id": str(top_quota.get("quota_id", "") or ""),
+        "quota_name": str(top_quota.get("name", "") or ""),
+    })
+    result["backup_advisories"] = advisories
+    _append_trace_step(
+        result,
+        stage,
+        backup_type=str(advisory_type or ""),
+        backup_confidence=backup.get("confidence", 0),
+        backup_quota_id=str(top_quota.get("quota_id", "") or ""),
+    )
 
 
 def _quota_book_from_id(quota_id: str) -> str:
@@ -3903,45 +1814,38 @@ def _apply_plugin_route_gate(item: dict, candidates: list[dict]) -> tuple[list[d
             "preferred_books": sorted(preferred_books),
         }
     if not strict_gate:
-        return [dict(candidate) for candidate in candidates], {
+        preferred_count = 0
+        routed: list[dict] = []
+        for candidate in candidates:
+            quota_book = _quota_book_from_id(candidate.get("quota_id", ""))
+            updated = dict(candidate)
+            updated["plugin_route_book"] = quota_book
+            if quota_book in preferred_books:
+                preferred_count += 1
+            routed.append(updated)
+        return routed, {
             "applied": False,
             "reason": "soft_preferred_books_only",
             "preferred_books": sorted(preferred_books),
+            "preferred_count": preferred_count,
         }
 
-    preferred: list[dict] = []
-    fallback: list[dict] = []
+    routed: list[dict] = []
+    preferred_count = 0
     for candidate in candidates:
         quota_book = _quota_book_from_id(candidate.get("quota_id", ""))
         updated = dict(candidate)
         updated["plugin_route_book"] = quota_book
         if quota_book in preferred_books:
-            preferred.append(updated)
-        else:
-            fallback.append(updated)
+            preferred_count += 1
+        routed.append(updated)
 
-    if not preferred:
-        return [dict(candidate) for candidate in candidates], {
-            "applied": False,
-            "reason": "no_matching_book_candidates",
-            "preferred_books": sorted(preferred_books),
-        }
-
-    if len(preferred) < 2 and len(candidates) <= 3:
-        return preferred + fallback, {
-            "applied": False,
-            "reason": "preferred_candidates_too_few",
-            "preferred_books": sorted(preferred_books),
-            "preferred_count": len(preferred),
-        }
-
-    gated = preferred + fallback[:2]
-    return gated, {
-        "applied": True,
-        "reason": "preferred_books_gate",
+    return routed, {
+        "applied": False,
+        "reason": "strict_preferred_books_disabled",
         "preferred_books": sorted(preferred_books),
-        "preferred_count": len(preferred),
-        "fallback_kept": len(gated) - len(preferred),
+        "preferred_count": preferred_count,
+        "strict_requested": True,
     }
 
 
@@ -4480,7 +2384,7 @@ def _finalize_search_result_payload(result: dict,
     if best and valid_candidates:
         result["alternatives"] = _build_alternatives(valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
     if not best:
-        result["no_match_reason"] = explanation or "search found no candidates"
+        result["no_match_reason"] = explanation or "搜索无匹配结果"
     return result
 
 
@@ -4652,7 +2556,9 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
 # ============================================================
 
 def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleValidator,
-                               province: str = None, exact_exp_direct: bool = False) -> dict:
+                               province: str = None, exact_exp_direct: bool = False,
+                               lightweight_experience: bool = False,
+                               lightweight_rule_prematch: bool = False) -> dict:
     """
     三种模式统一的前置处理：
     1) 措施项跳过
@@ -4708,6 +2614,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
     )
     item["classification"] = classification
+    item["_trace_classification"] = dict(classification or {})
     context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
     if context_gate.get("should_abstain"):
         return {
@@ -4731,8 +2638,18 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             current_gate["detail"] = context_gate.get("detail", "")
         item["_input_gate"] = current_gate
 
-    exp_result = try_experience_match(
-        normalized_query, item, experience_db, rule_validator, province=province)
+    if lightweight_experience:
+        exp_result = try_experience_exact_match(
+            normalized_query,
+            item,
+            experience_db,
+            rule_validator,
+            province=province,
+            authority_only=True,
+        )
+    else:
+        exp_result = try_experience_match(
+            normalized_query, item, experience_db, rule_validator, province=province)
 
     # 审核规则检查：经验库命中后，用审核规则验证一遍
     # 防止错误数据进入权威层后被无限复制
@@ -4766,9 +2683,12 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             "early_type": "experience_exact",
         }
 
-    rule_direct, rule_backup = _prepare_rule_match(
-        rule_validator, full_query, item, search_query, classification,
-        route_profile=ctx.get("query_route"))
+    if lightweight_rule_prematch:
+        rule_direct, rule_backup = None, None
+    else:
+        rule_direct, rule_backup = _prepare_rule_match(
+            rule_validator, full_query, item, search_query, classification,
+            route_profile=ctx.get("query_route"))
     if rule_direct:
         # 审核规则检查：规则直通也要过安检（与经验库直通一致）
         review_error = _review_check_match_result(rule_direct, item)

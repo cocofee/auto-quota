@@ -12,18 +12,10 @@ from src.specialty_classifier import (
     SYSTEM_HINT_TO_BOOK,
     parse_section_title,
 )
+from src.subject_family_guard import should_suppress_family_hint
 
 
-def _dedupe_keep_order(values) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values or []:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
+from src.utils import dedupe_keep_order
 
 
 def _normalize_book_code(value: str) -> str:
@@ -41,7 +33,7 @@ def _normalize_book_code(value: str) -> str:
 
 
 def _normalize_book_list(values) -> list[str]:
-    return _dedupe_keep_order(_normalize_book_code(value) for value in (values or []))
+    return dedupe_keep_order(_normalize_book_code(value) for value in (values or []))
 
 
 def _book_from_system_hint(value: str) -> str:
@@ -103,12 +95,27 @@ def build_unified_search_plan(
         or context_prior.get("prior_family")
         or ""
     ).strip()
+    suppress_family_hint = should_suppress_family_hint(family, context_prior)
+    if suppress_family_hint:
+        family = ""
     family_books = _normalize_book_list(FAMILY_ALLOWED_BOOKS.get(family, ()))
 
     seed_specialty = _normalize_book_code(item.get("specialty") or context_prior.get("specialty"))
+    if suppress_family_hint and plugin_hints.get("source") == "generated_benchmark_knowledge":
+        plugin_hints = dict(plugin_hints)
+        for key in (
+            "preferred_books",
+            "preferred_specialties",
+            "synonym_aliases",
+            "preferred_quota_names",
+            "avoided_quota_names",
+        ):
+            plugin_hints[key] = []
+        plugin_hints["family_hint_suppressed"] = True
+
     plugin_books = _normalize_book_list(plugin_hints.get("preferred_books", []))
     plugin_specialties = _normalize_book_list(plugin_hints.get("preferred_specialties", []))
-    search_aliases = _dedupe_keep_order(plugin_hints.get("synonym_aliases", []))[:3]
+    search_aliases = dedupe_keep_order(plugin_hints.get("synonym_aliases", []))[:3]
 
     primary_book = next(
         (
@@ -157,10 +164,12 @@ def build_unified_search_plan(
         reason_tags.append("province_plugin")
     if seed_specialty:
         reason_tags.append("seed_specialty")
+    if suppress_family_hint:
+        reason_tags.append("primary_subject_guard")
 
     merged_plugin_hints = dict(plugin_hints)
     if preferred_books:
-        merged_plugin_hints["preferred_books"] = _dedupe_keep_order(
+        merged_plugin_hints["preferred_books"] = dedupe_keep_order(
             list(plugin_hints.get("preferred_books", []) or []) + preferred_books
         )[:6]
     if search_aliases:

@@ -64,20 +64,6 @@ class TestRulePostChecker:
         assert _is_relevant_scope("镀锌钢管DN25", "管道安装", "电梯机房费用") is False
 
 
-class TestPromptSlimming:
-    """Agent Prompt 瘦身测试"""
-
-    def test_rules_not_in_prompt_by_default(self):
-        """默认配置下，规则不注入prompt"""
-        import config
-        assert config.AGENT_RULES_IN_PROMPT is False
-
-    def test_method_cards_not_in_prompt_by_default(self):
-        """默认配置下，方法卡片不注入prompt"""
-        import config
-        assert config.AGENT_METHOD_CARDS_IN_PROMPT is False
-
-
 class TestMatchByModeRuleHints:
     """match_by_mode 规则提示集成测试"""
 

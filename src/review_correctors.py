@@ -12,6 +12,8 @@ import re
 from loguru import logger
 
 from src.quota_search import search_quota_db
+from src.specialty_classifier import get_book_from_quota_id
+from src.text_parser import parser as text_parser
 from src.review_checkers import (
     MATERIAL_MAP, CONNECTION_MAP, CORRECTION_STRATEGIES, ELECTRIC_PAIR_RULES,
     extract_description_lines, extract_connection, extract_material,
@@ -398,6 +400,44 @@ def _is_relevant_correction(item, corrected_name):
     return any(w in corrected_name for w in words)
 
 
+def _is_semantically_compatible_correction(item, corrected_id, corrected_name):
+    """Reject corrections that only share a noisy token but drift to another family/system."""
+    if not corrected_name:
+        return True
+
+    bill_features = dict(item.get("canonical_features") or {})
+    if not bill_features:
+        full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
+        bill_features = text_parser.parse_canonical(
+            full_text,
+            specialty=item.get("specialty", ""),
+            context_prior=item.get("context_prior") or {},
+        )
+
+    corrected_features = text_parser.parse_canonical(
+        corrected_name,
+        specialty=get_book_from_quota_id(corrected_id) or "",
+    )
+
+    bill_system = str(bill_features.get("system") or "").strip()
+    corrected_system = str(corrected_features.get("system") or "").strip()
+    if bill_system and corrected_system and bill_system != corrected_system:
+        return False
+
+    bill_family = str(bill_features.get("family") or "").strip()
+    corrected_family = str(corrected_features.get("family") or "").strip()
+    if bill_family and corrected_family and bill_family != corrected_family:
+        return False
+
+    if not bill_family and not corrected_family:
+        bill_entity = str(bill_features.get("entity") or "").strip()
+        corrected_entity = str(corrected_features.get("entity") or "").strip()
+        if bill_entity and corrected_entity and bill_entity != corrected_entity:
+            return False
+
+    return True
+
+
 def _to_correction_payload(result, province):
     """标准化纠正结果，补齐来源库信息。"""
     if not result:
@@ -463,6 +503,10 @@ def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=N
             result = None
 
     # 主库没搜到或验真不通过，尝试兄弟库（跨库搜索）
+    if result and not _is_semantically_compatible_correction(item, result["quota_id"], result["quota_name"]):
+        logger.debug(f"绾犳璇箟鎶ゆ爮鎷︽埅: [{error_type}] {result['quota_name']}")
+        result = None
+
     if not result and sibling_provinces:
         bill_name = item.get("name", "")[:30]
         for sib_province in sibling_provinces:
@@ -481,6 +525,9 @@ def correct_error(item, error, dn, province=None, conn=None, sibling_provinces=N
                     logger.debug(f"跨库防劣化拦截: {sib_province} {sib_result['quota_name']} 与清单无关")
                     continue
                 logger.info(f"跨库纠正成功: [{error_type}] {bill_name} → {sib_province} {sib_result['quota_id']}")
+                if not _is_semantically_compatible_correction(item, sib_result["quota_id"], sib_result["quota_name"]):
+                    logger.debug(f"璺ㄥ簱璇箟鎶ゆ爮鎷︽埅: {sib_province} {sib_result['quota_name']}")
+                    continue
                 return sib_result
 
     if not result:

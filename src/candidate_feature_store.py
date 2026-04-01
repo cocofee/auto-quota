@@ -9,6 +9,9 @@ from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 import config
 
 
+CANDIDATE_FEATURE_CACHE_VERSION = "v3"
+
+
 def get_candidate_feature_store_db_path() -> Path:
     return config.COMMON_DB_DIR / "candidate_features.db"
 
@@ -46,10 +49,10 @@ class CandidateFeatureStore:
     def build_cache_key(candidate: dict) -> str:
         quota_id = str(candidate.get("quota_id") or "").strip()
         if quota_id:
-            return f"quota:{quota_id}"
+            return f"{CANDIDATE_FEATURE_CACHE_VERSION}|quota:{quota_id}"
         name = str(candidate.get("name") or "").strip()
         desc = str(candidate.get("description") or "").strip()
-        return f"text:{name}|{desc}"
+        return f"{CANDIDATE_FEATURE_CACHE_VERSION}|text:{name}|{desc}"
 
     def get(self, province: str, candidate: dict) -> dict | None:
         province = province or ""

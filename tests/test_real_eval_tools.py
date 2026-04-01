@@ -6,7 +6,13 @@ import shutil
 from pathlib import Path
 
 from tools.export_real_eval_set import export_real_eval_set, fetch_real_eval_records
-from tools.run_real_eval import run_real_eval, summarize_real_eval_details
+from tools.run_real_eval import (
+    _detail_from_result,
+    _build_keyword_miss_export_rows,
+    _build_mode_comparison,
+    run_real_eval,
+    summarize_real_eval_details,
+)
 
 
 def _create_experience_db(db_path: Path) -> None:
@@ -231,6 +237,9 @@ def test_summarize_real_eval_details_tracks_accept_and_error_buckets():
             "cause": "",
             "source": "project_import",
             "miss_stage": "",
+            "error_stage": "correct",
+            "error_type": "",
+            "oracle_status": "ok",
         },
         {
             "is_match": False,
@@ -239,6 +248,9 @@ def test_summarize_real_eval_details_tracks_accept_and_error_buckets():
             "cause": "wrong_tier",
             "source": "project_import",
             "miss_stage": "rank_miss",
+            "error_stage": "ranker",
+            "error_type": "oracle_in_candidates_but_not_top1",
+            "oracle_status": "ok",
         },
         {
             "is_match": False,
@@ -247,6 +259,9 @@ def test_summarize_real_eval_details_tracks_accept_and_error_buckets():
             "cause": "wrong_book",
             "source": "user_confirmed",
             "miss_stage": "recall_miss",
+            "error_stage": "retriever",
+            "error_type": "oracle_not_in_candidates",
+            "oracle_status": "name_mismatch",
         },
     ]
 
@@ -260,7 +275,351 @@ def test_summarize_real_eval_details_tracks_accept_and_error_buckets():
     assert summary["recall_miss_count"] == 1
     assert summary["rank_miss_count"] == 1
     assert summary["severe_error_count"] == 1
+    assert summary["error_stage_counts"] == {"ranker": 1, "retriever": 1}
+    assert summary["error_type_counts"] == {
+        "oracle_in_candidates_but_not_top1": 1,
+        "oracle_not_in_candidates": 1,
+    }
     assert summary["diagnosis"] == {"wrong_tier": 1, "wrong_book": 1}
+    assert summary["oracle_alignment"] == {"name_mismatch": 1, "ok": 2}
+    assert summary["aligned_total"] == 2
+    assert summary["aligned_correct"] == 1
+    assert summary["aligned_hit_rate"] == 50.0
+    assert summary["aligned_oracle_in_candidates"] == 2
+    assert summary["aligned_oracle_not_in_candidates"] == 0
+    assert summary["aligned_rank_miss_count"] == 1
+    assert summary["aligned_recall_miss_count"] == 0
+
+
+def test_detail_from_result_diagnoses_final_validator_stage():
+    record = {
+        "sample_id": "s1",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目A",
+        "bill_name": "截止阀",
+        "bill_text": "截止阀 DN50 丝接",
+        "section": "给排水",
+        "sheet_name": "安装",
+        "specialty": "C10",
+        "oracle_quota_ids": ["C10-1-2"],
+        "oracle_quota_names": ["截止阀安装 DN50"],
+    }
+    result = {
+        "quotas": [{"quota_id": "C10-1-3", "name": "截止阀安装 DN65"}],
+        "all_candidate_ids": ["C10-1-2", "C10-1-3"],
+        "pre_ltr_top1_id": "C10-1-3",
+        "post_ltr_top1_id": "C10-1-2",
+        "post_cgr_top1_id": "C10-1-2",
+        "post_arbiter_top1_id": "C10-1-2",
+        "post_explicit_top1_id": "C10-1-2",
+        "post_anchor_top1_id": "C10-1-2",
+        "post_final_top1_id": "C10-1-3",
+        "final_validation": {"status": "vetoed", "vetoed": True},
+        "reasoning_decision": {},
+        "match_source": "search",
+        "confidence": 71,
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["miss_stage"] == "post_rank_miss"
+    assert detail["error_stage"] == "final_validator"
+    assert detail["error_type"] == "post_anchor_correct_but_final_changed"
+
+
+def test_detail_from_result_no_longer_reports_experience_anchor_stage():
+    record = {
+        "sample_id": "s-anchor",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目A",
+        "bill_name": "电气配管",
+        "bill_text": "SC32 暗敷设",
+        "section": "电气",
+        "sheet_name": "安装",
+        "specialty": "C4",
+        "oracle_quota_ids": ["C4-12-177"],
+        "oracle_quota_names": ["波纹电线管敷设 ≤32"],
+    }
+    result = {
+        "quotas": [{"quota_id": "Q-WRONG", "name": "错误定额"}],
+        "all_candidate_ids": ["C4-12-177", "Q-WRONG"],
+        "pre_ltr_top1_id": "Q-SEARCH",
+        "post_ltr_top1_id": "Q-SEARCH",
+        "post_cgr_top1_id": "Q-SEARCH",
+        "post_arbiter_top1_id": "Q-SEARCH",
+        "post_explicit_top1_id": "C4-12-177",
+        "post_anchor_top1_id": "Q-WRONG",
+        "post_final_top1_id": "Q-WRONG",
+        "reasoning_decision": {},
+        "match_source": "search",
+        "confidence": 63,
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["miss_stage"] == "post_rank_miss"
+    assert detail["error_stage"] == "ranker"
+    assert detail["error_type"] == "oracle_in_candidates_but_not_top1"
+
+
+def test_detail_from_result_keeps_search_trace_and_candidates():
+    record = {
+        "sample_id": "s2",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目B",
+        "bill_name": "配管",
+        "bill_text": "JDG20 配管",
+        "section": "电气",
+        "sheet_name": "安装",
+        "specialty": "C4",
+        "oracle_quota_ids": ["C4-1-1"],
+        "oracle_quota_names": ["配管"],
+    }
+    result = {
+        "quotas": [{"quota_id": "C4-1-2", "name": "错误定额"}],
+        "all_candidate_ids": ["C4-1-2", "C4-1-1"],
+        "candidate_snapshots": [
+            {"quota_id": "C4-1-2", "name": "错误定额"},
+            {"quota_id": "C4-1-1", "name": "配管"},
+        ],
+        "pre_ltr_top1_id": "C4-1-2",
+        "post_ltr_top1_id": "C4-1-2",
+        "post_arbiter_top1_id": "C4-1-2",
+        "post_final_top1_id": "C4-1-2",
+        "reasoning_decision": {},
+        "match_source": "search",
+        "confidence": 62,
+        "trace": {
+            "path": ["search_select"],
+            "steps": [
+                {
+                    "stage": "search_select",
+                    "parser": {"search_query": "JDG20 配管", "entity": "配管"},
+                    "router": {"primary_book": "C4"},
+                    "retriever": {"candidate_count": 2},
+                    "ranker": {"selected_quota": "C4-1-2"},
+                }
+            ],
+        },
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["search_query"] == "JDG20 配管"
+    assert detail["parser"]["entity"] == "配管"
+    assert detail["router"]["primary_book"] == "C4"
+    assert detail["retriever"]["candidate_count"] == 2
+    assert detail["ranker"]["selected_quota"] == "C4-1-2"
+    assert detail["candidate_snapshots"][1]["quota_id"] == "C4-1-1"
+
+
+def test_detail_from_result_keeps_experience_review_rejection_trace():
+    record = {
+        "sample_id": "s3",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目C",
+        "bill_name": "组串式逆变器",
+        "bill_text": "组串式逆变器 150kW",
+        "section": "安装",
+        "sheet_name": "安装",
+        "specialty": "C5",
+        "oracle_quota_ids": ["C5-1-1"],
+        "oracle_quota_names": ["光伏逆变器安装"],
+    }
+    result = {
+        "quotas": [{"quota_id": "C5-1-1", "name": "光伏逆变器安装"}],
+        "all_candidate_ids": ["C5-1-1"],
+        "reasoning_decision": {},
+        "match_source": "search",
+        "confidence": 88,
+        "trace": {
+            "path": ["experience_review_rejected", "search_select"],
+            "steps": [
+                {
+                    "stage": "experience_review_rejected",
+                    "error_type": "category_mismatch",
+                    "error_reason": "review rejected experience direct hit",
+                    "experience_source": "experience_exact",
+                    "quota_id": "Q-EXP-1",
+                },
+                {
+                    "stage": "search_select",
+                    "parser": {"search_query": "逆变器 150kW", "entity": "逆变器"},
+                    "router": {"primary_book": "C5"},
+                    "retriever": {"candidate_count": 1},
+                    "ranker": {"selected_quota": "C5-1-1"},
+                },
+            ],
+        },
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["experience_review_rejected"] is True
+    assert detail["experience_review_rejected_type"] == "category_mismatch"
+    assert detail["experience_review_rejected_reason"] == "review rejected experience direct hit"
+    assert detail["experience_review_rejected_quota_id"] == "Q-EXP-1"
+    assert detail["experience_review_rejected_source"] == "experience_exact"
+
+
+def test_build_mode_comparison_summarizes_closed_book_vs_with_memory():
+    closed_payload = {
+        "profile": "smoke",
+        "dataset_path": "output/real_eval/demo.jsonl",
+        "eval_mode": "closed_book",
+        "total": 40,
+        "correct": 12,
+        "hit_rate": 30.0,
+        "province_results": [
+            {"province": "黑龙江", "total": 20, "correct": 6, "hit_rate": 30.0, "details": [{"x": 1}]},
+            {"province": "宁夏", "total": 20, "correct": 6, "hit_rate": 30.0, "details": [{"x": 2}]},
+        ],
+    }
+    with_memory_payload = {
+        "profile": "smoke",
+        "dataset_path": "output/real_eval/demo.jsonl",
+        "eval_mode": "with_memory",
+        "total": 40,
+        "correct": 36,
+        "hit_rate": 90.0,
+        "province_results": [
+            {"province": "黑龙江", "total": 20, "correct": 20, "hit_rate": 100.0, "details": [{"y": 1}]},
+            {"province": "宁夏", "total": 20, "correct": 16, "hit_rate": 80.0, "details": [{"y": 2}]},
+        ],
+    }
+
+    payload = _build_mode_comparison(closed_payload, with_memory_payload)
+
+    assert payload["comparison_mode"] == "closed_book_vs_with_memory"
+    assert payload["closed_book"]["eval_mode"] == "closed_book"
+    assert payload["with_memory"]["eval_mode"] == "with_memory"
+    assert "details" not in payload["closed_book"]["province_results"][0]
+    assert payload["delta"]["hit_rate_gain"] == 60.0
+    assert payload["delta"]["correct_gain"] == 24
+    assert payload["province_deltas"] == [
+        {
+            "province": "宁夏",
+            "closed_book_total": 20,
+            "with_memory_total": 20,
+            "closed_book_hit_rate": 30.0,
+            "with_memory_hit_rate": 80.0,
+            "hit_rate_gain": 50.0,
+            "closed_book_correct": 6,
+            "with_memory_correct": 16,
+            "correct_gain": 10,
+        },
+        {
+            "province": "黑龙江",
+            "closed_book_total": 20,
+            "with_memory_total": 20,
+            "closed_book_hit_rate": 30.0,
+            "with_memory_hit_rate": 100.0,
+            "hit_rate_gain": 70.0,
+            "closed_book_correct": 6,
+            "with_memory_correct": 20,
+            "correct_gain": 14,
+        },
+    ]
+
+
+def test_build_keyword_miss_export_rows_keeps_only_synonym_gap_recall_cases():
+    payload = {
+        "province_results": [
+            {
+                "province": "上海",
+                "details": [
+                    {
+                        "sample_id": "exp:1",
+                        "province": "上海",
+                        "source": "user_confirmed",
+                        "project_name": "项目A",
+                        "bill_name": "",
+                        "bill_text": "墙面装饰板 WD-201",
+                        "specialty": "A",
+                        "oracle_quota_ids": ["03-2-5-38"],
+                        "oracle_quota_names": ["衬微晶板"],
+                        "search_query": "墙面装饰板 WD-201",
+                        "parser": {"search_query": "墙面装饰板 WD-201"},
+                        "router": {
+                            "classification": {
+                                "primary": "C3",
+                                "search_books": ["C3"],
+                                "route_mode": "strict",
+                                "allow_cross_book_escape": False,
+                            }
+                        },
+                        "retriever": {
+                            "candidate_count": 12,
+                            "matched_candidate_count": 10,
+                            "candidate_ids": ["03-9-7-5", "03-2-5-38"],
+                            "authority_hit": False,
+                            "kb_hit": True,
+                        },
+                        "ranker": {
+                            "selected_quota": "03-9-7-5",
+                            "score_gap": 0.3,
+                            "decision_owner": "pre_ltr_seed",
+                            "top1_flip_count": 0,
+                        },
+                        "candidate_count": 12,
+                        "cause": "synonym_gap",
+                        "miss_stage": "recall_miss",
+                        "error_stage": "retriever",
+                        "error_type": "oracle_not_in_candidates",
+                        "algo_id": "03-9-7-5",
+                        "algo_name": "防火涂料",
+                        "match_source": "search",
+                        "confidence": 45.0,
+                    },
+                    {
+                        "sample_id": "exp:2",
+                        "province": "上海",
+                        "bill_text": "截止阀 DN50",
+                        "cause": "wrong_tier",
+                        "miss_stage": "rank_miss",
+                    },
+                ],
+            }
+        ]
+    }
+
+    rows = _build_keyword_miss_export_rows(payload)
+
+    assert len(rows) == 1
+    assert rows[0]["sample_id"] == "exp:1"
+    assert rows[0]["cause"] == "synonym_gap"
+    assert rows[0]["miss_stage"] == "recall_miss"
+    assert rows[0]["router"] == {
+        "primary_book": "C3",
+        "search_books": ["C3"],
+        "hard_search_books": [],
+        "advisory_search_books": [],
+        "route_mode": "strict",
+        "advisory_owner": "",
+        "effective_owner": "",
+        "allow_cross_book_escape": False,
+    }
+    assert rows[0]["retriever"] == {
+        "candidate_count": 12,
+        "matched_candidate_count": 10,
+        "candidate_ids": ["03-9-7-5", "03-2-5-38"],
+        "authority_hit": False,
+        "kb_hit": True,
+        "scope_owner": "",
+        "escape_owner": "",
+        "used_open_search": False,
+        "resolved_main_books": [],
+    }
+    assert rows[0]["ranker"] == {
+        "selected_quota": "03-9-7-5",
+        "score_gap": 0.3,
+        "decision_owner": "pre_ltr_seed",
+        "top1_flip_count": 0,
+    }
 
 
 def test_run_real_eval_can_skip_unavailable_provinces(monkeypatch):

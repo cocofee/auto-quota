@@ -37,6 +37,7 @@ from src.match_core import (
     _mark_agent_fastpath,
 )
 from src.match_pipeline import (
+    _append_item_review_rejection_trace,
     _prepare_item_for_matching,
     _resolve_search_mode_result,
     _apply_mode_backups,
@@ -53,7 +54,7 @@ def _should_log_progress(idx: int, total: int, interval: int) -> bool:
 
 
 def _log_standard_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
-                           interval: int, show_percent: bool = False):
+                           interval: int, show_percent: bool = False) -> None:
     """打印常规模式进度日志。"""
     if not _should_log_progress(idx, total, interval):
         return
@@ -67,7 +68,7 @@ def _log_standard_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
 
 
 def _log_agent_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
-                        agent_hits: int, interval: int):
+                        agent_hits: int, interval: int) -> None:
     """打印Agent模式进度日志。"""
     if not _should_log_progress(idx, total, interval):
         return
@@ -75,7 +76,7 @@ def _log_agent_progress(idx: int, total: int, exp_hits: int, rule_hits: int,
                f"(经验库{exp_hits}, 规则{rule_hits}, Agent{agent_hits})")
 
 
-def _log_exp_rule_summary(exp_hits: int, rule_hits: int, total: int):
+def _log_exp_rule_summary(exp_hits: int, rule_hits: int, total: int) -> None:
     """打印经验库/规则命中汇总。"""
     if exp_hits > 0 or rule_hits > 0:
         logger.info(f"经验库命中 {exp_hits}/{total} 条, "
@@ -93,15 +94,41 @@ def _top_quota_id(result: dict) -> str:
     return str(quotas[0].get("quota_id", "") or "").strip()
 
 
-def _mark_stage_top1_change(results: list[dict], stage_name: str):
+def _mark_stage_top1_change(
+    results: list[dict],
+    stage_name: str,
+    *,
+    base_top1_field: str = "post_arbiter_top1_id",
+) -> None:
     for result in results or []:
-        base_top1 = str(result.get("post_arbiter_top1_id", "") or "")
+        base_top1 = str(result.get(base_top1_field, "") or "")
         current_top1 = _top_quota_id(result)
         if not base_top1 or not current_top1 or base_top1 == current_top1:
             continue
         if result.get("final_changed_by"):
             continue
         result["final_changed_by"] = stage_name
+
+
+def _snapshot_stage_top1(results: list[dict], field_name: str) -> None:
+    for result in results or []:
+        result[field_name] = _top_quota_id(result)
+
+
+def _append_consistency_review_trace(results: list[dict]) -> None:
+    for result in results or []:
+        advisory = result.get("reflection_correction") or {}
+        summary = result.get("reflection_summary") or {}
+        _append_trace_step(
+            result,
+            "consistency_review",
+            reflection_conflict=bool(result.get("reflection_conflict")),
+            reflection_advisory=bool(advisory),
+            reflection_advisory_action=str(advisory.get("action") or ""),
+            reflection_advisory_quota_id=str(advisory.get("quota_id") or ""),
+            reflection_groups_checked=int(summary.get("groups_checked", 0) or 0),
+            reflection_inconsistent_groups=int(summary.get("inconsistent_groups", 0) or 0),
+        )
 
 
 def _consume_early_result(results: list[dict], early_result: dict, early_type: str,
@@ -131,7 +158,7 @@ def _consume_early_result(results: list[dict], early_result: dict, early_type: s
     return True, exp_hits, rule_hits
 
 
-def _update_consistency_memory(memory: dict, item: dict, result: dict):
+def _update_consistency_memory(memory: dict, item: dict, result: dict) -> None:
     """
     更新同文件一致性记忆
 
@@ -164,11 +191,17 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
                              searcher: HybridSearcher, reranker,
                              validator: ParamValidator,
                              interval: int, log_types: set[str],
-                             is_agent: bool = False, agent_hits: int = 0):
+                             is_agent: bool = False, agent_hits: int = 0,
+                             lightweight_experience: bool = False,
+                             lightweight_rule_prematch: bool = False,
+                             include_prior_candidates: bool = True) -> tuple[bool, int, int, dict | None]:
     """统一单条清单的前置命中消费和候选准备。"""
     prepared = _prepare_item_for_matching(
         item, experience_db, rule_validator, province=province,
-        exact_exp_direct=exact_exp_direct)
+        exact_exp_direct=exact_exp_direct,
+        lightweight_experience=lightweight_experience,
+        lightweight_rule_prematch=lightweight_rule_prematch,
+    )
     consumed, exp_hits, rule_hits = _consume_early_result(
         results=results,
         early_result=prepared.get("early_result"),
@@ -188,18 +221,25 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
         False,
         exp_hits,
         rule_hits,
-        _prepare_candidates_from_prepared(prepared, searcher, reranker, validator),
+        _prepare_candidates_from_prepared(
+            prepared,
+            searcher,
+            reranker,
+            validator,
+            include_prior_candidates=include_prior_candidates,
+        ),
     )
 
 
 def _append_search_result_and_log(results: list[dict], result: dict,
                                   idx: int, total: int,
-                                  exp_hits: int, rule_hits: int):
+                                  exp_hits: int, rule_hits: int,
+                                  interval: int = 50) -> None:
     """search模式统一结果入列与进度日志。"""
     _finalize_trace(result)
     results.append(result)
     _log_standard_progress(
-        idx, total, exp_hits, rule_hits, interval=50, show_percent=True)
+        idx, total, exp_hits, rule_hits, interval=interval, show_percent=True)
 
 
 def _append_agent_result_and_log(results: list[dict], result: dict,
@@ -256,6 +296,35 @@ def _canonical_query_views(canonical_query: dict | None,
     return payload, validation_query, resolved_search_query
 
 
+def _split_knowledge_for_prompt(
+    knowledge_evidence: dict | None,
+    *,
+    reference_cases: list[dict] | None = None,
+    rules_context: list[dict] | None = None,
+    method_cards: list[dict] | None = None,
+) -> tuple[dict, list[dict] | None, list[dict] | None]:
+    """Keep full structured evidence for trace/output, but honor prompt toggles."""
+    evidence = dict(knowledge_evidence or {})
+    evidence.setdefault("reference_cases", list(reference_cases or []))
+    evidence.setdefault("quota_rules", [])
+    evidence.setdefault("quota_explanations", [])
+    evidence.setdefault("method_cards", list(method_cards or []))
+
+    prompt_rules_enabled = bool(getattr(config, "AGENT_RULES_IN_PROMPT", True))
+    prompt_methods_enabled = bool(getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True))
+
+    prompt_rules_context = rules_context if prompt_rules_enabled else None
+    prompt_method_cards = method_cards if prompt_methods_enabled else None
+    prompt_evidence = dict(evidence)
+    if not prompt_rules_enabled:
+        prompt_evidence["quota_rules"] = []
+        prompt_evidence["quota_explanations"] = []
+    if not prompt_methods_enabled:
+        prompt_evidence["method_cards"] = []
+
+    return prompt_evidence, prompt_rules_context, prompt_method_cards
+
+
 # ============================================================
 # Agent模式结果处理
 # ============================================================
@@ -267,17 +336,22 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
                                exp_hits: int, rule_hits: int,
                                full_query: str = "", search_query: str = "",
                                province: str = None,
+                               unified_knowledge_retriever=None,
+                               unified_knowledge_cache: dict = None,
+                               unified_knowledge_cache_lock=None,
                                reference_cases_cache: dict = None,
                                reference_cases_cache_lock=None,
                                rules_context_cache: dict = None,
                                rules_context_cache_lock=None,
                                method_cards_db=None,
-                               overview_context: str = ""):
+                               overview_context: str = "") -> tuple[dict | None, int, int]:
     """agent模式统一结果决策：Agent分析 + 经验/规则兜底。"""
     if reference_cases_cache is None:
         reference_cases_cache = {}
     if rules_context_cache is None:
         rules_context_cache = {}
+    if unified_knowledge_cache is None:
+        unified_knowledge_cache = {}
     canonical_query, full_query, search_query = _canonical_query_views(
         canonical_query or item.get("canonical_query") or {},
         full_query=full_query,
@@ -293,19 +367,19 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         rule_backup=rule_backup,
     )
 
-    reference_cases = _get_reference_cases_cached(
+    reference_cases = None if unified_knowledge_retriever else _get_reference_cases_cached(
         reference_cases_cache, experience_db, full_query, province=province,
         top_k=3, specialty=item.get("specialty"),
         tolerate_error=True, default=None,
         error_prefix="参考案例获取失败（不影响Agent主流程）",
         cache_lock=reference_cases_cache_lock)
-    rules_context = _get_agent_rules_context_cached(
+    rules_context = None if unified_knowledge_retriever else _get_agent_rules_context_cached(
         rules_context_cache, rule_kb, name, desc, province=province, top_k=3,
         cache_lock=rules_context_cache_lock)
 
     # 查询方法论卡片（按清单名称+专业匹配）
     relevant_cards = None
-    if method_cards_db:
+    if method_cards_db and not unified_knowledge_retriever:
         try:
             relevant_cards = method_cards_db.find_relevant(
                 name, desc, specialty=item.get("specialty"),
@@ -313,12 +387,54 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         except Exception as e:
             logger.debug(f"方法卡片查询失败（不影响主流程）: {e}")
 
+    if unified_knowledge_retriever:
+        knowledge_context = _get_unified_knowledge_context_cached(
+            unified_knowledge_cache,
+            unified_knowledge_retriever,
+            query_text=search_query or full_query or f"{name} {desc}".strip(),
+            bill_name=name,
+            bill_desc=desc,
+            province=province,
+            specialty=item.get("specialty", ""),
+            unit=item.get("unit", ""),
+            materials_signature=item.get("materials_signature", ""),
+            cache_lock=unified_knowledge_cache_lock,
+        )
+        reference_cases = knowledge_context.get("reference_cases") or None
+        rules_context = knowledge_context.get("rules_context") or None
+        relevant_cards = knowledge_context.get("method_cards") or None
+        knowledge_evidence = knowledge_context.get("knowledge_evidence") or {}
+        knowledge_meta = knowledge_context.get("meta") or {}
+    else:
+        knowledge_evidence = {
+            "reference_cases": reference_cases or [],
+            "quota_rules": [],
+            "quota_explanations": [],
+            "method_cards": relevant_cards or [],
+        }
+        knowledge_meta = {
+            "reference_cases_count": len(reference_cases or []),
+            "rules_context_count": len(rules_context or []),
+            "method_cards_count": len(relevant_cards or []),
+            "quota_rules_count": 0,
+            "quota_explanations_count": 0,
+        }
+
+    quota_rules = knowledge_evidence.get("quota_rules") or []
+    quota_explanations = knowledge_evidence.get("quota_explanations") or []
+    prompt_knowledge_evidence, prompt_rules_context, prompt_method_cards = _split_knowledge_for_prompt(
+        knowledge_evidence,
+        reference_cases=reference_cases,
+        rules_context=rules_context,
+        method_cards=relevant_cards,
+    )
     result = agent.match_single(
         bill_item=item,
         candidates=candidates,
         reference_cases=reference_cases,
-        rules_context=rules_context,
-        method_cards=relevant_cards,
+        rules_context=prompt_rules_context,
+        method_cards=prompt_method_cards,
+        knowledge_evidence=prompt_knowledge_evidence,
         reasoning_packet=reasoning_packet,
         canonical_query=canonical_query,
         search_query=search_query,
@@ -332,6 +448,14 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
     result["require_final_review"] = bool(
         reasoning_packet.get("decision", {}).get("require_final_review")
     )
+    result["knowledge_evidence"] = knowledge_evidence
+    result["knowledge_summary"] = {
+        "reference_cases_count": len(reference_cases or []),
+        "quota_rules_count": len(quota_rules),
+        "quota_explanations_count": len(quota_explanations),
+        "method_cards_count": len(relevant_cards or []),
+    }
+    _append_item_review_rejection_trace(result, item)
     _append_trace_step(
         result,
         "agent_llm",
@@ -340,13 +464,21 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reference_case_ids=[str(c.get("record_id", "")) for c in (reference_cases or []) if c.get("record_id") not in (None, "")],
         rules_context_count=len(rules_context or []),
         rule_context_ids=[str(r.get("id", "")) for r in (rules_context or []) if r.get("id") not in (None, "")],
+        quota_rules_count=len(quota_rules),
+        quota_rule_ids=[str(r.get("id", "")) for r in quota_rules if r.get("id") not in (None, "")],
+        quota_explanations_count=len(quota_explanations),
+        quota_explanation_ids=[str(r.get("id", "")) for r in quota_explanations if r.get("id") not in (None, "")],
         method_cards_count=len(relevant_cards or []),
         method_card_ids=[str(c.get("id", "")) for c in (relevant_cards or []) if c.get("id") not in (None, "")],
         method_card_categories=[c.get("category", "") for c in (relevant_cards or [])],
+        knowledge_evidence=knowledge_evidence,
+        knowledge_summary=result.get("knowledge_summary") or {},
+        knowledge_basis=result.get("knowledge_basis") or {},
         reasoning_engaged=bool(reasoning_packet.get("engaged")),
         reasoning_conflicts=reasoning_packet.get("conflict_summaries", []),
         reasoning_decision=reasoning_packet.get("decision", {}),
         reasoning_compare_points=reasoning_packet.get("compare_points", []),
+        unified_knowledge_meta=knowledge_meta,
         canonical_query=canonical_query,
         query_route=item.get("query_route") or {},
         batch_context=summarize_batch_context_for_trace(item),
@@ -369,7 +501,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
 # 初始化函数
 # ============================================================
 
-def init_search_components(resolved_province: str, aux_provinces: list = None):
+def init_search_components(resolved_province: str, aux_provinces: list = None) -> tuple[HybridSearcher, ParamValidator]:
     """初始化搜索引擎与参数校验器，并做状态检查。
 
     如果指定了辅助定额库（aux_provinces），会为每个辅助库创建独立的搜索器，
@@ -405,6 +537,17 @@ def init_search_components(resolved_province: str, aux_provinces: list = None):
         raise RuntimeError("BM25索引未就绪，请先运行: python -m src.bm25_engine")
 
     # ---- 辅助定额库初始化 ----
+    # aux_provinces=None 时自动挂载同省同年份兄弟库；
+    # 显式传 [] 视为调用方有意禁用辅助库。
+    if aux_provinces is None:
+        try:
+            aux_provinces = config.get_sibling_provinces(resolved_province)
+            if aux_provinces:
+                logger.info(f"  自动挂载兄弟库: {aux_provinces}")
+        except Exception as e:
+            logger.warning(f"  自动发现兄弟库失败: {e}")
+            aux_provinces = []
+
     # aux_searchers: [HybridSearcher, ...] 列表
     # 附加到主搜索器上，cascade_search() 会在非安装项目时搜索这些库
     searcher.aux_searchers = []
@@ -421,7 +564,7 @@ def init_search_components(resolved_province: str, aux_provinces: list = None):
     return searcher, validator
 
 
-def init_experience_db(no_experience: bool, province: str = None):
+def init_experience_db(no_experience: bool, province: str = None) -> 'ExperienceDB | None':
     """按配置初始化经验库（可选）。"""
     experience_db = None
     if no_experience:
@@ -440,7 +583,7 @@ def init_experience_db(no_experience: bool, province: str = None):
 def _get_reference_cases(experience_db, full_query: str, province: str = None,
                          top_k: int = 3, specialty: str = None,
                          tolerate_error: bool = False,
-                         default=None, error_prefix: str = "参考案例获取失败（不影响主流程）"):
+                         default=None, error_prefix: str = "参考案例获取失败（不影响主流程）") -> list[dict]:
     """统一获取经验库参考案例。specialty传入后同专业案例优先。"""
     if not experience_db:
         return default
@@ -460,43 +603,21 @@ def _get_reference_cases_cached(cache: dict, experience_db, full_query: str,
                                 specialty: str = None,
                                 tolerate_error: bool = False, default=None,
                                 error_prefix: str = "参考案例获取失败（不影响主流程）",
-                                cache_lock=None):
+                                cache_lock=None) -> list[dict]:
     """带缓存获取经验案例，减少重复查询。specialty传入后同专业优先。"""
+    from src.utils import cached_with_key_lock
     key = (province or "", full_query, top_k, specialty or "", tolerate_error)
-    if cache_lock:
-        # 快速路径：锁内只检查缓存（不做昂贵计算）
-        with cache_lock:
-            if key in cache:
-                return cache[key]
-            # 获取/创建 per-key 锁（不同key可并行，同key单飞）
-            _lk = ("_lock_", key)
-            if _lk not in cache:
-                cache[_lk] = threading.Lock()
-            key_lock = cache[_lk]
-        # per-key 锁：同key等待不重复计算，不同key互不阻塞
-        with key_lock:
-            with cache_lock:
-                if key in cache:
-                    return cache[key]
-            value = _get_reference_cases(
-                experience_db, full_query, province=province, top_k=top_k,
-                specialty=specialty,
-                tolerate_error=tolerate_error, default=default,
-                error_prefix=error_prefix)
-            with cache_lock:
-                cache[key] = value
-            return value
-    if key not in cache:
-        cache[key] = _get_reference_cases(
+    return cached_with_key_lock(
+        cache, key,
+        lambda: _get_reference_cases(
             experience_db, full_query, province=province, top_k=top_k,
-            specialty=specialty,
-            tolerate_error=tolerate_error, default=default,
-            error_prefix=error_prefix)
-    return cache[key]
+            specialty=specialty, tolerate_error=tolerate_error, default=default,
+            error_prefix=error_prefix),
+        cache_lock)
 
 
 def _get_agent_rules_context(rule_kb, name: str, desc: str, province: str = None,
-                             top_k: int = 3):
+                             top_k: int = 3) -> list[dict] | None:
     """Agent模式获取规则上下文（失败时降级继续）。"""
     if not rule_kb:
         return None
@@ -509,36 +630,67 @@ def _get_agent_rules_context(rule_kb, name: str, desc: str, province: str = None
 
 def _get_agent_rules_context_cached(cache: dict, rule_kb, name: str, desc: str,
                                     province: str = None, top_k: int = 3,
-                                    cache_lock=None):
+                                    cache_lock=None) -> list[dict] | None:
     """带缓存获取规则上下文，减少重复检索。"""
+    from src.utils import cached_with_key_lock
     key = (province or "", name, desc, top_k)
-    if cache_lock:
-        # 快速路径：锁内只检查缓存
-        with cache_lock:
-            if key in cache:
-                return cache[key]
-            # 获取/创建 per-key 锁（不同key可并行，同key单飞）
-            _lk = ("_lock_", key)
-            if _lk not in cache:
-                cache[_lk] = threading.Lock()
-            key_lock = cache[_lk]
-        # per-key 锁：同key等待不重复计算，不同key互不阻塞
-        with key_lock:
-            with cache_lock:
-                if key in cache:
-                    return cache[key]
-            value = _get_agent_rules_context(
-                rule_kb, name, desc, province=province, top_k=top_k)
-            with cache_lock:
-                cache[key] = value
-            return value
-    if key not in cache:
-        cache[key] = _get_agent_rules_context(
-            rule_kb, name, desc, province=province, top_k=top_k)
-    return cache[key]
+    return cached_with_key_lock(
+        cache, key,
+        lambda: _get_agent_rules_context(rule_kb, name, desc, province=province, top_k=top_k),
+        cache_lock)
 
 
-def _load_rule_kb(province: str = None):
+def _get_unified_knowledge_context(retriever, *, query_text: str, bill_name: str,
+                                   bill_desc: str, province: str = None,
+                                   specialty: str = "", unit: str = "",
+                                   materials_signature: str = "") -> dict:
+    if not retriever:
+        return {
+            "reference_cases": None,
+            "rules_context": None,
+            "method_cards": None,
+            "knowledge_evidence": {},
+            "meta": {},
+        }
+    try:
+        return retriever.search_context(
+            query_text=query_text,
+            bill_name=bill_name,
+            bill_desc=bill_desc,
+            province=province,
+            specialty=specialty,
+            unit=unit,
+            materials_signature=materials_signature,
+        )
+    except Exception as e:
+        logger.debug(f"统一知识入口检索失败（不影响主流程）: {e}")
+        return {
+            "reference_cases": None,
+            "rules_context": None,
+            "method_cards": None,
+            "knowledge_evidence": {},
+            "meta": {},
+        }
+
+
+def _get_unified_knowledge_context_cached(cache: dict, retriever, *,
+                                          query_text: str, bill_name: str,
+                                          bill_desc: str, province: str = None,
+                                          specialty: str = "", unit: str = "",
+                                          materials_signature: str = "",
+                                          cache_lock=None) -> dict:
+    from src.utils import cached_with_key_lock
+    key = (province or "", query_text, bill_name, bill_desc, specialty, unit, materials_signature)
+    return cached_with_key_lock(
+        cache, key,
+        lambda: _get_unified_knowledge_context(
+            retriever, query_text=query_text, bill_name=bill_name,
+            bill_desc=bill_desc, province=province, specialty=specialty,
+            unit=unit, materials_signature=materials_signature),
+        cache_lock)
+
+
+def _load_rule_kb(province: str = None) -> 'RuleKnowledge | None':
     """Agent模式按需加载规则知识库，失败时降级为None。"""
     try:
         from src.rule_knowledge import RuleKnowledge
@@ -549,7 +701,7 @@ def _load_rule_kb(province: str = None):
         return None
 
 
-def _create_rule_validator_and_reranker(province: str = None):
+def _create_rule_validator_and_reranker(province: str = None) -> 'tuple[RuleValidator, Reranker]':
     """统一创建规则校验器和Reranker。"""
     from src.reranker import Reranker
     return RuleValidator(province=province), Reranker()
@@ -582,8 +734,17 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     match_start_time = time.time()  # 纯匹配阶段开始时间
 
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
+    if experience_db:
+        searcher.set_experience_db(experience_db)
 
     total = len(bill_items)
+    search_lightweight_prep = bool(getattr(config, "SEARCH_LIGHTWEIGHT_PREP_ENABLED", True))
+    search_rule_prematch_enabled = bool(getattr(config, "SEARCH_RULE_PREMATCH_ENABLED", False))
+    include_prior_candidates = bool(getattr(config, "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", False))
+    progress_log_interval = max(1, int(getattr(config, "SEARCH_PROGRESS_LOG_INTERVAL", 10) or 10))
+    search_log_types = {"rule_direct"}
+    if search_lightweight_prep:
+        search_log_types.add("experience_exact")
 
     # 进度回调辅助（30%~90% 之间线性映射）
     def _notify_progress(current_idx, result=None):
@@ -618,12 +779,15 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             experience_db=experience_db,
             rule_validator=rule_validator,
             province=province,
-            exact_exp_direct=False,
+            exact_exp_direct=search_lightweight_prep,
             searcher=searcher,
             reranker=reranker,
             validator=validator,
-            interval=50,
-            log_types={"rule_direct"},
+            interval=progress_log_interval,
+            log_types=search_log_types,
+            lightweight_experience=search_lightweight_prep,
+            lightweight_rule_prematch=not search_rule_prematch_enabled,
+            include_prior_candidates=include_prior_candidates,
         )
         if consumed:
             _notify_progress(idx, result=results[-1] if results else None)
@@ -638,7 +802,8 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
 
         _append_search_result_and_log(
-            results, result, idx, total, exp_hits, rule_hits)
+            results, result, idx, total, exp_hits, rule_hits,
+            interval=progress_log_interval)
         _update_consistency_memory(consistency_memory, item, result)
         _notify_progress(idx, result=result)
 
@@ -651,10 +816,6 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
         per_item_sec = match_elapsed / n
         logger.info(f"纯匹配耗时: {match_elapsed:.1f}秒 ({per_item_sec:.2f}秒/条, 共{n}条)")
 
-    # 规则后置校验：对搜索出来的结果校验档位，纠正选错的档位
-    rule_validator.validate_results(results)
-    _mark_stage_top1_change(results, "rule_validator")
-
     # L3 一致性反思：同类清单定额一致性检查
     try:
         from src.consistency_checker import check_and_fix
@@ -662,9 +823,13 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
-    _mark_stage_top1_change(results, "consistency_checker")
-    FinalValidator(province=province).validate_results(results)
-    _mark_stage_top1_change(results, "final_validator")
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
 
     for result in results:
         result["post_final_top1_id"] = _top_quota_id(result)
@@ -715,20 +880,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     agent = AgentMatcher(llm_type=agent_llm, province=province)
 
     # 初始化方法卡片（从经验中提炼的选定额方法论，注入Agent Prompt）
-    # L6: 可通过配置关闭方法卡片注入，策略已融入固定提示词
+    # L6: prompt 注入可关闭，但统一知识链仍应持续检索方法卡。
     method_cards_db = None
-    if getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True):
-        try:
-            from src.method_cards import MethodCards
-            mc = MethodCards()
-            mc_stats = mc.get_stats()
-            if mc_stats["total_cards"] > 0:
-                method_cards_db = mc
-                logger.info(f"方法卡片已加载: {mc_stats['total_cards']}张")
-        except Exception as e:
-            logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
-    else:
-        logger.info("L6: 方法卡片注入已关闭（AGENT_METHOD_CARDS_IN_PROMPT=False）")
+    try:
+        from src.method_cards import MethodCards
+        mc = MethodCards()
+        mc_stats = mc.get_stats()
+        if mc_stats["total_cards"] > 0:
+            method_cards_db = mc
+            logger.info(f"方法卡片知识源已加载: {mc_stats['total_cards']}张")
+    except Exception as e:
+        logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+    if not getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True):
+        logger.info("L6: 方法卡片 prompt 注入已关闭（统一知识检索仍启用）")
 
     # 结果数组：按原始顺序存放，用 index 定位
     results_by_idx = {}  # {idx: result}
@@ -742,12 +906,25 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
 
     # 查规则知识库（Agent需要规则上下文）
-    # L6: 可通过配置关闭规则知识注入prompt，改由代码校验替代
-    if getattr(config, "AGENT_RULES_IN_PROMPT", True):
-        rule_kb = _load_rule_kb(province=province)
-    else:
-        rule_kb = None
-        logger.info("L6: 规则知识prompt注入已关闭（AGENT_RULES_IN_PROMPT=False）")
+    # L6: prompt 注入可关闭，但统一知识链仍应持续检索规则/解释。
+    rule_kb = _load_rule_kb(province=province)
+    if not getattr(config, "AGENT_RULES_IN_PROMPT", True):
+        logger.info("L6: 规则知识 prompt 注入已关闭（统一知识检索仍启用）")
+    unified_knowledge_retriever = None
+    if experience_db or rule_kb or method_cards_db:
+        try:
+            from src.unified_knowledge import UnifiedKnowledgeRetriever
+            unified_knowledge_retriever = UnifiedKnowledgeRetriever(
+                province=province,
+                experience_db=experience_db,
+                rule_kb=rule_kb,
+                method_cards_db=method_cards_db,
+            )
+        except Exception as e:
+            logger.debug(f"缁熶竴鐭ヨ瘑鍏ュ彛鍔犺浇澶辫触锛堥檷绾х户缁級: {e}")
+            unified_knowledge_retriever = None
+    unified_knowledge_cache = {}
+    unified_knowledge_cache_lock = threading.Lock()
     reference_cases_cache = {}
     reference_cases_cache_lock = threading.Lock()
     rules_context_cache = {}
@@ -1045,6 +1222,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                             full_query=retry_validation_query,
                             search_query=retry_search_query,
                             province=province,
+                            unified_knowledge_retriever=unified_knowledge_retriever,
+                            unified_knowledge_cache=unified_knowledge_cache,
+                            unified_knowledge_cache_lock=unified_knowledge_cache_lock,
                             reference_cases_cache=reference_cases_cache,
                             reference_cases_cache_lock=reference_cases_cache_lock,
                             rules_context_cache=rules_context_cache,
@@ -1079,6 +1259,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             )
             # 构建表级上下文摘要（在LLM调用前快照，线程安全）
             ctx_summary = _build_overview_context(item)
+            ctx_summary = _build_overview_context(item)
             result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
                 agent=agent,
                 item=item,
@@ -1095,6 +1276,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 full_query=full_query,
                 search_query=search_query,
                 province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
                 reference_cases_cache=reference_cases_cache,
                 reference_cases_cache_lock=reference_cases_cache_lock,
                 rules_context_cache=rules_context_cache,
@@ -1233,9 +1417,6 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         logger.info(f"快速通道抽检: {fastpath_audit_total} 条, 不一致 {fastpath_audit_mismatch} 条, "
                    f"一致率 {consistency:.1f}%")
 
-    # 规则后置校验
-    rule_validator.validate_results(results)
-
     # L3 一致性反思：同类清单定额一致性检查
     try:
         from src.consistency_checker import check_and_fix
@@ -1243,9 +1424,13 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     except Exception as e:
         logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
 
-    _mark_stage_top1_change(results, "consistency_checker")
-    FinalValidator(province=province).validate_results(results)
-    _mark_stage_top1_change(results, "final_validator")
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
 
     for result in results:
         result["post_final_top1_id"] = _top_quota_id(result)
@@ -1275,6 +1460,8 @@ def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
                   project_overview: str = "",
                   progress_callback=None) -> list[dict]:
     """按模式执行匹配。"""
+    if experience_db:
+        searcher.set_experience_db(experience_db)
     if mode == "search":
         results = match_search_only(
             bill_items, searcher, validator, experience_db, province=resolved_province,
@@ -1295,7 +1482,7 @@ def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
 
 
 def _apply_rule_hints(results: list[dict], bill_items: list[dict],
-                      province: str = None):
+                      province: str = None) -> None:
     """给匹配结果添加规则知识提示（L6规则代码化）
 
     从 rule_knowledge.db 搜索相关规则，提取系数、包含/不包含等信息，

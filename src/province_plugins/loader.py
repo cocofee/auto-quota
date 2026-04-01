@@ -7,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from src.utils import dedupe_keep_order
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PLUGIN_COMMON_PATH = PROJECT_ROOT / "data" / "province_plugins" / "common.json"
@@ -42,18 +44,6 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _dedupe_keep_order(values: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
-
-
 def _term_family_variants(text: str) -> list[str]:
     normalized = normalize_plugin_term(text)
     if not normalized:
@@ -73,7 +63,7 @@ def _term_family_variants(text: str) -> list[str]:
     if compact and compact != normalized:
         variants.append(compact[:80])
 
-    return _dedupe_keep_order(variants)
+    return dedupe_keep_order(variants)
 
 
 def _merge_plugin_blocks(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -83,7 +73,7 @@ def _merge_plugin_blocks(base: dict[str, Any], override: dict[str, Any]) -> dict
         if isinstance(existing, dict) and isinstance(value, dict):
             merged[key] = _merge_plugin_blocks(existing, value)
         elif isinstance(existing, list) and isinstance(value, list):
-            merged[key] = _dedupe_keep_order(list(existing) + list(value))
+            merged[key] = dedupe_keep_order(list(existing) + list(value))
         else:
             merged[key] = value
     return merged
@@ -320,7 +310,7 @@ class ProvincePluginRegistry:
         canonical_features = dict(canonical_features or {})
         knowledge = self._load()
 
-        term_candidates = _dedupe_keep_order(
+        term_candidates = dedupe_keep_order(
             _term_family_variants(item.get("name", "")) +
             _term_family_variants(item.get("original_name", "")) +
             _term_family_variants(canonical_features.get("canonical_name", "")) +
@@ -340,23 +330,23 @@ class ProvincePluginRegistry:
         province_tier = self._lookup_term_block(province_block.get("tier_hints", {}) or {}, term_candidates)
         national_tier = self._lookup_term_block(national_block.get("tier_hints", {}) or {}, term_candidates)
 
-        aliases = _dedupe_keep_order(
+        aliases = dedupe_keep_order(
             list(province_synonyms.get("aliases", []) or []) +
             list(national_synonyms.get("aliases", []) or [])
         )[:3]
-        preferred_books = _dedupe_keep_order(
+        preferred_books = dedupe_keep_order(
             list(province_route.get("preferred_books", []) or []) +
             list(national_route.get("preferred_books", []) or [])
         )[:3]
-        preferred_specialties = _dedupe_keep_order(
+        preferred_specialties = dedupe_keep_order(
             list(province_route.get("preferred_specialties", []) or []) +
             list(national_route.get("preferred_specialties", []) or [])
         )[:3]
-        preferred_quota_names = _dedupe_keep_order(
+        preferred_quota_names = dedupe_keep_order(
             list(province_tier.get("preferred_quota_names", []) or []) +
             list(national_tier.get("preferred_quota_names", []) or [])
         )[:3]
-        avoided_quota_names = _dedupe_keep_order(
+        avoided_quota_names = dedupe_keep_order(
             list(province_tier.get("avoided_quota_names", []) or []) +
             list(national_tier.get("avoided_quota_names", []) or [])
         )[:3]

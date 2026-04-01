@@ -26,10 +26,11 @@ from loguru import logger
 import config
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
+from src.quota_search import search_by_id
 from src.query_router import build_query_route_profile, count_spec_signals
 from src.specialty_classifier import get_book_from_quota_id
 from src.text_parser import parser as text_parser
-from db.sqlite import connect as _db_connect
+from src.utils import safe_json_list
 
 
 class HybridSearcher:
@@ -44,6 +45,7 @@ class HybridSearcher:
         frozenset(("air_valve", "air_device")),
         frozenset(("electrical_box", "conduit_raceway")),
         frozenset(("electrical_box", "cable_family")),
+        frozenset(("electrical_box", "protection_device")),
         frozenset(("cable_head_accessory", "cable_family")),
     }
     _FAMILY_GATE_STRICT_ENTITY_FAMILIES = {
@@ -54,6 +56,7 @@ class HybridSearcher:
         "air_device",
         "sanitary_fixture",
         "electrical_box",
+        "protection_device",
         "conduit_raceway",
     }
     _FAMILY_WINDOW_FAMILIES = {
@@ -64,15 +67,49 @@ class HybridSearcher:
         "air_valve",
         "air_device",
         "electrical_box",
+        "protection_device",
         "conduit_raceway",
     }
+    _KB_HINT_OBJECT_FAMILIES = {
+        "bridge_raceway",
+        "bridge_support",
+        "pipe_run",
+        "pipe_support",
+        "pipe_sleeve",
+        "valve_body",
+        "valve_accessory",
+        "air_terminal",
+        "air_valve",
+        "air_device",
+        "sanitary_fixture",
+        "electrical_box",
+        "protection_device",
+        "conduit_raceway",
+        "cable_family",
+        "cable_head_accessory",
+    }
+    _CONDUIT_HINT_KEEP_WORDS = ("电线管", "配管", "导管", "金属软管", "可挠金属套管")
+    _CONDUIT_HINT_BLOCK_WORDS = ("钢管敷设", "镀锌钢管", "焊接钢管")
+    _KB_HINT_FEE_BLOCK_WORDS = ("增加费", "附加费", "脚手架", "系数", "降效")
+    _KB_HINT_FEE_CONTEXT_WORDS = ("建筑层数", "层数", "檐高", "高度", "高层建筑")
+    _QUOTA_DN_BUCKETS = (
+        15, 20, 25, 32, 40, 50, 65, 80, 100, 125, 150, 200, 250, 300, 350,
+        400, 500, 600, 700, 800, 900, 1000,
+    )
+    _QUOTA_CAPACITY_BUCKETS = (
+        1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 500, 800, 1000,
+    )
+    _INVERTER_POWER_BUCKETS = (250, 1000)
+    _PLASTIC_PIPE_MARKERS = ("UPVC", "PVC", "PPR", "PE", "HDPE", "塑料")
 
-    def __init__(self, province: str = None):
+    def __init__(self, province: str = None, experience_db=None):
         """
         参数:
             province: 省份名称，默认用config配置
+            experience_db: 经验库实例（可选，提供反馈偏置数据）
         """
         self.province = province or config.get_current_province()
+        self._experience_db = experience_db
 
         # 两个搜索引擎（延迟初始化）
         self._bm25_engine = None
@@ -93,6 +130,366 @@ class HybridSearcher:
 
         # 编号体系检测缓存（行业定额用纯数字book，不兼容C1-C12搜索）
         self._uses_standard_books = None
+
+    def set_experience_db(self, experience_db) -> None:
+        """设置经验库实例（延迟注入，避免循环依赖）。"""
+        self._experience_db = experience_db
+        for aux_searcher in list(getattr(self, "aux_searchers", []) or []):
+            setter = getattr(aux_searcher, "set_experience_db", None)
+            if callable(setter):
+                setter(experience_db)
+
+    @staticmethod
+    def _stable_result_identity(candidate: dict) -> tuple[str, str, str]:
+        return (
+            str(candidate.get("quota_id", "") or "").strip(),
+            str(candidate.get("name", "") or "").strip(),
+            str(candidate.get("id", "") or "").strip(),
+        )
+
+    @classmethod
+    def _hybrid_result_sort_key(cls, candidate: dict) -> tuple:
+        def _rank_value(value) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 10**9
+
+        bm25_rank = _rank_value(candidate.get("bm25_rank"))
+        vector_rank = _rank_value(candidate.get("vector_rank"))
+        best_rank = min(bm25_rank, vector_rank)
+        quota_id, name, db_id = cls._stable_result_identity(candidate)
+        return (
+            -float(candidate.get("hybrid_score", 0.0) or 0.0),
+            best_rank,
+            vector_rank,
+            bm25_rank,
+            quota_id,
+            name,
+            db_id,
+        )
+
+    @staticmethod
+    def _normalize_requested_books_for_nonstandard_db(
+        books: list[str] | None,
+        available_books: set[str] | None,
+    ) -> list[str] | None:
+        requested = [str(book or "").strip() for book in (books or []) if str(book or "").strip()]
+        available = {str(book or "").strip() for book in (available_books or set()) if str(book or "").strip()}
+        if not requested or not available:
+            return requested or None
+
+        def _numeric_equivalent_candidates(book_value: str) -> list[str]:
+            if not book_value.isdigit():
+                return []
+            normalized = str(int(book_value))
+            matches = [
+                candidate for candidate in available
+                if candidate.isdigit() and str(int(candidate)) == normalized
+            ]
+            return sorted(matches, key=lambda value: (len(value), value))
+
+        mapped: list[str] = []
+        saw_broad_group = False
+        for book in requested:
+            if book.startswith("C") and book[1:].isdigit():
+                stripped = book[1:].lstrip("0") or "0"
+                if stripped in available:
+                    mapped.append(stripped)
+                    continue
+                numeric_matches = _numeric_equivalent_candidates(stripped)
+                if numeric_matches:
+                    mapped.append(numeric_matches[0])
+                continue
+
+            if len(book) == 1 and book in {"A", "D", "E"}:
+                saw_broad_group = True
+                prefixed = sorted(candidate for candidate in available if candidate == book or candidate.startswith(book))
+                if prefixed:
+                    mapped.extend(prefixed)
+                continue
+
+            if book in available:
+                mapped.append(book)
+                continue
+
+            numeric_matches = _numeric_equivalent_candidates(book)
+            if numeric_matches:
+                mapped.append(numeric_matches[0])
+
+        if mapped:
+            return list(dict.fromkeys(mapped))
+        if saw_broad_group:
+            return None
+        return None
+
+    def collect_prior_candidates(
+        self,
+        query_text: str,
+        *,
+        full_query: str = "",
+        books: list[str] | None = None,
+        item: dict | None = None,
+        top_k: int = 8,
+        exact_only: bool = False,
+    ) -> list[dict]:
+        if not bool(getattr(config, "SEARCH_PRIOR_CANDIDATES_ENABLED", True)):
+            return []
+
+        priors: list[dict] = []
+        priors.extend(
+            self._collect_quota_alias_exact_prior_candidates(
+                query_text=query_text,
+                full_query=full_query,
+                item=item,
+                books=books,
+                top_k=max(1, min(top_k, 4)),
+            )
+        )
+        if bool(getattr(config, "SEARCH_EXPERIENCE_INJECTION_ENABLED", True)):
+            priors.extend(
+                self._collect_experience_exact_prior_candidates(
+                    query_text=query_text,
+                    full_query=full_query,
+                    item=item,
+                    top_k=max(1, min(top_k, 4)),
+                )
+            )
+            if not exact_only:
+                priors.extend(
+                    self._collect_experience_prior_candidates(
+                        query_text=query_text,
+                        full_query=full_query,
+                        item=item,
+                        top_k=max(1, min(top_k, 4)),
+                    )
+                )
+        if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
+            priors.extend(
+                self._collect_universal_kb_exact_prior_candidates(
+                    query_text=query_text,
+                    full_query=full_query,
+                    item=item,
+                    books=books,
+                    top_k=max(1, min(top_k, 4)),
+                )
+            )
+            if not exact_only:
+                priors.extend(
+                    self._collect_universal_kb_prior_candidates(
+                        query_text=query_text,
+                        full_query=full_query,
+                        item=item,
+                        books=books,
+                        top_k=max(1, min(top_k, 4)),
+                    )
+                )
+
+        deduped: dict[str, dict] = {}
+        for candidate in priors:
+            quota_id = str(candidate.get("quota_id", "") or "").strip()
+            if not quota_id:
+                continue
+            existing = deduped.get(quota_id)
+            if existing is None:
+                deduped[quota_id] = candidate
+                continue
+            existing_sources = set(existing.get("knowledge_prior_sources") or [])
+            merged_sources = list(existing_sources | set(candidate.get("knowledge_prior_sources") or []))
+            if float(candidate.get("knowledge_prior_score", 0.0) or 0.0) > float(existing.get("knowledge_prior_score", 0.0) or 0.0):
+                merged = dict(candidate)
+                merged["knowledge_prior_sources"] = merged_sources
+                deduped[quota_id] = merged
+            else:
+                existing["knowledge_prior_sources"] = merged_sources
+
+        results = list(deduped.values())
+        results.sort(key=self._stable_result_identity)
+        results.sort(
+            key=lambda candidate: (
+                float(candidate.get("knowledge_prior_score", 0.0) or 0.0),
+                float(candidate.get("hybrid_score", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )
+        return results[:top_k]
+
+    @staticmethod
+    def _normalize_alias_text(text: str) -> str:
+        return re.sub(r"\s+", "", str(text or "").strip()).lower()
+
+    def _collect_quota_alias_exact_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        books: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        item = dict(item or {})
+        variants = self._build_prior_query_variants(
+            query_text,
+            full_query=full_query,
+            item=item,
+        )
+        primary_query_profile = dict(
+            (item.get("canonical_query") or {}).get("primary_query_profile")
+            or item.get("primary_query_profile")
+            or {}
+        )
+        alias_pool = [
+            str(value).strip()
+            for value in list(primary_query_profile.get("quota_aliases") or [])
+            if str(value).strip()
+        ]
+        alias_pool.extend(variants[:2])
+        if not alias_pool:
+            return []
+
+        candidates: list[dict] = []
+        seen_quota_ids: set[str] = set()
+        seen_aliases: set[str] = set()
+        for alias in alias_pool:
+            normalized_alias = self._normalize_alias_text(alias)
+            if not normalized_alias or normalized_alias in seen_aliases:
+                continue
+            seen_aliases.add(normalized_alias)
+            try:
+                matched = self.bm25_engine.search(alias, top_k=max(6, top_k * 3), books=books)
+            except Exception as e:
+                logger.debug(f"quota alias exact prior search failed: {alias[:40]} {e}")
+                continue
+            for row in matched or []:
+                quota_id = str(row.get("quota_id", "") or "").strip()
+                quota_name = str(row.get("name", "") or "").strip()
+                if not quota_id or not quota_name or quota_id in seen_quota_ids:
+                    continue
+                if self._normalize_alias_text(quota_name) != normalized_alias:
+                    continue
+                candidate = dict(row)
+                candidate["match_source"] = "quota_alias_exact"
+                candidate["quota_alias_exact"] = alias
+                candidate["knowledge_prior_sources"] = ["quota_alias"]
+                candidate["knowledge_prior_score"] = 0.98
+                candidates.append(candidate)
+                seen_quota_ids.add(quota_id)
+                if len(candidates) >= top_k:
+                    return candidates
+        return candidates
+
+    @staticmethod
+    def _build_prior_query_variants(
+        query_text: str,
+        *,
+        full_query: str = "",
+        item: dict | None = None,
+    ) -> list[str]:
+        item = dict(item or {})
+        canonical_query = dict(item.get("canonical_query") or {})
+        primary_query_profile = dict(
+            canonical_query.get("primary_query_profile")
+            or item.get("primary_query_profile")
+            or {}
+        )
+        name = str(item.get("name", "") or "").strip()
+        desc = str(item.get("description", "") or "").strip()
+        full_text = " ".join(part for part in (name, desc) if part).strip()
+        query_features = dict(item.get("canonical_features") or item.get("query_features") or {})
+        if not query_features:
+            query_features = text_parser.parse_canonical(
+                query_text or full_query or full_text
+            )
+
+        variants: list[str] = []
+        for value in (
+            canonical_query.get("normalized_query", ""),
+            full_text,
+            canonical_query.get("validation_query", ""),
+            canonical_query.get("search_query", ""),
+            primary_query_profile.get("primary_text", ""),
+            primary_query_profile.get("primary_subject", ""),
+            *list(primary_query_profile.get("quota_aliases") or [])[:2],
+            " ".join(
+                str(value).strip()
+                for value in (
+                    [primary_query_profile.get("primary_subject", "")]
+                    + list(primary_query_profile.get("decisive_terms") or [])[:2]
+                )
+                if str(value).strip()
+            ),
+            full_query,
+            query_text,
+            name,
+            desc,
+        ):
+            text = str(value or "").strip()
+            if text and text not in variants:
+                variants.append(text)
+        for value in HybridSearcher._build_quota_style_query_variants(
+            query_features=query_features,
+            primary_query_profile=primary_query_profile,
+        ):
+            if value not in variants:
+                variants.append(value)
+        return variants
+
+    @staticmethod
+    def _looks_like_numeric_alias(text: str) -> bool:
+        text = str(text or "").strip()
+        if not text:
+            return False
+        return bool(
+            re.search(r"\d", text)
+            or re.search(r"(?:DN|DE|KW|KVA|MM)\b", text, flags=re.IGNORECASE)
+        )
+
+    @classmethod
+    def _select_retrieval_aliases(
+        cls,
+        aliases: list[str] | None,
+        *,
+        max_count: int = 2,
+    ) -> list[str]:
+        pool = [
+            str(value).strip()
+            for value in (aliases or [])
+            if str(value).strip()
+        ]
+        if len(pool) <= max_count:
+            return pool
+
+        selected: list[str] = []
+
+        def _push(value: str) -> None:
+            if value and value not in selected:
+                selected.append(value)
+
+        _push(pool[0])
+        first_is_numeric = cls._looks_like_numeric_alias(pool[0])
+        contrast = next(
+            (
+                alias
+                for alias in pool[1:]
+                if cls._looks_like_numeric_alias(alias) != first_is_numeric
+            ),
+            "",
+        )
+        if contrast:
+            _push(contrast)
+        for alias in pool[1:]:
+            if len(selected) >= max_count:
+                break
+            _push(alias)
+        return selected[:max_count]
+
+    @staticmethod
+    def _coerce_prior_list(value) -> list[str]:
+        return [
+            str(item).strip()
+            for item in safe_json_list(value)
+            if str(item).strip()
+        ]
 
     @property
     def uses_standard_books(self) -> bool:
@@ -144,9 +541,340 @@ class HybridSearcher:
                 self._universal_kb = False
         return self._universal_kb if self._universal_kb is not False else None
 
+    def _materialize_quota_candidate(self, quota_id: str, fallback_name: str = "",
+                                     fallback_unit: str = "") -> dict | None:
+        quota_id = str(quota_id or "").strip()
+        if not quota_id:
+            return None
+        row = search_by_id(quota_id, province=self.province)
+        if row:
+            quota_id, quota_name, unit = row
+        else:
+            quota_name = str(fallback_name or "").strip()
+            unit = str(fallback_unit or "").strip()
+            if not quota_name:
+                return None
+        return {
+            "quota_id": str(quota_id or "").strip(),
+            "name": str(quota_name or "").strip(),
+            "unit": str(unit or "").strip(),
+            "id": None,
+            "db_id": None,
+            "candidate_canonical_features": text_parser.parse_canonical(
+                str(quota_name or "").strip(),
+                specialty=get_book_from_quota_id(quota_id) or "",
+            ),
+        }
+
+    def _collect_experience_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        if not self._experience_db:
+            return []
+
+        item = dict(item or {})
+        query = str(full_query or query_text or "").strip()
+        if not query:
+            return []
+
+        try:
+            records = self._experience_db.search_experience(
+                query,
+                top_k=max(top_k, 3),
+                min_confidence=70,
+                province=self.province,
+                specialty=str(item.get("specialty", "") or "").strip(),
+                unit=str(item.get("unit", "") or "").strip(),
+                materials_signature=str(item.get("materials_signature", "") or "").strip(),
+                install_method=str(item.get("install_method", "") or "").strip(),
+            )
+        except Exception as e:
+            logger.debug(f"经验先验候选检索失败（不影响主流程）: {e}")
+            return []
+
+        candidates: list[dict] = []
+        for record in records or []:
+            if str(record.get("gate", "") or "").strip() == "red":
+                continue
+            if str(record.get("match_type", "") or "").strip() in {"stale", "candidate"}:
+                continue
+            quota_ids = self._coerce_prior_list(record.get("quota_ids"))
+            quota_names = self._coerce_prior_list(record.get("quota_names"))
+            if not quota_ids:
+                continue
+            quota_id = str(quota_ids[0] or "").strip()
+            fallback_name = quota_names[0] if quota_names else ""
+            candidate = self._materialize_quota_candidate(quota_id, fallback_name=fallback_name)
+            if not candidate:
+                continue
+            prior_score = max(
+                float(record.get("total_score", 0.0) or 0.0),
+                float(record.get("similarity", 0.0) or 0.0) * 0.9,
+                float(record.get("confidence", 0.0) or 0.0) / 100.0 * 0.8,
+            )
+            candidate.update({
+                "match_source": "experience_injected",
+                "is_experience_candidate": 1,
+                "experience_record_id": record.get("id"),
+                "experience_layer": record.get("layer", ""),
+                "experience_gate": record.get("gate", ""),
+                "experience_similarity": float(record.get("similarity", 0.0) or 0.0),
+                "experience_total_score": float(record.get("total_score", 0.0) or 0.0),
+                "experience_confidence": float(record.get("confidence", 0.0) or 0.0),
+                "knowledge_prior_sources": ["experience"],
+                "knowledge_prior_score": prior_score,
+            })
+            candidates.append(candidate)
+            if len(candidates) >= top_k:
+                break
+        return candidates
+
+    def _collect_experience_exact_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        if not self._experience_db:
+            return []
+
+        item = dict(item or {})
+        variants = self._build_prior_query_variants(
+            query_text,
+            full_query=full_query,
+            item=item,
+        )
+        if not variants:
+            return []
+
+        candidates: list[dict] = []
+        seen_quota_ids: set[str] = set()
+        min_confidence = 70
+
+        exact_lookup = getattr(self._experience_db, "_find_exact_match", None)
+        if callable(exact_lookup):
+            for variant in variants:
+                try:
+                    record = exact_lookup(variant, self.province, authority_only=True)
+                except Exception as e:
+                    logger.debug(f"缁忛獙 exact prior 鏌ヨ澶辫触锛堜笉褰卞搷涓绘祦绋嬶級: {e}")
+                    record = None
+                if not record or int(record.get("confidence") or 0) < min_confidence:
+                    continue
+                quota_ids = self._coerce_prior_list(record.get("quota_ids"))
+                quota_names = self._coerce_prior_list(record.get("quota_names"))
+                if not quota_ids:
+                    continue
+                quota_id = str(quota_ids[0] or "").strip()
+                if not quota_id or quota_id in seen_quota_ids:
+                    continue
+                candidate = self._materialize_quota_candidate(
+                    quota_id,
+                    fallback_name=quota_names[0] if quota_names else "",
+                )
+                if not candidate:
+                    continue
+                candidate.update({
+                    "match_source": "experience_injected_exact",
+                    "is_experience_candidate": 1,
+                    "experience_record_id": record.get("id"),
+                    "experience_layer": record.get("layer", ""),
+                    "experience_gate": "green",
+                    "experience_similarity": 1.0,
+                    "experience_total_score": 1.0,
+                    "experience_confidence": float(record.get("confidence", 0.0) or 0.0),
+                    "knowledge_prior_sources": ["experience"],
+                    "knowledge_prior_score": 1.10,
+                    "experience_exact_variant": variant,
+                })
+                candidates.append(candidate)
+                seen_quota_ids.add(quota_id)
+                if len(candidates) >= top_k:
+                    return candidates
+
+        find_experience = getattr(self._experience_db, "find_experience", None)
+        if not callable(find_experience):
+            return candidates
+
+        for variant in variants:
+            try:
+                records = find_experience(variant, province=self.province, limit=max(top_k, 5))
+            except Exception as e:
+                logger.debug(f"缁忛獙 bill_name exact prior 鏌ヨ澶辫触锛堜笉褰卞搷涓绘祦绋嬶級: {e}")
+                continue
+            for record in records or []:
+                if str(record.get("bill_name", "") or "").strip() != variant:
+                    continue
+                if str(record.get("layer", "") or "").strip() == "candidate":
+                    continue
+                if int(record.get("confidence") or 0) < min_confidence:
+                    continue
+                quota_ids = self._coerce_prior_list(record.get("quota_ids"))
+                quota_names = self._coerce_prior_list(record.get("quota_names"))
+                if not quota_ids:
+                    continue
+                quota_id = str(quota_ids[0] or "").strip()
+                if not quota_id or quota_id in seen_quota_ids:
+                    continue
+                candidate = self._materialize_quota_candidate(
+                    quota_id,
+                    fallback_name=quota_names[0] if quota_names else "",
+                )
+                if not candidate:
+                    continue
+                candidate.update({
+                    "match_source": "experience_injected_exact",
+                    "is_experience_candidate": 1,
+                    "experience_record_id": record.get("id"),
+                    "experience_layer": record.get("layer", ""),
+                    "experience_gate": "green",
+                    "experience_similarity": 1.0,
+                    "experience_total_score": 1.0,
+                    "experience_confidence": float(record.get("confidence", 0.0) or 0.0),
+                    "knowledge_prior_sources": ["experience"],
+                    "knowledge_prior_score": 1.05,
+                    "experience_exact_variant": variant,
+                })
+                candidates.append(candidate)
+                seen_quota_ids.add(quota_id)
+                if len(candidates) >= top_k:
+                    return candidates
+        return candidates
+
+    def _collect_universal_kb_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        books: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        if not self.universal_kb:
+            return []
+
+        query = str(full_query or query_text or "").strip()
+        if not query:
+            return []
+
+        try:
+            hints = self.universal_kb.search_hints(query, top_k=2, authority_only=True)
+        except Exception as e:
+            logger.debug(f"通用知识先验候选检索失败（不影响主流程）: {e}")
+            return []
+
+        candidates: list[dict] = []
+        for hint in hints or []:
+            similarity = float(hint.get("similarity", 0.0) or 0.0)
+            confidence = float(hint.get("confidence", 0.0) or 0.0)
+            if similarity < 0.75 or confidence < 70:
+                continue
+            patterns = [str(p).strip() for p in (hint.get("quota_patterns") or []) if str(p).strip()]
+            for pattern in patterns[:2]:
+                try:
+                    matched = self.bm25_engine.search(pattern, top_k=2, books=books)
+                except Exception as e:
+                    logger.debug(f"通用知识定额模式检索失败（不影响主流程）: {pattern[:40]} {e}")
+                    continue
+                for row in matched or []:
+                    quota_id = str(row.get("quota_id", "") or "").strip()
+                    quota_name = str(row.get("name", "") or "").strip()
+                    if not quota_id or not quota_name:
+                        continue
+                    candidate = dict(row)
+                    candidate["match_source"] = "kb_injected"
+                    candidate["is_kb_candidate"] = 1
+                    candidate["kb_bill_pattern"] = hint.get("bill_pattern", "")
+                    candidate["kb_quota_pattern"] = pattern
+                    candidate["kb_similarity"] = similarity
+                    candidate["kb_confidence"] = confidence
+                    candidate["knowledge_prior_sources"] = ["universal_kb"]
+                    candidate["knowledge_prior_score"] = max(
+                        similarity * 0.9,
+                        confidence / 100.0 * 0.75,
+                    )
+                    candidates.append(candidate)
+                    if len(candidates) >= top_k:
+                        return candidates
+        return candidates
+
+    def _collect_universal_kb_exact_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        books: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        if not self.universal_kb:
+            return []
+
+        exact_lookup = getattr(self.universal_kb, "_find_exact", None)
+        if not callable(exact_lookup):
+            return []
+
+        variants = self._build_prior_query_variants(
+            query_text,
+            full_query=full_query,
+            item=item,
+        )
+        if not variants:
+            return []
+
+        candidates: list[dict] = []
+        seen_quota_ids: set[str] = set()
+        for variant in variants:
+            try:
+                hint = exact_lookup(variant)
+            except Exception as e:
+                logger.debug(f"閫氱敤鐭ヨ瘑 exact prior 鏌ヨ澶辫触锛堜笉褰卞搷涓绘祦绋嬶級: {e}")
+                hint = None
+            if not hint:
+                continue
+            if str(hint.get("layer", "") or "").strip() != "authority":
+                continue
+            if float(hint.get("confidence", 0.0) or 0.0) < 70:
+                continue
+            patterns = [str(p).strip() for p in safe_json_list(hint.get("quota_patterns")) if str(p).strip()]
+            for pattern in patterns[:2]:
+                try:
+                    matched = self.bm25_engine.search(pattern, top_k=2, books=books)
+                except Exception as e:
+                    logger.debug(f"閫氱敤鐭ヨ瘑 exact prior 瀹氶妫€绱㈠け璐ワ紙涓嶅奖鍝嶄富娴佺▼锛? {e}")
+                    continue
+                for row in matched or []:
+                    quota_id = str(row.get("quota_id", "") or "").strip()
+                    if not quota_id or quota_id in seen_quota_ids:
+                        continue
+                    candidate = dict(row)
+                    candidate["match_source"] = "kb_injected_exact"
+                    candidate["is_kb_candidate"] = 1
+                    candidate["kb_bill_pattern"] = hint.get("bill_pattern", "")
+                    candidate["kb_quota_pattern"] = pattern
+                    candidate["kb_similarity"] = 1.0
+                    candidate["kb_confidence"] = float(hint.get("confidence", 0.0) or 0.0)
+                    candidate["knowledge_prior_sources"] = ["universal_kb"]
+                    candidate["knowledge_prior_score"] = 1.00
+                    candidate["kb_exact_variant"] = variant
+                    candidates.append(candidate)
+                    seen_quota_ids.add(quota_id)
+                    if len(candidates) >= top_k:
+                        return candidates
+        return candidates
+
     def search(self, query: str, top_k: int = None,
                bm25_weight: float = None, vector_weight: float = None,
-               books: list[str] = None) -> list[dict]:
+               books: list[str] = None,
+               item: dict | None = None,
+               context_prior: dict | None = None) -> list[dict]:
         """
         混合搜索：同时执行BM25和向量搜索，用RRF融合结果
 
@@ -167,10 +895,19 @@ class HybridSearcher:
             {id, quota_id, name, unit, hybrid_score, bm25_rank, vector_rank, ...}
         """
         top_k = top_k or config.HYBRID_TOP_K
+        item = dict(item or {})
+        context_prior = dict(context_prior or {})
+        primary_query_profile = dict(
+            (item.get("canonical_query") or {}).get("primary_query_profile")
+            or item.get("primary_query_profile")
+            or context_prior.get("primary_query_profile")
+            or {}
+        )
         query_features = text_parser.parse_canonical(query or "")
         route_profile = build_query_route_profile(
             query,
             canonical_features=query_features,
+            context_prior=context_prior,
         )
         rank_window = self._resolve_rank_window(
             top_k=top_k,
@@ -190,23 +927,21 @@ class HybridSearcher:
         # match_core.py已有翻译逻辑，翻译后的books是纯数字（如["10"]），不需要再处理
         # 只在books仍带C前缀时介入（说明是API直接调的，没经过match_core翻译）
         if books and not self.uses_standard_books:
-            has_c_prefix = any(b.startswith("C") and b[1:].isdigit() for b in books if b)
-            if has_c_prefix:
-                # 直接映射：C10→"10", C8→"8"（比classify_to_books统计推断更准确）
-                available_books = set(self.bm25_engine.quota_books.values())
-                mapped = []
-                for b in books:
-                    if b.startswith("C") and b[1:].isdigit():
-                        stripped = b[1:].lstrip("0") or "0"  # C10→10, C08→8
-                        if stripped in available_books:
-                            mapped.append(stripped)
-                    elif b in available_books:
-                        mapped.append(b)
-                books = mapped if mapped else None  # 映射失败则搜全库
+            available_books = set(self.bm25_engine.quota_books.values())
+            books = self._normalize_requested_books_for_nonstandard_db(books, available_books)
 
         # 会话缓存检查：相同query+books组合复用搜索结果
         books_key = ",".join(sorted(books)) if books else ""
-        cache_key = f"{query}|{books_key}|{top_k}"
+        primary_key = "|".join(
+            str(value).strip()
+            for value in (
+                primary_query_profile.get("primary_text", ""),
+                primary_query_profile.get("primary_subject", ""),
+                " ".join(primary_query_profile.get("decisive_terms", []) or []),
+            )
+            if str(value).strip()
+        )
+        cache_key = f"{query}|{books_key}|{top_k}|{primary_key}"
         cached = self._session_cache.get(cache_key)
         if cached is not None:
             import copy
@@ -220,6 +955,10 @@ class HybridSearcher:
         if self.universal_kb:
             try:
                 kb_hints = self.universal_kb.get_search_keywords(query)
+                kb_hints = self._filter_kb_hints_for_query_features(
+                    kb_hints,
+                    query_features=query_features,
+                )
                 if kb_hints:
                     logger.debug(f"通用知识库增强: {kb_hints[:3]}")
             except Exception as e:
@@ -233,6 +972,7 @@ class HybridSearcher:
             kb_hints,
             query_features=query_features,
             route_profile=route_profile,
+            primary_query_profile=primary_query_profile,
         )
         bm25_runs = []
         vector_runs = []
@@ -417,11 +1157,18 @@ class HybridSearcher:
                 pattern_hits += 1
 
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", query))
+        route_profile = build_query_route_profile(query)
+        route = str((route_profile or {}).get("route") or "").strip()
         reason = "balanced"
         new_bm25 = bm25_weight
         new_vector = vector_weight
 
-        if pattern_hits >= 2:
+        if route == "installation_spec":
+            install_boost = max(boost, 0.28)
+            new_bm25 = bm25_weight + install_boost
+            new_vector = vector_weight - install_boost
+            reason = str((route_profile or {}).get("reason") or "spec_heavy_installation")
+        elif route == "spec_heavy" or pattern_hits >= 2:
             new_bm25 = bm25_weight + boost
             new_vector = vector_weight - boost
             reason = "spec_heavy"
@@ -465,28 +1212,16 @@ class HybridSearcher:
 
         bias = 0.0
         try:
-            exp_db = config.get_experience_db_path()
-            if not exp_db.exists():
+            if not self._experience_db:
                 self._feedback_bias_value = 0.0
                 self._feedback_bias_ts = now
                 return 0.0
 
-            conn = _db_connect(exp_db)
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT source, bill_text
-                    FROM experiences
-                    WHERE bill_text IS NOT NULL
-                      AND province = ?
-                      AND source IN ('user_correction', 'user_confirmed')
-                    ORDER BY updated_at DESC
-                    LIMIT 2000
-                    """
-                    , (self.province,)
-                ).fetchall()
-            finally:
-                conn.close()
+            rows = self._experience_db.get_feedback_bias_data(self.province)
+            if not rows:
+                self._feedback_bias_value = 0.0
+                self._feedback_bias_ts = now
+                return 0.0
 
             if len(rows) < min_samples:
                 self._feedback_bias_value = 0.0
@@ -547,7 +1282,8 @@ class HybridSearcher:
 
     def _build_query_variants(self, query: str, kb_hints: list[str], *,
                               query_features: dict | None = None,
-                              route_profile: dict | None = None) -> list[dict]:
+                              route_profile: dict | None = None,
+                              primary_query_profile: dict | None = None) -> list[dict]:
         """
         构造少量高价值查询变体，避免纯原始query召回盲区。
         """
@@ -555,8 +1291,26 @@ class HybridSearcher:
         max_variants = max(max_variants, 1)
         query_features = dict(query_features or {})
         route_profile = dict(route_profile or {})
+        primary_query_profile = dict(primary_query_profile or {})
+        if (
+            str(query_features.get("family") or "").strip() == "pipe_support"
+            and str(query_features.get("support_scope") or "").strip() == "管道支架"
+            and dict(query_features.get("numeric_params") or {}).get("weight_t") is None
+        ):
+            kb_hints = [
+                str(hint).strip()
+                for hint in (kb_hints or [])
+                if str(hint).strip()
+                and "单件重量" not in str(hint)
+                and "每组重量" not in str(hint)
+            ]
         if query_features.get("family"):
             max_variants = max(max_variants, 5)
+        numeric_params = dict(query_features.get("numeric_params") or {})
+        if primary_query_profile.get("quota_aliases") and any(
+            numeric_params.get(key) is not None for key in ("dn", "kva", "kw")
+        ):
+            max_variants = max(max_variants, 7)
         raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60, 0.50])
         if not isinstance(raw_weights, (list, tuple)) or not raw_weights:
             raw_weights = [1.0, 0.75, 0.60, 0.50]
@@ -587,6 +1341,54 @@ class HybridSearcher:
         normalized = re.sub(r"[，,。；;、|/\\]+", " ", query)
         normalized = re.sub(r"\s+", " ", normalized).strip()
         _add(normalized, "normalized")
+
+        primary_text = str(primary_query_profile.get("primary_text") or "").strip()
+        primary_subject = str(primary_query_profile.get("primary_subject") or "").strip()
+        quota_aliases = [
+            str(value).strip()
+            for value in list(primary_query_profile.get("quota_aliases") or [])
+            if str(value).strip()
+        ]
+        decisive_terms = [
+            str(value).strip()
+            for value in list(primary_query_profile.get("decisive_terms") or [])
+            if str(value).strip()
+        ]
+        retrieval_aliases = self._select_retrieval_aliases(quota_aliases, max_count=2)
+        short_subject = re.sub(r"\s+", "", primary_subject)
+        prefer_quota_alias_first = (
+            str((route_profile or {}).get("route") or "").strip() in {"spec_heavy", "installation_spec"}
+            and bool(retrieval_aliases)
+            and not decisive_terms
+            and 0 < len(short_subject) <= 12
+        )
+        if prefer_quota_alias_first:
+            for idx, alias in enumerate(retrieval_aliases, start=1):
+                if len(variants) >= max_variants:
+                    break
+                _add(alias, f"quota_alias_{idx}")
+        if primary_text and primary_text != normalized and len(variants) < max_variants:
+            _add(primary_text, "primary_text")
+        if primary_subject and primary_subject not in {query, normalized, primary_text} and len(variants) < max_variants:
+            _add(primary_subject, "primary_subject")
+        for idx, alias in enumerate(retrieval_aliases, start=1):
+            if len(variants) >= max_variants:
+                break
+            _add(alias, f"quota_alias_{idx}")
+        quota_style_variants = self._build_quota_style_query_variants(
+            query_features=query_features,
+            primary_query_profile=primary_query_profile,
+        )
+        for idx, quota_style_variant in enumerate(quota_style_variants, start=1):
+            if len(variants) >= max_variants:
+                break
+            _add(quota_style_variant, f"quota_style_{idx}")
+        if decisive_terms and len(variants) < max_variants:
+            merged_primary = " ".join(
+                token for token in [primary_subject or primary_text, *decisive_terms[:2]]
+                if token
+            ).strip()
+            _add(merged_primary, "primary_decisive")
 
         # V3.5: family-focused 变体
         family_variants = self._build_family_query_variants(
@@ -635,6 +1437,50 @@ class HybridSearcher:
 
         return variants[:max_variants]
 
+    @classmethod
+    def _filter_kb_hints_for_query_features(cls,
+                                            kb_hints: list[str],
+                                            *,
+                                            query_features: dict | None = None) -> list[str]:
+        query_features = dict(query_features or {})
+        family = str(query_features.get("family") or "").strip()
+        entity = str(query_features.get("entity") or "").strip()
+        system = str(query_features.get("system") or "").strip()
+
+        if not kb_hints:
+            return []
+
+        filtered: list[str] = []
+        should_block_fee_hints = family in cls._KB_HINT_OBJECT_FAMILIES
+        for hint in kb_hints:
+            text = str(hint or "").strip()
+            if not text:
+                continue
+            if should_block_fee_hints and cls._is_fee_like_kb_hint(text):
+                continue
+            if (
+                family == "conduit_raceway"
+                and entity == "配管"
+                and system == "电气"
+                and
+                any(word in text for word in cls._CONDUIT_HINT_BLOCK_WORDS)
+                and not any(word in text for word in cls._CONDUIT_HINT_KEEP_WORDS)
+            ):
+                continue
+            filtered.append(text)
+        return filtered
+
+    @classmethod
+    def _is_fee_like_kb_hint(cls, text: str) -> bool:
+        text = str(text or "").strip()
+        if not text:
+            return False
+        if any(word in text for word in cls._KB_HINT_FEE_BLOCK_WORDS):
+            return True
+        if "超高" in text and any(word in text for word in cls._KB_HINT_FEE_CONTEXT_WORDS):
+            return True
+        return False
+
     @staticmethod
     def _format_numeric_variant_tokens(query_features: dict) -> list[str]:
         numeric_params = dict((query_features or {}).get("numeric_params") or {})
@@ -661,6 +1507,132 @@ class HybridSearcher:
             tokens.append(f"{kg_text}kg")
         return tokens
 
+    @staticmethod
+    def _format_bucket_value(value) -> str:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value or "").strip()
+        if numeric.is_integer():
+            return str(int(numeric))
+        return f"{numeric:.2f}".rstrip("0").rstrip(".")
+
+    @classmethod
+    def _nearest_quota_bucket(cls, value, buckets: tuple[int, ...]) -> int | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        for bucket in buckets:
+            if numeric <= bucket:
+                return int(bucket)
+        return int(buckets[-1]) if buckets else None
+
+    @classmethod
+    def _looks_like_plastic_pipe_alias(cls, alias: str, primary_subject: str = "") -> bool:
+        combined = f"{alias} {primary_subject}".upper()
+        return any(marker in combined for marker in cls._PLASTIC_PIPE_MARKERS)
+
+    @staticmethod
+    def _looks_like_sweep_alias(alias: str, primary_subject: str = "") -> bool:
+        combined = f"{alias} {primary_subject}"
+        return "清扫口" in combined or "扫除口" in combined
+
+    @staticmethod
+    def _looks_like_inverter_alias(alias: str, primary_subject: str = "") -> bool:
+        combined = f"{alias} {primary_subject}"
+        return "逆变器" in combined
+
+    @classmethod
+    def _build_quota_style_query_variants(
+        cls,
+        *,
+        query_features: dict | None = None,
+        primary_query_profile: dict | None = None,
+    ) -> list[str]:
+        query_features = dict(query_features or {})
+        primary_query_profile = dict(primary_query_profile or {})
+        numeric_params = dict(query_features.get("numeric_params") or {})
+        primary_subject = str(primary_query_profile.get("primary_subject") or "").strip()
+        aliases = [
+            str(value).strip()
+            for value in list(primary_query_profile.get("quota_aliases") or [])
+            if str(value).strip()
+        ]
+        alias_pool = cls._select_retrieval_aliases(aliases, max_count=2)
+        if primary_subject and primary_subject not in alias_pool:
+            alias_pool.append(primary_subject)
+        if not alias_pool:
+            return []
+
+        system = str(query_features.get("system") or "").strip()
+        variants: list[str] = []
+        seen: set[str] = set()
+
+        def _push(text: str):
+            normalized = re.sub(r"\s+", " ", str(text or "").strip())
+            if not normalized or normalized in seen:
+                return
+            variants.append(normalized)
+            seen.add(normalized)
+
+        dn_value = numeric_params.get("dn")
+        if dn_value is not None:
+            default_bucket = cls._nearest_quota_bucket(dn_value, cls._QUOTA_DN_BUCKETS)
+            for alias in alias_pool[:2]:
+                if default_bucket is None:
+                    continue
+                bucket = max(default_bucket, 50) if cls._looks_like_sweep_alias(alias, primary_subject) else default_bucket
+                bucket_text = cls._format_bucket_value(bucket)
+                if cls._looks_like_sweep_alias(alias, primary_subject):
+                    _push(f"{alias} {bucket_text}mm以内")
+                    continue
+                if system and system not in alias:
+                    if cls._looks_like_plastic_pipe_alias(alias, primary_subject):
+                        _push(f"{system} {alias} 公称外径(mm以内) {bucket_text}")
+                    else:
+                        _push(f"{system} {alias} 公称直径(mm以内) {bucket_text}")
+                if cls._looks_like_plastic_pipe_alias(alias, primary_subject):
+                    _push(f"{alias} 公称外径(mm以内) {bucket_text}")
+                    _push(f"{alias} 外径(mm以内) {bucket_text}")
+                else:
+                    _push(f"{alias} 公称直径(mm以内) {bucket_text}")
+                    _push(f"{alias} 管外径(mm以内) {bucket_text}")
+                raw_dn = cls._format_bucket_value(dn_value)
+                if bucket_text != raw_dn:
+                    _push(f"{alias} {bucket_text}mm以内")
+
+        kva_value = numeric_params.get("kva")
+        if kva_value is not None:
+            kva_text = cls._format_bucket_value(kva_value)
+            kva_bucket = cls._nearest_quota_bucket(kva_value, cls._QUOTA_CAPACITY_BUCKETS)
+            for alias in alias_pool[:2]:
+                if system and system not in alias:
+                    _push(f"{system} {alias} 容量{kva_text}kVA")
+                _push(f"{alias} 容量{kva_text}kVA")
+                _push(f"{alias} 不间断电源容量{kva_text}kVA以下")
+                if kva_bucket is not None:
+                    _push(f"{alias} 容量{cls._format_bucket_value(kva_bucket)}kVA以下")
+
+        kw_value = numeric_params.get("kw")
+        if kw_value is not None:
+            kw_text = cls._format_bucket_value(kw_value)
+            kw_aliases = list(alias_pool[:2])
+            kw_aliases.sort(
+                key=lambda value: (
+                    cls._looks_like_numeric_alias(value),
+                    len(str(value or "")),
+                )
+            )
+            for alias in kw_aliases:
+                _push(f"{alias} 功率{kw_text}kW")
+                if cls._looks_like_inverter_alias(alias, primary_subject):
+                    for bucket in cls._INVERTER_POWER_BUCKETS:
+                        if kw_value <= bucket:
+                            _push(f"{alias} 功率≤{cls._format_bucket_value(bucket)}kW")
+
+        return variants[:4]
+
     def _build_family_query_variants(self, *, query_features: dict,
                                      route_profile: dict) -> list[str]:
         family = str((query_features or {}).get("family") or "").strip()
@@ -669,12 +1641,15 @@ class HybridSearcher:
         material = str((query_features or {}).get("material") or "").strip()
         connection = str((query_features or {}).get("connection") or "").strip()
         install_method = str((query_features or {}).get("install_method") or "").strip()
+        support_scope = str((query_features or {}).get("support_scope") or "").strip()
+        support_action = str((query_features or {}).get("support_action") or "").strip()
         system = str((query_features or {}).get("system") or "").strip()
         traits = [
             str(value).strip()
             for value in ((query_features or {}).get("traits") or [])
             if str(value).strip()
         ]
+        numeric_params = dict((query_features or {}).get("numeric_params") or {})
         route = str((route_profile or {}).get("route") or "").strip()
 
         if not family:
@@ -693,6 +1668,12 @@ class HybridSearcher:
         if family == "bridge_support":
             _push("桥架支撑架", entity or "支吊架", *trait_tokens, *numeric_tokens)
         elif family == "pipe_support":
+            if support_scope == "管道支架" and numeric_params.get("weight_t") is None:
+                action_phrase = "制作安装"
+                if support_action == "安装":
+                    action_phrase = "安装"
+                _push(f"{support_scope}{action_phrase} 一般管架")
+                _push(f"室内管道{support_scope}{action_phrase} 一般管架")
             _push("管道支架", entity or "支吊架", *trait_tokens, *numeric_tokens)
         elif family == "valve_accessory":
             _push(entity or canonical_name, connection, *numeric_tokens)
@@ -704,6 +1685,9 @@ class HybridSearcher:
             _push(system, entity or canonical_name, *trait_tokens)
         elif family == "electrical_box":
             _push(entity or canonical_name, install_method, *numeric_tokens)
+        elif family == "protection_device":
+            _push(entity or canonical_name, *trait_tokens, *numeric_tokens)
+            _push(system, entity or canonical_name, *trait_tokens)
         elif family == "conduit_raceway":
             _push(material, entity or canonical_name, install_method, *numeric_tokens)
         elif family == "bridge_raceway":
@@ -876,7 +1860,7 @@ class HybridSearcher:
             vector_rank_maps.append((max(float(run.get("weight", 1.0)), 0.05), rank_map))
 
         scored_results = []
-        for db_id in all_ids:
+        for db_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
             bm25_rank = None
             vector_rank = None
             rrf_score = 0.0
@@ -915,7 +1899,7 @@ class HybridSearcher:
             result["vector_score"] = vector_score
             scored_results.append(result)
 
-        scored_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
+        scored_results.sort(key=self._hybrid_result_sort_key)
         return scored_results
 
     def _rrf_fusion(self, bm25_results: list[dict], vector_results: list[dict],
@@ -956,7 +1940,7 @@ class HybridSearcher:
 
         # 计算每条结果的RRF融合分数
         scored_results = []
-        for db_id in all_ids:
+        for db_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
             bm25_rank = None
             vector_rank = None
             rrf_score = 0.0
@@ -987,7 +1971,7 @@ class HybridSearcher:
             scored_results.append(result)
 
         # 按RRF分数降序排列
-        scored_results.sort(key=lambda x: x["hybrid_score"], reverse=True)
+        scored_results.sort(key=self._hybrid_result_sort_key)
 
         return scored_results
 
@@ -1063,7 +2047,10 @@ class HybridSearcher:
         query_features = dict(query_features or {})
         if str(query_features.get("family") or "").strip() != "pipe_support":
             return 0.0, ""
-        if str(query_features.get("support_scope") or "").strip() != "管道支架":
+        query_scope = str(query_features.get("support_scope") or "").strip()
+        if not query_scope and "管道支架" in (query_text or ""):
+            query_scope = "管道支架"
+        if query_scope != "管道支架":
             return 0.0, ""
 
         traits = [
@@ -1127,11 +2114,12 @@ class HybridSearcher:
             candidate["support_subtype_gate_score"] = support_subtype_score
             candidate["_family_gate_index"] = index
 
+        candidates.sort(key=self._stable_result_identity)
         candidates.sort(
             key=lambda candidate: (
                 1 if not candidate.get("family_gate_hard_conflict") else 0,
-                float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0)))
-                + float(candidate.get("family_gate_score", 0.0)) * 0.005,
+                float(candidate.get("family_gate_score", 0.0)),
+                float(candidate.get("hybrid_score", candidate.get("rerank_score", 0.0))),
                 -int(candidate.get("_family_gate_index", 0)),
             ),
             reverse=True,

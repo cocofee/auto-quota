@@ -27,12 +27,15 @@ import re
 import sqlite3
 import threading
 import time
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 from src.specialty_classifier import get_book_from_quota_id
+from src.utils import safe_json_list
 import config
 
 # L7: 经验库模糊匹配用的文本归一化函数（顶层导入，避免每次查询重复import）
@@ -42,12 +45,35 @@ except ImportError:
     _normalize_for_match = None
 
 
+@dataclass
+class ExperienceInput:
+    """经验记录输入参数，替代add_experience的17个散装参数。"""
+    bill_text: str
+    quota_ids: list[str]
+    quota_names: list[str] = None
+    materials: list[dict] = None
+    bill_name: str = None
+    bill_code: str = None
+    bill_unit: str = None
+    source: str = "auto_match"
+    confidence: int = 80
+    province: str = None
+    project_name: str = None
+    notes: str = None
+    specialty: str = None
+    skip_vector: bool = False
+    skip_fts: bool = False
+    feature_text: str = None
+    install_method: str = None
+    parse_status: str = ""
+
+
 class ExperienceDB:
     """经验库：存储和查询历史匹配记录"""
 
-    def __init__(self, province: str = None):
+    def __init__(self, province: str = None, db_path: Path | None = None):
         self.province = province or config.get_current_province()
-        self.db_path = config.get_experience_db_path()
+        self.db_path = Path(db_path) if db_path else config.get_experience_db_path()
         self.chroma_dir = config.get_chroma_experience_dir()
 
         # 向量模型和ChromaDB（延迟加载，避免启动时就占显存）
@@ -131,6 +157,27 @@ class ExperienceDB:
                 cursor.execute("ALTER TABLE experiences ADD COLUMN disputed INTEGER DEFAULT 0")
                 logger.info("经验库已升级：新增 disputed 字段（争议标记）")
 
+            self._ensure_column(cursor, "experiences", "feature_text", "TEXT DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "materials_signature", "TEXT DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "install_method", "TEXT DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "quota_fingerprint", "TEXT DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "quota_codes_sorted", "TEXT DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "promoted_at", "REAL DEFAULT NULL")
+            self._ensure_column(cursor, "experiences", "promoted_from", "TEXT DEFAULT NULL")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS promotion_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    experience_id INTEGER NOT NULL,
+                    from_layer TEXT NOT NULL,
+                    to_layer TEXT NOT NULL,
+                    group_key TEXT NOT NULL,
+                    matching_project_count INTEGER NOT NULL,
+                    quota_consistency_rate REAL NOT NULL,
+                    promoted_at REAL NOT NULL
+                )
+            """)
+
             # 全文搜索索引（加速精确文本查找）
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_bill_text
@@ -152,11 +199,37 @@ class ExperienceDB:
                 CREATE INDEX IF NOT EXISTS idx_province_normalized_text
                 ON experiences(province, normalized_text)
             """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_layer
+                ON experiences(layer)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_structure
+                ON experiences(specialty, bill_unit, materials_signature)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_quota_fingerprint
+                ON experiences(quota_fingerprint)
+            """)
+
+            try:
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS experience_fts USING fts5(
+                        experience_id UNINDEXED,
+                        bill_text,
+                        normalized_text,
+                        feature_text,
+                        quota_names
+                    )
+                """)
+            except sqlite3.OperationalError as exc:
+                logger.warning(f"经验库 FTS5 初始化失败，降级为非BM25检索: {exc}")
 
             conn.commit()
 
             # L7: 一次性迁移旧记录的 normalized_text（只在字段为空时执行）
             self._migrate_normalized_text(conn)
+            self._ensure_fts_seeded(conn)
         finally:
             conn.close()
 
@@ -201,17 +274,12 @@ class ExperienceDB:
         return _db_connect(self.db_path, row_factory=row_factory)
 
     @staticmethod
-    def _safe_json_list(raw):
-        """安全解析JSON数组，异常时返回空列表，避免脏数据导致主流程崩溃。"""
-        if isinstance(raw, list):
-            return raw
-        if not raw:
-            return []
+    def _ensure_column(cursor, table: str, column: str, ddl: str):
         try:
-            value = json.loads(raw)
-            return value if isinstance(value, list) else []
-        except Exception:
-            return []
+            cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            logger.info(f"经验库已升级：新增 {column} 字段")
 
     @staticmethod
     def _json_dump(value) -> str:
@@ -219,20 +287,492 @@ class ExperienceDB:
         return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
-    def _source_to_layer(source: str) -> str:
-        """来源到层级映射。
+    def _safe_text(value) -> str:
+        return str(value or "").strip()
 
-        authority（权威层，可直通匹配）：
-          - user_correction: 用户手动修正
-          - user_confirmed: 用户点击确认
-          - project_import: 已完成项目导入（人工验证过的预算）
-        candidate（候选层，仅供参考）：
-          - auto_match: 系统自动匹配（未经人工验证）
-          - auto_review: 贾维斯自动审核纠正（未经人工验证）
-          - project_import_suspect: 项目导入但审核规则检测到问题（待人工确认）
-        """
-        authority_sources = ("user_correction", "user_confirmed", "project_import")
-        return "authority" if source in authority_sources else "candidate"
+    def _fts_available(self, cursor) -> bool:
+        try:
+            cursor.execute("SELECT COUNT(*) FROM experience_fts")
+            cursor.fetchone()
+            return True
+        except sqlite3.OperationalError:
+            return False
+
+    def _ensure_fts_seeded(self, conn):
+        cursor = conn.cursor()
+        if not self._fts_available(cursor):
+            return
+        try:
+            cursor.execute("SELECT COUNT(*) FROM experience_fts")
+            fts_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM experiences")
+            exp_count = cursor.fetchone()[0]
+        except sqlite3.OperationalError:
+            return
+        if exp_count == 0 or fts_count > 0:
+            return
+        try:
+            self.build_fts_index(conn=conn)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower():
+                logger.debug("经验库 FTS 首次灌库遇到数据库锁，跳过本次初始化")
+                return
+            raise
+
+    def build_fts_index(self, conn=None):
+        owns_conn = conn is None
+        conn = conn or self._connect()
+        cursor = conn.cursor()
+        if not self._fts_available(cursor):
+            if owns_conn:
+                conn.close()
+            return 0
+        cursor.execute("DELETE FROM experience_fts")
+        cursor.execute("""
+            INSERT INTO experience_fts (experience_id, bill_text, normalized_text, feature_text, quota_names)
+            SELECT id, bill_text, COALESCE(normalized_text, ''), COALESCE(feature_text, ''), COALESCE(quota_names, '')
+            FROM experiences
+        """)
+        if owns_conn:
+            conn.commit()
+            conn.close()
+        return cursor.rowcount
+
+    def _upsert_fts_record(self, record_id: int, *, bill_text: str, normalized_text: str = "", feature_text: str = "", quota_names_json: str = ""):
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            if not self._fts_available(cursor):
+                return
+            quota_names_text = quota_names_json or ""
+            cursor.execute("DELETE FROM experience_fts WHERE experience_id = ?", (str(record_id),))
+            cursor.execute(
+                """
+                INSERT INTO experience_fts (experience_id, bill_text, normalized_text, feature_text, quota_names)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(record_id), bill_text or "", normalized_text or "", feature_text or "", quota_names_text),
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.debug(f"经验库 FTS 单条同步失败: {exc}")
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _unit_equivalent(unit: str) -> str:
+        value = str(unit or "").strip().lower()
+        if not value:
+            return ""
+        groups = {
+            "设备": {"台", "套"},
+            "长度": {"m", "米", "延长米"},
+            "面积": {"m2", "㎡", "m²", "平方米"},
+            "体积": {"m3", "m³", "立方米"},
+            "项处": {"项", "处"},
+        }
+        for alias, values in groups.items():
+            if value in values:
+                return alias
+        return value
+
+    @staticmethod
+    def _jaccard_similarity(left: str, right: str) -> float:
+        a = {part for part in str(left or "").split("|") if part}
+        b = {part for part in str(right or "").split("|") if part}
+        if not a and not b:
+            return 0.0
+        return len(a & b) / max(len(a | b), 1)
+
+    def _recall_exact(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 20) -> list[dict]:
+        clauses = ["normalized_text = ?", "normalized_text != ''", "layer = ?"]
+        params: list = [query_item["normalized_text"], layer]
+        if province_mode == "local":
+            clauses.append("province = ?")
+            params.append(query_item["province"])
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT * FROM experiences
+                WHERE {' AND '.join(clauses)}
+                ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def _recall_bm25(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 30) -> list[dict]:
+        normalized_text = self._safe_text(query_item.get("normalized_text"))
+        raw_text = self._safe_text(query_item.get("raw_text"))
+        tokens = [token for token in re.findall(r"[\u4e00-\u9fffa-zA-Z0-9]+", raw_text or normalized_text) if len(token) >= 1]
+        match_query = " ".join(tokens[:8]) or normalized_text
+        if not match_query:
+            return []
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            if not self._fts_available(cursor):
+                return []
+            province_clause = " AND e.province = ?" if province_mode == "local" else ""
+            params = [match_query, layer]
+            if province_mode == "local":
+                params.append(query_item["province"])
+            params.append(limit)
+            cursor.execute(
+                f"""
+                SELECT e.*, bm25(experience_fts) AS bm25_score
+                FROM experience_fts
+                JOIN experiences e ON e.id = CAST(experience_fts.experience_id AS INTEGER)
+                WHERE experience_fts MATCH ?
+                  AND e.layer = ?{province_clause}
+                ORDER BY bm25_score ASC, e.confidence DESC, e.confirm_count DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            rows = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                raw_bm25 = float(record.pop("bm25_score", 0.0) or 0.0)
+                record["bm25_score"] = 1.0 / (1.0 + max(raw_bm25, 0.0))
+                rows.append(record)
+            return rows
+        except sqlite3.OperationalError as exc:
+            logger.debug(f"经验库 BM25 召回失败，降级跳过: {exc}")
+            return []
+        finally:
+            conn.close()
+
+    def _recall_structural(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 30) -> list[dict]:
+        clauses = ["layer = ?"]
+        params: list = [layer]
+        specialty = self._safe_text(query_item.get("specialty"))
+        unit = self._safe_text(query_item.get("unit"))
+        materials_signature = self._safe_text(query_item.get("materials_signature"))
+        if specialty:
+            clauses.append("specialty = ?")
+            params.append(specialty)
+        if unit:
+            clauses.append("bill_unit = ?")
+            params.append(unit)
+        if materials_signature:
+            clauses.append("materials_signature = ?")
+            params.append(materials_signature)
+        if len(clauses) == 1:
+            return []
+        if province_mode == "local":
+            clauses.append("province = ?")
+            params.append(query_item["province"])
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM experiences
+                WHERE {' AND '.join(clauses)}
+                ORDER BY confidence DESC, confirm_count DESC, updated_at DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            )
+            rows = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                record["structural_score"] = 1.0
+                rows.append(record)
+            return rows
+        finally:
+            conn.close()
+
+    def _recall_vector_candidates(self, query_text: str, *, top_k: int, province: str) -> list[tuple[int, float]]:
+        if not getattr(config, "VECTOR_ENABLED", True):
+            return []
+        coll = self.collection
+        if coll is None or coll.count() == 0 or self.model is None:
+            return []
+        fetch_k = min(max(top_k * 4, 30), coll.count())
+        try:
+            from src.model_profile import encode_queries
+            query_embedding = encode_queries(self.model, [query_text])
+            try:
+                results = coll.query(
+                    query_embeddings=query_embedding.tolist(),
+                    n_results=fetch_k,
+                    where={"province": province},
+                )
+            except Exception:
+                results = coll.query(query_embeddings=query_embedding.tolist(), n_results=fetch_k)
+            ids = results.get("ids", [[]])[0] if results else []
+            distances = results.get("distances", [[]])[0] if results else []
+            pairs = []
+            for exp_id, distance in zip(ids, distances):
+                try:
+                    pairs.append((int(exp_id), max(0.0, min(1.0, 1.0 - float(distance or 1.0)))))
+                except (TypeError, ValueError):
+                    continue
+            return pairs
+        except Exception as exc:
+            logger.debug(f"经验库向量召回失败，降级跳过: {exc}")
+            return []
+
+    def _fetch_records_by_ids(self, ids: list[int], *, min_confidence: int, province: str | None = None) -> dict[int, dict]:
+        if not ids:
+            return {}
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            placeholders = ",".join(["?"] * len(ids))
+            clauses = [f"id IN ({placeholders})", "confidence >= ?"]
+            params: list = [*ids, min_confidence]
+            if province:
+                clauses.append("province = ?")
+                params.append(province)
+            cursor.execute(
+                f"SELECT * FROM experiences WHERE {' AND '.join(clauses)}",
+                params,
+            )
+            return {row["id"]: dict(row) for row in cursor.fetchall()}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _layer_score(layer: str) -> float:
+        return {"authority": 1.0, "verified": 0.6, "candidate": 0.3}.get(str(layer or ""), 0.3)
+
+    def _estimate_recall_score(self, record: dict) -> float:
+        text_score = max(
+            float(record.get("bm25_score", 0.0) or 0.0),
+            float(record.get("vector_score", 0.0) or 0.0),
+            float(record.get("similarity", 0.0) or 0.0),
+            1.0 if record.get("_exact_match") else 0.0,
+        )
+        return 0.35 * text_score + 0.10 * self._layer_score(record.get("layer"))
+
+    def _expand_query_layers(self, candidates: dict[int, dict], *, current_step: int) -> bool:
+        green_hits = sum(1 for item in candidates.values() if self._estimate_recall_score(item) >= 0.85)
+        yellow_hits = sum(1 for item in candidates.values() if self._estimate_recall_score(item) >= 0.60)
+        if green_hits >= 3:
+            return False
+        if yellow_hits >= 5:
+            return False
+        return current_step < 6
+
+    def _merge_recall_results(self, candidates: dict[int, dict], records: list[dict], *, channel: str):
+        for record in records:
+            record_id = int(record.get("id") or 0)
+            if record_id <= 0:
+                continue
+            if record_id not in candidates:
+                record["recalled_by"] = [channel]
+                record["raw_scores"] = {}
+                candidates[record_id] = record
+            else:
+                existing = candidates[record_id]
+                existing.setdefault("recalled_by", [])
+                if channel not in existing["recalled_by"]:
+                    existing["recalled_by"].append(channel)
+                for key in (
+                    "bm25_score", "vector_score", "similarity", "structural_score",
+                    "_exact_match",
+                ):
+                    if key in record and record.get(key) not in (None, ""):
+                        if key == "_exact_match":
+                            existing[key] = bool(existing.get(key) or record.get(key))
+                        else:
+                            existing[key] = max(float(existing.get(key, 0.0) or 0.0), float(record.get(key, 0.0) or 0.0))
+            if "bm25_score" in record:
+                candidates[record_id].setdefault("raw_scores", {})["bm25"] = float(record.get("bm25_score", 0.0) or 0.0)
+            if "vector_score" in record:
+                candidates[record_id].setdefault("raw_scores", {})["vector"] = float(record.get("vector_score", 0.0) or 0.0)
+
+    def _hard_filter(self, candidate: dict, query_item: dict) -> dict | None:
+        candidate_specialty = self._safe_text(candidate.get("specialty"))
+        candidate_unit = self._safe_text(candidate.get("bill_unit"))
+        candidate_materials = self._safe_text(candidate.get("materials_signature"))
+        query_specialty = self._safe_text(query_item.get("specialty"))
+        query_unit = self._safe_text(query_item.get("unit"))
+        query_materials = self._safe_text(query_item.get("materials_signature"))
+        risk_flags = list(candidate.get("risk_flags") or [])
+        penalty_factor = 1.0
+
+        if query_specialty and candidate_specialty and candidate_specialty != query_specialty:
+            return None
+        if query_unit and candidate_unit:
+            if candidate_unit != query_unit:
+                if self._unit_equivalent(candidate_unit) == self._unit_equivalent(query_unit):
+                    pass
+                else:
+                    penalty_factor *= 0.3
+                    risk_flags.append("unit_mismatch_severe")
+        if query_materials and candidate_materials:
+            candidate_first = candidate_materials.split("|", 1)[0]
+            query_first = query_materials.split("|", 1)[0]
+            if candidate_first and query_first and candidate_first != query_first:
+                penalty_factor *= 0.5
+                risk_flags.append("material_conflict")
+
+        current_version = query_item.get("quota_version") or ""
+        record_version = candidate.get("quota_db_version") or ""
+        if current_version and record_version and current_version != record_version:
+            risk_flags.append("version_mismatch")
+        if query_item.get("province") and candidate.get("province") and candidate.get("province") != query_item.get("province"):
+            risk_flags.append("cross_province")
+
+        candidate["risk_flags"] = sorted(set(risk_flags))
+        candidate["penalty_factor"] = penalty_factor
+        return candidate
+
+    def _distinct_project_count(self, record: dict) -> int:
+        normalized_text = self._safe_text(record.get("normalized_text"))
+        specialty = self._safe_text(record.get("specialty"))
+        bill_unit = self._safe_text(record.get("bill_unit"))
+        if not normalized_text:
+            return min(int(record.get("confirm_count") or 1), 5)
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT project_name)
+                FROM experiences
+                WHERE normalized_text = ?
+                  AND specialty = ?
+                  AND bill_unit = ?
+                  AND project_name IS NOT NULL
+                  AND project_name != ''
+                """,
+                (normalized_text, specialty, bill_unit),
+            )
+            count = cursor.fetchone()[0] or 0
+            return max(int(count), min(int(record.get("confirm_count") or 1), 5))
+        finally:
+            conn.close()
+
+    def _compute_experience_total_score(self, candidate: dict, query_item: dict) -> tuple[float, dict]:
+        bm25_score = float(candidate.get("bm25_score", 0.0) or 0.0)
+        vector_score = float(candidate.get("vector_score", candidate.get("similarity", 0.0)) or 0.0)
+        if candidate.get("_exact_match"):
+            bm25_score = max(bm25_score, 1.0)
+            vector_score = max(vector_score, 1.0)
+        text_score = min(1.0, max(0.0, 0.4 * bm25_score + 0.6 * vector_score))
+        specialty_score = 1.0
+        unit_score = 1.0
+        query_unit = self._safe_text(query_item.get("unit"))
+        candidate_unit = self._safe_text(candidate.get("bill_unit"))
+        if query_unit and candidate_unit:
+            if query_unit == candidate_unit:
+                unit_score = 1.0
+            elif self._unit_equivalent(query_unit) == self._unit_equivalent(candidate_unit):
+                unit_score = 0.8
+            else:
+                unit_score = 0.0
+        material_score = self._jaccard_similarity(candidate.get("materials_signature"), query_item.get("materials_signature"))
+        source_score = self._layer_score(candidate.get("layer"))
+        consensus_score = min(self._distinct_project_count(candidate) / 5.0, 1.0)
+        total = (
+            0.35 * text_score +
+            0.20 * specialty_score +
+            0.15 * unit_score +
+            0.15 * material_score +
+            0.10 * source_score +
+            0.05 * consensus_score
+        ) * float(candidate.get("penalty_factor", 1.0) or 1.0)
+        dimension_scores = {
+            "text": round(text_score, 6),
+            "specialty": round(specialty_score, 6),
+            "unit": round(unit_score, 6),
+            "material": round(material_score, 6),
+            "source": round(source_score, 6),
+            "consensus": round(consensus_score, 6),
+        }
+        return float(total), dimension_scores
+
+    def _has_authority_conflict(self, candidate: dict) -> bool:
+        normalized_text = self._safe_text(candidate.get("normalized_text"))
+        specialty = self._safe_text(candidate.get("specialty"))
+        bill_unit = self._safe_text(candidate.get("bill_unit"))
+        if not normalized_text:
+            return False
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT quota_fingerprint)
+                FROM experiences
+                WHERE layer = 'authority'
+                  AND normalized_text = ?
+                  AND specialty = ?
+                  AND bill_unit = ?
+                  AND quota_fingerprint IS NOT NULL
+                  AND quota_fingerprint != ''
+                """,
+                (normalized_text, specialty, bill_unit),
+            )
+            count = cursor.fetchone()[0] or 0
+            return count > 1
+        finally:
+            conn.close()
+
+    def _apply_gate(self, candidate: dict, query_item: dict):
+        total_score = float(candidate.get("total_score", 0.0) or 0.0)
+        risk_flags = set(candidate.get("risk_flags") or [])
+        if self._has_authority_conflict(candidate):
+            risk_flags.add("authority_conflict")
+        candidate["risk_flags"] = sorted(risk_flags)
+        query_unit = self._safe_text(query_item.get("unit"))
+        candidate_unit = self._safe_text(candidate.get("bill_unit"))
+        unit_ok = not query_unit or not candidate_unit or query_unit == candidate_unit or self._unit_equivalent(query_unit) == self._unit_equivalent(candidate_unit)
+        version_ok = not query_item.get("quota_version") or not candidate.get("quota_db_version") or query_item.get("quota_version") == candidate.get("quota_db_version")
+        has_red_flag = any(flag in risk_flags for flag in {"authority_conflict", "unit_mismatch_severe", "material_conflict", "specialty_mismatch"})
+        if (
+            total_score >= 0.85 and
+            candidate.get("layer") == "authority" and
+            unit_ok and version_ok and
+            not has_red_flag
+        ):
+            candidate["gate"] = "green"
+        elif total_score < 0.60 or has_red_flag:
+            candidate["gate"] = "red"
+        else:
+            candidate["gate"] = "yellow"
+
+    def _build_query_item(self, query_text: str, *, province: str, specialty: str = "", unit: str = "", materials_signature: str = "", install_method: str = "", quota_version: str = "") -> dict:
+        return {
+            "raw_text": query_text,
+            "normalized_text": _normalize_for_match(query_text) if _normalize_for_match else self._safe_text(query_text),
+            "province": province,
+            "specialty": self._safe_text(specialty),
+            "unit": self._safe_text(unit),
+            "materials_signature": self._safe_text(materials_signature),
+            "install_method": self._safe_text(install_method),
+            "quota_version": quota_version or config.get_current_quota_version(province),
+        }
+
+    @staticmethod
+    def _source_to_layer(source: str) -> str:
+        authority_sources = {
+            "user_correction",
+            "user_confirmed",
+            "openclaw_approved",
+            "multi_project_promoted",
+            "promote_from_candidate",
+        }
+        verified_sources = {
+            "completed_project",
+            "reviewed_import",
+        }
+        if source in authority_sources:
+            return "authority"
+        if source in verified_sources:
+            return "verified"
+        return "candidate"
 
     @staticmethod
     def _safe_int(value, default: int) -> int:
@@ -246,11 +786,197 @@ class ExperienceDB:
     def _clamp(value: int, low: int, high: int) -> int:
         return max(min(value, high), low)
 
+    @staticmethod
+    def _normalize_confidence_value(value) -> int:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0
+        if 0 <= numeric <= 1:
+            numeric *= 100
+        return max(0, min(int(round(numeric)), 100))
+
+    @staticmethod
+    def _coerce_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _meets_verified_criteria(self, *,
+                                 bill_text: str,
+                                 bill_unit: str,
+                                 specialty: str,
+                                 quota_ids: list[str],
+                                 quota_names: list[str],
+                                 confidence: int,
+                                 parse_status: str = "") -> bool:
+        if str(parse_status or "").strip().lower() == "error":
+            return False
+        if not str(bill_text or "").strip():
+            return False
+        if not str(bill_unit or "").strip():
+            return False
+        if not str(specialty or "").strip():
+            return False
+        if not quota_ids or not any(str(item or "").strip() for item in quota_ids):
+            return False
+        if not quota_names or not any(str(item or "").strip() for item in quota_names):
+            return False
+        return self._normalize_confidence_value(confidence) >= 50
+
+    def _determine_layer(self, *,
+                         source: str,
+                         bill_text: str,
+                         bill_unit: str,
+                         specialty: str,
+                         quota_ids: list[str],
+                         quota_names: list[str],
+                         confidence: int,
+                         parse_status: str = "") -> str:
+        base_layer = self._source_to_layer(source)
+        if base_layer != "verified":
+            return base_layer
+        if self._meets_verified_criteria(
+            bill_text=bill_text,
+            bill_unit=bill_unit,
+            specialty=specialty,
+            quota_ids=quota_ids,
+            quota_names=quota_names,
+            confidence=confidence,
+            parse_status=parse_status,
+        ):
+            return "verified"
+        return "candidate"
+
+    def _determine_backfill_layer(self, record: dict) -> str:
+        source = self._safe_text(record.get("source"))
+        current_layer = self._safe_text(record.get("layer"))
+        if current_layer == "deleted":
+            return "deleted"
+
+        quota_ids = safe_json_list(record.get("quota_ids"))
+        quota_names = safe_json_list(record.get("quota_names"))
+        base_layer = self._determine_layer(
+            source=source,
+            bill_text=record.get("bill_text", ""),
+            bill_unit=record.get("bill_unit", ""),
+            specialty=record.get("specialty", ""),
+            quota_ids=quota_ids,
+            quota_names=quota_names,
+            confidence=record.get("confidence", 0),
+            parse_status=record.get("parse_status", ""),
+        )
+        if base_layer != "candidate":
+            return base_layer
+
+        # Compatibility bridge for legacy imported authority data:
+        # old imports may already be trustworthy enough for verified, but should no longer
+        # remain direct authority after the new three-layer rules landed.
+        if source in {"project_import", "oss_import", "batch_import", "auto_review"}:
+            if current_layer == "authority" and self._meets_verified_criteria(
+                bill_text=record.get("bill_text", ""),
+                bill_unit=record.get("bill_unit", ""),
+                specialty=record.get("specialty", ""),
+                quota_ids=quota_ids,
+                quota_names=quota_names,
+                confidence=record.get("confidence", 0),
+                parse_status=record.get("parse_status", ""),
+            ):
+                return "verified"
+        return base_layer
+
+    @staticmethod
+    def _build_group_key(normalized_text: str, specialty: str, bill_unit: str, quota_version: str) -> str:
+        payload = "||".join([
+            str(normalized_text or "").strip(),
+            str(specialty or "").strip(),
+            str(bill_unit or "").strip(),
+            str(quota_version or "").strip(),
+        ])
+        return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _material_category_from_text(text: str) -> str:
+        value = str(text or "").strip().lower()
+        if not value:
+            return "other"
+        mapping = [
+            ("steel_pipe", ["钢管", "镀锌钢管", "焊接钢管", "无缝钢管"]),
+            ("copper_pipe", ["铜管", "紫铜管"]),
+            ("plastic_pipe", ["ppr", "pe", "pvc", "hdpe", "塑料管"]),
+            ("valve", ["阀门", "闸阀", "截止阀", "球阀", "蝶阀", "止回阀"]),
+            ("insulation", ["保温", "橡塑", "岩棉", "玻璃棉"]),
+            ("fan_coil", ["风机盘管", "fcu"]),
+            ("ahu", ["空调机组", "ahu", "组合式空调"]),
+            ("chiller", ["冷水机组", "冷机", "离心机", "螺杆机"]),
+            ("pump", ["水泵", "循环泵", "加压泵", "消防泵"]),
+            ("duct", ["风管", "镀锌风管", "铁皮风管", "复合风管"]),
+            ("cable", ["电缆", "电线", "bv", "yjv", "wdzn"]),
+            ("bridge", ["桥架", "线槽", "电缆桥架"]),
+            ("sprinkler", ["喷淋头", "喷头", "洒水喷头"]),
+            ("fire_hydrant", ["消火栓", "消防栓"]),
+            ("fitting", ["管件", "弯头", "三通", "法兰"]),
+        ]
+        for category, keywords in mapping:
+            matched = False
+            for keyword in keywords:
+                needle = keyword.lower()
+                if re.fullmatch(r"[a-z0-9_.-]+", needle):
+                    if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", value):
+                        matched = True
+                        break
+                elif needle in value:
+                    matched = True
+                    break
+            if matched:
+                return category
+        return "other"
+
+    def _compute_material_signature(self, materials) -> str:
+        items = safe_json_list(materials)
+        if not items:
+            return ""
+        ranked = []
+        for index, item in enumerate(items):
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("material_name") or item.get("raw_name") or ""
+                amount = self._coerce_float(item.get("amount"))
+                if amount is None:
+                    unit_price = self._coerce_float(item.get("unit_price"))
+                    qty = self._coerce_float(item.get("qty") or item.get("quantity"))
+                    if unit_price is not None and qty is not None:
+                        amount = unit_price * qty
+                score = amount if amount is not None else -(index + 1)
+            else:
+                name = str(item or "")
+                score = -(index + 1)
+            ranked.append((score, self._material_category_from_text(name)))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        categories = []
+        seen = set()
+        for _, category in ranked:
+            if category in seen:
+                continue
+            seen.add(category)
+            categories.append(category)
+            if len(categories) >= 3:
+                break
+        return "|".join(sorted(categories))
+
+    def _compute_quota_fingerprint(self, quota_ids: list[str]) -> tuple[str, str]:
+        cleaned = sorted({str(item).strip() for item in (quota_ids or []) if str(item).strip()})
+        if not cleaned:
+            return "", "[]"
+        joined = "|".join(cleaned)
+        digest = hashlib.md5(joined.encode("utf-8")).hexdigest()[:8]
+        return digest, self._json_dump(cleaned)
+
     def _normalize_record_quota_fields(self, record: dict) -> dict:
         """统一把记录中的 quota_ids/quota_names/materials 解析成 list。"""
-        record["quota_ids"] = self._safe_json_list(record.get("quota_ids"))
-        record["quota_names"] = self._safe_json_list(record.get("quota_names"))
-        record["materials"] = self._safe_json_list(record.get("materials"))
+        record["quota_ids"] = safe_json_list(record.get("quota_ids"))
+        record["quota_names"] = safe_json_list(record.get("quota_names"))
+        record["materials"] = safe_json_list(record.get("materials"))
         return record
 
     @property
@@ -559,9 +1285,45 @@ class ExperienceDB:
             logger.warning(f"加载定额库映射失败: {e}")
             return {}
 
+    def _get_quota_version_cached(self, province: str = None) -> str:
+        province = province or self.province
+        cache_by_province = getattr(self, "_quota_version_cache_by_province", {})
+        if province in cache_by_province:
+            return cache_by_province[province]
+        version = config.get_current_quota_version(province)
+        if len(cache_by_province) >= 6:
+            oldest_key = next(iter(cache_by_province))
+            del cache_by_province[oldest_key]
+        cache_by_province[province] = version
+        self._quota_version_cache_by_province = cache_by_province
+        return version
+
     # ================================================================
     # 写入经验
     # ================================================================
+
+    def add(self, entry: ExperienceInput) -> int:
+        """添加经验记录（推荐接口，用ExperienceInput替代17个散装参数）。"""
+        return self.add_experience(
+            bill_text=entry.bill_text,
+            quota_ids=entry.quota_ids,
+            quota_names=entry.quota_names,
+            materials=entry.materials,
+            bill_name=entry.bill_name,
+            bill_code=entry.bill_code,
+            bill_unit=entry.bill_unit,
+            source=entry.source,
+            confidence=entry.confidence,
+            province=entry.province,
+            project_name=entry.project_name,
+            notes=entry.notes,
+            specialty=entry.specialty,
+            skip_vector=entry.skip_vector,
+            skip_fts=entry.skip_fts,
+            feature_text=entry.feature_text,
+            install_method=entry.install_method,
+            parse_status=entry.parse_status,
+        )
 
     def add_experience(self, bill_text: str, quota_ids: list[str],
                        quota_names: list[str] = None,
@@ -574,7 +1336,11 @@ class ExperienceDB:
                        project_name: str = None,
                        notes: str = None,
                        specialty: str = None,
-                       skip_vector: bool = False) -> int:
+                       skip_vector: bool = False,
+                       skip_fts: bool = False,
+                       feature_text: str = None,
+                       install_method: str = None,
+                       parse_status: str = "") -> int:
         """
         添加一条经验记录
 
@@ -590,113 +1356,36 @@ class ExperienceDB:
         返回:
             新记录的ID，校验失败返回 -1
         """
-        province = province or self.province
-        now = time.time()
-
-        # ========== 校验 quota_ids / quota_names 长度一致 ==========
-        # 两个列表必须等长，否则存进去数据是错乱的（第i个name对不上第i个id）
-        if quota_names and len(quota_names) != len(quota_ids):
-            logger.warning(
-                f"经验库写入拒绝: quota_ids({len(quota_ids)})与quota_names({len(quota_names)})"
-                f"长度不一致, bill_text='{bill_text[:50]}'"
-            )
+        prepared = self._prepare_experience_payload(
+            bill_text=bill_text,
+            quota_ids=quota_ids,
+            quota_names=quota_names,
+            materials=materials,
+            bill_name=bill_name,
+            bill_code=bill_code,
+            bill_unit=bill_unit,
+            source=source,
+            confidence=confidence,
+            province=province,
+            project_name=project_name,
+            notes=notes,
+            specialty=specialty,
+            feature_text=feature_text,
+            install_method=install_method,
+            parse_status=parse_status,
+        )
+        if prepared is None:
             return -1
 
-        # ========== 过滤空的 quota_id ==========
-        # 空字符串的定额编号是无效数据，过滤掉避免污染经验库
-        if quota_ids:
-            cleaned_pairs = [
-                (qid, quota_names[i] if quota_names and i < len(quota_names) else "")
-                for i, qid in enumerate(quota_ids)
-                if qid and str(qid).strip()
-            ]
-            if not cleaned_pairs:
-                logger.warning(f"经验库写入拒绝: 所有quota_id均为空, bill_text='{bill_text[:50]}'")
-                return -1
-            quota_ids = [p[0] for p in cleaned_pairs]
-            quota_names = [p[1] for p in cleaned_pairs]
-
-        # ========== 自动推断专业册号（调用方没传 specialty 时从定额编号推断）==========
-        if not specialty and quota_ids:
-            for qid in quota_ids:
-                inferred = get_book_from_quota_id(qid)
-                if inferred:
-                    specialty = inferred
-                    break
-
-        # ========== 定额校验（除了用户手动修正，其他来源都要校验）==========
-        # user_correction 是用户亲手改的，信任度最高，跳过校验
-        if source != "user_correction":
-            validation = self._validate_quota_ids(
-                bill_text, quota_ids, quota_names, province=province)
-            if not validation["valid"]:
-                logger.warning(
-                    f"经验库写入被拦截 [{source}]: '{bill_text[:50]}' → {quota_ids} "
-                    f"原因: {validation['errors']}"
-                )
-                return -1  # 校验失败，拒绝写入
-            # 使用清洗后的编号和名称
-            quota_ids = validation["cleaned_ids"]
-            quota_names = validation["cleaned_names"]
-
-        # 获取当前定额库版本号（绑定到经验记录）
-        quota_db_ver = config.get_current_quota_version(province)
-
-        # 根据来源设置层级（详见 _source_to_layer() 注释）
-        layer = self._source_to_layer(source)
-        quota_ids_json = self._json_dump(quota_ids)
-        quota_names_json = self._json_dump(quota_names or [])
-        materials_json = self._json_dump(materials or [])
-
-        # L7: 生成归一化文本（模糊匹配用）
-        normalized_text = _normalize_for_match(bill_text) if _normalize_for_match else ""
-
-        inserted_new = False
         conn = self._connect()
         cursor = conn.cursor()
         try:
-            # 事务化“查重+写入/更新”，避免并发下重复插入
             cursor.execute("BEGIN IMMEDIATE")
-            cursor.execute("""
-                SELECT id FROM experiences
-                WHERE bill_text = ? AND province = ?
-                LIMIT 1
-            """, (bill_text, province))
-            existing = cursor.fetchone()
-
-            if existing:
-                record_id = self._update_experience(
-                    int(existing[0]), quota_ids, quota_names,
-                    source, confidence,
-                    quota_db_version=quota_db_ver,
-                    materials_json=materials_json,
-                    specialty=specialty,
-                    project_name=project_name,
-                    notes=notes,
-                    conn=conn, cursor=cursor, commit=False
-                )
-            else:
-                cursor.execute("""
-                    INSERT INTO experiences
-                    (bill_text, bill_name, bill_code, bill_unit,
-                     quota_ids, quota_names, materials, source, confidence,
-                     confirm_count, province, project_name,
-                     created_at, updated_at, notes, quota_db_version, layer, specialty,
-                     normalized_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    bill_text, bill_name, bill_code, bill_unit,
-                    quota_ids_json,
-                    quota_names_json,
-                    materials_json,
-                    source, confidence,
-                    province, project_name, now, now, notes,
-                    quota_db_ver, layer, specialty,
-                    normalized_text,
-                ))
-                record_id = int(cursor.lastrowid)
-                inserted_new = True
-
+            record_id, inserted_new = self._write_prepared_experience(
+                prepared,
+                conn=conn,
+                cursor=cursor,
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -706,13 +1395,292 @@ class ExperienceDB:
 
         # 新建记录才追加向量索引；更新走原id即可
         # skip_vector=True 时跳过逐条写入（批量导入场景，导入完后统一调用 rebuild_vector_index）
+        if not skip_fts:
+            self._upsert_fts_record(
+                record_id,
+                bill_text=prepared["bill_text"],
+                normalized_text=prepared["normalized_text"],
+                feature_text=prepared["feature_text"] or "",
+                quota_names_json=prepared["quota_names_json"],
+            )
         if inserted_new:
             if not skip_vector:
-                self._add_to_vector_index(record_id, bill_text, province=province)
-            logger.debug(f"经验库新增: [{source}] '{bill_text[:50]}' → {quota_ids}")
+                self._add_to_vector_index(record_id, prepared["bill_text"], province=prepared["province"])
+            logger.debug(f"经验库新增: [{prepared['source']}] '{prepared['bill_text'][:50]}' → {prepared['quota_ids']}")
         else:
-            logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={source}")
+            logger.debug(f"经验库更新(事务路径): ID={record_id}, 来源={prepared['source']}")
         return record_id
+
+    def _prepare_experience_payload(self, *,
+                                    bill_text: str,
+                                    quota_ids: list[str],
+                                    quota_names: list[str] = None,
+                                    materials: list[dict] = None,
+                                    bill_name: str = None,
+                                    bill_code: str = None,
+                                    bill_unit: str = None,
+                                    source: str = "auto_match",
+                                    confidence: int = 80,
+                                    province: str = None,
+                                    project_name: str = None,
+                                    notes: str = None,
+                                    specialty: str = None,
+                                    feature_text: str = None,
+                                    install_method: str = None,
+                                    parse_status: str = "") -> dict | None:
+        province = province or self.province
+        quota_names = quota_names or []
+        materials = materials or []
+
+        if quota_names and len(quota_names) != len(quota_ids):
+            logger.warning(
+                f"经验库写入拒绝: quota_ids({len(quota_ids)})与quota_names({len(quota_names)})"
+                f"长度不一致, bill_text='{bill_text[:50]}'"
+            )
+            return None
+
+        if quota_ids:
+            cleaned_pairs = [
+                (qid, quota_names[i] if quota_names and i < len(quota_names) else "")
+                for i, qid in enumerate(quota_ids)
+                if qid and str(qid).strip()
+            ]
+            if not cleaned_pairs:
+                logger.warning(f"经验库写入拒绝: 所有quota_id均为空, bill_text='{bill_text[:50]}'")
+                return None
+            quota_ids = [p[0] for p in cleaned_pairs]
+            quota_names = [p[1] for p in cleaned_pairs]
+
+        if not specialty and quota_ids:
+            for qid in quota_ids:
+                inferred = get_book_from_quota_id(qid)
+                if inferred:
+                    specialty = inferred
+                    break
+
+        if source not in {"user_correction", "openclaw_approved"}:
+            validation = self._validate_quota_ids(
+                bill_text, quota_ids, quota_names, province=province)
+            if not validation["valid"]:
+                logger.warning(
+                    f"经验库写入被拦截 [{source}]: '{bill_text[:50]}' → {quota_ids} "
+                    f"原因: {validation['errors']}"
+                )
+                return None
+            quota_ids = validation["cleaned_ids"]
+            quota_names = validation["cleaned_names"]
+
+        confidence = self._normalize_confidence_value(confidence)
+        quota_db_ver = self._get_quota_version_cached(province)
+        materials_signature = self._compute_material_signature(materials)
+        quota_fingerprint, quota_codes_sorted_json = self._compute_quota_fingerprint(quota_ids)
+        layer = self._determine_layer(
+            source=source,
+            bill_text=bill_text,
+            bill_unit=bill_unit or "",
+            specialty=specialty or "",
+            quota_ids=quota_ids,
+            quota_names=quota_names or [],
+            confidence=confidence,
+            parse_status=parse_status,
+        )
+        normalized_text = _normalize_for_match(bill_text) if _normalize_for_match else ""
+        return {
+            "bill_text": bill_text,
+            "bill_name": bill_name,
+            "bill_code": bill_code,
+            "bill_unit": bill_unit,
+            "quota_ids": quota_ids,
+            "quota_names": quota_names or [],
+            "quota_ids_json": self._json_dump(quota_ids),
+            "quota_names_json": self._json_dump(quota_names or []),
+            "materials": materials,
+            "materials_json": self._json_dump(materials),
+            "source": source,
+            "confidence": confidence,
+            "province": province,
+            "project_name": project_name,
+            "notes": notes,
+            "specialty": specialty,
+            "feature_text": feature_text,
+            "install_method": install_method,
+            "parse_status": parse_status,
+            "quota_db_ver": quota_db_ver,
+            "materials_signature": materials_signature,
+            "quota_fingerprint": quota_fingerprint,
+            "quota_codes_sorted_json": quota_codes_sorted_json,
+            "layer": layer,
+            "normalized_text": normalized_text,
+            "now": time.time(),
+        }
+
+    def _write_prepared_experience(self, prepared: dict, *, conn, cursor,
+                                   existing_id: int | None = None) -> tuple[int, bool]:
+        existing = (existing_id,) if existing_id else None
+        if existing is None:
+            cursor.execute("""
+                SELECT id FROM experiences
+                WHERE bill_text = ? AND province = ?
+                LIMIT 1
+            """, (prepared["bill_text"], prepared["province"]))
+            existing = cursor.fetchone()
+        inserted_new = False
+
+        if existing:
+            record_id = self._update_experience(
+                int(existing[0]), prepared["quota_ids"], prepared["quota_names"],
+                prepared["source"], prepared["confidence"],
+                quota_db_version=prepared["quota_db_ver"],
+                materials_json=prepared["materials_json"],
+                specialty=prepared["specialty"],
+                project_name=prepared["project_name"],
+                notes=prepared["notes"],
+                feature_text=prepared["feature_text"],
+                install_method=prepared["install_method"],
+                materials_signature=prepared["materials_signature"],
+                quota_fingerprint=prepared["quota_fingerprint"],
+                quota_codes_sorted_json=prepared["quota_codes_sorted_json"],
+                parse_status=prepared["parse_status"],
+                bill_text=prepared["bill_text"],
+                bill_unit=prepared["bill_unit"] or "",
+                conn=conn, cursor=cursor, commit=False
+            )
+        else:
+            cursor.execute("""
+                INSERT INTO experiences
+                (bill_text, bill_name, bill_code, bill_unit,
+                 quota_ids, quota_names, materials, source, confidence,
+                 confirm_count, province, project_name,
+                 created_at, updated_at, notes, quota_db_version, layer, specialty,
+                 normalized_text, feature_text, materials_signature,
+                 install_method, quota_fingerprint, quota_codes_sorted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                prepared["bill_text"], prepared["bill_name"], prepared["bill_code"], prepared["bill_unit"],
+                prepared["quota_ids_json"], prepared["quota_names_json"], prepared["materials_json"],
+                prepared["source"], prepared["confidence"],
+                prepared["province"], prepared["project_name"], prepared["now"], prepared["now"],
+                prepared["notes"], prepared["quota_db_ver"], prepared["layer"], prepared["specialty"],
+                prepared["normalized_text"], prepared["feature_text"], prepared["materials_signature"],
+                prepared["install_method"], prepared["quota_fingerprint"], prepared["quota_codes_sorted_json"],
+            ))
+            record_id = int(cursor.lastrowid)
+            inserted_new = True
+        return record_id, inserted_new
+
+    def _prefetch_existing_experience_ids(self, prepared_records: list[dict], *, cursor) -> dict[tuple[str, str], int]:
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for prepared in prepared_records:
+            province = str(prepared.get("province") or "")
+            bill_text = str(prepared.get("bill_text") or "")
+            if province and bill_text:
+                grouped[province].append(bill_text)
+
+        existing_ids: dict[tuple[str, str], int] = {}
+        chunk_size = 300
+        for province, bill_texts in grouped.items():
+            unique_bill_texts = list(dict.fromkeys(bill_texts))
+            for start in range(0, len(unique_bill_texts), chunk_size):
+                chunk = unique_bill_texts[start:start + chunk_size]
+                placeholders = ",".join(["?"] * len(chunk))
+                cursor.execute(
+                    f"""
+                    SELECT id, bill_text, province
+                    FROM experiences
+                    WHERE province = ?
+                      AND bill_text IN ({placeholders})
+                    """,
+                    [province, *chunk],
+                )
+                for row in cursor.fetchall():
+                    existing_ids[(str(row[2] or ""), str(row[1] or ""))] = int(row[0])
+        return existing_ids
+
+    def bulk_add_experiences(self, records: list[dict], *,
+                             skip_vector: bool = True,
+                             skip_fts: bool = True) -> dict:
+        prepared_records: list[dict] = []
+        rejected = 0
+        prepared_cache: dict[str, dict | None] = {}
+        for record in records or []:
+            cache_key = self._json_dump(
+                {
+                    "bill_text": record.get("bill_text"),
+                    "quota_ids": record.get("quota_ids"),
+                    "quota_names": record.get("quota_names"),
+                    "materials": record.get("materials"),
+                    "bill_name": record.get("bill_name"),
+                    "bill_code": record.get("bill_code"),
+                    "bill_unit": record.get("bill_unit"),
+                    "source": record.get("source"),
+                    "confidence": record.get("confidence"),
+                    "province": record.get("province"),
+                    "project_name": record.get("project_name"),
+                    "notes": record.get("notes"),
+                    "specialty": record.get("specialty"),
+                    "feature_text": record.get("feature_text"),
+                    "install_method": record.get("install_method"),
+                    "parse_status": record.get("parse_status"),
+                }
+            )
+            if cache_key not in prepared_cache:
+                prepared_cache[cache_key] = self._prepare_experience_payload(**record)
+            prepared = prepared_cache[cache_key]
+            if prepared is None:
+                rejected += 1
+                continue
+            prepared_records.append(dict(prepared))
+
+        if not prepared_records:
+            return {"written": 0, "rejected": rejected, "inserted": 0, "updated": 0, "record_ids": []}
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        record_ids: list[int] = []
+        inserted = 0
+        updated = 0
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            existing_ids = self._prefetch_existing_experience_ids(prepared_records, cursor=cursor)
+            for prepared in prepared_records:
+                record_id, inserted_new = self._write_prepared_experience(
+                    prepared,
+                    conn=conn,
+                    cursor=cursor,
+                    existing_id=existing_ids.get((prepared["province"], prepared["bill_text"])),
+                )
+                record_ids.append(record_id)
+                if inserted_new:
+                    inserted += 1
+                else:
+                    updated += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        if not skip_fts:
+            for prepared, record_id in zip(prepared_records, record_ids):
+                self._upsert_fts_record(
+                    record_id,
+                    bill_text=prepared["bill_text"],
+                    normalized_text=prepared["normalized_text"],
+                    feature_text=prepared["feature_text"] or "",
+                    quota_names_json=prepared["quota_names_json"],
+                )
+        if not skip_vector:
+            for prepared, record_id in zip(prepared_records, record_ids):
+                self._add_to_vector_index(record_id, prepared["bill_text"], province=prepared["province"])
+
+        return {
+            "written": len(record_ids),
+            "rejected": rejected,
+            "inserted": inserted,
+            "updated": updated,
+            "record_ids": record_ids,
+        }
 
     def add_experience_text(self, *,
                             province: str,
@@ -825,6 +1793,14 @@ class ExperienceDB:
                            specialty: str = None,
                            project_name: str = None,
                            notes: str = None,
+                           feature_text: str = None,
+                           install_method: str = None,
+                           materials_signature: str = None,
+                           quota_fingerprint: str = None,
+                           quota_codes_sorted_json: str = None,
+                           parse_status: str = "",
+                           bill_text: str = "",
+                           bill_unit: str = "",
                            conn=None, cursor=None,
                            commit: bool = True) -> int:
         """更新已有的经验记录
@@ -843,9 +1819,19 @@ class ExperienceDB:
             conn = self._connect()
             cursor = conn.cursor()
 
-        confidence_floor = self._safe_int(confidence, 80)
+        confidence_floor = self._normalize_confidence_value(confidence)
+        target_layer = self._determine_layer(
+            source=source,
+            bill_text=bill_text,
+            bill_unit=bill_unit,
+            specialty=specialty or "",
+            quota_ids=quota_ids,
+            quota_names=quota_names or [],
+            confidence=confidence_floor,
+            parse_status=parse_status,
+        )
 
-        if source == "user_correction":
+        if source in {"user_correction", "openclaw_approved"}:
             # 用户手动修正 → 最高信任：更新定额、涨分、涨确认次数、晋升权威层
             cursor.execute("""
                 UPDATE experiences SET
@@ -892,7 +1878,7 @@ class ExperienceDB:
                     quota_names = ?,
                     confidence = MIN(MAX(confidence + 2, ?), 95),
                     confirm_count = confirm_count + 1,
-                    layer = 'authority',
+                    layer = 'candidate',
                     source = 'project_import',
                     materials = CASE
                         WHEN ? != '[]' THEN ?
@@ -901,11 +1887,36 @@ class ExperienceDB:
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
-                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed')
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'openclaw_approved')
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
                 project_floor, materials_json or '[]', materials_json or '[]',
+                quota_db_version, specialty or '', now, record_id,
+            ))
+        elif source in {"completed_project", "reviewed_import"}:
+            verified_floor = self._clamp(confidence_floor, 0, 95)
+            cursor.execute("""
+                UPDATE experiences SET
+                    quota_ids = ?,
+                    quota_names = ?,
+                    confidence = MIN(MAX(confidence + 2, ?), 95),
+                    confirm_count = confirm_count + 1,
+                    layer = ?,
+                    source = ?,
+                    materials = CASE
+                        WHEN ? != '[]' THEN ?
+                        ELSE materials
+                    END,
+                    quota_db_version = COALESCE(?, quota_db_version),
+                    specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
+                    updated_at = ?
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'openclaw_approved')
+            """, (
+                self._json_dump(quota_ids),
+                self._json_dump(quota_names or []),
+                verified_floor, target_layer, source,
+                materials_json or '[]', materials_json or '[]',
                 quota_db_version, specialty or '', now, record_id,
             ))
         elif source == "project_import_suspect":
@@ -924,7 +1935,7 @@ class ExperienceDB:
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
-                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed')
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'openclaw_approved')
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
@@ -955,7 +1966,7 @@ class ExperienceDB:
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
-                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'project_import')
+                WHERE id = ? AND source NOT IN ('user_correction', 'user_confirmed', 'openclaw_approved', 'project_import')
             """, (
                 self._json_dump(quota_ids),
                 self._json_dump(quota_names or []),
@@ -979,24 +1990,25 @@ class ExperienceDB:
             """, (self._json_dump(quota_ids), quota_db_version,
                   specialty or '', now, record_id))
 
-        # ========== 自动晋升：候选层达到门槛自动晋升为权威层 ==========
-        # 多次独立匹配结果一致 = 数据可信，无需人工逐条审核
-        # 门槛按置信度分级：高置信度要求少、低置信度要求多
-        # 注意：project_import_suspect 不参与自动晋升（审核不通过被强制降级的）
-        # batch_import 允许自动晋升（但只有不同项目确认才涨 confirm_count，防止同项目刷分）
-        if source != "project_import_suspect":
-            cursor.execute("""
-                UPDATE experiences SET layer = 'authority'
-                WHERE id = ? AND layer = 'candidate'
-                  AND source != 'project_import_suspect'
-                  AND (
-                    (confidence >= 95 AND confirm_count >= 2)
-                    OR (confidence >= 90 AND confirm_count >= 3)
-                    OR (confidence >= 85 AND confirm_count >= 5)
-                  )
-            """, (record_id,))
-            if cursor.rowcount > 0:
-                logger.info(f"经验库自动晋升: ID={record_id} 候选层→权威层（达到确认门槛）")
+        cursor.execute("""
+            UPDATE experiences SET
+                feature_text = COALESCE(NULLIF(?, ''), feature_text),
+                install_method = COALESCE(NULLIF(?, ''), install_method),
+                materials_signature = CASE
+                    WHEN ? IS NOT NULL AND ? != '' THEN ?
+                    ELSE materials_signature
+                END,
+                quota_fingerprint = COALESCE(NULLIF(?, ''), quota_fingerprint),
+                quota_codes_sorted = COALESCE(NULLIF(?, ''), quota_codes_sorted)
+            WHERE id = ?
+        """, (
+            feature_text or "",
+            install_method or "",
+            materials_signature, materials_signature, materials_signature,
+            quota_fingerprint or "",
+            quota_codes_sorted_json or "",
+            record_id,
+        ))
 
         if notes:
             cursor.execute("""
@@ -1010,6 +2022,13 @@ class ExperienceDB:
 
         if commit:
             conn.commit()
+            self._upsert_fts_record(
+                record_id,
+                bill_text=bill_text,
+                normalized_text=_normalize_for_match(bill_text) if _normalize_for_match else bill_text,
+                feature_text=feature_text or "",
+                quota_names_json=self._json_dump(quota_names or []),
+            )
         if owns_conn:
             conn.close()
 
@@ -1092,211 +2111,458 @@ class ExperienceDB:
     # 查询经验
     # ================================================================
 
+    def backfill_experience_enhancements(self, *,
+                                         batch_size: int = 1000,
+                                         limit: int | None = None,
+                                         sources: list[str] | None = None,
+                                         include_deleted: bool = False,
+                                         dry_run: bool = False) -> dict:
+        batch_size = max(int(batch_size or 1000), 1)
+        remaining = None if limit is None else max(int(limit), 0)
+        source_filters = [self._safe_text(item) for item in (sources or []) if self._safe_text(item)]
+        processed = 0
+        updated = 0
+        normalized_updated = 0
+        material_updated = 0
+        quota_updated = 0
+        layer_updated = 0
+        layer_transitions: dict[str, int] = defaultdict(int)
+
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            where_clauses = []
+            params: list = []
+            if not include_deleted:
+                where_clauses.append("COALESCE(layer, '') != 'deleted'")
+            if source_filters:
+                placeholders = ",".join(["?"] * len(source_filters))
+                where_clauses.append(f"source IN ({placeholders})")
+                params.extend(source_filters)
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+            offset = 0
+            while remaining is None or remaining > 0:
+                fetch_size = batch_size if remaining is None else min(batch_size, remaining)
+                cursor.execute(
+                    f"""
+                    SELECT id, bill_text, bill_unit, specialty, quota_ids, quota_names,
+                           materials, source, confidence, layer, normalized_text,
+                           materials_signature, quota_fingerprint, quota_codes_sorted
+                    FROM experiences
+                    {where_sql}
+                    ORDER BY id
+                    LIMIT ? OFFSET ?
+                    """,
+                    [*params, fetch_size, offset],
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                updates = []
+                for row in rows:
+                    record = dict(row)
+                    processed += 1
+                    quota_ids = safe_json_list(record.get("quota_ids"))
+                    normalized_text = _normalize_for_match(record.get("bill_text", "")) if _normalize_for_match else self._safe_text(record.get("bill_text"))
+                    materials_signature = self._compute_material_signature(record.get("materials"))
+                    quota_fingerprint, quota_codes_sorted_json = self._compute_quota_fingerprint(quota_ids)
+                    target_layer = self._determine_backfill_layer(record)
+
+                    current_normalized = self._safe_text(record.get("normalized_text"))
+                    current_material = self._safe_text(record.get("materials_signature"))
+                    current_fingerprint = self._safe_text(record.get("quota_fingerprint"))
+                    current_codes = self._safe_text(record.get("quota_codes_sorted"))
+                    current_layer = self._safe_text(record.get("layer"))
+
+                    changed = False
+                    if normalized_text != current_normalized:
+                        normalized_updated += 1
+                        changed = True
+                    if materials_signature != current_material:
+                        material_updated += 1
+                        changed = True
+                    if quota_fingerprint != current_fingerprint or quota_codes_sorted_json != current_codes:
+                        quota_updated += 1
+                        changed = True
+                    if target_layer != current_layer:
+                        layer_updated += 1
+                        layer_transitions[f"{current_layer or 'empty'}->{target_layer or 'empty'}"] += 1
+                        changed = True
+                    if changed:
+                        updated += 1
+                        updates.append((
+                            normalized_text,
+                            materials_signature,
+                            quota_fingerprint,
+                            quota_codes_sorted_json,
+                            target_layer,
+                            int(record["id"]),
+                        ))
+
+                if updates and not dry_run:
+                    cursor.executemany(
+                        """
+                        UPDATE experiences
+                        SET normalized_text = ?,
+                            materials_signature = ?,
+                            quota_fingerprint = ?,
+                            quota_codes_sorted = ?,
+                            layer = ?
+                        WHERE id = ?
+                        """,
+                        updates,
+                    )
+                    conn.commit()
+
+                offset += len(rows)
+                if remaining is not None:
+                    remaining -= len(rows)
+
+            if not dry_run:
+                self.build_fts_index(conn=conn)
+        finally:
+            conn.close()
+
+        return {
+            "processed": processed,
+            "updated": updated,
+            "normalized_updated": normalized_updated,
+            "materials_signature_updated": material_updated,
+            "quota_fingerprint_updated": quota_updated,
+            "layer_updated": layer_updated,
+            "layer_transitions": dict(sorted(layer_transitions.items())),
+            "dry_run": bool(dry_run),
+        }
+
+    def run_promotion_scan(self, *,
+                           batch_size: int = 500,
+                           limit_groups: int | None = None,
+                           group_keys: list[str] | None = None,
+                           dry_run: bool = False) -> dict:
+        batch_size = max(int(batch_size or 500), 1)
+        group_key_filters = [self._safe_text(item) for item in (group_keys or []) if self._safe_text(item)]
+        promoted_records = 0
+        promoted_groups = 0
+        scanned_groups = 0
+        skipped_conflicts = 0
+        skipped_threshold = 0
+        promotion_logs = []
+        updates = []
+        now = time.time()
+
+        conn = self._connect(row_factory=True)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, normalized_text, specialty, bill_unit, quota_db_version,
+                       quota_fingerprint, project_name, layer
+                FROM experiences
+                WHERE layer = 'verified'
+                  AND normalized_text IS NOT NULL AND normalized_text != ''
+                  AND specialty IS NOT NULL AND specialty != ''
+                  AND bill_unit IS NOT NULL AND bill_unit != ''
+                  AND quota_db_version IS NOT NULL AND quota_db_version != ''
+                  AND quota_fingerprint IS NOT NULL AND quota_fingerprint != ''
+                ORDER BY normalized_text, specialty, bill_unit, quota_db_version, id
+                """
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            grouped: dict[str, list[dict]] = defaultdict(list)
+            for row in rows:
+                group_key = self._build_group_key(
+                    row.get("normalized_text"),
+                    row.get("specialty"),
+                    row.get("bill_unit"),
+                    row.get("quota_db_version"),
+                )
+                if group_key_filters and group_key not in group_key_filters:
+                    continue
+                row["group_key"] = group_key
+                grouped[group_key].append(row)
+
+            sorted_group_keys = sorted(grouped.keys())
+            if limit_groups is not None:
+                sorted_group_keys = sorted_group_keys[:max(int(limit_groups), 0)]
+
+            for group_key in sorted_group_keys:
+                group_rows = grouped[group_key]
+                scanned_groups += 1
+                normalized_text = self._safe_text(group_rows[0].get("normalized_text"))
+                specialty = self._safe_text(group_rows[0].get("specialty"))
+                bill_unit = self._safe_text(group_rows[0].get("bill_unit"))
+                quota_version = self._safe_text(group_rows[0].get("quota_db_version"))
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT quota_fingerprint)
+                    FROM experiences
+                    WHERE layer = 'authority'
+                      AND normalized_text = ?
+                      AND specialty = ?
+                      AND bill_unit = ?
+                      AND quota_db_version = ?
+                      AND quota_fingerprint IS NOT NULL
+                      AND quota_fingerprint != ''
+                    """,
+                    (normalized_text, specialty, bill_unit, quota_version),
+                )
+                authority_fingerprint_count = cursor.fetchone()[0] or 0
+                if authority_fingerprint_count > 1:
+                    skipped_conflicts += 1
+                    continue
+
+                project_set = {self._safe_text(row.get("project_name")) for row in group_rows if self._safe_text(row.get("project_name"))}
+                if len(project_set) < 3:
+                    skipped_threshold += 1
+                    continue
+
+                fingerprint_projects: dict[str, set[str]] = defaultdict(set)
+                fingerprint_record_ids: dict[str, list[int]] = defaultdict(list)
+                for row in group_rows:
+                    fingerprint = self._safe_text(row.get("quota_fingerprint"))
+                    project_name = self._safe_text(row.get("project_name"))
+                    if not fingerprint or not project_name:
+                        continue
+                    fingerprint_projects[fingerprint].add(project_name)
+                    fingerprint_record_ids[fingerprint].append(int(row["id"]))
+
+                if not fingerprint_projects:
+                    skipped_threshold += 1
+                    continue
+
+                dominant_fingerprint, dominant_projects = max(
+                    fingerprint_projects.items(),
+                    key=lambda item: (len(item[1]), item[0]),
+                )
+                total_projects = len(project_set)
+                matching_project_count = len(dominant_projects)
+                quota_consistency_rate = matching_project_count / max(total_projects, 1)
+                if matching_project_count < 3 or quota_consistency_rate < 0.8:
+                    skipped_threshold += 1
+                    continue
+
+                record_ids = sorted(set(fingerprint_record_ids.get(dominant_fingerprint) or []))
+                if not record_ids:
+                    skipped_threshold += 1
+                    continue
+
+                promoted_groups += 1
+                promoted_records += len(record_ids)
+                for record_id in record_ids:
+                    updates.append((now, "verified", "multi_project_promoted", record_id))
+                promotion_logs.append((
+                    group_key,
+                    record_ids,
+                    matching_project_count,
+                    quota_consistency_rate,
+                ))
+
+            if updates and not dry_run:
+                for chunk_start in range(0, len(updates), batch_size):
+                    chunk = updates[chunk_start:chunk_start + batch_size]
+                    cursor.executemany(
+                        """
+                        UPDATE experiences
+                        SET promoted_at = ?,
+                            promoted_from = ?,
+                            source = ?,
+                            layer = 'authority'
+                        WHERE id = ?
+                          AND layer = 'verified'
+                        """,
+                        chunk,
+                    )
+                for group_key, record_ids, matching_project_count, quota_consistency_rate in promotion_logs:
+                    for record_id in record_ids:
+                        cursor.execute(
+                            """
+                            INSERT INTO promotion_log
+                            (experience_id, from_layer, to_layer, group_key,
+                             matching_project_count, quota_consistency_rate, promoted_at)
+                            VALUES (?, 'verified', 'authority', ?, ?, ?, ?)
+                            """,
+                            (record_id, group_key, matching_project_count, quota_consistency_rate, now),
+                        )
+                conn.commit()
+        finally:
+            conn.close()
+
+        return {
+            "scanned_groups": scanned_groups,
+            "promoted_groups": promoted_groups,
+            "promoted_records": promoted_records,
+            "skipped_conflicts": skipped_conflicts,
+            "skipped_threshold": skipped_threshold,
+            "dry_run": bool(dry_run),
+        }
+
+    def search_experience(self, query_text: str, *, top_k: int = 10,
+                          min_confidence: int = 60, province: str = None,
+                          specialty: str = "", unit: str = "",
+                          materials_signature: str = "",
+                          install_method: str = "",
+                          quota_version: str = "") -> list[dict]:
+        province = province or self.province
+        query_item = self._build_query_item(
+            query_text,
+            province=province,
+            specialty=specialty,
+            unit=unit,
+            materials_signature=materials_signature,
+            install_method=install_method,
+            quota_version=quota_version,
+        )
+
+        merged: dict[int, dict] = {}
+        has_runtime_recall_backend = getattr(self, "db_path", None) is not None or "_connect" in getattr(self, "__dict__", {})
+
+        # 直通优先：本省 authority 精确命中且版本一致，直接 green 返回
+        exact = self._find_exact_match(query_text, province, authority_only=True)
+        if exact and exact.get("confidence", 0) >= min_confidence:
+            self._normalize_record_quota_fields(exact)
+            exact["similarity"] = 1.0
+            exact["_exact_match"] = True
+            exact["recalled_by"] = ["exact"]
+            exact["raw_scores"] = {"bm25": 1.0, "vector": 1.0}
+            exact["penalty_factor"] = 1.0
+            total_score, dimension_scores = self._compute_experience_total_score(exact, query_item)
+            exact["total_score"] = total_score
+            exact["dimension_scores"] = dimension_scores
+            self._apply_gate(exact, query_item)
+            if exact.get("gate") == "green":
+                exact["match_type"] = "exact"
+                return [exact]
+            # 轻量 stub 场景没有真实 recall backend，直接保留 non-green exact 作为 stale/similar 兜底。
+            if not has_runtime_recall_backend:
+                record_version = exact.get("quota_db_version", "")
+                current_version = query_item.get("quota_version") or ""
+                if exact.get("layer") == "candidate":
+                    exact["match_type"] = "candidate"
+                elif current_version and record_version and current_version == record_version:
+                    exact["match_type"] = "similar"
+                else:
+                    exact["match_type"] = "stale"
+                return [exact]
+            # 非 green 的精确命中仍保留为候选，供 stale/similar 排序兜底。
+            self._merge_recall_results(merged, [exact], channel="exact")
+
+        expansion_steps = [
+            ("authority", "local"),
+            ("authority", "global"),
+            ("verified", "local"),
+            ("verified", "global"),
+            ("candidate", "local"),
+            ("candidate", "global"),
+        ]
+        vector_pairs = self._recall_vector_candidates(query_text, top_k=top_k, province=province)
+        if has_runtime_recall_backend:
+            vector_records = self._fetch_records_by_ids([item[0] for item in vector_pairs], min_confidence=min_confidence)
+            for record_id, similarity in vector_pairs:
+                if record_id in vector_records:
+                    record = vector_records[record_id]
+                    record["vector_score"] = similarity
+                    record["similarity"] = similarity
+                    self._merge_recall_results(merged, [record], channel="vector")
+
+            for step_index, (layer, province_mode) in enumerate(expansion_steps, start=1):
+                try:
+                    exact_records = self._recall_exact(query_item, layer=layer, province_mode=province_mode, limit=top_k * 2)
+                except Exception as exc:
+                    logger.debug(f"经验库 exact 召回失败，降级跳过: {exc}")
+                    exact_records = []
+                for item in exact_records:
+                    item["_exact_match"] = True
+                    item["similarity"] = 1.0
+                self._merge_recall_results(merged, exact_records, channel="exact")
+
+                try:
+                    bm25_records = self._recall_bm25(query_item, layer=layer, province_mode=province_mode, limit=top_k * 3)
+                except Exception as exc:
+                    logger.debug(f"经验库 BM25 召回失败，降级跳过: {exc}")
+                    bm25_records = []
+                self._merge_recall_results(merged, bm25_records, channel="bm25")
+
+                try:
+                    structural_records = self._recall_structural(query_item, layer=layer, province_mode=province_mode, limit=top_k * 3)
+                except Exception as exc:
+                    logger.debug(f"经验库结构化召回失败，降级跳过: {exc}")
+                    structural_records = []
+                self._merge_recall_results(merged, structural_records, channel="structural")
+
+                if not self._expand_query_layers(merged, current_step=step_index):
+                    break
+
+        ranked = []
+        current_version = query_item.get("quota_version") or ""
+        for record in merged.values():
+            if int(record.get("confidence") or 0) < min_confidence:
+                continue
+            self._normalize_record_quota_fields(record)
+            filtered = self._hard_filter(record, query_item)
+            if not filtered:
+                continue
+            total_score, dimension_scores = self._compute_experience_total_score(filtered, query_item)
+            filtered["total_score"] = total_score
+            filtered["dimension_scores"] = dimension_scores
+            filtered["similarity"] = max(
+                float(filtered.get("similarity", 0.0) or 0.0),
+                float(filtered.get("bm25_score", 0.0) or 0.0),
+                float(filtered.get("vector_score", 0.0) or 0.0),
+            )
+            record_version = filtered.get("quota_db_version", "")
+            if filtered.get("layer") == "candidate":
+                filtered["match_type"] = "candidate"
+            elif current_version and record_version and current_version == record_version:
+                filtered["match_type"] = "similar"
+            else:
+                filtered["match_type"] = "stale"
+            self._apply_gate(filtered, query_item)
+            ranked.append(filtered)
+
+        layer_priority = {"authority": 0, "verified": 1, "candidate": 2}
+        gate_priority = {"green": 0, "yellow": 1, "red": 2}
+        ranked.sort(
+            key=lambda item: (
+                gate_priority.get(item.get("gate", "red"), 2),
+                -float(item.get("total_score", 0.0) or 0.0),
+                layer_priority.get(item.get("layer", "candidate"), 2),
+                -int(item.get("confidence", 0) or 0),
+                -int(item.get("confirm_count", 0) or 0),
+            )
+        )
+        return ranked[:top_k]
+
     def search_similar(self, query_text: str, top_k: int = 5,
                        min_confidence: int = 60,
                        province: str = None) -> list[dict]:
-        """
-        从经验库中搜索相似的历史匹配
+        return self.search_experience(
+            query_text,
+            top_k=top_k,
+            min_confidence=min_confidence,
+            province=province,
+        )
 
-        版本校验规则：
-        - 经验记录的 quota_db_version 与当前定额库版本一致 → 正常返回（允许直通）
-        - 版本不一致或经验没有版本号 → 降级：match_type 标记为 "stale"，
-          调用方应把它当参考而非直通
-
-        参数:
-            query_text: 新的清单文本
-            top_k: 返回前K条相似记录
-            min_confidence: 最低置信度过滤
-            province: 省份过滤
-
-        返回:
-            相似的经验记录列表，每条包含:
-            {id, bill_text, quota_ids, quota_names, similarity, confidence, ...}
-        """
-        province = province or self.province
-
-        # 获取当前定额库版本（用于校验经验记录是否过期）
-        current_version = config.get_current_quota_version(province)
-        stale_exact = None
-
-        # 先尝试精确匹配（最快）—— 直通匹配只查权威层
-        exact = self._find_exact_match(query_text, province, authority_only=True)
-        if exact and exact.get("confidence", 0) >= min_confidence:
-            exact["similarity"] = 1.0  # 精确匹配相似度为1
-            self._normalize_record_quota_fields(exact)
-
-            # 版本校验：版本一致才标记为 "exact"（允许直通）
-            record_version = exact.get("quota_db_version", "")
-            if current_version and record_version and record_version == current_version:
-                exact["match_type"] = "exact"
-            elif not current_version or not record_version:
-                # 版本信息缺失（老数据或尚未导入定额）→ 降级为 stale
-                # 缺版本号说明是早期数据，定额可能已更新，不应直通高置信匹配
-                exact["match_type"] = "stale"
-                logger.debug(f"经验库版本信息缺失（经验:'{record_version}' 当前:'{current_version}'），降级为参考")
-            else:
-                # 版本不一致 → 降级为"过期参考"，不应直通
-                exact["match_type"] = "stale"
-                logger.debug(f"经验库版本不一致（经验:{record_version} vs 当前:{current_version}），降级为参考")
-            if exact["match_type"] == "exact":
-                return [exact]
-            stale_exact = exact
-
-        # 向量搜索关闭时直接跳过（懒猫无GPU场景）
-        if not getattr(config, "VECTOR_ENABLED", True):
-            return [stale_exact] if stale_exact else []
-
-        # 向量相似搜索（ChromaDB不可用时跳过，依赖精确匹配兜底）
-        coll = self.collection  # 缓存到局部变量，避免多次访问属性
-        if coll is None:
-            logger.warning("经验库向量索引不可用（ChromaDB未初始化），跳过相似搜索")
-            return [stale_exact] if stale_exact else []
-        collection_count = coll.count()
-        if collection_count == 0:
-            return [stale_exact] if stale_exact else []
-        # 多取一些结果，避免候选层记录在向量层面挤掉权威层记录
-        # 后续排序时会优先保留权威层，再截断到 top_k
-        n_results = min(max(top_k * 3, 15), collection_count)
-
+    def get_feedback_bias_data(self, province: str, limit: int = 2000) -> list[tuple[str, str]]:
+        """获取反馈偏置计算所需的原始数据（source, bill_text）。"""
+        conn = self._connect()
         try:
-            # 向量模型不可用时快速跳过（不重复报错，依赖精确匹配兜底）
-            if self.model is None:
-                return [stale_exact] if stale_exact else []
-
-            query_prefix = ""  # 前缀由model_profile统一管理
-            from src.model_profile import encode_queries
-            query_embedding = encode_queries(self.model, [query_text])
-            # 先尝试按省份过滤的向量搜索
-            try:
-                results = coll.query(
-                    query_embeddings=query_embedding.tolist(),
-                    n_results=n_results,
-                    where={"province": province},  # 按省份过滤向量搜索
-                )
-            except Exception as where_err:
-                # 旧索引可能没有province metadata，where过滤会报错
-                logger.warning(f"经验库按省份过滤失败({where_err})，降级为全库搜索。"
-                              f"建议重建向量索引以获得更好的多省份隔离")
-                results = coll.query(
-                    query_embeddings=query_embedding.tolist(),
-                    n_results=n_results,
-                )
-
-            # 兼容旧索引：按省份过滤后无结果时，尝试无过滤搜索（SQL层仍会过滤省份）
-            if not results or not results.get("ids") or not results.get("ids")[0]:
-                results = coll.query(
-                    query_embeddings=query_embedding.tolist(),
-                    n_results=n_results,
-                )
-
-            if not results or not results.get("ids") or not results.get("ids")[0]:
-                return [stale_exact] if stale_exact else []
-
-            # 获取匹配的记录ID和相似度（防御性处理长度不一致/非法ID）
-            raw_ids = results.get("ids", [[]])[0]
-            raw_distances = results["distances"][0] if results.get("distances") else []
-            if len(raw_distances) != len(raw_ids):
-                logger.warning(
-                    f"经验库向量检索返回长度不一致: ids={len(raw_ids)}, "
-                    f"distances={len(raw_distances)}，已按最低相似度补齐/截断"
-                )
-            distances = list(raw_distances[:len(raw_ids)])
-            if len(distances) < len(raw_ids):
-                distances.extend([1.0] * (len(raw_ids) - len(distances)))
-
-            matched_ids = []
-            similarities = []
-            for mid, dist in zip(raw_ids, distances):
-                try:
-                    db_id = int(mid)
-                except (TypeError, ValueError):
-                    logger.warning(f"经验库向量检索返回非法ID，已跳过: {mid!r}")
-                    continue
-                matched_ids.append(db_id)
-                similarities.append(max(0.0, min(1.0, 1 - dist)))
-
-            if not matched_ids:
-                return [stale_exact] if stale_exact else []
-
-            # 从SQLite获取完整记录
-            conn = self._connect(row_factory=True)
-            try:
-                cursor = conn.cursor()
-                placeholders = ",".join(["?"] * len(matched_ids))
-                # 同时查权威层和候选层，候选层记录后续标记 match_type="candidate"
-                cursor.execute(f"""
-                    SELECT * FROM experiences
-                    WHERE id IN ({placeholders})
-                    AND province = ?
-                    AND confidence >= ?
-                    AND layer IN ('authority', 'candidate')
-                """, matched_ids + [province, min_confidence])
-                rows = {row["id"]: dict(row) for row in cursor.fetchall()}
-            finally:
-                conn.close()
-
-            # 组装结果
-            similar_records = []
-            for db_id, sim in zip(matched_ids, similarities):
-                if db_id in rows:
-                    record = rows[db_id]
-                    record["similarity"] = sim
-                    self._normalize_record_quota_fields(record)
-
-                    # 候选层记录标记为 "candidate"，不参与直通，仅作参考
-                    if record.get("layer") == "candidate":
-                        record["match_type"] = "candidate"
-                    # 权威层记录做版本校验：
-                    # 仅"当前版本+记录版本"均存在且一致时，才可标记为 similar；
-                    # 其余情况（缺版本号或不一致）一律降级为 stale。
-                    else:
-                        record_version = record.get("quota_db_version", "")
-                        if current_version and record_version and record_version == current_version:
-                            record["match_type"] = "similar"
-                        else:
-                            record["match_type"] = "stale"
-
-                    similar_records.append(record)
-
-            # 按相似度降序排序，同相似度下权威层优先于候选层
-            # 避免 top_k 截断时候选层记录挤掉有效的权威层记录
-            _layer_priority = {"authority": 0, "candidate": 1}
-            similar_records.sort(
-                key=lambda x: (-x["similarity"],
-                               _layer_priority.get(x.get("layer", "candidate"), 1))
-            )
-
-            # 权威层优先截断：先取权威层记录，再用候选层补齐到 top_k
-            # 这样即使候选层相似度更高，也不会把权威层挤出结果
-            authority_recs = [r for r in similar_records if r.get("layer") == "authority"]
-            candidate_recs = [r for r in similar_records if r.get("layer") != "authority"]
-            truncated = authority_recs[:top_k]
-            remaining = top_k - len(truncated)
-            if remaining > 0:
-                truncated.extend(candidate_recs[:remaining])
-            # 合并后重新按相似度排序，保持结果的自然顺序
-            truncated.sort(
-                key=lambda x: (-x["similarity"],
-                               _layer_priority.get(x.get("layer", "candidate"), 1))
-            )
-
-            # 精确命中过期时，保留为首条参考，但不阻断后续有效记录
-            if stale_exact:
-                merged = [stale_exact]
-                seen = {stale_exact.get("id")}
-                for rec in truncated:
-                    rec_id = rec.get("id")
-                    if rec_id in seen:
-                        continue
-                    merged.append(rec)
-                    seen.add(rec_id)
-                truncated = merged
-
-            return truncated[:top_k]
-
-        except Exception as e:
-            logger.warning(f"经验库向量搜索失败: {e}")
-            return [stale_exact] if stale_exact else []
+            rows = conn.execute(
+                """
+                SELECT source, bill_text
+                FROM experiences
+                WHERE bill_text IS NOT NULL
+                  AND province = ?
+                  AND source IN ('user_correction', 'user_confirmed')
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (province, limit),
+            ).fetchall()
+            return [(r["source"], r["bill_text"]) for r in rows]
+        except Exception:
+            return []
 
     def search_cross_province(self, query_text: str, current_province: str,
                               top_k: int = 3) -> list[dict]:
@@ -1493,6 +2759,42 @@ class ExperienceDB:
             records.append(self._normalize_record_quota_fields(item))
         return records
 
+    @staticmethod
+    def _experience_importer_module():
+        from src import experience_importer
+        return experience_importer
+
+    @staticmethod
+    def _experience_manager_module():
+        from src import experience_manager
+        return experience_manager
+
+    def get_reference_cases(self, query_text: str, top_k: int = 3,
+                            province: str = None,
+                            specialty: str = None) -> list[dict]:
+        return self._experience_manager_module().get_reference_cases(
+            self,
+            query_text,
+            top_k=top_k,
+            province=province,
+            specialty=specialty,
+        )
+
+    def import_from_project(self, records: list[dict],
+                            project_name: str = None,
+                            province: str = None,
+                            enabled_checkers: list = None) -> dict:
+        return self._experience_importer_module().import_from_project(
+            self,
+            records,
+            project_name=project_name,
+            province=province,
+            enabled_checkers=enabled_checkers,
+        )
+
+    def rebuild_vector_index(self):
+        return self._experience_importer_module().rebuild_vector_index(self)
+
     # get_reference_cases — 已拆分到 experience_manager.py
     # import_from_project — 已拆分到 experience_importer.py
     # rebuild_vector_index — 已拆分到 experience_importer.py
@@ -1559,8 +2861,14 @@ class ExperienceDB:
             cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'authority'")
             authority_count = cursor.fetchone()[0]
 
+            cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'verified'")
+            verified_count = cursor.fetchone()[0]
+
             cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'candidate'")
             candidate_count = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM experiences WHERE layer = 'deleted'")
+            deleted_count = cursor.fetchone()[0]
 
             # 按来源分类统计
             cursor.execute("""
@@ -1602,7 +2910,9 @@ class ExperienceDB:
         return {
             "total": total,
             "authority": authority_count,
+            "verified": verified_count,
             "candidate": candidate_count,
+            "deleted": deleted_count,
             "by_source": by_source,
             "by_province": by_province,
             "by_specialty": by_specialty,
@@ -1610,43 +2920,41 @@ class ExperienceDB:
             "vector_count": vector_count,
         }
 
-    # demote_to_candidate / promote_to_authority / mark_stale_experiences
-    # get_authority_records / get_candidate_records
-    # — 已拆分到 experience_manager.py
+    def demote_to_candidate(self, record_id: int, reason: str = ""):
+        return self._experience_manager_module().demote_to_candidate(
+            self,
+            record_id,
+            reason=reason,
+        )
 
-# ================================================================
-# 方法重绑定：把拆分出去的函数挂回 ExperienceDB 类
-# 调用方仍然用 db.import_from_project(...) 等，无需感知拆分
-# ================================================================
-from src import experience_importer as _exp_importer
-from src import experience_manager as _exp_manager
+    def promote_to_authority(self, record_id: int, reason: str = ""):
+        return self._experience_manager_module().promote_to_authority(
+            self,
+            record_id,
+            reason=reason,
+        )
 
-ExperienceDB.import_from_project = _exp_importer.import_from_project
-ExperienceDB.rebuild_vector_index = _exp_importer.rebuild_vector_index
-ExperienceDB.get_reference_cases = _exp_manager.get_reference_cases
-ExperienceDB.demote_to_candidate = _exp_manager.demote_to_candidate
-ExperienceDB.promote_to_authority = _exp_manager.promote_to_authority
-ExperienceDB.mark_stale_experiences = _exp_manager.mark_stale_experiences
-ExperienceDB.get_authority_records = _exp_manager.get_authority_records
-ExperienceDB.get_candidate_records = _exp_manager.get_candidate_records
+    def mark_stale_experiences(self, province: str, current_version: str) -> int:
+        return self._experience_manager_module().mark_stale_experiences(
+            self,
+            province,
+            current_version,
+        )
 
-# ================================================================
-# 命令行入口：查看经验库状态
-# ================================================================
+    def get_authority_records(self, province: str = None,
+                              limit: int = 0) -> list[dict]:
+        return self._experience_manager_module().get_authority_records(
+            self,
+            province=province,
+            limit=limit,
+        )
 
-if __name__ == "__main__":
-    db = ExperienceDB()
-    stats = db.get_stats()
-
-    print("=" * 50)
-    print("经验库状态")
-    print("=" * 50)
-    print(f"  总记录数: {stats['total']}")
-    print(f"  向量索引: {stats['vector_count']}条")
-    print(f"  平均置信度: {stats['avg_confidence']}")
-    print(f"  按来源:")
-    for source, cnt in stats.get("by_source", {}).items():
-        print(f"    {source}: {cnt}条")
-    print(f"  按省份:")
-    for prov, cnt in stats.get("by_province", {}).items():
-        print(f"    {prov}: {cnt}条")
+    def get_candidate_records(self, province: str = None,
+                              limit: int = 50,
+                              exclude_demoted: bool = False) -> list[dict]:
+        return self._experience_manager_module().get_candidate_records(
+            self,
+            province=province,
+            limit=limit,
+            exclude_demoted=exclude_demoted,
+        )

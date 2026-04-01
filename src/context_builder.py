@@ -99,16 +99,7 @@ _SYSTEM_NORMALIZE_MAP = {
     "\u6696\u901a": "\u901a\u98ce\u7a7a\u8c03",
 }
 
-def _dedupe_keep_order(values: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
+from src.utils import dedupe_keep_order
 
 
 def _item_text(item: dict[str, Any], *fields: str) -> str:
@@ -179,7 +170,7 @@ def build_project_context(items: list[dict[str, Any]]) -> dict[str, Any]:
     primary_specialty = specialty_counter.most_common(1)[0][0] if specialty_counter else ""
     file_system_hint = file_system_counter.most_common(1)[0][0] if file_system_counter else ""
     system_hint = system_counter.most_common(1)[0][0] if system_counter else file_system_hint
-    context_hints = _dedupe_keep_order([file_system_hint, system_hint])
+    context_hints = dedupe_keep_order([file_system_hint, system_hint])
 
     return {
         "primary_specialty": primary_specialty,
@@ -322,12 +313,12 @@ def build_context_prior(item: dict[str, Any],
         ).strip(),
     }
 
-    context_hints = _dedupe_keep_order(list(item.get("_context_hints") or []))
-    batch_hints = _dedupe_keep_order(list(batch_context.get("neighbor_system_hints") or []))
+    context_hints = dedupe_keep_order(list(item.get("_context_hints") or []))
+    batch_hints = dedupe_keep_order(list(batch_context.get("neighbor_system_hints") or []))
     section_hint = str(batch_context.get("section_system_hint") or "").strip()
     sheet_hint = str(batch_context.get("sheet_system_hint") or "").strip()
     file_hint = str(batch_context.get("file_system_hint") or project_context.get("file_system_hint") or "").strip()
-    project_hints = _dedupe_keep_order(list(project_context.get("context_hints") or []))
+    project_hints = dedupe_keep_order(list(project_context.get("context_hints") or []))
 
     merged_hints = context_hints + batch_hints
     if section_hint:
@@ -338,7 +329,7 @@ def build_context_prior(item: dict[str, Any],
         merged_hints.append(file_hint)
     if project_hints:
         merged_hints.extend(project_hints[:2])
-    merged_hints = _dedupe_keep_order(merged_hints)
+    merged_hints = dedupe_keep_order(merged_hints)
     if merged_hints:
         context_prior["context_hints"] = merged_hints
 

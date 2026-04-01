@@ -8,6 +8,7 @@ from pathlib import Path
 
 import config
 from src.text_parser import parser as text_parser
+from src.utils import safe_float
 
 
 PARAM_SPECS: dict[str, tuple[str, ...]] = {
@@ -40,13 +41,6 @@ GENERICITY_DEFAULTS = {
     "retrieval_popularity": -1.0,
     "specificity_score": -1.0,
 }
-
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -214,9 +208,9 @@ def _genericity_for_candidate(candidate: dict) -> dict[str, float]:
     merged = dict(GENERICITY_DEFAULTS)
     for key in GENERICITY_DEFAULTS:
         if key in record:
-            merged[key] = _safe_float(record.get(key), GENERICITY_DEFAULTS[key])
-    retrieval_hits = _safe_float(record.get("retrieval_hits"), merged["retrieval_hits"])
-    positive_hits = _safe_float(record.get("positive_hits"), merged["positive_hits"])
+            merged[key] = safe_float(record.get(key), GENERICITY_DEFAULTS[key])
+    retrieval_hits = safe_float(record.get("retrieval_hits"), merged["retrieval_hits"])
+    positive_hits = safe_float(record.get("positive_hits"), merged["positive_hits"])
     if merged["retrieval_popularity"] < 0:
         merged["retrieval_popularity"] = math.log1p(max(retrieval_hits, 0.0))
     if merged["genericity_index"] < 0 and retrieval_hits > 0:
@@ -309,12 +303,12 @@ def extract_group_features(item: dict, candidates: list[dict], context: dict | N
     query_core_tokens = raw_query_tokens | _token_set(str(query_features.get("canonical_name") or ""))
     query_core_bigrams = _bigram_set(list(query_core_tokens))
 
-    hybrid_scores = [_safe_float(c.get("hybrid_score", c.get("rerank_score", 0.0)), 0.0) for c in candidates]
-    semantic_scores = [_safe_float(c.get("semantic_rerank_score", c.get("vector_score", 0.0)), 0.0) for c in candidates]
-    spec_scores = [_safe_float(c.get("spec_rerank_score", c.get("rerank_score", c.get("hybrid_score", 0.0))), 0.0) for c in candidates]
-    param_scores = [_safe_float(c.get("param_score"), 0.0) for c in candidates]
-    logic_scores = [_safe_float(c.get("logic_score"), 0.5) for c in candidates]
-    feature_scores = [_safe_float(c.get("feature_alignment_score"), 0.5) for c in candidates]
+    hybrid_scores = [safe_float(c.get("hybrid_score", c.get("rerank_score", 0.0)), 0.0) for c in candidates]
+    semantic_scores = [safe_float(c.get("semantic_rerank_score", c.get("vector_score", 0.0)), 0.0) for c in candidates]
+    spec_scores = [safe_float(c.get("spec_rerank_score", c.get("rerank_score", c.get("hybrid_score", 0.0))), 0.0) for c in candidates]
+    param_scores = [safe_float(c.get("param_score"), 0.0) for c in candidates]
+    logic_scores = [safe_float(c.get("logic_score"), 0.5) for c in candidates]
+    feature_scores = [safe_float(c.get("feature_alignment_score"), 0.5) for c in candidates]
 
     hybrid_z = _compute_zscores(hybrid_scores)
     semantic_z = _compute_zscores(semantic_scores)
@@ -323,9 +317,9 @@ def extract_group_features(item: dict, candidates: list[dict], context: dict | N
     logic_z = _compute_zscores(logic_scores)
     feature_z = _compute_zscores(feature_scores)
 
-    bm25_ranks = _rank_map([_safe_float(c.get("bm25_score"), 0.0) for c in candidates])
-    dense_ranks = _rank_map([_safe_float(c.get("vector_score"), 0.0) for c in candidates])
-    rrf_ranks = _rank_map([_safe_float(c.get("rrf_score", c.get("hybrid_score", 0.0)), 0.0) for c in candidates])
+    bm25_ranks = _rank_map([safe_float(c.get("bm25_score"), 0.0) for c in candidates])
+    dense_ranks = _rank_map([safe_float(c.get("vector_score"), 0.0) for c in candidates])
+    rrf_ranks = _rank_map([safe_float(c.get("rrf_score", c.get("hybrid_score", 0.0)), 0.0) for c in candidates])
     hybrid_ranks = _rank_map(hybrid_scores)
 
     best_hybrid = max(hybrid_scores, default=0.0)
@@ -358,10 +352,10 @@ def extract_group_features(item: dict, candidates: list[dict], context: dict | N
             "quota_id": str(candidate.get("quota_id", "") or ""),
             "province": str(item.get("_resolved_province") or item.get("province") or context.get("province") or ""),
             "candidate_index": index,
-            "manual_structured_score": _safe_float(candidate.get("manual_structured_score"), 0.0),
-            "manual_param_score": _safe_float(candidate.get("param_score"), 0.0),
-            "manual_logic_score": _safe_float(candidate.get("logic_score"), 0.5),
-            "manual_feature_alignment_score": _safe_float(candidate.get("feature_alignment_score"), 0.5),
+            "manual_structured_score": safe_float(candidate.get("manual_structured_score"), 0.0),
+            "manual_param_score": safe_float(candidate.get("param_score"), 0.0),
+            "manual_logic_score": safe_float(candidate.get("logic_score"), 0.5),
+            "manual_feature_alignment_score": safe_float(candidate.get("feature_alignment_score"), 0.5),
             "candidate_genericity_index": genericity["genericity_index"],
             "candidate_success_ratio": genericity["success_ratio"],
             "candidate_retrieval_popularity": genericity["retrieval_popularity"],
@@ -478,13 +472,13 @@ def extract_group_features(item: dict, candidates: list[dict], context: dict | N
         same_family_candidates = [
             peer for peer in candidates if _family_key(peer) == _family_key(candidate)
         ]
-        same_family_param_scores = [_safe_float(peer.get("param_score"), 0.0) for peer in same_family_candidates]
+        same_family_param_scores = [safe_float(peer.get("param_score"), 0.0) for peer in same_family_candidates]
         same_family_semantic_scores = [
-            _safe_float(peer.get("semantic_rerank_score", peer.get("vector_score", 0.0)), 0.0)
+            safe_float(peer.get("semantic_rerank_score", peer.get("vector_score", 0.0)), 0.0)
             for peer in same_family_candidates
         ]
-        current_param = _safe_float(candidate.get("param_score"), 0.0)
-        current_semantic = _safe_float(candidate.get("semantic_rerank_score", candidate.get("vector_score", 0.0)), 0.0)
+        current_param = safe_float(candidate.get("param_score"), 0.0)
+        current_semantic = safe_float(candidate.get("semantic_rerank_score", candidate.get("vector_score", 0.0)), 0.0)
         row["delta_to_best_same_family_param"] = max(same_family_param_scores, default=current_param) - current_param
         row["within_family_rank_by_param"] = 1 + sum(score > current_param for score in same_family_param_scores)
         row["within_family_rank_by_semantic"] = 1 + sum(score > current_semantic for score in same_family_semantic_scores)

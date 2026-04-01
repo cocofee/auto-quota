@@ -126,6 +126,20 @@ def test_flexible_joint_large_dn():
     assert "法兰" in query
 
 
+def test_ppr_plastic_valve_keeps_valve_family():
+    """PPR塑料阀门不应被改写为塑料给水管查询。"""
+    query = build_quota_query(parser, "PPR塑料阀门", "规格:DN25")
+    assert "阀门" in query
+    assert "塑料给水管" not in query
+
+
+def test_ppr_plastic_valve_hotmelt_routes_to_plastic_valve_install():
+    query = build_quota_query(parser, "塑料阀门", "类型:PPR截止阀 规格:De25 连接形式:热熔连接")
+    assert "塑料阀门" in query
+    assert "熔接" in query
+    assert "螺纹阀门" not in query
+
+
 # === 5. 法兰套件 ===
 
 def test_electrofusion_flange_kit():

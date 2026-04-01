@@ -36,7 +36,7 @@ from src.candidate_scoring import sort_candidates_with_stage_priority
 # ============================================================
 
 # 级联搜索最少要返回的候选数量（少于此值则扩大搜索范围）
-CASCADE_MIN_CANDIDATES = 3
+CASCADE_MIN_CANDIDATES = 5
 # 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
 RULE_DIRECT_CONFIDENCE = 80
 # 措施项弱关键词（需要同时无单位无工程量才跳过，防止误伤正常清单）
@@ -810,6 +810,83 @@ def try_experience_match(query: str, item: dict, experience_db,
     return None
 
 
+def try_experience_exact_match(
+    query: str,
+    item: dict,
+    experience_db,
+    rule_validator=None,
+    province: str = None,
+    *,
+    authority_only: bool = True,
+) -> dict:
+    """轻量经验库命中：只做 exact/normalized exact，不跑完整相似检索链。"""
+    if experience_db is None:
+        return None
+
+    exact_lookup = getattr(experience_db, "_find_exact_match", None)
+    if not callable(exact_lookup):
+        return None
+
+    target_province = province or getattr(experience_db, "province", "")
+    if not target_province:
+        return None
+
+    try:
+        best = exact_lookup(query, target_province, authority_only=authority_only)
+    except TypeError:
+        best = exact_lookup(query, target_province)
+
+    if not best:
+        return None
+
+    best = dict(best)
+    normalizer = getattr(experience_db, "_normalize_record_quota_fields", None)
+    if callable(normalizer):
+        best = normalizer(best)
+
+    quota_ids = best.get("quota_ids", [])
+    quota_names = best.get("quota_names", [])
+    if not quota_ids:
+        logger.debug(f"经验库轻量精确命中但定额列表为空，跳过: {query[:50]}")
+        return None
+
+    confidence = min(best.get("confidence", 80), 98)
+    exp_materials = _safe_json_materials(best.get("materials"))
+    quotas = []
+    for i, qid in enumerate(quota_ids):
+        quotas.append({
+            "quota_id": qid,
+            "name": quota_names[i] if i < len(quota_names) else "",
+            "unit": "",
+            "reason": f"经验库精确匹配 (置信度{confidence}%, 确认{best.get('confirm_count', 1)}次)",
+        })
+
+    result = {
+        "bill_item": item,
+        "quotas": quotas,
+        "materials": exp_materials,
+        "confidence": confidence,
+        "explanation": f"经验库精确匹配 (确认{best.get('confirm_count', 1)}次)",
+        "match_source": "experience_exact",
+    }
+    _append_trace_step(
+        result,
+        "experience_exact_lightweight",
+        record_id=best.get("id"),
+        similarity=1.0,
+        confirm_count=best.get("confirm_count", 0),
+        quota_ids=[q.get("quota_id", "") for q in quotas],
+        materials_count=len(exp_materials),
+        match_method=str(best.get("_match_method", "exact") or "exact"),
+        authority_only=bool(authority_only),
+    )
+
+    validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
+    if validated is None:
+        return None
+    return validated
+
+
 # ============================================================
 # 搜索与级联
 # ============================================================
@@ -1216,9 +1293,13 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
     def _search_is_good_enough(found: list[dict]) -> bool:
         if len(found) < CASCADE_MIN_CANDIDATES:
             return False
+        top_score = found[0].get("hybrid_score", 0)
+        # 绝对分数太低时，不管分差多大都继续搜（防止主册搜到弱结果就停止）
+        ABSOLUTE_QUALITY_FLOOR = 0.6
+        if top_score < ABSOLUTE_QUALITY_FLOOR:
+            return False
         if len(found) >= CASCADE_MIN_CANDIDATES + 2:
             return True
-        top_score = found[0].get("hybrid_score", 0)
         third_idx = min(2, len(found) - 1)
         third_score = found[third_idx].get("hybrid_score", 0)
         quality_threshold = getattr(config, "CASCADE_QUALITY_THRESHOLD", 0.3)
@@ -1327,6 +1408,12 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 item=item,
                 context_prior=context_prior,
             )
+            if (
+                resolved_primary_books
+                and len(best_candidates) >= top_k
+                and not getattr(searcher, "uses_standard_books", True)
+            ):
+                return _merge_with_aux(best_candidates, aux_candidates, top_k * 2)
             if _search_is_good_enough(best_candidates):
                 return _merge_with_aux(best_candidates, aux_candidates, top_k * 2)
 
@@ -1478,7 +1565,8 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         canonical_features: dict = None,
                         context_prior: dict = None,
                         route_profile=None,
-                        item: dict | None = None) -> list[dict]:
+                        item: dict | None = None,
+                        include_prior_candidates: bool = True) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     try:
         candidates = cascade_search(
@@ -1490,15 +1578,16 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         )
     except TypeError:
         candidates = cascade_search(searcher, search_query, classification)
-    prior_candidates = _collect_all_prior_candidates(
-        searcher,
-        search_query=search_query,
-        full_query=full_query,
-        classification=classification,
-        item=item,
-    )
-    if prior_candidates:
-        candidates = _merge_prior_candidates(candidates, prior_candidates)
+    if include_prior_candidates:
+        prior_candidates = _collect_all_prior_candidates(
+            searcher,
+            search_query=search_query,
+            full_query=full_query,
+            classification=classification,
+            item=item,
+        )
+        if prior_candidates:
+            candidates = _merge_prior_candidates(candidates, prior_candidates)
     candidates, route_scope_filter = _filter_candidates_to_route_scope(candidates, classification)
     if isinstance(classification, dict):
         classification["route_scope_filter"] = route_scope_filter
@@ -1882,7 +1971,9 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
 
 
 def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
-                                      reranker, validator: ParamValidator):
+                                      reranker, validator: ParamValidator,
+                                      *,
+                                      include_prior_candidates: bool = True):
     """从统一 prepared 上下文中取字段并执行候选流水线。"""
     ctx = prepared["ctx"]
     canonical_query = ctx.get("canonical_query") or {}
@@ -1919,6 +2010,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         context_prior=ctx.get("context_prior"),
         route_profile=item.get("query_route") if isinstance(item, dict) else None,
         item=item if isinstance(item, dict) else None,
+        include_prior_candidates=include_prior_candidates,
     )
     if isinstance(item, dict):
         item["_supplemental_quotas"] = _build_support_surface_process_quotas(

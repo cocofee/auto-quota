@@ -55,6 +55,66 @@ _COPPER_CORE_MODEL_PATTERNS = (
     "BTTZ",
     "BTLY",
 )
+_MINERAL_CABLE_MODEL_PATTERNS = (
+    "BTTRZ",
+    "BTTVZ",
+    "BTLY",
+    "BTTZ",
+    "TBTRZY",
+    "YTTW",
+    "BBTRZ",
+    "NG-A",
+)
+_CONTROL_CABLE_MODEL_PATTERNS = (
+    "DJYPVP",
+    "DJYPV",
+    "DJYVP",
+    "DJYJV",
+    "KYJVP",
+    "KYJV",
+    "KYJY",
+    "KVVP2",
+    "KVV22",
+    "KVVP",
+    "KVVR",
+    "KVV",
+)
+_POWER_CABLE_MODEL_PATTERNS = (
+    "BPYJLV",
+    "BPYJV",
+    "BPYJY",
+    "YJLV",
+    "YJV",
+    "YJY",
+    "YJFE",
+    "JKLV",
+    "JKYJ",
+    "VLV",
+    "VV",
+    "VY",
+)
+_SOFT_WIRE_MODEL_PATTERNS = (
+    "RYJSP",
+    "RYJS",
+    "RVVP",
+    "RVV",
+    "RVS",
+)
+_WIRE_MODEL_PATTERNS = (
+    "BYJ",
+    "BYJR",
+    "BYP",
+    "BVR",
+    "BLV",
+    "BV",
+)
+_ALL_WIRE_TYPE_PATTERNS = tuple(dict.fromkeys(
+    list(_MINERAL_CABLE_MODEL_PATTERNS)
+    + list(_CONTROL_CABLE_MODEL_PATTERNS)
+    + list(_POWER_CABLE_MODEL_PATTERNS)
+    + list(_SOFT_WIRE_MODEL_PATTERNS)
+    + list(_WIRE_MODEL_PATTERNS)
+))
 
 
 class TextParser:
@@ -102,6 +162,26 @@ class TextParser:
             "对焊连接", "焊接",
         ]
 
+        # 显式补充正确中文词汇，避免历史乱码词表漏掉常见安装管材/连接方式。
+        self._supplemental_materials = [
+            "PSP钢塑复合管", "钢塑复合压力给水管", "钢塑复合给水管", "钢塑复合管",
+            "钢骨架塑料复合管", "金属骨架复合管", "金属骨架塑料复合管",
+            "铝塑复合管", "衬塑钢管", "涂塑钢管",
+            "PPR复合管", "PP-R管", "PPR管", "PP-R", "PPR",
+            "复合管",
+        ]
+        self._supplemental_connections = [
+            "电磁感应热熔", "双热熔连接", "双热熔", "热熔连接", "热熔",
+            "电熔连接", "电熔",
+            "卡压连接", "卡压", "环压连接", "环压",
+            "沟槽连接", "沟槽", "卡箍连接", "卡箍",
+            "螺纹连接", "螺纹", "丝扣连接", "丝扣",
+            "法兰连接", "法兰",
+            "承插连接", "承插",
+            "焊接连接", "焊接",
+            "粘接",
+        ]
+
         # 最终使用的列表（基础 + 从定额库自动提取的，按长度降序）
         self._materials = None  # 延迟初始化
         self._connections = None  # 延迟初始化
@@ -119,6 +199,8 @@ class TextParser:
         # 先用基础列表
         mat_set = set(self._base_materials)
         conn_set = set(self._base_connections)
+        mat_set.update(self._supplemental_materials)
+        conn_set.update(self._supplemental_connections)
 
         # 尝试从定额库自动提取的缓存文件加载额外词汇
         cache_path = Path(__file__).parent.parent / "data" / "dict" / "extracted_vocab.txt"
@@ -174,10 +256,18 @@ class TextParser:
             "安装",  # 材质名称不应含"安装"
         )
         cleaned_materials = {m for m in cleaned_materials if not any(w in m for w in equipment_words)}
+        material_noise_terms = {
+            "成品管",
+            "成品管卡",
+            "管卡",
+            "卡箍件",
+            "配套成品管卡",
+        }
+        cleaned_materials = {m for m in cleaned_materials if m not in material_noise_terms}
 
         # 按长度降序排列（长词优先匹配，避免"钢塑复合管"被"钢管"截断）
-        self._materials = sorted(cleaned_materials, key=len, reverse=True)
-        self._connections = sorted(conn_set, key=len, reverse=True)
+        self._materials = sorted(cleaned_materials, key=lambda value: (-len(value), value))
+        self._connections = sorted(conn_set, key=lambda value: (-len(value), value))
 
     def _get_parse_cache(self, text: str) -> Optional[dict]:
         """读取解析缓存（LRU 命中后刷新活跃度）。"""
@@ -218,20 +308,22 @@ class TextParser:
 
         result = {}
 
+        # 提取电气配管管径（SC20、PC25 等管材代号）
+        # 单独存放，不参与参数验证的 DN 比较（电气配管定额不按管径分档）
+        conduit_dn = self._extract_conduit_dn(text)
+        if conduit_dn is not None:
+            result["conduit_dn"] = conduit_dn
+            # 兼容旧调用链：部分下游和历史测试仍从 dn 读取配管口径。
+            result["dn"] = conduit_dn
+
         # 提取管径（DN）
-        dn = self._extract_dn(text)
+        # 若已命中电气配管口径，则跳过通用 DN 规则，避免“配管 规格：20”被误判成给排水 DN。
+        dn = None if conduit_dn is not None else self._extract_dn(text)
         if dn is not None:
             result["dn"] = dn
         elif re.search(r'水龙头|龙头', text):
             # 未显式标注时，卫生器具中的水龙头通常按 DN15 套档。
             result["dn"] = 15
-
-        # 提取电气配管管径（SC20、PC25 等管材代号）
-        # 单独存放，不参与参数验证的 DN 比较（电气配管定额不按管径分档）
-        if "dn" not in result:
-            conduit_dn = self._extract_conduit_dn(text)
-            if conduit_dn is not None:
-                result["conduit_dn"] = conduit_dn
 
         # 提取接地扁钢宽度（在电缆截面之前，避免扁钢规格40×4被误识别为截面4）
         ground_bar_width = self._extract_ground_bar_width(text)
@@ -291,10 +383,33 @@ class TextParser:
         if material:
             result["material"] = material
 
+        cable_type = self._extract_cable_type(text, material=material)
+        if cable_type:
+            result["cable_type"] = cable_type
+
+        cable_head_type = self._extract_cable_head_type(text)
+        if cable_head_type:
+            result["cable_head_type"] = cable_head_type
+
+        conduit_type = self._extract_conduit_type(text)
+        if conduit_type:
+            result["conduit_type"] = conduit_type
+
+        wire_type = self._extract_wire_type(text)
+        if wire_type:
+            result["wire_type"] = wire_type
+
         # 提取连接方式
         connection = self._extract_connection(text)
         if connection:
             result["connection"] = connection
+
+        valve_connection_family = self._extract_valve_connection_family(
+            text,
+            connection=connection or "",
+        )
+        if valve_connection_family:
+            result["valve_connection_family"] = valve_connection_family
 
         valve_type = self._extract_valve_type(text)
         if valve_type:
@@ -304,6 +419,14 @@ class TextParser:
         if support_material:
             result["support_material"] = support_material
 
+        support_scope = self._extract_support_scope(text)
+        if support_scope:
+            result["support_scope"] = support_scope
+
+        support_action = self._extract_support_action(text)
+        if support_action:
+            result["support_action"] = support_action
+
         surface_process = self._extract_surface_process(text)
         if surface_process:
             result["surface_process"] = surface_process
@@ -311,6 +434,30 @@ class TextParser:
         sanitary_subtype = self._extract_sanitary_subtype(text)
         if sanitary_subtype:
             result["sanitary_subtype"] = sanitary_subtype
+
+        sanitary_mount_mode = self._extract_sanitary_mount_mode(text)
+        if sanitary_mount_mode:
+            result["sanitary_mount_mode"] = sanitary_mount_mode
+
+        sanitary_flush_mode = self._extract_sanitary_flush_mode(text)
+        if sanitary_flush_mode:
+            result["sanitary_flush_mode"] = sanitary_flush_mode
+
+        sanitary_water_mode = self._extract_sanitary_water_mode(text)
+        if sanitary_water_mode:
+            result["sanitary_water_mode"] = sanitary_water_mode
+
+        sanitary_nozzle_mode = self._extract_sanitary_nozzle_mode(text)
+        if sanitary_nozzle_mode:
+            result["sanitary_nozzle_mode"] = sanitary_nozzle_mode
+
+        sanitary_tank_mode = self._extract_sanitary_tank_mode(text)
+        if sanitary_tank_mode:
+            result["sanitary_tank_mode"] = sanitary_tank_mode
+
+        lamp_type = self._extract_lamp_type(text)
+        if lamp_type:
+            result["lamp_type"] = lamp_type
 
         # 提取回路数（配电箱按回路分档：4/8/16/24/32/48）
         circuits = self._extract_circuits(text)
@@ -320,6 +467,14 @@ class TextParser:
         port_count = self._extract_port_count(text)
         if port_count is not None:
             result["port_count"] = port_count
+
+        item_count = self._extract_item_count(text)
+        if item_count is not None:
+            result["item_count"] = item_count
+
+        item_length = self._extract_item_length(text)
+        if item_length is not None:
+            result["item_length"] = item_length
 
         # 提取风管形状（矩形/圆形，通风空调管道的核心分类维度）
         shape = self._extract_shape(text)
@@ -354,18 +509,34 @@ class TextParser:
         if switch_gangs is not None:
             result["switch_gangs"] = switch_gangs
 
+        outlet_grounding = self._extract_outlet_grounding(text)
+        if outlet_grounding:
+            result["outlet_grounding"] = outlet_grounding
+
         # 提取安装方式（明装/暗装/落地/挂墙/嵌入/吊装/悬挂/明敷/暗敷）
         install_method = self._extract_install_method(text)
         if install_method:
             result["install_method"] = install_method
 
+        box_mount_mode = self._extract_box_mount_mode(text, install_method=install_method)
+        if box_mount_mode:
+            result["box_mount_mode"] = box_mount_mode
+
         laying_method = self._extract_laying_method(text)
         if laying_method:
             result["laying_method"] = laying_method
 
+        bridge_type = self._extract_bridge_type(text)
+        if bridge_type:
+            result["bridge_type"] = bridge_type
+
         bridge_wh_sum = self._extract_bridge_wh_sum(text)
         if bridge_wh_sum is not None:
             result["bridge_wh_sum"] = bridge_wh_sum
+            if "桥架" in text and "cable_section" in result:
+                del result["cable_section"]
+            if "桥架" in text and "cable_cores" in result:
+                del result["cable_cores"]
 
         # 提取电梯类型（从名称关键词判断：货梯→载货电梯、客梯→曳引式电梯等）
         elevator_type = self._extract_elevator_type(text)
@@ -459,7 +630,8 @@ class TextParser:
         # 3. 文本中包含管道相关关键词（材质或连接方式），排除电气/弱电项误提取
         # 用具体管材关键词判断，不用"管"——"管"太宽泛，会匹配"管道"（如"碳钢通风管道"是风管不是水管）
         pipe_keywords = ["钢管", "铸铁管", "铜管", "不锈钢管", "塑料管",
-                         "PE管", "PPR管", "PVC管", "HDPE管",
+                         "PE管", "PPR管", "PVC管", "HDPE管", "JDG", "KBG", "SC", "RC",
+                         "配管", "线管", "电线管", "明敷", "暗敷",
                          "涂塑", "涂覆", "衬塑", "碳钢管", "镀锌",
                          "阀", "沟槽", "螺纹", "法兰", "卡压",
                          "热熔", "粘接", "承插", "焊接连接",
@@ -472,6 +644,26 @@ class TextParser:
                 if 10 <= val <= 600:
                     return val
 
+            suffixed_pipe_match = re.search(
+                r'(?:钢管|碳钢管|镀锌钢管|涂塑钢管|不锈钢管|铸铁管|球墨铸铁管|'
+                r'PE管|PPR管|PP-R管|PVC管|UPVC管|HDPE管|铜管|铝塑复合管)'
+                r'\s*[-_：:]?\s*(\d+)(?!\d)',
+                text,
+            )
+            if suffixed_pipe_match:
+                val = int(suffixed_pipe_match.group(1))
+                if 10 <= val <= 600:
+                    return val
+
+        slotting_match = re.search(
+            r'(?:凿(?:\(压、切割\))?槽|剔槽|凿槽).*?规格[：:]\s*(\d+)(?:以内|以下)?',
+            text,
+        )
+        if slotting_match:
+            val = int(slotting_match.group(1))
+            if 10 <= val <= 100:
+                return val
+
         # 人防密闭阀门专用规格：SMF20=直径200mm，D400=直径400mm
         # SMF后面的数字是厘米(×10→毫米)，D后面的数字直接是毫米
         _civil_defense_kw = ("密闭阀", "插板阀", "人防")
@@ -482,6 +674,31 @@ class TextParser:
             d_match = re.search(r'\bD(\d{3,4})\b', text)
             if d_match:
                 return int(d_match.group(1))
+            wh_match = re.search(r'(\d{2,4})\s*[*×xX]\s*(\d{2,4})', text)
+            if wh_match:
+                return max(int(wh_match.group(1)), int(wh_match.group(2)))
+
+        sleeve_keywords = ("套管", "填料套管", "防水套管", "刚性防水套管", "柔性防水套管")
+        if any(keyword in text for keyword in sleeve_keywords):
+            sleeve_match = re.search(r'规格(?:型号)?[：:]\s*(\d{2,4})\s*[*×xX]\s*(\d{2,4})', text)
+            if sleeve_match:
+                first = int(sleeve_match.group(1))
+                second = int(sleeve_match.group(2))
+                large = max(first, second)
+                small = min(first, second)
+                if large >= 1000 and 20 <= small <= 1000:
+                    return small
+
+        refrigerant_keywords = ("冷媒分配器", "冷媒分歧管", "分歧器", "分配器")
+        if any(keyword in text for keyword in refrigerant_keywords):
+            range_match = re.search(
+                r'(?:\d+(?:\.\d+)?)\s*[≤<]\s*[Φφ]\s*[≤<]\s*(\d+(?:\.\d+)?)',
+                text,
+            )
+            if range_match:
+                upper = float(range_match.group(1))
+                if 5 <= upper <= 100:
+                    return int(math.ceil(upper))
 
         return None
 
@@ -508,11 +725,23 @@ class TextParser:
             r'(?:SC|PVC|PC|JDG|KBG|RC|MT|FPC)\s*(\d+)', text)
         if pipe_code_match:
             return int(pipe_code_match.group(1))
+
+        conduit_type = self._extract_conduit_type(text)
+        conduit_context = any(
+            keyword in text
+            for keyword in ("配管", "导管", "电线管", "穿线管", "配置形式", "配线形式", "明配", "暗配", "明敷", "暗敷")
+        )
+        if conduit_type and conduit_context:
+            spec_match = re.search(r'规格(?:型号)?[：:]\s*(\d+)(?!\d)(?!\s*[*×xX])', text)
+            if spec_match:
+                val = int(spec_match.group(1))
+                if 10 <= val <= 150:
+                    return val
         return None
 
     def _extract_cable_bundle_specs(self, text: str) -> list[dict]:
         """提取复合电缆规格，如 3x4+2x2.5。"""
-        if not re.search(r'(?:BV|BYJ|BVR|BLV|RVS|RVV|YJV|YJY|电缆|电线|导线|配线|穿线)',
+        if not re.search(r'(?:BV|BYJ|BYJR|BYP|BVR|BLV|RVS|RVV|YJV|YJY|电缆|电线|导线|配线|穿线)',
                          text, flags=re.IGNORECASE):
             return []
         normalized = text.replace("×", "x").replace("*", "x").replace("X", "x")
@@ -533,6 +762,30 @@ class TextParser:
             })
         return specs
 
+    def _has_cable_section_context(self, text: str) -> bool:
+        if not text:
+            return False
+
+        if any(
+            keyword in text
+            for keyword in (
+                "电缆", "电线", "导线", "配线", "穿线",
+                "电力电缆", "控制电缆", "电缆头", "终端头",
+                "接线端子", "压铜接线端子", "铜鼻子", "线鼻子",
+                "截面", "平方",
+            )
+        ):
+            return True
+
+        compact_text = re.sub(r"\s+", "", text).upper()
+        if re.search(
+            rf"{_CABLE_PREFIX_PATTERN}(?:{'|'.join(re.escape(model) for model in _ALL_WIRE_TYPE_PATTERNS)})(?=[\-\d,./()*×Xx]|$)",
+            compact_text,
+        ):
+            return True
+
+        return bool(re.search(r'\d+(?:\.\d+)?\s*mm[²2]', text, re.IGNORECASE))
+
     def _extract_cable_section(self, text: str) -> Optional[float]:
         """
         提取电缆截面积（mm²），返回主线芯截面
@@ -548,6 +801,9 @@ class TextParser:
         - 600x600 这样的二维尺寸（面板尺寸不是截面）
         - 15W、28W 这样的功率（瓦数不是截面）
         """
+        if not self._has_cable_section_context(text):
+            return None
+
         # 先排除功率格式（NW、NkW），避免把灯具功率误识别为截面
         # 如 "15W"、"28W"、"1.5kW"
         text_clean = re.sub(r'\d+(?:\.\d+)?\s*[kK]?[wW]\b', ' ', text)
@@ -613,12 +869,17 @@ class TextParser:
         if match:
             return float(match.group(1))
 
+        # 规格/型号直接写成 16mm2 / 2.5mm² / BYJ2.5mm2 的场景。
+        mm2_match = re.search(r'(\d+(?:\.\d+)?)\s*mm[²2]', text, re.IGNORECASE)
+        if mm2_match:
+            return float(mm2_match.group(1))
+
         # 导线型号格式：BV-2.5、BYJ-4、WDZN-BYJ-4、NH-BV-2.5 等
         # 支持前缀：WDZ/WDZN/WDZZ（低烟无卤/阻燃）、NH（耐火）
         # 支持型号：BV/BYJ/BVR/BLV/RVS/RVV
         wire_match = re.search(
-            r'(?:WDZ[NZ]?-?|NH-?)*'         # 可选的阻燃/耐火前缀
-            r'(?:BV|BYJ|BVR|BLV|RVS|RVV)'   # 导线型号
+            rf'{_CABLE_PREFIX_PATTERN}'       # 可选的阻燃/耐火前缀
+            r'(?:BV|BYJ|BYJR|BYP|BVR|BLV|RVS|RVV)'   # 导线型号
             r'\s*-?\s*'                       # 可选分隔符
             r'(\d+(?:\.\d+)?)',              # 截面数值
             text
@@ -634,7 +895,7 @@ class TextParser:
         _standard_sections = {1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95,
                               120, 150, 185, 240, 300, 400, 500}
         if any(kw in text for kw in _cable_keywords):
-            spec_match = re.search(r'规格[：:]\s*(\d+(?:\.\d+)?)\s*(?:\s|$|[,，])', text)
+            spec_match = re.search(r'规格[：:]\s*-?\s*(\d+(?:\.\d+)?)\s*(?:\s|$|[,，/])', text)
             if spec_match:
                 val = float(spec_match.group(1))
                 if val in _standard_sections:
@@ -847,6 +1108,10 @@ class TextParser:
 
         同一优先级下，长词优先（"钢塑复合管"优先于"钢管"）
         """
+        explicit = self._extract_explicit_material(text)
+        if explicit:
+            return explicit
+
         self._ensure_vocab_loaded()
 
         # 先把换行符替换为空格，避免换行截断材质字段
@@ -881,6 +1146,31 @@ class TextParser:
 
         return None
 
+    @staticmethod
+    def _extract_explicit_material(text: str) -> Optional[str]:
+        if not text:
+            return None
+
+        explicit_rules = (
+            (r"PSP钢塑复合管", "钢塑复合管"),
+            (r"钢塑复合(?:压力)?(?:给水)?管", "钢塑复合管"),
+            (r"钢骨架塑料复合管", "钢骨架塑料复合管"),
+            (r"金属骨架(?:塑料)?复合管", "金属骨架复合管"),
+            (r"铝塑复合(?:给水)?管", "铝塑复合管"),
+            (r"衬塑钢管", "衬塑钢管"),
+            (r"涂塑钢管", "涂塑钢管"),
+            (r"PPR复合管", "PPR复合管"),
+            (r"PP-R管", "PPR管"),
+            (r"\bPPR\b", "PPR"),
+        )
+        for pattern, normalized in explicit_rules:
+            if re.search(pattern, text, re.IGNORECASE):
+                return normalized
+
+        if "复合管" in text:
+            return "复合管"
+        return None
+
     def _infer_cable_material_from_model(self, text: str) -> Optional[str]:
         """从电缆/导线型号推断芯材，并单独识别矿物绝缘电缆。"""
         if not text:
@@ -893,8 +1183,7 @@ class TextParser:
         if not compact_text:
             return None
 
-        mineral_models = ("BTTRZ", "BTTVZ", "BTLY", "BTTZ", "TBTRZY", "YTTW", "BBTRZ", "NG-A")
-        for model in mineral_models:
+        for model in _MINERAL_CABLE_MODEL_PATTERNS:
             if re.search(
                 rf"{_CABLE_PREFIX_PATTERN}{re.escape(model)}(?=[\-\d,./()*×Xx]|$)",
                 compact_text,
@@ -916,6 +1205,125 @@ class TextParser:
                 return "铜芯"
 
         return None
+
+    def _extract_wire_type(self, text: str) -> str:
+        """提取线缆基础型号，如 BPYJV/KVV/BV/JDG。"""
+        if not text:
+            return ""
+
+        compact_text = re.sub(r"\s+", "", text).upper()
+        if not compact_text:
+            return ""
+
+        for model in sorted(_ALL_WIRE_TYPE_PATTERNS, key=len, reverse=True):
+            if re.search(
+                rf"{_CABLE_PREFIX_PATTERN}{re.escape(model)}(?=[\-\d,./()*×Xx]|$)",
+                compact_text,
+            ):
+                return model
+        return ""
+
+    def _extract_cable_type(self, text: str, material: str = "") -> str:
+        """提取线缆家族锚点，区分电力/控制/电线/软导线/矿物绝缘。"""
+        if not text:
+            return ""
+
+        # 电线管/钢导管类定额名称属于配管对象，不能被“电线”字样误判成线缆。
+        if any(
+            keyword in text
+            for keyword in (
+                "波纹电线管", "镀锌电线管", "金属电线管", "PVC电线管",
+                "电线管", "钢导管", "紧定式钢导管", "扣压式钢导管",
+            )
+        ):
+            return ""
+
+        if "光缆" in text:
+            return "光缆"
+        if any(keyword in text for keyword in ("双绞线", "网线", "网缆")):
+            return "双绞线"
+        if "矿物绝缘" in text or "矿物电缆" in text:
+            return "矿物绝缘电缆"
+        if "控制电缆" in text:
+            return "控制电缆"
+        if "电力电缆" in text or "变频电力电缆" in text:
+            return "电力电缆"
+        if any(keyword in text for keyword in ("软导线", "软线")):
+            return "软导线"
+        if any(keyword in text for keyword in ("电线", "导线", "配线", "穿线")):
+            return "电线"
+
+        wire_type = self._extract_wire_type(text)
+        if material == "矿物绝缘电缆" or wire_type in _MINERAL_CABLE_MODEL_PATTERNS:
+            return "矿物绝缘电缆"
+        if "控制电缆" in text or wire_type in _CONTROL_CABLE_MODEL_PATTERNS:
+            return "控制电缆"
+        if any(keyword in text for keyword in ("软导线", "软线")) or wire_type in _SOFT_WIRE_MODEL_PATTERNS:
+            return "软导线"
+        if any(keyword in text for keyword in ("电线", "导线", "配线", "穿线")) or wire_type in _WIRE_MODEL_PATTERNS:
+            return "电线"
+        if "电力电缆" in text or "变频电力电缆" in text or wire_type in _POWER_CABLE_MODEL_PATTERNS:
+            return "电力电缆"
+        return ""
+
+    def _extract_cable_head_type(self, text: str) -> str:
+        """提取电缆头子类锚点。"""
+        if not text:
+            return ""
+        if any(keyword in text for keyword in ("中间头", "中间接头")):
+            return "中间头"
+        if any(keyword in text for keyword in ("终端头", "终端接头")):
+            return "终端头"
+        return ""
+
+    def _extract_conduit_type(self, text: str) -> str:
+        """提取配管类型锚点，如 JDG/KBG/SC/PC。"""
+        if not text:
+            return ""
+
+        upper_text = re.sub(r"\s+", "", text).upper().replace("KJG", "KBG")
+        conduit_context_tokens = (
+            "配管",
+            "导管",
+            "电气配管",
+            "电线管",
+            "穿线管",
+            "钢导管",
+            "镀锌电线管",
+            "金属软管",
+            "可挠金属套管",
+            "明配",
+            "暗配",
+            "敷设",
+        )
+        code_rules = (
+            ("PVC", ("PVC", "PVC阻燃塑料管", "刚性阻燃管")),
+            ("JDG", ("JDG", "套接紧定式镀锌钢导管", "套接紧定式钢导管", "紧定式钢导管")),
+            ("KBG", ("KBG", "扣压式薄壁钢导管", "扣压式钢导管")),
+            ("FPC", ("FPC", "半硬质阻燃管", "半硬质塑料管")),
+            ("SC", ("SC", "焊接钢管")),
+            ("PC", ("PC", "PC阻燃塑料管")),
+            ("RC", ("RC", "镀锌电线管")),
+            ("MT", ("MT", "金属电线管")),
+            ("G", ("DG", "G", "镀锌钢管")),
+        )
+        for canonical, aliases in code_rules:
+            for alias in aliases:
+                if alias.isascii():
+                    match = re.search(
+                        rf"(?<![A-Z0-9]){re.escape(alias)}(?=\d|管|(?![A-Z0-9]))",
+                        upper_text,
+                    )
+                    if not match:
+                        continue
+                    next_char = upper_text[match.end():match.end() + 1]
+                    if next_char and not next_char.isdigit() and next_char != "管":
+                        if not any(token in text for token in conduit_context_tokens):
+                            continue
+                    return canonical
+                elif alias in text:
+                    return canonical
+        return ""
 
     # 材质同义词组（工程实践中等价的材质名称）
     # 每组里的材质互相等价，比如"碳钢通风管道"就是用"薄钢板"做的
@@ -940,11 +1348,59 @@ class TextParser:
 
         词汇来源：基础列表 + 定额库自动提取
         """
+        explicit = self._extract_explicit_connection(text)
+        if explicit:
+            return explicit
+
         self._ensure_vocab_loaded()
         for conn in self._connections:
             if conn in text:
                 return conn
         return None
+
+    @staticmethod
+    def _extract_explicit_connection(text: str) -> Optional[str]:
+        if not text:
+            return None
+
+        explicit_rules = (
+            (("电磁感应热熔", "双热熔连接", "双热熔", "热熔连接", "热熔"), "热熔连接"),
+            (("电熔连接", "电熔"), "电熔连接"),
+            (("卡压连接", "卡压"), "卡压连接"),
+            (("环压连接", "环压"), "环压连接"),
+            (("沟槽连接", "沟槽", "卡箍连接", "卡箍"), "沟槽连接"),
+            (("螺纹连接", "螺纹", "丝扣连接", "丝扣"), "螺纹连接"),
+            (("法兰连接", "法兰"), "法兰连接"),
+            (("承插连接", "承插"), "承插连接"),
+            (("焊接连接", "焊接"), "焊接连接"),
+            (("粘接",), "粘接"),
+        )
+        for aliases, normalized in explicit_rules:
+            if any(alias in text for alias in aliases):
+                return normalized
+        return None
+
+    def _extract_valve_connection_family(self, text: str, connection: str = "") -> str:
+        """提取管道阀门连接家族锚点。"""
+        if not text or not any(keyword in text for keyword in ("阀门", "闸阀", "蝶阀", "球阀", "截止阀", "止回阀")):
+            return ""
+
+        if "焊接法兰阀" in text:
+            return "焊接法兰阀"
+        if "螺纹法兰阀" in text:
+            return "螺纹法兰阀"
+        if "法兰阀门" in text:
+            return "法兰阀门"
+        if "螺纹阀门" in text:
+            return "螺纹阀门"
+
+        if "焊接" in connection:
+            return "焊接法兰阀"
+        if "法兰" in connection or "卡箍" in connection or "沟槽" in connection:
+            return "法兰阀门"
+        if "螺纹" in connection or "丝扣" in connection:
+            return "螺纹阀门"
+        return ""
 
     def _extract_valve_type(self, text: str) -> str:
         """提取阀门类型锚点。"""
@@ -983,6 +1439,34 @@ class TextParser:
                 return canonical
         return ""
 
+    def _extract_support_scope(self, text: str) -> str:
+        if not text or not any(keyword in text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+            return ""
+        if any(keyword in text for keyword in ("抗震支架", "抗震支吊架", "抗震吊架")):
+            return "抗震支架"
+        if any(keyword in text for keyword in (
+            "桥架支撑架", "电缆桥架支撑架", "桥架支架", "桥架侧纵向", "母线槽支架",
+        )):
+            return "桥架支架"
+        if any(keyword in text for keyword in ("设备支架", "设备吊架", "设备支吊架")):
+            return "设备支架"
+        if any(keyword in text for keyword in ("管道支架", "管架", "一般管架", "03S402", "室内管道")):
+            return "管道支架"
+        return ""
+
+    def _extract_support_action(self, text: str) -> str:
+        if not text or not any(keyword in text for keyword in ("支架", "吊架", "支吊架", "支撑架")):
+            return ""
+        has_make = any(keyword in text for keyword in ("制作安装", "制安", "制作", "单件重量", "图集", "型钢"))
+        has_install = any(keyword in text for keyword in ("制作安装", "制安", "安装"))
+        if has_make and has_install:
+            return "制作安装"
+        if has_make:
+            return "制作"
+        if has_install:
+            return "安装"
+        return ""
+
     def _extract_surface_process(self, text: str) -> str:
         """提取除锈/刷油/漆种等表面处理工艺。"""
         if not text:
@@ -1017,7 +1501,7 @@ class TextParser:
         if "大便器" in text:
             if any(alias in text for alias in ("蹲式", "脚踏", "感应蹲", "蹲便")):
                 return "蹲便器"
-            if any(alias in text for alias in ("连体水箱", "隐蔽水箱", "高水箱", "低水箱", "座便", "坐便")):
+            if any(alias in text for alias in ("连体水箱", "隐蔽水箱", "高水箱", "低水箱", "自闭阀", "座便", "坐便")):
                 return "坐便器"
             return ""
 
@@ -1032,6 +1516,92 @@ class TextParser:
         for canonical, aliases in subtype_rules:
             if any(alias in text for alias in aliases):
                 return canonical
+        return ""
+
+    def _extract_sanitary_mount_mode(self, text: str) -> str:
+        if not text:
+            return ""
+        if any(keyword in text for keyword in ("壁挂式", "挂墙式", "挂壁式", "墙挂式")):
+            return "挂墙式"
+        if any(keyword in text for keyword in ("立式", "落地式", "立柱式")):
+            return "立式"
+        if any(keyword in text for keyword in ("蹲式", "蹲便器", "蹲位")):
+            return "蹲式"
+        return ""
+
+    def _extract_sanitary_flush_mode(self, text: str) -> str:
+        if not text:
+            return ""
+        if not any(keyword in text for keyword in (
+            "便器", "小便", "大便", "坐便", "蹲便", "冲洗阀", "水箱",
+        )):
+            return ""
+        if "感应" in text:
+            return "感应"
+        if "脚踏" in text:
+            return "脚踏"
+        if "自动冲洗" in text:
+            return "自动冲洗"
+        if "自闭阀" in text:
+            return "自闭阀"
+        if "普通阀" in text:
+            return "普通阀"
+        return ""
+
+    def _extract_sanitary_water_mode(self, text: str) -> str:
+        if not text:
+            return ""
+        if any(keyword in text for keyword in ("冷热水", "冷热", "冷热混水", "冷热龙头")):
+            return "冷热水"
+        if any(keyword in text for keyword in ("冷水", "单冷", "冷水龙头")):
+            return "冷水"
+        if any(keyword in text for keyword in ("热水", "单热", "热水龙头")):
+            return "热水"
+        return ""
+
+    def _extract_sanitary_nozzle_mode(self, text: str) -> str:
+        if not text:
+            return ""
+        if any(keyword in text for keyword in ("双嘴", "双孔", "双龙头")):
+            return "双嘴"
+        if any(keyword in text for keyword in ("单嘴", "单孔", "单龙头")):
+            return "单嘴"
+        return ""
+
+    def _extract_sanitary_tank_mode(self, text: str) -> str:
+        if not text:
+            return ""
+        if "连体水箱" in text:
+            return "连体水箱"
+        if any(keyword in text for keyword in ("隐藏水箱", "隐蔽水箱", "暗藏水箱")):
+            return "隐藏水箱"
+        if "高水箱" in text:
+            return "高水箱"
+        if "低水箱" in text:
+            return "低水箱"
+        return ""
+
+    def _extract_lamp_type(self, text: str) -> str:
+        if not text or "灯" not in text:
+            return ""
+        if any(keyword in text for keyword in ("疏散指示", "标志灯", "出口灯")):
+            return "标志灯"
+        if "应急灯" in text:
+            return "应急灯"
+        if any(keyword in text for keyword in ("线形灯", "线性灯", "灯带", "荧光灯带")):
+            return "灯带"
+        if any(keyword in text for keyword in ("筒灯", "防眩筒灯")):
+            return "筒灯"
+        if any(keyword in text for keyword in ("壁灯", "墙灯", "壁装灯")):
+            return "壁灯"
+        if any(keyword in text for keyword in ("轮廓灯", "立面轮廓灯")):
+            return "轮廓灯"
+        if any(keyword in text for keyword in ("投光灯", "泛光灯")):
+            return "投光灯"
+        if any(keyword in text for keyword in ("平板灯", "面板灯", "格栅灯盘", "长条灯", "条形灯", "吸顶灯")):
+            return "吸顶灯"
+        if "荧光灯" in text:
+            return "荧光灯"
         return ""
 
     def _extract_circuits(self, text: str) -> Optional[int]:
@@ -1067,6 +1637,55 @@ class TextParser:
         if 1 <= value <= 512:
             return value
         return None
+
+    def _extract_item_count(self, text: str) -> Optional[int]:
+        """提取通用数量档位参数，如“扬声器数量≤50台”."""
+        if not text:
+            return None
+
+        patterns = [
+            r'(?:数量|台数|只数|套数|樘数|扬声器数量)\s*(?:[:：]|[（(])?\s*[≤<>=]?\s*(\d+)\s*(?:台|个|只|套|樘)?',
+            r'(?:数量|台数|只数|套数|樘数)[^0-9]{0,6}(\d+)\s*(?:台|个|只|套|樘)',
+            r'[≤<]\s*(\d+)\s*(?:台|个|只|套|樘)(?![A-Za-z0-9])',
+            r'(\d+)\s*(?:台|个|只|套|樘)(?:以下|以内|及以下|及以内)',
+        ]
+        value = self._search_first_int(text, patterns)
+        if value is None or not (1 <= value <= 100000):
+            return None
+        return value
+
+    def _extract_item_length(self, text: str) -> Optional[float]:
+        """提取通用长度档位参数，统一返回米。"""
+        if not text:
+            return None
+
+        explicit_patterns = [
+            r'(?:建筑物)?檐口高度(?:、层数)?[：:]\s*(\d+(?:\.\d+)?)\s*(?:m|M|米)(?![mM2²])',
+            r'平均井深\s*(\d+(?:\.\d+)?)\s*(?:m|M|米)(?![mM2²])',
+            r'喷(?:洒|射)半径[：:]\s*(?:\d+(?:\.\d+)?\s*[-~至]\s*)?(\d+(?:\.\d+)?)\s*(?:m|M|米)(?![mM2²])',
+            r'(?:杆高|灯高)\s*(\d+(?:\.\d+)?)\s*(?:/\s*\d+(?:\.\d+)?)?\s*(?:m|M|米)(?![mM2²])',
+            r'柱高\s*(\d+(?:\.\d+)?)\s*mm',
+        ]
+        for pattern in explicit_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            value = float(match.group(1))
+            if "柱高" in pattern:
+                value = value / 1000.0
+            if 0 < value <= 100000:
+                return value
+
+        patterns = [
+            r'(?:长度|延长米|平均桩长|管长|桩长|粧长|挡墙高度|墙高|挖土深度|坑深|人力车运|建筑檐高|檐口高度|基础标高|井深|柱高|内周长)\s*(?:[:：]|[（(]|在)?\s*[≤<>=]?(\d+(?:\.\d+)?)\s*(?:m|M|米)(?![mM2²])',
+            r'(?:长度|延长米|平均桩长|管长|桩长|檐口高度|基础标高|井深|柱高|内周长)\s*(?:[:：]|[（(]|在)?\s*[≤<>=]?\s*(\d+(?:\.\d+)?)\s*(?:m|米)(?![m2²])',
+            r'[≤<]\s*(\d+(?:\.\d+)?)\s*(?:m|米)(?![m2²])',
+            r'(\d+(?:\.\d+)?)\s*(?:m|米)(?![m2²])(?:以下|以内|及以下|及以内)',
+        ]
+        value = self._search_first_float(text, patterns)
+        if value is None or not (0 < value <= 100000):
+            return None
+        return value
 
     def _extract_shape(self, text: str) -> str:
         """
@@ -1183,9 +1802,19 @@ class TextParser:
             w, h = spec_wh
             return w + h  # 半周长 = W + H（单位mm）
 
+        box_size_match = re.search(r'箱体尺寸[：:]\s*(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)', text)
+        if box_size_match:
+            return float(box_size_match.group(1)) + float(box_size_match.group(2))
+
         # === 4. 默认值 ===
         if re.search(r'配电箱|配电柜|动力箱|照明箱', text):
-            return 1500.0
+            install_cues = (
+                "明装", "暗装", "距地", "挂墙", "壁挂", "嵌入", "嵌墙", "悬挂", "落地",
+            )
+            has_box_install_cue = any(cue in text for cue in install_cues)
+            has_box_model = bool(re.search(r'\b\d*[A-Z]{1,4}\d+[A-Z0-9-]*\b', text, re.IGNORECASE))
+            if has_box_install_cue or has_box_model:
+                return 1500.0
 
         return None
 
@@ -1197,7 +1826,15 @@ class TextParser:
         1. 定额名称："大边长(mm以内) 630" → 630
         2. 清单规格："规格：800*500" → 大边长 = max(800, 500) = 800
         """
-        return self._extract_named_mm_or_spec(text, "大边长", use_perimeter=False)
+        result = self._extract_named_mm_or_spec(text, "大边长", use_perimeter=False)
+        if result is not None:
+            return result
+
+        direct_match = re.search(r'大边长\s*(?:mm|毫米)?\s*[≤<>=]?\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+        if direct_match:
+            return float(direct_match.group(1))
+
+        return None
 
     def _extract_elevator_stops(self, text: str) -> Optional[int]:
         """
@@ -1261,13 +1898,24 @@ class TextParser:
 
         只在含"开关"或"按钮"上下文中提取，避免误匹配（如"联动""联锁"等）
         """
-        # 守卫条件：只有开关/按钮相关的文本才提取联数
-        if not any(kw in text for kw in ["开关", "按钮"]):
+        # 守卫条件：只有开关/按钮/强电插座相关的文本才提取联数
+        weak_current_outlets = ("信息插座", "电视插座", "电话插座", "网络插座", "光纤插座")
+        has_outlet_context = "插座" in text and not any(keyword in text for keyword in weak_current_outlets)
+        has_switch_control_phrase = bool(
+            re.search(r'([单双三四五六一二两])联(?:单控|双控)', text)
+        )
+        if not has_outlet_context and not has_switch_control_phrase and not any(kw in text for kw in ["开关", "按钮"]):
             return None
 
+        # 组合插座常写成"两孔加三孔/二三孔"，定额通常按双联处理。
+        if has_outlet_context and re.search(r'(?:两|二|2)\s*孔?\s*(?:加|和|及|、)?\s*(?:三|3)\s*孔', text):
+            return 2
+
         # 格式1："单联"、"双联"等中文数字+联
-        match = re.search(r'([单双三四五六一二])联', text)
+        match = re.search(r'([单双三四五六一二两])联', text)
         if match:
+            if match.group(1) == "两":
+                return 2
             return self._CN_GANG_NUM.get(match.group(1))
 
         # 格式2："3联"等数字+联（排除"联动""联锁"等非联数词）
@@ -1285,6 +1933,25 @@ class TextParser:
                 return val
 
         return None
+
+    def _extract_outlet_grounding(self, text: str) -> str:
+        """提取插座是否带接地，仅用于强电插座。"""
+        if not text or "插座" not in text:
+            return ""
+        if any(keyword in text for keyword in ("信息插座", "电视插座", "电话插座", "网络插座", "光纤插座")):
+            return ""
+
+        grounding_keywords = (
+            "带接地", "带保护极", "保护极", "接地极",
+            "二三极", "二、三极", "二三孔", "二、三孔",
+            "三孔", "五孔", "四孔", "空调插座",
+        )
+        if any(keyword in text for keyword in grounding_keywords):
+            return "带接地"
+
+        if any(keyword in text for keyword in ("两孔", "二孔", "二极")):
+            return "不带接地"
+        return ""
 
     # 安装/敷设方式关键词规则（按优先级排列，长词优先避免误匹配）
     # 统一归类为：明装/暗装/落地/挂墙/嵌入/吊装/悬挂/明敷/暗敷
@@ -1321,33 +1988,81 @@ class TextParser:
             return ""
         if "紧急呼叫" in text and "扬声器" in text:
             return "挂墙"
-        upper_text = text.upper()
-        if "配电箱" in text and re.search(r'\b\d*AP\d+\b', upper_text):
-            return "落地"
+        kv_match = re.search(
+            r'(?:安装形式|安装方式|配置形式|安装类型)\s*[：:]\s*([^\n\r,，;；]+)',
+            text,
+        )
+        if kv_match:
+            raw = kv_match.group(1).strip()
+            structured_rules = [
+                (("明配",), "明装"),
+                (("暗配",), "暗装"),
+                (("明敷",), "明敷"),
+                (("暗敷",), "暗敷"),
+                (("落地",), "落地"),
+                (("挂墙", "挂墙式", "壁挂", "挂壁", "壁装", "壁式"), "挂墙"),
+                (("嵌入", "嵌入式", "嵌墙", "嵌装"), "嵌入"),
+                (("吊装",), "吊装"),
+                (("吸顶",), "吸顶"),
+                (("悬挂", "悬吊"), "悬挂"),
+                (("明装",), "明装"),
+                (("暗装",), "暗装"),
+            ]
+            matched_methods = {
+                method
+                for keywords, method in structured_rules
+                if any(keyword in raw for keyword in keywords)
+            }
+            if len(matched_methods) == 1:
+                return next(iter(matched_methods))
+            if len(matched_methods) > 1:
+                return ""
         for keywords, method in self._INSTALL_METHOD_RULES:
             if any(kw in text for kw in keywords):
                 return method
+        return ""
+
+    def _extract_box_mount_mode(self, text: str, install_method: str = "") -> str:
+        """提取配电箱/配电柜安装大类锚点。"""
+        if not text or not any(keyword in text for keyword in ("配电箱", "配电柜", "控制箱", "控制柜", "动力箱", "照明箱")):
+            return ""
+
+        if install_method == "落地" or any(keyword in text for keyword in ("落地", "柜基础", "基础槽钢")):
+            return "落地式"
+        if (
+            install_method in {"挂墙", "嵌入", "明装", "暗装", "悬挂"}
+            or any(keyword in text for keyword in ("悬挂", "嵌入", "明装", "暗装", "挂墙", "壁挂", "墙上", "柱上", "距地"))
+        ):
+            return "悬挂/嵌入式"
+        if any(keyword in text for keyword in ("配电柜", "控制柜")):
+            return "落地式"
         return ""
 
     def _extract_laying_method(self, text: str) -> str:
         """提取线缆/桥架/配管场景的敷设方式，支持复合方式。"""
         if not text:
             return ""
-        if not any(kw in text for kw in ("敷设", "布放", "穿管", "桥架", "线槽", "直埋", "排管", "支架", "管内", "配线")):
+        if not any(kw in text for kw in ("敷设", "布放", "穿管", "桥架", "线槽", "直埋", "排管", "支架", "管内", "配线", "配管", "配置形式", "配线形式", "电缆沟", "地沟", "明配", "暗配", "明敷", "暗敷")):
             return ""
 
         hits: list[str] = []
 
+        if any(kw in text for kw in ("明配", "明敷")):
+            hits.append("明配")
+        if any(kw in text for kw in ("暗配", "暗敷")):
+            hits.append("暗配")
         if any(kw in text for kw in ("直埋", "埋地", "埋设")):
             hits.append("直埋")
-        if any(kw in text for kw in ("桥架", "梯架", "托盘")):
+        if any(kw in text for kw in ("桥架", "梯架", "托盘", "桥架内", "桥架上", "沿桥架")):
             hits.append("桥架")
-        if any(kw in text for kw in ("线槽", "槽盒")):
+        if any(kw in text for kw in ("线槽", "槽盒", "线槽内", "穿线槽")):
             hits.append("线槽")
         if any(kw in text for kw in ("排管", "排管内")):
             hits.append("排管")
-        if any(kw in text for kw in ("穿管", "管内", "导管内", "钢管内", "PVC管内", "配管内")):
+        if any(kw in text for kw in ("穿管", "管内", "导管内", "钢管内", "PVC管内", "配管内", "穿保护管")):
             hits.append("穿管")
+        if any(kw in text for kw in ("电缆沟", "地沟")):
+            hits.append("地沟")
         if any(kw in text for kw in ("沿墙", "沿支架", "支架上", "墙面敷设")):
             hits.append("支架")
 
@@ -1356,6 +2071,20 @@ class TextParser:
             if method not in normalized:
                 normalized.append(method)
         return "/".join(normalized)
+
+    def _extract_bridge_type(self, text: str) -> str:
+        """提取桥架细类锚点。"""
+        if not text:
+            return ""
+        if "槽式" in text:
+            return "槽式"
+        if "托盘式" in text:
+            return "托盘式"
+        if "梯式" in text or "梯架" in text:
+            return "梯式"
+        if "线槽" in text and "桥架" in text:
+            return "线槽"
+        return ""
 
     def _extract_bridge_wh_sum(self, text: str) -> Optional[float]:
         """提取桥架宽+高，统一为mm；若明显是cm写法则转为mm。"""

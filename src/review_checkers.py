@@ -101,6 +101,42 @@ def extract_description_lines(desc):
     return result
 
 
+_SUPPORT_ITEM_KEYWORDS = ("支架", "吊架", "支吊架", "支撑架", "管架")
+_SUPPORT_PROCESS_KEYWORDS = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆", "防腐")
+
+
+_CATEGORY_NOISE_MARKERS = ("工作内容", "包含", "其他说明", "其他", "未尽事宜", "备注")
+
+
+def _strip_category_noise(text):
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"[（(]\s*(?:含|包含)[^）)]*[）)]", "", text)
+    text = re.sub(r"[（(][^）)]*(?:自带|厂家自带)[^）)]*[）)]", "", text)
+    text = re.sub(r"[（(]\s*工作内容[^）)]*[）)]", "", text)
+    for marker in ("名称:", "名称：", "规格:", "规格：", "安装方式:", "安装方式：", "材质:", "材质："):
+        idx = text.find(marker)
+        if idx > 0:
+            text = text[:idx]
+    for marker in _CATEGORY_NOISE_MARKERS:
+        idx = text.find(marker)
+        if idx >= 0:
+            text = text[:idx]
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _is_support_composite_item(bill_name, desc_lines):
+    primary_text = _strip_category_noise(bill_name)
+    if primary_text and any(keyword in primary_text for keyword in _SUPPORT_ITEM_KEYWORDS):
+        return True
+    if desc_lines:
+        first_desc = _strip_category_noise(desc_lines[0])
+        if first_desc and any(keyword in first_desc for keyword in _SUPPORT_ITEM_KEYWORDS):
+            return True
+    return False
+
+
 def extract_core_noun(bill_name, desc_lines):
     """从清单名+描述中提取核心名词，用于类别匹配
 
@@ -114,13 +150,17 @@ def extract_core_noun(bill_name, desc_lines):
     "敷设方式:沿桥架"中的"桥架"），这些不是清单的核心类别，
     而名称通常直接指明清单类别。
     """
+    clean_bill_name = _strip_category_noise(bill_name)
+    if _is_support_composite_item(clean_bill_name, desc_lines):
+        return "支撑架"
+
     sorted_keywords = sorted(CATEGORY_KEYWORDS.keys(), key=len, reverse=True)
 
     # 优先从清单名称提取（名称更准确地反映核心类别）
     # 收集所有匹配的关键词，按长度降序、同长度按位置靠后优先
     matched = []
     for keyword in sorted_keywords:
-        pos = bill_name.find(keyword)
+        pos = clean_bill_name.find(keyword)
         if pos >= 0:
             matched.append((keyword, len(keyword), pos))
     if matched:
@@ -133,7 +173,7 @@ def extract_core_noun(bill_name, desc_lines):
     # 这些在描述中常作为附带信息出现，不代表清单的核心类别
     _process_keywords = {"除锈", "防腐", "保温", "刷油"}
     if desc_lines:
-        first_line = desc_lines[0]
+        first_line = _strip_category_noise(desc_lines[0])
         for keyword in sorted_keywords:
             if keyword in _process_keywords:
                 continue  # 工艺类关键词不从描述提取，只从名称提取
@@ -177,6 +217,22 @@ def extract_sleeve_type(desc_lines):
 def check_category_mismatch(item, quota_name, desc_lines):
     """规则1：类别关键词不一致"""
     bill_name = item.get("name", "")
+    if _is_support_composite_item(bill_name, desc_lines):
+        has_support_anchor = any(keyword in quota_name for keyword in _SUPPORT_ITEM_KEYWORDS)
+        has_process_only = (
+            any(keyword in quota_name for keyword in _SUPPORT_PROCESS_KEYWORDS)
+            and not has_support_anchor
+        )
+        if has_support_anchor:
+            return None
+        if has_process_only:
+            return {
+                "type": "category_mismatch",
+                "reason": f"类别不匹配: 清单是「支架」复合项，定额却落到工艺项「{quota_name}」",
+                "core_noun": "支撑架",
+                "expected": list(_SUPPORT_ITEM_KEYWORDS),
+            }
+
     core_noun = extract_core_noun(bill_name, desc_lines)
 
     if not core_noun:
@@ -423,8 +479,7 @@ def _get_expected_elevator_id(elev_type, floors):
         if seq:
             return f"C1-4-{seq}"
         # 层数>30 但映射表中没有，说明规则表可能不完整
-        import logging
-        logging.getLogger(__name__).debug(
+        logger.debug(
             f"电梯层数映射缺失: {elev_type} {floors}层 不在 high_floor_map 中，"
             f"请检查 review_rules.json 的 elevator_floor_rules.high_floor_map"
         )
@@ -439,8 +494,7 @@ def _get_expected_elevator_id(elev_type, floors):
 
     # 有规则但层数超出范围 → 警告规则表可能不完整
     if type_has_rules:
-        import logging
-        logging.getLogger(__name__).debug(
+        logger.debug(
             f"电梯层数超出规则范围: {elev_type} {floors}层，"
             f"请检查 review_rules.json 的 elevator_floor_rules.rules"
         )
