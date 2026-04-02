@@ -382,6 +382,48 @@ def test_constraint_filter_rejects_hard_conflicts_and_penalizes_soft_violations(
     assert result["meta"]["soft_violation_counts"]["main_param_minor_deviation"] == 1
 
 
+def test_constraint_filter_rejects_distribution_box_for_signal_cabinet_query():
+    result = ConstraintFilter().filter(
+        {
+            "name": "安装悬挂式信号机箱",
+            "canonical_features": {
+                "entity": "机箱",
+                "family": "device_cabinet",
+                "system": "电气",
+            },
+        },
+        [
+            {
+                "quota_id": "Q-BAD",
+                "name": "成套配电箱安装",
+                "unified_score": 0.95,
+                "candidate_canonical_features": {
+                    "entity": "配电箱",
+                    "family": "electrical_box",
+                    "system": "电气",
+                },
+            },
+            {
+                "quota_id": "Q-GOOD",
+                "name": "machine_box_candidate",
+                "unified_score": 0.70,
+                "candidate_canonical_features": {
+                    "entity": "机箱",
+                    "family": "device_cabinet",
+                    "system": "电气",
+                },
+            },
+        ],
+        top_k=5,
+    )
+
+    assert [candidate["quota_id"] for candidate in result["candidates"]] == ["Q-GOOD"]
+    assert result["rejected"][0]["quota_id"] == "Q-BAD"
+    rejection_types = {item["type"] for item in result["rejected"][0]["rejection_reason"]}
+    assert "entity_conflict" in rejection_types
+    assert "family_conflict" in rejection_types
+
+
 def test_unified_scoring_explanation_contains_contributions():
     engine = UnifiedScoringEngine(
         feature_extractor=FeatureExtractor(),
@@ -396,6 +438,207 @@ def test_unified_scoring_explanation_contains_contributions():
     explanation = scored[0]["explanation"]
     assert explanation["contributions"]
     assert explanation["top_driver"] in {"text_similarity", "param_match", "classification", "prior_knowledge", "context"}
+
+
+def test_adaptive_weight_calculator_uses_default_template_without_extra_signals():
+    calculator = AdaptiveWeightCalculator()
+
+    template, weights = calculator.calculate_weight_profile(
+        {"name": "????"},
+        {
+            "exact_experience_anchor": 0.0,
+            "from_experience": 0.0,
+            "prior_score": 0.0,
+            "exact_anchor_support": 0.0,
+            "feature_alignment_score": 0.1,
+            "family_match": 0.0,
+            "specialty_match": 0.0,
+            "book_match": 0.0,
+        },
+    )
+
+    assert template == "default"
+    assert weights == {
+        "text_similarity": 0.35,
+        "param_match": 0.30,
+        "classification": 0.20,
+        "prior_knowledge": 0.10,
+        "context": 0.05,
+    }
+
+
+def test_adaptive_weight_calculator_uses_param_heavy_template_for_precise_params():
+    calculator = AdaptiveWeightCalculator()
+
+    template, weights = calculator.calculate_weight_profile(
+        {"name": "???? DN100", "params": {"dn": 100}},
+        {
+            "exact_experience_anchor": 0.0,
+            "from_experience": 0.0,
+            "prior_score": 0.0,
+            "exact_anchor_support": 0.0,
+            "feature_alignment_score": 0.2,
+            "family_match": 0.0,
+            "specialty_match": 0.0,
+            "book_match": 0.0,
+        },
+    )
+
+    assert template == "param_heavy"
+    assert weights["param_match"] == 0.45
+    assert weights["text_similarity"] == 0.25
+
+
+def test_adaptive_weight_calculator_uses_prior_heavy_template_for_experience_anchor():
+    calculator = AdaptiveWeightCalculator()
+
+    template, weights = calculator.calculate_weight_profile(
+        {"name": "??????"},
+        {
+            "exact_experience_anchor": 1.0,
+            "from_experience": 1.0,
+            "prior_score": 1.0,
+            "exact_anchor_support": 0.0,
+            "feature_alignment_score": 0.2,
+            "family_match": 0.0,
+            "specialty_match": 0.0,
+            "book_match": 0.0,
+        },
+    )
+
+    assert template == "prior_heavy"
+    assert weights["prior_knowledge"] == 0.35
+    assert weights["text_similarity"] == 0.20
+
+
+def test_adaptive_weight_calculator_uses_classification_heavy_template_for_exact_anchor_support():
+    calculator = AdaptiveWeightCalculator()
+
+    template, weights = calculator.calculate_weight_profile(
+        {"name": "??????"},
+        {
+            "exact_experience_anchor": 0.0,
+            "from_experience": 0.0,
+            "prior_score": 0.0,
+            "exact_anchor_support": 2.0 / 3.0,
+            "feature_alignment_score": 0.9,
+            "family_match": 1.0,
+            "specialty_match": 1.0,
+            "book_match": 0.0,
+        },
+    )
+
+    assert template == "classification_heavy"
+    assert weights["classification"] == 0.32
+    assert weights["text_similarity"] == 0.24
+
+
+def test_adaptive_weight_calculator_uses_dirty_short_text_template_when_text_is_weak():
+    calculator = AdaptiveWeightCalculator()
+
+    template, weights = calculator.calculate_weight_profile(
+        {"name": "??", "_is_ambiguous_short": True},
+        {
+            "exact_experience_anchor": 0.0,
+            "from_experience": 0.0,
+            "prior_score": 0.0,
+            "exact_anchor_support": 0.0,
+            "feature_alignment_score": 0.0,
+            "family_match": 0.0,
+            "specialty_match": 0.0,
+            "book_match": 0.0,
+        },
+    )
+
+    assert template == "dirty_short_text"
+    assert weights["text_similarity"] == 0.18
+    assert weights["context"] == 0.20
+
+
+def test_unified_scoring_engine_exposes_weight_template_on_candidate():
+    engine = UnifiedScoringEngine(
+        feature_extractor=FeatureExtractor(),
+        weight_calculator=AdaptiveWeightCalculator(),
+    )
+
+    scored = engine.score(
+        {"name": "???? DN100", "params": {"dn": 100}},
+        [{"quota_id": "Q1", "name": "???? DN100", "param_match": True, "param_score": 0.9, "hybrid_score": 0.8}],
+    )
+
+    assert scored[0]["weight_template"] == "param_heavy"
+
+
+def test_unified_ranking_pipeline_confidence_drops_when_top_candidates_are_close():
+    class _FakeScoring:
+        def score(self, query_item, candidates):
+            del query_item, candidates
+            return [
+                {
+                    "quota_id": "Q1",
+                    "name": "Top Candidate",
+                    "unified_score": 0.86,
+                    "confidence": 0.80,
+                    "confidence_base": 0.80,
+                    "features": {"exact_experience_anchor": 0.0, "exact_anchor_support": 0.0},
+                    "weight_template": "default",
+                    "explanation": {"top_driver": "text_similarity"},
+                },
+                {
+                    "quota_id": "Q2",
+                    "name": "Runner Up",
+                    "unified_score": 0.85,
+                    "confidence": 0.79,
+                    "confidence_base": 0.79,
+                    "features": {"exact_experience_anchor": 0.0, "exact_anchor_support": 0.0},
+                    "weight_template": "default",
+                    "explanation": {"top_driver": "text_similarity"},
+                },
+            ]
+
+    pipeline = UnifiedRankingPipeline(scoring=_FakeScoring(), constraint_filter=ConstraintFilter())
+
+    result = pipeline.rank_candidates({"name": "close race"}, [{"quota_id": "seed"}], top_k=2)
+
+    top = result["candidates"][0]
+    assert top["confidence"] < top["confidence_base"]
+    assert abs(top["confidence_details"]["score_gap"] - 0.01) < 1e-9
+    assert result["top1_confidence"] == top["confidence"]
+
+
+
+def test_unified_ranking_pipeline_confidence_penalizes_dirty_text_and_soft_violations():
+    class _FakeScoring:
+        def score(self, query_item, candidates):
+            del query_item, candidates
+            return [
+                {
+                    "quota_id": "Q1",
+                    "name": "Dirty Candidate",
+                    "unit": "m",
+                    "unified_score": 0.90,
+                    "confidence": 0.82,
+                    "confidence_base": 0.82,
+                    "features": {"exact_experience_anchor": 0.0, "exact_anchor_support": 0.0},
+                    "weight_template": "dirty_short_text",
+                    "candidate_scope_conflict": True,
+                    "explanation": {"top_driver": "context"},
+                },
+            ]
+
+    pipeline = UnifiedRankingPipeline(scoring=_FakeScoring(), constraint_filter=ConstraintFilter())
+
+    result = pipeline.rank_candidates(
+        {"name": "??", "unit": "m", "_is_ambiguous_short": True},
+        [{"quota_id": "seed"}],
+        top_k=1,
+    )
+
+    top = result["candidates"][0]
+    assert top["penalty"] > 0.0
+    assert top["confidence"] < top["confidence_base"]
+    assert top["confidence_details"]["dirty_text_risk"] == 1.0
+    assert top["confidence_details"]["penalty"] == top["penalty"]
 
 
 def test_unified_ranking_pipeline_runs_end_to_end_with_injected_components():
