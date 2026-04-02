@@ -9,6 +9,57 @@ from src.explicit_family_picker_utils import pick_best_candidate, score_candidat
 from src.text_parser import parser as text_parser
 
 
+def _build_fire_device_picker_context(text: str, rules: dict) -> dict | None:
+    bill_params = text_parser.parse(text)
+    prefer_words: list[str] = []
+
+    if "试验消火栓" in text:
+        prefer_words.extend(["试验用消火栓", "消火栓"])
+    elif "室内消火栓" in text:
+        prefer_words.extend(["室内消火栓", "消火栓"])
+        for keyword in ("单栓", "双栓", "卷盘", "暗装", "明装"):
+            if keyword in text:
+                prefer_words.append(keyword)
+    else:
+        return None
+
+    return {
+        "bill_text": text,
+        "bill_params": bill_params,
+        "prefer_words": prefer_words,
+    }
+
+
+def _build_network_device_picker_context(text: str, rules: dict) -> dict | None:
+    bill_params = text_parser.parse(text)
+    port_count = bill_params.get("port_count")
+    if port_count is None:
+        port_match = re.search(r"(\d+)\s*口", text)
+        if port_match:
+            port_count = int(port_match.group(1))
+    if port_count is None:
+        return None
+
+    prefer_small = port_count <= 24
+    prefer_words: list[str] = []
+    forbidden_words: list[str] = []
+    if prefer_small:
+        prefer_words.extend(["≤24口", "24口及以下", "24口以内"])
+        forbidden_words.extend([">24口", "24口以上"])
+    else:
+        prefer_words.extend([">24口", "24口以上", f"{int(port_count)}口"])
+        forbidden_words.extend(["≤24口", "24口及以下", "24口以内"])
+
+    bill_params = dict(bill_params)
+    bill_params["port_count"] = port_count
+    return {
+        "bill_text": text,
+        "bill_params": bill_params,
+        "prefer_words": prefer_words,
+        "forbidden_words": forbidden_words,
+    }
+
+
 def _pick_explicit_plumbing_accessory_candidate(bill_text: str,
                                                 candidates: list[dict]) -> dict | None:
     text = bill_text or ""

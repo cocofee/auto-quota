@@ -27,20 +27,20 @@ from src.candidate_scoring import (
     has_exact_universal_kb_anchor,
     sort_candidates_with_stage_priority,
 )
-from src.explicit_electrical_family_pickers import (
+from src.explicit_framework_family_pickers import (
     _pick_explicit_cable_family_candidate,
+    _pick_explicit_distribution_box_candidate,
+    _pick_explicit_fire_device_candidate,
+    _pick_explicit_motor_family_candidate,
+    _pick_explicit_network_device_candidate,
+    _pick_explicit_plumbing_accessory_candidate,
+    _pick_explicit_support_family_candidate,
+    _pick_explicit_valve_family_candidate,
+    _pick_explicit_ventilation_family_candidate,
     _pick_explicit_wiring_family_candidate,
 )
 from src.explicit_equipment_family_pickers import (
-    _pick_explicit_distribution_box_candidate,
-    _pick_explicit_motor_family_candidate,
-    _pick_explicit_valve_family_candidate,
     _promote_explicit_distribution_box_candidate,
-)
-from src.explicit_misc_family_pickers import (
-    _pick_explicit_fire_device_candidate,
-    _pick_explicit_network_device_candidate,
-    _pick_explicit_plumbing_accessory_candidate,
 )
 from src.explicit_terminal_family_pickers import (
     _pick_explicit_button_broadcast_candidate,
@@ -54,13 +54,11 @@ from src.explicit_mep_family_pickers import (
     _pick_explicit_conduit_family_candidate,
     _pick_explicit_plastic_sleeve_candidate,
     _pick_explicit_sleeve_family_candidate,
-    _pick_explicit_ventilation_family_candidate,
 )
 from src.explicit_pipe_family_pickers import (
     _pick_explicit_cast_iron_pipe_candidate,
     _pick_explicit_insulation_family_candidate,
     _pick_explicit_pipe_run_candidate,
-    _pick_explicit_support_family_candidate,
 )
 from src.province_plugins import resolve_plugin_hints
 from src.query_builder import build_primary_query_profile
@@ -1407,6 +1405,8 @@ def _carry_ranking_snapshot(target: dict, source: dict, *, changed_by: str = "")
 # ============================================================
 
 _RULE_INJECTION_VALIDATOR: ParamValidator | None = None
+_PRICE_VALIDATOR = None
+_PRICE_VALIDATOR_LOAD_ATTEMPTED = False
 
 
 def _get_rule_injection_validator() -> ParamValidator:
@@ -1414,6 +1414,67 @@ def _get_rule_injection_validator() -> ParamValidator:
     if _RULE_INJECTION_VALIDATOR is None:
         _RULE_INJECTION_VALIDATOR = ParamValidator()
     return _RULE_INJECTION_VALIDATOR
+
+
+def _get_price_validator():
+    global _PRICE_VALIDATOR, _PRICE_VALIDATOR_LOAD_ATTEMPTED
+    if _PRICE_VALIDATOR is not None:
+        return _PRICE_VALIDATOR
+    if _PRICE_VALIDATOR_LOAD_ATTEMPTED:
+        return None
+    _PRICE_VALIDATOR_LOAD_ATTEMPTED = True
+    try:
+        from src.price_reference_db import PriceReferenceDB
+        from src.price_validator import PriceValidator
+
+        _PRICE_VALIDATOR = PriceValidator(PriceReferenceDB())
+    except Exception as exc:
+        logger.warning(f"price validator unavailable, skip price validation: {exc}")
+        _PRICE_VALIDATOR = None
+    return _PRICE_VALIDATOR
+
+
+def _apply_price_validation(result: dict, item: dict, best: dict | None) -> dict:
+    if not best:
+        return result
+    validator = _get_price_validator()
+    if validator is None:
+        return result
+
+    validation = validator.validate(item, best, confidence=result.get("confidence"))
+    result["price_validation"] = validation
+    _append_trace_step(
+        result,
+        "price_validate",
+        status=str(validation.get("status", "")),
+        message=str(validation.get("message", "")),
+        sample_count=int(validation.get("sample_count", 0) or 0),
+        median_price=validation.get("median_price"),
+        actual_price=validation.get("actual_price"),
+        confidence_penalty=validation.get("confidence_penalty", 0),
+    )
+
+    if validation.get("status") != "price_mismatch":
+        return result
+
+    previous_confidence = float(result.get("confidence", 0) or 0.0)
+    penalty = float(validation.get("confidence_penalty", -10) or 0.0)
+    adjusted_confidence = max(0.0, min(100.0, previous_confidence + penalty))
+    validation["previous_confidence"] = previous_confidence
+    validation["adjusted_confidence"] = adjusted_confidence
+    result["confidence"] = adjusted_confidence
+    result["confidence_score"] = int(round(adjusted_confidence))
+    result["reason_tags"] = merge_reason_tags(
+        result.get("reason_tags") or [],
+        ["price_mismatch", "manual_review"],
+    )
+    _set_result_reason(
+        result,
+        "price_mismatch",
+        result.get("reason_tags") or [],
+        str(validation.get("message") or "price validation mismatch"),
+    )
+    return result
 
 
 def _rule_backup_primary_quota(rule_backup: dict) -> dict:
@@ -2397,6 +2458,8 @@ def _finalize_search_result_payload(result: dict,
         if reasoning_decision.get("require_final_review"):
             ambiguity_tags.append("manual_review")
         _set_result_reason(result, result.get("primary_reason", ""), ambiguity_tags, result.get("reason_detail", "") or explanation)
+
+    result = _apply_price_validation(result, item, best)
 
     if best and valid_candidates:
         result["alternatives"] = _build_alternatives(valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
