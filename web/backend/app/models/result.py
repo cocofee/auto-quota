@@ -128,7 +128,8 @@ class MatchResult(Base):
     # OpenClaw 审核建议层（只存建议，不直接进入正式纠正/经验库）
     # ============================================================
 
-    # 建议层状态: "pending"=未提交建议, "drafted"=已有建议草稿, "applied"=草稿已转正式纠正
+    # 建议层状态: "pending"=未提交建议, "reviewed"=已有结构化建议待人工确认,
+    # "applied"=建议已转正式纠正, "rejected"=人工已驳回
     openclaw_review_status: Mapped[str] = mapped_column(String(20), default="pending")
 
     # OpenClaw 建议定额（JSON 格式，结构同 quotas/corrected_quotas）
@@ -146,6 +147,29 @@ class MatchResult(Base):
     # OpenClaw 最近一次保存/应用建议的时间
     openclaw_review_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # OpenClaw 结构化决策类型:
+    # agree / override_within_candidates / retry_search_then_select /
+    # candidate_pool_insufficient / abstain
+    openclaw_decision_type: Mapped[str] = mapped_column(String(50), default="")
+
+    # OpenClaw 判断错误主要发生在哪一层:
+    # retriever / ranker / arbiter / final_validator / unknown
+    openclaw_error_stage: Mapped[str] = mapped_column(String(50), default="")
+
+    # OpenClaw 判断的错误类型:
+    # wrong_family / wrong_param / wrong_book / synonym_gap /
+    # low_confidence_override / missing_candidate / unknown
+    openclaw_error_type: Mapped[str] = mapped_column(String(50), default="")
+
+    # OpenClaw 建议的重搜 query（仅保存建议，不代表已执行）
+    openclaw_retry_query: Mapped[str] = mapped_column(Text, default="")
+
+    # OpenClaw 结构化原因码列表（JSON 数组）
+    openclaw_reason_codes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    # OpenClaw 完整结构化审核 payload（JSON）
+    openclaw_review_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # 人工二次确认状态: "pending" / "approved" / "rejected"
     openclaw_review_confirm_status: Mapped[str] = mapped_column(String(20), default="pending")
 
@@ -154,6 +178,9 @@ class MatchResult(Base):
 
     # 人工二次确认时间
     openclaw_review_confirm_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 人工最终确认后的结构化反馈 payload（JSON）
+    human_feedback_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # ============================================================
     # 时间戳

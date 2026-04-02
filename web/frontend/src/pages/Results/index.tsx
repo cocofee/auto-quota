@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination,
+  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Descriptions,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -37,6 +37,20 @@ import type {
   MatchResult, ResultListResponse, TaskInfo, ReviewStatus, QuotaItem,
 } from '../../types';
 
+const OPENCLAW_CONFIRM_MAP: Record<string, { color: string; text: string }> = {
+  pending: { color: 'orange', text: '待人工确认' },
+  approved: { color: 'blue', text: '人工已通过' },
+  rejected: { color: 'red', text: '人工已驳回' },
+};
+
+const OPENCLAW_DECISION_MAP: Record<string, { color: string; text: string }> = {
+  agree: { color: 'success', text: '保持 Jarvis' },
+  override_within_candidates: { color: 'gold', text: '候选内改判' },
+  retry_search_then_select: { color: 'blue', text: '建议重搜' },
+  candidate_pool_insufficient: { color: 'volcano', text: '候选不足' },
+  abstain: { color: 'default', text: '弃权' },
+};
+
 function getResultLightStatus(result: MatchResult): 'green' | 'yellow' | 'red' {
   if (result.review_status === 'corrected' && (result.corrected_quotas?.length || 0) > 0) {
     return 'green';
@@ -60,6 +74,23 @@ function getResultConfidenceText(result: MatchResult, hasQuotas: boolean): strin
 }
 
 // 包一层兼容 hasQuotas 参数
+function getJarvisQuotas(result: MatchResult): QuotaItem[] {
+  return result.quotas || [];
+}
+
+function getFinalQuotas(result: MatchResult): QuotaItem[] {
+  return result.corrected_quotas || result.quotas || [];
+}
+
+function hasOpenClawPendingSuggestion(result: MatchResult): boolean {
+  return result.openclaw_review_status === 'reviewed'
+    && result.openclaw_review_confirm_status === 'pending';
+}
+
+function hasOpenClawConflict(result: MatchResult): boolean {
+  return hasOpenClawPendingSuggestion(result) && result.openclaw_decision_type !== 'agree';
+}
+
 function getBillRowBgColor(result: MatchResult, hasQuotas: boolean): string {
   if (!hasQuotas) return '#F5F5F5';
   const colorMap = {
@@ -214,7 +245,7 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
 export default function ResultsPage() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { message, modal } = App.useApp();
   const { user } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
@@ -244,9 +275,12 @@ export default function ResultsPage() {
   const [expandedAlts, setExpandedAlts] = useState<Set<string>>(new Set());
 
   // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
-  const [confFilter, setConfFilter] = useState<'all' | 'need_review' | 'green' | 'yellow' | 'red'>(
+  const [confFilter, setConfFilter] = useState<
+    'all' | 'need_review' | 'green' | 'yellow' | 'red' | 'openclaw_pending' | 'openclaw_conflict'
+  >(
     isAdmin ? 'need_review' : 'all',
   );
+  const [compareResultId, setCompareResultId] = useState(targetResultId);
 
   // 分页状态（以清单项为单位）
   const [page, setPage] = useState(1);
@@ -280,18 +314,23 @@ export default function ResultsPage() {
   }, [taskId, isAdmin, targetResultId]);
 
   useEffect(() => {
-    if (!targetResultId || results.length === 0) return;
+    setCompareResultId(targetResultId);
+  }, [targetResultId]);
+
+  useEffect(() => {
+    const focusResultId = compareResultId || targetResultId;
+    if (!focusResultId || results.length === 0) return;
     if (confFilter !== 'all') {
       setConfFilter('all');
       return;
     }
-    const targetIndex = results.findIndex((item) => item.id === targetResultId);
+    const targetIndex = results.findIndex((item) => item.id === focusResultId);
     if (targetIndex < 0) return;
     const targetPage = Math.floor(targetIndex / pageSize) + 1;
     if (page !== targetPage) {
       setPage(targetPage);
     }
-  }, [targetResultId, results, confFilter, pageSize, page]);
+  }, [compareResultId, targetResultId, results, confFilter, pageSize, page]);
 
   // 置信度筛选 → 分页 → 展平
   const filteredResults = useMemo(() => {
@@ -300,6 +339,8 @@ export default function ResultsPage() {
       next = next.filter((r) => {
         const light = getResultLightStatus(r);
         if (confFilter === 'need_review') return r.review_status === 'pending' && (light === 'yellow' || light === 'red');
+        if (confFilter === 'openclaw_pending') return hasOpenClawPendingSuggestion(r);
+        if (confFilter === 'openclaw_conflict') return hasOpenClawConflict(r);
         if (confFilter === 'green') return light === 'green';
         if (confFilter === 'yellow') return light === 'yellow';
         return light === 'red';
@@ -313,6 +354,18 @@ export default function ResultsPage() {
       return r.review_status === 'pending' && (light === 'yellow' || light === 'red');
     }).length,
     [results],
+  );
+  const openclawPendingCount = useMemo(
+    () => results.filter((r) => hasOpenClawPendingSuggestion(r)).length,
+    [results],
+  );
+  const openclawConflictCount = useMemo(
+    () => results.filter((r) => hasOpenClawConflict(r)).length,
+    [results],
+  );
+  const compareResult = useMemo(
+    () => results.find((item) => item.id === (compareResultId || targetResultId)) || null,
+    [compareResultId, results, targetResultId],
   );
   const pagedResults = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -485,6 +538,49 @@ export default function ResultsPage() {
   };
 
   /** 删除单条定额（通过纠正 API 实现） */
+  const focusCompareResult = useCallback((resultId: string) => {
+    setCompareResultId(resultId);
+    const next = new URLSearchParams(searchParams);
+    next.set('result_id', resultId);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const adoptJarvisResult = async (result: MatchResult) => {
+    try {
+      if (hasOpenClawPendingSuggestion(result)) {
+        await api.post(`/openclaw/tasks/${taskId}/results/${result.id}/review-confirm`, {
+          decision: 'reject',
+          review_note: '结果页人工采纳 Jarvis',
+        });
+      } else if (result.review_status === 'pending') {
+        await api.post(`/tasks/${taskId}/results/confirm`, {
+          result_ids: [result.id],
+        });
+      }
+      message.success('已采纳 Jarvis');
+      loadData();
+    } catch {
+      message.error('采纳 Jarvis 失败');
+    }
+  };
+
+  const adoptOpenClawResult = async (result: MatchResult) => {
+    if (!hasOpenClawPendingSuggestion(result)) {
+      message.info('当前结果没有待确认的 OpenClaw 建议');
+      return;
+    }
+    try {
+      await api.post(`/openclaw/tasks/${taskId}/results/${result.id}/review-confirm`, {
+        decision: 'approve',
+        review_note: '结果页人工采纳 OpenClaw',
+      });
+      message.success('已采纳 OpenClaw 建议');
+      loadData();
+    } catch {
+      message.error('采纳 OpenClaw 失败');
+    }
+  };
+
   const removeQuota = (row: QuotaDisplayRow) => {
     const result = row._parentResult;
     const quotas = result.corrected_quotas || result.quotas || [];
@@ -877,6 +973,41 @@ export default function ResultsPage() {
       },
     },
     // 管理员审核操作列
+    {
+      title: 'OpenClaw 对照',
+      key: 'openclaw_compare',
+      width: 220,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+      render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType !== 'bill') return null;
+        const result = row._result;
+        const decisionInfo = result.openclaw_decision_type
+          ? (OPENCLAW_DECISION_MAP[result.openclaw_decision_type] || {
+            color: 'default',
+            text: result.openclaw_decision_type,
+          })
+          : null;
+        const confirmInfo = OPENCLAW_CONFIRM_MAP[result.openclaw_review_confirm_status]
+          || { color: 'default', text: result.openclaw_review_confirm_status || '-' };
+        return (
+          <Space direction="vertical" size={4}>
+            <Space size={4} wrap>
+              {decisionInfo ? <Tag color={decisionInfo.color}>{decisionInfo.text}</Tag> : <Tag>未复判</Tag>}
+              {result.openclaw_review_status !== 'pending'
+                ? <Tag color={confirmInfo.color}>{confirmInfo.text}</Tag>
+                : null}
+            </Space>
+            {result.openclaw_review_note ? (
+              <div style={{ fontSize: 12, color: '#666', whiteSpace: 'pre-wrap' }}>
+                {result.openclaw_review_note}
+              </div>
+            ) : (
+              <span style={{ color: '#999', fontSize: 12 }}>暂无建议</span>
+            )}
+          </Space>
+        );
+      },
+    },
     ...(isAdmin ? [{
       title: '审核',
       key: 'review',
@@ -995,6 +1126,102 @@ export default function ResultsPage() {
       )}
 
       {/* 顶部操作栏 */}
+      {compareResult && (
+        <Card
+          size="small"
+          title="Jarvis / OpenClaw / 最终结果对照"
+          extra={(
+            <Space size="small">
+              <Tag color={getResultLightStatus(compareResult) === 'green' ? 'success' : getResultLightStatus(compareResult) === 'yellow' ? 'warning' : 'error'}>
+                {getResultLightStatus(compareResult)}
+              </Tag>
+              <Typography.Text type="secondary">当前结果 ID: {compareResult.id}</Typography.Text>
+            </Space>
+          )}
+        >
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="清单项">
+              <Space direction="vertical" size={4}>
+                <Typography.Text strong>{compareResult.bill_name}</Typography.Text>
+                <Typography.Text type="secondary">{compareResult.bill_description || '-'}</Typography.Text>
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="Jarvis 原结果">
+              <Space wrap>
+                {getJarvisQuotas(compareResult).length > 0
+                  ? getJarvisQuotas(compareResult).map((item) => (
+                    <Tag key={`jarvis-${item.quota_id}-${item.name}`} color="blue">
+                      {item.quota_id} {item.name}
+                    </Tag>
+                  ))
+                  : <Typography.Text type="secondary">无稳定 top1</Typography.Text>}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="OpenClaw 建议">
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Space wrap>
+                  {compareResult.openclaw_decision_type ? (
+                    <Tag color={OPENCLAW_DECISION_MAP[compareResult.openclaw_decision_type]?.color || 'default'}>
+                      {OPENCLAW_DECISION_MAP[compareResult.openclaw_decision_type]?.text || compareResult.openclaw_decision_type}
+                    </Tag>
+                  ) : (
+                    <Tag>未复判</Tag>
+                  )}
+                  {compareResult.openclaw_review_status !== 'pending' ? (
+                    <Tag color={OPENCLAW_CONFIRM_MAP[compareResult.openclaw_review_confirm_status]?.color || 'default'}>
+                      {OPENCLAW_CONFIRM_MAP[compareResult.openclaw_review_confirm_status]?.text || compareResult.openclaw_review_confirm_status}
+                    </Tag>
+                  ) : null}
+                </Space>
+                <Space wrap>
+                  {(compareResult.openclaw_suggested_quotas || []).length > 0
+                    ? (compareResult.openclaw_suggested_quotas || []).map((item) => (
+                      <Tag key={`openclaw-${item.quota_id}-${item.name}`} color="gold">
+                        {item.quota_id} {item.name}
+                      </Tag>
+                    ))
+                    : <Typography.Text type="secondary">暂无 OpenClaw 建议</Typography.Text>}
+                </Space>
+                {compareResult.openclaw_review_note ? (
+                  <Typography.Text type="secondary">{compareResult.openclaw_review_note}</Typography.Text>
+                ) : null}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="最终结果">
+              <Space wrap>
+                {getFinalQuotas(compareResult).length > 0
+                  ? getFinalQuotas(compareResult).map((item) => (
+                    <Tag key={`final-${item.quota_id}-${item.name}`} color="green">
+                      {item.quota_id} {item.name}
+                    </Tag>
+                  ))
+                  : <Typography.Text type="secondary">暂无正式结果</Typography.Text>}
+                <Tag color={REVIEW_MAP[compareResult.review_status]?.color || 'default'}>
+                  {REVIEW_MAP[compareResult.review_status]?.text || compareResult.review_status}
+                </Tag>
+              </Space>
+            </Descriptions.Item>
+          </Descriptions>
+          {isAdmin && (
+            <Space wrap style={{ marginTop: 12 }}>
+              <Button onClick={() => void adoptJarvisResult(compareResult)}>
+                采纳 Jarvis
+              </Button>
+              <Button
+                type="primary"
+                disabled={!hasOpenClawPendingSuggestion(compareResult)}
+                onClick={() => void adoptOpenClawResult(compareResult)}
+              >
+                采纳 OpenClaw
+              </Button>
+              <Button onClick={() => focusCompareResult(compareResult.id)}>
+                定位到当前结果
+              </Button>
+            </Space>
+          )}
+        </Card>
+      )}
+
       <Card size="small">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Space>
@@ -1084,6 +1311,8 @@ export default function ResultsPage() {
         <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
           {([
             ...(isAdmin ? [{ key: 'need_review', label: '先看要核对的项', color: '#d97706', count: reviewFocusCount }] : []),
+            ...(isAdmin ? [{ key: 'openclaw_pending', label: 'OpenClaw 待确认', color: '#fa8c16', count: openclawPendingCount }] : []),
+            ...(isAdmin ? [{ key: 'openclaw_conflict', label: 'Jarvis≠OpenClaw', color: '#cf1322', count: openclawConflictCount }] : []),
             { key: 'all', label: '全部', color: undefined, count: results.length },
             { key: 'green', label: '高置信度', color: COLORS.greenSolid, count: summary.high_confidence },
             { key: 'yellow', label: '中置信度', color: COLORS.yellowSolid, count: summary.mid_confidence },
@@ -1097,7 +1326,12 @@ export default function ResultsPage() {
                 borderColor: confFilter === key ? undefined : color,
                 color: confFilter === key ? undefined : color,
               }}
-              onClick={() => { setConfFilter(key as 'all' | 'need_review' | 'green' | 'yellow' | 'red'); setPage(1); }}
+              onClick={() => {
+                setConfFilter(
+                  key as 'all' | 'need_review' | 'green' | 'yellow' | 'red' | 'openclaw_pending' | 'openclaw_conflict',
+                );
+                setPage(1);
+              }}
             >
               {label} {count > 0 && `(${count})`}
             </Button>
@@ -1214,6 +1448,7 @@ export default function ResultsPage() {
                   outline: r.id === targetResultId ? '2px solid #1677ff' : undefined,
                   outlineOffset: r.id === targetResultId ? '-2px' : undefined,
                 },
+                onClick: () => focusCompareResult(r.id),
               };
             }
             return {

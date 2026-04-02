@@ -110,12 +110,12 @@ export default function MainLayout() {
       {
         key: 'admin-data-group',
         type: 'group',
-        label: '知识与治理',
+        label: '知识运营',
         children: [
           {
             key: '/admin',
             icon: <DatabaseOutlined />,
-            label: '治理中心',
+            label: '后台总览',
           },
           {
             key: '/admin/knowledge-staging',

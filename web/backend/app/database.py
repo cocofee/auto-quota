@@ -127,6 +127,32 @@ async def init_db():
         # 手动迁移：给已有表添加新列（create_all 不会做这件事）
         # 每条语句用 IF NOT EXISTS 保证可重复执行不报错
         migrations = [
+            # 2026-04-02: OpenClaw review jobs table
+            """
+            CREATE TABLE IF NOT EXISTS openclaw_review_jobs (
+                id UUID PRIMARY KEY,
+                source_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                status VARCHAR(20) DEFAULT 'ready',
+                scope VARCHAR(50) DEFAULT 'need_review',
+                requested_by VARCHAR(255) DEFAULT '',
+                note TEXT DEFAULT '',
+                total_results INTEGER DEFAULT 0,
+                pending_results INTEGER DEFAULT 0,
+                reviewable_results INTEGER DEFAULT 0,
+                green_count INTEGER DEFAULT 0,
+                yellow_count INTEGER DEFAULT 0,
+                red_count INTEGER DEFAULT 0,
+                reviewed_pending_count INTEGER DEFAULT 0,
+                summary JSON,
+                error_message VARCHAR(1000),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_openclaw_review_jobs_source_task_id ON openclaw_review_jobs(source_task_id)",
+            "CREATE INDEX IF NOT EXISTS ix_openclaw_review_jobs_status ON openclaw_review_jobs(status)",
             # 2026-02-25: match_results 表新增 bill_code 列（清单项编码）
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS bill_code VARCHAR(100) DEFAULT ''",
             # 2026-02-25: match_results 表新增 sheet_name 和 section 列（分部分项展示用）
@@ -151,6 +177,14 @@ async def init_db():
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confidence INTEGER",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_actor VARCHAR(255) DEFAULT ''",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_time TIMESTAMP WITH TIME ZONE",
+            # 2026-04-02: match_results 表新增 OpenClaw 结构化二审契约字段
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_decision_type VARCHAR(50) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_error_stage VARCHAR(50) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_error_type VARCHAR(50) DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_retry_query TEXT DEFAULT ''",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_reason_codes JSON",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_payload JSON",
+            "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS human_feedback_payload JSON",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirm_status VARCHAR(20) DEFAULT 'pending'",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirmed_by VARCHAR(255) DEFAULT ''",
             "ALTER TABLE match_results ADD COLUMN IF NOT EXISTS openclaw_review_confirm_time TIMESTAMP WITH TIME ZONE",

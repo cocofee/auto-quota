@@ -319,3 +319,62 @@ def test_create_promotion_card_enqueues_staging_candidate(monkeypatch):
     assert response.id == 12
     assert response.target_layer == "MethodCards"
     assert response.review_status == "unreviewed"
+
+
+def test_build_auto_review_draft_request_keeps_green_jarvis_top1():
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Jarvis Task",
+        province="beijing",
+        status="completed",
+        mode="agent",
+        original_filename="input.xlsx",
+    )
+    match_result = _make_match_result(
+        confidence=95,
+        confidence_score=95,
+        light_status="green",
+    )
+
+    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+
+    assert req.openclaw_decision_type == "agree"
+    assert req.openclaw_suggested_quotas is not None
+    assert req.openclaw_suggested_quotas[0].quota_id == "C10-1-1"
+    assert req.openclaw_error_stage == "unknown"
+
+
+def test_build_auto_review_draft_request_promotes_candidate_when_top1_missing():
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Jarvis Task",
+        province="beijing",
+        status="completed",
+        mode="agent",
+        original_filename="input.xlsx",
+    )
+    match_result = _make_match_result(
+        quotas=[],
+        alternatives=[{"quota_id": "C10-8-8", "name": "Candidate Quota", "unit": "m", "source": "trace"}],
+        confidence=68,
+        confidence_score=68,
+        light_status="red",
+        trace={
+            "steps": [
+                {
+                    "final_validation": {
+                        "status": "manual_review",
+                        "issues": [{"type": "category_mismatch"}],
+                    }
+                }
+            ]
+        },
+    )
+
+    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+
+    assert req.openclaw_decision_type == "override_within_candidates"
+    assert req.openclaw_suggested_quotas is not None
+    assert req.openclaw_suggested_quotas[0].quota_id == "C10-8-8"
+    assert req.openclaw_error_stage == "final_validator"
+    assert req.openclaw_error_type == "wrong_family"
