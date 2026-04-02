@@ -28,6 +28,15 @@ def test_parse_canonical_distribution_box_with_spd_note_stays_distribution_box()
     assert result["family"] == "electrical_box"
 
 
+def test_parse_canonical_signal_cabinet_is_not_distribution_box():
+    result = parser.parse_canonical("安装悬挂式信号机箱")
+
+    assert result["entity"] == "机箱"
+    assert result["canonical_name"] == "机箱"
+    assert result["family"] == "device_cabinet"
+    assert result["system"] == "电气"
+
+
 class TestExtractDN:
     """DN（公称直径）提取测试"""
 

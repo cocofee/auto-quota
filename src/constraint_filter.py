@@ -9,6 +9,25 @@ from typing import Any
 
 from src.utils import safe_float
 
+_ENTITY_HARD_CONFLICTS = {
+    frozenset(("机箱", "配电箱")),
+}
+
+_FAMILY_HARD_CONFLICTS = {
+    frozenset(("bridge_support", "bridge_raceway")),
+    frozenset(("bridge_support", "pipe_support")),
+    frozenset(("pipe_support", "bridge_raceway")),
+    frozenset(("valve_body", "valve_accessory")),
+    frozenset(("air_terminal", "air_valve")),
+    frozenset(("air_terminal", "air_device")),
+    frozenset(("air_valve", "air_device")),
+    frozenset(("electrical_box", "conduit_raceway")),
+    frozenset(("electrical_box", "cable_family")),
+    frozenset(("electrical_box", "protection_device")),
+    frozenset(("electrical_box", "device_cabinet")),
+    frozenset(("cable_head_accessory", "cable_family")),
+}
+
 _MAIN_PARAM_ALIASES: tuple[tuple[str, ...], ...] = (
     ("dn", "conduit_dn"),
     ("cable_section", "cross_section"),
@@ -67,12 +86,16 @@ def _main_param_value(payload: dict[str, Any]) -> float | None:
     return None
 
 
+def _canonical_features(payload: dict[str, Any], *, candidate: bool = False) -> dict[str, Any]:
+    if candidate:
+        features = payload.get("candidate_canonical_features") or payload.get("canonical_features") or {}
+    else:
+        features = payload.get("canonical_features") or {}
+    return dict(features or {})
+
+
 def _normalize_material(payload: dict[str, Any]) -> str:
-    canonical_features = dict(
-        payload.get("candidate_canonical_features")
-        or payload.get("canonical_features")
-        or {}
-    )
+    canonical_features = _canonical_features(payload, candidate=True)
     return str(
         payload.get("material")
         or canonical_features.get("material")
@@ -164,6 +187,28 @@ class ConstraintFilter:
                 }
             )
 
+        item_features = _canonical_features(item, candidate=False)
+        candidate_features = _canonical_features(candidate, candidate=True)
+        item_entity = str(item_features.get("entity") or "").strip()
+        candidate_entity = str(candidate_features.get("entity") or "").strip()
+        if self._is_entity_hard_conflict(item_entity, candidate_entity):
+            violations.append(
+                {
+                    "type": "entity_conflict",
+                    "message": f"entity conflict: {item_entity} vs {candidate_entity}",
+                }
+            )
+
+        item_family = str(item_features.get("family") or "").strip()
+        candidate_family = str(candidate_features.get("family") or "").strip()
+        if self._is_family_hard_conflict(item_family, candidate_family):
+            violations.append(
+                {
+                    "type": "family_conflict",
+                    "message": f"family conflict: {item_family} vs {candidate_family}",
+                }
+            )
+
         item_unit = str(item.get("unit") or "").strip().lower()
         candidate_unit = str(candidate.get("unit") or "").strip().lower()
         if item_unit and candidate_unit and item_unit != candidate_unit:
@@ -235,6 +280,18 @@ class ConstraintFilter:
             )
 
         return violations
+
+    @staticmethod
+    def _is_entity_hard_conflict(item_entity: str, candidate_entity: str) -> bool:
+        if not item_entity or not candidate_entity or item_entity == candidate_entity:
+            return False
+        return frozenset((item_entity, candidate_entity)) in _ENTITY_HARD_CONFLICTS
+
+    @staticmethod
+    def _is_family_hard_conflict(item_family: str, candidate_family: str) -> bool:
+        if not item_family or not candidate_family or item_family == candidate_family:
+            return False
+        return frozenset((item_family, candidate_family)) in _FAMILY_HARD_CONFLICTS
 
     def _main_param_rel_dist(self, item: dict[str, Any], candidate: dict[str, Any]) -> float | None:
         item_value = _main_param_value(item)
