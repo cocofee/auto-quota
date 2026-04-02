@@ -16,9 +16,13 @@ set "ACR_NAMESPACE=cocofee2026"
 
 set "ACR_USER=nick1293622534"
 
-set "FRONTEND_IMAGE=%ACR_REGISTRY%/%ACR_NAMESPACE%/auto-quota-frontend:latest"
+set "FRONTEND_IMAGE_REPO=%ACR_REGISTRY%/%ACR_NAMESPACE%/auto-quota-frontend"
 
-set "BACKEND_IMAGE=%ACR_REGISTRY%/%ACR_NAMESPACE%/auto-quota-app:latest"
+set "BACKEND_IMAGE_REPO=%ACR_REGISTRY%/%ACR_NAMESPACE%/auto-quota-app"
+
+set "FRONTEND_IMAGE_LATEST=%FRONTEND_IMAGE_REPO%:latest"
+
+set "BACKEND_IMAGE_LATEST=%BACKEND_IMAGE_REPO%:latest"
 
 set "SSH_CMD=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q -p 22222 box@fc03:1136:3825:2790:9282:59f7:ba36:403"
 
@@ -44,7 +48,7 @@ echo  ========================================
 
 echo.
 
-echo  [1] Quick deploy - pack + install only
+echo  [1] Quick deploy - pack + install only ^(no image rebuild^)
 
 echo  [2] Full build - docker build + push + pack + install
 
@@ -272,7 +276,7 @@ echo.
 
 echo [1/4] Build frontend...
 
-docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t %FRONTEND_IMAGE% web/frontend/
+docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t !FRONTEND_IMAGE_VERSIONED! web/frontend/
 
 if !errorlevel! neq 0 (
 
@@ -284,7 +288,7 @@ if !errorlevel! neq 0 (
 
 echo [2/4] Build backend...
 
-docker build -f web/backend/Dockerfile -t %BACKEND_IMAGE% .
+docker build -f web/backend/Dockerfile -t !BACKEND_IMAGE_VERSIONED! .
 
 if !errorlevel! neq 0 (
 
@@ -296,7 +300,7 @@ if !errorlevel! neq 0 (
 
 echo [3/4] Push frontend...
 
-docker push %FRONTEND_IMAGE%
+docker push !FRONTEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
@@ -306,9 +310,12 @@ if !errorlevel! neq 0 (
 
 )
 
+docker tag !FRONTEND_IMAGE_VERSIONED! %FRONTEND_IMAGE_LATEST%
+docker push %FRONTEND_IMAGE_LATEST%
+
 echo [4/4] Push backend...
 
-docker push %BACKEND_IMAGE%
+docker push !BACKEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
@@ -317,6 +324,9 @@ if !errorlevel! neq 0 (
     echo [WARN] Continue to pack anyway...
 
 )
+
+docker tag !BACKEND_IMAGE_VERSIONED! %BACKEND_IMAGE_LATEST%
+docker push %BACKEND_IMAGE_LATEST%
 
 goto DO_PACK
 
@@ -330,7 +340,7 @@ echo.
 
 echo [1/2] Build frontend...
 
-docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t %FRONTEND_IMAGE% web/frontend/
+docker build --build-arg BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000 -t !FRONTEND_IMAGE_VERSIONED! web/frontend/
 
 if !errorlevel! neq 0 (
 
@@ -342,7 +352,7 @@ if !errorlevel! neq 0 (
 
 echo [2/2] Push frontend...
 
-docker push %FRONTEND_IMAGE%
+docker push !FRONTEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
@@ -351,6 +361,9 @@ if !errorlevel! neq 0 (
     echo [WARN] Continue to pack anyway...
 
 )
+
+docker tag !FRONTEND_IMAGE_VERSIONED! %FRONTEND_IMAGE_LATEST%
+docker push %FRONTEND_IMAGE_LATEST%
 
 goto DO_PACK
 
@@ -364,7 +377,7 @@ echo.
 
 echo [1/2] Build backend...
 
-docker build -f web/backend/Dockerfile -t %BACKEND_IMAGE% .
+docker build -f web/backend/Dockerfile -t !BACKEND_IMAGE_VERSIONED! .
 
 if !errorlevel! neq 0 (
 
@@ -376,7 +389,7 @@ if !errorlevel! neq 0 (
 
 echo [2/2] Push backend...
 
-docker push %BACKEND_IMAGE%
+docker push !BACKEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
@@ -385,6 +398,9 @@ if !errorlevel! neq 0 (
     echo [WARN] Continue to pack anyway...
 
 )
+
+docker tag !BACKEND_IMAGE_VERSIONED! %BACKEND_IMAGE_LATEST%
+docker push %BACKEND_IMAGE_LATEST%
 
 goto DO_PACK
 
@@ -406,9 +422,7 @@ echo.
 
 echo [VER] Reading current version...
 
-for /f "tokens=2 delims=: " %%a in ('findstr /r "^version:" lzc-manifest.yml') do set "VER=%%a"
-
-set "VER=%VER:"=%"
+call :READ_CURRENT_VERSION
 
 echo       Current: %VER%
 
@@ -424,11 +438,13 @@ for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
 
 echo       New:     !NEW!
 
+call :SET_IMAGE_TAGS !NEW!
+
 
 
 echo [VER] Updating manifest...
 
-powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
+powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','$1!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','$1!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
 
 
 
@@ -452,7 +468,23 @@ rem ============================================================
 
 rem Quick deploy 走这里时还没改版本，先改
 
-if not defined NEW call :BUMP_VERSION
+if not defined NEW (
+
+    call :READ_CURRENT_VERSION
+
+    call :SET_IMAGE_TAGS !VER!
+
+    call :ENSURE_QUICK_PACK_SAFE
+
+    if !errorlevel! neq 0 goto END
+
+    echo [PACK] Quick deploy will reuse current manifest version/image tags: !VER!
+
+)
+
+set "PACK_VERSION=!NEW!"
+
+if not defined PACK_VERSION set "PACK_VERSION=!VER!"
 
 echo.
 
@@ -462,7 +494,7 @@ echo [PACK] Building LPK...
 
 
 
-set "LPK_FILE=cloud.lazycat.app.autoquota-v!NEW!.lpk"
+set "LPK_FILE=cloud.lazycat.app.autoquota-v!PACK_VERSION!.lpk"
 
 if not exist "!LPK_FILE!" (
 
@@ -491,7 +523,7 @@ echo [INSTALL] exit code: !errorlevel!
 echo.
 echo [LOCAL] Syncing local Docker...
 rem 把刚构建的ACR镜像标记为本地docker-compose用的名字
-docker tag %BACKEND_IMAGE% auto-quota-app:latest 2>nul
+docker tag !BACKEND_IMAGE_VERSIONED! auto-quota-app:latest 2>nul
 rem 重建前端 + 重启所有容器
 docker-compose up -d --build frontend 2>nul
 docker-compose up -d 2>nul
@@ -503,7 +535,7 @@ echo.
 
 echo  ========================================
 
-echo   Done! v!NEW! deployed
+echo   Done! v!PACK_VERSION! deployed
 
 echo   https://autoquota.microfeicat2025.heiyu.space
 
@@ -513,21 +545,73 @@ echo  ========================================
 
 echo.
 
-echo [GIT] Auto commit...
+if defined NEW (
 
-git add lzc-manifest.yml web/frontend/src/constants/changelog.ts scripts/
+    echo [GIT] Auto commit...
 
-git commit -m "deploy: v!NEW!"
+    git add lzc-manifest.yml web/frontend/src/constants/changelog.ts scripts/
 
-if !errorlevel! equ 0 (
+    git commit -m "deploy: v!NEW!"
 
-    echo [OK] Committed deploy: v!NEW!
+    if !errorlevel! equ 0 (
+
+        echo [OK] Committed deploy: v!NEW!
+
+    ) else (
+
+        echo [INFO] Nothing to commit
+
+    )
 
 ) else (
 
-    echo [INFO] Nothing to commit
+    echo [GIT] Skip auto commit for pack-only deploy
 
 )
+
+
+
+:READ_CURRENT_VERSION
+
+for /f "tokens=2 delims=: " %%a in ('findstr /r "^version:" lzc-manifest.yml') do set "VER=%%a"
+
+set "VER=%VER:"=%"
+
+exit /b 0
+
+
+
+:SET_IMAGE_TAGS
+
+set "FRONTEND_IMAGE_VERSIONED=%FRONTEND_IMAGE_REPO%:%~1"
+
+set "BACKEND_IMAGE_VERSIONED=%BACKEND_IMAGE_REPO%:%~1"
+
+exit /b 0
+
+
+
+:ENSURE_QUICK_PACK_SAFE
+
+set "HAS_CODE_CHANGES="
+
+for /f "delims=" %%i in ('git status --porcelain -- web/frontend web/backend') do set "HAS_CODE_CHANGES=1"
+
+if defined HAS_CODE_CHANGES (
+
+    echo.
+
+    echo [BLOCK] Quick deploy no longer allows frontend/backend code changes without rebuilding images.
+
+    echo         Please use option [2] Full build so the deployed containers match the code.
+
+    exit /b 1
+
+)
+
+echo [CHECK] No frontend/backend code changes detected. Safe to pack current manifest only.
+
+exit /b 0
 
 
 
