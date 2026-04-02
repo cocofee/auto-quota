@@ -14,6 +14,7 @@ from src.candidate_scoring import (
 )
 from src.constrained_ranker import apply_constrained_gated_ranker
 from src.ltr_feature_extractor import extract_group_features
+from src.ltr_model_cache import LTRModelCache
 from src.query_router import normalize_query_route
 from src.text_parser import parser as text_parser
 from src.utils import safe_float
@@ -36,9 +37,7 @@ class LTRRanker:
             cls._load_error = f"model_missing:{model_path}"
             return None, []
         try:
-            import lightgbm as lgb
-
-            cls._model = lgb.Booster(model_file=str(model_path))
+            cls._model = LTRModelCache.get_model(model_path)
             feature_names: list[str] = []
             if feature_path.exists():
                 payload = json.loads(feature_path.read_text(encoding="utf-8"))
