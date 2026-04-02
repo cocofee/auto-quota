@@ -17,6 +17,8 @@ from contextlib import nullcontext
 
 from loguru import logger
 
+import config
+
 from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
 from src.candidate_scoring import (
@@ -2062,12 +2064,217 @@ def _init_ranking_meta() -> dict:
         "post_explicit_top1_id": "",
         "post_anchor_top1_id": "",
         "selected_top1_id": "",
+        "legacy_top1_id": "",
         "post_final_top1_id": "",
         "final_changed_by": "",
         "candidate_count": 0,
         "ltr": {},
         "explicit_override": {},
+        "unified_ranking_enabled": False,
+        "unified_ranking_shadow_mode": False,
+        "unified_ranking_mode": "disabled",
+        "unified_ranking_executed": False,
+        "unified_result_used": False,
+        "unified_top1_id": "",
+        "unified_top1_score": 0.0,
+        "unified_top1_confidence": 0.0,
+        "unified_top1_matches_selected": False,
+        "unified_top1_matches_legacy": False,
+        "legacy_top1_unified_score": None,
+        "legacy_top1_unified_confidence": None,
+        "unified_legacy_score_gap": None,
+        "unified_ranking_diagnostics": {},
+        "unified_ranking_error": "",
     }
+
+
+def _resolve_unified_ranking_flags() -> dict:
+    enabled = bool(getattr(config, "UNIFIED_RANKING_ENABLED", False))
+    shadow_mode = bool(getattr(config, "UNIFIED_RANKING_SHADOW_MODE", False))
+    if shadow_mode:
+        mode = "shadow"
+    elif enabled:
+        mode = "enabled"
+    else:
+        mode = "disabled"
+    return {
+        "enabled": enabled,
+        "shadow_mode": shadow_mode,
+        "mode": mode,
+    }
+
+
+_UNIFIED_RANKING_PIPELINE = None
+
+
+def _get_unified_ranking_pipeline():
+    global _UNIFIED_RANKING_PIPELINE
+    if _UNIFIED_RANKING_PIPELINE is None:
+        from src.unified_ranking_pipeline import UnifiedRankingPipeline
+
+        _UNIFIED_RANKING_PIPELINE = UnifiedRankingPipeline()
+    return _UNIFIED_RANKING_PIPELINE
+
+
+def _run_unified_ranking_shadow(item: dict, candidates: list[dict], *, top_k: int = 5) -> dict:
+    pipeline = _get_unified_ranking_pipeline()
+    return pipeline.rank_candidates(item, candidates, top_k=top_k)
+
+
+def _build_unified_shadow_comparison(shadow_result: dict, ranking_meta: dict) -> dict:
+    legacy_top1_id = str(ranking_meta.get("legacy_top1_id", "") or ranking_meta.get("selected_top1_id", "") or "")
+    unified_top1_id = str(ranking_meta.get("unified_top1_id", "") or "")
+    top1_score = float(shadow_result.get("top1_score", 0.0) or 0.0)
+    legacy_candidate = None
+    for candidate in list(shadow_result.get("candidates") or []):
+        if str(candidate.get("quota_id", "") or "") == legacy_top1_id:
+            legacy_candidate = candidate
+            break
+
+    legacy_score = None
+    legacy_confidence = None
+    score_gap = None
+    if legacy_candidate:
+        legacy_score = float(legacy_candidate.get("filtered_score", legacy_candidate.get("unified_score", 0.0)) or 0.0)
+        legacy_confidence = float(legacy_candidate.get("confidence", 0.0) or 0.0)
+        score_gap = top1_score - legacy_score
+
+    return {
+        "legacy_top1_id": legacy_top1_id,
+        "unified_top1_id": unified_top1_id,
+        "matches_legacy": bool(legacy_top1_id and unified_top1_id and legacy_top1_id == unified_top1_id),
+        "legacy_candidate_present": legacy_candidate is not None,
+        "legacy_top1_unified_score": legacy_score,
+        "legacy_top1_unified_confidence": legacy_confidence,
+        "score_gap": score_gap,
+        "failure_reason": str(ranking_meta.get("unified_ranking_error", "") or ""),
+    }
+
+
+def _apply_unified_ranking_shadow(item: dict, candidates: list[dict], ranking_meta: dict) -> dict:
+    if not candidates:
+        return {}
+    if str(ranking_meta.get("unified_ranking_mode") or "disabled") == "disabled":
+        return {}
+    top_k = len(candidates)
+    try:
+        shadow_result = _run_unified_ranking_shadow(item, candidates, top_k=top_k)
+    except Exception as exc:  # pragma: no cover
+        ranking_meta["unified_ranking_error"] = str(exc)
+        ranking_meta["unified_ranking_executed"] = False
+        return {}
+
+    top_candidate = (shadow_result.get("candidates") or [None])[0]
+    unified_top1_id = str((top_candidate or {}).get("quota_id", "") or "")
+    ranking_meta["unified_ranking_executed"] = True
+    ranking_meta["unified_result_used"] = False
+    ranking_meta["unified_top1_id"] = unified_top1_id
+    ranking_meta["unified_top1_score"] = float(shadow_result.get("top1_score", 0.0) or 0.0)
+    ranking_meta["unified_top1_confidence"] = float(shadow_result.get("top1_confidence", 0.0) or 0.0)
+    comparison = _build_unified_shadow_comparison(shadow_result, ranking_meta)
+    ranking_meta["unified_top1_matches_selected"] = bool(
+        unified_top1_id and unified_top1_id == str(ranking_meta.get("selected_top1_id", "") or "")
+    )
+    ranking_meta["unified_top1_matches_legacy"] = bool(comparison.get("matches_legacy"))
+    ranking_meta["legacy_top1_unified_score"] = comparison.get("legacy_top1_unified_score")
+    ranking_meta["legacy_top1_unified_confidence"] = comparison.get("legacy_top1_unified_confidence")
+    ranking_meta["unified_legacy_score_gap"] = comparison.get("score_gap")
+    ranking_meta["unified_ranking_diagnostics"] = dict(shadow_result.get("diagnostics") or {})
+    ranking_meta["unified_ranking_error"] = ""
+    return shadow_result
+
+
+def _merge_unified_candidate(base_candidate: dict | None, unified_candidate: dict | None) -> dict | None:
+    if not isinstance(unified_candidate, dict):
+        return dict(base_candidate) if isinstance(base_candidate, dict) else None
+    merged = dict(base_candidate or {})
+    merged.update(dict(unified_candidate))
+    return merged
+
+
+def _apply_unified_candidate_order(base_candidates: list[dict], unified_candidates: list[dict]) -> list[dict]:
+    base_by_quota_id = {
+        str(candidate.get("quota_id", "") or "").strip(): candidate
+        for candidate in (base_candidates or [])
+        if str(candidate.get("quota_id", "") or "").strip()
+    }
+    ordered: list[dict] = []
+    seen: set[str] = set()
+    for unified_candidate in unified_candidates or []:
+        quota_id = str(unified_candidate.get("quota_id", "") or "").strip()
+        if not quota_id or quota_id in seen:
+            continue
+        ordered_candidate = _merge_unified_candidate(base_by_quota_id.get(quota_id), unified_candidate)
+        if ordered_candidate:
+            ordered.append(ordered_candidate)
+            seen.add(quota_id)
+    for candidate in base_candidates or []:
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        if quota_id and quota_id in seen:
+            continue
+        ordered.append(dict(candidate))
+    return ordered
+
+
+def _format_unified_selection_explanation(unified_result: dict, candidate: dict | None) -> str:
+    top_driver = str(((candidate or {}).get("explanation") or {}).get("top_driver") or "")
+    score = float(unified_result.get("top1_score", 0.0) or 0.0)
+    if top_driver:
+        return f"unified_ranking: top_driver={top_driver}; filtered_score={score:.3f}"
+    return f"unified_ranking: filtered_score={score:.3f}"
+
+
+def _apply_unified_enabled_selection(item: dict,
+                                     valid_candidates: list[dict],
+                                     matched_candidates: list[dict],
+                                     ranking_meta: dict,
+                                     arbitration: dict,
+                                     unified_result: dict,
+                                     best: dict | None,
+                                     confidence: float,
+                                     explanation: str,
+                                     reasoning_decision: dict) -> tuple[list[dict], list[dict], dict | None, float, str, dict]:
+    if str(ranking_meta.get("unified_ranking_mode") or "disabled") != "enabled":
+        return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
+
+    unified_candidates = list((unified_result or {}).get("candidates") or [])
+    if not unified_candidates:
+        return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
+
+    reordered_valid_candidates = _apply_unified_candidate_order(valid_candidates, unified_candidates)
+    unified_best = reordered_valid_candidates[0] if reordered_valid_candidates else None
+    if not unified_best:
+        return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
+
+    reordered_matched_candidates = list(matched_candidates or [])
+    if matched_candidates:
+        reordered_matched_candidates = _apply_unified_candidate_order(matched_candidates, unified_candidates)
+
+    ranking_meta["unified_result_used"] = True
+    ranking_meta["final_changed_by"] = "unified_ranking"
+    ranking_meta["selected_top1_id"] = str(unified_best.get("quota_id", "") or "")
+    ranking_meta["unified_top1_matches_selected"] = bool(
+        ranking_meta["selected_top1_id"]
+        and ranking_meta["selected_top1_id"] == str(ranking_meta.get("unified_top1_id", "") or "")
+    )
+
+    selected_confidence = float(
+        unified_best.get("confidence", (unified_result or {}).get("top1_confidence", confidence)) or confidence
+    )
+    selected_explanation = _format_unified_selection_explanation(unified_result, unified_best)
+    selected_reasoning = analyze_ambiguity(
+        reordered_valid_candidates,
+        route_profile=item.get("query_route"),
+        arbitration=arbitration,
+    ).as_dict()
+    return (
+        reordered_valid_candidates,
+        reordered_matched_candidates,
+        unified_best,
+        selected_confidence,
+        selected_explanation,
+        selected_reasoning,
+    )
 
 def _build_parser_trace_diagnostics(item: dict) -> dict:
     canonical_query = item.get("canonical_query") or {}
@@ -2211,6 +2418,10 @@ def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, r
         {"stage": "candidate_arbiter", "quota_id": str(ranking_meta.get("post_arbiter_top1_id", "") or "")},
         {"stage": "explicit_override", "quota_id": str(ranking_meta.get("post_explicit_top1_id", "") or "")},
         {"stage": "experience_anchor", "quota_id": str(ranking_meta.get("post_anchor_top1_id", "") or "")},
+        {
+            "stage": "unified_ranking",
+            "quota_id": str(ranking_meta.get("unified_top1_id", "") or "") if ranking_meta.get("unified_result_used") else "",
+        },
         {"stage": "selected", "quota_id": str(ranking_meta.get("selected_top1_id", "") or "")},
     ]
 
@@ -2248,6 +2459,24 @@ def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, r
         "rank_timeline": timeline,
         "rank_timeline_changes": rank_timeline_changes,
         "arbitration": dict(arbitration or {}),
+        "unified_ranking": {
+            "enabled": bool(ranking_meta.get("unified_ranking_enabled")),
+            "shadow_mode": bool(ranking_meta.get("unified_ranking_shadow_mode")),
+            "mode": str(ranking_meta.get("unified_ranking_mode") or "disabled"),
+            "executed": bool(ranking_meta.get("unified_ranking_executed")),
+            "legacy_selected_quota": str(ranking_meta.get("legacy_top1_id", "") or ""),
+            "selected_quota": str(ranking_meta.get("unified_top1_id", "") or ""),
+            "score": float(ranking_meta.get("unified_top1_score", 0.0) or 0.0),
+            "confidence": float(ranking_meta.get("unified_top1_confidence", 0.0) or 0.0),
+            "matches_selected": bool(ranking_meta.get("unified_top1_matches_selected")),
+            "matches_legacy": bool(ranking_meta.get("unified_top1_matches_legacy")),
+            "legacy_score": ranking_meta.get("legacy_top1_unified_score"),
+            "legacy_confidence": ranking_meta.get("legacy_top1_unified_confidence"),
+            "score_gap_vs_legacy": ranking_meta.get("unified_legacy_score_gap"),
+            "result_used": bool(ranking_meta.get("unified_result_used")),
+            "diagnostics": dict(ranking_meta.get("unified_ranking_diagnostics") or {}),
+            "error": str(ranking_meta.get("unified_ranking_error", "") or ""),
+        },
     }
 
 
@@ -2260,6 +2489,10 @@ def _run_rank_pipeline(item: dict,
     ordered = list(decision_candidates or [])
     ranking_meta = _init_ranking_meta()
     ranking_meta["candidate_count"] = len(reservoir or [])
+    unified_ranking_flags = _resolve_unified_ranking_flags()
+    ranking_meta["unified_ranking_enabled"] = unified_ranking_flags["enabled"]
+    ranking_meta["unified_ranking_shadow_mode"] = unified_ranking_flags["shadow_mode"]
+    ranking_meta["unified_ranking_mode"] = unified_ranking_flags["mode"]
     arbitration: dict = {}
     explicit_override: dict = {}
 
@@ -2267,6 +2500,36 @@ def _run_rank_pipeline(item: dict,
         return ordered, ranking_meta, arbitration, explicit_override, None
 
     ranking_meta["pre_ltr_top1_id"] = _top_candidate_id(ordered)
+    if ranking_meta["unified_ranking_mode"] == "enabled":
+        seed_top1_id = ranking_meta["pre_ltr_top1_id"]
+        ranking_meta["ltr"] = {
+            "skipped_by_unified_primary": True,
+            "legacy_stage_disabled": True,
+        }
+        ranking_meta["post_ltr_top1_id"] = seed_top1_id
+        ranking_meta["post_cgr_top1_id"] = seed_top1_id
+        ranking_meta["post_arbiter_top1_id"] = seed_top1_id
+        ranking_meta["post_explicit_top1_id"] = seed_top1_id
+        ranking_meta["post_anchor_top1_id"] = seed_top1_id
+        arbitration = {
+            "applied": False,
+            "advisory_applied": False,
+            "reason": "skipped_by_unified_primary",
+            "legacy_stage_disabled": True,
+        }
+        explicit_override = {
+            "applied": False,
+            "advisory_applied": False,
+            "reason": "skipped_by_unified_primary",
+            "legacy_stage_disabled": True,
+        }
+        best = ordered[0] if ordered else None
+        if not best:
+            best = _pick_category_safe_candidate(item, ordered)
+        if best:
+            ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
+        return ordered, ranking_meta, arbitration, explicit_override, best
+
     ordered, ltr_meta = rerank_candidates_with_ltr(item, ordered, {"item": item})
     ranking_meta["ltr"] = ltr_meta
     ranking_meta["post_ltr_top1_id"] = str((ltr_meta.get("post_ltr_top1_id") or _top_candidate_id(ordered)) or "")
@@ -2348,7 +2611,10 @@ def _assemble_search_result_payload(item: dict,
         matched_candidates if valid_candidates else [],
         router_diagnostics,
     )
-    ranker_diagnostics = _build_ranker_trace_diagnostics(matched_candidates if matched_candidates else valid_candidates, best, ranking_meta, arbitration)
+    ranker_candidates = valid_candidates if ranking_meta.get("unified_result_used") else (
+        matched_candidates if matched_candidates else valid_candidates
+    )
+    ranker_diagnostics = _build_ranker_trace_diagnostics(ranker_candidates, best, ranking_meta, arbitration)
 
     quotas = [{
         "quota_id": best["quota_id"],
@@ -2392,8 +2658,33 @@ def _assemble_search_result_payload(item: dict,
         "post_explicit_top1_id": ranking_meta["post_explicit_top1_id"],
         "post_anchor_top1_id": ranking_meta["post_anchor_top1_id"],
         "selected_top1_id": ranking_meta["selected_top1_id"],
+        "legacy_top1_id": ranking_meta["legacy_top1_id"],
+        "unified_ranking_enabled": ranking_meta["unified_ranking_enabled"],
+        "unified_ranking_shadow_mode": ranking_meta["unified_ranking_shadow_mode"],
+        "unified_ranking_mode": ranking_meta["unified_ranking_mode"],
+        "unified_ranking_executed": ranking_meta["unified_ranking_executed"],
+        "unified_result_used": ranking_meta["unified_result_used"],
+        "unified_top1_id": ranking_meta["unified_top1_id"],
+        "unified_top1_score": ranking_meta["unified_top1_score"],
+        "unified_top1_confidence": ranking_meta["unified_top1_confidence"],
+        "unified_top1_matches_selected": ranking_meta["unified_top1_matches_selected"],
+        "unified_top1_matches_legacy": ranking_meta["unified_top1_matches_legacy"],
+        "legacy_top1_unified_score": ranking_meta["legacy_top1_unified_score"],
+        "legacy_top1_unified_confidence": ranking_meta["legacy_top1_unified_confidence"],
+        "unified_legacy_score_gap": ranking_meta["unified_legacy_score_gap"],
+        "unified_shadow_comparison": {
+            "legacy_top1_id": ranking_meta["legacy_top1_id"],
+            "unified_top1_id": ranking_meta["unified_top1_id"],
+            "matches": ranking_meta["unified_top1_matches_legacy"],
+            "legacy_top1_unified_score": ranking_meta["legacy_top1_unified_score"],
+            "legacy_top1_unified_confidence": ranking_meta["legacy_top1_unified_confidence"],
+            "score_gap": ranking_meta["unified_legacy_score_gap"],
+            "failure_reason": ranking_meta["unified_ranking_error"],
+        },
+        "unified_ranking_diagnostics": ranking_meta["unified_ranking_diagnostics"],
+        "unified_ranking_error": ranking_meta["unified_ranking_error"],
         "post_final_top1_id": str((quotas[0].get("quota_id", "") if quotas else "") or ""),
-        "final_changed_by": "",
+        "final_changed_by": ranking_meta["final_changed_by"],
         "ltr_rerank": ranking_meta["ltr"],
         "rank_decision_owner": ranker_diagnostics.get("decision_owner", ""),
         "rank_top1_flip_count": ranker_diagnostics.get("top1_flip_count", 0),
@@ -2566,6 +2857,21 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
             )
         else:
             explanation = "no safe candidate selected from ranked results"
+
+    ranking_meta["legacy_top1_id"] = str(ranking_meta.get("selected_top1_id", "") or "")
+    unified_result = _apply_unified_ranking_shadow(item, valid_candidates, ranking_meta)
+    valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision = _apply_unified_enabled_selection(
+        item,
+        valid_candidates,
+        matched_candidates,
+        ranking_meta,
+        arbitration,
+        unified_result,
+        best,
+        confidence,
+        explanation,
+        reasoning_decision,
+    )
 
     result = _assemble_search_result_payload(
         item,

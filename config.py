@@ -5,8 +5,10 @@
 
 import contextvars
 import os
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
+from loguru import logger
 
 # 加载.env文件中的API密钥等敏感配置
 load_dotenv()
@@ -81,89 +83,71 @@ def _safe_dir_name(name: str) -> str:
     hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
     return f"{ascii_part}_{hash_suffix}" if ascii_part else f"p_{hash_suffix}"
 
+def _migrate_chroma_dir(new_path: Path, old_paths: list[Path], label: str) -> Path:
+    """通用ChromaDB目录迁移：旧路径存在且新路径不存在时，copytree迁移。"""
+    if VECTOR_MODEL_KEY != "bge":
+        return new_path
+    for old_path in old_paths:
+        if old_path.exists() and not new_path.exists():
+            try:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(str(old_path), str(new_path))
+                break
+            except Exception as e:
+                logger.warning(f"{label}向量迁移失败({e})，继续使用旧路径: {old_path}")
+                return old_path
+    return new_path
+
 def get_chroma_quota_dir(province=None):
     """获取定额向量数据库目录（按model_key隔离，避免不同模型维度冲突）"""
     province = province or get_current_province()
     safe_name = _safe_dir_name(province)
     new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / f"{safe_name}_quota"
-
-    # 兼容迁移：旧路径(无model_key层)存在时，只在bge模式下迁移
-    if VECTOR_MODEL_KEY == "bge":
-        old_path_v2 = DB_DIR / "chroma" / f"{safe_name}_quota"
-        old_path_v1 = get_province_db_dir(province) / "chroma_quota"
-        for old_path in [old_path_v2, old_path_v1]:
-            if old_path.exists() and not new_path.exists():
-                try:
-                    import shutil
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(str(old_path), str(new_path))
-                    break
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning(f"向量库迁移失败({e})，继续使用旧路径: {old_path}")
-                    return old_path
-
-    return new_path
+    old_paths = [DB_DIR / "chroma" / f"{safe_name}_quota",
+                 get_province_db_dir(province) / "chroma_quota"]
+    return _migrate_chroma_dir(new_path, old_paths, "定额库")
 
 def get_experience_db_path():
     """获取经验库SQLite数据库路径"""
     return COMMON_DB_DIR / "experience.db"
+
+def get_price_reference_db_path():
+    """获取统一历史价格参考库SQLite数据库路径"""
+    return COMMON_DB_DIR / "price_reference.db"
 
 def get_universal_kb_path():
     """获取通用知识库SQLite数据库路径"""
     return COMMON_DB_DIR / "universal_kb.db"
 
 def get_knowledge_staging_db_path():
-    """鑾峰彇 knowledge staging SQLite 鏁版嵁搴撹矾寰?"""
+    """获取 knowledge staging SQLite 数据库路径"""
     return COMMON_DB_DIR / "knowledge_staging.db"
 
 def get_knowledge_staging_schema_path():
-    """鑾峰彇 knowledge staging DDL 鑴氭湰璺緞"""
+    """获取 knowledge staging DDL 脚本路径"""
     return PROJECT_ROOT / "docs" / "knowledge_staging_schema_v1.sql"
 
 def get_chroma_experience_dir():
     """获取经验库向量数据库目录（按model_key隔离）"""
     new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_experience"
-
-    # 兼容迁移：旧路径存在时，只在bge模式下迁移
-    if VECTOR_MODEL_KEY == "bge":
-        old_path_v2 = DB_DIR / "chroma" / "common_experience"
-        old_path_v1 = COMMON_DB_DIR / "chroma_experience"
-        for old_path in [old_path_v2, old_path_v1]:
-            if old_path.exists() and not new_path.exists():
-                try:
-                    import shutil
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(str(old_path), str(new_path))
-                    break
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning(f"经验库向量迁移失败({e})，继续使用旧路径: {old_path}")
-                    return old_path
-
-    return new_path
+    old_paths = [DB_DIR / "chroma" / "common_experience",
+                 COMMON_DB_DIR / "chroma_experience"]
+    return _migrate_chroma_dir(new_path, old_paths, "经验库")
 
 def get_chroma_universal_kb_dir():
     """获取通用知识库向量数据库目录（按model_key隔离）"""
     new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_universal_kb"
+    old_paths = [DB_DIR / "chroma" / "common_universal_kb",
+                 COMMON_DB_DIR / "chroma_universal_kb"]
+    return _migrate_chroma_dir(new_path, old_paths, "通用知识库")
 
-    # 兼容迁移：旧路径存在时，只在bge模式下迁移
-    if VECTOR_MODEL_KEY == "bge":
-        old_path_v2 = DB_DIR / "chroma" / "common_universal_kb"
-        old_path_v1 = COMMON_DB_DIR / "chroma_universal_kb"
-        for old_path in [old_path_v2, old_path_v1]:
-            if old_path.exists() and not new_path.exists():
-                try:
-                    import shutil
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(str(old_path), str(new_path))
-                    break
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning(f"通用知识库向量迁移失败({e})，继续使用旧路径: {old_path}")
-                    return old_path
 
-    return new_path
+def get_chroma_onnx_cache_dir(model_name: str = "all-MiniLM-L6-v2") -> Path:
+    """获取 Chroma 默认 ONNX embedding 模型缓存目录（项目内可写路径）"""
+    safe_name = _safe_dir_name(model_name)
+    path = DB_DIR / "chroma_cache" / safe_name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 def get_current_quota_version(province=None):
     """获取当前定额库的版本号（供经验库写入时绑定）
@@ -253,10 +237,14 @@ def get_sibling_provinces(main_province: str) -> list[str]:
         # 年份：括号中的4位数字
         year_match = re.search(r'[（(](\d{4})[)）]', name)
         year = year_match.group(1) if year_match else ''
-        # 省份：前2-3个汉字（遇到省/市/回族等截断）
-        region_match = re.match(
-            r'^([\u4e00-\u9fff]{2,3}?)(省|市|回族|壮族|维吾尔)', name)
-        region = region_match.group(1) if region_match else name[:2]
+        # 行政区前缀：优先提取“上海市/北京市/内蒙古自治区/广西壮族自治区”等完整行政区描述，
+        # 再统一收敛为稳定的区域键，避免“上海园林/上海安装”这种兄弟库识别失败。
+        prefix_match = re.match(
+            r'^([\u4e00-\u9fff]{2,8}?)(?:省|市|自治区|特别行政区|回族自治区|壮族自治区|维吾尔自治区)',
+            name,
+        )
+        prefix = prefix_match.group(1) if prefix_match else name[:2]
+        region = prefix[:2]
         return region, year
 
     main_region, main_year = _extract_region_year(main_province)
@@ -515,11 +503,11 @@ VECTOR_TOP_K = 20                               # 向量搜索返回Top K
 VECTOR_WEIGHT = 0.7                             # 混合搜索中向量的权重（参考OpenClaw的70/30配比）
 
 # BM25搜索配置
-BM25_TOP_K = 20                                 # BM25搜索返回Top K
+BM25_TOP_K = 30                                 # BM25搜索返回Top K
 BM25_WEIGHT = 0.3                               # 混合搜索中BM25的权重
 
 # 混合搜索配置
-HYBRID_TOP_K = 20                               # 混合搜索最终返回Top K
+HYBRID_TOP_K = 25                               # 混合搜索最终返回Top K
 RRF_K = 60                                      # RRF融合排序的常数k（标准值60）
 
 # 自适应融合与多查询增强（训练无关，适合快速演进）
@@ -532,15 +520,30 @@ HYBRID_ADAPTIVE_BOOST = 0.18                    # 动态权重偏移幅度（0~0
 # 级联搜索质量门槛：主搜候选较少时，检查top分差是否足够大
 # 值含义：top1与top3的hybrid_score分差比例，低于此值则继续全库搜索
 # 0.3表示top1至少比top3高30%的分数才认为搜索结果确定
-CASCADE_QUALITY_THRESHOLD = 0.3
+CASCADE_QUALITY_THRESHOLD = 0.15
 HYBRID_FEEDBACK_ADAPTIVE_BIAS = True            # 从用户修正/确认数据学习全局权重偏置
 HYBRID_FEEDBACK_BIAS_MAX = 0.08                 # 反馈偏置最大幅度（避免震荡）
 HYBRID_FEEDBACK_BIAS_REFRESH_SEC = 300          # 偏置缓存刷新周期（秒）
 HYBRID_FEEDBACK_MIN_SAMPLES = 60                # 启用偏置的最小样本数
 
 # Reranker重排配置（交叉编码器，精度远高于向量搜索）
-RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3" # 中文重排模型（568M参数，FP16约2GB显存）
-RERANKER_TOP_K = 20                              # 重排后保留的候选数（不截断，让param_validator精确筛选）
+# 可用环境变量覆盖为本地目录：
+#   RERANKER_MODEL_NAME=C:\path\to\local\reranker
+# 未设置时默认走 Hugging Face 仓库名。
+RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3").strip()
+RERANKER_TOP_K = 25                              # 重排后保留的候选数（不截断，让param_validator精确筛选）
+RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
+RERANKERS_MODEL_TYPE = os.getenv("RERANKERS_MODEL_TYPE", "").strip() or None
+UNIFIED_RANKING_ENABLED = os.getenv(
+    "UNIFIED_RANKING_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+UNIFIED_RANKING_SHADOW_MODE = os.getenv(
+    "UNIFIED_RANKING_SHADOW_MODE", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
 
 # ============================================================
 # 大模型API配置
@@ -645,7 +648,10 @@ LOW_CONFIDENCE_RETRY_THRESHOLD = int(os.getenv("LOW_CONFIDENCE_RETRY_THRESHOLD",
 # 纯Python后处理，不调LLM，耗时可忽略。
 
 # 总开关（True=启用，False=跳过）
-REFLECTION_ENABLED = True
+# 默认关闭：当前主问题是后置自动改判会吞掉搜索/LTR 已经选对的结果。
+REFLECTION_ENABLED = os.getenv("REFLECTION_ENABLED", "0").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
 
 # 投票决策阈值：winner票权至少是runner-up的多少倍才纠正
 # 低于此比例的只标记冲突，不强制纠正
@@ -684,6 +690,18 @@ AGENT_RULES_IN_PROMPT = False
 
 # 是否在Agent prompt中注入方法卡片（关闭后策略已融入固定提示词，节省~200-400 tokens/条）
 AGENT_METHOD_CARDS_IN_PROMPT = False
+
+# ============================================================
+# FinalValidator / 后置审核
+# ============================================================
+
+# FinalValidator 是否允许自动改写 quota。
+# 默认关闭：审核层先只负责 pass / manual_review / reject，避免覆盖搜索主链 top1。
+FINAL_VALIDATOR_AUTO_CORRECT = os.getenv(
+    "FINAL_VALIDATOR_AUTO_CORRECT", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
 
 # ============================================================
 # LLM后验证（匹配后逐条审核纠正）
@@ -737,20 +755,78 @@ AUTO_SYNONYMS_ENABLED = True
 # BM25 同义词扩展变体（在混合搜索中增加同义词反向替换变体）
 BM25_SYNONYM_EXPANSION_ENABLED = True
 
+# 搜索主链先验候选注入：把 universal_kb / experience 前移为候选补强，而不是只做提示词或直通。
+SEARCH_PRIOR_CANDIDATES_ENABLED = os.getenv(
+    "SEARCH_PRIOR_CANDIDATES_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_EXPERIENCE_INJECTION_ENABLED = os.getenv(
+    "SEARCH_EXPERIENCE_INJECTION_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_UNIVERSAL_KB_INJECTION_ENABLED = os.getenv(
+    "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_LIGHTWEIGHT_PREP_ENABLED = os.getenv(
+    "SEARCH_LIGHTWEIGHT_PREP_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_RULE_PREMATCH_ENABLED = os.getenv(
+    "SEARCH_RULE_PREMATCH_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT = os.getenv(
+    "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_PROGRESS_LOG_INTERVAL = max(
+    1,
+    int(os.getenv("SEARCH_PROGRESS_LOG_INTERVAL", "10")),
+)
+
 # ============================================================
 # LTR v2 / 置信度校准（第一轮先启用 LTR，校准器预留）
 # ============================================================
 
-LTR_V2_ENABLED = os.getenv("LTR_V2_ENABLED", "0").strip().lower() not in (
+def _first_existing_path(*candidates: Path) -> Path:
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return Path(candidate)
+    return Path(candidates[0])
+
+
+_LTR_V2_MODEL_DEFAULT = _first_existing_path(
+    OUTPUT_DIR / "ltr" / "model_v2" / "ltr_v2_model.txt",
+    DATA_DIR / "ltr_v2_model.txt",
+)
+_LTR_V2_FEATURES_DEFAULT = _first_existing_path(
+    OUTPUT_DIR / "ltr" / "model_v2" / "ltr_v2_features.json",
+    DATA_DIR / "ltr_v2_features.json",
+)
+_LTR_V2_AUTO_ENABLED = (
+    _LTR_V2_MODEL_DEFAULT.exists() and _LTR_V2_FEATURES_DEFAULT.exists()
+)
+
+LTR_V2_ENABLED = os.getenv(
+    "LTR_V2_ENABLED",
+    "1" if _LTR_V2_AUTO_ENABLED else "0",
+).strip().lower() not in (
     "0", "false", "no", "off", ""
 )
 LTR_V2_MODEL_PATH = Path(os.getenv(
     "LTR_V2_MODEL_PATH",
-    str(DATA_DIR / "ltr_v2_model.txt"),
+    str(_LTR_V2_MODEL_DEFAULT),
 ))
 LTR_V2_FEATURES_PATH = Path(os.getenv(
     "LTR_V2_FEATURES_PATH",
-    str(DATA_DIR / "ltr_v2_features.json"),
+    str(_LTR_V2_FEATURES_DEFAULT),
 ))
 LTR_GENERICITY_STATS_PATH = Path(os.getenv(
     "LTR_GENERICITY_STATS_PATH",
@@ -760,6 +836,15 @@ LTR_FEATURE_LOGGING = os.getenv("LTR_FEATURE_LOGGING", "0").strip().lower() not 
     "0", "false", "no", "off", ""
 )
 LTR_FEATURE_LOG_TOPK = int(os.getenv("LTR_FEATURE_LOG_TOPK", "3"))
+LTR_GUARD_ENABLED = os.getenv("LTR_GUARD_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+LTR_GUARD_THRESHOLD = max(0.0, float(os.getenv("LTR_GUARD_THRESHOLD", "6.0")))
+PARAM_VALIDATOR_LEGACY_LTR_ENABLED = os.getenv(
+    "PARAM_VALIDATOR_LEGACY_LTR_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
 
 CONSTRAINED_GATED_RANKER_ENABLED = os.getenv(
     "CONSTRAINED_GATED_RANKER_ENABLED", "0"
