@@ -16,6 +16,7 @@ import inspect
 import json
 import random
 import re
+from contextlib import nullcontext
 
 from loguru import logger
 
@@ -26,6 +27,7 @@ from src.ambiguity_gate import analyze_ambiguity
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
+from src.performance_monitor import PerformanceMonitor, measure_call
 from src.policy_engine import PolicyEngine
 from src.specialty_classifier import detect_db_type
 from src.candidate_scoring import sort_candidates_with_stage_priority
@@ -1566,34 +1568,39 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         context_prior: dict = None,
                         route_profile=None,
                         item: dict | None = None,
-                        include_prior_candidates: bool = True) -> list[dict]:
+                        include_prior_candidates: bool = True,
+                        performance_monitor: PerformanceMonitor | None = None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
-    try:
-        candidates = cascade_search(
-            searcher,
-            search_query,
-            classification,
-            item=item,
-            context_prior=context_prior,
-        )
-    except TypeError:
-        candidates = cascade_search(searcher, search_query, classification)
-    if include_prior_candidates:
-        prior_candidates = _collect_all_prior_candidates(
-            searcher,
-            search_query=search_query,
-            full_query=full_query,
-            classification=classification,
-            item=item,
-        )
-        if prior_candidates:
-            candidates = _merge_prior_candidates(candidates, prior_candidates)
-    candidates, route_scope_filter = _filter_candidates_to_route_scope(candidates, classification)
-    if isinstance(classification, dict):
-        classification["route_scope_filter"] = route_scope_filter
-    candidates, candidate_scope_guard = _filter_candidates_to_effective_guard_scope(candidates, classification)
-    if isinstance(classification, dict):
-        classification["candidate_scope_guard"] = candidate_scope_guard
+    with (
+        performance_monitor.measure("混合搜索")
+        if performance_monitor is not None else nullcontext()
+    ):
+        try:
+            candidates = cascade_search(
+                searcher,
+                search_query,
+                classification,
+                item=item,
+                context_prior=context_prior,
+            )
+        except TypeError:
+            candidates = cascade_search(searcher, search_query, classification)
+        if include_prior_candidates:
+            prior_candidates = _collect_all_prior_candidates(
+                searcher,
+                search_query=search_query,
+                full_query=full_query,
+                classification=classification,
+                item=item,
+            )
+            if prior_candidates:
+                candidates = _merge_prior_candidates(candidates, prior_candidates)
+        candidates, route_scope_filter = _filter_candidates_to_route_scope(candidates, classification)
+        if isinstance(classification, dict):
+            classification["route_scope_filter"] = route_scope_filter
+        candidates, candidate_scope_guard = _filter_candidates_to_effective_guard_scope(candidates, classification)
+        if isinstance(classification, dict):
+            classification["candidate_scope_guard"] = candidate_scope_guard
 
     # 按 (quota_id + 来源库) 去重：RRF融合后同一定额可能因不同查询变体出现多次
     # 保留hybrid_score最高的那条，避免浪费reranker和LLM的处理资源
@@ -1618,20 +1625,27 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
 
     # 单候选时重排无意义，可直接跳过提升速度
     if candidates and len(candidates) > 1:
-        prerank_candidates = list(candidates)
-        try:
-            candidates = reranker.rerank(
-                search_query,
-                candidates,
-                route_profile=route_profile,
-            )
-        except TypeError:
-            candidates = reranker.rerank(search_query, candidates)
-        candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
+        with (
+            performance_monitor.measure("候选打分")
+            if performance_monitor is not None else nullcontext()
+        ):
+            prerank_candidates = list(candidates)
+            try:
+                candidates = reranker.rerank(
+                    search_query,
+                    candidates,
+                    route_profile=route_profile,
+                )
+            except TypeError:
+                candidates = reranker.rerank(search_query, candidates)
+            candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
     if candidates:
         # 从classification中提取search_books（用于v3 LTR特征book_match）
         search_books = classification.get("search_books", []) if classification else []
-        candidates = _validate_candidates_with_context(
+        candidates = measure_call(
+            performance_monitor,
+            "候选打分",
+            _validate_candidates_with_context,
             validator,
             full_query,
             candidates,
@@ -1973,7 +1987,8 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
 def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
                                       reranker, validator: ParamValidator,
                                       *,
-                                      include_prior_candidates: bool = True):
+                                      include_prior_candidates: bool = True,
+                                      performance_monitor: PerformanceMonitor | None = None):
     """从统一 prepared 上下文中取字段并执行候选流水线。"""
     ctx = prepared["ctx"]
     canonical_query = ctx.get("canonical_query") or {}
@@ -2011,6 +2026,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         route_profile=item.get("query_route") if isinstance(item, dict) else None,
         item=item if isinstance(item, dict) else None,
         include_prior_candidates=include_prior_candidates,
+        performance_monitor=performance_monitor,
     )
     if isinstance(item, dict):
         item["_supplemental_quotas"] = _build_support_surface_process_quotas(

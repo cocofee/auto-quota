@@ -13,6 +13,7 @@
 """
 
 import re
+from contextlib import nullcontext
 
 from loguru import logger
 
@@ -88,6 +89,7 @@ from src.match_core import (
     summarize_candidate_reasoning,
 )
 from src.policy_engine import PolicyEngine
+from src.performance_monitor import PerformanceMonitor
 from src.review_checkers import (
     check_category_mismatch,
     check_material_mismatch,
@@ -660,37 +662,44 @@ def _evaluate_context_gate(name: str,
         "detail": "专业或上下文信息不足，继续检索但降低自动判定可信度" if base_tags else "",
     }
 
-def _ensure_item_feature_context(item: dict):
+def _ensure_item_feature_context(item: dict,
+                                 performance_monitor: PerformanceMonitor | None = None):
     """Lazily restore feature context for retry/replay callers that bypass preprocessing."""
     if not isinstance(item, dict):
         return
 
-    context_prior = item.get("context_prior")
-    if not isinstance(context_prior, dict) or not context_prior:
-        context_prior = build_context_prior(item)
-        item["context_prior"] = context_prior
-
-    full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
-    params = item.get("params")
-    if not isinstance(params, dict) or not params:
-        params = text_parser.parse(full_text)
-        item["params"] = params
-
-    canonical_features = item.get("canonical_features")
-    if isinstance(canonical_features, dict) and canonical_features:
-        return
-
-    item["canonical_features"] = text_parser.parse_canonical(
-        full_text,
-        specialty=item.get("specialty", ""),
-        context_prior=context_prior,
-        params=params,
+    stage = (
+        performance_monitor.measure("文本解析")
+        if performance_monitor is not None else nullcontext()
     )
+    with stage:
+        context_prior = item.get("context_prior")
+        if not isinstance(context_prior, dict) or not context_prior:
+            context_prior = build_context_prior(item)
+            item["context_prior"] = context_prior
+
+        full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
+        params = item.get("params")
+        if not isinstance(params, dict) or not params:
+            params = text_parser.parse(full_text)
+            item["params"] = params
+
+        canonical_features = item.get("canonical_features")
+        if isinstance(canonical_features, dict) and canonical_features:
+            return
+
+        item["canonical_features"] = text_parser.parse_canonical(
+            full_text,
+            specialty=item.get("specialty", ""),
+            context_prior=context_prior,
+            params=params,
+        )
 
 
-def _build_item_context(item: dict) -> dict:
+def _build_item_context(item: dict,
+                        performance_monitor: PerformanceMonitor | None = None) -> dict:
     """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
-    _ensure_item_feature_context(item)
+    _ensure_item_feature_context(item, performance_monitor=performance_monitor)
     name = item.get("name", "")
     desc = item.get("description", "") or ""
     section = item.get("section", "") or ""
@@ -700,7 +709,11 @@ def _build_item_context(item: dict) -> dict:
     context_prior = item.get("context_prior") or {}
     input_gate = _evaluate_input_gate(name, desc)
     query_name = input_gate.get("query_name", name)
-    primary_query_profile = build_primary_query_profile(query_name, desc)
+    with (
+        performance_monitor.measure("查询构建")
+        if performance_monitor is not None else nullcontext()
+    ):
+        primary_query_profile = build_primary_query_profile(query_name, desc)
     context_prior = dict(context_prior)
     context_prior["primary_query_profile"] = primary_query_profile
     primary_subject = str(primary_query_profile.get("primary_subject") or "").strip()
@@ -743,12 +756,16 @@ def _build_item_context(item: dict) -> dict:
     if unified_plan:
         context_prior = dict(context_prior)
         context_prior["unified_plan"] = unified_plan
-    search_query = text_parser.build_quota_query(query_name, desc,
-                                                  specialty=item.get("specialty", ""),
-                                                  bill_params=item.get("params"),
-                                                  section_title=section,
-                                                  canonical_features=canonical_features,
-                                                  context_prior=context_prior)
+    with (
+        performance_monitor.measure("查询构建")
+        if performance_monitor is not None else nullcontext()
+    ):
+        search_query = text_parser.build_quota_query(query_name, desc,
+                                                      specialty=item.get("specialty", ""),
+                                                      bill_params=item.get("params"),
+                                                      section_title=section,
+                                                      canonical_features=canonical_features,
+                                                      context_prior=context_prior)
     # 线缆类型标签：追加到搜索词，帮助BM25区分电线/电缆/光缆定额
     cable_type = item.get("cable_type", "")
     if cable_type:
@@ -2558,7 +2575,8 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
 def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleValidator,
                                province: str = None, exact_exp_direct: bool = False,
                                lightweight_experience: bool = False,
-                               lightweight_rule_prematch: bool = False) -> dict:
+                               lightweight_rule_prematch: bool = False,
+                               performance_monitor: PerformanceMonitor | None = None) -> dict:
     """
     三种模式统一的前置处理：
     1) 措施项跳过
@@ -2568,7 +2586,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     """
     if province and not item.get("_resolved_province"):
         item["_resolved_province"] = province
-    ctx = _build_item_context(item)
+    ctx = _build_item_context(item, performance_monitor=performance_monitor)
     item["query_route"] = ctx.get("query_route")
     item["plugin_hints"] = ctx.get("plugin_hints") or {}
     item["unified_plan"] = ctx.get("unified_plan") or {}
@@ -2610,9 +2628,13 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             current_gate["detail"] = input_gate.get("detail", "")
         item["_input_gate"] = current_gate
 
-    classification = _build_classification(
-        item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
-    )
+    with (
+        performance_monitor.measure("专业分类")
+        if performance_monitor is not None else nullcontext()
+    ):
+        classification = _build_classification(
+            item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
+        )
     item["classification"] = classification
     item["_trace_classification"] = dict(classification or {})
     context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
