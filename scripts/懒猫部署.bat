@@ -1,5 +1,14 @@
 @echo off
 
+if /i not "%LAZYCAT_DEPLOY_WINDOW%"=="1" (
+    echo %CMDCMDLINE% | findstr /i /c:" /c " >nul
+    if not errorlevel 1 (
+        set "LAZYCAT_DEPLOY_WINDOW=1"
+        start "LazyCat Deploy" cmd /k ""%~f0" %*"
+        exit /b
+    )
+)
+
 chcp 65001 >nul
 
 setlocal enabledelayedexpansion
