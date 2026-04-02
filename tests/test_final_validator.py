@@ -1,4 +1,5 @@
 from src.final_validator import FinalValidator
+from src.price_validator import PriceValidator
 
 
 def test_unit_conflict_marks_red_light_without_capping_score():
@@ -162,3 +163,59 @@ def test_final_validator_merges_reason_tags_and_final_reason():
     assert "manual_review" in result["reason_tags"]
     assert "light_red" in result["reason_tags"]
     assert result["final_reason"]
+
+
+def test_price_mismatch_lowers_confidence_and_marks_manual_review():
+    class _FakePriceValidator:
+        def validate(self, bill_item, matched_quota):
+            return {
+                "status": "price_mismatch",
+                "message": "单价偏离历史中位数60%",
+                "confidence_penalty": -10,
+                "median_price": 100.0,
+                "actual_price": 160.0,
+                "sample_count": 8,
+                "deviation": 0.6,
+            }
+
+    result = {
+        "bill_item": {"name": "桥架安装", "description": "", "unit": "m", "unit_price": 160.0},
+        "quotas": [{"quota_id": "Q1", "name": "桥架安装", "unit": "m"}],
+        "confidence": 80,
+        "match_source": "search",
+    }
+
+    FinalValidator(
+        province="测试省份",
+        auto_correct=False,
+        price_validator=_FakePriceValidator(),
+    ).validate_result(result)
+
+    assert result["confidence"] == 70
+    assert result["confidence_score"] == 70
+    assert result["review_risk"] == "high"
+    assert result["light_status"] == "red"
+    assert result["final_validation"]["status"] == "manual_review"
+    assert result["final_validation"]["issues"][-1]["type"] == "price_mismatch"
+    assert result["final_validation"]["price_validation"]["median_price"] == 100.0
+
+
+def test_price_validator_skips_when_samples_are_insufficient():
+    class _FakePriceDb:
+        def get_composite_price_reference(self, **kwargs):
+            return {
+                "summary": {
+                    "sample_count": 3,
+                    "median_composite_unit_price": 100.0,
+                }
+            }
+
+    validator = PriceValidator(_FakePriceDb())
+
+    result = validator.validate(
+        {"name": "桥架安装", "specialty": "安装", "unit_price": 90.0},
+        {"quota_id": "Q1", "confidence": 75},
+    )
+
+    assert result["status"] == "insufficient_samples"
+    assert result["sample_count"] == 3

@@ -9,6 +9,7 @@ _ISSUE_TAG_MAP = {
     "material_mismatch": ["material_conflict", "manual_review"],
     "connection_mismatch": ["connection_conflict", "manual_review"],
     "parameter_deviation": ["param_conflict", "manual_review"],
+    "price_mismatch": ["price_conflict", "manual_review"],
     "pipe_usage_conflict": ["context_conflict", "manual_review"],
     "sleeve_mismatch": ["family_conflict", "manual_review"],
     "electric_pair_mismatch": ["pair_conflict", "manual_review"],
@@ -55,4 +56,3 @@ def apply_reason_metadata(result: dict,
 
 def tags_for_issue(issue_type: str) -> list[str]:
     return list(_ISSUE_TAG_MAP.get(str(issue_type or "").strip(), []))
-
