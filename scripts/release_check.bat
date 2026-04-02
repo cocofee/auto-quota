@@ -32,7 +32,7 @@ if /i not "%BENCH_MODE%"=="search" if /i not "%BENCH_MODE%"=="agent" (
 
 if not exist "tests\benchmark_baseline.json" (
     echo [ERROR] missing baseline: tests\benchmark_baseline.json
-    echo [HINT] run: python tools\run_benchmark.py --mode search --save
+    echo [HINT] run: python tools\run_benchmark.py --profile full --mode search --save
     set "RC=1"
     goto FINISH
 )
@@ -55,12 +55,12 @@ echo.
 echo [2/3] Run benchmark compare
 set "BENCHMARK_LOG_LEVEL=ERROR"
 if /i "%DATASET%"=="all" goto RUN_BENCH_ALL
-python tools\run_benchmark.py --mode %BENCH_MODE% --dataset "%DATASET%" --compare
+python tools\run_benchmark.py --profile full --mode %BENCH_MODE% --dataset "%DATASET%" --compare
 set "RC=%ERRORLEVEL%"
 goto BENCH_DONE
 
 :RUN_BENCH_ALL
-python tools\run_benchmark.py --mode %BENCH_MODE% --compare
+python tools\run_benchmark.py --profile full --mode %BENCH_MODE% --compare
 set "RC=%ERRORLEVEL%"
 
 :BENCH_DONE
