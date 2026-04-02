@@ -1,4 +1,8 @@
-from src.query_router import build_query_route_profile
+from src.query_router import (
+    build_query_route_profile,
+    route_query_by_specialty,
+    select_search_books,
+)
 
 
 def test_installation_spec_route_detects_complex_cable_query():
@@ -27,3 +31,24 @@ def test_material_route_detects_material_like_query():
 
     assert profile["route"] == "material"
     assert profile["is_material_query"] is True
+
+
+def test_select_search_books_includes_borrow_priority():
+    books = select_search_books("C10", None, borrow=True)
+
+    assert books[:4] == ["C10", "C9", "C8", "C13"]
+
+
+def test_select_search_books_respects_nonstandard_province_scope():
+    books = select_search_books("C10", "电力技改序列定额（2020）", borrow=True)
+
+    assert books == []
+
+
+def test_route_query_by_specialty_builds_strict_route_profile():
+    profile = route_query_by_specialty("C4", None)
+
+    assert profile["primary"] == "C4"
+    assert profile["route_mode"] == "strict"
+    assert profile["allow_cross_book_escape"] is False
+    assert profile["hard_search_books"] == ["C4"]

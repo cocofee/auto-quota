@@ -30,6 +30,7 @@ from src.query_builder_specialized_rules import (
     _extract_distribution_box_fields,
     _normalize_distribution_box_name,
 )
+from src.rule_matcher import try_rule_match
 from src.subject_family_guard import (
     is_family_hint_term,
     resolve_primary_subject_hint,
@@ -2388,6 +2389,24 @@ def _build_explicit_pipe_run_query(name: str,
     return " ".join(dict.fromkeys(part for part in parts if part))
 
 
+def _finalize_rule_match_query(
+    rule_match: dict | None,
+    *,
+    specialty: str,
+    canonical_features: dict,
+    context_prior: dict,
+) -> str | None:
+    if not rule_match:
+        return None
+    return _finalize_query(
+        rule_match["query"],
+        specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+        apply_synonyms=rule_match.get("apply_synonyms", True),
+    )
+
+
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
                       bill_params: dict = None,
@@ -2486,14 +2505,29 @@ def build_quota_query(parser, name: str, description: str = "",
         name = discovered_routing_subject
 
     # --- 防火门/金属门窗硬锚点：在通用路由前先稳定家族召回，避免被编码或配管规则带偏 ---
-    opening_query = _build_fire_door_or_metal_opening_query(name, description)
-    if opening_query:
-        return _finalize_query(
-            opening_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-        )
+    pre_route_match = try_rule_match(
+        {
+            "name": name,
+            "description": description,
+        },
+        [
+            {
+                "name": "fire_door_or_metal_opening",
+                "builder": lambda item: _build_fire_door_or_metal_opening_query(
+                    item["name"],
+                    item["description"],
+                ),
+            },
+        ],
+    )
+    finalized_pre_route_match = _finalize_rule_match_query(
+        pre_route_match,
+        specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+    )
+    if finalized_pre_route_match:
+        return finalized_pre_route_match
 
     # 提取安装部位（室内/室外）
     location = ""
@@ -2592,26 +2626,42 @@ def build_quota_query(parser, name: str, description: str = "",
     # ===== 管道类：有材质或DN参数，且不是电气类（电缆/配管/穿线） =====
     # 电气类即使有material/dn也应走下面的电气专用query构建
     # 灯具类也不走管道路由（描述中"保护管"等配件词会被误提取为材质）
-    garden_plant_query = _build_garden_plant_query(name, full_text, specialty)
-    if garden_plant_query:
-        return _finalize_query(
-            garden_plant_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
-
-    # 阀门族对象模板：在管道路由之前拦截，避免被管道路由误覆盖
-    valve_query = _build_valve_query(name, full_text, params, specialty)
-    if valve_query:
-        return _finalize_query(
-            valve_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
+    prioritized_rule_match = try_rule_match(
+        {
+            "name": name,
+            "full_text": full_text,
+            "specialty": specialty,
+        },
+        [
+            {
+                "name": "garden_plant",
+                "builder": lambda item: _build_garden_plant_query(
+                    item["name"],
+                    item["full_text"],
+                    item["specialty"],
+                ),
+                "apply_synonyms": False,
+            },
+            {
+                "name": "valve",
+                "builder": lambda item: _build_valve_query(
+                    item["name"],
+                    item["full_text"],
+                    params,
+                    item["specialty"],
+                ),
+                "apply_synonyms": False,
+            },
+        ],
+    )
+    finalized_prioritized_rule_match = _finalize_rule_match_query(
+        prioritized_rule_match,
+        specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+    )
+    if finalized_prioritized_rule_match:
+        return finalized_prioritized_rule_match
 
     support_route_text = full_text
     if not any(keyword in (name or "") for keyword in ("支架", "吊架", "支吊架", "支撑架")):
@@ -2918,14 +2968,32 @@ def build_quota_query(parser, name: str, description: str = "",
             context_prior=context_prior,
         )
 
-    switchgear_query = _build_switchgear_query(name, description, full_text, params)
-    if switchgear_query:
-        return _finalize_query(
-            switchgear_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-        )
+    switchgear_rule_match = try_rule_match(
+        {
+            "name": name,
+            "description": description,
+            "full_text": full_text,
+        },
+        [
+            {
+                "name": "switchgear",
+                "builder": lambda item: _build_switchgear_query(
+                    item["name"],
+                    item["description"],
+                    item["full_text"],
+                    params,
+                ),
+            },
+        ],
+    )
+    finalized_switchgear_rule_match = _finalize_rule_match_query(
+        switchgear_rule_match,
+        specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+    )
+    if finalized_switchgear_rule_match:
+        return finalized_switchgear_rule_match
     # ===== 电梯类：有电梯参数时构建专用搜索query =====
     # 例如 "6#客梯(高区)" 速度2.5m/s 26站 → "曳引式电梯 运行速度2m/s以上 层数站数"
     # 例如 "载货电梯" 速度1.0m/s 10站 → "载货电梯 运行速度2m/s以下 层数 站数"
@@ -2973,7 +3041,6 @@ def build_quota_query(parser, name: str, description: str = "",
     # ===== 非管道类：从描述中提取关键信息构建query =====
     # 电气设备、灯具、电缆、配管、配线等
 
-    distribution_box_query = None
     distribution_box_route_text = guarded_full_text if protect_primary_subject else full_text
     allow_distribution_box_template = (
         not protect_primary_subject
@@ -2992,68 +3059,67 @@ def build_quota_query(parser, name: str, description: str = "",
             )
         )
     )
-    if allow_distribution_box_template:
-        distribution_box_query = _build_distribution_box_query(
-            name=name,
-            description=description,
-            full_text=distribution_box_route_text,
-            fields=fields,
-            params=params,
-            specialty=specialty,
-        )
-    if distribution_box_query:
-        return _finalize_query(
-            distribution_box_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
-
-    # 电缆头模板：在_normalize_bill_name之前拦截，
-    # 因为normalize会把"电缆头"→"电缆终端头"丢失原始信息
-    sanitary_query = _build_sanitary_query(
-        name=name,
-        full_text=full_text,
-        params=params,
+    late_rule_match = try_rule_match(
+        {
+            "name": name,
+            "description": description,
+            "full_text": full_text,
+            "distribution_box_route_text": distribution_box_route_text,
+            "allow_distribution_box_template": allow_distribution_box_template,
+            "specialty": specialty,
+        },
+        [
+            {
+                "name": "distribution_box",
+                "enabled": lambda: allow_distribution_box_template,
+                "builder": lambda item: _build_distribution_box_query(
+                    name=item["name"],
+                    description=item["description"],
+                    full_text=item["distribution_box_route_text"],
+                    fields=fields,
+                    params=params,
+                    specialty=item["specialty"],
+                ),
+                "apply_synonyms": False,
+            },
+            {
+                "name": "sanitary",
+                "builder": lambda item: _build_sanitary_query(
+                    name=item["name"],
+                    full_text=item["full_text"],
+                    params=params,
+                ),
+                "apply_synonyms": False,
+            },
+            {
+                "name": "surge_protector",
+                "builder": lambda item: _build_surge_protector_query(
+                    name=item["name"],
+                    full_text=item["full_text"],
+                    params=params,
+                ),
+                "apply_synonyms": False,
+            },
+            {
+                "name": "cable_head",
+                "builder": lambda item: _build_cable_head_query(
+                    name=item["name"],
+                    full_text=item["full_text"],
+                    params=params,
+                    specialty=item["specialty"],
+                ),
+                "apply_synonyms": False,
+            },
+        ],
     )
-    if sanitary_query:
-        return _finalize_query(
-            sanitary_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
-
-    surge_protector_query = _build_surge_protector_query(
-        name=name,
-        full_text=full_text,
-        params=params,
-    )
-    if surge_protector_query:
-        return _finalize_query(
-            surge_protector_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
-
-    cable_head_query = _build_cable_head_query(
-        name=name,
-        full_text=full_text,
-        params=params,
+    finalized_late_rule_match = _finalize_rule_match_query(
+        late_rule_match,
         specialty=specialty,
+        canonical_features=canonical_features,
+        context_prior=context_prior,
     )
-    if cable_head_query:
-        return _finalize_query(
-            cable_head_query,
-            specialty=specialty,
-            canonical_features=canonical_features,
-            context_prior=context_prior,
-            apply_synonyms=False,
-        )
+    if finalized_late_rule_match:
+        return finalized_late_rule_match
 
     # 清单名称 → 定额搜索名称的规范化映射
     # 清单用的名称和定额用的名称经常不一样

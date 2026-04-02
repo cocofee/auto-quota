@@ -1,6 +1,12 @@
 import re
 from typing import Any, Mapping
 
+from src.specialty_classifier import (
+    BORROW_PRIORITY,
+    book_matches_province_scope,
+    province_uses_standard_route_books,
+)
+
 
 _INSTALLATION_HINTS = (
     "安装",
@@ -160,4 +166,46 @@ def build_query_route_profile(
         "decisive_terms": list(context_prior.get("decisive_terms", []) or [])[:4],
         "noise_marker": str(context_prior.get("noise_marker") or ""),
         "context": context_text[:120],
+    }
+
+
+def select_search_books(specialty: str, province: str | None, borrow: bool = True) -> list[str]:
+    """Select the candidate books for a routed specialty under province scope."""
+    primary = str(specialty or "").strip().upper()
+    if not primary:
+        return []
+
+    if province and primary in BORROW_PRIORITY:
+        if not province_uses_standard_route_books(province):
+            return []
+        if not book_matches_province_scope(primary, province):
+            return []
+
+    books = [primary]
+    if borrow:
+        books.extend(str(book).strip() for book in BORROW_PRIORITY.get(primary, []))
+
+    scoped: list[str] = []
+    for book in books:
+        if not book:
+            continue
+        if province and book in BORROW_PRIORITY and not book_matches_province_scope(book, province):
+            continue
+        if book not in scoped:
+            scoped.append(book)
+    return scoped
+
+
+def route_query_by_specialty(specialty: str, province: str | None) -> dict:
+    """Build a specialty-first routing profile for search book selection."""
+    books = select_search_books(specialty, province, borrow=True)
+    primary = books[0] if books else ""
+    route_mode = "strict" if primary else "open"
+    return {
+        "primary": primary,
+        "search_books": books,
+        "hard_search_books": [primary] if primary else [],
+        "advisory_search_books": books[1:] if len(books) > 1 else [],
+        "route_mode": route_mode,
+        "allow_cross_book_escape": route_mode != "strict",
     }
