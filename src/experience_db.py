@@ -27,6 +27,7 @@ import re
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -520,6 +521,111 @@ class ExperienceDB:
         except Exception as exc:
             logger.debug(f"经验库向量召回失败，降级跳过: {exc}")
             return []
+
+    def _recall_vector_records(self, query_text: str, *, top_k: int, min_confidence: int, province: str) -> list[dict]:
+        vector_pairs = self._recall_vector_candidates(query_text, top_k=top_k, province=province)
+        if not vector_pairs:
+            return []
+        vector_records = self._fetch_records_by_ids(
+            [item[0] for item in vector_pairs],
+            min_confidence=min_confidence,
+        )
+        records = []
+        for record_id, similarity in vector_pairs:
+            if record_id not in vector_records:
+                continue
+            record = dict(vector_records[record_id])
+            record["vector_score"] = similarity
+            record["similarity"] = similarity
+            records.append(record)
+        return records
+
+    def _cascade_recall_parallel(
+        self,
+        query_item: dict,
+        *,
+        query_text: str,
+        layer: str,
+        province_mode: str,
+        top_k: int,
+        min_confidence: int,
+        province: str,
+        include_vector: bool = False,
+        max_workers: int = 3,
+        timeout: float = 5.0,
+    ) -> dict[str, list[dict]]:
+        """Run recall strategies concurrently and merge them by channel later."""
+        recall_results: dict[str, list[dict]] = {
+            "exact": [],
+            "bm25": [],
+            "structural": [],
+        }
+        if include_vector:
+            recall_results["vector"] = []
+
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        futures = {
+            executor.submit(
+                self._recall_exact,
+                query_item,
+                layer=layer,
+                province_mode=province_mode,
+                limit=top_k * 2,
+            ): "exact",
+            executor.submit(
+                self._recall_bm25,
+                query_item,
+                layer=layer,
+                province_mode=province_mode,
+                limit=top_k * 3,
+            ): "bm25",
+            executor.submit(
+                self._recall_structural,
+                query_item,
+                layer=layer,
+                province_mode=province_mode,
+                limit=top_k * 3,
+            ): "structural",
+        }
+        if include_vector:
+            futures[executor.submit(
+                self._recall_vector_records,
+                query_text,
+                top_k=top_k,
+                min_confidence=min_confidence,
+                province=province,
+            )] = "vector"
+
+        try:
+            try:
+                for future in as_completed(futures, timeout=timeout):
+                    strategy = futures[future]
+                    try:
+                        result = future.result()
+                        if strategy == "exact":
+                            for item in result:
+                                item["_exact_match"] = True
+                                item["similarity"] = 1.0
+                        recall_results[strategy] = result
+                        logger.debug(f"{strategy} recall: {len(result)} candidates")
+                    except Exception as exc:
+                        logger.warning(f"{strategy} recall failed: {exc}")
+            except FutureTimeoutError:
+                unfinished = sorted(
+                    {
+                        strategy
+                        for future, strategy in futures.items()
+                        if not future.done()
+                    }
+                )
+                logger.warning(
+                    f"parallel recall timed out after {timeout}s"
+                    + (f": {', '.join(unfinished)}" if unfinished else "")
+                )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        return recall_results
 
     def _fetch_records_by_ids(self, ids: list[int], *, min_confidence: int, province: str | None = None) -> dict[int, dict]:
         if not ids:
@@ -2456,41 +2562,23 @@ class ExperienceDB:
             ("candidate", "local"),
             ("candidate", "global"),
         ]
-        vector_pairs = self._recall_vector_candidates(query_text, top_k=top_k, province=province)
         if has_runtime_recall_backend:
-            vector_records = self._fetch_records_by_ids([item[0] for item in vector_pairs], min_confidence=min_confidence)
-            for record_id, similarity in vector_pairs:
-                if record_id in vector_records:
-                    record = vector_records[record_id]
-                    record["vector_score"] = similarity
-                    record["similarity"] = similarity
-                    self._merge_recall_results(merged, [record], channel="vector")
-
             for step_index, (layer, province_mode) in enumerate(expansion_steps, start=1):
-                try:
-                    exact_records = self._recall_exact(query_item, layer=layer, province_mode=province_mode, limit=top_k * 2)
-                except Exception as exc:
-                    logger.debug(f"经验库 exact 召回失败，降级跳过: {exc}")
-                    exact_records = []
-                for item in exact_records:
-                    item["_exact_match"] = True
-                    item["similarity"] = 1.0
-                self._merge_recall_results(merged, exact_records, channel="exact")
-
-                try:
-                    bm25_records = self._recall_bm25(query_item, layer=layer, province_mode=province_mode, limit=top_k * 3)
-                except Exception as exc:
-                    logger.debug(f"经验库 BM25 召回失败，降级跳过: {exc}")
-                    bm25_records = []
-                self._merge_recall_results(merged, bm25_records, channel="bm25")
-
-                try:
-                    structural_records = self._recall_structural(query_item, layer=layer, province_mode=province_mode, limit=top_k * 3)
-                except Exception as exc:
-                    logger.debug(f"经验库结构化召回失败，降级跳过: {exc}")
-                    structural_records = []
-                self._merge_recall_results(merged, structural_records, channel="structural")
-
+                recall_results = self._cascade_recall_parallel(
+                    query_item,
+                    query_text=query_text,
+                    layer=layer,
+                    province_mode=province_mode,
+                    top_k=top_k,
+                    min_confidence=min_confidence,
+                    province=province,
+                    include_vector=step_index == 1,
+                )
+                self._merge_recall_results(merged, recall_results.get("exact", []), channel="exact")
+                self._merge_recall_results(merged, recall_results.get("bm25", []), channel="bm25")
+                self._merge_recall_results(merged, recall_results.get("structural", []), channel="structural")
+                if step_index == 1:
+                    self._merge_recall_results(merged, recall_results.get("vector", []), channel="vector")
                 if not self._expand_query_layers(merged, current_step=step_index):
                     break
 
