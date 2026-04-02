@@ -522,6 +522,8 @@ class OutputWriter:
             parts.append(f"解释{len(evidence.get('quota_explanations') or [])}")
         if evidence.get("method_cards"):
             parts.append(f"方法卡{len(evidence.get('method_cards') or [])}")
+        if evidence.get("price_references"):
+            parts.append(f"浠锋牸{len(evidence.get('price_references') or [])}")
         if not parts:
             return ""
         return f"[知识]{'/'.join(parts)}"

@@ -350,6 +350,7 @@ def _split_knowledge_for_prompt(
     evidence.setdefault("quota_rules", [])
     evidence.setdefault("quota_explanations", [])
     evidence.setdefault("method_cards", list(method_cards or []))
+    evidence.setdefault("price_references", [])
 
     prompt_rules_enabled = bool(getattr(config, "AGENT_RULES_IN_PROMPT", True))
     prompt_methods_enabled = bool(getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True))
@@ -452,6 +453,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
             "quota_rules": [],
             "quota_explanations": [],
             "method_cards": relevant_cards or [],
+            "price_references": [],
         }
         knowledge_meta = {
             "reference_cases_count": len(reference_cases or []),
@@ -459,6 +461,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
             "method_cards_count": len(relevant_cards or []),
             "quota_rules_count": 0,
             "quota_explanations_count": 0,
+            "price_references_count": 0,
         }
 
     quota_rules = knowledge_evidence.get("quota_rules") or []
@@ -495,6 +498,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         "quota_rules_count": len(quota_rules),
         "quota_explanations_count": len(quota_explanations),
         "method_cards_count": len(relevant_cards or []),
+        "price_references_count": len(knowledge_evidence.get("price_references") or []),
     }
     _append_item_review_rejection_trace(result, item)
     _append_trace_step(
@@ -966,7 +970,17 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     if not getattr(config, "AGENT_RULES_IN_PROMPT", True):
         logger.info("L6: 规则知识 prompt 注入已关闭（统一知识检索仍启用）")
     unified_knowledge_retriever = None
-    if experience_db or rule_kb or method_cards_db:
+    unified_data_layer = None
+    try:
+        from src.unified_data_layer import UnifiedDataLayer
+        unified_data_layer = UnifiedDataLayer(
+            province=province,
+            experience_db=experience_db,
+        )
+    except Exception as e:
+        logger.debug(f"缁熶竴鏁版嵁灞傚姞杞借烦杩囷紙涓嶅奖鍝嶄富娴佺▼锛? {e}")
+        unified_data_layer = None
+    if experience_db or rule_kb or method_cards_db or unified_data_layer:
         try:
             from src.unified_knowledge import UnifiedKnowledgeRetriever
             unified_knowledge_retriever = UnifiedKnowledgeRetriever(
@@ -974,6 +988,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 experience_db=experience_db,
                 rule_kb=rule_kb,
                 method_cards_db=method_cards_db,
+                unified_data_layer=unified_data_layer,
             )
         except Exception as e:
             logger.debug(f"缁熶竴鐭ヨ瘑鍏ュ彛鍔犺浇澶辫触锛堥檷绾х户缁級: {e}")
