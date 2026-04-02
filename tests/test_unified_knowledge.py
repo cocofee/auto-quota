@@ -55,12 +55,38 @@ class _StubMethodCards:
         ]
 
 
+class _StubUnifiedDataLayer:
+    def search(self, query, sources=None, strategy="score", top_k=2, authority_only=True):
+        del query, sources, strategy, top_k, authority_only
+        return {
+            "grouped": {
+                "price": [
+                    {
+                        "id": 31,
+                        "title": "镀锌钢管安装 DN25",
+                        "content": "管道安装 镀锌钢管 DN25 | price=88.6/m | 广州",
+                        "score": 0.70,
+                        "raw": {
+                            "id": 31,
+                            "quota_name": "管道安装 镀锌钢管 DN25",
+                            "unit": "m",
+                            "composite_unit_price": 88.6,
+                            "region": "广州",
+                            "source_date": "2025-05-01",
+                        },
+                    }
+                ]
+            }
+        }
+
+
 def test_unified_knowledge_splits_rules_and_explanations():
     retriever = UnifiedKnowledgeRetriever(
         province="广东2024",
         experience_db=_StubExperienceDB(),
         rule_kb=_StubRuleKB(),
         method_cards_db=_StubMethodCards(),
+        unified_data_layer=_StubUnifiedDataLayer(),
     )
 
     context = retriever.search_context(
@@ -90,3 +116,24 @@ def test_unified_knowledge_splits_rules_and_explanations():
     assert context["meta"]["reference_cases_count"] == 1
     assert context["meta"]["quota_rules_count"] == 1
     assert context["meta"]["quota_explanations_count"] == 1
+def test_unified_knowledge_includes_price_references():
+    retriever = UnifiedKnowledgeRetriever(
+        province="TestProvince",
+        experience_db=_StubExperienceDB(),
+        rule_kb=_StubRuleKB(),
+        method_cards_db=_StubMethodCards(),
+        unified_data_layer=_StubUnifiedDataLayer(),
+    )
+
+    context = retriever.search_context(
+        query_text="镀锌钢管安装 DN25",
+        bill_name="镀锌钢管安装",
+        bill_desc="DN25",
+        specialty="C10",
+        unit="m",
+    )
+
+    evidence = context["knowledge_evidence"]
+    assert len(evidence["price_references"]) == 1
+    assert evidence["price_references"][0]["price"] == 88.6
+    assert context["meta"]["price_references_count"] == 1

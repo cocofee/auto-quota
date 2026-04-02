@@ -102,7 +102,7 @@ class HybridSearcher:
     _INVERTER_POWER_BUCKETS = (250, 1000)
     _PLASTIC_PIPE_MARKERS = ("UPVC", "PVC", "PPR", "PE", "HDPE", "塑料")
 
-    def __init__(self, province: str = None, experience_db=None):
+    def __init__(self, province: str = None, experience_db=None, unified_data_layer=None):
         """
         参数:
             province: 省份名称，默认用config配置
@@ -110,6 +110,7 @@ class HybridSearcher:
         """
         self.province = province or config.get_current_province()
         self._experience_db = experience_db
+        self._unified_data_layer = unified_data_layer
 
         # 两个搜索引擎（延迟初始化）
         self._bm25_engine = None
@@ -134,6 +135,12 @@ class HybridSearcher:
     def set_experience_db(self, experience_db) -> None:
         """设置经验库实例（延迟注入，避免循环依赖）。"""
         self._experience_db = experience_db
+        unified_data_layer = getattr(self, "_unified_data_layer", None)
+        if unified_data_layer not in (None, False):
+            try:
+                unified_data_layer.experience_db = experience_db
+            except Exception:
+                pass
         for aux_searcher in list(getattr(self, "aux_searchers", []) or []):
             setter = getattr(aux_searcher, "set_experience_db", None)
             if callable(setter):
@@ -255,15 +262,6 @@ class HybridSearcher:
                     top_k=max(1, min(top_k, 4)),
                 )
             )
-            if not exact_only:
-                priors.extend(
-                    self._collect_experience_prior_candidates(
-                        query_text=query_text,
-                        full_query=full_query,
-                        item=item,
-                        top_k=max(1, min(top_k, 4)),
-                    )
-                )
         if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
             priors.extend(
                 self._collect_universal_kb_exact_prior_candidates(
@@ -274,16 +272,38 @@ class HybridSearcher:
                     top_k=max(1, min(top_k, 4)),
                 )
             )
-            if not exact_only:
-                priors.extend(
-                    self._collect_universal_kb_prior_candidates(
-                        query_text=query_text,
-                        full_query=full_query,
-                        item=item,
-                        books=books,
-                        top_k=max(1, min(top_k, 4)),
-                    )
+        if not exact_only:
+            unified_priors = None
+            if bool(getattr(config, "SEARCH_UNIFIED_DATA_PRIOR_ENABLED", True)):
+                unified_priors = self._collect_unified_data_prior_candidates(
+                    query_text=query_text,
+                    full_query=full_query,
+                    item=item,
+                    books=books,
+                    top_k=max(1, min(top_k, 4)),
                 )
+            if unified_priors is not None:
+                priors.extend(unified_priors)
+            else:
+                if bool(getattr(config, "SEARCH_EXPERIENCE_INJECTION_ENABLED", True)):
+                    priors.extend(
+                        self._collect_experience_prior_candidates(
+                            query_text=query_text,
+                            full_query=full_query,
+                            item=item,
+                            top_k=max(1, min(top_k, 4)),
+                        )
+                    )
+                if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
+                    priors.extend(
+                        self._collect_universal_kb_prior_candidates(
+                            query_text=query_text,
+                            full_query=full_query,
+                            item=item,
+                            books=books,
+                            top_k=max(1, min(top_k, 4)),
+                        )
+                    )
 
         deduped: dict[str, dict] = {}
         for candidate in priors:
@@ -541,6 +561,23 @@ class HybridSearcher:
                 self._universal_kb = False
         return self._universal_kb if self._universal_kb is not False else None
 
+    @property
+    def unified_data_layer(self):
+        """寤惰繜鍔犺浇缁熶竴鏁版嵁灞?"""
+        current = getattr(self, "_unified_data_layer", None)
+        if current is None:
+            try:
+                from src.unified_data_layer import UnifiedDataLayer
+
+                self._unified_data_layer = UnifiedDataLayer(
+                    province=self.province,
+                    experience_db=self._experience_db,
+                )
+            except Exception as e:
+                logger.debug(f"缁熶竴鏁版嵁灞傚姞杞藉け璐ワ紙鍥為€€鍒版棫妫€绱㈤€昏緫锛? {e}")
+                self._unified_data_layer = False
+        return self._unified_data_layer if self._unified_data_layer is not False else None
+
     def _materialize_quota_candidate(self, quota_id: str, fallback_name: str = "",
                                      fallback_unit: str = "") -> dict | None:
         quota_id = str(quota_id or "").strip()
@@ -565,6 +602,137 @@ class HybridSearcher:
                 specialty=get_book_from_quota_id(quota_id) or "",
             ),
         }
+
+    def _collect_unified_data_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        books: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[dict] | None:
+        unified_data_layer = self.unified_data_layer
+        if not unified_data_layer:
+            return None
+
+        item = dict(item or {})
+        query = str(full_query or query_text or "").strip()
+        if not query:
+            return []
+
+        payload = {
+            "text": query,
+            "province": self.province,
+            "specialty": str(item.get("specialty", "") or "").strip(),
+            "unit": str(item.get("unit", "") or "").strip(),
+            "materials_signature": str(item.get("materials_signature", "") or "").strip(),
+            "install_method": str(item.get("install_method", "") or "").strip(),
+        }
+        if books and len(books) == 1:
+            payload["book"] = str(books[0] or "").strip()
+
+        try:
+            search_result = unified_data_layer.search(
+                payload,
+                sources=["experience", "universal_kb", "quota"],
+                strategy="auto",
+                top_k=max(top_k * 2, top_k),
+                authority_only=True,
+            )
+        except Exception as e:
+            logger.debug(f"缁熶竴鏁版嵁鍏堥獙鍊欓€夋绱㈠け璐ワ紙鍥為€€鍒版棫妫€绱㈤€昏緫锛? {e}")
+            return None
+
+        grouped = dict(search_result.get("grouped") or {})
+        candidates: list[dict] = []
+
+        for entry in grouped.get("experience", []) or []:
+            raw = dict(entry.get("raw") or {})
+            if str(raw.get("gate", "") or "").strip() == "red":
+                continue
+            if str(raw.get("match_type", "") or "").strip() in {"stale", "candidate"}:
+                continue
+            quota_ids = self._coerce_prior_list(raw.get("quota_ids"))
+            quota_names = self._coerce_prior_list(raw.get("quota_names"))
+            if not quota_ids:
+                continue
+            quota_id = str(quota_ids[0] or "").strip()
+            fallback_name = quota_names[0] if quota_names else ""
+            candidate = self._materialize_quota_candidate(quota_id, fallback_name=fallback_name)
+            if not candidate:
+                continue
+            prior_score = max(
+                float(raw.get("total_score", 0.0) or 0.0),
+                float(raw.get("similarity", 0.0) or 0.0) * 0.9,
+                float(raw.get("confidence", 0.0) or 0.0) / 100.0 * 0.8,
+            )
+            candidate.update({
+                "match_source": "experience_injected",
+                "is_experience_candidate": 1,
+                "experience_record_id": raw.get("id"),
+                "experience_layer": raw.get("layer", ""),
+                "experience_gate": raw.get("gate", ""),
+                "experience_similarity": float(raw.get("similarity", 0.0) or 0.0),
+                "experience_total_score": float(raw.get("total_score", 0.0) or 0.0),
+                "experience_confidence": float(raw.get("confidence", 0.0) or 0.0),
+                "knowledge_prior_sources": ["experience"],
+                "knowledge_prior_score": prior_score,
+            })
+            candidates.append(candidate)
+            if len(candidates) >= top_k:
+                return candidates[:top_k]
+
+        for entry in grouped.get("universal_kb", []) or []:
+            raw = dict(entry.get("raw") or {})
+            similarity = float(raw.get("similarity", entry.get("similarity", 0.0)) or 0.0)
+            confidence = float(raw.get("confidence", entry.get("confidence", 0.0)) or 0.0)
+            if similarity < 0.75 or confidence < 70:
+                continue
+            patterns = [str(p).strip() for p in (raw.get("quota_patterns") or []) if str(p).strip()]
+            for pattern in patterns[:2]:
+                try:
+                    matched = self.bm25_engine.search(pattern, top_k=2, books=books)
+                except Exception as e:
+                    logger.debug(f"缁熶竴鏁版嵁KB妯″紡妫€绱㈠け璐ワ紙涓嶅奖鍝嶄富娴佺▼锛? {pattern[:40]} {e}")
+                    continue
+                for row in matched or []:
+                    quota_id = str(row.get("quota_id", "") or "").strip()
+                    quota_name = str(row.get("name", "") or "").strip()
+                    if not quota_id or not quota_name:
+                        continue
+                    candidate = dict(row)
+                    candidate["match_source"] = "kb_injected"
+                    candidate["is_kb_candidate"] = 1
+                    candidate["kb_bill_pattern"] = raw.get("bill_pattern", "")
+                    candidate["kb_quota_pattern"] = pattern
+                    candidate["kb_similarity"] = similarity
+                    candidate["kb_confidence"] = confidence
+                    candidate["knowledge_prior_sources"] = ["universal_kb"]
+                    candidate["knowledge_prior_score"] = max(
+                        similarity * 0.9,
+                        confidence / 100.0 * 0.75,
+                    )
+                    candidates.append(candidate)
+                    if len(candidates) >= top_k:
+                        return candidates[:top_k]
+
+        for entry in grouped.get("quota", []) or []:
+            raw = dict(entry.get("raw") or {})
+            quota_id = str(raw.get("quota_id", "") or "").strip()
+            quota_name = str(raw.get("name", "") or "").strip()
+            if not quota_id or not quota_name:
+                continue
+            candidate = dict(raw)
+            candidate.setdefault("unit", str(raw.get("unit", "") or "").strip())
+            candidate["match_source"] = "quota_unified"
+            candidate["knowledge_prior_sources"] = ["quota"]
+            candidate["knowledge_prior_score"] = float(entry.get("score", 0.0) or 0.0)
+            candidates.append(candidate)
+            if len(candidates) >= top_k:
+                break
+
+        return candidates[:top_k]
 
     def _collect_experience_prior_candidates(
         self,

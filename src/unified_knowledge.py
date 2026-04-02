@@ -50,11 +50,20 @@ def _clean_inline(text: str, *, limit: int = 160) -> str:
 class UnifiedKnowledgeRetriever:
     """Aggregate three knowledge channels behind one retrieval entry."""
 
-    def __init__(self, *, province: str = None, experience_db=None, rule_kb=None, method_cards_db=None):
+    def __init__(
+        self,
+        *,
+        province: str = None,
+        experience_db=None,
+        rule_kb=None,
+        method_cards_db=None,
+        unified_data_layer=None,
+    ):
         self.province = province
         self.experience_db = experience_db
         self.rule_kb = rule_kb
         self.method_cards_db = method_cards_db
+        self.unified_data_layer = unified_data_layer
 
     def search_context(
         self,
@@ -69,6 +78,7 @@ class UnifiedKnowledgeRetriever:
         top_k_cases: int = 3,
         top_k_rules: int = 3,
         top_k_methods: int = 2,
+        top_k_prices: int = 2,
     ) -> dict[str, Any]:
         province = province or self.province
         reference_cases = self._search_reference_cases(
@@ -93,15 +103,22 @@ class UnifiedKnowledgeRetriever:
             province=province,
             top_k=top_k_methods,
         )
+        price_references = self._search_price_references(
+            query_text=query_text,
+            specialty=specialty,
+            top_k=top_k_prices,
+        )
         structured_rules = self._build_rule_knowledge(rules_context)
         structured_methods = self._build_method_knowledge(method_cards)
         structured_cases = self._build_reference_case_knowledge(reference_cases)
+        structured_prices = self._build_price_reference_knowledge(price_references)
 
         knowledge_evidence = {
             "reference_cases": structured_cases,
             "quota_rules": structured_rules["quota_rules"],
             "quota_explanations": structured_rules["quota_explanations"],
             "method_cards": structured_methods,
+            "price_references": structured_prices,
         }
         meta = {
             "reference_cases_count": len(reference_cases or []),
@@ -109,11 +126,13 @@ class UnifiedKnowledgeRetriever:
             "method_cards_count": len(method_cards or []),
             "quota_rules_count": len(structured_rules["quota_rules"]),
             "quota_explanations_count": len(structured_rules["quota_explanations"]),
+            "price_references_count": len(structured_prices),
         }
         return {
             "reference_cases": structured_cases,
             "rules_context": structured_rules["all_rules"],
             "method_cards": structured_methods,
+            "price_references": structured_prices,
             "knowledge_evidence": knowledge_evidence,
             "meta": meta,
         }
@@ -217,6 +236,31 @@ class UnifiedKnowledgeRetriever:
             logger.debug(f"unified knowledge: method card retrieval failed, continue degraded: {exc}")
             return []
 
+    def _search_price_references(
+        self,
+        *,
+        query_text: str,
+        specialty: str,
+        top_k: int = 2,
+    ) -> list[dict]:
+        if not self.unified_data_layer:
+            return []
+        try:
+            result = self.unified_data_layer.search(
+                {
+                    "text": query_text,
+                    "province": self.province,
+                    "specialty": specialty,
+                },
+                sources=["price"],
+                strategy="score",
+                top_k=top_k,
+            )
+            return list((result.get("grouped") or {}).get("price") or [])[:top_k]
+        except Exception as exc:
+            logger.debug(f"unified knowledge: price retrieval failed, continue degraded: {exc}")
+            return []
+
     def _build_reference_case_knowledge(self, cases: list[dict]) -> list[dict]:
         normalized = []
         for case in cases or []:
@@ -301,6 +345,27 @@ class UnifiedKnowledgeRetriever:
                     "method_text": method_text,
                     "universal_method": universal_method,
                     "common_errors": str(card.get("common_errors", "") or "").strip(),
+                }
+            )
+        return normalized
+
+    def _build_price_reference_knowledge(self, prices: list[dict]) -> list[dict]:
+        normalized = []
+        for row in prices or []:
+            if not isinstance(row, dict):
+                continue
+            raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+            normalized.append(
+                {
+                    "id": str(row.get("id", "") or raw.get("id", "") or "").strip(),
+                    "title": str(row.get("title", "") or "").strip(),
+                    "summary": _clean_inline(row.get("content", ""), limit=120),
+                    "score": row.get("score", 0.0),
+                    "quota_name": str(raw.get("quota_name", "") or "").strip(),
+                    "unit": str(raw.get("unit", "") or "").strip(),
+                    "price": raw.get("composite_unit_price", raw.get("price_value")),
+                    "region": str(raw.get("region", "") or "").strip(),
+                    "source_date": str(raw.get("source_date", "") or raw.get("price_date_iso", "") or "").strip(),
                 }
             )
         return normalized

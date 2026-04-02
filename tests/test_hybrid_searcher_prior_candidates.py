@@ -58,6 +58,50 @@ class _FakeBM25:
         return []
 
 
+class _FakeUnifiedDataLayer:
+    def search(self, query, sources=None, strategy="auto", top_k=10, authority_only=True):
+        del query, sources, strategy, top_k, authority_only
+        return {
+            "grouped": {
+                "experience": [
+                    {
+                        "raw": {
+                            "id": 21,
+                            "quota_ids": ["Q-U-EXP"],
+                            "quota_names": ["Unified Experience Quota"],
+                            "confidence": 92,
+                            "layer": "authority",
+                            "gate": "green",
+                            "total_score": 0.91,
+                            "similarity": 0.89,
+                            "match_type": "similar",
+                        }
+                    }
+                ],
+                "universal_kb": [
+                    {
+                        "raw": {
+                            "bill_pattern": "KB Bill",
+                            "quota_patterns": ["KB Quota Pattern"],
+                            "similarity": 0.88,
+                            "confidence": 86,
+                        }
+                    }
+                ],
+                "quota": [
+                    {
+                        "raw": {
+                            "quota_id": "Q-U-QUOTA",
+                            "name": "Unified Quota Candidate",
+                            "unit": "m",
+                        },
+                        "score": 0.77,
+                    }
+                ],
+            }
+        }
+
+
 def test_collect_prior_candidates_uses_experience_exact_variants(monkeypatch):
     monkeypatch.setattr("src.hybrid_searcher.search_by_id", lambda quota_id, province=None: (quota_id, "Resolved " + quota_id, "m"))
 
@@ -183,3 +227,31 @@ def test_build_query_variants_include_primary_query_profile():
     variant_queries = [row["query"] for row in variants]
     assert "强电桥架 600mm×200mm" in variant_queries
     assert "强电桥架" in variant_queries
+def test_collect_prior_candidates_uses_unified_data_layer_when_available(monkeypatch):
+    monkeypatch.setattr(
+        "src.hybrid_searcher.search_by_id",
+        lambda quota_id, province=None: (quota_id, "Resolved " + quota_id, "m"),
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = None
+    searcher._universal_kb = False
+    searcher._unified_data_layer = _FakeUnifiedDataLayer()
+    searcher._bm25_engine = _FakeBM25()
+
+    priors = searcher.collect_prior_candidates(
+        "search query",
+        full_query="full query",
+        item={},
+        top_k=4,
+    )
+
+    quota_ids = [row["quota_id"] for row in priors]
+    assert "Q-U-EXP" in quota_ids
+    assert "Q-KB-1" in quota_ids
+    assert "Q-U-QUOTA" in quota_ids
+
+    quota_prior = next(row for row in priors if row["quota_id"] == "Q-U-QUOTA")
+    assert quota_prior["match_source"] == "quota_unified"
+    assert quota_prior["knowledge_prior_sources"] == ["quota"]
