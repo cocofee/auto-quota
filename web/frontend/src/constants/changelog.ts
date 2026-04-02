@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.118';
+export const APP_VERSION = '0.2.120';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,42 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.120',
+    date: '2026-04-02',
+    changes: [
+      { type: 'admin', text: 'refactor explicit picker framework' },
+      { type: 'admin', text: 'Add unified data layer integration' },
+      { type: 'admin', text: 'Normalize repository text encoding to UTF-8' },
+      { type: 'admin', text: 'split query routing and rule matching' },
+      { type: 'admin', text: 'add performance monitoring to match pipeline' },
+      { type: 'admin', text: 'Cache LTR model loading' },
+      { type: 'admin', text: 'parallelize experience recall' },
+      { type: 'admin', text: 'add price validation layer' },
+      { type: 'admin', text: '阶段三第1批同义词补充（+28条）' },
+      { type: 'admin', text: 'stage2-stage3 stabilize ranking parser recall regressions' },
+      { type: 'admin', text: 'Add reranker fallback and local path guard' },
+      { type: 'admin', text: 'Fix export-final row alignment rebuild' },
+    ],
+  },
+  {
+    version: '0.2.119',
+    date: '2026-04-02',
+    changes: [
+      { type: 'admin', text: 'refactor explicit picker framework' },
+      { type: 'admin', text: 'Add unified data layer integration' },
+      { type: 'admin', text: 'Normalize repository text encoding to UTF-8' },
+      { type: 'admin', text: 'split query routing and rule matching' },
+      { type: 'admin', text: 'add performance monitoring to match pipeline' },
+      { type: 'admin', text: 'Cache LTR model loading' },
+      { type: 'admin', text: 'parallelize experience recall' },
+      { type: 'admin', text: 'add price validation layer' },
+      { type: 'admin', text: '阶段三第1批同义词补充（+28条）' },
+      { type: 'admin', text: 'stage2-stage3 stabilize ranking parser recall regressions' },
+      { type: 'admin', text: 'Add reranker fallback and local path guard' },
+      { type: 'admin', text: 'Fix export-final row alignment rebuild' },
+    ],
+  },
   {
     version: '0.2.118',
     date: '2026-03-31',
