@@ -145,9 +145,16 @@ def _light_status_from_state(
 
 
 class FinalValidator:
-    def __init__(self, *, province: str | None = None, auto_correct: bool = True):
+    def __init__(
+        self,
+        *,
+        province: str | None = None,
+        auto_correct: bool = True,
+        price_validator=None,
+    ):
         self.province = province
         self.auto_correct = auto_correct
+        self.price_validator = price_validator
 
     def validate_results(self, results: list[dict]) -> list[dict]:
         for result in results or []:
@@ -163,6 +170,7 @@ class FinalValidator:
         issues: list[ValidationIssue] = []
         vetoed = False
         result["final_review_correction"] = {}
+        confidence_score = _safe_confidence(result.get("confidence_score", result.get("confidence")))
 
         ambiguity_issue = self._check_reasoning_review(result)
         if ambiguity_issue:
@@ -185,6 +193,19 @@ class FinalValidator:
         if anchor_issue:
             issues.append(anchor_issue)
 
+        price_validation = self._validate_price(item, result)
+        if price_validation.get("status") == "price_mismatch":
+            confidence_score = _safe_confidence(
+                confidence_score + int(price_validation.get("confidence_penalty", 0) or 0)
+            )
+            issues.append(
+                ValidationIssue(
+                    issue_type="price_mismatch",
+                    severity="warning",
+                    message=price_validation.get("message", "价格偏离历史参考"),
+                )
+            )
+
         status = "ok"
         veto_issue = self._pick_veto_issue(issues)
         if veto_issue:
@@ -194,7 +215,6 @@ class FinalValidator:
         if status == "ok" and issues:
             status = "manual_review"
 
-        confidence_score = _safe_confidence(result.get("confidence_score", result.get("confidence")))
         review_risk = _review_risk_from_state(
             confidence_score=confidence_score,
             issues=issues,
@@ -233,6 +253,7 @@ class FinalValidator:
         result["review_risk"] = review_risk
         result["light_status"] = light_status
         result["confidence"] = confidence_score
+        result["price_validation"] = price_validation
         result["final_validation"] = {
             "status": status,
             "corrected": False,
@@ -246,8 +267,39 @@ class FinalValidator:
             "confidence_score": confidence_score,
             "review_risk": review_risk,
             "light_status": light_status,
+            "price_validation": price_validation,
         }
         return result
+
+    def _get_price_validator(self):
+        if self.price_validator is not None:
+            return self.price_validator
+        try:
+            from src.price_reference_db import PriceReferenceDB
+            from src.price_validator import PriceValidator
+
+            self.price_validator = PriceValidator(PriceReferenceDB())
+        except Exception:
+            self.price_validator = False
+        return self.price_validator or None
+
+    def _validate_price(self, item: dict, result: dict) -> dict:
+        quotas = result.get("quotas") or []
+        if not quotas:
+            return {"status": "skip"}
+
+        validator = self._get_price_validator()
+        if validator is None:
+            return {"status": "unavailable"}
+
+        matched_quota = dict(quotas[0] or {})
+        matched_quota["confidence"] = _safe_confidence(
+            result.get("confidence_score", result.get("confidence"))
+        )
+        try:
+            return validator.validate(item, matched_quota) or {"status": "skip"}
+        except Exception:
+            return {"status": "unavailable"}
 
     def _check_reasoning_review(self, result: dict) -> ValidationIssue | None:
         decision = result.get("reasoning_decision") or {}
