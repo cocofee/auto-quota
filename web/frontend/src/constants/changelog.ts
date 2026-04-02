@@ -9,7 +9,7 @@
  * - type: 'admin' → 仅管理员可见（部署、重构、CI/CD、内部优化等技术改动）
  */
 
-export const APP_VERSION = '0.2.121';
+export const APP_VERSION = '0.2.122';
 
 /** 更新类型：user=用户可见, admin=仅管理员可见 */
 export type ChangeType = 'user' | 'admin';
@@ -27,6 +27,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.122',
+    date: '2026-04-03',
+    changes: [
+      { type: 'admin', text: 'add openclaw jarvis review workflow' },
+      { type: 'admin', text: 'fix signal cabinet family guard' },
+    ],
+  },
   {
     version: '0.2.121',
     date: '2026-04-02',
