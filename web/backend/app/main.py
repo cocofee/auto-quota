@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.config import CORS_ORIGINS, LOG_DIR
-from app.services.local_http import local_match_request
+from app.services.local_http import local_match_async_client
 
 # 把项目根目录加入Python路径，这样后端代码可以直接 import main, config, src.* 等
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -196,15 +196,14 @@ async def list_provinces():
         from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
 
         if MATCH_BACKEND == "remote" and LOCAL_MATCH_URL:
-            # 远程模式：从本地匹配服务的 /health 接口获取省份列表
-            resp = local_match_request(
-                "GET",
-                f"{LOCAL_MATCH_URL}/health",
-                headers={"X-API-Key": LOCAL_MATCH_API_KEY or ""},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            # 远程模式：从本地匹配服务的专用元数据接口获取省份列表
+            async with local_match_async_client(timeout=30) as client:
+                resp = await client.get(
+                    f"{LOCAL_MATCH_URL}/provinces-meta",
+                    headers={"X-API-Key": LOCAL_MATCH_API_KEY or ""},
+                )
+                resp.raise_for_status()
+                data = resp.json()
             return {
                 "provinces": data.get("provinces", []),
                 "groups": data.get("groups", {}),

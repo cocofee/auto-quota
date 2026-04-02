@@ -455,9 +455,9 @@ export default function TaskCreatePage() {
       formData.append('province', values.province);
       formData.append('mode', values.mode || 'agent');
 
-      // 传选中的sheets（不全选时才传）
-      if (selectedSheets.length > 0 && selectedSheets.length < sheetNames.length) {
-        formData.append('sheet', selectedSheets.join(','));
+      // 始终显式传递选中的 sheets，避免“全选”时被后端回退到自动筛选。
+      if (selectedSheets.length > 0) {
+        formData.append('sheet', JSON.stringify(selectedSheets));
       }
 
       formData.append('use_experience', String(isAdmin ? (values.use_experience ?? true) : true));

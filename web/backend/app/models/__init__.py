@@ -3,9 +3,10 @@
 from app.models.user import User
 from app.models.task import Task
 from app.models.result import MatchResult
+from app.models.openclaw_review_job import OpenClawReviewJob
 from app.models.refresh_token import RefreshToken
 from app.models.consult import ConsultSubmission
 from app.models.order import Order
 from app.models.quota_log import QuotaLog
 
-__all__ = ["User", "Task", "MatchResult", "RefreshToken", "ConsultSubmission", "Order", "QuotaLog"]
+__all__ = ["User", "Task", "MatchResult", "OpenClawReviewJob", "RefreshToken", "ConsultSubmission", "Order", "QuotaLog"]

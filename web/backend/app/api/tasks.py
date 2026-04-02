@@ -15,6 +15,7 @@ import uuid
 import json
 import shutil
 import asyncio
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy import select, func, desc, true as sa_true, cast, Integer
@@ -32,6 +33,8 @@ from app.services.match_service import save_upload_file, get_task_output_dir
 from app.tasks.match_task import execute_match
 from app.config import UPLOAD_DIR, TASK_OUTPUT_DIR, ACCESS_TOKEN_COOKIE_NAME
 from app.api.shared import get_user_task
+from app.text_utils import normalize_client_filename, repair_mojibake_text
+from src.bill_reader import parse_sheet_selection
 
 router = APIRouter()
 
@@ -61,48 +64,139 @@ def _normalize_create_task_inputs(
     return province_norm, sheet_norm, llm_norm
 
 
+def _canonicalize_sheet_selection(sheet: str | None) -> str | None:
+    names = parse_sheet_selection(sheet)
+    if not names:
+        return None
+    return json.dumps(names, ensure_ascii=False, separators=(",", ":"))
+
+
+def _task_signature_matches(
+    task: Task,
+    *,
+    province: str,
+    mode: str,
+    sheet: str | None,
+    limit_count: int | None,
+    use_experience: bool,
+) -> bool:
+    return (
+        task.province == province
+        and task.mode == mode
+        and (task.sheet or None) == sheet
+        and task.limit_count == limit_count
+        and task.use_experience == use_experience
+    )
+
+
+def _sha256_file(path: str) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(1024 * 1024):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+async def _has_recent_duplicate_task(
+    db: AsyncSession,
+    *,
+    user_id,
+    province: str,
+    mode: str,
+    sheet: str | None,
+    limit_count: int | None,
+    use_experience: bool,
+    file_path: str,
+) -> bool:
+    from datetime import datetime, timezone, timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    query = (
+        select(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.status.in_(["pending", "running"]),
+            Task.created_at >= cutoff,
+        )
+        .order_by(desc(Task.created_at))
+    )
+    candidates = (await db.execute(query)).scalars().all()
+    if not candidates:
+        return False
+
+    new_hash = _sha256_file(file_path)
+    if not new_hash:
+        return False
+
+    for task in candidates:
+        if not _task_signature_matches(
+            task,
+            province=province,
+            mode=mode,
+            sheet=sheet,
+            limit_count=limit_count,
+            use_experience=use_experience,
+        ):
+            continue
+        existing_hash = _sha256_file(task.file_path)
+        if existing_hash and existing_hash == new_hash:
+            return True
+    return False
+
+
+def _estimate_task_bill_count(file_path: str, province: str, sheet: str | None, limit_count: int | None) -> int | None:
+    try:
+        import main as auto_quota_main
+
+        items = auto_quota_main._load_bill_items_for_run(
+            file_path,
+            sheet=sheet,
+            limit=limit_count,
+            province=province,
+        )
+        return len(items)
+    except Exception as exc:
+        logger.warning(f"任务创建预检未能读取清单条数，回退到基础额度校验: {exc}")
+        return None
+
+
+def _to_task_response(task: Task) -> TaskResponse:
+    resp = TaskResponse.model_validate(task)
+    resp.name = repair_mojibake_text(resp.name) or ""
+    resp.original_filename = normalize_client_filename(resp.original_filename, "unknown.xlsx")
+    resp.province = repair_mojibake_text(resp.province) or ""
+    resp.progress_message = repair_mojibake_text(resp.progress_message) or ""
+    resp.error_message = repair_mojibake_text(resp.error_message)
+    resp.username = repair_mojibake_text(resp.username)
+    return resp
+
+
 @router.post("", response_model=TaskResponse, status_code=201)
 async def create_task(
-    file: UploadFile = File(description="清单Excel文件（.xlsx/.xls）"),
+    file: UploadFile = File(description="清单 Excel 文件（.xlsx/.xls）"),
     province: str = Form(description="省份定额库名称"),
-    mode: str | None = Form(default=None, description="匹配模式: search（快速）或 agent（精准）"),
-    sheet: str | None = Form(default=None, description="指定Sheet名称"),
+    mode: str | None = Form(default=None, description="匹配模式：search 或 agent"),
+    sheet: str | None = Form(default=None, description="指定 Sheet 名称"),
     limit_count: int | None = Form(default=None, description="限制处理条数"),
     use_experience: bool = Form(default=True, description="是否使用经验库"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """创建匹配任务
-
-    上传清单Excel文件 + 配置匹配参数 → 任务进入Celery队列等待执行。
-    立即返回任务信息，前端可通过 /progress 端点跟踪进度。
-    匹配模式由前端传入（search/agent），未传时使用后端默认配置。
-    """
-    # 1. 校验参数
+    """创建匹配任务。"""
     if limit_count is not None and (limit_count < 1 or limit_count > 10000):
         raise HTTPException(status_code=400, detail="limit_count 必须在 1~10000 之间")
+
     province, sheet, _ = _normalize_create_task_inputs(province, sheet, None)
+    sheet = _canonicalize_sheet_selection(sheet)
+    original_filename = normalize_client_filename(file.filename, "unknown.xlsx")
+    if len(original_filename) > 255:
+        raise HTTPException(status_code=400, detail="original filename 长度不能超过 255")
 
-    # 防重复提交：同一用户、同文件名、同省份，5分钟内有 pending/running 的任务就拒绝
-    from datetime import datetime, timezone, timedelta
-    original_filename = file.filename or "unknown.xlsx"
-    dup_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-    dup_query = select(func.count()).select_from(Task).where(
-        Task.user_id == user.id,
-        Task.original_filename == original_filename,
-        Task.province == province,
-        Task.status.in_(["pending", "running"]),
-        Task.created_at >= dup_cutoff,
-    )
-    dup_count = (await db.execute(dup_query)).scalar_one()
-    if dup_count > 0:
-        raise HTTPException(
-            status_code=409,
-            detail=f"该文件（{original_filename}）在同一定额库下已有进行中的任务，请等待完成后再提交"
-        )
-
-    # 匹配模式：前端传入优先，未传则用后端默认配置
     from app.config import MATCH_MODE
+
     if mode and mode.strip():
         mode = mode.strip()
         if mode not in ("search", "agent"):
@@ -110,44 +204,74 @@ async def create_task(
     else:
         mode = MATCH_MODE
 
-    # 额度预检查：余额为0时拦截（创建时不知道实际条数，只做基本检查）
-    # 如果指定了 limit_count，可以做更精确的预检
     min_required = limit_count if limit_count else 1
     if user.quota_balance < min_required:
-        raise HTTPException(
-            status_code=402,
-            detail=f"额度不足，请先购买额度。当前余额: {user.quota_balance}条"
-                   + (f"，本次任务至少需要{limit_count}条" if limit_count else ""),
-        )
+        detail = f"额度不足，当前剩余 {user.quota_balance} 条"
+        if limit_count:
+            detail += f"，本次任务至少需要 {limit_count} 条"
+        raise HTTPException(status_code=402, detail=detail)
+
     try:
         from app.services.llm_config_service import get_llm_config
+
         llm_cfg = await get_llm_config(db)
         agent_llm = llm_cfg["llm_type"]
     except Exception:
         from app.config import MATCH_LLM
+
         agent_llm = MATCH_LLM
 
-    # 2. 生成任务ID并保存上传文件
-    #    save_upload_file 是同步磁盘I/O，用 to_thread 避免阻塞事件循环
     task_id = uuid.uuid4()
     try:
         saved_path = await asyncio.to_thread(save_upload_file, file, task_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # 3. 创建任务记录
+    task_dir = UPLOAD_DIR / str(task_id)
+    if await _has_recent_duplicate_task(
+        db,
+        user_id=user.id,
+        province=province,
+        mode=mode,
+        sheet=sheet,
+        limit_count=limit_count,
+        use_experience=use_experience,
+        file_path=str(saved_path),
+    ):
+        if task_dir.exists():
+            shutil.rmtree(task_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"文件“{original_filename}”已有相同参数的进行中任务，"
+                "请等待当前任务完成后再提交"
+            ),
+        )
+
+    estimated_count = await asyncio.to_thread(
+        _estimate_task_bill_count,
+        str(saved_path),
+        province,
+        sheet,
+        limit_count,
+    )
+    if estimated_count is not None and estimated_count > user.quota_balance:
+        if task_dir.exists():
+            shutil.rmtree(task_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"额度不足，当前剩余 {user.quota_balance} 条，"
+                f"预估本次任务需要 {estimated_count} 条"
+            ),
+        )
+
     from pathlib import Path
-    if len(original_filename) > 255:
-        # 校验失败，清理已保存的临时文件
-        try:
-            Path(saved_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise HTTPException(status_code=400, detail="原始文件名过长（最多255字符）")
+
     task = Task(
         id=task_id,
         user_id=user.id,
-        name=Path(original_filename).stem,  # 任务名从文件名提取
+        name=Path(original_filename).stem,
         file_path=str(saved_path),
         original_filename=original_filename,
         mode=mode,
@@ -161,12 +285,8 @@ async def create_task(
         progress_message="等待执行...",
     )
     db.add(task)
-
-    # 必须先提交到数据库，确保 Celery worker 能找到这条记录
-    # （如果只 flush 不 commit，快速的 worker 可能在 commit 前就查不到记录）
     await db.commit()
 
-    # 4. 提交Celery异步任务
     try:
         celery_result = execute_match.delay(
             task_id=str(task_id),
@@ -180,21 +300,18 @@ async def create_task(
                 "no_experience": not use_experience,
             },
         )
-        # 记录Celery任务ID（用于后续取消等操作）
         task.celery_task_id = celery_result.id
-        await db.commit()  # 显式提交 celery_task_id
+        await db.commit()
     except Exception as e:
-        # Redis/Celery 不可用时，标记任务失败并清理上传文件
         task.status = "failed"
         task.error_message = f"任务入队失败: {e}"
-        await db.commit()  # 显式提交失败状态，避免依赖 teardown 而丢失
-        task_dir = UPLOAD_DIR / str(task_id)
+        await db.commit()
         if task_dir.exists():
             shutil.rmtree(task_dir, ignore_errors=True)
         logger.error(f"Celery任务入队失败: {e}")
 
     logger.info(f"创建任务 {task_id}: {task.name} (mode={mode}, province={province})")
-    return task
+    return _to_task_response(task)
 
 
 @router.get("", response_model=TaskListResponse)
@@ -267,11 +384,12 @@ async def list_tasks(
         )).all()
         user_map = {r.id: r.nickname or r.email for r in user_rows}
         for t in tasks:
-            resp = TaskResponse.model_validate(t)
+            resp = _to_task_response(t)
             resp.username = user_map.get(t.user_id, "")
+            resp.username = repair_mojibake_text(resp.username)
             items.append(resp)
     else:
-        items = [TaskResponse.model_validate(t) for t in tasks]
+        items = [_to_task_response(t) for t in tasks]
 
     return TaskListResponse(items=items, total=total, page=page, size=size, total_bills=total_bills)
 
@@ -286,7 +404,8 @@ async def get_task(
 
     管理员可查看任意任务，普通用户只能查看自己的。
     """
-    return await get_user_task(task_id, user, db)
+    task = await get_user_task(task_id, user, db)
+    return _to_task_response(task)
 
 
 @router.delete("/{task_id}", status_code=204)

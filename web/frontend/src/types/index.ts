@@ -117,6 +117,23 @@ export interface QuotaItem {
 export type ReviewStatus = 'pending' | 'confirmed' | 'corrected';
 export type ReviewRisk = 'low' | 'medium' | 'high';
 export type LightStatus = 'green' | 'yellow' | 'red';
+export type OpenClawReviewStatus = 'pending' | 'reviewed' | 'applied' | 'rejected';
+export type OpenClawReviewConfirmStatus = 'pending' | 'approved' | 'rejected';
+export type OpenClawDecisionType =
+  | 'agree'
+  | 'override_within_candidates'
+  | 'retry_search_then_select'
+  | 'candidate_pool_insufficient'
+  | 'abstain';
+export type OpenClawErrorStage = 'retriever' | 'ranker' | 'arbiter' | 'final_validator' | 'unknown';
+export type OpenClawErrorType =
+  | 'wrong_family'
+  | 'wrong_param'
+  | 'wrong_book'
+  | 'synonym_gap'
+  | 'low_confidence_override'
+  | 'missing_candidate'
+  | 'unknown';
 
 /** 单条匹配结果 */
 export interface MatchResult {
@@ -145,15 +162,22 @@ export interface MatchResult {
   review_status: ReviewStatus;
   corrected_quotas: QuotaItem[] | null;
   review_note: string;
-  openclaw_review_status: string;
+  openclaw_review_status: OpenClawReviewStatus;
   openclaw_suggested_quotas: QuotaItem[] | null;
   openclaw_review_note: string;
   openclaw_review_confidence: number | null;
   openclaw_review_actor: string;
   openclaw_review_time: string | null;
-  openclaw_review_confirm_status: string;
+  openclaw_decision_type?: OpenClawDecisionType | null;
+  openclaw_error_stage?: OpenClawErrorStage | null;
+  openclaw_error_type?: OpenClawErrorType | null;
+  openclaw_retry_query?: string;
+  openclaw_reason_codes?: string[] | null;
+  openclaw_review_payload?: Record<string, unknown> | null;
+  openclaw_review_confirm_status: OpenClawReviewConfirmStatus;
   openclaw_review_confirmed_by: string;
   openclaw_review_confirm_time: string | null;
+  human_feedback_payload?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -171,6 +195,52 @@ export interface ResultListResponse {
     corrected: number;   // 已纠正条数（审核后）
     pending: number;     // 待审核条数
   };
+}
+
+export type OpenClawReviewJobStatus = 'ready' | 'running' | 'completed' | 'failed';
+export type OpenClawReviewJobScope = 'need_review' | 'all_pending' | 'yellow_red_pending';
+
+export interface OpenClawReviewJob {
+  id: string;
+  source_task_id: string;
+  status: OpenClawReviewJobStatus;
+  scope: OpenClawReviewJobScope;
+  requested_by: string;
+  note: string;
+  total_results: number;
+  pending_results: number;
+  reviewable_results: number;
+  green_count: number;
+  yellow_count: number;
+  red_count: number;
+  reviewed_pending_count: number;
+  summary?: Record<string, unknown> | null;
+  error_message?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface OpenClawAutoReviewResponse {
+  result_id: string;
+  source_task_id: string;
+  review_job_id?: string | null;
+  status: 'drafted' | 'skipped';
+  decision_type?: OpenClawDecisionType | null;
+  openclaw_review_status: OpenClawReviewStatus;
+  reviewable: boolean;
+  note: string;
+}
+
+export interface OpenClawBatchAutoReviewResponse {
+  review_job_id?: string | null;
+  source_task_id: string;
+  scope: OpenClawReviewJobScope;
+  total_candidates: number;
+  drafted_count: number;
+  skipped_count: number;
+  failed_count: number;
+  processed_result_ids: string[];
 }
 
 // ============================================================

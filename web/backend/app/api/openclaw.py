@@ -20,6 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import quota_search as quota_search_api
+from app.api import file_intake as file_intake_api
+from app.api import reference as reference_api
 from app.api import results as results_api
 from app.api import tasks as tasks_api
 from app.api.shared import get_user_task
@@ -27,8 +29,14 @@ from app.auth.openclaw import get_openclaw_read_user, get_openclaw_service_user
 from app.auth.permissions import require_admin
 from app.config import OPENCLAW_API_KEY, OPENCLAW_SERVICE_EMAIL, OPENCLAW_SERVICE_NICKNAME
 from app.database import get_db
+from app.models.openclaw_review_job import OpenClawReviewJob
 from app.models.result import MatchResult
+from app.models.task import Task
 from app.models.user import User
+from app.schemas.openclaw_review_job import (
+    OpenClawReviewJobCreateRequest,
+    OpenClawReviewJobResponse,
+)
 from app.schemas.result import (
     ConfirmResultsRequest,
     CorrectResultRequest,
@@ -37,7 +45,18 @@ from app.schemas.result import (
     OpenClawReviewDraftRequest,
     ResultListResponse,
 )
+from app.schemas.file_intake import (
+    FileClassifyRequest,
+    FileClassifyResponse,
+    FileIntakeResponse,
+    FileParseRequest,
+    FileParseResponse,
+    FileRouteRequest,
+    FileRouteResponse,
+)
+from app.schemas.reference import CompositePriceReferenceResponse, ItemPriceReferenceResponse
 from app.schemas.task import TaskListResponse, TaskResponse
+from app.services.openclaw_review_service import OpenClawReviewService
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -72,6 +91,44 @@ def _mask_key(value: str) -> str:
     if len(value) <= 10:
         return "*" * len(value)
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
+
+
+def _normalize_openclaw_reason_codes(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized or None
+
+
+def _build_openclaw_review_payload(
+    req: OpenClawReviewDraftRequest,
+    *,
+    suggested_quotas: list[dict],
+) -> dict:
+    explicit_payload = dict(req.openclaw_review_payload or {})
+    payload = {
+        **explicit_payload,
+        "decision_type": str(req.openclaw_decision_type or explicit_payload.get("decision_type") or "").strip(),
+        "error_stage": str(req.openclaw_error_stage or explicit_payload.get("error_stage") or "").strip(),
+        "error_type": str(req.openclaw_error_type or explicit_payload.get("error_type") or "").strip(),
+        "retry_query": str(req.openclaw_retry_query or explicit_payload.get("retry_query") or "").strip(),
+        "reason_codes": _normalize_openclaw_reason_codes(
+            req.openclaw_reason_codes
+            if req.openclaw_reason_codes is not None
+            else explicit_payload.get("reason_codes")
+        ) or [],
+        "review_confidence": req.openclaw_review_confidence,
+        "note": str(req.openclaw_review_note or explicit_payload.get("note") or "").strip(),
+        "suggested_quotas": suggested_quotas,
+    }
+    return payload
 
 
 def _get_staging():
@@ -148,6 +205,39 @@ PROMOTION_TARGET_BY_TYPE = {
     "experience": "ExperienceDB",
 }
 OPENCLAW_MANUAL_CARD_SOURCE_TABLE = "openclaw_manual_cards"
+OPENCLAW_REVIEW_SERVICE = OpenClawReviewService()
+
+
+class OpenClawAutoReviewRequest(BaseModel):
+    review_job_id: uuid.UUID | None = None
+
+
+class OpenClawBatchAutoReviewRequest(BaseModel):
+    review_job_id: uuid.UUID | None = None
+    scope: Literal["need_review", "all_pending", "yellow_red_pending"] | None = None
+    limit: int | None = Field(default=None, ge=1, le=1000)
+
+
+class OpenClawAutoReviewResponse(BaseModel):
+    result_id: uuid.UUID
+    source_task_id: uuid.UUID
+    review_job_id: uuid.UUID | None = None
+    status: Literal["drafted", "skipped"]
+    decision_type: str | None = None
+    openclaw_review_status: str
+    reviewable: bool
+    note: str = ""
+
+
+class OpenClawBatchAutoReviewResponse(BaseModel):
+    review_job_id: uuid.UUID | None = None
+    source_task_id: uuid.UUID
+    scope: str
+    total_candidates: int
+    drafted_count: int
+    skipped_count: int
+    failed_count: int
+    processed_result_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 def _build_result_list_response(items: list[MatchResult]) -> ResultListResponse:
@@ -254,12 +344,42 @@ async def _save_review_draft(
         db=db,
         owner=service_user,
     )
+    response = await _apply_review_draft(
+        match_result=match_result,
+        req=req,
+        service_user=service_user,
+        enforce_bucket_policy=True,
+    )
+    await db.flush()
+    return response
     _ensure_openclaw_reviewable(_openclaw_policy_bucket(match_result))
 
+    suggested_quotas = [item.model_dump() for item in (req.openclaw_suggested_quotas or [])]
+    if not suggested_quotas:
+        suggested_quotas = list(match_result.quotas or [])
+    if not suggested_quotas:
+        raise HTTPException(status_code=422, detail="OpenClaw draft 至少需要一组建议定额或原始定额可供确认")
+
+    payload = _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas)
+
     match_result.openclaw_review_status = "reviewed"
-    match_result.openclaw_suggested_quotas = [item.model_dump() for item in req.openclaw_suggested_quotas]
-    match_result.openclaw_review_note = req.openclaw_review_note or ""
-    match_result.openclaw_review_confidence = req.openclaw_review_confidence
+    match_result.openclaw_suggested_quotas = suggested_quotas
+    match_result.openclaw_review_note = str(payload.get("note") or req.openclaw_review_note or "")
+    payload_confidence = payload.get("review_confidence")
+    match_result.openclaw_review_confidence = (
+        int(payload_confidence) if isinstance(payload_confidence, int) else req.openclaw_review_confidence
+    )
+    decision_type = str(payload.get("decision_type") or req.openclaw_decision_type or "").strip()
+    error_stage = str(payload.get("error_stage") or req.openclaw_error_stage or "").strip()
+    error_type = str(payload.get("error_type") or req.openclaw_error_type or "").strip()
+    match_result.openclaw_decision_type = decision_type or None
+    match_result.openclaw_error_stage = error_stage or None
+    match_result.openclaw_error_type = error_type or None
+    match_result.openclaw_retry_query = str(payload.get("retry_query") or req.openclaw_retry_query or "")
+    match_result.openclaw_reason_codes = _normalize_openclaw_reason_codes(
+        payload.get("reason_codes") if isinstance(payload.get("reason_codes"), list) else req.openclaw_reason_codes
+    )
+    match_result.openclaw_review_payload = payload
     match_result.openclaw_review_actor = _service_actor(service_user)
     match_result.openclaw_review_time = _utcnow()
     match_result.openclaw_review_confirm_status = "pending"
@@ -268,6 +388,522 @@ async def _save_review_draft(
 
     await db.flush()
     return results_api._to_result_response(match_result)
+
+
+def _is_pending_formal_result(result_or_row) -> bool:
+    review_status = str(getattr(result_or_row, "review_status", "") or "").strip().lower()
+    return review_status not in {"confirmed", "corrected"}
+
+
+def _is_reviewed_pending_confirm(result_or_row) -> bool:
+    review_status = str(getattr(result_or_row, "openclaw_review_status", "") or "").strip().lower()
+    confirm_status = str(
+        getattr(result_or_row, "openclaw_review_confirm_status", "") or ""
+    ).strip().lower()
+    return review_status == "reviewed" and confirm_status == "pending"
+
+
+def _matches_review_job_scope(result_or_row, scope: str) -> bool:
+    pending_formal = _is_pending_formal_result(result_or_row)
+    yellow_red_pending = pending_formal and _openclaw_policy_bucket(result_or_row) in {
+        "yellow",
+        "red",
+    }
+    if scope == "all_pending":
+        return pending_formal
+    if scope == "yellow_red_pending":
+        return yellow_red_pending
+    return yellow_red_pending or _is_reviewed_pending_confirm(result_or_row)
+
+
+def _review_job_scope_label(scope: str) -> str:
+    if scope == "all_pending":
+        return "all pending formal results"
+    if scope == "yellow_red_pending":
+        return "yellow/red pending formal results"
+    return "results that still need OpenClaw attention"
+
+
+async def _get_review_job_source_task(
+    *,
+    source_task_id: uuid.UUID,
+    db: AsyncSession,
+) -> Task:
+    result = await db.execute(select(Task).where(Task.id == source_task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="source task not found")
+    if str(task.status or "").strip().lower() != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"source task status must be completed, current={task.status}",
+        )
+    return task
+
+
+async def _ensure_no_active_review_job(
+    *,
+    source_task_id: uuid.UUID,
+    scope: str,
+    db: AsyncSession,
+) -> None:
+    result = await db.execute(
+        select(OpenClawReviewJob)
+        .where(
+            OpenClawReviewJob.source_task_id == source_task_id,
+            OpenClawReviewJob.scope == scope,
+            OpenClawReviewJob.status.in_(["ready", "running"]),
+        )
+        .order_by(OpenClawReviewJob.created_at.desc())
+    )
+    existing = result.scalars().first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"active review job already exists: {existing.id}",
+        )
+
+
+async def _summarize_review_job_source_task(
+    *,
+    task: Task,
+    scope: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    result = await db.execute(
+        select(
+            MatchResult.id,
+            MatchResult.light_status,
+            MatchResult.confidence_score,
+            MatchResult.confidence,
+            MatchResult.review_status,
+            MatchResult.openclaw_review_status,
+            MatchResult.openclaw_review_confirm_status,
+        ).where(MatchResult.task_id == task.id)
+    )
+    rows = result.all()
+    if not rows:
+        raise HTTPException(status_code=409, detail="source task has no results")
+
+    total_results = len(rows)
+    pending_results = 0
+    green_count = 0
+    yellow_count = 0
+    red_count = 0
+    reviewed_pending_count = 0
+    reviewable_results = 0
+
+    for row in rows:
+        bucket = _openclaw_policy_bucket(row)
+        if bucket == "green":
+            green_count += 1
+        elif bucket == "yellow":
+            yellow_count += 1
+        else:
+            red_count += 1
+
+        if _is_pending_formal_result(row):
+            pending_results += 1
+        if _is_reviewed_pending_confirm(row):
+            reviewed_pending_count += 1
+        if _matches_review_job_scope(row, scope):
+            reviewable_results += 1
+
+    return {
+        "total_results": total_results,
+        "pending_results": pending_results,
+        "reviewable_results": reviewable_results,
+        "green_count": green_count,
+        "yellow_count": yellow_count,
+        "red_count": red_count,
+        "reviewed_pending_count": reviewed_pending_count,
+        "summary": {
+            "scope": scope,
+            "scope_label": _review_job_scope_label(scope),
+            "source_task": {
+                "task_id": str(task.id),
+                "name": str(task.name or "").strip(),
+                "province": str(task.province or "").strip(),
+                "status": str(task.status or "").strip(),
+                "mode": str(task.mode or "").strip(),
+                "original_filename": str(task.original_filename or "").strip(),
+            },
+            "counts": {
+                "total_results": total_results,
+                "pending_results": pending_results,
+                "reviewable_results": reviewable_results,
+                "green_count": green_count,
+                "yellow_count": yellow_count,
+                "red_count": red_count,
+                "reviewed_pending_count": reviewed_pending_count,
+            },
+        },
+    }
+
+
+def _is_openclaw_auto_review_pending(result_or_row) -> bool:
+    return str(getattr(result_or_row, "openclaw_review_status", "") or "").strip().lower() in {
+        "",
+        "pending",
+    }
+
+
+def _issue_list_from_final_validation(final_validation: dict[str, Any]) -> list[dict[str, Any]]:
+    issues = final_validation.get("issues") if isinstance(final_validation, dict) else None
+    return [item for item in (issues or []) if isinstance(item, dict)]
+
+
+def _map_issue_type_to_openclaw_error(issue_type: str) -> str:
+    mapping = {
+        "category_mismatch": "wrong_family",
+        "anchor_conflict": "wrong_family",
+        "unit_conflict": "wrong_param",
+        "param_conflict": "wrong_param",
+        "book_conflict": "wrong_book",
+        "ambiguity_review": "low_confidence_override",
+        "price_mismatch": "low_confidence_override",
+        "missing_candidate": "missing_candidate",
+        "synonym_gap": "synonym_gap",
+    }
+    return mapping.get(issue_type, "unknown")
+
+
+def _infer_openclaw_error_stage(
+    *,
+    final_validation: dict[str, Any],
+    final_review_correction: dict[str, Any],
+    reasoning_summary: dict[str, Any],
+) -> str:
+    if final_validation or final_review_correction:
+        return "final_validator"
+    if reasoning_summary.get("engaged"):
+        return "arbiter"
+    return "unknown"
+
+
+def _candidate_to_quota(candidate: dict[str, Any]) -> dict[str, Any]:
+    quota = {
+        "quota_id": str(candidate.get("quota_id") or "").strip(),
+        "name": str(candidate.get("name") or "").strip(),
+        "unit": str(candidate.get("unit") or "").strip(),
+    }
+    for key in ("source", "param_score", "rerank_score"):
+        value = candidate.get(key)
+        if value not in (None, ""):
+            quota[key] = value
+    return quota
+
+
+def _normalize_quota_dict(quota: dict[str, Any]) -> dict[str, Any]:
+    normalized = {
+        "quota_id": str(quota.get("quota_id") or "").strip(),
+        "name": str(quota.get("name") or "").strip(),
+        "unit": str(quota.get("unit") or "").strip(),
+    }
+    for key in ("source", "param_score", "rerank_score"):
+        value = quota.get(key)
+        if value not in (None, ""):
+            normalized[key] = value
+    return normalized
+
+
+def _find_candidate_by_ref(
+    *,
+    candidate_pool: list[dict[str, Any]],
+    quotas: list[dict[str, Any]],
+    target_quota_id: str,
+    target_name: str,
+) -> dict[str, Any] | None:
+    target_quota_id = str(target_quota_id or "").strip()
+    target_name = str(target_name or "").strip()
+    for item in candidate_pool:
+        if not isinstance(item, dict):
+            continue
+        if target_quota_id and str(item.get("quota_id") or "").strip() == target_quota_id:
+            return _candidate_to_quota(item)
+        if target_name and str(item.get("name") or "").strip() == target_name:
+            return _candidate_to_quota(item)
+    for item in quotas:
+        if not isinstance(item, dict):
+            continue
+        if target_quota_id and str(item.get("quota_id") or "").strip() == target_quota_id:
+            return _normalize_quota_dict(item)
+        if target_name and str(item.get("name") or "").strip() == target_name:
+            return _normalize_quota_dict(item)
+    return None
+
+
+def _reason_codes_for_auto_review(
+    *,
+    bucket: str,
+    issue_types: list[str],
+    reasoning_summary: dict[str, Any],
+    final_review_correction: dict[str, Any],
+    has_candidate_pool: bool,
+    has_current_quota: bool,
+) -> list[str]:
+    codes: list[str] = []
+    if bucket:
+        codes.append(f"light_{bucket}")
+    for issue_type in issue_types[:3]:
+        item = str(issue_type or "").strip()
+        if item:
+            codes.append(item)
+    if reasoning_summary.get("engaged"):
+        codes.append("reasoning_engaged")
+    if final_review_correction:
+        codes.append("final_review_correction")
+    if not has_current_quota:
+        codes.append("jarvis_missing_top1")
+    if has_candidate_pool:
+        codes.append("candidate_pool_available")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for code in codes:
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        deduped.append(code)
+    return deduped
+
+
+def _build_auto_review_note(
+    *,
+    decision_type: str,
+    bucket: str,
+    issue_types: list[str],
+    has_current_quota: bool,
+    has_candidate_pool: bool,
+) -> str:
+    if decision_type == "override_within_candidates" and not has_current_quota:
+        return "Jarvis 未稳定产出 top1，OpenClaw 从候选池提升一个候选供人工复核。"
+    if decision_type == "override_within_candidates":
+        return "OpenClaw 根据终检/候选证据建议在现有候选池内改判。"
+    if decision_type == "candidate_pool_insufficient":
+        return "当前候选池不足以形成可执行建议，需补充召回或人工处理。"
+    if bucket == "green":
+        return "Jarvis 结果处于高置信区间，OpenClaw 未发现足够强的改判证据。"
+    if issue_types:
+        return "OpenClaw 保留 Jarvis 当前 top1，但记录了需要人工关注的诊断信号。"
+    if has_candidate_pool:
+        return "OpenClaw 复核后暂不改判，保留 Jarvis 当前选择并附带候选池上下文。"
+    return "OpenClaw 复核后暂不改判。"
+
+
+def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> OpenClawReviewDraftRequest:
+    context = OPENCLAW_REVIEW_SERVICE.build_review_context(task, match_result)
+    trace_summary = context.get("trace_summary") or {}
+    final_validation = trace_summary.get("final_validation") or {}
+    final_review_correction = trace_summary.get("final_review_correction") or {}
+    reasoning_summary = trace_summary.get("reasoning_summary") or {}
+    candidate_pool = [
+        item for item in (context.get("candidate_pool") or []) if isinstance(item, dict)
+    ]
+    current_quotas = [
+        _normalize_quota_dict(item)
+        for item in list(getattr(match_result, "quotas", None) or [])
+        if isinstance(item, dict)
+    ]
+    issue_types = [
+        str(item.get("type") or "").strip()
+        for item in _issue_list_from_final_validation(final_validation)
+        if str(item.get("type") or "").strip()
+    ]
+    bucket = _openclaw_policy_bucket(match_result)
+    suggested_quotas: list[dict[str, Any]] = []
+    decision_type = "agree"
+
+    correction_quota = _find_candidate_by_ref(
+        candidate_pool=candidate_pool,
+        quotas=current_quotas,
+        target_quota_id=str(final_review_correction.get("quota_id") or "").strip(),
+        target_name=str(final_review_correction.get("quota_name") or "").strip(),
+    )
+    if correction_quota:
+        decision_type = "override_within_candidates"
+        suggested_quotas = [correction_quota]
+    elif not current_quotas and candidate_pool:
+        decision_type = "override_within_candidates"
+        suggested_quotas = [_candidate_to_quota(candidate_pool[0])]
+    elif current_quotas:
+        decision_type = "agree"
+        suggested_quotas = list(current_quotas)
+    else:
+        decision_type = "candidate_pool_insufficient"
+        suggested_quotas = []
+
+    error_stage = _infer_openclaw_error_stage(
+        final_validation=final_validation,
+        final_review_correction=final_review_correction,
+        reasoning_summary=reasoning_summary,
+    )
+    error_type = _map_issue_type_to_openclaw_error(issue_types[0]) if issue_types else "unknown"
+    review_confidence = {
+        "override_within_candidates": 78 if bucket == "red" else 86,
+        "agree": 93 if bucket == "green" else 80,
+        "candidate_pool_insufficient": 55,
+    }.get(decision_type, 70)
+    reason_codes = _reason_codes_for_auto_review(
+        bucket=bucket,
+        issue_types=issue_types,
+        reasoning_summary=reasoning_summary,
+        final_review_correction=final_review_correction,
+        has_candidate_pool=bool(candidate_pool),
+        has_current_quota=bool(current_quotas),
+    )
+    note = _build_auto_review_note(
+        decision_type=decision_type,
+        bucket=bucket,
+        issue_types=issue_types,
+        has_current_quota=bool(current_quotas),
+        has_candidate_pool=bool(candidate_pool),
+    )
+    draft = OPENCLAW_REVIEW_SERVICE.build_structured_draft(
+        task,
+        match_result,
+        decision_type=decision_type,
+        suggested_quotas=suggested_quotas,
+        review_confidence=review_confidence,
+        error_stage=error_stage,
+        error_type=error_type,
+        retry_query=str((trace_summary.get("query_route") or {}).get("rewrite_query") or "").strip(),
+        reason_codes=reason_codes,
+        note=note,
+        evidence={
+            "bucket": bucket,
+            "issue_types": issue_types,
+            "final_validation": final_validation,
+            "final_review_correction": final_review_correction,
+            "reasoning_summary": reasoning_summary,
+        },
+    )
+    return OpenClawReviewDraftRequest(**draft)
+
+
+async def _apply_review_draft(
+    *,
+    match_result: MatchResult,
+    req: OpenClawReviewDraftRequest,
+    service_user: User,
+    enforce_bucket_policy: bool,
+) -> MatchResultResponse:
+    if enforce_bucket_policy:
+        _ensure_openclaw_reviewable(_openclaw_policy_bucket(match_result))
+
+    suggested_quotas = [item.model_dump() for item in (req.openclaw_suggested_quotas or [])]
+    decision_type = str(req.openclaw_decision_type or "").strip()
+    allow_empty_suggestions = decision_type in {
+        "candidate_pool_insufficient",
+        "retry_search_then_select",
+        "abstain",
+    }
+    if not suggested_quotas and not allow_empty_suggestions:
+        suggested_quotas = list(match_result.quotas or [])
+    if not suggested_quotas and not allow_empty_suggestions:
+        raise HTTPException(status_code=422, detail="OpenClaw review draft requires a suggested quota set")
+
+    payload = _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas)
+
+    match_result.openclaw_review_status = "reviewed"
+    match_result.openclaw_suggested_quotas = suggested_quotas or None
+    match_result.openclaw_review_note = str(payload.get("note") or req.openclaw_review_note or "")
+    payload_confidence = payload.get("review_confidence")
+    match_result.openclaw_review_confidence = (
+        int(payload_confidence) if isinstance(payload_confidence, int) else req.openclaw_review_confidence
+    )
+    decision_type = str(payload.get("decision_type") or req.openclaw_decision_type or "").strip()
+    error_stage = str(payload.get("error_stage") or req.openclaw_error_stage or "").strip()
+    error_type = str(payload.get("error_type") or req.openclaw_error_type or "").strip()
+    match_result.openclaw_decision_type = decision_type or None
+    match_result.openclaw_error_stage = error_stage or None
+    match_result.openclaw_error_type = error_type or None
+    match_result.openclaw_retry_query = str(payload.get("retry_query") or req.openclaw_retry_query or "")
+    match_result.openclaw_reason_codes = _normalize_openclaw_reason_codes(
+        payload.get("reason_codes") if isinstance(payload.get("reason_codes"), list) else req.openclaw_reason_codes
+    )
+    match_result.openclaw_review_payload = payload
+    match_result.openclaw_review_actor = _service_actor(service_user)
+    match_result.openclaw_review_time = _utcnow()
+    match_result.openclaw_review_confirm_status = "pending"
+    match_result.openclaw_review_confirmed_by = ""
+    match_result.openclaw_review_confirm_time = None
+    return results_api._to_result_response(match_result)
+
+
+async def _get_review_job_or_404(
+    *,
+    review_job_id: uuid.UUID,
+    db: AsyncSession,
+) -> OpenClawReviewJob:
+    result = await db.execute(
+        select(OpenClawReviewJob).where(OpenClawReviewJob.id == review_job_id)
+    )
+    review_job = result.scalar_one_or_none()
+    if not review_job:
+        raise HTTPException(status_code=404, detail="review job not found")
+    return review_job
+
+
+async def _resolve_auto_review_run(
+    *,
+    task_id: uuid.UUID,
+    requested_scope: str | None,
+    review_job_id: uuid.UUID | None,
+    db: AsyncSession,
+) -> tuple[Task, str, OpenClawReviewJob | None]:
+    task = await _get_review_job_source_task(source_task_id=task_id, db=db)
+    review_job = None
+    scope = str(requested_scope or "need_review").strip() or "need_review"
+    if review_job_id:
+        review_job = await _get_review_job_or_404(review_job_id=review_job_id, db=db)
+        if review_job.source_task_id != task_id:
+            raise HTTPException(status_code=409, detail="review job does not belong to this source task")
+        scope = str(review_job.scope or scope).strip() or "need_review"
+    return task, scope, review_job
+
+
+async def _mark_review_job_running(review_job: OpenClawReviewJob | None, db: AsyncSession) -> None:
+    if not review_job:
+        return
+    review_job.status = "running"
+    review_job.started_at = review_job.started_at or _utcnow()
+    review_job.completed_at = None
+    review_job.error_message = None
+    await db.flush()
+
+
+async def _finalize_review_job(
+    *,
+    review_job: OpenClawReviewJob | None,
+    task: Task,
+    scope: str,
+    drafted_count: int,
+    skipped_count: int,
+    failed_count: int,
+    db: AsyncSession,
+) -> None:
+    if not review_job:
+        return
+    refreshed = await _summarize_review_job_source_task(task=task, scope=scope, db=db)
+    review_job.total_results = int(refreshed["total_results"])
+    review_job.pending_results = int(refreshed["pending_results"])
+    review_job.reviewable_results = int(refreshed["reviewable_results"])
+    review_job.green_count = int(refreshed["green_count"])
+    review_job.yellow_count = int(refreshed["yellow_count"])
+    review_job.red_count = int(refreshed["red_count"])
+    review_job.reviewed_pending_count = int(refreshed["reviewed_pending_count"])
+    summary = dict(refreshed["summary"])
+    summary["last_batch"] = {
+        "drafted_count": drafted_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "completed_at": _utcnow().isoformat(),
+    }
+    review_job.summary = summary
+    review_job.status = "completed" if failed_count == 0 else "failed"
+    review_job.completed_at = _utcnow()
+    review_job.error_message = "" if failed_count == 0 else f"failed_count={failed_count}"
+    await db.flush()
 
 
 def _build_openclaw_openapi(request: Request) -> dict:
@@ -308,6 +944,67 @@ async def health(service_user: User = Depends(get_openclaw_service_user)):
     }
 
 
+@router.post("/file-intake/upload", response_model=FileIntakeResponse, status_code=201)
+async def upload_file_intake(
+    file: UploadFile = File(...),
+    province: str = Form(default=""),
+    project_name: str = Form(default=""),
+    project_stage: str = Form(default=""),
+    source_hint: str = Form(default=""),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    return await file_intake_api._save_upload(
+        file=file,
+        province=province,
+        project_name=project_name,
+        project_stage=project_stage,
+        source_hint=source_hint,
+        actor=service_user,
+    )
+
+
+@router.get("/file-intake/{file_id}", response_model=FileIntakeResponse)
+async def get_file_intake(
+    file_id: str,
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    record = file_intake_api.FileIntakeDB().get_file(file_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="file not found")
+    return file_intake_api._to_response(record)
+
+
+@router.post("/file-intake/{file_id}/classify", response_model=FileClassifyResponse)
+async def classify_file_intake(
+    file_id: str,
+    req: FileClassifyRequest,
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    return await file_intake_api._classify_file(file_id, req)
+
+
+@router.post("/file-intake/{file_id}/parse", response_model=FileParseResponse)
+async def parse_file_intake(
+    file_id: str,
+    req: FileParseRequest,
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    return await file_intake_api._parse_file(file_id, req)
+
+
+@router.post("/file-intake/{file_id}/route", response_model=FileRouteResponse)
+async def route_file_intake(
+    file_id: str,
+    req: FileRouteRequest,
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    _ = service_user
+    return await file_intake_api._route_file(file_id, req)
+
+
 @router.get("/admin/key-status", response_model=OpenClawKeyStatusResponse)
 async def key_status(admin: User = Depends(require_admin)):
     return OpenClawKeyStatusResponse(
@@ -333,7 +1030,7 @@ async def generate_key_suggestion(
         suggested_key=suggested_key,
         env_name="OPENCLAW_API_KEY",
         sync_targets=["backend", "celery-worker"],
-        manifest_paths=["lzc-manifest.yml", "deploy/lazycat/lzc-manifest.yml"],
+        manifest_paths=["lzc-manifest.yml"],
         rollout_steps=[
             "把新 key 填到 backend.environment.OPENCLAW_API_KEY",
             "把同一个 key 填到 celery-worker.environment.OPENCLAW_API_KEY",
@@ -388,9 +1085,105 @@ async def create_promotion_card(
     )
 
 
+@router.post("/review-jobs", response_model=OpenClawReviewJobResponse, status_code=201)
+async def create_review_job(
+    req: OpenClawReviewJobCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    task = await _get_review_job_source_task(source_task_id=req.source_task_id, db=db)
+    await _ensure_no_active_review_job(
+        source_task_id=req.source_task_id,
+        scope=req.scope,
+        db=db,
+    )
+    summary = await _summarize_review_job_source_task(task=task, scope=req.scope, db=db)
+    if int(summary["reviewable_results"]) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"no reviewable results found for scope={req.scope}",
+        )
+
+    review_job = OpenClawReviewJob(
+        source_task_id=req.source_task_id,
+        status="ready",
+        scope=req.scope,
+        requested_by=_service_actor(service_user),
+        note=(req.note or "").strip(),
+        total_results=int(summary["total_results"]),
+        pending_results=int(summary["pending_results"]),
+        reviewable_results=int(summary["reviewable_results"]),
+        green_count=int(summary["green_count"]),
+        yellow_count=int(summary["yellow_count"]),
+        red_count=int(summary["red_count"]),
+        reviewed_pending_count=int(summary["reviewed_pending_count"]),
+        summary=summary["summary"],
+    )
+    db.add(review_job)
+    await db.commit()
+    await db.refresh(review_job)
+    return OpenClawReviewJobResponse.model_validate(review_job)
+
+
+@router.get("/review-jobs/{review_job_id}", response_model=OpenClawReviewJobResponse)
+async def get_review_job(
+    review_job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    result = await db.execute(
+        select(OpenClawReviewJob).where(OpenClawReviewJob.id == review_job_id)
+    )
+    review_job = result.scalar_one_or_none()
+    if not review_job:
+        raise HTTPException(status_code=404, detail="review job not found")
+    return OpenClawReviewJobResponse.model_validate(review_job)
+
+
 @router.get("/provinces")
 async def list_provinces(reader: User = Depends(get_openclaw_read_user)):
     return await quota_search_api.list_search_provinces(user=reader)
+
+
+@router.get("/reference/item-price", response_model=ItemPriceReferenceResponse)
+async def get_openclaw_item_price_reference(
+    q: str = Query(description="设备/材料查询词"),
+    specialty: str = Query(default="", description="专业"),
+    brand: str = Query(default="", description="品牌"),
+    model: str = Query(default="", description="型号"),
+    region: str = Query(default="", description="地区"),
+    top_k: int = Query(default=20, ge=1, le=100),
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    return reference_api._get_item_price_reference(
+        q=q,
+        specialty=specialty,
+        brand=brand,
+        model=model,
+        region=region,
+        top_k=top_k,
+    )
+
+
+@router.get("/reference/composite-price", response_model=CompositePriceReferenceResponse)
+async def get_openclaw_composite_price_reference(
+    q: str = Query(description="清单/综合单价查询词"),
+    specialty: str = Query(default="", description="专业"),
+    quota_code: str = Query(default="", description="定额编号"),
+    region: str = Query(default="", description="地区"),
+    top_k: int = Query(default=20, ge=1, le=100),
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    return reference_api._get_composite_price_reference(
+        q=q,
+        specialty=specialty,
+        quota_code=quota_code,
+        region=region,
+        top_k=top_k,
+    )
 
 
 @router.get("/quota-search")
@@ -582,6 +1375,7 @@ async def legacy_save_review_draft(
             openclaw_suggested_quotas=req.corrected_quotas,
             openclaw_review_note=req.review_note or "",
             openclaw_review_confidence=None,
+            openclaw_decision_type="override_within_candidates" if req.corrected_quotas else None,
         ),
         db=db,
         service_user=service_user,
@@ -602,6 +1396,144 @@ async def save_review_draft(
         req=req,
         db=db,
         service_user=service_user,
+    )
+
+
+@router.post("/tasks/{task_id}/results/{result_id}/auto-review", response_model=OpenClawAutoReviewResponse)
+async def auto_review_result(
+    task_id: uuid.UUID,
+    result_id: uuid.UUID,
+    req: OpenClawAutoReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    task, scope, review_job = await _resolve_auto_review_run(
+        task_id=task_id,
+        requested_scope="need_review",
+        review_job_id=req.review_job_id,
+        db=db,
+    )
+    _, match_result = await _get_match_result(
+        task_id=task_id,
+        result_id=result_id,
+        db=db,
+        owner=service_user,
+    )
+    reviewable = _matches_review_job_scope(match_result, scope)
+    if not reviewable or not _is_openclaw_auto_review_pending(match_result):
+        return OpenClawAutoReviewResponse(
+            result_id=result_id,
+            source_task_id=task_id,
+            review_job_id=review_job.id if review_job else None,
+            status="skipped",
+            decision_type=str(getattr(match_result, "openclaw_decision_type", "") or "").strip() or None,
+            openclaw_review_status=str(getattr(match_result, "openclaw_review_status", "") or "pending"),
+            reviewable=reviewable,
+            note="result is not eligible for a fresh auto-review draft",
+        )
+
+    draft_req = _build_auto_review_draft_request(task, match_result)
+    response = await _apply_review_draft(
+        match_result=match_result,
+        req=draft_req,
+        service_user=service_user,
+        enforce_bucket_policy=False,
+    )
+    await db.flush()
+    return OpenClawAutoReviewResponse(
+        result_id=result_id,
+        source_task_id=task_id,
+        review_job_id=review_job.id if review_job else None,
+        status="drafted",
+        decision_type=response.openclaw_decision_type,
+        openclaw_review_status=response.openclaw_review_status,
+        reviewable=True,
+        note=response.openclaw_review_note,
+    )
+
+
+@router.post("/tasks/{task_id}/results/batch-auto-review", response_model=OpenClawBatchAutoReviewResponse)
+async def batch_auto_review_results(
+    task_id: uuid.UUID,
+    req: OpenClawBatchAutoReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    service_user: User = Depends(get_openclaw_service_user),
+):
+    task, scope, review_job = await _resolve_auto_review_run(
+        task_id=task_id,
+        requested_scope=req.scope,
+        review_job_id=req.review_job_id,
+        db=db,
+    )
+    if review_job and str(review_job.status or "").strip().lower() == "completed":
+        raise HTTPException(status_code=409, detail="review job already completed")
+
+    result = await db.execute(
+        select(MatchResult)
+        .where(MatchResult.task_id == task_id)
+        .order_by(MatchResult.index)
+    )
+    candidates = [
+        item
+        for item in result.scalars().all()
+        if _matches_review_job_scope(item, scope)
+    ]
+    if req.limit is not None:
+        candidates = candidates[: req.limit]
+
+    drafted_count = 0
+    skipped_count = 0
+    failed_count = 0
+    processed_result_ids: list[uuid.UUID] = []
+    await _mark_review_job_running(review_job, db)
+
+    try:
+        for match_result in candidates:
+            if not _is_openclaw_auto_review_pending(match_result):
+                skipped_count += 1
+                continue
+            try:
+                draft_req = _build_auto_review_draft_request(task, match_result)
+                await _apply_review_draft(
+                    match_result=match_result,
+                    req=draft_req,
+                    service_user=service_user,
+                    enforce_bucket_policy=False,
+                )
+                drafted_count += 1
+                processed_result_ids.append(match_result.id)
+            except HTTPException:
+                failed_count += 1
+            except Exception:
+                failed_count += 1
+
+        await _finalize_review_job(
+            review_job=review_job,
+            task=task,
+            scope=scope,
+            drafted_count=drafted_count,
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+            db=db,
+        )
+        await db.commit()
+    except Exception as exc:
+        if review_job:
+            review_job.status = "failed"
+            review_job.error_message = str(exc)[:1000]
+            review_job.completed_at = _utcnow()
+            await db.commit()
+        raise
+
+    return OpenClawBatchAutoReviewResponse(
+        review_job_id=review_job.id if review_job else None,
+        source_task_id=task_id,
+        scope=scope,
+        total_candidates=len(candidates),
+        drafted_count=drafted_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        processed_result_ids=processed_result_ids,
     )
 
 

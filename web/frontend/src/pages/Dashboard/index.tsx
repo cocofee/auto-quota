@@ -20,7 +20,7 @@ import {
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
-import { COLORS } from '../../utils/experience';
+import { COLORS, GREEN_THRESHOLD } from '../../utils/experience';
 import type { TaskInfo, TaskListResponse, TaskStatus, QuotaBalance } from '../../types';
 import { STATUS_MAP } from '../../constants/task';
 
@@ -255,7 +255,7 @@ export default function DashboardPage() {
         <Col xs={12} sm={6}>
           <Card hoverable styles={{ body: { padding: '20px 24px' } }}>
             <Statistic
-              title={<Tooltip title={`基于${completedWithStats.length}个已完成任务，绿灯(≥85%)占比`}>绿灯率</Tooltip>}
+              title={<Tooltip title={`基于${completedWithStats.length}个已完成任务，绿灯(≥${GREEN_THRESHOLD}%)占比`}>绿灯率</Tooltip>}
               value={avgAccuracy}
               suffix="%"
               valueStyle={{
