@@ -1,0 +1,228 @@
+{
+  "motor": {
+    "trigger_any": ["电动机"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "kw",
+        "candidate_field": "kw",
+        "equal": 6,
+        "greater": 3,
+        "less": -8
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 12
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 10
+      }
+    ]
+  },
+  "fire_device": {
+    "trigger_any": ["消火栓"],
+    "trigger_none": ["钢管", "管道", "立管", "支管", "灭火器", "干粉"],
+    "candidate_forbid_any": ["钢管", "管道"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "dn",
+        "candidate_field": "dn",
+        "equal": 5,
+        "greater": 2,
+        "less": -6
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 8
+      }
+    ]
+  },
+  "network_device": {
+    "trigger_any": ["交换机"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "port_count",
+        "candidate_field": "port_count",
+        "equal": 12,
+        "greater": 7,
+        "less": -10
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 12
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 10
+      }
+    ]
+  },
+  "wiring": {
+    "trigger_any": ["配线", "电气配线", "线槽配线", "管内穿线", "穿线"],
+    "trigger_none": ["电缆"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "cable_section",
+        "candidate_field": "cable_section",
+        "equal": 6,
+        "greater": 3,
+        "less": -8
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 8
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 8
+      }
+    ]
+  },
+  "distribution_box": {
+    "trigger_any": ["配电箱", "配电柜", "控制箱", "控制柜", "动力箱", "照明箱", "程序控制箱"],
+    "base_score": 0
+  },
+  "plumbing_accessory": {
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "dn",
+        "candidate_field": "dn",
+        "equal": 5,
+        "greater": 2,
+        "less": -4
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "expected_words",
+        "weight": 10
+      },
+      {
+        "context_key": "prefer_words",
+        "weight": 3
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 8
+      }
+    ]
+  },
+  "valve": {
+    "trigger_any": ["螺纹阀门", "焊接法兰阀门", "法兰阀门", "螺纹法兰阀门", "碳钢阀门", "塑料阀门", "PPR阀门", "PP-R阀门"],
+    "trigger_none": ["倒流防止器", "风阀", "防火阀", "调节阀", "多叶调节阀", "定风量阀", "人防", "密闭阀"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "dn",
+        "candidate_field": "dn",
+        "equal": 10,
+        "greater": 0,
+        "less": -10
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 6
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 10
+      }
+    ]
+  },
+  "ventilation": {
+    "trigger_any": ["风口", "散流器", "百叶", "风机", "排气扇", "换气扇", "通风器", "软风管", "消声器", "止回阀", "调节阀", "防火阀", "排烟阀", "定风量阀", "插板阀"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "perimeter",
+        "candidate_field": "perimeter",
+        "equal": 6,
+        "greater": 3,
+        "less": -8
+      },
+      {
+        "bill_field": "weight_t",
+        "candidate_field": "weight_t",
+        "equal": 10,
+        "greater": 4,
+        "less": -8
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "prefer_words",
+        "weight": 8
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 8
+      }
+    ]
+  },
+  "cable": {
+    "trigger_any": ["电缆"],
+    "base_score": 0,
+    "numeric_rules": [
+      {
+        "bill_field": "cable_cores",
+        "candidate_field": "cable_cores",
+        "equal": 8,
+        "greater": 4,
+        "less": -10
+      },
+      {
+        "bill_field": "cable_section",
+        "candidate_field": "cable_section",
+        "equal": 6,
+        "greater": 3,
+        "less": -8
+      }
+    ],
+    "text_score_groups": [
+      {
+        "context_key": "expected_words",
+        "weight": 8
+      },
+      {
+        "context_key": "core_words",
+        "weight": 4
+      }
+    ],
+    "text_penalty_groups": [
+      {
+        "context_key": "forbidden_words",
+        "weight": 8
+      }
+    ]
+  },
+  "support": {
+    "base_score": 0
+  }
+}

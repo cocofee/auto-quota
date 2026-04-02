@@ -8,6 +8,30 @@ from src.explicit_family_picker_utils import pick_best_candidate, score_candidat
 from src.text_parser import parser as text_parser
 
 
+def _build_motor_picker_context(text: str, rules: dict) -> dict | None:
+    bill_params = text_parser.parse(text)
+    prefer_check = "检查接线" in text
+    prefer_load = "负载调试" in text
+    if not prefer_check and not prefer_load:
+        return None
+
+    prefer_words: list[str] = []
+    forbidden_words: list[str] = []
+    if prefer_check:
+        prefer_words.append("检查接线")
+        forbidden_words.append("负载调试")
+    if prefer_load:
+        prefer_words.append("负载调试")
+        forbidden_words.append("检查接线")
+
+    return {
+        "bill_text": text,
+        "bill_params": bill_params,
+        "prefer_words": prefer_words,
+        "forbidden_words": forbidden_words,
+    }
+
+
 def _pick_explicit_distribution_box_candidate(bill_text: str,
                                               candidates: list[dict]) -> dict | None:
     text = bill_text or ""
@@ -164,45 +188,9 @@ def _pick_explicit_distribution_box_candidate(bill_text: str,
 
 def _pick_explicit_motor_family_candidate(bill_text: str,
                                           candidates: list[dict]) -> dict | None:
-    text = bill_text or ""
-    if "\u7535\u52a8\u673a" not in text:
-        return None
+    from src.explicit_framework_family_pickers import _pick_explicit_motor_family_candidate as _delegate
 
-    bill_params = text_parser.parse(text)
-    bill_kw = bill_params.get("kw")
-    prefer_check = "\u68c0\u67e5\u63a5\u7ebf" in text
-    prefer_load = "\u8d1f\u8f7d\u8c03\u8bd5" in text
-    if not prefer_check and not prefer_load:
-        return None
-
-    scored: list[tuple[tuple[int, float, float], dict]] = []
-    for candidate in candidates:
-        quota_name = candidate.get("name", "") or ""
-        candidate_params = text_parser.parse(quota_name)
-        score = 0
-        if prefer_check:
-            if "\u68c0\u67e5\u63a5\u7ebf" in quota_name:
-                score += 12
-            if "\u8d1f\u8f7d\u8c03\u8bd5" in quota_name:
-                score -= 10
-        if prefer_load:
-            if "\u8d1f\u8f7d\u8c03\u8bd5" in quota_name:
-                score += 12
-            if "\u68c0\u67e5\u63a5\u7ebf" in quota_name:
-                score -= 8
-        candidate_kw = candidate_params.get("kw")
-        if bill_kw is not None and candidate_kw is not None:
-            if bill_kw == candidate_kw:
-                score += 6
-            elif bill_kw < candidate_kw:
-                score += 3
-            else:
-                score -= 8
-        if score <= 0:
-            continue
-        scored.append(score_candidate(candidate, score))
-
-    return pick_best_candidate(scored)
+    return _delegate(bill_text, candidates)
 
 
 def _pick_explicit_valve_family_candidate(bill_text: str,
