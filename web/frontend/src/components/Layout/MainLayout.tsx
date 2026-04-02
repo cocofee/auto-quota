@@ -14,6 +14,7 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  RobotOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -121,6 +122,11 @@ export default function MainLayout() {
             key: '/admin/knowledge-staging',
             icon: <SafetyCertificateOutlined />,
             label: '候选知识晋升',
+          },
+          {
+            key: '/admin/openclaw-reviews',
+            icon: <RobotOutlined />,
+            label: 'OpenClaw 复核',
           },
           {
             key: '/admin/quotas',
