@@ -65,7 +65,7 @@ from src.explicit_pipe_family_pickers import (
 from src.province_plugins import resolve_plugin_hints
 from src.query_builder import build_primary_query_profile
 from src.text_parser import parser as text_parser, normalize_bill_text
-from src.query_router import build_query_route_profile
+from src.query_router import build_query_route_profile, select_search_books
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
 from src.specialty_classifier import (
     BORROW_PRIORITY,
@@ -1145,7 +1145,7 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         if str(book).strip()
     ]
     if primary and not fallbacks:
-        fallbacks = list(BORROW_PRIORITY.get(primary, []))
+        fallbacks = select_search_books(primary, province, borrow=True)[1:]
     classification = {
         "primary": primary,
         "fallbacks": fallbacks,
