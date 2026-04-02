@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from src import match_core
+from src.performance_monitor import PerformanceMonitor
 
 
 def test_prepare_candidates_passes_context_into_validator(monkeypatch):
@@ -285,6 +286,48 @@ def test_prepare_candidates_collects_prior_candidates_from_aux_searchers(monkeyp
     retained = next(candidate for candidate in candidates if candidate["quota_id"] == "03-4-5-56")
     assert retained["_source_province"] == "上海市安装工程预算定额(2016)"
     assert retained["knowledge_prior_sources"] == ["universal_kb"]
+
+
+def test_prepare_candidates_records_performance_stages(monkeypatch):
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return []
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, **kwargs):
+            del query_text, kwargs
+            return candidates
+
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda searcher, query, classification: [
+            {
+                "quota_id": "C4-1-1",
+                "name": "鐢电紗妗ユ灦鏀灦鍒朵綔瀹夎",
+                "hybrid_score": 0.8,
+            }
+        ],
+    )
+
+    monitor = PerformanceMonitor()
+    match_core._prepare_candidates(
+        FakeSearcher(),
+        FakeReranker(),
+        FakeValidator(),
+        "鏀灦 妗ユ灦",
+        "鏀灦",
+        {"primary": "C4", "fallbacks": [], "search_books": ["C4"]},
+        performance_monitor=monitor,
+    )
+
+    assert "混合搜索" in monitor.stages
+    assert "候选打分" in monitor.stages
 
 
 def test_prepare_candidates_from_prepared_prefers_canonical_query(monkeypatch):

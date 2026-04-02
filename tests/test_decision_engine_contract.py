@@ -28,6 +28,7 @@ from src.match_core import (
     _finalize_trace,
     _summarize_candidates_for_trace,
 )
+from src.performance_monitor import PerformanceMonitor
 
 
 class TestPrepareItemContract:
@@ -117,6 +118,33 @@ class TestPrepareItemContract:
         # 非措施项应包含搜索所需的上下文
         if "early_result" not in prepared:
             assert "search_query" in prepared or "ctx" in prepared
+
+    def test_prepare_item_records_performance_stages(self):
+        rule_validator = MagicMock()
+        rule_validator.match_by_rules.return_value = {
+            "quotas": [], "confidence": 0
+        }
+        rule_validator.rules = True
+
+        item = {
+            "name": "缁欐按绠￠亾DN25",
+            "description": "1.鏉愯川:PPR",
+            "unit": "m",
+            "quantity": 50,
+        }
+        monitor = PerformanceMonitor()
+
+        prepared = _prepare_item_for_matching(
+            item,
+            experience_db=None,
+            rule_validator=rule_validator,
+            performance_monitor=monitor,
+        )
+
+        assert prepared.get("early_result") is None
+        assert "文本解析" in monitor.stages
+        assert "查询构建" in monitor.stages
+        assert "专业分类" in monitor.stages
 
     def test_numeric_code_without_meaningful_desc_abstains_early(self):
         item = {

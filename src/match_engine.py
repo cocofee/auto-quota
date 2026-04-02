@@ -15,6 +15,7 @@
 import re
 import threading
 import time
+from contextlib import nullcontext
 
 from loguru import logger
 
@@ -42,6 +43,7 @@ from src.match_pipeline import (
     _resolve_search_mode_result,
     _apply_mode_backups,
 )
+from src.performance_monitor import PerformanceMonitor
 
 
 # ============================================================
@@ -131,6 +133,42 @@ def _append_consistency_review_trace(results: list[dict]) -> None:
         )
 
 
+def _attach_performance_snapshot(result: dict,
+                                 monitor: PerformanceMonitor | None,
+                                 *,
+                                 idx: int | None = None,
+                                 total: int | None = None) -> None:
+    if not isinstance(result, dict) or monitor is None:
+        return
+
+    stages = monitor.snapshot()
+    if not stages:
+        return
+
+    total_elapsed = sum(stages.values())
+    result["performance"] = {
+        "stages": stages,
+        "total": total_elapsed,
+    }
+    _append_trace_step(
+        result,
+        "performance_monitor",
+        performance_stages=stages,
+        performance_total=total_elapsed,
+    )
+
+    if not bool(getattr(config, "PERFORMANCE_MONITOR_REPORT_EACH_ITEM", False)):
+        return
+
+    item_name = str(((result.get("bill_item") or {}).get("name") or "")).strip()
+    title_parts = ["性能报告"]
+    if idx is not None and total:
+        title_parts.append(f"#{idx}/{total}")
+    if item_name:
+        title_parts.append(item_name[:40])
+    logger.debug(monitor.format_report(" ".join(title_parts)))
+
+
 def _consume_early_result(results: list[dict], early_result: dict, early_type: str,
                           idx: int, total: int, interval: int,
                           exp_hits: int, rule_hits: int,
@@ -194,13 +232,15 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
                              is_agent: bool = False, agent_hits: int = 0,
                              lightweight_experience: bool = False,
                              lightweight_rule_prematch: bool = False,
-                             include_prior_candidates: bool = True) -> tuple[bool, int, int, dict | None]:
+                             include_prior_candidates: bool = True,
+                             performance_monitor: PerformanceMonitor | None = None) -> tuple[bool, int, int, dict | None]:
     """统一单条清单的前置命中消费和候选准备。"""
     prepared = _prepare_item_for_matching(
         item, experience_db, rule_validator, province=province,
         exact_exp_direct=exact_exp_direct,
         lightweight_experience=lightweight_experience,
         lightweight_rule_prematch=lightweight_rule_prematch,
+        performance_monitor=performance_monitor,
     )
     consumed, exp_hits, rule_hits = _consume_early_result(
         results=results,
@@ -227,6 +267,7 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
             reranker,
             validator,
             include_prior_candidates=include_prior_candidates,
+            performance_monitor=performance_monitor,
         ),
     )
 
@@ -760,6 +801,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     consistency_memory = {}  # {(清单名称, 专业): "定额族关键词"}
 
     for idx, item in enumerate(bill_items, start=1):
+        performance_monitor = PerformanceMonitor()
         # 同文件一致性注入：如果之前同名同专业清单已高置信匹配，给短名称补提示
         item_name = item.get("name", "")
         memory_key = (item_name, item.get("specialty", ""))
@@ -788,8 +830,15 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             lightweight_experience=search_lightweight_prep,
             lightweight_rule_prematch=not search_rule_prematch_enabled,
             include_prior_candidates=include_prior_candidates,
+            performance_monitor=performance_monitor,
         )
         if consumed:
+            _attach_performance_snapshot(
+                results[-1] if results else None,
+                performance_monitor,
+                idx=idx,
+                total=total,
+            )
             _notify_progress(idx, result=results[-1] if results else None)
             # 经验库/规则直通的结果也更新一致性记忆
             if results:
@@ -800,6 +849,12 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
 
         result, exp_hits, rule_hits = _resolve_search_mode_result(
             item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
+        _attach_performance_snapshot(
+            result,
+            performance_monitor,
+            idx=idx,
+            total=total,
+        )
 
         _append_search_result_and_log(
             results, result, idx, total, exp_hits, rule_hits,
@@ -970,7 +1025,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     def _make_llm_task(*, idx: int, item: dict, candidates: list[dict], canonical_query: dict,
                        name: str, desc: str, exp_backup: dict, rule_backup: dict,
-                       is_audit: bool) -> dict:
+                       is_audit: bool,
+                       performance_monitor: PerformanceMonitor | None = None) -> dict:
         canonical_query, validation_query, resolved_search_query = _canonical_query_views(canonical_query)
         return {
             "idx": idx,
@@ -984,6 +1040,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             "exp_backup": exp_backup,
             "rule_backup": rule_backup,
             "is_audit": is_audit,
+            "performance_monitor": performance_monitor,
         }
 
     # 进度回调辅助（第1阶段: 30%~60%, 第2阶段: 60%~90%）
@@ -1013,6 +1070,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     consistency_memory_agent = {}
 
     for idx, item in enumerate(bill_items, start=1):
+        performance_monitor = PerformanceMonitor()
         # 同文件一致性注入
         item_name = item.get("name", "")
         memory_key = (item_name, item.get("specialty", ""))
@@ -1040,9 +1098,16 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             log_types={"experience_exact", "rule_direct"},
             is_agent=True,
             agent_hits=agent_hits,
+            performance_monitor=performance_monitor,
         )
         if consumed:
             # 经验库/规则直通命中，结果在 _consumed_buf 最后一条
+            _attach_performance_snapshot(
+                _consumed_buf[-1],
+                performance_monitor,
+                idx=idx,
+                total=total,
+            )
             results_by_idx[idx] = _consumed_buf[-1]
             _update_match_stats(_consumed_buf[-1])
             _update_consistency_memory(consistency_memory_agent, item, _consumed_buf[-1])
@@ -1079,6 +1144,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             fast_result, exp_hits, rule_hits = _resolve_search_mode_result(
                 item, candidates, exp_backup, rule_backup, exp_hits, rule_hits)
             _mark_agent_fastpath(fast_result)
+            _attach_performance_snapshot(
+                fast_result,
+                performance_monitor,
+                idx=idx,
+                total=total,
+            )
             fastpath_hits += 1
             results_by_idx[idx] = fast_result
             _update_match_stats(fast_result)
@@ -1097,6 +1168,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     exp_backup=exp_backup,
                     rule_backup=rule_backup,
                     is_audit=True,
+                    performance_monitor=performance_monitor,
                 ))
         else:
             # 需要LLM分析
@@ -1110,6 +1182,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 exp_backup=exp_backup,
                 rule_backup=rule_backup,
                 is_audit=False,
+                performance_monitor=performance_monitor,
             ))
 
         _notify_progress(idx, phase=1)
@@ -1353,6 +1426,12 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                         task_exp_hits = 0
                         task_rule_hits = 0
 
+                _attach_performance_snapshot(
+                    result,
+                    task.get("performance_monitor"),
+                    idx=idx,
+                    total=total,
+                )
                 if is_audit:
                     # 审计模式：对比快通道结果
                     fast_result = results_by_idx.get(idx)
