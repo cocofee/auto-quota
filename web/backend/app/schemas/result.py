@@ -127,7 +127,7 @@ class OpenClawReviewDraftRequest(BaseModel):
 
     openclaw_suggested_quotas: list[QuotaItem] | None = Field(
         default=None,
-        description="OpenClaw 建议的定额列表；旧版接口建议继续传，结构化 agree 场景可省略"
+        description="OpenClaw 建议的定额列表；旧版接口建议继续传，结构化 agree 场景可省略",
     )
     openclaw_review_note: str = Field(default="", max_length=500, description="OpenClaw 审核备注")
     openclaw_review_confidence: int | None = Field(
@@ -165,3 +165,7 @@ class OpenClawReviewConfirmRequest(BaseModel):
 
     decision: str = Field(description="approve 或 reject")
     review_note: str = Field(default="", max_length=500, description="人工确认备注")
+    human_feedback_payload: dict | None = Field(
+        default=None,
+        description="人工确认后沉淀的结构化错因/反馈信息",
+    )
