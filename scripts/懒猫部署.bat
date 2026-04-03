@@ -539,6 +539,10 @@ if not defined NEW (
 
 if defined NEW (
 
+    call :VERIFY_REMOTE_IMAGES_READY
+
+    if !errorlevel! neq 0 goto END
+
     call :APPLY_VERSION_FILES
 
     if !errorlevel! neq 0 goto END
@@ -548,6 +552,10 @@ if defined NEW (
 set "PACK_VERSION=!NEW!"
 
 if not defined PACK_VERSION set "PACK_VERSION=!VER!"
+
+call :VERIFY_REMOTE_IMAGES_READY
+
+if !errorlevel! neq 0 goto END
 
 echo.
 
@@ -651,6 +659,44 @@ set "FRONTEND_IMAGE_VERSIONED=%FRONTEND_IMAGE_REPO%:%~1"
 set "BACKEND_IMAGE_VERSIONED=%BACKEND_IMAGE_REPO%:%~1"
 
 exit /b 0
+
+
+
+:VERIFY_REMOTE_IMAGES_READY
+
+call :VERIFY_REMOTE_IMAGE "!FRONTEND_IMAGE_VERSIONED!" "frontend"
+
+if !errorlevel! neq 0 exit /b 1
+
+call :VERIFY_REMOTE_IMAGE "!BACKEND_IMAGE_VERSIONED!" "backend"
+
+if !errorlevel! neq 0 exit /b 1
+
+exit /b 0
+
+
+
+:VERIFY_REMOTE_IMAGE
+
+set "VERIFY_IMAGE=%~1"
+set "VERIFY_NAME=%~2"
+
+echo [CHECK] Verifying remote !VERIFY_NAME! image: !VERIFY_IMAGE!
+
+for /l %%n in (1,1,8) do (
+    docker manifest inspect !VERIFY_IMAGE! >nul 2>nul
+    if !errorlevel! equ 0 (
+        echo [CHECK] Remote !VERIFY_NAME! image is available.
+        exit /b 0
+    )
+    echo [WAIT] Remote !VERIFY_NAME! image not visible yet ^(attempt %%n/8^). Retrying...
+    timeout /t 2 >nul
+)
+
+echo [FAIL] Remote !VERIFY_NAME! image not found: !VERIFY_IMAGE!
+echo [FAIL] Do not install this LPK yet. Push the image successfully first.
+
+exit /b 1
 
 
 
