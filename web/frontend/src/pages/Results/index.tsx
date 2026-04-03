@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Descriptions,
+  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Input,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -80,6 +80,122 @@ function getJarvisQuotas(result: MatchResult): QuotaItem[] {
 
 function getFinalQuotas(result: MatchResult): QuotaItem[] {
   return result.corrected_quotas || result.quotas || [];
+}
+
+function getPrimaryQuota(quotas: QuotaItem[] | null | undefined): QuotaItem | null {
+  return quotas?.[0] || null;
+}
+
+function formatQuotaLine(quota: QuotaItem | null | undefined): string {
+  if (!quota) return '-';
+  return [quota.quota_id, quota.name].filter(Boolean).join(' ');
+}
+
+function formatQuotaSummary(quotas: QuotaItem[] | null | undefined): string {
+  const items = quotas || [];
+  if (items.length === 0) return '-';
+  const first = formatQuotaLine(items[0]);
+  return items.length > 1 ? `${first} +${items.length - 1}` : first;
+}
+
+function shortenReason(text?: string | null): string {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  const firstSentence = normalized.split(/[。！？!?;\n]/)[0]?.trim() || normalized;
+  return firstSentence.length > 56 ? `${firstSentence.slice(0, 56)}...` : firstSentence;
+}
+
+type SuggestionStrength = 'strong_change' | 'optional_change' | 'keep';
+
+const SUGGESTION_STRENGTH_MAP: Record<SuggestionStrength, { color: string; text: string }> = {
+  strong_change: { color: 'red', text: '强建议改' },
+  optional_change: { color: 'gold', text: '可改可不改' },
+  keep: { color: 'blue', text: '建议维持' },
+};
+
+function getSuggestionStrength(result: MatchResult): SuggestionStrength {
+  if (result.openclaw_decision_type === 'agree') {
+    return 'keep';
+  }
+  if (
+    result.openclaw_error_type === 'wrong_family'
+    || result.openclaw_error_type === 'wrong_book'
+    || result.openclaw_error_type === 'wrong_param'
+    || result.openclaw_decision_type === 'override_within_candidates'
+    || result.openclaw_decision_type === 'candidate_pool_insufficient'
+  ) {
+    return 'strong_change';
+  }
+  return 'optional_change';
+}
+
+function getSuggestionReason(result: MatchResult): string {
+  const reasonMap: Record<string, string> = {
+    wrong_family: '原结果错大类，建议改到正确对象。',
+    wrong_book: '原结果错册或错专业，建议切到正确定额册。',
+    wrong_param: '原结果参数不匹配，建议换成更贴近规格的定额。',
+    synonym_gap: '方向基本对，但名称或映射仍可收紧。',
+    low_confidence_override: '当前建议比 Jarvis 更稳，仍建议人工扫一眼。',
+    missing_candidate: '现有候选不足，建议人工搜索正确定额。',
+    unknown: '需要人工复核差异后决定。',
+  };
+  if (result.openclaw_error_type && reasonMap[result.openclaw_error_type]) {
+    return reasonMap[result.openclaw_error_type];
+  }
+  if (result.openclaw_decision_type === 'agree') {
+    return 'OpenClaw 认为 Jarvis 原结果可接受。';
+  }
+  return shortenReason(result.openclaw_review_note)
+    || shortenReason(result.explanation)
+    || '需要人工复核差异后决定。';
+}
+
+function normalizeAlternativeQuota(raw: Record<string, unknown>): QuotaItem | null {
+  const quotaId = String(raw.quota_id || '').trim();
+  const name = String(raw.name || '').trim();
+  if (!quotaId || !name) {
+    return null;
+  }
+  return {
+    quota_id: quotaId,
+    name,
+    unit: String(raw.unit || '').trim(),
+    param_score: typeof raw.param_score === 'number' ? raw.param_score : null,
+    rerank_score: typeof raw.rerank_score === 'number' ? raw.rerank_score : null,
+    source: String(raw.source || 'alternative').trim(),
+  };
+}
+
+function buildInlineOpenClawQuotaOptions(result: MatchResult): Array<{
+  key: string;
+  quota: QuotaItem;
+  origin: 'openclaw' | 'alternative';
+}> {
+  const merged: Array<{
+    key: string;
+    quota: QuotaItem;
+    origin: 'openclaw' | 'alternative';
+  }> = [];
+  const seen = new Set<string>();
+
+  for (const quota of result.openclaw_suggested_quotas || []) {
+    const key = `${quota.quota_id}::${quota.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({ key, quota, origin: 'openclaw' });
+  }
+
+  for (const raw of result.alternatives || []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const quota = normalizeAlternativeQuota(raw as Record<string, unknown>);
+    if (!quota) continue;
+    const key = `${quota.quota_id}::${quota.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({ key, quota, origin: 'alternative' });
+  }
+
+  return merged.slice(0, 6);
 }
 
 function hasOpenClawPendingSuggestion(result: MatchResult): boolean {
@@ -223,17 +339,6 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
       _parentSectionKey: currentSectionKey,
     });
     // 定额子行
-    quotas.forEach((q, idx) => {
-      rows.push({
-        _rowType: 'quota',
-        _rowKey: `${r.id}_q${idx}`,
-        _parentResult: r,
-        _quotaIndex: idx,
-        _quota: q,
-        _parentSpecialtyKey: currentSpecialtyKey,
-        _parentSectionKey: currentSectionKey,
-      });
-    });
   }
   return rows;
 }
@@ -273,6 +378,9 @@ export default function ResultsPage() {
 
   // 红灯行展开候选定额的状态（key = result.id）
   const [expandedAlts, setExpandedAlts] = useState<Set<string>>(new Set());
+  const [inlineQuotaKeywords, setInlineQuotaKeywords] = useState<Record<string, string>>({});
+  const [inlineQuotaResults, setInlineQuotaResults] = useState<Record<string, QuotaItem[]>>({});
+  const [inlineQuotaLoading, setInlineQuotaLoading] = useState<Record<string, boolean>>({});
 
   // 置信度筛选（all=全部, green=高置信度, yellow=中置信度, red=低置信度）
   const [confFilter, setConfFilter] = useState<
@@ -362,10 +470,6 @@ export default function ResultsPage() {
   const openclawConflictCount = useMemo(
     () => results.filter((r) => hasOpenClawConflict(r)).length,
     [results],
-  );
-  const compareResult = useMemo(
-    () => results.find((item) => item.id === (compareResultId || targetResultId)) || null,
-    [compareResultId, results, targetResultId],
   );
   const pagedResults = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -581,6 +685,64 @@ export default function ResultsPage() {
     }
   };
 
+  const pickInlineQuota = async (
+    result: MatchResult,
+    quota: QuotaItem,
+    origin: 'openclaw' | 'alternative' | 'search',
+  ) => {
+    try {
+      if (hasOpenClawPendingSuggestion(result)) {
+        await api.post(`/openclaw/tasks/${taskId}/results/${result.id}/review-confirm`, {
+          decision: 'reject',
+          review_note: '结果页人工改为其他定额',
+        });
+      }
+      await api.put(`/tasks/${taskId}/results/${result.id}`, {
+        corrected_quotas: [{
+          quota_id: quota.quota_id,
+          name: quota.name,
+          unit: quota.unit || '',
+          source: quota.source || (origin === 'openclaw' ? 'openclaw_manual' : 'manual_search'),
+        }],
+        review_note: `结果页人工选择定额: ${quota.quota_id}`,
+      });
+      message.success(`已改为 ${quota.quota_id}`);
+      loadData();
+    } catch {
+      message.error('人工选定额失败');
+    }
+  };
+
+  const searchInlineQuota = async (result: MatchResult) => {
+    const keyword = (inlineQuotaKeywords[result.id] || '').trim();
+    if (!keyword) {
+      message.warning('先输入定额关键词');
+      return;
+    }
+    if (!task?.province) {
+      message.error('缺少定额库省份，无法搜索');
+      return;
+    }
+    setInlineQuotaLoading((prev) => ({ ...prev, [result.id]: true }));
+    try {
+      const { data } = await api.get<{ items: QuotaItem[] }>('/quota-search', {
+        params: {
+          keyword,
+          province: task.province,
+          limit: 6,
+        },
+      });
+      setInlineQuotaResults((prev) => ({ ...prev, [result.id]: data.items || [] }));
+      if ((data.items || []).length === 0) {
+        message.info('没有搜到匹配定额');
+      }
+    } catch {
+      message.error('定额搜索失败');
+    } finally {
+      setInlineQuotaLoading((prev) => ({ ...prev, [result.id]: false }));
+    }
+  };
+
   const removeQuota = (row: QuotaDisplayRow) => {
     const result = row._parentResult;
     const quotas = result.corrected_quotas || result.quotas || [];
@@ -631,7 +793,7 @@ export default function ResultsPage() {
   // 列定义 — Excel 广联达风格
   // ============================================================
 
-  const columns = [
+  const rawColumns = [
     // 序号列：清单行显示数字，定额行空，分部标题行跨全列显示标题
     {
       title: '序号',
@@ -641,7 +803,7 @@ export default function ResultsPage() {
       onCell: (row: DisplayRow) => {
         if (row._rowType === 'section') {
           // 跨所有列 + 强制左对齐（序号列默认居中，标题行需要覆盖）
-          return { colSpan: 20, style: { textAlign: 'left' as const, paddingLeft: 12 } };
+          return { colSpan: 32, style: { textAlign: 'left' as const, paddingLeft: 12 } };
         }
         return {};
       },
@@ -712,7 +874,18 @@ export default function ResultsPage() {
       render: (_: unknown, row: DisplayRow) => {
         if (row._rowType === 'section') return null;
         if (row._rowType === 'bill') {
-          return <span style={{ fontWeight: 500 }}>{row._result.bill_name}</span>;
+          return (
+            <span style={{
+              display: 'block',
+              fontWeight: 500,
+              whiteSpace: 'normal',
+              wordBreak: 'break-all',
+              lineHeight: '1.5',
+            }}
+            >
+              {row._result.bill_name}
+            </span>
+          );
         }
         // 定额行：完整显示名称，允许换行
         return (
@@ -1059,6 +1232,182 @@ export default function ResultsPage() {
   // 统计摘要
   // ============================================================
 
+  const jarvisQuotaColumn = {
+    title: 'Jarvis 定额',
+    key: 'jarvis_quota',
+    width: 220,
+    onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+    render: (_: unknown, row: DisplayRow) => {
+      if (row._rowType !== 'bill') return null;
+      const quota = getPrimaryQuota(getJarvisQuotas(row._result));
+      return (
+        <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'normal', wordBreak: 'break-all' }}>
+          {quota ? (
+            <>
+              <div style={{ fontWeight: 600 }}>{quota.quota_id}</div>
+              <div style={{ color: '#444' }}>{quota.name}</div>
+            </>
+          ) : (
+            <span style={{ color: '#999' }}>-</span>
+          )}
+        </div>
+      );
+    },
+  };
+
+  const openClawReviewColumn = {
+    title: 'OpenClaw 审核',
+    key: 'openclaw_inline_review',
+    width: 250,
+    onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+    render: (_: unknown, row: DisplayRow) => {
+      if (row._rowType !== 'bill') return null;
+      const result = row._result;
+      const quota = getPrimaryQuota(result.openclaw_suggested_quotas);
+      const strength = SUGGESTION_STRENGTH_MAP[getSuggestionStrength(result)];
+      const decisionInfo = result.openclaw_decision_type
+        ? (OPENCLAW_DECISION_MAP[result.openclaw_decision_type] || {
+          color: 'default',
+          text: result.openclaw_decision_type,
+        })
+        : null;
+      const confirmInfo = OPENCLAW_CONFIRM_MAP[result.openclaw_review_confirm_status]
+        || { color: 'default', text: result.openclaw_review_confirm_status || '-' };
+
+      return (
+        <div style={{ fontSize: 12, lineHeight: '1.6' }}>
+          <div style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all' }}>
+            {quota ? formatQuotaSummary(result.openclaw_suggested_quotas) : '暂无建议'}
+          </div>
+          <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+            {decisionInfo ? <Tag color={decisionInfo.color}>{decisionInfo.text}</Tag> : <Tag>未复核</Tag>}
+            <Tag color={strength.color}>{strength.text}</Tag>
+            {result.openclaw_review_status !== 'pending' ? (
+              <Tag color={confirmInfo.color}>{confirmInfo.text}</Tag>
+            ) : null}
+          </Space>
+          <div style={{ marginTop: 4, color: '#666', whiteSpace: 'normal', wordBreak: 'break-all' }}>
+            {getSuggestionReason(result)}
+          </div>
+        </div>
+      );
+    },
+  };
+
+  const manualReviewColumn = {
+    title: '人工审核',
+    key: 'manual_inline_review',
+    width: 340,
+    onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+    render: (_: unknown, row: DisplayRow) => {
+      if (row._rowType !== 'bill') return null;
+      const result = row._result;
+      const finalQuota = getPrimaryQuota(result.corrected_quotas);
+      const currentQuota = finalQuota || getPrimaryQuota(getFinalQuotas(result));
+      const quickOptions = buildInlineOpenClawQuotaOptions(result);
+      const searchResults = inlineQuotaResults[result.id] || [];
+      const searchLoading = inlineQuotaLoading[result.id];
+      const reviewInfo = REVIEW_MAP[result.review_status] || { color: 'default', text: result.review_status };
+
+      return (
+        <div style={{ fontSize: 12, lineHeight: '1.6' }}>
+          <div style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all' }}>
+            {currentQuota ? formatQuotaLine(currentQuota) : '未处理'}
+          </div>
+          <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+            <Tag color={reviewInfo.color}>{reviewInfo.text}</Tag>
+            {finalQuota ? <Tag color="green">人工已定</Tag> : <Tag>当前沿用 Jarvis</Tag>}
+            <Button
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                void adoptJarvisResult(result);
+              }}
+            >
+              维持 Jarvis
+            </Button>
+            {hasOpenClawPendingSuggestion(result) ? (
+              <Button
+                size="small"
+                type="primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void adoptOpenClawResult(result);
+                }}
+              >
+                采纳 OpenClaw
+              </Button>
+            ) : null}
+          </Space>
+          {quickOptions.length > 0 ? (
+            <div style={{ marginTop: 6 }}>
+              <Space size={[4, 4]} wrap>
+                {quickOptions.map(({ key, quota, origin }) => (
+                  <Button
+                    key={key}
+                    size="small"
+                    style={{ maxWidth: 150 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void pickInlineQuota(result, quota, origin);
+                    }}
+                    title={formatQuotaLine(quota)}
+                  >
+                    {quota.quota_id}
+                  </Button>
+                ))}
+              </Space>
+            </div>
+          ) : null}
+          <div style={{ marginTop: 6 }}>
+            <Input.Search
+              size="small"
+              allowClear
+              placeholder="搜索定额"
+              value={inlineQuotaKeywords[result.id] || ''}
+              loading={searchLoading}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                const { value } = e.target;
+                setInlineQuotaKeywords((prev) => ({ ...prev, [result.id]: value }));
+              }}
+              onSearch={() => void searchInlineQuota(result)}
+            />
+          </div>
+          {searchResults.length > 0 ? (
+            <div style={{ marginTop: 6 }}>
+              <Space size={[4, 4]} wrap>
+                {searchResults.map((quota) => (
+                  <Button
+                    key={`search-${result.id}-${quota.quota_id}-${quota.name}`}
+                    size="small"
+                    style={{ maxWidth: 170 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void pickInlineQuota(result, quota, 'search');
+                    }}
+                    title={formatQuotaLine(quota)}
+                  >
+                    {quota.quota_id}
+                  </Button>
+                ))}
+              </Space>
+            </div>
+          ) : null}
+        </div>
+      );
+    },
+  };
+
+  const columns = rawColumns
+    .filter((column) => !['openclaw_compare', 'review'].includes(String(column.key || '')))
+    .flatMap((column) => {
+      if (column.key === 'description') {
+        return [column, jarvisQuotaColumn, openClawReviewColumn, ...(isAdmin ? [manualReviewColumn] : [])];
+      }
+      return [column];
+    });
+
   const renderSummary = () => {
     const { total, confirmed = 0, corrected = 0, no_match } = summary;
     const pill = (bg: string, color: string): React.CSSProperties => ({
@@ -1126,9 +1475,12 @@ export default function ResultsPage() {
       )}
 
       {/* 顶部操作栏 */}
-      {compareResult && (
+      {/*
         <Card
           size="small"
+          bordered
+          sticky
+          tableLayout="fixed"
           title="Jarvis / OpenClaw / 最终结果对照"
           extra={(
             <Space size="small">
@@ -1220,7 +1572,7 @@ export default function ResultsPage() {
             </Space>
           )}
         </Card>
-      )}
+      */}
 
       <Card size="small">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1356,11 +1708,16 @@ export default function ResultsPage() {
       >
         {/* 表格视觉增强 */}
         <style>{`
+          .result-table .ant-table-container table {
+            table-layout: fixed;
+          }
           /* td 继承 tr 背景色（Ant Design 默认白色会覆盖） */
           .result-table .ant-table-tbody > tr > td {
             background: inherit !important;
             transition: filter 0.15s ease;
             border-bottom: 1px solid #f0f0f0;
+            border-right: 1px solid #f0f0f0;
+            vertical-align: top;
           }
           /* 表格圆角 + 外边框 */
           .result-table .ant-table {
@@ -1374,6 +1731,8 @@ export default function ResultsPage() {
             font-weight: 600 !important;
             font-size: 13px;
             border-bottom: 2px solid #d9d9d9 !important;
+            border-right: 1px solid #d9d9d9 !important;
+            vertical-align: middle;
           }
           /* 清单行悬停变暗一点 */
           .result-table .ant-table-tbody > tr.bill-row:hover > td {
@@ -1460,7 +1819,7 @@ export default function ResultsPage() {
             };
           }}
           locale={{ emptyText: '暂无匹配结果' }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 2200 }}
         />
 
         {/* 手动分页（以清单项数量计） */}
