@@ -313,14 +313,22 @@ docker push !FRONTEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
-    echo [WARN] Frontend push failed, try option 5 to login
-
-    echo [WARN] Continue to pack anyway...
+    echo [FAIL] Frontend push failed for !FRONTEND_IMAGE_VERSIONED!
+    echo [FAIL] Run option 5 to login, then rerun full build.
+    goto END
 
 )
 
 docker tag !FRONTEND_IMAGE_VERSIONED! %FRONTEND_IMAGE_LATEST%
 docker push %FRONTEND_IMAGE_LATEST%
+
+if !errorlevel! neq 0 (
+
+    echo [FAIL] Frontend latest tag push failed for %FRONTEND_IMAGE_LATEST%
+    echo [FAIL] Run option 5 to login, then rerun full build.
+    goto END
+
+)
 
 echo [4/4] Push backend...
 
@@ -328,14 +336,22 @@ docker push !BACKEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
-    echo [WARN] Backend push failed, try option 5 to login
-
-    echo [WARN] Continue to pack anyway...
+    echo [FAIL] Backend push failed for !BACKEND_IMAGE_VERSIONED!
+    echo [FAIL] Run option 5 to login, then rerun full build.
+    goto END
 
 )
 
 docker tag !BACKEND_IMAGE_VERSIONED! %BACKEND_IMAGE_LATEST%
 docker push %BACKEND_IMAGE_LATEST%
+
+if !errorlevel! neq 0 (
+
+    echo [FAIL] Backend latest tag push failed for %BACKEND_IMAGE_LATEST%
+    echo [FAIL] Run option 5 to login, then rerun full build.
+    goto END
+
+)
 
 goto DO_PACK
 
@@ -365,14 +381,22 @@ docker push !FRONTEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
-    echo [WARN] Push failed, try option 5 to login
-
-    echo [WARN] Continue to pack anyway...
+    echo [FAIL] Frontend push failed for !FRONTEND_IMAGE_VERSIONED!
+    echo [FAIL] Run option 5 to login, then rerun frontend build.
+    goto END
 
 )
 
 docker tag !FRONTEND_IMAGE_VERSIONED! %FRONTEND_IMAGE_LATEST%
 docker push %FRONTEND_IMAGE_LATEST%
+
+if !errorlevel! neq 0 (
+
+    echo [FAIL] Frontend latest tag push failed for %FRONTEND_IMAGE_LATEST%
+    echo [FAIL] Run option 5 to login, then rerun frontend build.
+    goto END
+
+)
 
 goto DO_PACK
 
@@ -402,14 +426,22 @@ docker push !BACKEND_IMAGE_VERSIONED!
 
 if !errorlevel! neq 0 (
 
-    echo [WARN] Push failed, try option 5 to login
-
-    echo [WARN] Continue to pack anyway...
+    echo [FAIL] Backend push failed for !BACKEND_IMAGE_VERSIONED!
+    echo [FAIL] Run option 5 to login, then rerun backend build.
+    goto END
 
 )
 
 docker tag !BACKEND_IMAGE_VERSIONED! %BACKEND_IMAGE_LATEST%
 docker push %BACKEND_IMAGE_LATEST%
+
+if !errorlevel! neq 0 (
+
+    echo [FAIL] Backend latest tag push failed for %BACKEND_IMAGE_LATEST%
+    echo [FAIL] Run option 5 to login, then rerun backend build.
+    goto END
+
+)
 
 goto DO_PACK
 
