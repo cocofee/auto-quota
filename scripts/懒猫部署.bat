@@ -453,7 +453,7 @@ call :SET_IMAGE_TAGS !NEW!
 
 echo [VER] Updating manifest...
 
-powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','$1!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','$1!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
+powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','${1}!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','${1}!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
 
 
 
