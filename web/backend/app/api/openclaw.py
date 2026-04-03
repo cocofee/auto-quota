@@ -214,7 +214,7 @@ class OpenClawAutoReviewRequest(BaseModel):
 
 class OpenClawBatchAutoReviewRequest(BaseModel):
     review_job_id: uuid.UUID | None = None
-    scope: Literal["need_review", "all_pending", "yellow_red_pending"] | None = None
+    scope: Literal["need_review", "yellow_red_pending"] | None = Field(default="yellow_red_pending")
     limit: int | None = Field(default=None, ge=1, le=1000)
 
 
@@ -411,16 +411,12 @@ def _matches_review_job_scope(result_or_row, scope: str) -> bool:
         "yellow",
         "red",
     }
-    if scope == "all_pending":
-        return pending_formal
     if scope == "yellow_red_pending":
         return yellow_red_pending
     return yellow_red_pending or _is_reviewed_pending_confirm(result_or_row)
 
 
 def _review_job_scope_label(scope: str) -> str:
-    if scope == "all_pending":
-        return "all pending formal results"
     if scope == "yellow_red_pending":
         return "yellow/red pending formal results"
     return "results that still need OpenClaw attention"
@@ -855,12 +851,12 @@ async def _resolve_auto_review_run(
 ) -> tuple[Task, str, OpenClawReviewJob | None]:
     task = await _get_review_job_source_task(source_task_id=task_id, db=db)
     review_job = None
-    scope = str(requested_scope or "need_review").strip() or "need_review"
+    scope = str(requested_scope or "yellow_red_pending").strip() or "yellow_red_pending"
     if review_job_id:
         review_job = await _get_review_job_or_404(review_job_id=review_job_id, db=db)
         if review_job.source_task_id != task_id:
             raise HTTPException(status_code=409, detail="review job does not belong to this source task")
-        scope = str(review_job.scope or scope).strip() or "need_review"
+        scope = str(review_job.scope or scope).strip() or "yellow_red_pending"
     return task, scope, review_job
 
 
@@ -1320,7 +1316,13 @@ async def list_review_items(
         .where(MatchResult.task_id == task_id)
         .order_by(MatchResult.index)
     )
-    return _build_result_list_response(result.scalars().all())
+    items = [
+        item
+        for item in result.scalars().all()
+        if _openclaw_policy_bucket(item) in {"yellow", "red"}
+        or _is_reviewed_pending_confirm(item)
+    ]
+    return _build_result_list_response(items)
 
 
 @router.get("/tasks/{task_id}/review-pending", response_model=ResultListResponse)
@@ -1411,7 +1413,7 @@ async def auto_review_result(
 ):
     task, scope, review_job = await _resolve_auto_review_run(
         task_id=task_id,
-        requested_scope="need_review",
+        requested_scope="yellow_red_pending",
         review_job_id=req.review_job_id,
         db=db,
     )
@@ -1570,6 +1572,7 @@ async def review_confirm(
         match_result.openclaw_review_confirm_status = "rejected"
         match_result.openclaw_review_confirmed_by = actor
         match_result.openclaw_review_confirm_time = now
+        match_result.human_feedback_payload = req.human_feedback_payload
         if req.review_note.strip():
             match_result.openclaw_review_note = _merge_review_notes(
                 match_result.openclaw_review_note,
@@ -1597,6 +1600,7 @@ async def review_confirm(
     match_result.openclaw_review_confirm_status = "approved"
     match_result.openclaw_review_confirmed_by = actor
     match_result.openclaw_review_confirm_time = now
+    match_result.human_feedback_payload = req.human_feedback_payload
     if final_review_note:
         match_result.openclaw_review_note = final_review_note
     await db.flush()

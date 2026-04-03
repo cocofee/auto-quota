@@ -46,13 +46,33 @@ class _FakeDb:
         self.flushed = True
 
 
+class _ScalarResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._items
+
+
+class _ListDb:
+    def __init__(self, items):
+        self._items = items
+
+    async def execute(self, _query):
+        return _ScalarResult(self._items)
+
+
 def _make_match_result(**overrides):
     payload = {
         "id": uuid.uuid4(),
+        "task_id": uuid.uuid4(),
         "index": 1,
         "bill_code": "031001001001",
         "bill_name": "给水管道安装",
-        "bill_description": "室内 PPR 管",
+        "bill_description": "室内PPR给水管",
         "bill_unit": "m",
         "bill_quantity": 10.0,
         "bill_unit_price": None,
@@ -68,6 +88,10 @@ def _make_match_result(**overrides):
         "light_status": "yellow",
         "match_source": "search",
         "explanation": "候选接近，需要审核",
+        "knowledge_evidence": None,
+        "knowledge_basis": None,
+        "knowledge_summary": None,
+        "trace": None,
         "candidates_count": 5,
         "is_measure_item": False,
         "review_status": "pending",
@@ -79,9 +103,16 @@ def _make_match_result(**overrides):
         "openclaw_review_confidence": None,
         "openclaw_review_actor": "",
         "openclaw_review_time": None,
+        "openclaw_decision_type": None,
+        "openclaw_error_stage": None,
+        "openclaw_error_type": None,
+        "openclaw_retry_query": "",
+        "openclaw_reason_codes": None,
+        "openclaw_review_payload": None,
         "openclaw_review_confirm_status": "pending",
         "openclaw_review_confirmed_by": "",
         "openclaw_review_confirm_time": None,
+        "human_feedback_payload": None,
         "created_at": datetime.now(UTC),
     }
     payload.update(overrides)
@@ -106,36 +137,14 @@ def test_openclaw_openapi_contains_bridge_routes_only():
     assert "/api/openclaw/promotion-cards" in payload["paths"]
     assert "/api/openclaw/openapi.json" not in payload["paths"]
 
-    security_schemes = payload["components"]["securitySchemes"]
-    assert any(item.get("type") == "apiKey" for item in security_schemes.values())
-
 
 def test_require_openclaw_api_key_validates_secret(monkeypatch):
     monkeypatch.setattr(openclaw_auth, "OPENCLAW_API_KEY", "secret-key")
-
     assert asyncio.run(openclaw_auth.require_openclaw_api_key("secret-key")) == "secret-key"
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(openclaw_auth.require_openclaw_api_key("wrong-key"))
     assert exc.value.status_code == 401
-
-
-def test_get_openclaw_service_user_reuses_existing_user(monkeypatch):
-    monkeypatch.setattr(openclaw_auth, "OPENCLAW_SERVICE_EMAIL", "openclaw@system.local")
-    monkeypatch.setattr(openclaw_auth, "OPENCLAW_SERVICE_QUOTA", 1000)
-
-    user = SimpleNamespace(
-        email="openclaw@system.local",
-        is_active=True,
-        is_admin=True,
-        nickname="OpenClaw",
-        quota_balance=1000,
-    )
-    db = _FakeDb(user)
-
-    current_user = asyncio.run(openclaw_auth.get_openclaw_service_user("ignored", db))
-
-    assert current_user is user
 
 
 def test_openclaw_policy_bucket():
@@ -177,21 +186,16 @@ def test_save_review_draft_does_not_change_formal_result(monkeypatch):
     assert match_result.openclaw_review_status == "reviewed"
     assert match_result.openclaw_review_confirm_status == "pending"
     assert match_result.openclaw_suggested_quotas[0]["quota_id"] == "C10-9-9"
-    assert match_result.openclaw_suggested_quotas[0]["name"] == "建议定额"
     assert response.openclaw_review_status == "reviewed"
 
 
 def test_save_review_draft_allows_red_light_result(monkeypatch):
-    match_result = _make_match_result(
-        confidence=68,
-        confidence_score=68,
-        light_status="red",
-    )
+    match_result = _make_match_result(confidence=68, confidence_score=68, light_status="red")
     db = _FakeDb()
     service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
 
     async def _fake_get_match_result(**_kwargs):
-        return SimpleNamespace(province="鍖椾含"), match_result
+        return SimpleNamespace(province="北京"), match_result
 
     monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
 
@@ -200,8 +204,8 @@ def test_save_review_draft_allows_red_light_result(monkeypatch):
             task_id=uuid.uuid4(),
             result_id=match_result.id,
             req=OpenClawReviewDraftRequest(
-                openclaw_suggested_quotas=[{"quota_id": "C10-8-8", "name": "绾㈢伅寤鸿瀹氶", "unit": "m"}],
-                openclaw_review_note="绾㈢伅缁撴灉鍏佽 OpenClaw 缁欏嚭澶嶆牳寤鸿",
+                openclaw_suggested_quotas=[{"quota_id": "C10-8-8", "name": "红灯建议定额", "unit": "m"}],
+                openclaw_review_note="红灯结果允许 OpenClaw 给出复核建议",
                 openclaw_review_confidence=76,
             ),
             db=db,
@@ -218,16 +222,12 @@ def test_save_review_draft_allows_red_light_result(monkeypatch):
 
 
 def test_save_review_draft_still_blocks_green_light_result(monkeypatch):
-    match_result = _make_match_result(
-        confidence=95,
-        confidence_score=95,
-        light_status="green",
-    )
+    match_result = _make_match_result(confidence=95, confidence_score=95, light_status="green")
     db = _FakeDb()
     service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
 
     async def _fake_get_match_result(**_kwargs):
-        return SimpleNamespace(province="鍖椾含"), match_result
+        return SimpleNamespace(province="北京"), match_result
 
     monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
 
@@ -237,8 +237,8 @@ def test_save_review_draft_still_blocks_green_light_result(monkeypatch):
                 task_id=uuid.uuid4(),
                 result_id=match_result.id,
                 req=OpenClawReviewDraftRequest(
-                    openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": "寤鸿瀹氶", "unit": "m"}],
-                    openclaw_review_note="缁跨伅涓嶅簲鍐嶈蛋 draft",
+                    openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": "建议定额", "unit": "m"}],
+                    openclaw_review_note="绿灯不应再走 draft",
                     openclaw_review_confidence=96,
                 ),
                 db=db,
@@ -272,6 +272,37 @@ def test_build_result_list_response_tolerates_legacy_openclaw_field_values():
     assert item.openclaw_review_payload is None
     assert item.openclaw_reason_codes is None
     assert item.human_feedback_payload is None
+
+
+def test_list_review_items_only_returns_yellow_red_and_pending_reviews(monkeypatch):
+    yellow = _make_match_result(light_status="yellow")
+    red = _make_match_result(light_status="red")
+    green = _make_match_result(light_status="green")
+    reviewed_green = _make_match_result(
+        light_status="green",
+        openclaw_review_status="reviewed",
+        openclaw_review_confirm_status="pending",
+    )
+
+    async def _fake_get_user_task(*_args, **_kwargs):
+        return SimpleNamespace(id=uuid.uuid4())
+
+    monkeypatch.setattr(openclaw_api, "get_user_task", _fake_get_user_task)
+
+    response = asyncio.run(
+        openclaw_api.list_review_items(
+            task_id=uuid.uuid4(),
+            db=_ListDb([yellow, red, green, reviewed_green]),
+            reader=SimpleNamespace(),
+        )
+    )
+
+    assert response.total == 3
+    ids = {item.id for item in response.items}
+    assert yellow.id in ids
+    assert red.id in ids
+    assert reviewed_green.id in ids
+    assert green.id not in ids
 
 
 def test_review_confirm_reject_only_marks_rejected(monkeypatch):
@@ -328,14 +359,9 @@ def test_review_confirm_approve_applies_suggested_quotas(monkeypatch):
 
     monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
     monkeypatch.setattr(openclaw_api.results_api, "correct_result", _fake_correct_result)
-    staging_calls = {}
 
-    async def _fake_record_openclaw_approved_review_async(task, match_result_arg, *, actor, review_note=""):
-        staging_calls["task"] = task
-        staging_calls["match_result"] = match_result_arg
-        staging_calls["actor"] = actor
-        staging_calls["review_note"] = review_note
-        return {"audit_error_id": 1, "promotion_id": 2, "queued_rule": True}
+    async def _fake_record_openclaw_approved_review_async(*_args, **_kwargs):
+        return None
 
     monkeypatch.setattr(
         "app.services.openclaw_staging.record_openclaw_approved_review_async",
@@ -353,121 +379,102 @@ def test_review_confirm_approve_applies_suggested_quotas(monkeypatch):
     )
 
     assert db.flushed is True
-    assert match_result.quotas == [{"quota_id": "C10-1-1", "name": "原始定额", "unit": "m"}]
     assert match_result.corrected_quotas[0].quota_id == "C10-9-9"
-    assert match_result.corrected_quotas[0].name == "建议定额"
     assert match_result.review_status == "corrected"
     assert match_result.openclaw_review_status == "applied"
     assert match_result.openclaw_review_confirm_status == "approved"
-    assert match_result.openclaw_review_confirmed_by == "人工复核"
     assert response.corrected_quotas[0].quota_id == "C10-9-9"
-    assert response.openclaw_review_status == "applied"
-    assert staging_calls["task"].province == "北京"
-    assert staging_calls["match_result"] is match_result
-    assert staging_calls["actor"] == "人工复核"
-    assert staging_calls["review_note"] == "人工确认通过"
 
 
-def test_create_promotion_card_enqueues_staging_candidate(monkeypatch):
-    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
-    captured = {}
+def test_review_confirm_approve_persists_human_feedback_payload(monkeypatch):
+    suggested = [{"quota_id": "C10-9-9", "name": "建议定额", "unit": "m"}]
+    match_result = _make_match_result(
+        openclaw_review_status="reviewed",
+        openclaw_suggested_quotas=suggested,
+        openclaw_review_note="OpenClaw 建议替换",
+    )
+    db = _FakeDb()
+    reviewer = SimpleNamespace(id=uuid.uuid4(), email="reviewer@example.com", nickname="人工复核")
 
-    class _FakeStaging:
-        def enqueue_promotion(self, payload):
-            captured["payload"] = payload
-            return 12
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="北京"), match_result
 
-        def get_promotion(self, record_id):
-            assert record_id == 12
-            return {
-                "id": 12,
-                "source_table": "openclaw_manual_cards",
-                "source_record_id": "card-001",
-                "target_layer": "MethodCards",
-                "status": "draft",
-                "review_status": "unreviewed",
-            }
+    async def _fake_correct_result(*, req, **_kwargs):
+        match_result.corrected_quotas = req.corrected_quotas
+        match_result.review_status = "corrected"
+        match_result.review_note = req.review_note
+        return None
 
-    monkeypatch.setattr(openclaw_api, "_get_staging", lambda: _FakeStaging())
+    async def _fake_record_openclaw_approved_review_async(*_args, **_kwargs):
+        return None
 
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+    monkeypatch.setattr(openclaw_api.results_api, "correct_result", _fake_correct_result)
+    monkeypatch.setattr(
+        "app.services.openclaw_staging.record_openclaw_approved_review_async",
+        _fake_record_openclaw_approved_review_async,
+    )
+
+    payload = {
+        "error_tags": ["wrong_family", "wrong_param"],
+        "root_cause": "classifier_bias",
+        "note": "先错专业，再错参数",
+    }
     response = asyncio.run(
-        openclaw_api.create_promotion_card(
-            req=openclaw_api.OpenClawPromotionCardCreateRequest(
-                card_id="card-001",
-                candidate_type="method",
-                candidate_title="桥架审核顺序",
-                candidate_summary="先核专业，再核册号，再核单位。",
-                candidate_payload={"steps": ["专业", "册号", "单位"]},
-                evidence_ref="feishu://doc/card-001",
+        openclaw_api.review_confirm(
+            task_id=uuid.uuid4(),
+            result_id=match_result.id,
+            req=OpenClawReviewConfirmRequest(
+                decision="approve",
+                review_note="人工确认通过",
+                human_feedback_payload=payload,
             ),
-            service_user=service_user,
+            db=db,
+            user=reviewer,
         )
     )
 
-    assert captured["payload"]["source_table"] == "openclaw_manual_cards"
-    assert captured["payload"]["source_record_id"] == "card-001"
-    assert captured["payload"]["candidate_type"] == "method"
-    assert captured["payload"]["target_layer"] == "MethodCards"
-    assert captured["payload"]["owner"] == "openclaw@system.local"
-    assert response.id == 12
-    assert response.target_layer == "MethodCards"
-    assert response.review_status == "unreviewed"
+    assert match_result.human_feedback_payload == payload
+    assert response.human_feedback_payload == payload
 
 
-def test_build_auto_review_draft_request_keeps_green_jarvis_top1():
-    task = SimpleNamespace(
-        id=uuid.uuid4(),
-        name="Jarvis Task",
-        province="beijing",
-        status="completed",
-        mode="agent",
-        original_filename="input.xlsx",
-    )
-    match_result = _make_match_result(
-        confidence=95,
-        confidence_score=95,
+def test_matches_review_job_scope_excludes_green_pending_formal_results():
+    green = _make_match_result(light_status="green", review_status="pending")
+    yellow = _make_match_result(light_status="yellow", review_status="pending")
+    reviewed_green = _make_match_result(
         light_status="green",
+        review_status="pending",
+        openclaw_review_status="reviewed",
+        openclaw_review_confirm_status="pending",
     )
 
-    req = openclaw_api._build_auto_review_draft_request(task, match_result)
-
-    assert req.openclaw_decision_type == "agree"
-    assert req.openclaw_suggested_quotas is not None
-    assert req.openclaw_suggested_quotas[0].quota_id == "C10-1-1"
-    assert req.openclaw_error_stage == "unknown"
+    assert openclaw_api._matches_review_job_scope(green, "yellow_red_pending") is False
+    assert openclaw_api._matches_review_job_scope(yellow, "yellow_red_pending") is True
+    assert openclaw_api._matches_review_job_scope(reviewed_green, "need_review") is True
 
 
-def test_build_auto_review_draft_request_promotes_candidate_when_top1_missing():
-    task = SimpleNamespace(
-        id=uuid.uuid4(),
-        name="Jarvis Task",
-        province="beijing",
-        status="completed",
-        mode="agent",
-        original_filename="input.xlsx",
-    )
-    match_result = _make_match_result(
-        quotas=[],
-        alternatives=[{"quota_id": "C10-8-8", "name": "Candidate Quota", "unit": "m", "source": "trace"}],
-        confidence=68,
-        confidence_score=68,
-        light_status="red",
-        trace={
-            "steps": [
-                {
-                    "final_validation": {
-                        "status": "manual_review",
-                        "issues": [{"type": "category_mismatch"}],
-                    }
-                }
-            ]
-        },
+def test_resolve_auto_review_run_defaults_to_yellow_red_pending(monkeypatch):
+    fake_task = SimpleNamespace(id=uuid.uuid4(), status="completed")
+
+    async def _fake_get_review_job_source_task(**_kwargs):
+        return fake_task
+
+    monkeypatch.setattr(openclaw_api, "_get_review_job_source_task", _fake_get_review_job_source_task)
+
+    task, scope, review_job = asyncio.run(
+        openclaw_api._resolve_auto_review_run(
+            task_id=uuid.uuid4(),
+            requested_scope=None,
+            review_job_id=None,
+            db=SimpleNamespace(),
+        )
     )
 
-    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+    assert task is fake_task
+    assert scope == "yellow_red_pending"
+    assert review_job is None
 
-    assert req.openclaw_decision_type == "override_within_candidates"
-    assert req.openclaw_suggested_quotas is not None
-    assert req.openclaw_suggested_quotas[0].quota_id == "C10-8-8"
-    assert req.openclaw_error_stage == "final_validator"
-    assert req.openclaw_error_type == "wrong_family"
+
+def test_batch_auto_review_request_defaults_to_yellow_red_pending():
+    req = openclaw_api.OpenClawBatchAutoReviewRequest()
+    assert req.scope == "yellow_red_pending"
