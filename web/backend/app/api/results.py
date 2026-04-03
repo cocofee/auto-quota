@@ -295,7 +295,91 @@ def _build_rebuilt_results_from_json(task, items: list[MatchResult]) -> list[dic
 
 
 def _to_result_response(match_result: MatchResult) -> MatchResultResponse:
-    payload = MatchResultResponse.model_validate(match_result).model_dump()
+    payload = {
+        field_name: _read_result_value(match_result, field_name, None)
+        for field_name in MatchResultResponse.model_fields
+        if field_name not in {"knowledge_evidence", "knowledge_basis", "knowledge_summary", "trace"}
+    }
+    for field_name in (
+        "bill_code",
+        "bill_name",
+        "bill_description",
+        "bill_unit",
+        "specialty",
+        "sheet_name",
+        "section",
+        "review_risk",
+        "light_status",
+        "match_source",
+        "explanation",
+        "review_status",
+        "review_note",
+        "openclaw_review_note",
+        "openclaw_review_actor",
+        "openclaw_retry_query",
+        "openclaw_review_confirmed_by",
+    ):
+        payload[field_name] = str(payload.get(field_name) or "")
+    for field_name in ("index", "confidence", "confidence_score", "candidates_count"):
+        value = payload.get(field_name)
+        try:
+            payload[field_name] = int(value or 0)
+        except (TypeError, ValueError):
+            payload[field_name] = 0
+    payload["is_measure_item"] = bool(payload.get("is_measure_item", False))
+    payload["openclaw_review_status"] = (
+        str(payload.get("openclaw_review_status") or "").strip().lower() or "pending"
+    )
+    if payload["openclaw_review_status"] not in {"pending", "reviewed", "applied", "rejected"}:
+        payload["openclaw_review_status"] = "pending"
+    payload["openclaw_review_confirm_status"] = (
+        str(payload.get("openclaw_review_confirm_status") or "").strip().lower() or "pending"
+    )
+    if payload["openclaw_review_confirm_status"] not in {"pending", "approved", "rejected"}:
+        payload["openclaw_review_confirm_status"] = "pending"
+    for field_name, allowed_values in {
+        "openclaw_decision_type": {
+            "agree",
+            "override_within_candidates",
+            "retry_search_then_select",
+            "candidate_pool_insufficient",
+            "abstain",
+        },
+        "openclaw_error_stage": {"retriever", "ranker", "arbiter", "final_validator", "unknown"},
+        "openclaw_error_type": {
+            "wrong_family",
+            "wrong_param",
+            "wrong_book",
+            "synonym_gap",
+            "low_confidence_override",
+            "missing_candidate",
+            "unknown",
+        },
+    }.items():
+        value = str(payload.get(field_name) or "").strip().lower()
+        payload[field_name] = value if value in allowed_values else None
+    for field_name in (
+        "quotas",
+        "corrected_quotas",
+        "openclaw_suggested_quotas",
+        "alternatives",
+    ):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, list):
+            payload[field_name] = None
+    reason_codes = payload.get("openclaw_reason_codes")
+    if isinstance(reason_codes, list):
+        payload["openclaw_reason_codes"] = [
+            str(item).strip()
+            for item in reason_codes
+            if str(item or "").strip()
+        ] or None
+    else:
+        payload["openclaw_reason_codes"] = None
+    for field_name in ("openclaw_review_payload", "human_feedback_payload"):
+        value = payload.get(field_name)
+        if value is not None and not isinstance(value, dict):
+            payload[field_name] = None
     payload["knowledge_evidence"] = _extract_knowledge_evidence(match_result)
     payload["knowledge_basis"] = _extract_knowledge_basis(match_result)
     payload["knowledge_summary"] = _extract_knowledge_summary(match_result)
