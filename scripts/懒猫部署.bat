@@ -483,6 +483,10 @@ if not defined NEW (
 
     call :SET_IMAGE_TAGS !VER!
 
+    call :ENSURE_MANIFEST_IMAGE_TAGS_MATCH_VERSION
+
+    if !errorlevel! neq 0 goto END
+
     call :ENSURE_QUICK_PACK_SAFE
 
     if !errorlevel! neq 0 goto END
@@ -619,6 +623,42 @@ if defined HAS_CODE_CHANGES (
 )
 
 echo [CHECK] No frontend/backend code changes detected. Safe to pack current manifest only.
+
+exit /b 0
+
+
+
+:ENSURE_MANIFEST_IMAGE_TAGS_MATCH_VERSION
+
+set "FRONTEND_IMAGE_TAG="
+set "BACKEND_IMAGE_TAG="
+
+for /f "tokens=2 delims=:" %%a in ('findstr /c:"auto-quota-frontend:" lzc-manifest.yml') do (
+    set "FRONTEND_IMAGE_TAG=%%a"
+)
+
+for /f "tokens=2 delims=:" %%a in ('findstr /c:"auto-quota-app:" lzc-manifest.yml') do (
+    if not defined BACKEND_IMAGE_TAG set "BACKEND_IMAGE_TAG=%%a"
+)
+
+set "FRONTEND_IMAGE_TAG=!FRONTEND_IMAGE_TAG: =!"
+set "BACKEND_IMAGE_TAG=!BACKEND_IMAGE_TAG: =!"
+
+if /i not "!FRONTEND_IMAGE_TAG!"=="!VER!" (
+    echo.
+    echo [BLOCK] Manifest version is !VER!, but frontend image tag is !FRONTEND_IMAGE_TAG!.
+    echo         Rebuild and push the frontend image first, or align lzc-manifest.yml before packing.
+    exit /b 1
+)
+
+if /i not "!BACKEND_IMAGE_TAG!"=="!VER!" (
+    echo.
+    echo [BLOCK] Manifest version is !VER!, but backend image tag is !BACKEND_IMAGE_TAG!.
+    echo         Rebuild and push the backend image first, or align lzc-manifest.yml before packing.
+    exit /b 1
+)
+
+echo [CHECK] Manifest image tags match current version: !VER!
 
 exit /b 0
 
