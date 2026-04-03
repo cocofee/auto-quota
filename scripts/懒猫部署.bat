@@ -281,6 +281,8 @@ rem ============================================================
 
 call :BUMP_VERSION
 
+if !errorlevel! neq 0 goto END
+
 echo.
 
 echo [1/4] Build frontend...
@@ -361,6 +363,8 @@ goto DO_PACK
 
 call :BUMP_VERSION
 
+if !errorlevel! neq 0 goto END
+
 echo.
 
 echo [1/2] Build frontend...
@@ -406,6 +410,8 @@ goto DO_PACK
 
 call :BUMP_VERSION
 
+if !errorlevel! neq 0 goto END
+
 echo.
 
 echo [1/2] Build backend...
@@ -449,9 +455,11 @@ goto DO_PACK
 
 rem ============================================================
 
-rem  BUMP_VERSION: 递增版本号 + 更新 changelog（子程序）
+rem  BUMP_VERSION: 准备发布版本
 
-rem  Quick deploy 在 DO_PACK 里调用，Full build 在构建前调用
+rem  Full build 支持“重试当前版本”或“递增到新版本”，真正写 manifest/changelog
+
+rem  放到镜像推送成功之后的 DO_PACK 阶段执行，避免留下指向不存在镜像的版本文件
 
 rem ============================================================
 
@@ -467,31 +475,33 @@ call :READ_CURRENT_VERSION
 
 echo       Current: %VER%
 
+echo.
+echo  [1] Retry current version tag ^(recommended if previous push/install failed^)
+echo  [2] Bump to next version
+echo.
+set /p releasemode="Release mode (1-2): "
 
-
-for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
-
-    set /a "P=%%c+1"
-
-    set "NEW=%%a.%%b.!P!"
-
+if "%releasemode%"=="1" (
+    set "NEW=%VER%"
+    echo       Reuse:   !NEW!
+    goto VERSION_READY
 )
 
-echo       New:     !NEW!
+if "%releasemode%"=="2" (
+    for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
+        set /a "P=%%c+1"
+        set "NEW=%%a.%%b.!P!"
+    )
+    echo       New:     !NEW!
+    goto VERSION_READY
+)
 
+echo [FAIL] Invalid release mode
+exit /b 1
+
+:VERSION_READY
+set "VERSION_APPLIED="
 call :SET_IMAGE_TAGS !NEW!
-
-
-
-echo [VER] Updating manifest...
-
-powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','${1}!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','${1}!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
-
-
-
-echo [VER] Updating changelog...
-
-python tools\bump_changelog.py !NEW!
 
 exit /b 0
 
@@ -524,6 +534,14 @@ if not defined NEW (
     if !errorlevel! neq 0 goto END
 
     echo [PACK] Quick deploy will reuse current manifest version/image tags: !VER!
+
+)
+
+if defined NEW (
+
+    call :APPLY_VERSION_FILES
+
+    if !errorlevel! neq 0 goto END
 
 )
 
@@ -631,6 +649,40 @@ exit /b 0
 set "FRONTEND_IMAGE_VERSIONED=%FRONTEND_IMAGE_REPO%:%~1"
 
 set "BACKEND_IMAGE_VERSIONED=%BACKEND_IMAGE_REPO%:%~1"
+
+exit /b 0
+
+
+
+:APPLY_VERSION_FILES
+
+if defined VERSION_APPLIED exit /b 0
+
+if /i "!NEW!"=="!VER!" (
+    set "VERSION_APPLIED=1"
+    exit /b 0
+)
+
+echo [VER] Updating manifest...
+
+powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','${1}!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','${1}!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
+
+if !errorlevel! neq 0 (
+    echo [FAIL] Failed to update lzc-manifest.yml
+    exit /b 1
+)
+
+echo [VER] Updating changelog...
+
+python tools\bump_changelog.py !NEW!
+
+if !errorlevel! neq 0 (
+    echo [FAIL] Failed to update changelog
+    exit /b 1
+)
+
+set "VER=!NEW!"
+set "VERSION_APPLIED=1"
 
 exit /b 0
 
