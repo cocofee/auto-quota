@@ -984,9 +984,9 @@ class KnowledgeStaging:
                         source_table: str = "",
                         limit: int = 100) -> list[dict[str, Any]]:
         """List promotion candidates by statuses."""
-        statuses = [str(item or "").strip() for item in (statuses or ["draft", "reviewing", "approved"]) if str(item or "").strip()]
+        statuses = [str(item or "").strip() for item in (statuses or ["draft", "reviewing", "approved", "rejected", "promoted", "rolled_back"]) if str(item or "").strip()]
         if not statuses:
-            statuses = ["draft", "reviewing", "approved"]
+            statuses = ["draft", "reviewing", "approved", "rejected", "promoted", "rolled_back"]
         placeholders = ", ".join("?" for _ in statuses)
         where_parts = [f"is_deleted = 0 AND status IN ({placeholders})"]
         params: list[Any] = list(statuses)

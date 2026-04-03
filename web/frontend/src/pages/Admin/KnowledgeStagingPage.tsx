@@ -235,6 +235,7 @@ interface AuditErrorItem {
 }
 
 type PromotionStatusView = 'pending' | 'rejected' | 'promoted' | 'rolled_back' | 'all';
+const DEFAULT_PROMOTION_STATUS_VIEW: PromotionStatusView = 'all';
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'default',
@@ -472,7 +473,7 @@ export default function KnowledgeStagingPage() {
   const [knowledgeObjectDrawerOpen, setKnowledgeObjectDrawerOpen] = useState(false);
   const [knowledgeObjectLoading, setKnowledgeObjectLoading] = useState(false);
 
-  const [promotionStatusView, setPromotionStatusView] = useState<PromotionStatusView>('pending');
+  const [promotionStatusView, setPromotionStatusView] = useState<PromotionStatusView>(DEFAULT_PROMOTION_STATUS_VIEW);
   const [promotionTargetLayer, setPromotionTargetLayer] = useState<string>('all');
   const [promotionCandidateType, setPromotionCandidateType] = useState<string>('all');
   const [promotionSourceTable, setPromotionSourceTable] = useState<string>('all');
@@ -984,6 +985,9 @@ export default function KnowledgeStagingPage() {
             </Space>
           </Col>
         </Row>
+        <Typography.Text type="secondary">
+          默认展示全部状态，已晋升的历史导入记录也会显示在这里；如果只想看 OpenClaw 导入，直接把来源切到 OpenClaw 知识卡片。
+        </Typography.Text>
         {items.length === 0 && !primaryLoading ? (
           <Empty description={buildPromotionEmptyDescription(promotionStatusView)} />
         ) : (

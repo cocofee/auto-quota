@@ -541,7 +541,7 @@ async def get_promotion(
 @router.get("/promotions")
 async def list_pending_promotions(
     limit: int = Query(default=50, ge=1, le=200),
-    statuses: str = Query(default="draft,reviewing,approved"),
+    statuses: str = Query(default="draft,reviewing,approved,rejected,promoted,rolled_back"),
     candidate_types: str = Query(default=""),
     target_layers: str = Query(default=""),
     source_table: str = Query(default=""),
