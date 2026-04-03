@@ -181,6 +181,73 @@ def test_save_review_draft_does_not_change_formal_result(monkeypatch):
     assert response.openclaw_review_status == "reviewed"
 
 
+def test_save_review_draft_allows_red_light_result(monkeypatch):
+    match_result = _make_match_result(
+        confidence=68,
+        confidence_score=68,
+        light_status="red",
+    )
+    db = _FakeDb()
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="鍖椾含"), match_result
+
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    response = asyncio.run(
+        openclaw_api.save_review_draft(
+            task_id=uuid.uuid4(),
+            result_id=match_result.id,
+            req=OpenClawReviewDraftRequest(
+                openclaw_suggested_quotas=[{"quota_id": "C10-8-8", "name": "绾㈢伅寤鸿瀹氶", "unit": "m"}],
+                openclaw_review_note="绾㈢伅缁撴灉鍏佽 OpenClaw 缁欏嚭澶嶆牳寤鸿",
+                openclaw_review_confidence=76,
+            ),
+            db=db,
+            service_user=service_user,
+        )
+    )
+
+    assert db.flushed is True
+    assert match_result.review_status == "pending"
+    assert match_result.corrected_quotas is None
+    assert match_result.openclaw_review_status == "reviewed"
+    assert match_result.openclaw_suggested_quotas[0]["quota_id"] == "C10-8-8"
+    assert response.openclaw_review_status == "reviewed"
+
+
+def test_save_review_draft_still_blocks_green_light_result(monkeypatch):
+    match_result = _make_match_result(
+        confidence=95,
+        confidence_score=95,
+        light_status="green",
+    )
+    db = _FakeDb()
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="鍖椾含"), match_result
+
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            openclaw_api.save_review_draft(
+                task_id=uuid.uuid4(),
+                result_id=match_result.id,
+                req=OpenClawReviewDraftRequest(
+                    openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": "寤鸿瀹氶", "unit": "m"}],
+                    openclaw_review_note="缁跨伅涓嶅簲鍐嶈蛋 draft",
+                    openclaw_review_confidence=96,
+                ),
+                db=db,
+                service_user=service_user,
+            )
+        )
+    assert exc.value.status_code == 409
+
+
 def test_review_confirm_reject_only_marks_rejected(monkeypatch):
     match_result = _make_match_result(
         openclaw_review_status="reviewed",
