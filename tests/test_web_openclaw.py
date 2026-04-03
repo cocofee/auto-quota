@@ -248,6 +248,32 @@ def test_save_review_draft_still_blocks_green_light_result(monkeypatch):
     assert exc.value.status_code == 409
 
 
+def test_build_result_list_response_tolerates_legacy_openclaw_field_values():
+    match_result = _make_match_result(
+        openclaw_review_status="",
+        openclaw_review_confirm_status="",
+        openclaw_decision_type="",
+        openclaw_error_stage="",
+        openclaw_error_type="",
+        openclaw_review_payload="legacy-string-payload",
+        openclaw_reason_codes="legacy-string-codes",
+        human_feedback_payload="legacy-string-feedback",
+    )
+
+    response = openclaw_api._build_result_list_response([match_result])
+
+    assert response.total == 1
+    item = response.items[0]
+    assert item.openclaw_review_status == "pending"
+    assert item.openclaw_review_confirm_status == "pending"
+    assert item.openclaw_decision_type is None
+    assert item.openclaw_error_stage is None
+    assert item.openclaw_error_type is None
+    assert item.openclaw_review_payload is None
+    assert item.openclaw_reason_codes is None
+    assert item.human_feedback_payload is None
+
+
 def test_review_confirm_reject_only_marks_rejected(monkeypatch):
     match_result = _make_match_result(
         openclaw_review_status="reviewed",
