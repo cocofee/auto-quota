@@ -704,12 +704,7 @@ exit /b 1
 
 if defined VERSION_APPLIED exit /b 0
 
-if /i "!NEW!"=="!VER!" (
-    set "VERSION_APPLIED=1"
-    exit /b 0
-)
-
-echo [VER] Updating manifest...
+echo [VER] Syncing manifest to version !NEW!...
 
 powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','${1}!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','${1}!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
 
@@ -718,6 +713,8 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
+if /i not "!NEW!"=="!VER!" (
+
 echo [VER] Updating changelog...
 
 python tools\bump_changelog.py !NEW!
@@ -725,6 +722,8 @@ python tools\bump_changelog.py !NEW!
 if !errorlevel! neq 0 (
     echo [FAIL] Failed to update changelog
     exit /b 1
+)
+
 )
 
 set "VER=!NEW!"

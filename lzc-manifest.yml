@@ -15,12 +15,12 @@ application:
 
 services:
   frontend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:0.2.129
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-frontend:0.2.133
     depends_on:
       - backend
 
   backend:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.129
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.133
     command: sh -c "cd /app/web/backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --log-level info"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
@@ -55,7 +55,7 @@ services:
       - redis
 
   celery-worker:
-    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.129
+    image: crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/auto-quota-app:0.2.133
     command: sh -c "cd /app/web/backend && celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:autoquota@postgres:5432/autoquota
