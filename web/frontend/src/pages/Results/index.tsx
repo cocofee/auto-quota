@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Input,
+  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Input, Select,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -73,11 +73,6 @@ function getResultConfidenceText(result: MatchResult, hasQuotas: boolean): strin
   return confidenceToStars(result, true);
 }
 
-// 包一层兼容 hasQuotas 参数
-function getJarvisQuotas(result: MatchResult): QuotaItem[] {
-  return result.quotas || [];
-}
-
 function getFinalQuotas(result: MatchResult): QuotaItem[] {
   return result.corrected_quotas || result.quotas || [];
 }
@@ -91,42 +86,11 @@ function formatQuotaLine(quota: QuotaItem | null | undefined): string {
   return [quota.quota_id, quota.name].filter(Boolean).join(' ');
 }
 
-function formatQuotaSummary(quotas: QuotaItem[] | null | undefined): string {
-  const items = quotas || [];
-  if (items.length === 0) return '-';
-  const first = formatQuotaLine(items[0]);
-  return items.length > 1 ? `${first} +${items.length - 1}` : first;
-}
-
 function shortenReason(text?: string | null): string {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
   const firstSentence = normalized.split(/[。！？!?;\n]/)[0]?.trim() || normalized;
   return firstSentence.length > 56 ? `${firstSentence.slice(0, 56)}...` : firstSentence;
-}
-
-type SuggestionStrength = 'strong_change' | 'optional_change' | 'keep';
-
-const SUGGESTION_STRENGTH_MAP: Record<SuggestionStrength, { color: string; text: string }> = {
-  strong_change: { color: 'red', text: '强建议改' },
-  optional_change: { color: 'gold', text: '可改可不改' },
-  keep: { color: 'blue', text: '建议维持' },
-};
-
-function getSuggestionStrength(result: MatchResult): SuggestionStrength {
-  if (result.openclaw_decision_type === 'agree') {
-    return 'keep';
-  }
-  if (
-    result.openclaw_error_type === 'wrong_family'
-    || result.openclaw_error_type === 'wrong_book'
-    || result.openclaw_error_type === 'wrong_param'
-    || result.openclaw_decision_type === 'override_within_candidates'
-    || result.openclaw_decision_type === 'candidate_pool_insufficient'
-  ) {
-    return 'strong_change';
-  }
-  return 'optional_change';
 }
 
 function getSuggestionReason(result: MatchResult): string {
@@ -250,6 +214,9 @@ interface QuotaDisplayRow {
   _parentResult: MatchResult;  // 所属清单的原始数据
   _quotaIndex: number;         // 在定额列表中的索引
   _quota: QuotaItem;           // 定额数据
+  _quotaKind: 'current' | 'openclaw' | 'candidate' | 'search';
+  _quotaSourceLabel: string;
+  _quotaNote?: string;
   _parentSpecialtyKey: string;  // 所属专业的key（折叠用）
   _parentSectionKey: string;    // 所属分部的key（折叠用）
 }
@@ -288,31 +255,28 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
   const rows: DisplayRow[] = [];
   let currentSheet = '';
   let currentSection = '';
-  let currentSpecialtyKey = '';   // 当前专业section的_rowKey
-  let currentSectionKey = '';     // 当前分部section的_rowKey
+  let currentSpecialtyKey = '';
+  let currentSectionKey = '';
 
   for (const r of results) {
     const sheet = r.sheet_name || '';
     const section = r.section || '';
 
-    // 专业变化（Sheet变化）时，插入专业标题行
     if (sheet && sheet !== currentSheet) {
       const specialty = cleanSheetName(sheet);
       const key = `sheet_${rows.length}`;
       rows.push({
         _rowType: 'section',
         _rowKey: key,
-        _title: `━━ ${specialty} ━━`,
+        _title: specialty,
         _sectionLevel: 'specialty',
       });
       currentSheet = sheet;
-      currentSection = '';       // 专业变了，分部也要重新显示
+      currentSection = '';
       currentSpecialtyKey = key;
-      currentSectionKey = '';    // 清空当前分部
+      currentSectionKey = '';
     }
 
-    // 分部变化时，插入分部标题行
-    // 跳过看起来像定额编号的分部名（如"C10-2-123 换"、"SC20"）
     if (section && section !== currentSection) {
       if (!isQuotaCode(section)) {
         const key = `section_${rows.length}`;
@@ -328,24 +292,33 @@ function flattenResults(results: MatchResult[]): DisplayRow[] {
       currentSection = section;
     }
 
-    const quotas = r.corrected_quotas || r.quotas || [];
-    // 清单行
+    const currentQuotas = getFinalQuotas(r);
     rows.push({
       _rowType: 'bill',
       _rowKey: r.id,
       _result: r,
-      _quotaCount: quotas.length,
+      _quotaCount: currentQuotas.length,
       _parentSpecialtyKey: currentSpecialtyKey,
       _parentSectionKey: currentSectionKey,
     });
-    // 定额子行
+
+    currentQuotas.forEach((quota, index) => {
+      rows.push({
+        _rowType: 'quota',
+        _rowKey: `${r.id}-quota-${index}-${quota.quota_id}-${quota.name}`,
+        _parentResult: r,
+        _quotaIndex: index,
+        _quota: quota,
+        _quotaKind: 'current',
+        _quotaSourceLabel: '当前定额',
+        _quotaNote: '',
+        _parentSpecialtyKey: currentSpecialtyKey,
+        _parentSectionKey: currentSectionKey,
+      });
+    });
   }
   return rows;
 }
-
-// ============================================================
-// 页面组件
-// ============================================================
 
 export default function ResultsPage() {
   const { taskId } = useParams<{ taskId: string }>();
@@ -377,7 +350,6 @@ export default function ResultsPage() {
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   // 红灯行展开候选定额的状态（key = result.id）
-  const [expandedAlts, setExpandedAlts] = useState<Set<string>>(new Set());
   const [inlineQuotaKeywords, setInlineQuotaKeywords] = useState<Record<string, string>>({});
   const [inlineQuotaResults, setInlineQuotaResults] = useState<Record<string, QuotaItem[]>>({});
   const [inlineQuotaLoading, setInlineQuotaLoading] = useState<Record<string, boolean>>({});
@@ -965,6 +937,7 @@ export default function ResultsPage() {
       width: 140,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'quota') return null;
         if (row._rowType !== 'bill') return null;
         const r = row._result;
         const quotas = r.corrected_quotas || r.quotas || [];
@@ -1002,6 +975,7 @@ export default function ResultsPage() {
       width: 70,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'quota') return null;
         if (row._rowType !== 'bill') return null;
         const source = row._result.match_source;
         if (!source) return null;
@@ -1029,12 +1003,12 @@ export default function ResultsPage() {
       width: 220,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType === 'quota') return null;
         if (row._rowType !== 'bill') return null;
         const r = row._result;
         const text = r.explanation;
         const matchSource = r.match_source;
 
-        // 匹配说明内容
         let explanationNode: React.ReactNode;
         if (matchSource === 'llm_corrected' || (text && text.startsWith('[AI纠正]'))) {
           const detail = text ? text.replace(/^\[AI纠正\]\s*/, '') : '';
@@ -1065,84 +1039,7 @@ export default function ResultsPage() {
           ) : <span style={{ color: '#ccc' }}>-</span>;
         }
 
-        // 低置信度行：展开Top3候选
-        const alts = r.alternatives as { quota_id: string; name: string; unit: string; confidence: number; reason?: string }[] | null;
-        const isLow = r.review_status === 'pending' && getResultLightStatus(r) === 'red';
-        const isExpanded = expandedAlts.has(r.id);
-        const hasAlts = alts && alts.length > 0;
-
-        return (
-          <div>
-            {explanationNode}
-            {/* 低置信度且有候选时，显示展开按钮 */}
-            {isAdmin && isLow && hasAlts && (
-              <div style={{ marginTop: 4 }}>
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ padding: 0, fontSize: 12, color: COLORS.redSolid }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setExpandedAlts(prev => {
-                      const next = new Set(prev);
-                      if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
-                      return next;
-                    });
-                  }}
-                >
-                  {isExpanded ? '收起候选' : `查看${alts!.length}个候选 ▼`}
-                </Button>
-                {isExpanded && (
-                  <div style={{
-                    marginTop: 6, padding: 8, background: '#fef2f2',
-                    borderRadius: 6, border: '1px solid #fecaca',
-                  }}>
-                    {alts!.map((alt, idx) => (
-                      <div key={idx} style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '4px 0',
-                        borderBottom: idx < alts!.length - 1 ? '1px dashed #fecaca' : 'none',
-                      }}>
-                        <Tag color="blue" style={{ margin: 0, flexShrink: 0 }}>{alt.quota_id}</Tag>
-                        <span style={{ flex: 1, fontSize: 12 }}>{alt.name}</span>
-                        <span style={{ fontSize: 11, color: '#999', flexShrink: 0 }}>{alt.unit}</span>
-                        <Button
-                          type="primary"
-                          size="small"
-                          style={{ fontSize: 11, height: 22 }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // 纠正为该候选定额
-                            (async () => {
-                              try {
-                                await api.put(`/tasks/${taskId}/results/${r.id}`, {
-                                  corrected_quotas: [{
-                                    quota_id: alt.quota_id,
-                                    name: alt.name,
-                                    unit: alt.unit,
-                                    source: 'manual_correction',
-                                  }],
-                                  review_note: `从候选中选择: ${alt.quota_id}`,
-                                });
-                                message.success(`已纠正为 ${alt.quota_id}`);
-                                setExpandedAlts(prev => { const n = new Set(prev); n.delete(r.id); return n; });
-                                loadData();
-                              } catch {
-                                message.error('纠正失败');
-                              }
-                            })();
-                          }}
-                        >
-                          选用
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
+        return <div>{explanationNode}</div>;
       },
     },
     // 管理员审核操作列
@@ -1205,22 +1102,63 @@ export default function ResultsPage() {
                   />
                 )}
               </Space>
+              <Input.Search
+                size="small"
+                allowClear
+                placeholder="搜索定额编号或名称"
+                value={inlineQuotaKeywords[row._result.id] || ''}
+                loading={inlineQuotaLoading[row._result.id]}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const { value } = e.target;
+                  setInlineQuotaKeywords((prev) => ({ ...prev, [row._result.id]: value }));
+                }}
+                onSearch={() => void searchInlineQuota(row._result)}
+              />
             </Space>
           );
         }
         // 定额行：删除按钮
         if (row._rowType === 'quota') {
-          return (
-            <Tooltip title="删除此条定额">
+          if (row._quotaKind !== 'current') {
+            return (
               <Button
                 type="link"
                 size="small"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={(e) => { e.stopPropagation(); removeQuota(row); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void pickInlineQuota(
+                    row._parentResult,
+                    row._quota,
+                    row._quotaKind === 'openclaw'
+                      ? 'openclaw'
+                      : row._quotaKind === 'search'
+                        ? 'search'
+                        : 'alternative',
+                  );
+                }}
                 style={{ padding: 0 }}
-              />
-            </Tooltip>
+              >
+                选用
+              </Button>
+            );
+          }
+          return (
+            <Space size={4}>
+              <Tag color="green" style={{ margin: 0 }}>当前</Tag>
+              {(row._parentResult.corrected_quotas || []).length > 1 ? (
+                <Tooltip title="删除此条定额">
+                  <Button
+                    type="link"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={(e) => { e.stopPropagation(); removeQuota(row); }}
+                    style={{ padding: 0 }}
+                  />
+                </Tooltip>
+              ) : null}
+            </Space>
           );
         }
         return null;
@@ -1232,64 +1170,41 @@ export default function ResultsPage() {
   // 统计摘要
   // ============================================================
 
-  const jarvisQuotaColumn = {
-    title: 'Jarvis 定额',
-    key: 'jarvis_quota',
-    width: 220,
-    onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
-    render: (_: unknown, row: DisplayRow) => {
-      if (row._rowType !== 'bill') return null;
-      const quota = getPrimaryQuota(getJarvisQuotas(row._result));
-      return (
-        <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'normal', wordBreak: 'break-all' }}>
-          {quota ? (
-            <>
-              <div style={{ fontWeight: 600 }}>{quota.quota_id}</div>
-              <div style={{ color: '#444' }}>{quota.name}</div>
-            </>
-          ) : (
-            <span style={{ color: '#999' }}>-</span>
-          )}
-        </div>
-      );
-    },
-  };
-
   const openClawReviewColumn = {
     title: 'OpenClaw 审核',
     key: 'openclaw_inline_review',
-    width: 250,
+    width: 230,
     onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
     render: (_: unknown, row: DisplayRow) => {
-      if (row._rowType !== 'bill') return null;
-      const result = row._result;
-      const quota = getPrimaryQuota(result.openclaw_suggested_quotas);
-      const strength = SUGGESTION_STRENGTH_MAP[getSuggestionStrength(result)];
+      if (row._rowType !== 'quota' || row._quotaIndex > 0) return null;
+      const result = row._parentResult;
+      const suggestedQuota = getPrimaryQuota(result.openclaw_suggested_quotas);
       const decisionInfo = result.openclaw_decision_type
-        ? (OPENCLAW_DECISION_MAP[result.openclaw_decision_type] || {
-          color: 'default',
-          text: result.openclaw_decision_type,
-        })
+        ? (OPENCLAW_DECISION_MAP[result.openclaw_decision_type] || { color: 'default', text: result.openclaw_decision_type })
         : null;
       const confirmInfo = OPENCLAW_CONFIRM_MAP[result.openclaw_review_confirm_status]
         || { color: 'default', text: result.openclaw_review_confirm_status || '-' };
+      const reason = shortenReason(result.openclaw_review_note) || getSuggestionReason(result);
+
+      if (!decisionInfo && !suggestedQuota && !result.openclaw_review_note) {
+        return <Typography.Text type="secondary" style={{ fontSize: 12 }}>暂无建议</Typography.Text>;
+      }
 
       return (
-        <div style={{ fontSize: 12, lineHeight: '1.6' }}>
-          <div style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all' }}>
-            {quota ? formatQuotaSummary(result.openclaw_suggested_quotas) : '暂无建议'}
-          </div>
-          <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
-            {decisionInfo ? <Tag color={decisionInfo.color}>{decisionInfo.text}</Tag> : <Tag>未复核</Tag>}
-            <Tag color={strength.color}>{strength.text}</Tag>
-            {result.openclaw_review_status !== 'pending' ? (
-              <Tag color={confirmInfo.color}>{confirmInfo.text}</Tag>
-            ) : null}
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <Space size={[4, 4]} wrap>
+            {decisionInfo ? <Tag color={decisionInfo.color}>{decisionInfo.text}</Tag> : null}
+            {result.openclaw_review_status !== 'pending' ? <Tag color={confirmInfo.color}>{confirmInfo.text}</Tag> : null}
           </Space>
-          <div style={{ marginTop: 4, color: '#666', whiteSpace: 'normal', wordBreak: 'break-all' }}>
-            {getSuggestionReason(result)}
-          </div>
-        </div>
+          {suggestedQuota ? (
+            <Typography.Text style={{ fontSize: 12 }}>
+              {formatQuotaLine(suggestedQuota)}
+            </Typography.Text>
+          ) : null}
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {reason}
+          </Typography.Text>
+        </Space>
       );
     },
   };
@@ -1297,104 +1212,83 @@ export default function ResultsPage() {
   const manualReviewColumn = {
     title: '人工审核',
     key: 'manual_inline_review',
-    width: 340,
+    width: 300,
     onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
     render: (_: unknown, row: DisplayRow) => {
-      if (row._rowType !== 'bill') return null;
-      const result = row._result;
-      const finalQuota = getPrimaryQuota(result.corrected_quotas);
-      const currentQuota = finalQuota || getPrimaryQuota(getFinalQuotas(result));
+      if (row._rowType !== 'quota' || row._quotaIndex > 0) return null;
+      const result = row._parentResult;
       const quickOptions = buildInlineOpenClawQuotaOptions(result);
       const searchResults = inlineQuotaResults[result.id] || [];
       const searchLoading = inlineQuotaLoading[result.id];
       const reviewInfo = REVIEW_MAP[result.review_status] || { color: 'default', text: result.review_status };
+      const quickOptionItems = quickOptions.map(({ key, quota }) => ({
+        value: key,
+        label: formatQuotaLine(quota),
+      }));
+      const searchOptionItems = searchResults.map((quota) => ({
+        value: `search-${result.id}-${quota.quota_id}-${quota.name}`,
+        label: formatQuotaLine(quota),
+      }));
 
       return (
-        <div style={{ fontSize: 12, lineHeight: '1.6' }}>
-          <div style={{ fontWeight: 600, whiteSpace: 'normal', wordBreak: 'break-all' }}>
-            {currentQuota ? formatQuotaLine(currentQuota) : '未处理'}
-          </div>
-          <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          <Space size={[4, 4]} wrap>
             <Tag color={reviewInfo.color}>{reviewInfo.text}</Tag>
-            {finalQuota ? <Tag color="green">人工已定</Tag> : <Tag>当前沿用 Jarvis</Tag>}
-            <Button
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                void adoptJarvisResult(result);
-              }}
-            >
-              维持 Jarvis
+            <Button size="small" onClick={(e) => { e.stopPropagation(); void adoptJarvisResult(result); }}>
+              保留
             </Button>
             {hasOpenClawPendingSuggestion(result) ? (
-              <Button
-                size="small"
-                type="primary"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void adoptOpenClawResult(result);
-                }}
-              >
-                采纳 OpenClaw
+              <Button size="small" type="primary" onClick={(e) => { e.stopPropagation(); void adoptOpenClawResult(result); }}>
+                用建议
               </Button>
             ) : null}
           </Space>
-          {quickOptions.length > 0 ? (
-            <div style={{ marginTop: 6 }}>
-              <Space size={[4, 4]} wrap>
-                {quickOptions.map(({ key, quota, origin }) => (
-                  <Button
-                    key={key}
-                    size="small"
-                    style={{ maxWidth: 150 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void pickInlineQuota(result, quota, origin);
-                    }}
-                    title={formatQuotaLine(quota)}
-                  >
-                    {quota.quota_id}
-                  </Button>
-                ))}
-              </Space>
-            </div>
-          ) : null}
-          <div style={{ marginTop: 6 }}>
-            <Input.Search
+          {quickOptionItems.length > 0 ? (
+            <Select
               size="small"
-              allowClear
-              placeholder="搜索定额"
-              value={inlineQuotaKeywords[result.id] || ''}
-              loading={searchLoading}
+              style={{ width: '100%' }}
+              placeholder="候选定额"
+              options={quickOptionItems}
               onClick={(e) => e.stopPropagation()}
-              onChange={(e) => {
-                const { value } = e.target;
-                setInlineQuotaKeywords((prev) => ({ ...prev, [result.id]: value }));
+              onSelect={(value) => {
+                const picked = quickOptions.find((item) => item.key === value);
+                if (picked) {
+                  void pickInlineQuota(result, picked.quota, picked.origin);
+                }
               }}
-              onSearch={() => void searchInlineQuota(result)}
             />
-          </div>
-          {searchResults.length > 0 ? (
-            <div style={{ marginTop: 6 }}>
-              <Space size={[4, 4]} wrap>
-                {searchResults.map((quota) => (
-                  <Button
-                    key={`search-${result.id}-${quota.quota_id}-${quota.name}`}
-                    size="small"
-                    style={{ maxWidth: 170 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void pickInlineQuota(result, quota, 'search');
-                    }}
-                    title={formatQuotaLine(quota)}
-                  >
-                    {quota.quota_id}
-                  </Button>
-                ))}
-              </Space>
-            </div>
           ) : null}
-        </div>
+          <Input.Search
+            size="small"
+            allowClear
+            placeholder="搜索定额编号或名称"
+            value={inlineQuotaKeywords[result.id] || ''}
+            loading={searchLoading}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const { value } = e.target;
+              setInlineQuotaKeywords((prev) => ({ ...prev, [result.id]: value }));
+            }}
+            onSearch={() => void searchInlineQuota(result)}
+          />
+          {searchOptionItems.length > 0 ? (
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              placeholder="搜索结果"
+              options={searchOptionItems}
+              onClick={(e) => e.stopPropagation()}
+              onSelect={(value) => {
+                const picked = searchResults.find(
+                  (item) => `search-${result.id}-${item.quota_id}-${item.name}` === value,
+                );
+                if (picked) {
+                  void pickInlineQuota(result, picked, 'search');
+                }
+              }}
+            />
+          ) : null}
+        </Space>
       );
     },
   };
@@ -1403,11 +1297,10 @@ export default function ResultsPage() {
     .filter((column) => !['openclaw_compare', 'review'].includes(String(column.key || '')))
     .flatMap((column) => {
       if (column.key === 'description') {
-        return [column, jarvisQuotaColumn, openClawReviewColumn, ...(isAdmin ? [manualReviewColumn] : [])];
+        return [column, openClawReviewColumn, ...(isAdmin ? [manualReviewColumn] : [])];
       }
       return [column];
     });
-
   const renderSummary = () => {
     const { total, confirmed = 0, corrected = 0, no_match } = summary;
     const pill = (bg: string, color: string): React.CSSProperties => ({
@@ -1600,37 +1493,6 @@ export default function ResultsPage() {
                   size="small"
                 >
                   一键确认高置信度
-                </Button>
-                {/* 按颜色全选 */}
-                <Button
-                  size="small"
-                  style={{ color: COLORS.greenSolid, borderColor: COLORS.greenSolid }}
-                  onClick={() => {
-                    const ids = results.filter(r => getResultLightStatus(r) === 'green' && r.review_status === 'pending').map(r => r.id);
-                    setSelectedRowKeys(ids);
-                  }}
-                >
-                  选绿灯({summary.high_confidence})
-                </Button>
-                <Button
-                  size="small"
-                  style={{ color: COLORS.yellowSolid, borderColor: COLORS.yellowSolid }}
-                  onClick={() => {
-                    const ids = results.filter(r => getResultLightStatus(r) === 'yellow' && r.review_status === 'pending').map(r => r.id);
-                    setSelectedRowKeys(ids);
-                  }}
-                >
-                  选黄灯({summary.mid_confidence})
-                </Button>
-                <Button
-                  size="small"
-                  style={{ color: COLORS.redSolid, borderColor: COLORS.redSolid }}
-                  onClick={() => {
-                    const ids = results.filter(r => getResultLightStatus(r) === 'red' && r.review_status === 'pending').map(r => r.id);
-                    setSelectedRowKeys(ids);
-                  }}
-                >
-                  选红灯({summary.low_confidence})
                 </Button>
                 {selectedRowKeys.length > 0 && (
                   <Button
