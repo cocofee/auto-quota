@@ -2,8 +2,8 @@ from src.hybrid_searcher import HybridSearcher
 
 
 class _FakeExperienceDB:
-    def _find_exact_match(self, variant, province, authority_only=True):
-        del province, authority_only
+    def _find_exact_match(self, variant, province, authority_only=True, exclude_sources=None):
+        del province, authority_only, exclude_sources
         if variant == "normalized exact":
             return {
                 "id": 11,
@@ -14,8 +14,8 @@ class _FakeExperienceDB:
             }
         return None
 
-    def find_experience(self, bill_text, province=None, limit=20):
-        del province, limit
+    def find_experience(self, bill_text, province=None, limit=20, online_only=False):
+        del province, limit, online_only
         if bill_text == "Exact Bill Name":
             return [
                 {
