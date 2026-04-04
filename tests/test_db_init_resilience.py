@@ -1,3 +1,4 @@
+import sqlite3
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -63,6 +64,27 @@ def test_experience_db_init_closes_connection_on_init_error():
                 db._init_db()
 
         assert conn.closed is True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_experience_db_init_ignores_sqlite_lock_during_offline_source_demotion():
+    tmp_dir = _new_tmp_dir("experience-db-lock")
+    try:
+        db_path = tmp_dir / "experience.db"
+        db = experience_db_mod.ExperienceDB.__new__(experience_db_mod.ExperienceDB)
+        db.db_path = db_path
+
+        with patch.object(experience_db_mod.ExperienceDB, "_migrate_normalized_text", return_value=None), \
+             patch.object(experience_db_mod.ExperienceDB, "_ensure_fts_seeded", return_value=None), \
+             patch.object(
+                 experience_db_mod.ExperienceDB,
+                 "_demote_online_excluded_sources",
+                 side_effect=sqlite3.OperationalError("database is locked"),
+             ):
+            db._init_db()
+
+        assert db_path.exists() is True
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

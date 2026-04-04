@@ -19,6 +19,7 @@ RRF算法原理：
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 from loguru import logger
@@ -26,6 +27,7 @@ from loguru import logger
 import config
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
+from src.province_book_mapper import normalize_requested_books_for_search
 from src.quota_search import search_by_id
 from src.query_router import build_query_route_profile, count_spec_signals
 from src.specialty_classifier import get_book_from_quota_id
@@ -34,6 +36,10 @@ from src.utils import safe_json_list
 
 
 class HybridSearcher:
+    _kb_keyword_executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="universal-kb-keyword",
+    )
     """混合搜索引擎：BM25 + 向量搜索，RRF融合"""
     _FAMILY_GATE_HARD_CONFLICTS = {
         frozenset(("bridge_support", "bridge_raceway")),
@@ -118,6 +124,9 @@ class HybridSearcher:
 
         # 通用知识库（延迟初始化）
         self._universal_kb = None
+        self._kb_keyword_cache = {}
+        self._KB_KEYWORD_CACHE_MAX = 256
+        self._kb_keyword_blocked_until = 0.0
 
         # 会话级搜索缓存：相同 normalized_query + books 的搜索结果复用
         # 同一批次中"DN25镀锌钢管"和"DN32镀锌钢管"可能生成相同的 normalized query
@@ -180,55 +189,13 @@ class HybridSearcher:
     def _normalize_requested_books_for_nonstandard_db(
         books: list[str] | None,
         available_books: set[str] | None,
+        province: str | None = None,
     ) -> list[str] | None:
-        requested = [str(book or "").strip() for book in (books or []) if str(book or "").strip()]
-        available = {str(book or "").strip() for book in (available_books or set()) if str(book or "").strip()}
-        if not requested or not available:
-            return requested or None
-
-        def _numeric_equivalent_candidates(book_value: str) -> list[str]:
-            if not book_value.isdigit():
-                return []
-            normalized = str(int(book_value))
-            matches = [
-                candidate for candidate in available
-                if candidate.isdigit() and str(int(candidate)) == normalized
-            ]
-            return sorted(matches, key=lambda value: (len(value), value))
-
-        mapped: list[str] = []
-        saw_broad_group = False
-        for book in requested:
-            if book.startswith("C") and book[1:].isdigit():
-                stripped = book[1:].lstrip("0") or "0"
-                if stripped in available:
-                    mapped.append(stripped)
-                    continue
-                numeric_matches = _numeric_equivalent_candidates(stripped)
-                if numeric_matches:
-                    mapped.append(numeric_matches[0])
-                continue
-
-            if len(book) == 1 and book in {"A", "D", "E"}:
-                saw_broad_group = True
-                prefixed = sorted(candidate for candidate in available if candidate == book or candidate.startswith(book))
-                if prefixed:
-                    mapped.extend(prefixed)
-                continue
-
-            if book in available:
-                mapped.append(book)
-                continue
-
-            numeric_matches = _numeric_equivalent_candidates(book)
-            if numeric_matches:
-                mapped.append(numeric_matches[0])
-
-        if mapped:
-            return list(dict.fromkeys(mapped))
-        if saw_broad_group:
-            return None
-        return None
+        return normalize_requested_books_for_search(
+            books,
+            province=province,
+            available_books=available_books,
+        )
 
     def collect_prior_candidates(
         self,
@@ -553,7 +520,7 @@ class HybridSearcher:
                 from src.universal_kb import UniversalKB
                 self._universal_kb = UniversalKB()
                 # 检查是否有数据（没数据就不用查了）
-                if self._universal_kb.get_stats()["authority"] == 0:
+                if not self._universal_kb.has_authority_records():
                     logger.debug("通用知识库权威层为空，跳过知识库增强")
                     self._universal_kb = False  # 标记为不可用，避免反复初始化
             except Exception as e:
@@ -828,8 +795,25 @@ class HybridSearcher:
 
         exact_lookup = getattr(self._experience_db, "_find_exact_match", None)
         if callable(exact_lookup):
+            excluded_sources_getter = getattr(
+                self._experience_db,
+                "_get_online_excluded_sources",
+                None,
+            )
+            excluded_sources = (
+                list(excluded_sources_getter())
+                if callable(excluded_sources_getter)
+                else None
+            )
             for variant in variants:
                 try:
+                    record = exact_lookup(
+                        variant,
+                        self.province,
+                        authority_only=True,
+                        exclude_sources=excluded_sources,
+                    )
+                except TypeError:
                     record = exact_lookup(variant, self.province, authority_only=True)
                 except Exception as e:
                     logger.debug(f"缁忛獙 exact prior 鏌ヨ澶辫触锛堜笉褰卞搷涓绘祦绋嬶級: {e}")
@@ -873,6 +857,13 @@ class HybridSearcher:
 
         for variant in variants:
             try:
+                records = find_experience(
+                    variant,
+                    province=self.province,
+                    limit=max(top_k, 5),
+                    online_only=True,
+                )
+            except TypeError:
                 records = find_experience(variant, province=self.province, limit=max(top_k, 5))
             except Exception as e:
                 logger.debug(f"缁忛獙 bill_name exact prior 鏌ヨ澶辫触锛堜笉褰卞搷涓绘祦绋嬶級: {e}")
@@ -1065,6 +1056,13 @@ class HybridSearcher:
         top_k = top_k or config.HYBRID_TOP_K
         item = dict(item or {})
         context_prior = dict(context_prior or {})
+        adaptive_strategy = str(
+            item.get("adaptive_strategy")
+            or context_prior.get("adaptive_strategy")
+            or "standard"
+        ).strip().lower()
+        if adaptive_strategy not in {"fast", "standard", "deep"}:
+            adaptive_strategy = "standard"
         primary_query_profile = dict(
             (item.get("canonical_query") or {}).get("primary_query_profile")
             or item.get("primary_query_profile")
@@ -1081,6 +1079,7 @@ class HybridSearcher:
             top_k=top_k,
             query_features=query_features,
             route_profile=route_profile,
+            adaptive_strategy=adaptive_strategy,
         )
         base_bm25_weight = config.BM25_WEIGHT if bm25_weight is None else bm25_weight
         base_vector_weight = config.VECTOR_WEIGHT if vector_weight is None else vector_weight
@@ -1096,7 +1095,11 @@ class HybridSearcher:
         # 只在books仍带C前缀时介入（说明是API直接调的，没经过match_core翻译）
         if books and not self.uses_standard_books:
             available_books = set(self.bm25_engine.quota_books.values())
-            books = self._normalize_requested_books_for_nonstandard_db(books, available_books)
+            books = self._normalize_requested_books_for_nonstandard_db(
+                books,
+                available_books,
+                province=self.province,
+            )
 
         # 会话缓存检查：相同query+books组合复用搜索结果
         books_key = ",".join(sorted(books)) if books else ""
@@ -1120,9 +1123,43 @@ class HybridSearcher:
         # 第0步：查通用知识库获取搜索增强关键词
         # ============================================================
         kb_hints = []
-        if self.universal_kb:
+        if adaptive_strategy == "standard" and self.universal_kb:
             try:
-                kb_hints = self.universal_kb.get_search_keywords(query)
+                cached_kb_hints = self._kb_keyword_cache.get(query)
+                if cached_kb_hints is not None:
+                    kb_hints = list(cached_kb_hints)
+                else:
+                    timeout_sec = float(getattr(config, "UNIVERSAL_KB_KEYWORD_TIMEOUT_SEC", 2.0) or 0.0)
+                    blocked_until = float(getattr(self, "_kb_keyword_blocked_until", 0.0) or 0.0)
+                    now = time.monotonic()
+                    if timeout_sec > 0 and now < blocked_until:
+                        kb_hints = []
+                    elif timeout_sec > 0:
+                        future = self._kb_keyword_executor.submit(
+                            self.universal_kb.get_search_keywords,
+                            query,
+                        )
+                        try:
+                            kb_hints = future.result(timeout=timeout_sec)
+                        except FutureTimeoutError:
+                            cooldown_sec = float(
+                                getattr(config, "UNIVERSAL_KB_KEYWORD_COOLDOWN_SEC", 30.0) or 0.0
+                            )
+                            self._kb_keyword_blocked_until = time.monotonic() + max(cooldown_sec, 0.0)
+                            future.cancel()
+                            logger.warning(
+                                    f"閫氱敤鐭ヨ瘑搴撳叧閿瘝澧炲己瓒呮椂({timeout_sec:.1f}s)锛岃烦杩囨湰娆″寮? {query[:40]}"
+                            )
+                            kb_hints = []
+                        except Exception as e:
+                                logger.debug(f"閫氱敤鐭ヨ瘑搴撴煡璇㈠け璐ワ紙涓嶅奖鍝嶆悳绱級: {e}")
+                                kb_hints = []
+                    else:
+                        kb_hints = self.universal_kb.get_search_keywords(query)
+                    if len(self._kb_keyword_cache) >= self._KB_KEYWORD_CACHE_MAX:
+                        old_key = next(iter(self._kb_keyword_cache))
+                        del self._kb_keyword_cache[old_key]
+                    self._kb_keyword_cache[query] = list(kb_hints or [])
                 kb_hints = self._filter_kb_hints_for_query_features(
                     kb_hints,
                     query_features=query_features,
@@ -1141,13 +1178,24 @@ class HybridSearcher:
             query_features=query_features,
             route_profile=route_profile,
             primary_query_profile=primary_query_profile,
+            adaptive_strategy=adaptive_strategy,
         )
         bm25_runs = []
         vector_runs = []
         total_bm25_hits = 0
         total_vector_hits = 0
-        bm25_top_k = max(int(getattr(config, "BM25_TOP_K", top_k)), rank_window)
-        vector_top_k = max(int(getattr(config, "VECTOR_TOP_K", top_k)), rank_window)
+        bm25_top_k = self._resolve_engine_top_k(
+            engine="bm25",
+            top_k=top_k,
+            rank_window=rank_window,
+            adaptive_strategy=adaptive_strategy,
+        )
+        vector_top_k = self._resolve_engine_top_k(
+            engine="vector",
+            top_k=top_k,
+            rank_window=rank_window,
+            adaptive_strategy=adaptive_strategy,
+        )
 
         # 向量搜索开关（环境变量VECTOR_ENABLED=false可关闭，Docker/懒猫无GPU时用）
         vector_enabled = config.VECTOR_ENABLED
@@ -1451,11 +1499,20 @@ class HybridSearcher:
     def _build_query_variants(self, query: str, kb_hints: list[str], *,
                               query_features: dict | None = None,
                               route_profile: dict | None = None,
-                              primary_query_profile: dict | None = None) -> list[dict]:
+                              primary_query_profile: dict | None = None,
+                              adaptive_strategy: str | None = None) -> list[dict]:
         """
         构造少量高价值查询变体，避免纯原始query召回盲区。
         """
+        strategy = str(adaptive_strategy or "standard").strip().lower()
         max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 4))
+        if strategy == "fast":
+            max_variants = min(max_variants, 2)
+        elif strategy == "deep":
+            max_variants = max(max_variants, 4)
+        strategy_variant_cap = None
+        if strategy == "deep":
+            strategy_variant_cap = int(getattr(config, "HYBRID_DEEP_QUERY_VARIANTS", 3) or 3)
         max_variants = max(max_variants, 1)
         query_features = dict(query_features or {})
         route_profile = dict(route_profile or {})
@@ -1479,6 +1536,8 @@ class HybridSearcher:
             numeric_params.get(key) is not None for key in ("dn", "kva", "kw")
         ):
             max_variants = max(max_variants, 7)
+        if strategy_variant_cap is not None:
+            max_variants = min(max_variants, max(1, strategy_variant_cap))
         raw_weights = getattr(config, "HYBRID_VARIANT_WEIGHTS", [1.0, 0.75, 0.60, 0.50])
         if not isinstance(raw_weights, (list, tuple)) or not raw_weights:
             raw_weights = [1.0, 0.75, 0.60, 0.50]
@@ -1872,10 +1931,15 @@ class HybridSearcher:
 
     def _resolve_rank_window(self, *, top_k: int,
                              query_features: dict,
-                             route_profile: dict) -> int:
+                             route_profile: dict,
+                             adaptive_strategy: str | None = None) -> int:
         family = str((query_features or {}).get("family") or "").strip()
         route = str((route_profile or {}).get("route") or "").strip()
         spec_count = int((route_profile or {}).get("spec_signal_count", 0) or 0)
+        strategy = str(adaptive_strategy or "standard").strip().lower()
+
+        if strategy == "fast":
+            return int(max(int(top_k), 8))
 
         rank_window = max(int(top_k), 10)
         if route in {"installation_spec", "spec_heavy"}:
@@ -1885,6 +1949,19 @@ class HybridSearcher:
         if spec_count >= 2 and family:
             rank_window = max(rank_window, top_k * 5, 50)
         return int(rank_window)
+
+    @staticmethod
+    def _resolve_engine_top_k(*, engine: str, top_k: int, rank_window: int,
+                              adaptive_strategy: str | None = None) -> int:
+        strategy = str(adaptive_strategy or "standard").strip().lower()
+        if engine == "bm25":
+            default_top_k = int(getattr(config, "BM25_TOP_K", top_k))
+        else:
+            default_top_k = int(getattr(config, "VECTOR_TOP_K", top_k))
+
+        if strategy == "fast":
+            return int(max(rank_window, min(default_top_k, max(int(top_k) + 4, 8))))
+        return int(max(default_top_k, rank_window))
 
     @staticmethod
     def _extract_core_noun_query(query: str) -> str | None:

@@ -72,6 +72,11 @@ class ExperienceInput:
 class ExperienceDB:
     """经验库：存储和查询历史匹配记录"""
 
+    _ONLINE_EXCLUDED_SOURCES = frozenset({
+        "completed_project",
+        "reviewed_import",
+    })
+
     def __init__(self, province: str = None, db_path: Path | None = None):
         self.province = province or config.get_current_province()
         self.db_path = Path(db_path) if db_path else config.get_experience_db_path()
@@ -83,9 +88,89 @@ class ExperienceDB:
         self._chroma_client = None
         # 锁：防止多线程并发初始化/重建 collection 时的竞态条件
         self._collection_lock = threading.Lock()
+        self._vector_index_disabled_until = 0.0
+        self._vector_index_disabled_reason = ""
+        self._vector_rebuild_in_progress = False
 
         # 确保数据库表存在
         self._init_db()
+
+    def _vector_failure_cooldown_sec(self) -> float:
+        try:
+            return max(30.0, float(getattr(config, "EXPERIENCE_VECTOR_FAILURE_COOLDOWN_SEC", 300) or 300))
+        except Exception:
+            return 300.0
+
+    def _vector_index_disabled(self) -> bool:
+        return time.time() < float(getattr(self, "_vector_index_disabled_until", 0.0) or 0.0)
+
+    @staticmethod
+    def _vector_rebuild_keywords() -> tuple[str, ...]:
+        return (
+            "disk i/o",
+            "disk i/o error",
+            "readonly",
+            "corrupt",
+            "malformed",
+            "no such table",
+            "sqlite",
+            "database",
+            "segment",
+            "index",
+            "hnsw",
+            "compactor",
+            "pool timed out",
+        )
+
+    def _should_rebuild_vector_index(self, exc: Exception | str | None) -> bool:
+        message = str(exc or "").strip().lower()
+        return any(keyword in message for keyword in self._vector_rebuild_keywords())
+
+    def _disable_vector_index(self, exc: Exception | str | None, *, schedule_rebuild: bool = False) -> None:
+        cooldown = self._vector_failure_cooldown_sec()
+        message = str(exc or "unknown vector index error").strip()
+        self._vector_index_disabled_until = max(
+            float(getattr(self, "_vector_index_disabled_until", 0.0) or 0.0),
+            time.time() + cooldown,
+        )
+        self._vector_index_disabled_reason = message
+        self._collection = None
+        self._chroma_client = None
+        logger.warning(f"经验库向量索引已临时熔断 {cooldown:.0f}s: {message}")
+        if schedule_rebuild:
+            self._schedule_vector_rebuild()
+
+    def _schedule_vector_rebuild(self) -> None:
+        with self._collection_lock:
+            if self._vector_rebuild_in_progress:
+                return
+            self._vector_rebuild_in_progress = True
+
+        def _rebuild_in_background():
+            try:
+                self.rebuild_vector_index()
+                self._vector_index_disabled_until = 0.0
+                self._vector_index_disabled_reason = ""
+                logger.info("经验库向量索引后台重建完成")
+            except Exception as exc:
+                logger.error(f"经验库向量索引后台重建失败: {exc}")
+            finally:
+                with self._collection_lock:
+                    self._vector_rebuild_in_progress = False
+
+        threading.Thread(target=_rebuild_in_background, daemon=True).start()
+
+    def _safe_collection_count(self, coll) -> int:
+        if coll is None:
+            return 0
+        try:
+            return int(coll.count() or 0)
+        except Exception as exc:
+            self._disable_vector_index(
+                exc,
+                schedule_rebuild=self._should_rebuild_vector_index(exc),
+            )
+            return 0
 
     def _init_db(self):
         """创建经验库SQLite表（如果不存在）"""
@@ -231,6 +316,11 @@ class ExperienceDB:
             # L7: 一次性迁移旧记录的 normalized_text（只在字段为空时执行）
             self._migrate_normalized_text(conn)
             self._ensure_fts_seeded(conn)
+            self._run_startup_best_effort_write(
+                conn,
+                action_name="experience db offline-source demotion",
+                callback=self._demote_online_excluded_sources,
+            )
         finally:
             conn.close()
 
@@ -270,9 +360,123 @@ class ExperienceDB:
         conn.commit()
         logger.info(f"经验库迁移完成：{len(batch)} 条记录已更新 normalized_text")
 
+    @classmethod
+    def _get_online_excluded_sources(cls) -> tuple[str, ...]:
+        return tuple(sorted(cls._ONLINE_EXCLUDED_SOURCES))
+
+    @classmethod
+    def _is_online_excluded_source(cls, source: str) -> bool:
+        return cls._safe_text(source) in cls._ONLINE_EXCLUDED_SOURCES
+
+    @classmethod
+    def _append_excluded_source_clauses(
+        cls,
+        clauses: list[str],
+        params: list,
+        exclude_sources: list[str] | tuple[str, ...] | None,
+        *,
+        column: str = "source",
+    ) -> None:
+        source_filters = [
+            cls._safe_text(item)
+            for item in (exclude_sources or [])
+            if cls._safe_text(item)
+        ]
+        if not source_filters:
+            return
+        placeholders = ",".join(["?"] * len(source_filters))
+        clauses.append(f"COALESCE({column}, '') NOT IN ({placeholders})")
+        params.extend(source_filters)
+
+    @staticmethod
+    def _is_sqlite_lock_error(exc: Exception | None) -> bool:
+        message = str(exc or "").strip().lower()
+        return any(
+            keyword in message
+            for keyword in (
+                "database is locked",
+                "database table is locked",
+                "database schema is locked",
+                "database busy",
+            )
+        )
+
+    def _run_startup_best_effort_write(
+        self,
+        conn,
+        *,
+        action_name: str,
+        callback,
+        max_attempts: int = 3,
+        retry_delay_sec: float = 0.25,
+    ):
+        attempts = max(int(max_attempts or 1), 1)
+        for attempt in range(1, attempts + 1):
+            try:
+                return callback(conn)
+            except sqlite3.OperationalError as exc:
+                if not self._is_sqlite_lock_error(exc):
+                    raise
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if attempt >= attempts:
+                    logger.warning(
+                        f"{action_name} skipped after sqlite lock contention ({attempt}/{attempts}): {exc}"
+                    )
+                    return None
+                sleep_sec = max(float(retry_delay_sec or 0.0), 0.0) * attempt
+                logger.warning(
+                    f"{action_name} hit sqlite lock ({attempt}/{attempts}), retry in {sleep_sec:.2f}s: {exc}"
+                )
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+
+    def _demote_online_excluded_sources(self, conn) -> int:
+        excluded_sources = list(self._get_online_excluded_sources())
+        if not excluded_sources:
+            return 0
+        cursor = conn.cursor()
+        placeholders = ",".join(["?"] * len(excluded_sources))
+        cursor.execute(
+            f"""
+            UPDATE experiences
+            SET layer = 'candidate',
+                updated_at = COALESCE(updated_at, ?)
+            WHERE source IN ({placeholders})
+              AND COALESCE(layer, '') NOT IN ('candidate', 'deleted')
+            """,
+            [time.time(), *excluded_sources],
+        )
+        updated = int(cursor.rowcount or 0)
+        if updated > 0:
+            conn.commit()
+            logger.info(
+                f"experience db normalized offline learning layers: {updated} records demoted to candidate"
+            )
+        return updated
+
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
         return _db_connect(self.db_path, row_factory=row_factory)
+
+    def get_total_count_fast(self, province: str | None = None) -> int:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            province_value = str(province or "").strip()
+            if province_value:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM experiences WHERE province = ?",
+                    (province_value,),
+                )
+            else:
+                cursor.execute("SELECT COUNT(*) FROM experiences")
+            row = cursor.fetchone()
+            return int((row or [0])[0] or 0)
+        finally:
+            conn.close()
 
     @staticmethod
     def _ensure_column(cursor, table: str, column: str, ddl: str):
@@ -385,12 +589,14 @@ class ExperienceDB:
             return 0.0
         return len(a & b) / max(len(a | b), 1)
 
-    def _recall_exact(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 20) -> list[dict]:
+    def _recall_exact(self, query_item: dict, *, layer: str, province_mode: str,
+                      limit: int = 20, exclude_sources: list[str] | None = None) -> list[dict]:
         clauses = ["normalized_text = ?", "normalized_text != ''", "layer = ?"]
         params: list = [query_item["normalized_text"], layer]
         if province_mode == "local":
             clauses.append("province = ?")
             params.append(query_item["province"])
+        self._append_excluded_source_clauses(clauses, params, exclude_sources)
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
@@ -407,7 +613,8 @@ class ExperienceDB:
         finally:
             conn.close()
 
-    def _recall_bm25(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 30) -> list[dict]:
+    def _recall_bm25(self, query_item: dict, *, layer: str, province_mode: str,
+                     limit: int = 30, exclude_sources: list[str] | None = None) -> list[dict]:
         normalized_text = self._safe_text(query_item.get("normalized_text"))
         raw_text = self._safe_text(query_item.get("raw_text"))
         tokens = [token for token in re.findall(r"[\u4e00-\u9fffa-zA-Z0-9]+", raw_text or normalized_text) if len(token) >= 1]
@@ -420,9 +627,19 @@ class ExperienceDB:
             if not self._fts_available(cursor):
                 return []
             province_clause = " AND e.province = ?" if province_mode == "local" else ""
+            excluded_clause = ""
             params = [match_query, layer]
             if province_mode == "local":
                 params.append(query_item["province"])
+            excluded_sources = [
+                self._safe_text(item)
+                for item in (exclude_sources or [])
+                if self._safe_text(item)
+            ]
+            if excluded_sources:
+                placeholders = ",".join(["?"] * len(excluded_sources))
+                excluded_clause = f" AND COALESCE(e.source, '') NOT IN ({placeholders})"
+                params.extend(excluded_sources)
             params.append(limit)
             cursor.execute(
                 f"""
@@ -430,7 +647,7 @@ class ExperienceDB:
                 FROM experience_fts
                 JOIN experiences e ON e.id = CAST(experience_fts.experience_id AS INTEGER)
                 WHERE experience_fts MATCH ?
-                  AND e.layer = ?{province_clause}
+                  AND e.layer = ?{province_clause}{excluded_clause}
                 ORDER BY bm25_score ASC, e.confidence DESC, e.confirm_count DESC
                 LIMIT ?
                 """,
@@ -449,7 +666,8 @@ class ExperienceDB:
         finally:
             conn.close()
 
-    def _recall_structural(self, query_item: dict, *, layer: str, province_mode: str, limit: int = 30) -> list[dict]:
+    def _recall_structural(self, query_item: dict, *, layer: str, province_mode: str,
+                           limit: int = 30, exclude_sources: list[str] | None = None) -> list[dict]:
         clauses = ["layer = ?"]
         params: list = [layer]
         specialty = self._safe_text(query_item.get("specialty"))
@@ -469,6 +687,7 @@ class ExperienceDB:
         if province_mode == "local":
             clauses.append("province = ?")
             params.append(query_item["province"])
+        self._append_excluded_source_clauses(clauses, params, exclude_sources)
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
@@ -495,9 +714,10 @@ class ExperienceDB:
         if not getattr(config, "VECTOR_ENABLED", True):
             return []
         coll = self.collection
-        if coll is None or coll.count() == 0 or self.model is None:
+        collection_count = self._safe_collection_count(coll)
+        if coll is None or collection_count == 0 or self.model is None:
             return []
-        fetch_k = min(max(top_k * 4, 30), coll.count())
+        fetch_k = min(max(top_k * 4, 30), collection_count)
         try:
             from src.model_profile import encode_queries
             query_embedding = encode_queries(self.model, [query_text])
@@ -519,16 +739,23 @@ class ExperienceDB:
                     continue
             return pairs
         except Exception as exc:
+            self._disable_vector_index(
+                exc,
+                schedule_rebuild=self._should_rebuild_vector_index(exc),
+            )
             logger.debug(f"经验库向量召回失败，降级跳过: {exc}")
             return []
 
-    def _recall_vector_records(self, query_text: str, *, top_k: int, min_confidence: int, province: str) -> list[dict]:
+    def _recall_vector_records(self, query_text: str, *, top_k: int,
+                               min_confidence: int, province: str,
+                               exclude_sources: list[str] | None = None) -> list[dict]:
         vector_pairs = self._recall_vector_candidates(query_text, top_k=top_k, province=province)
         if not vector_pairs:
             return []
         vector_records = self._fetch_records_by_ids(
             [item[0] for item in vector_pairs],
             min_confidence=min_confidence,
+            exclude_sources=exclude_sources,
         )
         records = []
         for record_id, similarity in vector_pairs:
@@ -553,6 +780,7 @@ class ExperienceDB:
         include_vector: bool = False,
         max_workers: int = 3,
         timeout: float = 5.0,
+        exclude_sources: list[str] | None = None,
     ) -> dict[str, list[dict]]:
         """Run recall strategies concurrently and merge them by channel later."""
         recall_results: dict[str, list[dict]] = {
@@ -571,6 +799,7 @@ class ExperienceDB:
                 layer=layer,
                 province_mode=province_mode,
                 limit=top_k * 2,
+                exclude_sources=exclude_sources,
             ): "exact",
             executor.submit(
                 self._recall_bm25,
@@ -578,6 +807,7 @@ class ExperienceDB:
                 layer=layer,
                 province_mode=province_mode,
                 limit=top_k * 3,
+                exclude_sources=exclude_sources,
             ): "bm25",
             executor.submit(
                 self._recall_structural,
@@ -585,6 +815,7 @@ class ExperienceDB:
                 layer=layer,
                 province_mode=province_mode,
                 limit=top_k * 3,
+                exclude_sources=exclude_sources,
             ): "structural",
         }
         if include_vector:
@@ -594,6 +825,7 @@ class ExperienceDB:
                 top_k=top_k,
                 min_confidence=min_confidence,
                 province=province,
+                exclude_sources=exclude_sources,
             )] = "vector"
 
         try:
@@ -627,7 +859,9 @@ class ExperienceDB:
 
         return recall_results
 
-    def _fetch_records_by_ids(self, ids: list[int], *, min_confidence: int, province: str | None = None) -> dict[int, dict]:
+    def _fetch_records_by_ids(self, ids: list[int], *, min_confidence: int,
+                              province: str | None = None,
+                              exclude_sources: list[str] | None = None) -> dict[int, dict]:
         if not ids:
             return {}
         conn = self._connect(row_factory=True)
@@ -639,6 +873,7 @@ class ExperienceDB:
             if province:
                 clauses.append("province = ?")
                 params.append(province)
+            self._append_excluded_source_clauses(clauses, params, exclude_sources)
             cursor.execute(
                 f"SELECT * FROM experiences WHERE {' AND '.join(clauses)}",
                 params,
@@ -870,14 +1105,8 @@ class ExperienceDB:
             "multi_project_promoted",
             "promote_from_candidate",
         }
-        verified_sources = {
-            "completed_project",
-            "reviewed_import",
-        }
         if source in authority_sources:
             return "authority"
-        if source in verified_sources:
-            return "verified"
         return "candidate"
 
     @staticmethod
@@ -1105,6 +1334,8 @@ class ExperienceDB:
 
         线程安全：用 _collection_lock 保护，防止多线程并发初始化/重建时竞态。
         """
+        if self._vector_index_disabled():
+            return None
         # 快速路径：已初始化且客户端未变，无需加锁
         if self._collection is not None and self._chroma_client is not None:
             try:
@@ -1149,6 +1380,10 @@ class ExperienceDB:
                     self._chroma_client = client
             except Exception as e:
                 logger.warning(f"ChromaDB collection初始化失败: {e}")
+                self._disable_vector_index(
+                    e,
+                    schedule_rebuild=self._should_rebuild_vector_index(e),
+                )
                 # 返回None，调用方需要处理
             return self._collection
 
@@ -1176,13 +1411,7 @@ class ExperienceDB:
         self._chroma_client = client
 
         # 从SQLite重建向量索引（后台执行，不阻塞当前请求）
-        def _rebuild_in_background():
-            try:
-                self.rebuild_vector_index()
-                logger.info("经验库向量索引自动重建完成")
-            except Exception as e:
-                logger.error(f"经验库向量索引自动重建失败: {e}")
-        threading.Thread(target=_rebuild_in_background, daemon=True).start()
+        self._schedule_vector_rebuild()
         return coll
 
     # ================================================================
@@ -2142,7 +2371,8 @@ class ExperienceDB:
         return record_id
 
     def _find_exact_match(self, bill_text: str, province: str,
-                          authority_only: bool = False) -> dict:
+                          authority_only: bool = False,
+                          exclude_sources: list[str] | None = None) -> dict:
         """精确查找相同清单文本的经验记录（含L7归一化模糊匹配）
 
         匹配优先级：
@@ -2157,15 +2387,19 @@ class ExperienceDB:
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            authority_clause = " AND layer = 'authority'" if authority_only else ""
+            exact_clauses = ["bill_text = ?", "province = ?"]
+            exact_params: list = [bill_text, province]
+            if authority_only:
+                exact_clauses.append("layer = 'authority'")
+            self._append_excluded_source_clauses(exact_clauses, exact_params, exclude_sources)
 
             # 第1级：完全精确匹配（现有逻辑不变）
             cursor.execute(f"""
                 SELECT * FROM experiences
-                WHERE bill_text = ? AND province = ?{authority_clause}
+                WHERE {' AND '.join(exact_clauses)}
                 ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
                 LIMIT 1
-            """, (bill_text, province))
+            """, exact_params)
             row = cursor.fetchone()
             if row:
                 return dict(row)
@@ -2175,13 +2409,21 @@ class ExperienceDB:
                 try:
                     norm_text = _normalize_for_match(bill_text)
                     if norm_text:  # 归一化后非空才查（避免空字符串匹配所有空记录）
+                        norm_clauses = [
+                            "normalized_text = ?",
+                            "province = ?",
+                            "normalized_text != ''",
+                        ]
+                        norm_params: list = [norm_text, province]
+                        if authority_only:
+                            norm_clauses.append("layer = 'authority'")
+                        self._append_excluded_source_clauses(norm_clauses, norm_params, exclude_sources)
                         cursor.execute(f"""
                             SELECT * FROM experiences
-                            WHERE normalized_text = ? AND province = ?
-                                  AND normalized_text != ''{authority_clause}
+                            WHERE {' AND '.join(norm_clauses)}
                             ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
                             LIMIT 1
-                        """, (norm_text, province))
+                        """, norm_params)
                         row = cursor.fetchone()
                         if row:
                             result = dict(row)
@@ -2211,6 +2453,10 @@ class ExperienceDB:
                 metadatas=[{"province": province}],
             )
         except Exception as e:
+            self._disable_vector_index(
+                e,
+                schedule_rebuild=self._should_rebuild_vector_index(e),
+            )
             logger.warning(f"向量索引添加失败: {e}")
 
     # ================================================================
@@ -2523,9 +2769,15 @@ class ExperienceDB:
 
         merged: dict[int, dict] = {}
         has_runtime_recall_backend = getattr(self, "db_path", None) is not None or "_connect" in getattr(self, "__dict__", {})
+        online_excluded_sources = list(self._get_online_excluded_sources())
 
         # 直通优先：本省 authority 精确命中且版本一致，直接 green 返回
-        exact = self._find_exact_match(query_text, province, authority_only=True)
+        exact = self._find_exact_match(
+            query_text,
+            province,
+            authority_only=True,
+            exclude_sources=online_excluded_sources,
+        )
         if exact and exact.get("confidence", 0) >= min_confidence:
             self._normalize_record_quota_fields(exact)
             exact["similarity"] = 1.0
@@ -2554,16 +2806,27 @@ class ExperienceDB:
             # 非 green 的精确命中仍保留为候选，供 stale/similar 排序兜底。
             self._merge_recall_results(merged, [exact], channel="exact")
 
-        expansion_steps = [
+        primary_expansion_steps = [
             ("authority", "local"),
             ("authority", "global"),
             ("verified", "local"),
             ("verified", "global"),
+        ]
+        fallback_expansion_steps = [
             ("candidate", "local"),
-            ("candidate", "global"),
         ]
         if has_runtime_recall_backend:
-            for step_index, (layer, province_mode) in enumerate(expansion_steps, start=1):
+            step_index = 0
+            primary_max_steps = max(
+                1,
+                int(getattr(config, "EXPERIENCE_MAX_EXPANSION_STEPS", len(primary_expansion_steps)) or len(primary_expansion_steps)),
+            )
+            recall_timeout = float(
+                getattr(config, "EXPERIENCE_PARALLEL_RECALL_TIMEOUT_SEC", 5.0) or 5.0
+            )
+
+            for layer, province_mode in primary_expansion_steps[:primary_max_steps]:
+                step_index += 1
                 recall_results = self._cascade_recall_parallel(
                     query_item,
                     query_text=query_text,
@@ -2573,6 +2836,8 @@ class ExperienceDB:
                     min_confidence=min_confidence,
                     province=province,
                     include_vector=step_index == 1,
+                    timeout=recall_timeout,
+                    exclude_sources=online_excluded_sources,
                 )
                 self._merge_recall_results(merged, recall_results.get("exact", []), channel="exact")
                 self._merge_recall_results(merged, recall_results.get("bm25", []), channel="bm25")
@@ -2582,10 +2847,33 @@ class ExperienceDB:
                 if not self._expand_query_layers(merged, current_step=step_index):
                     break
 
+            if self._expand_query_layers(merged, current_step=step_index):
+                for layer, province_mode in fallback_expansion_steps:
+                    step_index += 1
+                    recall_results = self._cascade_recall_parallel(
+                        query_item,
+                        query_text=query_text,
+                        layer=layer,
+                        province_mode=province_mode,
+                        top_k=top_k,
+                        min_confidence=min_confidence,
+                        province=province,
+                        include_vector=False,
+                        timeout=recall_timeout,
+                        exclude_sources=online_excluded_sources,
+                    )
+                    self._merge_recall_results(merged, recall_results.get("exact", []), channel="exact")
+                    self._merge_recall_results(merged, recall_results.get("bm25", []), channel="bm25")
+                    self._merge_recall_results(merged, recall_results.get("structural", []), channel="structural")
+                    if not self._expand_query_layers(merged, current_step=step_index):
+                        break
+
         ranked = []
         current_version = query_item.get("quota_version") or ""
         for record in merged.values():
             if int(record.get("confidence") or 0) < min_confidence:
+                continue
+            if self._is_online_excluded_source(record.get("source")):
                 continue
             self._normalize_record_quota_fields(record)
             filtered = self._hard_filter(record, query_item)
@@ -2678,7 +2966,7 @@ class ExperienceDB:
             logger.warning("经验库向量索引不可用，跳过跨省搜索")
             return []
         coll = self.collection  # 缓存到局部变量
-        collection_count = coll.count()
+        collection_count = self._safe_collection_count(coll)
         if collection_count == 0:
             return []
 
@@ -2725,14 +3013,23 @@ class ExperienceDB:
             try:
                 cursor = conn.cursor()
                 placeholders = ",".join(["?"] * len(matched_ids))
+                clauses = [
+                    f"id IN ({placeholders})",
+                    "province != ?",
+                    "layer = 'authority'",
+                    "confidence >= ?",
+                ]
+                params: list = [*matched_ids, current_province, min_confidence]
+                self._append_excluded_source_clauses(
+                    clauses,
+                    params,
+                    self._get_online_excluded_sources(),
+                )
                 cursor.execute(f"""
                     SELECT id, bill_text, quota_names, province, confidence
                     FROM experiences
-                    WHERE id IN ({placeholders})
-                    AND province != ?
-                    AND layer = 'authority'
-                    AND confidence >= ?
-                """, matched_ids + [current_province, min_confidence])
+                    WHERE {' AND '.join(clauses)}
+                """, params)
                 rows = {row["id"]: dict(row) for row in cursor.fetchall()}
             finally:
                 conn.close()
@@ -2769,11 +3066,16 @@ class ExperienceDB:
             return cross_refs[:top_k]
 
         except Exception as e:
+            self._disable_vector_index(
+                e,
+                schedule_rebuild=self._should_rebuild_vector_index(e),
+            )
             logger.debug(f"L5跨省搜索失败（不影响主流程）: {e}")
             return []
 
     def find_experience(self, bill_text: str, province: str = None,
-                        limit: int = 20) -> list[dict]:
+                        limit: int = 20, *,
+                        online_only: bool = False) -> list[dict]:
         """
         兼容查询接口：按清单文本/名称查找经验记录（用于工具脚本快速排查）。
 
@@ -2822,6 +3124,14 @@ class ExperienceDB:
         if province:
             where_clause = f"province = ? AND {text_match_condition}"
             params.insert(0, province)
+        if online_only:
+            online_clauses = [where_clause]
+            self._append_excluded_source_clauses(
+                online_clauses,
+                params,
+                self._get_online_excluded_sources(),
+            )
+            where_clause = " AND ".join(online_clauses)
         params.extend([text, text, like_pattern, like_pattern, limit_val])
 
         conn = self._connect(row_factory=True)
@@ -2990,7 +3300,7 @@ class ExperienceDB:
 
         # 向量索引数量
         try:
-            vector_count = self.collection.count() if self.collection is not None else 0
+            vector_count = self._safe_collection_count(self.collection)
         except Exception as e:
             logger.debug(f"经验库向量索引计数失败，按0返回: {e}")
             vector_count = 0
