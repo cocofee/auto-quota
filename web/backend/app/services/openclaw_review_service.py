@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.text_utils import repair_mojibake_data
+
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -171,7 +173,7 @@ class OpenClawReviewService:
         batch_context = _extract_latest_trace_dict(match_result, "batch_context")
         stage_top1_chain = _extract_stage_top1_chain(match_result)
 
-        return {
+        payload = {
             "task": {
                 "task_id": _clean_str(getattr(task, "id", "")),
                 "name": _clean_str(getattr(task, "name", "")),
@@ -228,6 +230,7 @@ class OpenClawReviewService:
                 "candidate_pool_required": True,
             },
         }
+        return repair_mojibake_data(payload, preserve_newlines=True)
 
     def build_structured_draft(
         self,
@@ -246,7 +249,7 @@ class OpenClawReviewService:
     ) -> dict[str, Any]:
         context = self.build_review_context(task, match_result)
         draft_quotas = list(suggested_quotas or getattr(match_result, "quotas", None) or [])
-        return {
+        payload = {
             "openclaw_suggested_quotas": draft_quotas,
             "openclaw_review_note": note,
             "openclaw_review_confidence": review_confidence,
@@ -268,3 +271,4 @@ class OpenClawReviewService:
                 "review_context": context,
             },
         }
+        return repair_mojibake_data(payload, preserve_newlines=True)

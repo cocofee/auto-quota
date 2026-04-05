@@ -18,6 +18,11 @@ from app.api.openclaw import router as openclaw_router  # noqa: E402
 from app.api import openclaw as openclaw_api  # noqa: E402
 from app.auth import openclaw as openclaw_auth  # noqa: E402
 from app.schemas.result import OpenClawReviewConfirmRequest, OpenClawReviewDraftRequest  # noqa: E402
+from app.services.openclaw_review_service import OpenClawReviewService  # noqa: E402
+
+
+def _garble(text: str) -> str:
+    return text.encode("utf-8").decode("latin1")
 
 
 class _Result:
@@ -189,6 +194,34 @@ def test_save_review_draft_does_not_change_formal_result(monkeypatch):
     assert response.openclaw_review_status == "reviewed"
 
 
+def test_save_review_draft_repairs_garbled_suggested_quota_name(monkeypatch):
+    match_result = _make_match_result()
+    db = _FakeDb()
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="\u5317\u4eac"), match_result
+
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    response = asyncio.run(
+        openclaw_api.save_review_draft(
+            task_id=uuid.uuid4(),
+            result_id=match_result.id,
+            req=OpenClawReviewDraftRequest(
+                openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": _garble("\u5efa\u8bae\u5b9a\u989d"), "unit": "m"}],
+                openclaw_review_note="OpenClaw \u5efa\u8bae\u66ff\u6362",
+                openclaw_review_confidence=88,
+            ),
+            db=db,
+            service_user=service_user,
+        )
+    )
+
+    assert match_result.openclaw_suggested_quotas[0]["name"] == "\u5efa\u8bae\u5b9a\u989d"
+    assert response.openclaw_suggested_quotas[0].name == "\u5efa\u8bae\u5b9a\u989d"
+
+
 def test_save_review_draft_allows_red_light_result(monkeypatch):
     match_result = _make_match_result(confidence=68, confidence_score=68, light_status="red")
     db = _FakeDb()
@@ -272,6 +305,30 @@ def test_build_result_list_response_tolerates_legacy_openclaw_field_values():
     assert item.openclaw_review_payload is None
     assert item.openclaw_reason_codes is None
     assert item.human_feedback_payload is None
+
+
+def test_openclaw_review_context_repairs_garbled_quota_text():
+    service = OpenClawReviewService()
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        name=_garble("\u5b89\u88c5\u4efb\u52a1"),
+        province=_garble("\u5317\u4eac\u5b9a\u989d\u5e93"),
+        mode="search",
+        original_filename=_garble("\u6d4b\u8bd5\u6e05\u5355.xlsx"),
+    )
+    match_result = _make_match_result(
+        bill_name=_garble("\u7ed9\u6c34\u7ba1\u9053\u5b89\u88c5"),
+        bill_description=_garble("\u5ba4\u5185PPR\u7ed9\u6c34\u7ba1"),
+        quotas=[{"quota_id": "C10-1-1", "name": _garble("\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"), "unit": "m"}],
+        alternatives=[{"quota_id": "C10-1-2", "name": _garble("\u5ba4\u5185\u9540\u950c\u94a2\u7ba1"), "unit": "m"}],
+    )
+
+    context = service.build_review_context(task, match_result)
+
+    assert context["task"]["name"] == "\u5b89\u88c5\u4efb\u52a1"
+    assert context["task"]["province"] == "\u5317\u4eac\u5b9a\u989d\u5e93"
+    assert context["jarvis_result"]["top1_quota_name"] == "\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"
+    assert context["candidate_pool"][0]["name"] == "\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"
 
 
 def test_list_review_items_only_returns_yellow_red_and_pending_reviews(monkeypatch):

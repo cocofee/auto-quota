@@ -33,6 +33,7 @@ import type {
   TaskListResponse,
 } from '../../types';
 import { resolveLightStatus } from '../../utils/experience';
+import { repairMojibakeText } from '../../utils/text';
 
 type ResultFilter =
   | 'drafted_pending'
@@ -94,8 +95,16 @@ function extractUuid(value: string): string {
   return match?.[0] || '';
 }
 
+function normalizeDisplayText(value?: string | null): string {
+  return repairMojibakeText(String(value || ''), true)?.trim() || '';
+}
+
 function quotaLines(quotas: MatchResult['quotas'] | MatchResult['openclaw_suggested_quotas']) {
-  return (quotas || []).map((item) => `${item.quota_id} ${item.name}`);
+  return (quotas || []).map((item) => {
+    const quotaId = normalizeDisplayText(item.quota_id);
+    const name = normalizeDisplayText(item.name);
+    return [quotaId, name].filter(Boolean).join(' ');
+  });
 }
 
 function buildKeywordText(item: MatchResult): string {
@@ -122,7 +131,7 @@ function renderQuotaStack(quotas: MatchResult['quotas'] | MatchResult['openclaw_
     <div style={{ fontSize: 12 }}>
       {quotas.map((item) => (
         <div key={`${item.quota_id}-${item.name}`}>
-          {item.quota_id} {item.name}
+          {normalizeDisplayText(item.quota_id)} {normalizeDisplayText(item.name)}
         </div>
       ))}
     </div>

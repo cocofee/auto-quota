@@ -57,6 +57,7 @@ from app.schemas.file_intake import (
 from app.schemas.reference import CompositePriceReferenceResponse, ItemPriceReferenceResponse
 from app.schemas.task import TaskListResponse, TaskResponse
 from app.services.openclaw_review_service import OpenClawReviewService
+from app.text_utils import repair_mojibake_data
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -788,7 +789,10 @@ async def _apply_review_draft(
     if enforce_bucket_policy:
         _ensure_openclaw_reviewable(_openclaw_policy_bucket(match_result))
 
-    suggested_quotas = [item.model_dump() for item in (req.openclaw_suggested_quotas or [])]
+    suggested_quotas = repair_mojibake_data(
+        [item.model_dump() for item in (req.openclaw_suggested_quotas or [])],
+        preserve_newlines=True,
+    )
     decision_type = str(req.openclaw_decision_type or "").strip()
     allow_empty_suggestions = decision_type in {
         "candidate_pool_insufficient",
@@ -800,7 +804,10 @@ async def _apply_review_draft(
     if not suggested_quotas and not allow_empty_suggestions:
         raise HTTPException(status_code=422, detail="OpenClaw review draft requires a suggested quota set")
 
-    payload = _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas)
+    payload = repair_mojibake_data(
+        _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas),
+        preserve_newlines=True,
+    )
 
     match_result.openclaw_review_status = "reviewed"
     match_result.openclaw_suggested_quotas = suggested_quotas or None
