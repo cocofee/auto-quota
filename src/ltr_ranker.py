@@ -245,6 +245,90 @@ class LTRRanker:
         return False, "", None
 
     @staticmethod
+    def _text_has_any(text: str, keywords: tuple[str, ...]) -> bool:
+        normalized = str(text or "").strip().lower()
+        return bool(normalized and any(keyword in normalized for keyword in keywords))
+
+    @classmethod
+    def _detect_explicit_semantic_advantage(
+        cls,
+        item: dict,
+        incumbent: dict,
+        challenger: dict,
+        context: dict | None = None,
+    ) -> tuple[bool, str, dict]:
+        item_text = cls._item_query_text(item, context)
+        incumbent_text = cls._candidate_query_text(incumbent)
+        challenger_text = cls._candidate_query_text(challenger)
+
+        details = {
+            "item_text": item_text,
+            "incumbent_text": incumbent_text,
+            "challenger_text": challenger_text,
+            "signals": [],
+        }
+
+        def _record(signal: str) -> None:
+            details["signals"].append(signal)
+
+        if (
+            "室外" not in item_text
+            and cls._text_has_any(incumbent_text, ("室外",))
+            and not cls._text_has_any(challenger_text, ("室外",))
+        ):
+            _record("indoor_default_vs_outdoor_incumbent")
+
+        if (
+            cls._text_has_any(item_text, ("雨水",))
+            and cls._text_has_any(challenger_text, ("雨水",))
+            and not cls._text_has_any(incumbent_text, ("雨水",))
+        ):
+            _record("rainwater_keyword_alignment")
+
+        if (
+            cls._text_has_any(item_text, ("排水",))
+            and cls._text_has_any(challenger_text, ("排水",))
+            and not cls._text_has_any(incumbent_text, ("排水",))
+        ):
+            _record("drainage_keyword_alignment")
+
+        if (
+            cls._text_has_any(item_text, ("阻火圈",))
+            and cls._text_has_any(challenger_text, ("阻火圈",))
+            and not cls._text_has_any(incumbent_text, ("阻火圈",))
+        ):
+            _record("firestop_ring_keyword_alignment")
+
+        if (
+            cls._text_has_any(item_text, ("刚性防水套管", "柔性防水套管", "填料套管", "套管"))
+            and cls._text_has_any(
+                challenger_text,
+                ("刚性防水套管", "柔性防水套管", "填料套管", "套管"),
+            )
+            and not cls._text_has_any(
+                incumbent_text,
+                ("刚性防水套管", "柔性防水套管", "填料套管", "套管"),
+            )
+        ):
+            _record("sleeve_keyword_alignment")
+
+        plastic_signal = cls._text_has_any(item_text, ("upvc", "pvc", "ppr", "pe", "hdpe", "塑料"))
+        challenger_plastic = cls._text_has_any(challenger_text, ("upvc", "pvc", "ppr", "pe", "hdpe", "塑料"))
+        incumbent_metal = cls._text_has_any(incumbent_text, ("铸铁", "镀锌", "钢", "铜", "不锈钢"))
+        if plastic_signal and challenger_plastic and incumbent_metal:
+            _record("plastic_query_vs_metal_incumbent")
+
+        cast_iron_signal = cls._text_has_any(item_text, ("铸铁",))
+        challenger_cast_iron = cls._text_has_any(challenger_text, ("铸铁",))
+        incumbent_plastic = cls._text_has_any(incumbent_text, ("upvc", "pvc", "ppr", "pe", "hdpe", "塑料"))
+        if cast_iron_signal and challenger_cast_iron and incumbent_plastic:
+            _record("cast_iron_query_vs_plastic_incumbent")
+
+        if details["signals"]:
+            return True, "challenger_explicit_semantic_advantage", details
+        return False, "", details
+
+    @staticmethod
     def _is_authority_candidate(candidate: dict) -> bool:
         layer = str(candidate.get("experience_layer") or candidate.get("layer") or "").strip().lower()
         if layer == "authority":
@@ -414,6 +498,21 @@ class LTRRanker:
         anchor_score, anchor_details = cls._compute_ltr_anchor(item, incumbent, context)
         meta["anchor_score"] = anchor_score
         meta["anchor_details"] = anchor_details
+        semantic_allow, semantic_reason, semantic_details = cls._detect_explicit_semantic_advantage(
+            item,
+            incumbent,
+            challenger,
+            context,
+        )
+        meta["semantic_guard"] = {
+            "allow_ltr": semantic_allow,
+            "reason": semantic_reason,
+            "details": semantic_details,
+        }
+        if semantic_allow:
+            meta["action"] = "allowed"
+            meta["reason"] = semantic_reason
+            return ltr_ranked, meta
 
         snapshot_guard_blocked, snapshot_reason, snapshot_details = cls._apply_snapshot_struct_guard(
             incumbent,

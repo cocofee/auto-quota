@@ -759,6 +759,166 @@ def test_ltr_guard_allows_ltr_override_on_weak_anchor(monkeypatch):
     assert meta["ltr_guard"]["anchor_score"] < 6.0
 
 
+def test_ltr_guard_allows_indoor_pipe_candidate_over_outdoor_manual_anchor(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.60, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.compute_candidate_structured_score",
+        lambda candidate: {"A": 0.95, "B": 0.90}[candidate["quota_id"]],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "给排水管道 室外塑料排水管(粘接) 公称外径(mm以内) 50",
+            "param_match": True,
+            "param_score": 0.94,
+            "logic_score": 1.0,
+            "feature_alignment_score": 0.90,
+            "context_alignment_score": 0.80,
+            "rerank_score": 0.99,
+            "hybrid_score": 0.02,
+            "candidate_canonical_features": {"entity": "塑料排水管", "material": "塑料"},
+        },
+        {
+            "quota_id": "B",
+            "name": "给排水管道 室内塑料排水管(粘接) 公称外径(mm以内) 50",
+            "param_match": True,
+            "param_score": 0.94,
+            "logic_score": 1.0,
+            "feature_alignment_score": 0.90,
+            "context_alignment_score": 0.80,
+            "rerank_score": 0.99,
+            "hybrid_score": 0.02,
+            "candidate_canonical_features": {"entity": "塑料排水管", "material": "塑料"},
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "塑料管",
+            "description": "材质、规格:UPVC排水DN50 连接形式:承插连接",
+            "params": {"dn": 50, "material": "UPVC"},
+            "canonical_features": {"entity": "塑料排水管", "material": "UPVC"},
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["B", "A"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "B"
+    assert meta["primary_stage"] == "ltr"
+    assert meta["ltr_guard"]["action"] == "allowed"
+    assert meta["ltr_guard"]["reason"] == "challenger_explicit_semantic_advantage"
+    assert "indoor_default_vs_outdoor_incumbent" in meta["ltr_guard"]["semantic_guard"]["details"]["signals"]
+
+
+def test_ltr_guard_allows_plastic_rainwater_candidate_over_cast_iron_manual_anchor(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.60, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.compute_candidate_structured_score",
+        lambda candidate: {"A": 0.96, "B": 0.88}[candidate["quota_id"]],
+    )
+    monkeypatch.setattr(
+        LTRRanker,
+        "_sort_with_stage_priority",
+        staticmethod(
+            lambda candidates, stage, primary_score_field: [
+                {
+                    **candidate,
+                    "rank_stage": stage,
+                    "rank_score": float(candidate.get(primary_score_field, 0.0) or 0.0),
+                }
+                for candidate in sorted(
+                    list(candidates),
+                    key=lambda candidate: (
+                        {"manual": {"A": 2, "B": 1}, "ltr": {"B": 2, "A": 1}}[stage][candidate["quota_id"]]
+                    ),
+                    reverse=True,
+                )
+            ]
+        ),
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "给排水管道 室内柔性铸铁雨水管(机械接口) 公称直径(mm以内) 100",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 1.0,
+            "feature_alignment_score": 0.76,
+            "context_alignment_score": 0.80,
+            "rerank_score": 0.99,
+            "hybrid_score": 0.02,
+            "candidate_canonical_features": {"entity": "雨水管", "material": "铸铁"},
+        },
+        {
+            "quota_id": "B",
+            "name": "给排水管道 室内塑料雨水管(粘接) 公称外径(mm以内) 110",
+            "param_match": True,
+            "param_score": 0.80,
+            "logic_score": 0.98,
+            "feature_alignment_score": 0.90,
+            "context_alignment_score": 0.80,
+            "rerank_score": 0.99,
+            "hybrid_score": 0.04,
+            "candidate_canonical_features": {"entity": "雨水管", "material": "塑料"},
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "塑料管",
+            "description": "材质、规格:UPVC雨水管DN100 连接形式:承插连接",
+            "params": {"dn": 100, "material": "UPVC"},
+            "canonical_features": {"entity": "雨水管", "material": "UPVC"},
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["B", "A"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "B"
+    assert meta["ltr_guard"]["action"] == "allowed"
+    assert meta["ltr_guard"]["reason"] == "challenger_explicit_semantic_advantage"
+    signals = meta["ltr_guard"]["semantic_guard"]["details"]["signals"]
+    assert "plastic_query_vs_metal_incumbent" in signals
+
+
 def test_ltr_guard_blocks_override_on_weak_route_when_manual_margin_is_clear(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
