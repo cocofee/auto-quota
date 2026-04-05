@@ -50,6 +50,7 @@ from src.explicit_terminal_family_pickers import (
     _pick_explicit_sanitary_family_candidate,
 )
 from src.context_builder import build_context_prior, summarize_batch_context_for_trace
+from src.adaptive_strategy import AdaptiveStrategy
 from src.ltr_ranker import rerank_candidates_with_ltr
 from src.explicit_mep_family_pickers import (
     _pick_explicit_bridge_family_candidate,
@@ -102,6 +103,8 @@ from src.review_checkers import (
     check_elevator_floor,
     extract_description_lines,
 )
+
+_ADAPTIVE_STRATEGY = AdaptiveStrategy()
 
 
 # ============================================================
@@ -945,6 +948,243 @@ def _drop_incompatible_standard_classification(classification: dict, province: s
     return classification
 
 
+def _dedupe_books(values) -> list[str]:
+    books: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        book = str(value or "").strip()
+        if not book or book in seen:
+            continue
+        seen.add(book)
+        books.append(book)
+    return books
+
+
+def _filter_books_to_province_scope(values, province: str | None) -> list[str]:
+    books = _dedupe_books(values)
+    province = str(province or "").strip()
+    if not province:
+        return books
+    if not province_uses_standard_route_books(province):
+        return [book for book in books if book not in BORROW_PRIORITY]
+    filtered: list[str] = []
+    for book in books:
+        if book in BORROW_PRIORITY and not book_matches_province_scope(book, province):
+            continue
+        filtered.append(book)
+    return filtered
+
+
+def _filter_classification_to_province_scope(classification: dict, province: str | None) -> dict:
+    base = dict(classification or {})
+    province = str(province or "").strip()
+    if not province:
+        return base
+
+    primary = str(base.get("primary") or "").strip()
+    fallbacks = _dedupe_books(base.get("fallbacks", []))
+    candidate_books = _dedupe_books(base.get("candidate_books", []))
+    search_books = _dedupe_books(base.get("search_books", []))
+    hard_book_constraints = _dedupe_books(base.get("hard_book_constraints", []))
+    hard_search_books = _dedupe_books(base.get("hard_search_books", []))
+    advisory_search_books = _dedupe_books(base.get("advisory_search_books", []))
+
+    ordered_scoped_books = _filter_books_to_province_scope(
+        [primary]
+        + fallbacks
+        + candidate_books
+        + search_books
+        + hard_book_constraints
+        + hard_search_books
+        + advisory_search_books,
+        province,
+    )
+    scoped_set = set(ordered_scoped_books)
+    if primary and primary not in scoped_set:
+        primary = ""
+    if not primary and ordered_scoped_books:
+        primary = ordered_scoped_books[0]
+
+    fallbacks = [
+        book for book in _filter_books_to_province_scope(fallbacks, province)
+        if book != primary
+    ]
+    candidate_books = [
+        book for book in _filter_books_to_province_scope(candidate_books, province)
+        if book != primary
+    ]
+    search_books = [
+        book for book in _filter_books_to_province_scope(search_books, province)
+        if book != primary
+    ]
+    hard_book_constraints = _filter_books_to_province_scope(hard_book_constraints, province)
+    hard_search_books = _filter_books_to_province_scope(hard_search_books, province)
+    advisory_search_books = [
+        book for book in _filter_books_to_province_scope(advisory_search_books, province)
+        if book != primary
+    ]
+
+    if primary:
+        if primary not in candidate_books:
+            candidate_books.insert(0, primary)
+        if primary not in search_books:
+            search_books.insert(0, primary)
+        if (
+            primary in _dedupe_books(base.get("hard_book_constraints", []))
+            and primary not in hard_book_constraints
+        ):
+            hard_book_constraints.insert(0, primary)
+        if (
+            primary in _dedupe_books(base.get("hard_search_books", []))
+            and primary not in hard_search_books
+        ):
+            hard_search_books.insert(0, primary)
+
+    kept_books = {
+        primary,
+        *fallbacks,
+        *candidate_books,
+        *search_books,
+        *hard_book_constraints,
+        *hard_search_books,
+        *advisory_search_books,
+    } - {""}
+
+    routing_evidence = {}
+    for book, reasons in dict(base.get("routing_evidence") or {}).items():
+        book_key = str(book or "").strip()
+        if book_key and book_key in kept_books:
+            routing_evidence[book_key] = list(reasons or [])
+
+    book_scores = {}
+    for book, score in dict(base.get("book_scores") or {}).items():
+        book_key = str(book or "").strip()
+        if book_key and book_key in kept_books:
+            book_scores[book_key] = score
+
+    base["primary"] = primary or None
+    base["fallbacks"] = fallbacks
+    base["candidate_books"] = candidate_books
+    base["search_books"] = search_books
+    base["hard_book_constraints"] = hard_book_constraints
+    base["hard_search_books"] = hard_search_books
+    base["advisory_search_books"] = advisory_search_books
+    base["routing_evidence"] = routing_evidence
+    base["book_scores"] = book_scores
+    return base
+
+
+_STRONG_C10_TO_C8_TERMS = (
+    "工业管道",
+    "工艺管道",
+    "蒸汽",
+    "高压",
+    "中压",
+    "化工",
+    "石油",
+    "炼油",
+    "炼化",
+    "锅炉",
+    "压力容器",
+    "介质",
+    "无缝钢管",
+    "合金钢",
+    "不锈钢",
+    "酸洗",
+    "脱脂",
+)
+
+_CONDITIONAL_C10_TO_C8_TERMS = (
+    "焊接",
+    "法兰",
+    "对焊",
+)
+
+
+def _has_c10_industrial_pipe_signal(
+    item: dict,
+    name: str,
+    desc: str,
+    section: str,
+    sheet_name: str = "",
+) -> bool:
+    context_prior = dict((item or {}).get("context_prior") or {})
+    canonical_features = dict((item or {}).get("canonical_features") or {})
+    text = " ".join(
+        str(value or "")
+        for value in (
+            name,
+            desc,
+            section,
+            sheet_name,
+            context_prior.get("primary_subject"),
+            context_prior.get("system_hint"),
+            canonical_features.get("system"),
+            canonical_features.get("entity"),
+        )
+        if str(value or "").strip()
+    )
+    if not text:
+        return False
+    strong_hits = sum(1 for term in _STRONG_C10_TO_C8_TERMS if term in text)
+    if "工业管道" in text or "工艺管道" in text:
+        return True
+    if strong_hits >= 2:
+        return True
+    return (
+        any(term in text for term in _CONDITIONAL_C10_TO_C8_TERMS)
+        and strong_hits >= 1
+    )
+
+
+def _suppress_c10_to_c8_borrow(
+    classification: dict,
+    item: dict,
+    name: str,
+    desc: str,
+    section: str,
+    sheet_name: str = "",
+) -> dict:
+    base = dict(classification or {})
+    primary = str(base.get("primary") or "").strip()
+    if primary != "C10":
+        return base
+    if _has_c10_industrial_pipe_signal(item, name, desc, section, sheet_name):
+        return base
+
+    for key in (
+        "fallbacks",
+        "candidate_books",
+        "search_books",
+        "hard_book_constraints",
+        "hard_search_books",
+        "advisory_search_books",
+    ):
+        if key in base:
+            base[key] = [
+                book for book in list(base.get(key) or [])
+                if str(book).strip() != "C8"
+            ]
+
+    routing_evidence = {}
+    for book, reasons in dict(base.get("routing_evidence") or {}).items():
+        book_key = str(book or "").strip()
+        if book_key and book_key != "C8":
+            routing_evidence[book_key] = list(reasons or [])
+    if routing_evidence:
+        base["routing_evidence"] = routing_evidence
+
+    book_scores = {}
+    for book, score in dict(base.get("book_scores") or {}).items():
+        book_key = str(book or "").strip()
+        if book_key and book_key != "C8":
+            book_scores[book_key] = score
+    if book_scores or "book_scores" in base:
+        base["book_scores"] = book_scores
+
+    return base
+
+
 def _build_unified_plan_fallback_classification(item: dict, province: str | None) -> dict | None:
     unified_plan = dict((item or {}).get("unified_plan") or {})
     if not unified_plan:
@@ -956,6 +1196,7 @@ def _build_unified_plan_fallback_classification(item: dict, province: str | None
         book = str(value or "").strip()
         if book and book not in preferred_books:
             preferred_books.append(book)
+    preferred_books = _filter_books_to_province_scope(preferred_books, province)
     if not preferred_books:
         return None
     reason_tags = [
@@ -990,6 +1231,7 @@ def _build_unified_plan_fallback_classification(item: dict, province: str | None
         book = str(value or "").strip()
         if book and book not in hard_book_constraints:
             hard_book_constraints.append(book)
+    hard_book_constraints = _filter_books_to_province_scope(hard_book_constraints, province)
     strong_reason_tags = {
         "explicit_book_anchor",
         "strong_system_anchor",
@@ -1004,7 +1246,7 @@ def _build_unified_plan_fallback_classification(item: dict, province: str | None
     routing_reason = "unified_plan"
     if non_seed_reason_tags:
         routing_reason = f"unified_plan:{'+'.join(non_seed_reason_tags[:2])}"
-    return {
+    return _filter_classification_to_province_scope({
         "primary": primary,
         "fallbacks": fallbacks,
         "candidate_books": list(preferred_books),
@@ -1024,10 +1266,10 @@ def _build_unified_plan_fallback_classification(item: dict, province: str | None
             unified_plan.get("allow_cross_book_escape", route_mode != "strict")
         ),
         "hard_book_constraints": hard_book_constraints,
-    }
+    }, province)
 
 
-def _build_broad_group_unified_plan_override(item: dict | None) -> dict | None:
+def _build_broad_group_unified_plan_override(item: dict | None, province: str | None) -> dict | None:
     unified_plan = dict((item or {}).get("unified_plan") or {})
     if not unified_plan:
         return None
@@ -1036,6 +1278,7 @@ def _build_broad_group_unified_plan_override(item: dict | None) -> dict | None:
         book = str(value or "").strip()
         if book and book not in preferred_books:
             preferred_books.append(book)
+    preferred_books = _filter_books_to_province_scope(preferred_books, province)
     if not preferred_books:
         return None
 
@@ -1062,7 +1305,7 @@ def _build_broad_group_unified_plan_override(item: dict | None) -> dict | None:
     if route_mode not in {"strict", "moderate", "open"}:
         route_mode = "moderate"
     routing_reason = "unified_plan:province_plugin"
-    return {
+    return _filter_classification_to_province_scope({
         "primary": primary,
         "fallbacks": fallbacks,
         "candidate_books": list(preferred_books),
@@ -1082,7 +1325,7 @@ def _build_broad_group_unified_plan_override(item: dict | None) -> dict | None:
             unified_plan.get("allow_cross_book_escape", route_mode != "strict")
         ),
         "hard_book_constraints": [],
-    }
+    }, province)
 
 
 def _should_prefer_unified_plan_fallback(
@@ -1174,12 +1417,21 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         classification = inferred
     unified_plan_fallback = _build_unified_plan_fallback_classification(item, province)
     if not unified_plan_fallback and classification.get("primary"):
-        unified_plan_fallback = _build_broad_group_unified_plan_override(item)
+        unified_plan_fallback = _build_broad_group_unified_plan_override(item, province)
     if unified_plan_fallback and (
         not classification.get("primary")
         or _should_prefer_unified_plan_fallback(classification, unified_plan_fallback, item)
     ):
         classification = unified_plan_fallback
+    classification = _filter_classification_to_province_scope(classification, province)
+    classification = _suppress_c10_to_c8_borrow(
+        classification,
+        item,
+        name,
+        desc,
+        section,
+        sheet_name or item.get("sheet_name") or "",
+    )
     return _normalize_classification(classification)
 
 
@@ -2809,6 +3061,7 @@ def _build_search_result_from_candidates_legacy(item: dict, candidates: list[dic
 
 
 def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> dict:
+    performance_monitor = PerformanceMonitor()
     best = None
     confidence = 0.0
     explanation = ""
@@ -2818,28 +3071,34 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     matched_candidates: list[dict] = []
     ranking_meta = _init_ranking_meta()
 
-    valid_candidates = [
-        candidate
-        for candidate in (candidates or [])
-        if str(candidate.get("quota_id", "")).strip() and str(candidate.get("name", "")).strip()
-    ]
-    valid_candidates, plugin_route_gate = _apply_plugin_route_gate(item, valid_candidates)
-    valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
-    valid_candidates = _annotate_candidate_scope_signals(item, valid_candidates)
+    with performance_monitor.measure("search_candidates_validate"):
+        valid_candidates = [
+            candidate
+            for candidate in (candidates or [])
+            if str(candidate.get("quota_id", "")).strip() and str(candidate.get("name", "")).strip()
+        ]
+    with performance_monitor.measure("search_plugin_route_gate"):
+        valid_candidates, plugin_route_gate = _apply_plugin_route_gate(item, valid_candidates)
+    with performance_monitor.measure("search_plugin_bias"):
+        valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
+    with performance_monitor.measure("search_scope_annotate"):
+        valid_candidates = _annotate_candidate_scope_signals(item, valid_candidates)
     ranking_meta["candidate_count"] = len(valid_candidates)
     if candidates and not valid_candidates:
         logger.warning("candidate list exists but all items miss quota_id/name; treat as no-match")
 
     if valid_candidates:
-        matched_candidates = [candidate for candidate in valid_candidates if candidate.get("param_match", True)]
+        with performance_monitor.measure("search_param_match_filter"):
+            matched_candidates = [candidate for candidate in valid_candidates if candidate.get("param_match", True)]
         decision_candidates = matched_candidates if matched_candidates else valid_candidates
-        ranked_candidates, ranking_meta, arbitration, explicit_override, best = _run_rank_pipeline(
-            item,
-            decision_candidates,
-            reservoir=valid_candidates,
-            allow_arbiter=bool(matched_candidates),
-            allow_explicit=bool(matched_candidates),
-        )
+        with performance_monitor.measure("search_rank_pipeline"):
+            ranked_candidates, ranking_meta, arbitration, explicit_override, best = _run_rank_pipeline(
+                item,
+                decision_candidates,
+                reservoir=valid_candidates,
+                allow_arbiter=bool(matched_candidates),
+                allow_explicit=bool(matched_candidates),
+            )
         if matched_candidates:
             matched_candidates = ranked_candidates
         else:
@@ -2847,14 +3106,15 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
 
         if best:
             ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
-            confidence, explanation, reasoning_decision = _build_ranked_selection_decision(
-                item,
-                best=best,
-                decision_candidates=ranked_candidates,
-                candidates_count=len(valid_candidates),
-                param_match=bool(matched_candidates),
-                arbitration=arbitration,
-            )
+            with performance_monitor.measure("search_selection_decision"):
+                confidence, explanation, reasoning_decision = _build_ranked_selection_decision(
+                    item,
+                    best=best,
+                    decision_candidates=ranked_candidates,
+                    candidates_count=len(valid_candidates),
+                    param_match=bool(matched_candidates),
+                    arbitration=arbitration,
+                )
         else:
             explanation = "no safe candidate selected from ranked results"
 
@@ -2873,20 +3133,25 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         reasoning_decision,
     )
 
-    result = _assemble_search_result_payload(
-        item,
-        candidates=candidates,
-        valid_candidates=valid_candidates,
-        matched_candidates=matched_candidates,
-        best=best,
-        confidence=confidence,
-        explanation=explanation,
-        arbitration=arbitration,
-        explicit_override=explicit_override,
-        plugin_route_gate=plugin_route_gate,
-        reasoning_decision=reasoning_decision,
-        ranking_meta=ranking_meta,
-    )
+    with performance_monitor.measure("search_result_payload_assemble"):
+        result = _assemble_search_result_payload(
+            item,
+            candidates=candidates,
+            valid_candidates=valid_candidates,
+            matched_candidates=matched_candidates,
+            best=best,
+            confidence=confidence,
+            explanation=explanation,
+            arbitration=arbitration,
+            explicit_override=explicit_override,
+            plugin_route_gate=plugin_route_gate,
+            reasoning_decision=reasoning_decision,
+            ranking_meta=ranking_meta,
+        )
+    result["search_candidate_stage_performance"] = {
+        "stages": performance_monitor.snapshot(),
+        "total": sum(performance_monitor.snapshot().values()),
+    }
     return _finalize_search_result_payload(
         result,
         item=item,
@@ -2900,15 +3165,19 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
                                 exp_backup: dict, rule_backup: dict,
                                 exp_hits: int, rule_hits: int):
     """search模式统一结果决策：搜索结果 + 经验/规则兜底。"""
+    performance_monitor = PerformanceMonitor()
     active_candidates = list(candidates or [])
     injected_rule_qid = ""
-    if rule_backup:
-        active_candidates, injected_rule_qid = _inject_rule_backup_candidate(
-            item, active_candidates, rule_backup
-        )
-    result = _build_search_result_from_candidates(item, active_candidates)
+    with performance_monitor.measure("search_rule_backup_injection"):
+        if rule_backup:
+            active_candidates, injected_rule_qid = _inject_rule_backup_candidate(
+                item, active_candidates, rule_backup
+            )
+    with performance_monitor.measure("search_result_build"):
+        result = _build_search_result_from_candidates(item, active_candidates)
     _append_item_review_rejection_trace(result, item)
-    result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
+    with performance_monitor.measure("search_experience_reconcile"):
+        result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
     if injected_rule_qid:
         selected_qid = str((result.get("quotas") or [{}])[0].get("quota_id", "") or "").strip()
         if selected_qid == injected_rule_qid:
@@ -2928,11 +3197,16 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
             backup_confidence=rule_backup.get("confidence", 0),
             current_confidence=result.get("confidence", 0),
         )
+    result["search_stage_performance"] = {
+        "stages": performance_monitor.snapshot(),
+        "total": sum(performance_monitor.snapshot().values()),
+    }
     _append_trace_step(
         result,
         "search_mode_final",
         final_source=result.get("match_source", ""),
         final_confidence=result.get("confidence", 0),
+        search_stage_performance=result.get("search_stage_performance") or {},
     )
     return result, exp_hits, rule_hits
 
@@ -3006,6 +3280,23 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         )
     item["classification"] = classification
     item["_trace_classification"] = dict(classification or {})
+
+    adaptive_meta = dict(item.get("_adaptive_strategy_meta") or item.get("adaptive_strategy_meta") or {})
+    if not adaptive_meta:
+        adaptive_meta = dict(_ADAPTIVE_STRATEGY.evaluate(item))
+    adaptive_strategy = str(adaptive_meta.get("strategy") or item.get("adaptive_strategy") or "standard").strip().lower()
+    if adaptive_strategy not in {"fast", "standard", "deep"}:
+        adaptive_strategy = "standard"
+    adaptive_meta["strategy"] = adaptive_strategy
+    if adaptive_strategy == "fast" and experience_db is None:
+        adaptive_meta["downgraded_from"] = "fast"
+        adaptive_meta["downgrade_reason"] = "missing_experience_db"
+        adaptive_meta["strategy"] = "standard"
+        adaptive_strategy = "standard"
+    item["adaptive_strategy"] = adaptive_strategy
+    item["adaptive_strategy_meta"] = adaptive_meta
+    item["_adaptive_strategy_meta"] = adaptive_meta
+
     context_gate = _evaluate_context_gate(name, desc, ctx["section"], classification)
     if context_gate.get("should_abstain"):
         return {
@@ -3029,7 +3320,10 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             current_gate["detail"] = context_gate.get("detail", "")
         item["_input_gate"] = current_gate
 
-    if lightweight_experience:
+    if adaptive_strategy == "fast":
+        exp_result = try_experience_match(
+            normalized_query, item, experience_db, rule_validator, province=province)
+    elif lightweight_experience:
         exp_result = try_experience_exact_match(
             normalized_query,
             item,
@@ -3066,6 +3360,18 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             exp_result = None  # 丢弃，走搜索兜底
 
     exp_backup = exp_result if exp_result else None
+
+    if adaptive_strategy == "fast" and exp_result is None:
+        result = _build_empty_match_result(
+            item,
+            "adaptive fast strategy returned after experience miss",
+            source="adaptive_fast",
+        )
+        _append_trace_step(result, "adaptive_fast_return", reason="experience_miss")
+        return {
+            "early_result": result,
+            "early_type": "adaptive_fast",
+        }
 
     if exact_exp_direct and exp_result and exp_result.get("match_source") == "experience_exact":
         _append_trace_step(exp_result, "experience_exact_direct_return")

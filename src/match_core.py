@@ -29,6 +29,7 @@ from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 from src.performance_monitor import PerformanceMonitor, measure_call
 from src.policy_engine import PolicyEngine
+from src.province_book_mapper import map_db_book_to_route_book, normalize_route_book_code
 from src.specialty_classifier import detect_db_type
 from src.candidate_scoring import sort_candidates_with_stage_priority
 
@@ -957,32 +958,89 @@ def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
 
 
 def _normalize_route_book_code(value: object) -> str:
-    raw = str(value or "").strip().upper()
-    if not raw:
-        return ""
-    match = re.match(r"^C0*(\d+)$", raw)
-    if match:
-        return f"C{int(match.group(1))}"
-    match = re.match(r"^0*(\d+)$", raw)
-    if match:
-        return f"C{int(match.group(1))}"
-    return raw
+    return normalize_route_book_code(value)
 
 
 def _candidate_book_code(candidate: dict) -> str:
     quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
     if not quota_id:
         return ""
+
+    def _accept_book(raw_value: str) -> str:
+        normalized = _normalize_route_book_code(raw_value)
+        if re.match(r"^(?:[ADE]|[A-Z]{1,3}\d+)$", normalized, re.IGNORECASE):
+            return normalized
+        return ""
+
     match = re.match(r"^(C\d+)-", quota_id, re.IGNORECASE)
     if match:
-        return _normalize_route_book_code(match.group(1))
+        return _accept_book(match.group(1))
+    match = re.match(r"^(A\d+)-", quota_id, re.IGNORECASE)
+    if match:
+        return _accept_book(match.group(1))
     match = re.match(r"^(\d+)-", quota_id)
     if match:
-        return _normalize_route_book_code(match.group(1))
-    match = re.match(r"^([A-Z]{1,3}\d*)-", quota_id)
+        return _accept_book(match.group(1))
+    match = re.match(r"^([A-Z]{1,3}\d+)-", quota_id, re.IGNORECASE)
     if match:
-        return _normalize_route_book_code(match.group(1))
+        return _accept_book(match.group(1))
+    match = re.match(r"^([A-Z])-", quota_id, re.IGNORECASE)
+    if match:
+        return _accept_book(match.group(1))
     return ""
+
+
+def _candidate_route_book(candidate: dict, province_name: str | None = None) -> str:
+    candidate = dict(candidate or {})
+    for field in (
+        "candidate_route_book",
+        "plugin_route_book",
+        "book",
+        "quota_book",
+    ):
+        book = candidate.get(field)
+        if field in {"book", "quota_book"}:
+            book = map_db_book_to_route_book(book, province=province_name)
+        else:
+            book = _normalize_route_book_code(book)
+        if book:
+            return book
+    return map_db_book_to_route_book(_candidate_book_code(candidate), province=province_name)
+
+
+def _candidate_matches_allowed_books(
+    candidate: dict,
+    allowed_set: set[str],
+    province_name: str | None = None,
+) -> bool:
+    book_code = _candidate_route_book(candidate, province_name=province_name)
+    if not book_code:
+        return True
+    if book_code in allowed_set:
+        return True
+
+    candidate = dict(candidate or {})
+    raw_route_book = ""
+    for field in (
+        "candidate_route_book",
+        "plugin_route_book",
+        "book",
+        "quota_book",
+    ):
+        raw_value = str(candidate.get(field) or "").strip().upper()
+        if raw_value:
+            raw_route_book = raw_value
+            break
+
+    if raw_route_book in {"03", "3"}:
+        return any(book.startswith("C") for book in allowed_set)
+    if raw_route_book in {"01", "1", "02", "2"}:
+        return "A" in allowed_set
+    if raw_route_book in {"04", "4"}:
+        return "D" in allowed_set
+    if raw_route_book in {"05", "5"}:
+        return "E" in allowed_set
+    return False
 
 
 def _effective_route_scope_books(classification: dict | None) -> list[str]:
@@ -1034,6 +1092,8 @@ def _filter_candidates_to_route_scope(
     candidates: list[dict],
     classification: dict | None,
 ) -> tuple[list[dict], dict]:
+    raw = dict(classification or {}) if isinstance(classification, dict) else {}
+    normalized = _normalize_classification(classification)
     allowed_books = _effective_route_scope_books(classification)
     meta = {
         "applied": False,
@@ -1045,13 +1105,21 @@ def _filter_candidates_to_route_scope(
     if not candidates or not allowed_books:
         return list(candidates or []), meta
 
+    province_name = str(
+        raw.get("province")
+        or normalized.get("province")
+        or config.get_current_province()
+        or ""
+    ).strip()
     allowed_set = {str(book).strip().upper() for book in allowed_books if str(book).strip()}
     kept: list[dict] = []
     dropped_quota_ids: list[str] = []
     for candidate in candidates or []:
-        book_code = _candidate_book_code(candidate)
         quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
-        if not book_code or book_code in allowed_set:
+        if candidate.get("knowledge_prior_sources"):
+            kept.append(candidate)
+            continue
+        if _candidate_matches_allowed_books(candidate, allowed_set, province_name=province_name):
             kept.append(candidate)
             continue
         if quota_id:
@@ -1060,10 +1128,11 @@ def _filter_candidates_to_route_scope(
     if not dropped_quota_ids:
         return list(candidates or []), meta
     if not kept:
+        meta["applied"] = True
         meta["reason"] = "empty_after_filter"
         meta["dropped_count"] = len(dropped_quota_ids)
         meta["dropped_quota_ids"] = dropped_quota_ids[:20]
-        return list(candidates or []), meta
+        return [], meta
 
     meta["applied"] = True
     meta["reason"] = "strict_route_scope"
@@ -1085,19 +1154,23 @@ def _effective_candidate_guard_books(classification: dict | None) -> list[str]:
 
     books: list[str] = []
     seen: set[str] = set()
-    for value in list(normalized.get("search_books") or []):
-        book = _normalize_route_book_code(value)
-        if not book or book in seen:
-            continue
-        seen.add(book)
-        books.append(book)
+    resolved_books: list[str] = []
     for call in main_calls:
         for value in list((call or {}).get("resolved_books") or []):
             book = _normalize_route_book_code(value)
             if not book or book in seen:
                 continue
             seen.add(book)
-            books.append(book)
+            resolved_books.append(book)
+    if resolved_books:
+        return resolved_books
+
+    for value in list(normalized.get("search_books") or []):
+        book = _normalize_route_book_code(value)
+        if not book or book in seen:
+            continue
+        seen.add(book)
+        books.append(book)
     return books
 
 
@@ -1105,6 +1178,8 @@ def _filter_candidates_to_effective_guard_scope(
     candidates: list[dict],
     classification: dict | None,
 ) -> tuple[list[dict], dict]:
+    raw = dict(classification or {}) if isinstance(classification, dict) else {}
+    normalized = _normalize_classification(classification)
     allowed_books = _effective_candidate_guard_books(classification)
     meta = {
         "applied": False,
@@ -1116,13 +1191,21 @@ def _filter_candidates_to_effective_guard_scope(
     if not candidates or not allowed_books:
         return list(candidates or []), meta
 
+    province_name = str(
+        raw.get("province")
+        or normalized.get("province")
+        or config.get_current_province()
+        or ""
+    ).strip()
     allowed_set = {str(book).strip().upper() for book in allowed_books if str(book).strip()}
     kept: list[dict] = []
     dropped_quota_ids: list[str] = []
     for candidate in candidates or []:
-        book_code = _candidate_book_code(candidate)
         quota_id = str((candidate or {}).get("quota_id", "") or "").strip()
-        if not book_code or book_code in allowed_set:
+        if candidate.get("knowledge_prior_sources"):
+            kept.append(candidate)
+            continue
+        if _candidate_matches_allowed_books(candidate, allowed_set, province_name=province_name):
             kept.append(candidate)
             continue
         if quota_id:
@@ -1131,10 +1214,11 @@ def _filter_candidates_to_effective_guard_scope(
     if not dropped_quota_ids:
         return list(candidates or []), meta
     if not kept:
+        meta["applied"] = True
         meta["reason"] = "empty_after_guard"
         meta["dropped_count"] = len(dropped_quota_ids)
         meta["dropped_quota_ids"] = dropped_quota_ids[:20]
-        return list(candidates or []), meta
+        return [], meta
 
     meta["applied"] = True
     meta["reason"] = "effective_scope_guard"
@@ -1159,11 +1243,20 @@ def _resolve_search_books_for_target(target_searcher, search_query: str,
         available_books = set(quota_books.values())
     else:
         available_books = set(quota_books or [])
+    if not available_books:
+        return []
 
     normalized = HybridSearcher._normalize_requested_books_for_nonstandard_db(
         resolved,
         available_books,
+        province=getattr(target_searcher, "province", None),
     )
+    if normalized:
+        normalized = [
+            str(book).strip()
+            for book in normalized
+            if str(book).strip() in available_books
+        ]
     broad_groups = {"A", "D", "E"}
     has_unresolved_broad_group = normalized is None and any(
         str(book or "").strip().upper() in broad_groups
@@ -1184,7 +1277,10 @@ def _resolve_search_books_for_target(target_searcher, search_query: str,
         return fallback_books
     if translated:
         return translated
-    return resolved
+    requested_available = any(str(book or "").strip() in available_books for book in resolved)
+    if requested_available:
+        return resolved
+    return []
 
 
 def _should_search_target_for_books(target_searcher, requested_books: list[str] | None) -> bool:
@@ -1221,6 +1317,7 @@ def _record_retrieval_resolution_call(
     resolved_books: list[str] | None,
     source_province: str = "",
     uses_standard_books: bool | None = None,
+    open_search: bool | None = None,
 ) -> None:
     if not isinstance(resolution_trace, dict):
         return
@@ -1231,11 +1328,28 @@ def _record_retrieval_resolution_call(
         "source_province": str(source_province or "").strip(),
         "requested_books": list(requested_books or []),
         "resolved_books": list(resolved_books or []),
-        "open_search": not bool(resolved_books),
+        "open_search": (not bool(resolved_books) if open_search is None else bool(open_search)),
         "uses_standard_books": (
             None if uses_standard_books is None else bool(uses_standard_books)
         ),
     })
+
+
+def _allows_unresolved_open_search(target_searcher, requested_books: list[str] | None) -> bool:
+    requested = [
+        str(book or "").strip().upper()
+        for book in (requested_books or [])
+        if str(book or "").strip()
+    ]
+    if not requested:
+        return True
+    if getattr(target_searcher, "uses_standard_books", True):
+        return False
+    broad_route_books = {"A", "D", "E"}
+    return (
+        all(book in broad_route_books for book in requested)
+        and _should_search_target_for_books(target_searcher, requested)
+    )
 
 
 def _search_with_optional_context(searcher, search_query: str, *,
@@ -1314,45 +1428,59 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
         return False
 
     aux_searchers = getattr(searcher, "aux_searchers", [])
-    aux_candidates = []
     aux_books = expanded_stage_books or primary_stage_books
-    for aux in aux_searchers:
-        try:
-            if not _should_search_target_for_books(aux, aux_books):
+    aux_candidates: list[dict] | None = None
+
+    def _collect_aux_candidates() -> list[dict]:
+        nonlocal aux_candidates
+        if aux_candidates is not None:
+            return aux_candidates
+        aux_candidates = []
+        for aux in aux_searchers:
+            try:
+                if not _should_search_target_for_books(aux, aux_books):
+                    _record_retrieval_resolution_call(
+                        retrieval_resolution,
+                        target="aux",
+                        stage="aux_skipped",
+                        requested_books=aux_books,
+                        resolved_books=[],
+                        source_province=str(getattr(aux, "province", "") or ""),
+                        uses_standard_books=getattr(aux, "uses_standard_books", None),
+                    )
+                    continue
+                resolved_aux_books = _resolve_search_books_for_target(aux, search_query, aux_books) or []
+                aux_open_search = (
+                    not bool(resolved_aux_books)
+                    and _allows_unresolved_open_search(aux, aux_books)
+                )
                 _record_retrieval_resolution_call(
                     retrieval_resolution,
                     target="aux",
-                    stage="aux_skipped",
+                    stage="aux",
                     requested_books=aux_books,
-                    resolved_books=[],
+                    resolved_books=resolved_aux_books,
                     source_province=str(getattr(aux, "province", "") or ""),
                     uses_standard_books=getattr(aux, "uses_standard_books", None),
+                    open_search=aux_open_search,
                 )
-                continue
-            resolved_aux_books = _resolve_search_books_for_target(aux, search_query, aux_books) or []
-            _record_retrieval_resolution_call(
-                retrieval_resolution,
-                target="aux",
-                stage="aux",
-                requested_books=aux_books,
-                resolved_books=resolved_aux_books,
-                source_province=str(getattr(aux, "province", "") or ""),
-                uses_standard_books=getattr(aux, "uses_standard_books", None),
-            )
-            aux_results = _search_with_optional_context(
-                aux,
-                search_query,
-                top_k=top_k,
-                books=resolved_aux_books or None,
-                item=item,
-                context_prior=context_prior,
-            )
-            for result in aux_results:
-                result["_source_province"] = aux.province
-            aux_candidates.extend(aux_results)
-        except (KeyError, TypeError, ValueError, AttributeError,
-                OSError, RuntimeError, ImportError) as e:
-            logger.warning(f"aux search failed: {getattr(aux, 'province', '')}: {e}")
+                if not resolved_aux_books and not aux_open_search:
+                    continue
+                aux_results = _search_with_optional_context(
+                    aux,
+                    search_query,
+                    top_k=top_k,
+                    books=resolved_aux_books or None,
+                    item=item,
+                    context_prior=context_prior,
+                )
+                for result in aux_results:
+                    result["_source_province"] = aux.province
+                aux_candidates.extend(aux_results)
+            except (KeyError, TypeError, ValueError, AttributeError,
+                    OSError, RuntimeError, ImportError) as e:
+                logger.warning(f"aux search failed: {getattr(aux, 'province', '')}: {e}")
+        return aux_candidates
 
     if not primary_stage_books and not expanded_stage_books:
         _record_retrieval_resolution_call(
@@ -1372,7 +1500,9 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
             item=item,
             context_prior=context_prior,
         )
-        return _merge_with_aux(candidates, aux_candidates, top_k)
+        if _search_is_good_enough(candidates) and bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+            return candidates[:top_k]
+        return _merge_with_aux(candidates, _collect_aux_candidates(), top_k)
 
     best_candidates: list[dict] = []
     if primary_stage_books:
@@ -1393,6 +1523,10 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 primary_stage_books,
                 allow_classifier_fallback=False,
             ) or []
+            primary_open_search = (
+                not bool(resolved_primary_books)
+                and _allows_unresolved_open_search(searcher, primary_stage_books)
+            )
             _record_retrieval_resolution_call(
                 retrieval_resolution,
                 target="main",
@@ -1401,23 +1535,29 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 resolved_books=resolved_primary_books,
                 source_province=str(getattr(searcher, "province", "") or ""),
                 uses_standard_books=getattr(searcher, "uses_standard_books", None),
+                open_search=primary_open_search,
             )
-            best_candidates = _search_with_optional_context(
-                searcher,
-                search_query,
-                top_k=top_k * 2,
-                books=resolved_primary_books or None,
-                item=item,
-                context_prior=context_prior,
-            )
+            if resolved_primary_books or primary_open_search:
+                best_candidates = _search_with_optional_context(
+                    searcher,
+                    search_query,
+                    top_k=top_k * 2,
+                    books=resolved_primary_books or None,
+                    item=item,
+                    context_prior=context_prior,
+                )
             if (
                 resolved_primary_books
                 and len(best_candidates) >= top_k
                 and not getattr(searcher, "uses_standard_books", True)
             ):
-                return _merge_with_aux(best_candidates, aux_candidates, top_k * 2)
+                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+                    return best_candidates[:top_k * 2]
+                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
             if _search_is_good_enough(best_candidates):
-                return _merge_with_aux(best_candidates, aux_candidates, top_k * 2)
+                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+                    return best_candidates[:top_k * 2]
+                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
 
     if expanded_stage_books and expanded_stage_books != primary_stage_books:
         if not _should_search_target_for_books(searcher, expanded_stage_books):
@@ -1437,6 +1577,10 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 expanded_stage_books,
                 allow_classifier_fallback=False,
             ) or []
+            expanded_open_search = (
+                not bool(resolved_expanded_books)
+                and _allows_unresolved_open_search(searcher, expanded_stage_books)
+            )
             _record_retrieval_resolution_call(
                 retrieval_resolution,
                 target="main",
@@ -1445,22 +1589,27 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 resolved_books=resolved_expanded_books,
                 source_province=str(getattr(searcher, "province", "") or ""),
                 uses_standard_books=getattr(searcher, "uses_standard_books", None),
+                open_search=expanded_open_search,
             )
-            expanded_candidates = _search_with_optional_context(
-                searcher,
-                search_query,
-                top_k=top_k * 2,
-                books=resolved_expanded_books or None,
-                item=item,
-                context_prior=context_prior,
-            )
+            expanded_candidates = []
+            if resolved_expanded_books or expanded_open_search:
+                expanded_candidates = _search_with_optional_context(
+                    searcher,
+                    search_query,
+                    top_k=top_k * 2,
+                    books=resolved_expanded_books or None,
+                    item=item,
+                    context_prior=context_prior,
+                )
             if expanded_candidates:
                 best_candidates = expanded_candidates
             if _search_is_good_enough(expanded_candidates):
-                return _merge_with_aux(expanded_candidates, aux_candidates, top_k * 2)
+                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+                    return expanded_candidates[:top_k * 2]
+                return _merge_with_aux(expanded_candidates, _collect_aux_candidates(), top_k * 2)
 
     if not allow_cross_book_escape:
-        return _merge_with_aux(best_candidates, aux_candidates, top_k)
+        return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k)
 
     _record_retrieval_resolution_call(
         retrieval_resolution,
@@ -1481,7 +1630,9 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
     )
     if candidates:
         best_candidates = candidates
-    return _merge_with_aux(best_candidates, aux_candidates, top_k)
+    if _search_is_good_enough(best_candidates) and bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+        return best_candidates[:top_k]
+    return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k)
 
 
 def cascade_search(searcher: HybridSearcher, search_query: str,
@@ -1496,6 +1647,16 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
         item=item,
         context_prior=context_prior,
     )
+
+
+def _resolve_adaptive_search_top_k(adaptive_strategy: str | None) -> int:
+    base_top_k = max(1, int(getattr(config, "HYBRID_TOP_K", 10) or 10))
+    strategy = str(adaptive_strategy or "standard").strip().lower()
+    if strategy == "deep":
+        return max(base_top_k + 5, int(base_top_k * 1.5))
+    if strategy == "fast":
+        return max(3, min(base_top_k, 5))
+    return base_top_k
 
 
 def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
@@ -1569,22 +1730,41 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         route_profile=None,
                         item: dict | None = None,
                         include_prior_candidates: bool = True,
+                        adaptive_strategy: str = "standard",
                         performance_monitor: PerformanceMonitor | None = None) -> list[dict]:
     """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
     with (
         performance_monitor.measure("混合搜索")
         if performance_monitor is not None else nullcontext()
     ):
+        search_top_k = _resolve_adaptive_search_top_k(adaptive_strategy)
         try:
             candidates = cascade_search(
                 searcher,
                 search_query,
                 classification,
+                top_k=search_top_k,
                 item=item,
                 context_prior=context_prior,
             )
         except TypeError:
-            candidates = cascade_search(searcher, search_query, classification)
+            try:
+                candidates = cascade_search(
+                    searcher,
+                    search_query,
+                    classification,
+                    item=item,
+                    context_prior=context_prior,
+                )
+            except TypeError:
+                candidates = cascade_search(searcher, search_query, classification)
+        include_prior_candidates = bool(include_prior_candidates) and adaptive_strategy != "fast"
+        if (
+            include_prior_candidates
+            and str(adaptive_strategy or "").strip().lower() == "deep"
+            and len(candidates) >= max(3, search_top_k)
+        ):
+            include_prior_candidates = False
         if include_prior_candidates:
             prior_candidates = _collect_all_prior_candidates(
                 searcher,
@@ -1630,14 +1810,17 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             if performance_monitor is not None else nullcontext()
         ):
             prerank_candidates = list(candidates)
+            rerank_input = prerank_candidates
+            if str(adaptive_strategy or "").strip().lower() == "fast":
+                rerank_input = prerank_candidates[: min(len(prerank_candidates), 8)]
             try:
                 candidates = reranker.rerank(
                     search_query,
-                    candidates,
+                    rerank_input,
                     route_profile=route_profile,
                 )
             except TypeError:
-                candidates = reranker.rerank(search_query, candidates)
+                candidates = reranker.rerank(search_query, rerank_input)
             candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
     if candidates:
         # 从classification中提取search_books（用于v3 LTR特征book_match）
@@ -1721,8 +1904,14 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
     for aux in list(getattr(searcher, "aux_searchers", []) or []):
         if not _should_search_target_for_books(aux, aux_books):
             continue
-        resolved_books = _resolve_search_books_for_target(aux, search_query, aux_books) or None
-        _collect_from(aux, resolved_books, source_province=str(getattr(aux, "province", "") or ""))
+        resolved_books = _resolve_search_books_for_target(aux, search_query, aux_books) or []
+        if not resolved_books and not _allows_unresolved_open_search(aux, aux_books):
+            continue
+        _collect_from(
+            aux,
+            resolved_books or None,
+            source_province=str(getattr(aux, "province", "") or ""),
+        )
 
     return prior_candidates
 
@@ -1995,6 +2184,12 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
     full_query = canonical_query.get("validation_query") or ctx["full_query"]
     search_query = canonical_query.get("search_query") or ctx["search_query"]
     classification = prepared["classification"]
+    adaptive_strategy = str(
+        prepared.get("adaptive_strategy")
+        or ctx.get("adaptive_strategy")
+        or ((ctx.get("item") or {}).get("adaptive_strategy") if isinstance(ctx.get("item"), dict) else "")
+        or "standard"
+    ).strip().lower()
 
     # L5跨省预热：如果经验库miss时留下了跨省提示，增强搜索查询
     item = ctx.get("item", {})
@@ -2025,7 +2220,10 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         context_prior=ctx.get("context_prior"),
         route_profile=item.get("query_route") if isinstance(item, dict) else None,
         item=item if isinstance(item, dict) else None,
-        include_prior_candidates=include_prior_candidates,
+        include_prior_candidates=(
+            bool(include_prior_candidates) or adaptive_strategy == "deep"
+        ) and adaptive_strategy != "fast",
+        adaptive_strategy=adaptive_strategy,
         performance_monitor=performance_monitor,
     )
     if isinstance(item, dict):
@@ -2159,8 +2357,12 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
 def _should_skip_agent_llm(candidates: list[dict],
                            exp_backup: dict = None,
                            rule_backup: dict = None,
-                           route_profile=None) -> bool:
+                           route_profile=None,
+                           adaptive_strategy: str | None = None) -> bool:
     """显式歧义门控：高置信候选走快通道，歧义候选交给 Agent。"""
+    if str(adaptive_strategy or "").strip().lower() == "deep":
+        return False
+
     decision = analyze_ambiguity(
         candidates,
         exp_backup=exp_backup,
