@@ -35,7 +35,7 @@ from app.schemas.result import (
 )
 from app.api.shared import get_user_task, store_experience, store_experience_batch, flag_disputed_experience
 from app.services.match_service import get_task_output_dir
-from app.text_utils import normalize_client_filename, repair_mojibake_data
+from app.text_utils import normalize_client_filename, repair_mojibake_data, repair_quota_name_loss
 from src.ranking_feedback_db import (
     RankingFeedbackDB,
     infer_misrank_primary_factor,
@@ -385,6 +385,19 @@ def _to_result_response(match_result: MatchResult) -> MatchResultResponse:
     payload["knowledge_summary"] = _extract_knowledge_summary(match_result)
     trace = _read_result_value(match_result, "trace", None)
     payload["trace"] = trace if isinstance(trace, dict) else None
+    repaired_suggested_quotas, repaired_changed = repair_quota_name_loss(
+        payload.get("openclaw_suggested_quotas"),
+        payload.get("alternatives") or [],
+        payload.get("corrected_quotas") or [],
+        payload.get("quotas") or [],
+        preserve_newlines=True,
+    )
+    if repaired_changed:
+        payload["openclaw_suggested_quotas"] = repaired_suggested_quotas
+        if isinstance(payload.get("openclaw_review_payload"), dict):
+            review_payload = dict(payload["openclaw_review_payload"])
+            review_payload["suggested_quotas"] = repaired_suggested_quotas
+            payload["openclaw_review_payload"] = review_payload
     repaired = repair_mojibake_data(payload, preserve_newlines=True)
     return MatchResultResponse.model_validate(repaired)
 

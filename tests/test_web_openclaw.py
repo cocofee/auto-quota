@@ -25,6 +25,10 @@ def _garble(text: str) -> str:
     return text.encode("utf-8").decode("latin1")
 
 
+def _garble_gb18030(text: str) -> str:
+    return text.encode("utf-8").decode("gb18030")
+
+
 class _Result:
     def __init__(self, value):
         self._value = value
@@ -200,6 +204,35 @@ def test_save_review_draft_repairs_garbled_suggested_quota_name(monkeypatch):
     service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
 
     async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="北京"), match_result
+
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    response = asyncio.run(
+        openclaw_api.save_review_draft(
+            task_id=uuid.uuid4(),
+            result_id=match_result.id,
+            req=OpenClawReviewDraftRequest(
+                openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": _garble("建议定额"), "unit": "m"}],
+                openclaw_review_note="OpenClaw 建议替换",
+                openclaw_review_confidence=88,
+            ),
+            db=db,
+            service_user=service_user,
+        )
+    )
+
+    assert match_result.openclaw_suggested_quotas[0]["name"] == "建议定额"
+    assert response.openclaw_suggested_quotas[0].name == "建议定额"
+
+
+def test_save_review_draft_repairs_gb18030_garbled_suggested_quota_name(monkeypatch):
+    match_result = _make_match_result()
+    db = _FakeDb()
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+    expected_name = "\u5efa\u8bae\u5b9a\u989d"
+
+    async def _fake_get_match_result(**_kwargs):
         return SimpleNamespace(province="\u5317\u4eac"), match_result
 
     monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
@@ -209,7 +242,7 @@ def test_save_review_draft_repairs_garbled_suggested_quota_name(monkeypatch):
             task_id=uuid.uuid4(),
             result_id=match_result.id,
             req=OpenClawReviewDraftRequest(
-                openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": _garble("\u5efa\u8bae\u5b9a\u989d"), "unit": "m"}],
+                openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": _garble_gb18030(expected_name), "unit": "m"}],
                 openclaw_review_note="OpenClaw \u5efa\u8bae\u66ff\u6362",
                 openclaw_review_confidence=88,
             ),
@@ -218,8 +251,39 @@ def test_save_review_draft_repairs_garbled_suggested_quota_name(monkeypatch):
         )
     )
 
-    assert match_result.openclaw_suggested_quotas[0]["name"] == "\u5efa\u8bae\u5b9a\u989d"
-    assert response.openclaw_suggested_quotas[0].name == "\u5efa\u8bae\u5b9a\u989d"
+    assert match_result.openclaw_suggested_quotas[0]["name"] == expected_name
+    assert response.openclaw_suggested_quotas[0].name == expected_name
+
+
+def test_save_review_draft_recovers_question_mark_suggested_quota_name_from_alternatives(monkeypatch):
+    expected_name = "\u81ea\u52a8\u7a7a\u6c14\u5f00\u5173\u5b89\u88c5 \u7535\u52a8\u5f0f"
+    match_result = _make_match_result(
+        alternatives=[{"quota_id": "C10-9-9", "name": expected_name, "unit": "\u4e2a"}],
+    )
+    db = _FakeDb()
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(province="\u5317\u4eac"), match_result
+
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    response = asyncio.run(
+        openclaw_api.save_review_draft(
+            task_id=uuid.uuid4(),
+            result_id=match_result.id,
+            req=OpenClawReviewDraftRequest(
+                openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": "???????? ???", "unit": "\u4e2a"}],
+                openclaw_review_note="OpenClaw review note",
+                openclaw_review_confidence=88,
+            ),
+            db=db,
+            service_user=service_user,
+        )
+    )
+
+    assert match_result.openclaw_suggested_quotas[0]["name"] == expected_name
+    assert response.openclaw_suggested_quotas[0].name == expected_name
 
 
 def test_save_review_draft_allows_red_light_result(monkeypatch):
@@ -307,28 +371,45 @@ def test_build_result_list_response_tolerates_legacy_openclaw_field_values():
     assert item.human_feedback_payload is None
 
 
+def test_build_result_list_response_recovers_question_mark_suggested_quota_name():
+    expected_name = "\u7ba1\u5185\u7a7f\u7ebf \u7a7f\u52a8\u529b\u7ebf \u94dc\u82af\u5bfc\u7ebf\u622a\u9762\uff08mm2\uff09 \u22642.5"
+    match_result = _make_match_result(
+        alternatives=[{"quota_id": "C10-9-9", "name": expected_name, "unit": "m"}],
+        openclaw_suggested_quotas=[{"quota_id": "C10-9-9", "name": "???? ???? ??????(mm2) ?2.5", "unit": "m"}],
+        openclaw_review_payload={
+            "decision_type": "override_within_candidates",
+            "suggested_quotas": [{"quota_id": "C10-9-9", "name": "???? ???? ??????(mm2) ?2.5", "unit": "m"}],
+        },
+    )
+
+    response = openclaw_api._build_result_list_response([match_result])
+
+    assert response.items[0].openclaw_suggested_quotas[0].name == expected_name
+    assert response.items[0].openclaw_review_payload["suggested_quotas"][0]["name"] == expected_name
+
+
 def test_openclaw_review_context_repairs_garbled_quota_text():
     service = OpenClawReviewService()
     task = SimpleNamespace(
         id=uuid.uuid4(),
-        name=_garble("\u5b89\u88c5\u4efb\u52a1"),
-        province=_garble("\u5317\u4eac\u5b9a\u989d\u5e93"),
+        name=_garble("安装任务"),
+        province=_garble("北京定额库"),
         mode="search",
-        original_filename=_garble("\u6d4b\u8bd5\u6e05\u5355.xlsx"),
+        original_filename=_garble("测试清单.xlsx"),
     )
     match_result = _make_match_result(
-        bill_name=_garble("\u7ed9\u6c34\u7ba1\u9053\u5b89\u88c5"),
-        bill_description=_garble("\u5ba4\u5185PPR\u7ed9\u6c34\u7ba1"),
-        quotas=[{"quota_id": "C10-1-1", "name": _garble("\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"), "unit": "m"}],
-        alternatives=[{"quota_id": "C10-1-2", "name": _garble("\u5ba4\u5185\u9540\u950c\u94a2\u7ba1"), "unit": "m"}],
+        bill_name=_garble("给水管道安装"),
+        bill_description=_garble("室内PPR给水管"),
+        quotas=[{"quota_id": "C10-1-1", "name": _garble("室内塑料给水管"), "unit": "m"}],
+        alternatives=[{"quota_id": "C10-1-2", "name": _garble("室内镀锌钢管"), "unit": "m"}],
     )
 
     context = service.build_review_context(task, match_result)
 
-    assert context["task"]["name"] == "\u5b89\u88c5\u4efb\u52a1"
-    assert context["task"]["province"] == "\u5317\u4eac\u5b9a\u989d\u5e93"
-    assert context["jarvis_result"]["top1_quota_name"] == "\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"
-    assert context["candidate_pool"][0]["name"] == "\u5ba4\u5185\u5851\u6599\u7ed9\u6c34\u7ba1"
+    assert context["task"]["name"] == "安装任务"
+    assert context["task"]["province"] == "北京定额库"
+    assert context["jarvis_result"]["top1_quota_name"] == "室内塑料给水管"
+    assert context["candidate_pool"][0]["name"] == "室内塑料给水管"
 
 
 def test_list_review_items_only_returns_yellow_red_and_pending_reviews(monkeypatch):
@@ -474,8 +555,11 @@ def test_review_confirm_approve_persists_human_feedback_payload(monkeypatch):
 
     payload = {
         "error_tags": ["wrong_family", "wrong_param"],
-        "root_cause": "classifier_bias",
-        "note": "先错专业，再错参数",
+        "root_cause": "retrieval_bias",
+        "decision_basis": "清单是配管，候选却落到配电箱，且单位 m/台 冲突",
+        "action": "retry_search_then_select",
+        "note": "先回电气配管语义重搜，再人工确认",
+        "review_bucket": "red",
     }
     response = asyncio.run(
         openclaw_api.review_confirm(
@@ -535,3 +619,107 @@ def test_resolve_auto_review_run_defaults_to_yellow_red_pending(monkeypatch):
 def test_batch_auto_review_request_defaults_to_yellow_red_pending():
     req = openclaw_api.OpenClawBatchAutoReviewRequest()
     assert req.scope == "yellow_red_pending"
+
+
+def test_auto_review_result_skips_green_item_even_when_called_directly(monkeypatch):
+    task_id = uuid.uuid4()
+    result_id = uuid.uuid4()
+    match_result = _make_match_result(
+        id=result_id,
+        light_status="green",
+        confidence=95,
+        confidence_score=95,
+        openclaw_review_status="pending",
+    )
+    service_user = SimpleNamespace(email="openclaw@system.local", nickname="OpenClaw")
+
+    async def _fake_resolve_auto_review_run(**_kwargs):
+        return SimpleNamespace(id=task_id), "yellow_red_pending", None
+
+    async def _fake_get_match_result(**_kwargs):
+        return SimpleNamespace(id=task_id), match_result
+
+    monkeypatch.setattr(openclaw_api, "_resolve_auto_review_run", _fake_resolve_auto_review_run)
+    monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
+
+    response = asyncio.run(
+        openclaw_api.auto_review_result(
+            task_id=task_id,
+            result_id=result_id,
+            req=openclaw_api.OpenClawAutoReviewRequest(),
+            db=SimpleNamespace(),
+            service_user=service_user,
+        )
+    )
+
+    assert response.status == "skipped"
+    assert response.reviewable is False
+    assert match_result.openclaw_review_status == "pending"
+
+
+def test_build_auto_review_draft_request_uses_retry_search_for_obvious_family_conflict():
+    task = SimpleNamespace(id=uuid.uuid4(), name="脏数据测试", province="北京市建设工程施工消耗量标准(2024)", mode="search", original_filename="dirty_data_sample.xlsx")
+    match_result = _make_match_result(
+        bill_name="配管（SC20）",
+        bill_description="配管SC20，暗敷,从配电箱至灯位",
+        bill_unit="m",
+        specialty="C4",
+        light_status="red",
+        confidence=17,
+        confidence_score=17,
+        quotas=[{"quota_id": "C4-4-37", "name": "配电箱箱体安装 配电箱半周长(m以内) 明装 2.5", "unit": "台"}],
+        trace={
+            "steps": [
+                {
+                    "final_validation": {
+                        "issues": [
+                            {"type": "unit_conflict", "severity": "error", "message": "清单单位 m 与定额单位 台 不一致"},
+                            {"type": "category_mismatch", "severity": "error", "message": "配管不应落到配电箱家族"},
+                        ]
+                    },
+                    "query_route": {"route": "installation_spec"},
+                }
+            ]
+        },
+        alternatives=[
+            {"quota_id": "C4-4-38", "name": "配电箱箱体安装 配电箱半周长(m以内) 暗装 1", "unit": "台"}
+        ],
+    )
+
+    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+
+    assert req.openclaw_decision_type == "retry_search_then_select"
+    assert req.openclaw_error_type == "wrong_family"
+    assert req.openclaw_error_stage == "final_validator"
+    assert req.openclaw_suggested_quotas in (None, [])
+    assert "unit_conflict" in (req.openclaw_reason_codes or [])
+    assert "category_mismatch" in (req.openclaw_reason_codes or [])
+
+
+def test_build_auto_review_draft_request_keeps_candidate_pool_insufficient_when_no_candidates():
+    task = SimpleNamespace(id=uuid.uuid4(), name="脏数据测试", province="北京市建设工程施工消耗量标准(2024)", mode="search", original_filename="dirty_data_sample.xlsx")
+    match_result = _make_match_result(
+        bill_name="阀",
+        bill_description="DN50",
+        bill_unit="个",
+        specialty="C4",
+        light_status="red",
+        confidence=0,
+        confidence_score=0,
+        quotas=None,
+        alternatives=None,
+        trace={
+            "steps": [
+                {
+                    "final_validation": {"issues": []},
+                    "query_route": {"route": "installation_spec"},
+                }
+            ]
+        },
+    )
+
+    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+
+    assert req.openclaw_decision_type == "candidate_pool_insufficient"
+    assert req.openclaw_suggested_quotas in (None, [])
+    assert req.openclaw_error_type in {"unknown", "missing_candidate"}

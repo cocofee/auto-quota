@@ -57,7 +57,7 @@ from app.schemas.file_intake import (
 from app.schemas.reference import CompositePriceReferenceResponse, ItemPriceReferenceResponse
 from app.schemas.task import TaskListResponse, TaskResponse
 from app.services.openclaw_review_service import OpenClawReviewService
-from app.text_utils import repair_mojibake_data
+from app.text_utils import repair_mojibake_data, repair_quota_name_loss
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -355,42 +355,6 @@ async def _save_review_draft(
     )
     await db.flush()
     return response
-    _ensure_openclaw_reviewable(_openclaw_policy_bucket(match_result))
-
-    suggested_quotas = [item.model_dump() for item in (req.openclaw_suggested_quotas or [])]
-    if not suggested_quotas:
-        suggested_quotas = list(match_result.quotas or [])
-    if not suggested_quotas:
-        raise HTTPException(status_code=422, detail="OpenClaw draft 至少需要一组建议定额或原始定额可供确认")
-
-    payload = _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas)
-
-    match_result.openclaw_review_status = "reviewed"
-    match_result.openclaw_suggested_quotas = suggested_quotas
-    match_result.openclaw_review_note = str(payload.get("note") or req.openclaw_review_note or "")
-    payload_confidence = payload.get("review_confidence")
-    match_result.openclaw_review_confidence = (
-        int(payload_confidence) if isinstance(payload_confidence, int) else req.openclaw_review_confidence
-    )
-    decision_type = str(payload.get("decision_type") or req.openclaw_decision_type or "").strip()
-    error_stage = str(payload.get("error_stage") or req.openclaw_error_stage or "").strip()
-    error_type = str(payload.get("error_type") or req.openclaw_error_type or "").strip()
-    match_result.openclaw_decision_type = decision_type or None
-    match_result.openclaw_error_stage = error_stage or None
-    match_result.openclaw_error_type = error_type or None
-    match_result.openclaw_retry_query = str(payload.get("retry_query") or req.openclaw_retry_query or "")
-    match_result.openclaw_reason_codes = _normalize_openclaw_reason_codes(
-        payload.get("reason_codes") if isinstance(payload.get("reason_codes"), list) else req.openclaw_reason_codes
-    )
-    match_result.openclaw_review_payload = payload
-    match_result.openclaw_review_actor = _service_actor(service_user)
-    match_result.openclaw_review_time = _utcnow()
-    match_result.openclaw_review_confirm_status = "pending"
-    match_result.openclaw_review_confirmed_by = ""
-    match_result.openclaw_review_confirm_time = None
-
-    await db.flush()
-    return results_api._to_result_response(match_result)
 
 
 def _is_pending_formal_result(result_or_row) -> bool:
@@ -567,6 +531,25 @@ def _map_issue_type_to_openclaw_error(issue_type: str) -> str:
     return mapping.get(issue_type, "unknown")
 
 
+def _pick_primary_error_type(issue_types: list[str]) -> str:
+    priority = [
+        "category_mismatch",
+        "anchor_conflict",
+        "book_conflict",
+        "unit_conflict",
+        "param_conflict",
+        "missing_candidate",
+        "synonym_gap",
+        "ambiguity_review",
+        "price_mismatch",
+    ]
+    issue_set = {str(item or "").strip() for item in issue_types if str(item or "").strip()}
+    for item in priority:
+        if item in issue_set:
+            return _map_issue_type_to_openclaw_error(item)
+    return _map_issue_type_to_openclaw_error(issue_types[0]) if issue_types else "unknown"
+
+
 def _infer_openclaw_error_stage(
     *,
     final_validation: dict[str, Any],
@@ -604,6 +587,20 @@ def _normalize_quota_dict(quota: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             normalized[key] = value
     return normalized
+
+
+def _repair_suggested_quotas_from_result(
+    match_result: MatchResult,
+    suggested_quotas: list[dict] | None,
+) -> tuple[list[dict], bool]:
+    repaired, changed = repair_quota_name_loss(
+        suggested_quotas or [],
+        match_result.alternatives or [],
+        match_result.corrected_quotas or [],
+        match_result.quotas or [],
+        preserve_newlines=True,
+    )
+    return repaired or [], changed
 
 
 def _find_candidate_by_ref(
@@ -666,6 +663,22 @@ def _reason_codes_for_auto_review(
     return deduped
 
 
+def _should_retry_search_then_select(
+    *,
+    issue_types: list[str],
+    current_quotas: list[dict[str, Any]],
+    candidate_pool: list[dict[str, Any]],
+) -> bool:
+    if not current_quotas:
+        return False
+    issue_set = {str(item or "").strip() for item in issue_types if str(item or "").strip()}
+    if not issue_set:
+        return False
+    has_family_conflict = bool({"category_mismatch", "anchor_conflict"} & issue_set)
+    has_unit_or_param_conflict = bool({"unit_conflict", "param_conflict", "book_conflict"} & issue_set)
+    return has_family_conflict and has_unit_or_param_conflict and bool(candidate_pool)
+
+
 def _build_auto_review_note(
     *,
     decision_type: str,
@@ -721,6 +734,13 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
     if correction_quota:
         decision_type = "override_within_candidates"
         suggested_quotas = [correction_quota]
+    elif _should_retry_search_then_select(
+        issue_types=issue_types,
+        current_quotas=current_quotas,
+        candidate_pool=candidate_pool,
+    ):
+        decision_type = "retry_search_then_select"
+        suggested_quotas = []
     elif not current_quotas and candidate_pool:
         decision_type = "override_within_candidates"
         suggested_quotas = [_candidate_to_quota(candidate_pool[0])]
@@ -736,9 +756,10 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
         final_review_correction=final_review_correction,
         reasoning_summary=reasoning_summary,
     )
-    error_type = _map_issue_type_to_openclaw_error(issue_types[0]) if issue_types else "unknown"
+    error_type = _pick_primary_error_type(issue_types)
     review_confidence = {
         "override_within_candidates": 78 if bucket == "red" else 86,
+        "retry_search_then_select": 90 if bucket == "red" else 84,
         "agree": 93 if bucket == "green" else 80,
         "candidate_pool_insufficient": 55,
     }.get(decision_type, 70)
@@ -761,7 +782,7 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
         task,
         match_result,
         decision_type=decision_type,
-        suggested_quotas=suggested_quotas,
+        suggested_quotas=suggested_quotas or None,
         review_confidence=review_confidence,
         error_stage=error_stage,
         error_type=error_type,
@@ -793,6 +814,7 @@ async def _apply_review_draft(
         [item.model_dump() for item in (req.openclaw_suggested_quotas or [])],
         preserve_newlines=True,
     )
+    suggested_quotas, _ = _repair_suggested_quotas_from_result(match_result, suggested_quotas)
     decision_type = str(req.openclaw_decision_type or "").strip()
     allow_empty_suggestions = decision_type in {
         "candidate_pool_insufficient",
@@ -808,6 +830,17 @@ async def _apply_review_draft(
         _build_openclaw_review_payload(req, suggested_quotas=suggested_quotas),
         preserve_newlines=True,
     )
+    payload_suggested, payload_changed = repair_quota_name_loss(
+        payload.get("suggested_quotas") if isinstance(payload, dict) else None,
+        suggested_quotas,
+        match_result.alternatives or [],
+        match_result.corrected_quotas or [],
+        match_result.quotas or [],
+        preserve_newlines=True,
+    )
+    if payload_changed and isinstance(payload, dict):
+        payload = dict(payload)
+        payload["suggested_quotas"] = payload_suggested
 
     match_result.openclaw_review_status = "reviewed"
     match_result.openclaw_suggested_quotas = suggested_quotas or None
@@ -1566,6 +1599,16 @@ async def review_confirm(
     decision = (req.decision or "").strip().lower()
     if decision not in {"approve", "reject"}:
         raise HTTPException(status_code=422, detail="decision 仅支持 approve 或 reject")
+    repaired_suggested_quotas, repaired_changed = _repair_suggested_quotas_from_result(
+        match_result,
+        match_result.openclaw_suggested_quotas,
+    )
+    if repaired_changed:
+        match_result.openclaw_suggested_quotas = repaired_suggested_quotas or None
+        if isinstance(match_result.openclaw_review_payload, dict):
+            payload = dict(match_result.openclaw_review_payload)
+            payload["suggested_quotas"] = repaired_suggested_quotas
+            match_result.openclaw_review_payload = payload
     if not match_result.openclaw_suggested_quotas:
         raise HTTPException(status_code=409, detail="当前结果还没有 OpenClaw 审核建议")
     if match_result.openclaw_review_status == "applied":
