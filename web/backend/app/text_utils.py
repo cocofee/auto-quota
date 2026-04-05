@@ -86,6 +86,70 @@ def repair_mojibake_data(value, *, preserve_newlines: bool = False):
     return value
 
 
+def text_has_irreversible_loss(text: str | None) -> bool:
+    """Detect text that was already collapsed into literal question marks."""
+    if text is None:
+        return False
+
+    cleaned = _clean_text(str(text), preserve_newlines=True)
+    if not cleaned:
+        return False
+
+    question_marks = cleaned.count("?")
+    if question_marks < 2:
+        return False
+
+    cjk_count = _count_cjk(cleaned)
+    return cjk_count == 0 or question_marks >= cjk_count
+
+
+def repair_quota_name_loss(
+    quotas,
+    *reference_groups,
+    preserve_newlines: bool = True,
+):
+    """Repair damaged quota names by reusing clean names from the same quota_id."""
+    if quotas is None:
+        return None, False
+    if not isinstance(quotas, Sequence) or isinstance(quotas, (bytes, bytearray, str)):
+        return quotas, False
+
+    reference_names: dict[str, str] = {}
+    for group in reference_groups:
+        if not isinstance(group, Sequence) or isinstance(group, (bytes, bytearray, str)):
+            continue
+        for item in group:
+            if not isinstance(item, Mapping):
+                continue
+            quota_id = str(item.get("quota_id") or "").strip()
+            name = repair_mojibake_text(
+                str(item.get("name") or ""),
+                preserve_newlines=preserve_newlines,
+            ) or ""
+            if quota_id and name and not text_has_irreversible_loss(name):
+                reference_names.setdefault(quota_id, name)
+
+    repaired_items = []
+    changed = False
+    for item in quotas:
+        if not isinstance(item, Mapping):
+            repaired_item = repair_mojibake_data(item, preserve_newlines=preserve_newlines)
+            repaired_items.append(repaired_item)
+            changed |= repaired_item != item
+            continue
+
+        repaired_item = repair_mojibake_data(dict(item), preserve_newlines=preserve_newlines)
+        quota_id = str(repaired_item.get("quota_id") or "").strip()
+        name = str(repaired_item.get("name") or "").strip()
+        replacement = reference_names.get(quota_id)
+        if replacement and text_has_irreversible_loss(name):
+            repaired_item["name"] = replacement
+        repaired_items.append(repaired_item)
+        changed |= repaired_item != item
+
+    return repaired_items, changed
+
+
 def normalize_client_filename(filename: str | None, default: str = "upload.xlsx") -> str:
     """Strip unsafe path parts and repair mojibake in uploaded filenames."""
     raw = (filename or "").replace("\\", "/").split("/")[-1]
