@@ -1508,6 +1508,11 @@ class HybridSearcher:
         max_variants = int(getattr(config, "HYBRID_QUERY_VARIANTS", 4))
         if strategy == "fast":
             max_variants = min(max_variants, 2)
+        elif strategy == "standard":
+            max_variants = min(
+                max_variants,
+                max(1, int(getattr(config, "HYBRID_STANDARD_QUERY_VARIANTS", 3) or 3)),
+            )
         elif strategy == "deep":
             max_variants = max(max_variants, 4)
         strategy_variant_cap = None
@@ -1529,10 +1534,10 @@ class HybridSearcher:
                 and "单件重量" not in str(hint)
                 and "每组重量" not in str(hint)
             ]
-        if query_features.get("family"):
+        if query_features.get("family") and strategy != "standard":
             max_variants = max(max_variants, 5)
         numeric_params = dict(query_features.get("numeric_params") or {})
-        if primary_query_profile.get("quota_aliases") and any(
+        if strategy != "standard" and primary_query_profile.get("quota_aliases") and any(
             numeric_params.get(key) is not None for key in ("dn", "kva", "kw")
         ):
             max_variants = max(max_variants, 7)
@@ -1948,6 +1953,12 @@ class HybridSearcher:
             rank_window = max(rank_window, top_k * 4, 40)
         if spec_count >= 2 and family:
             rank_window = max(rank_window, top_k * 5, 50)
+        if strategy == "deep":
+            cap = int(getattr(config, "HYBRID_DEEP_RANK_WINDOW_CAP", 72) or 72)
+        else:
+            cap = int(getattr(config, "HYBRID_STANDARD_RANK_WINDOW_CAP", 50) or 50)
+        if cap > 0:
+            rank_window = min(rank_window, cap)
         return int(rank_window)
 
     @staticmethod

@@ -1372,7 +1372,8 @@ def _search_with_optional_context(searcher, search_query: str, *,
 def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                            classification: dict, top_k: int = None,
                            item: dict | None = None,
-                           context_prior: dict | None = None) -> list[dict]:
+                           context_prior: dict | None = None,
+                           adaptive_strategy: str | None = None) -> list[dict]:
     """Staged search that honors book-routing constraints before escaping."""
     top_k = top_k or config.HYBRID_TOP_K
     raw_classification = classification if isinstance(classification, dict) else None
@@ -1391,6 +1392,7 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
     allow_cross_book_escape = bool(
         classification.get("allow_cross_book_escape", route_mode != "strict")
     )
+    strategy = str(adaptive_strategy or "standard").strip().lower()
 
     expanded_books = search_books or candidate_books or (
         [primary] + fallbacks if primary else []
@@ -1546,6 +1548,10 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                     item=item,
                     context_prior=context_prior,
                 )
+            if strategy == "standard" and len(best_candidates) >= top_k:
+                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
+                    return best_candidates[:top_k * 2]
+                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
             if (
                 resolved_primary_books
                 and len(best_candidates) >= top_k
@@ -1638,7 +1644,8 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
 def cascade_search(searcher: HybridSearcher, search_query: str,
                    classification: dict, top_k: int = None,
                    item: dict | None = None,
-                   context_prior: dict | None = None) -> list[dict]:
+                   context_prior: dict | None = None,
+                   adaptive_strategy: str | None = None) -> list[dict]:
     return _cascade_search_legacy(
         searcher,
         search_query,
@@ -1646,6 +1653,7 @@ def cascade_search(searcher: HybridSearcher, search_query: str,
         top_k=top_k,
         item=item,
         context_prior=context_prior,
+        adaptive_strategy=adaptive_strategy,
     )
 
 
@@ -1746,6 +1754,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                 top_k=search_top_k,
                 item=item,
                 context_prior=context_prior,
+                adaptive_strategy=adaptive_strategy,
             )
         except TypeError:
             try:

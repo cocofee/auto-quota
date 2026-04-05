@@ -1676,6 +1676,9 @@ def _get_price_validator():
         return _PRICE_VALIDATOR
     if _PRICE_VALIDATOR_LOAD_ATTEMPTED:
         return None
+    if not bool(getattr(config, "QUOTA_MATCH_PRICE_VALIDATION_ENABLED", False)):
+        _PRICE_VALIDATOR_LOAD_ATTEMPTED = True
+        return None
     _PRICE_VALIDATOR_LOAD_ATTEMPTED = True
     try:
         from src.price_reference_db import PriceReferenceDB

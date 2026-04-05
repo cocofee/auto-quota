@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import config
+
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags, tags_for_issue
 from src.review_checkers import (
     check_category_mismatch,
@@ -274,6 +276,9 @@ class FinalValidator:
     def _get_price_validator(self):
         if self.price_validator is not None:
             return self.price_validator
+        if not bool(getattr(config, "QUOTA_MATCH_PRICE_VALIDATION_ENABLED", False)):
+            self.price_validator = False
+            return None
         try:
             from src.price_reference_db import PriceReferenceDB
             from src.price_validator import PriceValidator
@@ -287,6 +292,10 @@ class FinalValidator:
         quotas = result.get("quotas") or []
         if not quotas:
             return {"status": "skip"}
+        if self.price_validator is None and not bool(
+            getattr(config, "QUOTA_MATCH_PRICE_VALIDATION_ENABLED", False)
+        ):
+            return {"status": "skip", "reason": "disabled_for_quota_matching"}
 
         validator = self._get_price_validator()
         if validator is None:
