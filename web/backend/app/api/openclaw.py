@@ -54,9 +54,11 @@ from app.schemas.file_intake import (
     FileRouteRequest,
     FileRouteResponse,
 )
+from app.schemas.qmd import QMDSearchRequest, QMDSearchResponse
 from app.schemas.reference import CompositePriceReferenceResponse, ItemPriceReferenceResponse
 from app.schemas.task import TaskListResponse, TaskResponse
 from app.services.openclaw_review_service import OpenClawReviewService
+from app.services.qmd_service import get_default_qmd_service
 from app.text_utils import repair_mojibake_data, repair_quota_name_loss
 from pydantic import BaseModel, Field
 
@@ -701,6 +703,45 @@ def _build_auto_review_note(
         return "OpenClaw 复核后暂不改判，保留 Jarvis 当前选择并附带候选池上下文。"
     return "OpenClaw 复核后暂不改判。"
 
+def _build_qmd_evidence_summary(context: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    qmd_recall = context.get("qmd_recall")
+    if not isinstance(qmd_recall, dict):
+        return "", {}
+
+    raw_hits = [item for item in (qmd_recall.get("hits") or []) if isinstance(item, dict)]
+    if not raw_hits:
+        return "", {
+            "query": str(qmd_recall.get("query") or "").strip(),
+            "count": 0,
+            "top_hits": [],
+        }
+
+    top_hits: list[dict[str, Any]] = []
+    brief_labels: list[str] = []
+    for hit in raw_hits[:3]:
+        compact = {
+            "title": str(hit.get("title") or hit.get("heading") or "").strip(),
+            "category": str(hit.get("category") or "").strip(),
+            "page_type": str(hit.get("page_type") or hit.get("type") or "").strip(),
+            "path": str(hit.get("path") or "").strip(),
+            "preview": str(hit.get("preview") or "").strip(),
+            "score": hit.get("score"),
+        }
+        top_hits.append(compact)
+        label = " / ".join(part for part in [compact["category"], compact["title"] or compact["path"]] if part)
+        if label:
+            brief_labels.append(label)
+
+    note = ""
+    if brief_labels:
+        note = f"QMD证据: 命中 {len(raw_hits)} 条，优先参考 {'；'.join(brief_labels[:2])}。"
+
+    return note, {
+        "query": str(qmd_recall.get("query") or "").strip(),
+        "count": int(qmd_recall.get("count") or len(raw_hits)),
+        "top_hits": top_hits,
+    }
+
 
 def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> OpenClawReviewDraftRequest:
     context = OPENCLAW_REVIEW_SERVICE.build_review_context(task, match_result)
@@ -778,6 +819,11 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
         has_current_quota=bool(current_quotas),
         has_candidate_pool=bool(candidate_pool),
     )
+    qmd_note, qmd_summary = _build_qmd_evidence_summary(context)
+    note = _merge_review_notes(note, qmd_note)
+    retry_query = str((trace_summary.get("query_route") or {}).get("rewrite_query") or "").strip()
+    if not retry_query and decision_type == "retry_search_then_select":
+        retry_query = str(qmd_summary.get("query") or "").strip()
     draft = OPENCLAW_REVIEW_SERVICE.build_structured_draft(
         task,
         match_result,
@@ -786,7 +832,7 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
         review_confidence=review_confidence,
         error_stage=error_stage,
         error_type=error_type,
-        retry_query=str((trace_summary.get("query_route") or {}).get("rewrite_query") or "").strip(),
+        retry_query=retry_query,
         reason_codes=reason_codes,
         note=note,
         evidence={
@@ -795,6 +841,8 @@ def _build_auto_review_draft_request(task: Task, match_result: MatchResult) -> O
             "final_validation": final_validation,
             "final_review_correction": final_review_correction,
             "reasoning_summary": reasoning_summary,
+            "qmd_recall": context.get("qmd_recall") if isinstance(context.get("qmd_recall"), dict) else {},
+            "qmd_summary": qmd_summary,
         },
     )
     return OpenClawReviewDraftRequest(**draft)
@@ -1273,6 +1321,38 @@ async def smart_search(
         limit=limit,
         user=reader,
     )
+
+
+@router.get("/qmd-search", response_model=QMDSearchResponse)
+async def qmd_search(
+    q: str = Query(description="QMD knowledge query"),
+    top_k: int = Query(default=5, ge=1, le=20),
+    category: str = Query(default="", description="QMD category filter"),
+    page_type: str = Query(default="", description="QMD page type filter"),
+    province: str = Query(default="", description="Province filter"),
+    specialty: str = Query(default="", description="Specialty filter"),
+    source_kind: str = Query(default="", description="Source kind filter"),
+    status: str = Query(default="", description="Status filter"),
+    reader: User = Depends(get_openclaw_read_user),
+):
+    _ = reader
+    service = get_default_qmd_service()
+    request = QMDSearchRequest(
+        query=q,
+        top_k=top_k,
+        category=category,
+        page_type=page_type,
+        province=province,
+        specialty=specialty,
+        source_kind=source_kind,
+        status=status,
+    )
+    try:
+        return await asyncio.to_thread(service.search, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/tasks", response_model=TaskResponse, status_code=201)
