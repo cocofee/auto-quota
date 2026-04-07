@@ -12,6 +12,27 @@ Web端定额咨询模块测试
 import json
 import pytest
 from unittest.mock import patch, MagicMock
+from pathlib import Path
+from types import SimpleNamespace
+import types
+from uuid import uuid4
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+import sys
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.append(str(BACKEND_ROOT))
+
+fake_jarvis_store = types.ModuleType("tools.jarvis_store")
+fake_jarvis_store.store_one = lambda *args, **kwargs: True
+sys.modules.setdefault("tools.jarvis_store", fake_jarvis_store)
+
+from app.api.consult import router as consult_router  # noqa: E402
+from app.api import consult as consult_api  # noqa: E402
 
 
 # ============================================================
@@ -214,3 +235,113 @@ class TestExperienceStoreParams:
                     )
 
             mock_store.assert_not_called()
+
+
+def test_consult_qmd_search_endpoint(monkeypatch):
+    class _FakeQMDService:
+        def search(self, request):
+            assert request.query == "现场照片 电缆"
+            return {
+                "query": request.query,
+                "count": 1,
+                "filters": {"source_kind": "image"},
+                "hits": [
+                    {
+                        "chunk_id": "source-1",
+                        "score": 0.89,
+                        "title": "电缆桥架现场照片",
+                        "heading": "现场照片",
+                        "category": "sources",
+                        "page_type": "source",
+                        "path": "sources/image-cable-photo.md",
+                        "province": "",
+                        "specialty": "安装",
+                        "status": "active",
+                        "source_kind": "image",
+                        "source_refs_text": "img-1",
+                        "preview": "现场示例图。",
+                        "document": "现场示例图。",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(consult_api, "get_default_qmd_service", lambda: _FakeQMDService())
+
+    app = FastAPI()
+    app.include_router(consult_router, prefix="/api/consult")
+    app.dependency_overrides[consult_api.get_current_user] = lambda: SimpleNamespace(
+        id=uuid4(),
+        email="user@example.com",
+        is_admin=False,
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/consult/qmd-search",
+        params={"q": "现场照片 电缆", "source_kind": "image", "top_k": 3},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["hits"][0]["source_kind"] == "image"
+
+
+def test_consult_chat_injects_qmd_context(monkeypatch):
+    captured = {}
+
+    class _FakeQMDService:
+        def search(self, request):
+            return SimpleNamespace(
+                model_dump=lambda: {
+                    "query": request.query,
+                    "count": 1,
+                    "filters": {},
+                    "hits": [
+                        {
+                            "title": "BV-2.5 穿管纠正规则",
+                            "heading": "穿管",
+                            "category": "rules",
+                            "page_type": "rule",
+                            "path": "rules/bv-2.5.md",
+                            "preview": "BV-2.5 导线通常对应穿管敷设。",
+                        }
+                    ],
+                }
+            )
+
+    def _fake_call_claude_chat(messages, system=""):
+        captured["messages"] = messages
+        captured["system"] = system
+        return "建议优先按穿管敷设处理。"
+
+    monkeypatch.setattr(consult_api, "get_default_qmd_service", lambda: _FakeQMDService())
+    monkeypatch.setattr(consult_api, "_call_claude_chat", _fake_call_claude_chat)
+
+    app = FastAPI()
+    app.include_router(consult_router, prefix="/api/consult")
+    app.dependency_overrides[consult_api.get_current_user] = lambda: SimpleNamespace(
+        id=uuid4(),
+        email="user@example.com",
+        is_admin=False,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/consult/chat",
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "BV-2.5 导线穿管敷设应该怎么套定额，依据是什么？",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "建议优先按穿管敷设处理。"
+    assert payload["qmd_recall"]["count"] == 1
+    assert "工程知识库(QMD)" in captured["system"]
+    assert "BV-2.5 穿管纠正规则" in captured["system"]

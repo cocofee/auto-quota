@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.qmd_service import get_default_qmd_service
 from app.text_utils import repair_mojibake_data
 
 
@@ -172,6 +173,7 @@ class OpenClawReviewService:
         query_route = _extract_latest_trace_dict(match_result, "query_route")
         batch_context = _extract_latest_trace_dict(match_result, "batch_context")
         stage_top1_chain = _extract_stage_top1_chain(match_result)
+        qmd_recall = get_default_qmd_service().recall_for_review_context(task, match_result, top_k=3)
 
         payload = {
             "task": {
@@ -209,6 +211,7 @@ class OpenClawReviewService:
                 "alternatives": list(getattr(match_result, "alternatives", None) or []),
             },
             "candidate_pool": candidate_pool,
+            "qmd_recall": qmd_recall,
             "trace_summary": {
                 "path": list(trace.get("path") or []),
                 "final_source": _clean_str(trace.get("final_source")),
@@ -248,7 +251,12 @@ class OpenClawReviewService:
         evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         context = self.build_review_context(task, match_result)
-        draft_quotas = list(suggested_quotas or getattr(match_result, "quotas", None) or [])
+        allow_empty = _clean_str(decision_type) in {
+            "candidate_pool_insufficient",
+            "retry_search_then_select",
+            "abstain",
+        }
+        draft_quotas = [] if allow_empty and not suggested_quotas else list(suggested_quotas or getattr(match_result, "quotas", None) or [])
         payload = {
             "openclaw_suggested_quotas": draft_quotas,
             "openclaw_review_note": note,

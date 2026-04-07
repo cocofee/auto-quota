@@ -17,8 +17,9 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,16 +29,19 @@ from app.models.consult import ConsultSubmission
 from app.models.user import User
 from app.auth.deps import get_current_user
 from app.auth.permissions import require_admin
+from app.schemas.qmd import QMDSearchRequest, QMDSearchResponse
 from app.schemas.consult import (
     ConsultSubmitRequest, ConsultReviewRequest,
     ChatRequest, ChatMessage, ParsedItem,
 )
 from app.api.shared import store_experience_batch
+from app.services.qmd_service import get_default_qmd_service
 
 router = APIRouter()
 
 # 每日对话次数限制（每个用户每天最多发送的消息数）
 DAILY_CHAT_LIMIT = 50
+_CHAT_QMD_TOP_K = 3
 
 # 简单的内存计数器（key: "user_id:日期", value: 已用次数）
 # 单进程足够用，重启后计数清零（宽容设计）
@@ -169,6 +173,130 @@ def _parse_extract_response(raw_text: str) -> list[dict]:
 # 端点1：多轮对话
 # ============================================================
 
+def _latest_user_message(messages: list[ChatMessage]) -> str:
+    for message in reversed(messages):
+        if message.role == "user":
+            return str(message.content or "").strip()
+    return ""
+
+
+def _should_use_qmd_recall(text: str) -> bool:
+    normalized = " ".join(str(text or "").split()).strip()
+    if len(normalized) < 2:
+        return False
+
+    lowered = normalized.lower()
+    if lowered in {"hi", "hello", "你好", "在吗", "在么", "在不在", "收到"}:
+        return False
+
+    trigger_keywords = (
+        "定额", "清单", "规则", "案例", "依据", "图纸", "照片", "图片", "视频", "文档",
+        "做法", "说明", "审核", "纠正", "为什么", "怎么", "是否", "桥架", "电缆", "穿管",
+        "给排水", "消防", "风管", "阀门", "配电箱", "套哪个", "怎么算",
+    )
+    if any(keyword in normalized for keyword in trigger_keywords):
+        return True
+    return len(normalized) >= 6
+
+
+def _compact_qmd_hit_for_prompt(hit: dict[str, Any]) -> dict[str, str]:
+    return {
+        "title": str(hit.get("title") or "").strip(),
+        "heading": str(hit.get("heading") or "").strip(),
+        "category": str(hit.get("category") or "").strip(),
+        "page_type": str(hit.get("page_type") or hit.get("type") or "").strip(),
+        "path": str(hit.get("path") or "").strip(),
+        "preview": str(hit.get("preview") or "").strip(),
+        "source_kind": str(hit.get("source_kind") or "").strip(),
+    }
+
+
+def _format_qmd_recall_for_prompt(qmd_recall: dict[str, Any] | None) -> str:
+    if not isinstance(qmd_recall, dict):
+        return ""
+    hits = [item for item in (qmd_recall.get("hits") or []) if isinstance(item, dict)]
+    if not hits:
+        return ""
+
+    lines = [
+        "以下是从工程知识库(QMD)召回的相关证据。仅可基于这些证据辅助判断，不要编造未召回的信息。",
+    ]
+    query = str(qmd_recall.get("query") or "").strip()
+    if query:
+        lines.append(f"检索词: {query}")
+
+    for index, raw_hit in enumerate(hits[:_CHAT_QMD_TOP_K], start=1):
+        hit = _compact_qmd_hit_for_prompt(raw_hit)
+        title = hit["title"] or hit["heading"] or f"证据 {index}"
+        meta = " / ".join(
+            part for part in [hit["category"], hit["page_type"], hit["source_kind"], hit["path"]] if part
+        )
+        lines.append(f"{index}. {title}")
+        if meta:
+            lines.append(f"   元数据: {meta}")
+        if hit["preview"]:
+            lines.append(f"   摘要: {hit['preview'][:180]}")
+
+    lines.append("回答时优先利用这些证据解释理由；如果证据不足，要明确说明证据不足。")
+    return "\n".join(lines)
+
+
+async def _build_chat_qmd_recall(messages: list[ChatMessage]) -> dict[str, Any] | None:
+    latest_user_message = _latest_user_message(messages)
+    if not _should_use_qmd_recall(latest_user_message):
+        return None
+
+    try:
+        response = await asyncio.to_thread(
+            get_default_qmd_service().search,
+            QMDSearchRequest(query=latest_user_message, top_k=_CHAT_QMD_TOP_K),
+        )
+    except Exception as exc:
+        logger.warning("Consult chat QMD recall failed: {}", exc)
+        return None
+    return response.model_dump()
+
+
+async def _build_chat_system_prompt(messages: list[ChatMessage]) -> tuple[str, dict[str, Any] | None]:
+    qmd_recall = await _build_chat_qmd_recall(messages)
+    qmd_prompt = _format_qmd_recall_for_prompt(qmd_recall)
+    if not qmd_prompt:
+        return JARVIS_SYSTEM_PROMPT, qmd_recall
+    return f"{JARVIS_SYSTEM_PROMPT}\n\n{qmd_prompt}", qmd_recall
+
+
+@router.get("/qmd-search", response_model=QMDSearchResponse)
+async def qmd_search(
+    q: str = Query(description="QMD knowledge query"),
+    top_k: int = Query(default=5, ge=1, le=20),
+    category: str = Query(default="", description="QMD category filter"),
+    page_type: str = Query(default="", description="QMD page type filter"),
+    province: str = Query(default="", description="Province filter"),
+    specialty: str = Query(default="", description="Specialty filter"),
+    source_kind: str = Query(default="", description="Source kind filter"),
+    status: str = Query(default="", description="Status filter"),
+    user: User = Depends(get_current_user),
+):
+    _ = user
+    service = get_default_qmd_service()
+    request = QMDSearchRequest(
+        query=q,
+        top_k=top_k,
+        category=category,
+        page_type=page_type,
+        province=province,
+        specialty=specialty,
+        source_kind=source_kind,
+        status=status,
+    )
+    try:
+        return await asyncio.to_thread(service.search, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -202,15 +330,17 @@ async def chat(
             # 用户消息：可能包含文字+图片
             api_messages.append({"role": "user", "content": msg.content})
 
+    system_prompt, qmd_recall = await _build_chat_system_prompt(req.messages)
+
     try:
         reply = await asyncio.to_thread(
-            _call_claude_chat, api_messages, JARVIS_SYSTEM_PROMPT
+            _call_claude_chat, api_messages, system_prompt
         )
     except Exception as e:
         logger.error(f"贾维斯对话失败: {e}")
         raise HTTPException(status_code=500, detail="AI 回复失败，请稍后重试")
 
-    return {"reply": reply}
+    return {"reply": reply, "qmd_recall": qmd_recall}
 
 
 # ============================================================

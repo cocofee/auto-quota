@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+import types
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -14,10 +15,18 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.append(str(BACKEND_ROOT))
 
+fake_config = types.ModuleType("config")
+fake_config.resolve_province = lambda province, interactive=False: province
+fake_config.get_quota_db_path = lambda province=None: ""
+fake_config.get_current_province = lambda: ""
+fake_config.__getattr__ = lambda name: ""
+sys.modules.setdefault("config", fake_config)
+
 from app.api.openclaw import router as openclaw_router  # noqa: E402
 from app.api import openclaw as openclaw_api  # noqa: E402
 from app.auth import openclaw as openclaw_auth  # noqa: E402
 from app.schemas.result import OpenClawReviewConfirmRequest, OpenClawReviewDraftRequest  # noqa: E402
+from app.services import openclaw_review_service as review_service_api  # noqa: E402
 from app.services.openclaw_review_service import OpenClawReviewService  # noqa: E402
 
 
@@ -137,6 +146,7 @@ def test_openclaw_openapi_contains_bridge_routes_only():
     assert response.status_code == 200
 
     payload = response.json()
+    assert "/api/openclaw/qmd-search" in payload["paths"]
     assert "/api/openclaw/quota-search/smart" in payload["paths"]
     assert "/api/openclaw/tasks" in payload["paths"]
     assert "/api/openclaw/tasks/{task_id}/review-items" in payload["paths"]
@@ -410,6 +420,101 @@ def test_openclaw_review_context_repairs_garbled_quota_text():
     assert context["task"]["province"] == "北京定额库"
     assert context["jarvis_result"]["top1_quota_name"] == "室内塑料给水管"
     assert context["candidate_pool"][0]["name"] == "室内塑料给水管"
+
+
+def test_openclaw_review_context_includes_qmd_recall(monkeypatch):
+    class _FakeQMDService:
+        def recall_for_review_context(self, task, match_result, *, top_k=3):
+            assert top_k == 3
+            return {
+                "query": f"{match_result.bill_name} {match_result.bill_description}",
+                "count": 1,
+                "filters": {},
+                "hits": [
+                    {
+                        "chunk_id": "rules-1",
+                        "score": 0.91,
+                        "title": "BV-2.5 穿管纠正规则",
+                        "heading": "BV-2.5 穿管",
+                        "category": "rules",
+                        "page_type": "rule",
+                        "path": "rules/bv-2.5.md",
+                        "province": "",
+                        "specialty": "安装",
+                        "status": "active",
+                        "source_kind": "",
+                        "source_refs_text": "source-1",
+                        "preview": "优先穿管敷设。",
+                        "document": "优先穿管敷设。",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(review_service_api, "get_default_qmd_service", lambda: _FakeQMDService())
+
+    service = OpenClawReviewService()
+    task = SimpleNamespace(id=uuid.uuid4(), name="安装任务", province="北京", mode="search", original_filename="demo.xlsx")
+    match_result = _make_match_result(
+        bill_name="BV-2.5 导线",
+        bill_description="穿管敷设",
+        specialty="安装",
+    )
+
+    context = service.build_review_context(task, match_result)
+
+    assert context["qmd_recall"]["count"] == 1
+    assert context["qmd_recall"]["hits"][0]["title"] == "BV-2.5 穿管纠正规则"
+
+
+def test_openclaw_qmd_search_endpoint(monkeypatch):
+    class _FakeQMDService:
+        def search(self, request):
+            assert request.query == "BV-2.5 穿管纠正"
+            return {
+                "query": request.query,
+                "count": 1,
+                "filters": {"category": "rules"},
+                "hits": [
+                    {
+                        "chunk_id": "rules-1",
+                        "score": 0.93,
+                        "title": "BV-2.5 穿管纠正规则",
+                        "heading": "穿管",
+                        "category": "rules",
+                        "page_type": "rule",
+                        "path": "rules/bv-2.5.md",
+                        "province": "",
+                        "specialty": "安装",
+                        "status": "active",
+                        "source_kind": "",
+                        "source_refs_text": "source-1",
+                        "preview": "优先穿管敷设。",
+                        "document": "优先穿管敷设。",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(openclaw_api, "get_default_qmd_service", lambda: _FakeQMDService())
+
+    app = FastAPI()
+    app.include_router(openclaw_router, prefix="/api/openclaw")
+    app.dependency_overrides[openclaw_api.get_openclaw_read_user] = lambda: SimpleNamespace(
+        id=uuid.uuid4(),
+        email="openclaw@test.local",
+        nickname="OpenClaw",
+        is_admin=True,
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/openclaw/qmd-search",
+        params={"q": "BV-2.5 穿管纠正", "category": "rules", "top_k": 3},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["hits"][0]["path"] == "rules/bv-2.5.md"
 
 
 def test_list_review_items_only_returns_yellow_red_and_pending_reviews(monkeypatch):
@@ -723,3 +828,44 @@ def test_build_auto_review_draft_request_keeps_candidate_pool_insufficient_when_
     assert req.openclaw_decision_type == "candidate_pool_insufficient"
     assert req.openclaw_suggested_quotas in (None, [])
     assert req.openclaw_error_type in {"unknown", "missing_candidate"}
+
+
+def test_build_auto_review_draft_request_carries_qmd_evidence(monkeypatch):
+    class _FakeQMDService:
+        def recall_for_review_context(self, task, match_result, *, top_k=3):
+            return {
+                "query": f"{match_result.bill_name} {match_result.bill_description}",
+                "count": 2,
+                "filters": {},
+                "hits": [
+                    {
+                        "title": "BV-2.5 穿管纠正规则",
+                        "heading": "穿管",
+                        "category": "rules",
+                        "page_type": "rule",
+                        "path": "rules/bv-2.5.md",
+                        "preview": "BV-2.5 导线通常对应穿管敷设。",
+                        "score": 0.95,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(review_service_api, "get_default_qmd_service", lambda: _FakeQMDService())
+
+    task = SimpleNamespace(id=uuid.uuid4(), name="安装任务", province="北京", mode="search", original_filename="demo.xlsx")
+    match_result = _make_match_result(
+        bill_name="BV-2.5 导线",
+        bill_description="穿管敷设",
+        specialty="安装",
+        light_status="yellow",
+        confidence=70,
+        confidence_score=70,
+        trace={"steps": [{"final_validation": {"issues": []}, "query_route": {}}]},
+    )
+
+    req = openclaw_api._build_auto_review_draft_request(task, match_result)
+
+    assert "QMD证据" in (req.openclaw_review_note or "")
+    evidence = (req.openclaw_review_payload or {}).get("evidence") or {}
+    assert evidence["qmd_summary"]["count"] == 2
+    assert evidence["qmd_recall"]["hits"][0]["title"] == "BV-2.5 穿管纠正规则"
