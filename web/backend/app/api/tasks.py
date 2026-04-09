@@ -39,6 +39,19 @@ from src.bill_reader import parse_sheet_selection
 router = APIRouter()
 
 
+def _revoke_celery_task(celery_task_id: str | None, *, terminate: bool) -> None:
+    if not celery_task_id:
+        return
+
+    try:
+        from app.celery_app import celery_app
+
+        celery_app.control.revoke(celery_task_id, terminate=terminate, signal="SIGTERM")
+        logger.info(f"已发送 Celery revoke: {celery_task_id} (terminate={terminate})")
+    except Exception as exc:
+        logger.warning(f"Celery revoke 失败，task_id={celery_task_id}: {exc}")
+
+
 def _normalize_create_task_inputs(
     province: str, sheet: str | None, agent_llm: str | None
 ) -> tuple[str, str | None, str | None]:
@@ -425,6 +438,9 @@ async def delete_task(
     if task.status == "running":
         raise HTTPException(status_code=409, detail="任务正在运行中，无法删除")
 
+    if task.status == "pending":
+        _revoke_celery_task(task.celery_task_id, terminate=False)
+
     # 清理上传文件和输出文件（避免磁盘泄漏）
     upload_dir = UPLOAD_DIR / str(task_id)
     output_dir = TASK_OUTPUT_DIR / str(task_id)
@@ -453,13 +469,7 @@ async def cancel_task(
         raise HTTPException(status_code=409, detail=f"任务状态为 {task.status}，无法取消")
 
     # 通过 Celery revoke 终止后台任务
-    if task.celery_task_id:
-        try:
-            from app.celery_app import celery_app
-            celery_app.control.revoke(task.celery_task_id, terminate=True, signal="SIGTERM")
-            logger.info(f"已发送 Celery revoke: {task.celery_task_id}")
-        except Exception as e:
-            logger.warning(f"Celery revoke 失败（任务可能已结束）: {e}")
+    _revoke_celery_task(task.celery_task_id, terminate=True)
 
     # 更新任务状态
     task.status = "cancelled"
