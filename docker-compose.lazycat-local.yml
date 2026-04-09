@@ -7,7 +7,6 @@ services:
       POSTGRES_USER: autoquota
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autoquota}
       POSTGRES_DB: autoquota
-      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -28,6 +27,50 @@ services:
       timeout: 5s
       retries: 5
 
+  match-service:
+    image: auto-quota-app:latest
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+    container_name: autoquota-match-service
+    restart: unless-stopped
+    command: >
+      sh -lc "cd /app &&
+      python local_match_server.py"
+    env_file:
+      - .env
+    environment:
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+      PYTHONIOENCODING: "utf-8"
+      LOCAL_MATCH_HOST: 0.0.0.0
+      LOCAL_MATCH_PORT: 9300
+      LOCAL_MATCH_API_KEY: ${LOCAL_MATCH_API_KEY:-f4d20d44381b4368}
+      VECTOR_ENABLED: "true"
+      LTR_V2_ENABLED: "1"
+      LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
+      LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
+      LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
+    volumes:
+      - ./config.py:/app/config.py
+      - ./main.py:/app/main.py
+      - ./local_match_server.py:/app/local_match_server.py
+      - ./docs:/app/docs
+      - ./src:/app/src
+      - ./tools:/app/tools
+      - ./knowledge:/app/knowledge
+      - ./data:/app/data
+      - ./db:/app/db
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./tests:/app/tests
+      - ./raw_files:/app/raw_files
+      - model_cache:/root/.cache
+    ports:
+      - "9300:9300"
+
   backend:
     image: auto-quota-app:latest
     build:
@@ -38,52 +81,37 @@ services:
     container_name: autoquota-backend
     restart: unless-stopped
     command: >
-      uvicorn app.main:app
-      --host 0.0.0.0
-      --port 8000
-      --workers 1
-      --log-level info
+      sh -lc "cd /app/web/backend &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --log-level info"
     working_dir: /app/web/backend
     env_file:
       - .env
-    ports:
-      - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://autoquota:${POSTGRES_PASSWORD:-autoquota}@postgres:5432/autoquota
       REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
-      CORS_ORIGINS: http://localhost:3300,http://127.0.0.1:3300,http://localhost:3210,http://127.0.0.1:3210,http://localhost:3000,http://localhost:5173
+      CORS_ORIGINS: http://localhost:3300,http://127.0.0.1:3300,http://localhost:3210,http://127.0.0.1:3210
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      PYTHONDONTWRITEBYTECODE: "1"
-      PYTHONUTF8: "1"
-      TZ: Asia/Shanghai
-      AGENT_LLM: qwen
-      VERIFY_LLM: kimi
-      VERIFY_MODEL: kimi-k2.5
-      MATCH_BACKEND: "local"
-      VECTOR_ENABLED: "true"
+      OPENCLAW_API_KEY: ${OPENCLAW_API_KEY:-un_MwK3PEcof0eSWKu7jni3ik8nf2tTmi108ZQkNvU4}
+      VECTOR_ENABLED: "false"
       LTR_V2_ENABLED: "1"
       LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
       LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
       LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
+      COOKIE_SECURE: "false"
+      COOKIE_SAMESITE: "lax"
+      MATCH_BACKEND: "remote"
+      LOCAL_MATCH_URL: http://match-service:9300
+      LOCAL_MATCH_API_KEY: ${LOCAL_MATCH_API_KEY:-f4d20d44381b4368}
     volumes:
-      - ./config.py:/app/config.py
-      - ./main.py:/app/main.py
-      - ./docs:/app/docs
-      - ./src:/app/src
-      - ./tools:/app/tools
-      - ./knowledge:/app/knowledge
-      - ./web/backend:/app/web/backend
-      - ./models:/app/models
-      - ./data:/app/data
-      - ./db:/app/db
       - ./output:/app/output
       - ./logs:/app/logs
-      - ./tests:/app/tests
+      - ./data:/app/data
+      - ./db:/app/db
       - ./raw_files:/app/raw_files
-      - model_cache:/root/.cache
     healthcheck:
       test:
         - CMD
@@ -99,16 +127,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      match-service:
+        condition: service_started
 
   celery-worker:
     image: auto-quota-app:latest
     container_name: autoquota-celery
     restart: unless-stopped
     command: >
-      celery -A app.celery_app worker
-      --loglevel=info
-      --concurrency=1
-      --pool=solo
+      sh -lc "cd /app/web/backend &&
+      celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
     working_dir: /app/web/backend
     env_file:
       - .env
@@ -118,31 +146,20 @@ services:
       LANG: "C.UTF-8"
       LC_ALL: "C.UTF-8"
       PYTHONIOENCODING: "utf-8"
-      PYTHONDONTWRITEBYTECODE: "1"
-      PYTHONUTF8: "1"
-      TZ: Asia/Shanghai
-      AGENT_LLM: qwen
-      VERIFY_LLM: kimi
-      VERIFY_MODEL: kimi-k2.5
-      MATCH_BACKEND: "local"
-      VECTOR_ENABLED: "true"
+      OPENCLAW_API_KEY: ${OPENCLAW_API_KEY:-un_MwK3PEcof0eSWKu7jni3ik8nf2tTmi108ZQkNvU4}
+      VECTOR_ENABLED: "false"
       LTR_V2_ENABLED: "1"
       LTR_V2_MODEL_PATH: /app/output/ltr/model_v2/ltr_v2_model.txt
       LTR_V2_FEATURES_PATH: /app/output/ltr/model_v2/ltr_v2_features.json
       LTR_GENERICITY_STATS_PATH: /app/data/ltr_quota_genericity.json
+      MATCH_BACKEND: "remote"
+      LOCAL_MATCH_URL: http://match-service:9300
+      LOCAL_MATCH_API_KEY: ${LOCAL_MATCH_API_KEY:-f4d20d44381b4368}
     volumes:
-      - ./config.py:/app/config.py
-      - ./main.py:/app/main.py
-      - ./docs:/app/docs
-      - ./src:/app/src
-      - ./tools:/app/tools
-      - ./knowledge:/app/knowledge
-      - ./web/backend:/app/web/backend
-      - ./models:/app/models
-      - ./data:/app/data
-      - ./db:/app/db
       - ./output:/app/output
       - ./logs:/app/logs
+      - ./data:/app/data
+      - ./db:/app/db
       - ./raw_files:/app/raw_files
       - model_cache:/root/.cache
     depends_on:
@@ -150,18 +167,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      match-service:
+        condition: service_started
 
   frontend:
-    image: autoquota-frontend-local:latest
+    image: auto-quota-lazycat-local:latest
     build:
-      context: ./web/frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: deploy/lazycat/Dockerfile
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
-        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:alpine}
-        BACKEND_UPSTREAM: backend:8000
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
     container_name: autoquota-frontend
     restart: unless-stopped
+    command: >
+      sh -lc "sed 's|http://backend.cloud.lazycat.app.autoquota.lzcapp:8000/api/|http://backend:8000/api/|g' /etc/nginx/conf.d/default.conf > /tmp/default.conf &&
+      cat /tmp/default.conf > /etc/nginx/conf.d/default.conf &&
+      nginx -g 'daemon off;'"
     ports:
       - "3300:80"
     depends_on:
