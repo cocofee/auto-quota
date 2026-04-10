@@ -105,3 +105,51 @@ def test_pending_draft_item_marks_missing_fields_and_position():
     assert 'sheet=电气, section=弱电系统, index=7' in report
     assert errors['[跨]'] == 1
     assert gaps['六类网线'] == 1
+
+
+def test_build_local_report_output_paths_returns_dual_targets():
+    paths = review.build_local_report_output_paths('task-123')
+    assert paths == [
+        review.PROJECT_ROOT / 'reports' / 'lobster_audit' / 'task-123_审核报告_v6.1.md',
+        review.PROJECT_ROOT / 'output' / 'tasks' / 'task-123' / '审核报告_v6.1.md',
+    ]
+
+
+def test_generate_local_task_report_writes_dual_outputs(monkeypatch, tmp_path):
+    monkeypatch.setattr(review, 'PROJECT_ROOT', tmp_path)
+    task = _task()
+    task['id'] = 'task-local-1'
+    results = {
+        'items': [{
+            'index': 1,
+            'bill_name': '单联单控开关',
+            'bill_description': '暗装',
+            'bill_unit': '个',
+            'confidence': 36,
+            'sheet_name': '电气',
+            'section': '强电系统',
+            'quotas': [{'quota_id': 'A4-14-379', 'name': '普通开关安装 单控', 'unit': '个'}],
+            'review_status': 'confirmed',
+            'review_note': '人工确认 Jarvis 原结果',
+            'openclaw_review_status': 'pending',
+        }],
+        'summary': {'total': 1, 'confirmed': 1, 'corrected': 0, 'pending': 0},
+    }
+
+    def _fake_load(task_id, db_url=None):
+        assert task_id == 'task-local-1'
+        assert db_url is None
+        return task, results, 'postgresql://autoquota:autoquota@postgres:5432/autoquota'
+
+    monkeypatch.setattr(review, 'load_local_task_bundle', _fake_load)
+
+    report, output_paths, task_info, results_data, used_db_url = review.generate_local_task_report('task-local-1')
+
+    assert task_info['id'] == 'task-local-1'
+    assert results_data is results
+    assert used_db_url.endswith('/autoquota')
+    assert len(output_paths) == 2
+    for output_path in output_paths:
+        assert output_path.exists()
+        assert output_path.read_text(encoding='utf-8') == report
+    assert '# Jarvis 自动审核汇总报告' in report
