@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import ssl
 import sys
 import urllib.error
@@ -577,13 +579,197 @@ def generate_report(tasks_data: list[tuple[dict[str, Any], dict[str, Any]]]) -> 
     return "\n".join(report).rstrip() + "\n"
 
 
+def _normalize_db_url(db_url: str) -> str:
+    return s(db_url).replace("+asyncpg", "").replace("+psycopg", "")
+
+
+def candidate_local_db_urls(explicit_db_url: str | None = None) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def add(url: str | None) -> None:
+        normalized = _normalize_db_url(url or "")
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        urls.append(normalized)
+
+    add(explicit_db_url)
+    add(os.getenv("DATABASE_URL_SYNC"))
+    add(os.getenv("DATABASE_URL"))
+
+    password = s(os.getenv("POSTGRES_PASSWORD")) or "autoquota"
+    for host in ("localhost", "127.0.0.1", "postgres"):
+        add(f"postgresql://autoquota:{password}@{host}:5432/autoquota")
+    for host in ("localhost", "127.0.0.1", "postgres"):
+        add(f"postgresql://autoquota:autoquota@{host}:5432/autoquota")
+    return urls
+
+
+def build_local_report_output_paths(task_id: str) -> list[Path]:
+    return [
+        PROJECT_ROOT / "reports" / "lobster_audit" / f"{task_id}_审核报告_v6.1.md",
+        PROJECT_ROOT / "output" / "tasks" / task_id / "审核报告_v6.1.md",
+    ]
+
+
+def _build_local_summary(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(items),
+        "confirmed": sum(1 for item in items if s(item.get("review_status")) == "confirmed"),
+        "corrected": sum(1 for item in items if s(item.get("review_status")) == "corrected"),
+        "pending": sum(1 for item in items if s(item.get("review_status")) not in {"confirmed", "corrected"}),
+    }
+
+
+async def _load_local_task_bundle_async(task_id: str, db_url: str | None = None) -> tuple[dict[str, Any], dict[str, Any], str]:
+    try:
+        import asyncpg
+    except Exception as exc:  # pragma: no cover - depends on runtime environment
+        raise RuntimeError("本地离线模式需要安装 asyncpg") from exc
+
+    task_sql = """
+        SELECT
+            id::text AS id,
+            name,
+            province,
+            original_filename,
+            status,
+            created_at
+        FROM tasks
+        WHERE id = $1
+    """
+    result_sql = """
+        SELECT
+            index,
+            id::text AS id,
+            bill_code,
+            bill_name,
+            bill_description,
+            bill_unit,
+            bill_quantity,
+            specialty,
+            sheet_name,
+            section,
+            quotas,
+            corrected_quotas,
+            confidence,
+            confidence_score,
+            review_risk,
+            light_status,
+            match_source,
+            explanation,
+            candidates_count,
+            alternatives,
+            is_measure_item,
+            trace,
+            review_status,
+            review_note,
+            openclaw_review_status,
+            openclaw_suggested_quotas,
+            openclaw_review_note,
+            openclaw_review_confidence,
+            openclaw_review_actor,
+            openclaw_review_time,
+            openclaw_decision_type,
+            openclaw_error_stage,
+            openclaw_error_type,
+            openclaw_retry_query,
+            openclaw_reason_codes,
+            openclaw_review_payload,
+            openclaw_review_confirm_status,
+            openclaw_review_confirmed_by,
+            openclaw_review_confirm_time,
+            human_feedback_payload,
+            created_at
+        FROM match_results
+        WHERE task_id = $1
+        ORDER BY index
+    """
+
+    last_error: Exception | None = None
+    for candidate in candidate_local_db_urls(db_url):
+        conn = None
+        try:
+            conn = await asyncpg.connect(candidate, timeout=5)
+            task_row = await conn.fetchrow(task_sql, task_id)
+            if task_row is None:
+                raise ValueError(f"本地数据库中未找到任务 {task_id}")
+            result_rows = await conn.fetch(result_sql, task_id)
+            task_info = dict(task_row)
+            task_info["pricing_name"] = s(task_info.get("pricing_name") or task_info.get("province"))
+            items = [dict(row) for row in result_rows]
+            return task_info, {"items": items, "summary": _build_local_summary(items)}, candidate
+        except Exception as exc:
+            last_error = exc
+        finally:
+            if conn is not None:
+                await conn.close()
+    if last_error is None:
+        raise RuntimeError("未找到可用的本地 PostgreSQL 连接配置")
+    raise RuntimeError(f"本地离线模式读取数据库失败: {last_error}") from last_error
+
+
+def load_local_task_bundle(task_id: str, db_url: str | None = None) -> tuple[dict[str, Any], dict[str, Any], str]:
+    return asyncio.run(_load_local_task_bundle_async(task_id, db_url=db_url))
+
+
+def write_report_outputs(report: str, output_paths: list[Path]) -> list[Path]:
+    written: list[Path] = []
+    for output_path in output_paths:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report, encoding="utf-8")
+        written.append(output_path)
+    return written
+
+
+def generate_local_task_report(
+    task_id: str,
+    *,
+    db_url: str | None = None,
+    output: str | None = None,
+) -> tuple[str, list[Path], dict[str, Any], dict[str, Any], str]:
+    task_info, results_data, used_db_url = load_local_task_bundle(task_id, db_url=db_url)
+    report = generate_report([(task_info, results_data)])
+    output_paths = [Path(output)] if output else build_local_report_output_paths(task_id)
+    written_paths = write_report_outputs(report, output_paths)
+    return report, written_paths, task_info, results_data, used_db_url
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Jarvis 任务审核并生成 v6.1 报告")
     parser.add_argument("--task", help="指定任务ID")
+    parser.add_argument("--task-local", help="指定任务ID，直接从本地 PostgreSQL 读取 tasks + match_results 生成报告")
     parser.add_argument("--recent", type=int, default=20, help="拉最近 N 个任务（默认 20）")
     parser.add_argument("--since", help="只看某天之后的任务，格式 YYYY-MM-DD")
+    parser.add_argument("--db-url", help="本地离线模式使用的 PostgreSQL 连接串")
     parser.add_argument("--output", help="报告输出路径（默认 output/temp/jarvis_review_report.md）")
     args = parser.parse_args()
+    if args.task and args.task_local:
+        parser.error("--task 和 --task-local 不能同时使用")
+    if args.task_local:
+        print(f"本地离线模式: 读取任务 {args.task_local}")
+        report, output_paths, _, results_data, used_db_url = generate_local_task_report(
+            args.task_local,
+            db_url=args.db_url,
+            output=args.output,
+        )
+        summary = d(results_data.get("summary"))
+        print(
+            "  总{total} | 已确认{confirmed} | 已纠正{corrected} | 待审{pending}".format(
+                total=summary.get("total", len(l(results_data.get("items")))),
+                confirmed=summary.get("confirmed", 0),
+                corrected=summary.get("corrected", 0),
+                pending=summary.get("pending", 0),
+            )
+        )
+        print(f"  DB: {used_db_url}")
+        for output_path in output_paths:
+            print(f"报告已生成: {output_path}")
+        start = report.find("## 全局汇总")
+        if start >= 0:
+            print("\n" + report[start:])
+        return
     api = API()
     print("登录API...")
     if not api.login():
