@@ -1,185 +1,253 @@
 # -*- coding: utf-8 -*-
 """
-Qwen3-Embedding-0.6B LoRA 微调训练器
+Qwen3 embedding finetune utility.
 
-用经验库三元组数据训练领域专用向量模型，替代通用BGE。
-
-用法:
-    python tools/qwen3_finetune.py                           # 默认参数训练
-    python tools/qwen3_finetune.py --epochs 5 --batch-size 16  # 调参
-    python tools/qwen3_finetune.py --resume models/qwen3-embedding-quota-lora  # 继续训练
-    python tools/qwen3_finetune.py --merge-only               # 只做LoRA合并（不训练）
-
-依赖:
-    pip install sentence-transformers peft torch
+Default behavior is conservative:
+- train on triplets with LoRA
+- keep the base model frozen
+- use a low learning rate
+- optionally upweight recall-miss samples
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import math
+import random
 import sys
 import time
+from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, ".")
 
 
-# ============================================================
-# 1. 加载训练数据
-# ============================================================
-
-def load_triplets(jsonl_path: str, split: str = None) -> list[dict]:
-    """从JSONL文件加载三元组数据"""
-    triplets = []
-    with open(jsonl_path, "r", encoding="utf-8") as f:
-        for line in f:
+def load_triplets(jsonl_path: str, split: str | None = None) -> list[dict]:
+    triplets: list[dict] = []
+    with open(jsonl_path, "r", encoding="utf-8") as handle:
+        for line in handle:
             line = line.strip()
             if not line:
                 continue
-            rec = json.loads(line)
-            if split and rec.get("split") != split:
+            row = json.loads(line)
+            if split and row.get("split") != split:
                 continue
-            triplets.append(rec)
+            triplets.append(row)
     return triplets
 
 
-# ============================================================
-# 2. 训练
-# ============================================================
+def _boost_train_samples(train_data: list[dict], recall_boost: float) -> list[dict]:
+    if recall_boost <= 1.0:
+        return train_data
 
-def train(args):
-    """LoRA微调训练主流程"""
+    boosted = list(train_data)
+    whole = max(0, int(math.floor(recall_boost)) - 1)
+    fractional = max(0.0, recall_boost - math.floor(recall_boost))
+
+    recall_rows = [row for row in train_data if row.get("source_type") == "recall_miss"]
+    if not recall_rows:
+        return train_data
+
+    for _ in range(whole):
+        boosted.extend(recall_rows)
+
+    if fractional > 0:
+        rng = random.Random(42)
+        for row in recall_rows:
+            if rng.random() < fractional:
+                boosted.append(row)
+
+    return boosted
+
+
+def _sample_train_data(train_data: list[dict], max_samples: int) -> list[dict]:
+    if not max_samples or len(train_data) <= max_samples:
+        return train_data
+
+    rng = random.Random(42)
+    by_province: dict[str, list[dict]] = defaultdict(list)
+    for row in train_data:
+        by_province[row.get("province", "unknown")].append(row)
+
+    province_count = max(1, len(by_province))
+    per_province_quota = max(1, max_samples // province_count)
+    sampled: list[dict] = []
+    remaining_budget = max_samples
+
+    small = {k: v for k, v in by_province.items() if len(v) <= per_province_quota}
+    large = {k: v for k, v in by_province.items() if len(v) > per_province_quota}
+
+    for rows in small.values():
+        sampled.extend(rows)
+        remaining_budget -= len(rows)
+
+    if large and remaining_budget > 0:
+        per_large = max(1, remaining_budget // len(large))
+        for rows in large.values():
+            sampled.extend(rng.sample(rows, min(per_large, len(rows))))
+
+    if len(sampled) > max_samples:
+        sampled = rng.sample(sampled, max_samples)
+
+    rng.shuffle(sampled)
+    return sampled
+
+
+def _print_sample_stats(label: str, rows: list[dict]) -> None:
+    province_counts = Counter(row.get("province", "?")[:8] for row in rows)
+    source_counts = Counter(row.get("source_type", "unknown") for row in rows)
+    print(f"{label}: {len(rows)}")
+    print(f"  source_type: {dict(source_counts)}")
+    print(f"  province_top5: {dict(province_counts.most_common(5))}")
+
+
+def _configure_lora(model, args) -> None:
+    from peft import LoraConfig, TaskType, get_peft_model
+
+    transformer = model._first_module()
+    auto_model = transformer.auto_model
+
+    lora_config = LoraConfig(
+        task_type=TaskType.FEATURE_EXTRACTION,
+        inference_mode=False,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        target_modules=[item.strip() for item in args.lora_targets.split(",") if item.strip()],
+    )
+    transformer.auto_model = get_peft_model(auto_model, lora_config)
+    if hasattr(transformer.auto_model, "print_trainable_parameters"):
+        transformer.auto_model.print_trainable_parameters()
+
+
+def _verify_sentence_transformer_dir(model_path: str) -> None:
+    from sentence_transformers import SentenceTransformer
+
+    print(f"verify saved model: {model_path}")
+    verified = SentenceTransformer(model_path)
+    test_emb = verified.encode(["test"], normalize_embeddings=True)
+    print(f"  verified_dim: {len(test_emb[0])}")
+    del verified
+
+
+def _maybe_merge_lora(model, merge_output: str | None) -> None:
+    if not merge_output:
+        return
+
+    from peft import PeftModel
+
+    transformer = model._first_module()
+    auto_model = transformer.auto_model
+    if not isinstance(auto_model, PeftModel):
+        print("[WARN] skip merge: current model is not a PEFT model")
+        return
+
+    print(f"merge LoRA adapter -> {merge_output}")
+    transformer.auto_model = auto_model.merge_and_unload()
+    model.save(merge_output)
+    _verify_sentence_transformer_dir(merge_output)
+
+
+def train(args) -> None:
+    import torch
+    from datasets import Dataset
     from sentence_transformers import (
         SentenceTransformer,
         SentenceTransformerTrainer,
         SentenceTransformerTrainingArguments,
         losses,
     )
-    from datasets import Dataset
 
-    # ----- 2.1 加载数据 -----
-    print(f"加载训练数据: {args.input}")
+    print(f"load triplets: {args.input}")
     train_data = load_triplets(args.input, split="train")
     val_data = load_triplets(args.input, split="val")
-    print(f"  训练集: {len(train_data)} 条三元组")
-    print(f"  验证集: {len(val_data)} 条三元组")
 
     if not train_data:
-        print("❌ 训练集为空")
+        print("[FAIL] empty train split")
         return
 
-    # 数据采样（分层采样：按省份均衡，避免大省碾压小省）
-    if args.max_samples and len(train_data) > args.max_samples:
-        import random
-        from collections import defaultdict
-        random.seed(42)
+    _print_sample_stats("train before boost", train_data)
 
-        # 按省份分组
-        by_province = defaultdict(list)
-        for t in train_data:
-            by_province[t.get("province", "unknown")].append(t)
+    if args.recall_boost > 1.0:
+        train_data = _boost_train_samples(train_data, args.recall_boost)
+        _print_sample_stats("train after boost", train_data)
 
-        # 计算每个省份的配额（均分，但不超过该省实际数量）
-        n_provinces = len(by_province)
-        per_province_quota = args.max_samples // n_provinces
+    train_data = _sample_train_data(train_data, args.max_samples)
+    _print_sample_stats("train final", train_data)
 
-        sampled = []
-        remaining_budget = args.max_samples
-        # 第一轮：小省份全取，大省份按配额取
-        small_provinces = {p: data for p, data in by_province.items() if len(data) <= per_province_quota}
-        large_provinces = {p: data for p, data in by_province.items() if len(data) > per_province_quota}
+    if args.max_samples and val_data and len(val_data) > max(1, args.max_samples // 5):
+        rng = random.Random(42)
+        val_data = rng.sample(val_data, args.max_samples // 5)
+    print(f"val final: {len(val_data)}")
 
-        for p, data in small_provinces.items():
-            sampled.extend(data)
-            remaining_budget -= len(data)
-
-        # 第二轮：大省份均分剩余预算
-        if large_provinces and remaining_budget > 0:
-            per_large = remaining_budget // len(large_provinces)
-            for p, data in large_provinces.items():
-                sampled.extend(random.sample(data, min(per_large, len(data))))
-
-        train_data = sampled
-        random.shuffle(train_data)
-
-        # 打印分布
-        from collections import Counter
-        prov_counts = Counter(t.get("province", "?")[:6] for t in train_data)
-        print(f"  分层采样后训练集: {len(train_data)} 条")
-        print(f"  省份分布: {dict(prov_counts.most_common(5))}...")
-    if args.max_samples and val_data and len(val_data) > args.max_samples // 5:
-        import random
-        random.seed(42)
-        val_data = random.sample(val_data, args.max_samples // 5)
-        print(f"  采样后验证集: {len(val_data)} 条")
-
-    # 转为HuggingFace Dataset格式
     train_dataset = Dataset.from_dict({
-        "anchor": [t["query"] for t in train_data],
-        "positive": [t["positive"] for t in train_data],
-        "negative": [t["negative"] for t in train_data],
+        "anchor": [row["query"] for row in train_data],
+        "positive": [row["positive"] for row in train_data],
+        "negative": [row["negative"] for row in train_data],
     })
     val_dataset = None
     if val_data:
         val_dataset = Dataset.from_dict({
-            "anchor": [t["query"] for t in val_data],
-            "positive": [t["positive"] for t in val_data],
-            "negative": [t["negative"] for t in val_data],
+            "anchor": [row["query"] for row in val_data],
+            "positive": [row["positive"] for row in val_data],
+            "negative": [row["negative"] for row in val_data],
         })
 
-    # ----- 2.2 加载模型 -----
     model_name = args.resume or args.model
-    print(f"\n加载模型: {model_name}")
+    print(f"load model: {model_name}")
+
+    model_kwargs = {}
+    use_bf16 = torch.cuda.is_available()
+    if use_bf16:
+        model_kwargs["torch_dtype"] = "bfloat16"
 
     model = SentenceTransformer(
         model_name,
-        model_kwargs={"torch_dtype": "bfloat16"},  # Qwen3用bf16
+        model_kwargs=model_kwargs,
         tokenizer_kwargs={"padding_side": "left"},
     )
+    model.max_seq_length = args.max_seq_length
 
-    # 限制最大序列长度（清单+定额通常不超过128字，减少显存和加速）
-    model.max_seq_length = 128
+    if args.use_lora:
+        _configure_lora(model, args)
+    else:
+        print("[WARN] full finetune enabled")
 
-    # 检查模型维度
     test_emb = model.encode(["测试"], normalize_embeddings=True)
-    print(f"  模型维度: {len(test_emb[0])}")
-    print(f"  设备: {model.device}")
+    print(f"embedding_dim: {len(test_emb[0])}")
+    print(f"device: {model.device}")
 
-    # ----- 2.3 损失函数 -----
-    # MultipleNegativesRankingLoss：拉近anchor和positive，推远anchor和negative
     train_loss = losses.MultipleNegativesRankingLoss(model)
-
-    # ----- 2.4 训练参数 -----
-    total_steps = len(train_dataset) // args.batch_size * args.epochs
-    warmup_steps = int(total_steps * 0.1)
+    total_steps = max(1, len(train_dataset) // args.batch_size * args.epochs)
+    warmup_steps = int(total_steps * args.warmup_ratio)
 
     training_args = SentenceTransformerTrainingArguments(
         output_dir=args.output,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,  # 梯度累积：省显存，等效大batch
+        gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         warmup_steps=warmup_steps,
-        bf16=True,  # Qwen3用bf16（不是fp16，fp16会报grad scaler错误）
-        logging_steps=100,
+        bf16=use_bf16,
+        fp16=False,
+        logging_steps=args.logging_steps,
         eval_strategy="steps" if val_dataset else "no",
-        eval_steps=1000 if val_dataset else None,
-        save_steps=500,  # 每500步保存checkpoint（防崩溃丢进度）
-        save_total_limit=3,
-        dataloader_num_workers=0,  # Windows兼容
-        report_to="none",  # 不上传到wandb
+        eval_steps=args.eval_steps if val_dataset else None,
+        save_steps=args.save_steps,
+        save_total_limit=2,
+        dataloader_num_workers=0,
+        report_to="none",
     )
 
-    # ----- 2.5 开始训练 -----
-    print(f"\n开始训练:")
+    print("start training")
     print(f"  epochs: {args.epochs}")
     print(f"  batch_size: {args.batch_size}")
+    print(f"  grad_accum: {args.grad_accum}")
     print(f"  lr: {args.lr}")
     print(f"  warmup_steps: {warmup_steps}")
-    print(f"  total_steps: {total_steps}")
-    print(f"  输出目录: {args.output}")
+    print(f"  output: {args.output}")
 
     trainer = SentenceTransformerTrainer(
         model=model,
@@ -192,123 +260,111 @@ def train(args):
     start = time.time()
     trainer.train()
     elapsed = time.time() - start
-    print(f"\n训练完成！耗时: {elapsed/3600:.1f} 小时")
+    print(f"train finished in {elapsed / 3600:.2f}h")
 
-    # ----- 2.6 保存模型 -----
     model.save(args.output)
-    print(f"模型已保存: {args.output}")
+    print(f"saved model: {args.output}")
+    total_size = sum(path.stat().st_size for path in Path(args.output).rglob("*") if path.is_file())
+    print(f"model_size_mb: {total_size / 1024 / 1024:.1f}")
+    _verify_sentence_transformer_dir(args.output)
 
-    # 打印模型大小
-    total_size = sum(f.stat().st_size for f in Path(args.output).rglob("*") if f.is_file())
-    print(f"模型大小: {total_size / 1024 / 1024:.1f} MB")
+    _maybe_merge_lora(model, args.merge_output)
 
 
-# ============================================================
-# 3. 快速验证
-# ============================================================
-
-def quick_eval(args):
-    """训练完后的快速验证"""
-    from sentence_transformers import SentenceTransformer
+def quick_eval(args) -> None:
     import numpy as np
+    from sentence_transformers import SentenceTransformer
 
-    model_path = args.output
+    model_path = args.eval_model or args.merge_output or args.output
     if not Path(model_path).exists():
-        print(f"模型不存在: {model_path}")
+        print(f"[FAIL] model not found: {model_path}")
         return
 
-    print(f"\n加载微调后模型: {model_path}")
-    model = SentenceTransformer(model_path)
-
-    # 用测试集做简单评估
     test_data = load_triplets(args.input, split="test")
     if not test_data:
         test_data = load_triplets(args.input, split="val")
     if not test_data:
-        print("没有测试数据，跳过评估")
+        print("[WARN] no eval split found")
         return
 
-    print(f"测试集: {len(test_data)} 条")
-
-    # 计算正样本和负样本的相似度
+    model = SentenceTransformer(model_path)
     correct_sims = []
     wrong_sims = []
-    for t in test_data[:1000]:  # 最多测1000条
-        embs = model.encode(
-            [t["query"], t["positive"], t["negative"]],
-            normalize_embeddings=True,
-        )
-        # 余弦相似度（归一化后就是点积）
-        sim_pos = float(np.dot(embs[0], embs[1]))
-        sim_neg = float(np.dot(embs[0], embs[2]))
-        correct_sims.append(sim_pos)
-        wrong_sims.append(sim_neg)
+    for row in test_data[: args.eval_limit]:
+        embs = model.encode([row["query"], row["positive"], row["negative"]], normalize_embeddings=True)
+        correct_sims.append(float(np.dot(embs[0], embs[1])))
+        wrong_sims.append(float(np.dot(embs[0], embs[2])))
 
-    avg_pos = np.mean(correct_sims)
-    avg_neg = np.mean(wrong_sims)
-    # 正样本相似度应该显著高于负样本
+    avg_pos = float(np.mean(correct_sims))
+    avg_neg = float(np.mean(wrong_sims))
     margin = avg_pos - avg_neg
-    # 准确率：正样本相似度 > 负样本相似度的比例
-    accuracy = np.mean([p > n for p, n in zip(correct_sims, wrong_sims)])
+    accuracy = float(np.mean([p > n for p, n in zip(correct_sims, wrong_sims)]))
 
-    print(f"\n快速评估结果:")
-    print(f"  正样本平均相似度: {avg_pos:.4f}")
-    print(f"  负样本平均相似度: {avg_neg:.4f}")
-    print(f"  margin (正-负):   {margin:.4f}")
-    print(f"  区分准确率:       {accuracy:.1%}")
+    print("quick eval")
+    print(f"  test_rows: {min(len(test_data), args.eval_limit)}")
+    print(f"  avg_pos: {avg_pos:.4f}")
+    print(f"  avg_neg: {avg_neg:.4f}")
+    print(f"  margin: {margin:.4f}")
+    print(f"  pair_acc: {accuracy:.1%}")
 
     if accuracy > 0.8:
-        print(f"  ✅ 模型效果不错（准确率 > 80%）")
+        print("  [OK] pair discrimination looks healthy")
     elif accuracy > 0.6:
-        print(f"  ⚠️ 模型效果一般，考虑增加epochs或调参")
+        print("  [WARN] pair discrimination is mediocre")
     else:
-        print(f"  ❌ 模型效果差，需要检查训练数据质量")
+        print("  [FAIL] pair discrimination is poor")
 
 
-# ============================================================
-# 主函数
-# ============================================================
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Qwen3 embedding finetune")
+    parser.add_argument("--input", type=str, default="data/qwen3_training_triplets.jsonl")
+    parser.add_argument("--output", type=str, default="models/qwen3-embedding-quota")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-Embedding-0.6B")
+    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--grad-accum", type=int, default=2)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--max-samples", type=int, default=12000)
+    parser.add_argument("--max-seq-length", type=int, default=128)
+    parser.add_argument("--warmup-ratio", type=float, default=0.1)
+    parser.add_argument("--logging-steps", type=int, default=100)
+    parser.add_argument("--eval-steps", type=int, default=500)
+    parser.add_argument("--save-steps", type=int, default=500)
+    parser.add_argument("--recall-boost", type=float, default=2.0)
+    parser.add_argument("--use-lora", action="store_true", default=True)
+    parser.add_argument("--full-finetune", action="store_true")
+    parser.add_argument("--lora-r", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument("--lora-targets", type=str, default="q_proj,k_proj,v_proj,o_proj")
+    parser.add_argument("--merge-output", type=str, default=None)
+    parser.add_argument("--eval-only", action="store_true")
+    parser.add_argument("--eval-model", type=str, default=None)
+    parser.add_argument("--eval-limit", type=int, default=1000)
+    return parser
 
-def main():
-    parser = argparse.ArgumentParser(description="Qwen3-Embedding LoRA微调训练器")
-    parser.add_argument("--input", type=str, default="data/qwen3_training_triplets.jsonl",
-                        help="训练数据JSONL路径")
-    parser.add_argument("--output", type=str, default="models/qwen3-embedding-quota",
-                        help="模型输出目录")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen3-Embedding-0.6B",
-                        help="基座模型（HuggingFace ID或本地路径）")
-    parser.add_argument("--resume", type=str, default=None,
-                        help="继续训练的checkpoint路径")
-    parser.add_argument("--epochs", type=int, default=3,
-                        help="训练轮数（默认3）")
-    parser.add_argument("--batch-size", type=int, default=16,
-                        help="批大小（默认16，配合梯度累积等效32）")
-    parser.add_argument("--grad-accum", type=int, default=2,
-                        help="梯度累积步数（默认2，等效batch=batch_size×grad_accum）")
-    parser.add_argument("--lr", type=float, default=2e-4,
-                        help="学习率（默认2e-4）")
-    parser.add_argument("--max-samples", type=int, default=100000,
-                        help="最大训练样本数（默认10万，设0不采样）")
-    parser.add_argument("--eval-only", action="store_true",
-                        help="只做评估不训练")
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
+
+    if args.full_finetune:
+        args.use_lora = False
 
     if args.eval_only:
         quick_eval(args)
         return
 
-    # 训练
     train(args)
-
-    # 训练完自动做快速评估
     quick_eval(args)
 
-    print(f"\n{'='*60}")
-    print("下一步:")
-    print(f"  1. 运行评测: python tools/qwen3_eval.py")
-    print(f"  2. 对比BGE:  看Recall@10是否提升")
-    print(f"  3. 效果好就替换搜索管线")
-    print(f"{'='*60}")
+    print("=" * 60)
+    print("next")
+    print("  1. run qwen3_eval.py for recall@k")
+    print("  2. compare with current v3 baseline")
+    print("  3. only swap pipeline after recall smoke test passes")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

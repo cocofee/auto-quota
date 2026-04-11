@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tools import autoresearch_manager as arm
 from tools.run_benchmark import (
+    _build_json_overall,
     _build_by_province_summary,
     _get_baseline_json_hit_rate,
 )
@@ -54,6 +55,136 @@ def test_get_baseline_json_hit_rate_supports_new_and_old_shapes():
 
     assert _get_baseline_json_hit_rate(baseline_new, "福建省房屋建筑与装饰工程预算定额(2017)") == 39.4
     assert _get_baseline_json_hit_rate(baseline_old, "福建省房屋建筑与装饰工程预算定额(2017)") == 39.4
+
+
+def test_build_by_province_summary_keeps_adaptive_strategy():
+    json_results = [
+        {
+            "province": "测试省",
+            "total": 10,
+            "correct": 6,
+            "hit_rate": 60.0,
+            "adaptive_strategy": {
+                "distribution": {
+                    "fast": {
+                        "count": 4,
+                        "matched": 3,
+                        "total_time_sec": 1.2,
+                        "observed_time_count": 4,
+                        "avg_time_sec": 0.3,
+                        "rate": 40.0,
+                        "matched_rate": 75.0,
+                    },
+                    "unknown": {
+                        "count": 0,
+                        "matched": 0,
+                        "total_time_sec": 0.0,
+                        "observed_time_count": 0,
+                        "avg_time_sec": None,
+                        "rate": 0.0,
+                        "matched_rate": 0.0,
+                    },
+                }
+            },
+        }
+    ]
+
+    summary = _build_by_province_summary(json_results, {})
+    assert summary["测试省"]["adaptive_strategy"]["distribution"]["fast"]["count"] == 4
+
+
+def test_build_json_overall_merges_adaptive_strategy_summary():
+    overall = _build_json_overall([
+        {
+            "total": 2,
+            "correct": 1,
+            "recall_miss_count": 1,
+            "rank_miss_count": 0,
+            "post_rank_miss_count": 0,
+            "oracle_in_candidates": 1,
+            "in_pool_top1_acc": 1.0,
+            "adaptive_strategy": {
+                "total": 2,
+                "with_strategy_count": 2,
+                "missing_strategy_count": 0,
+                "observed_time_count": 2,
+                "overall_avg_time_sec": 0.75,
+                "distribution": {
+                    "fast": {
+                        "count": 1,
+                        "matched": 1,
+                        "total_time_sec": 0.5,
+                        "observed_time_count": 1,
+                        "avg_time_sec": 0.5,
+                        "rate": 50.0,
+                        "matched_rate": 100.0,
+                    },
+                    "standard": {
+                        "count": 1,
+                        "matched": 0,
+                        "total_time_sec": 1.0,
+                        "observed_time_count": 1,
+                        "avg_time_sec": 1.0,
+                        "rate": 50.0,
+                        "matched_rate": 0.0,
+                    },
+                    "unknown": {
+                        "count": 0,
+                        "matched": 0,
+                        "total_time_sec": 0.0,
+                        "observed_time_count": 0,
+                        "avg_time_sec": None,
+                        "rate": 0.0,
+                        "matched_rate": 0.0,
+                    },
+                },
+            },
+        },
+        {
+            "total": 1,
+            "correct": 1,
+            "recall_miss_count": 0,
+            "rank_miss_count": 0,
+            "post_rank_miss_count": 0,
+            "oracle_in_candidates": 1,
+            "in_pool_top1_acc": 1.0,
+            "adaptive_strategy": {
+                "total": 1,
+                "with_strategy_count": 1,
+                "missing_strategy_count": 0,
+                "observed_time_count": 1,
+                "overall_avg_time_sec": 2.0,
+                "distribution": {
+                    "deep": {
+                        "count": 1,
+                        "matched": 1,
+                        "total_time_sec": 2.0,
+                        "observed_time_count": 1,
+                        "avg_time_sec": 2.0,
+                        "rate": 100.0,
+                        "matched_rate": 100.0,
+                    },
+                    "unknown": {
+                        "count": 0,
+                        "matched": 0,
+                        "total_time_sec": 0.0,
+                        "observed_time_count": 0,
+                        "avg_time_sec": None,
+                        "rate": 0.0,
+                        "matched_rate": 0.0,
+                    },
+                },
+            },
+        },
+    ])
+
+    adaptive = overall["adaptive_strategy"]
+    assert overall["total"] == 3
+    assert adaptive["with_strategy_count"] == 3
+    assert adaptive["distribution"]["fast"]["count"] == 1
+    assert adaptive["distribution"]["standard"]["count"] == 1
+    assert adaptive["distribution"]["deep"]["count"] == 1
+    assert adaptive["overall_avg_time_sec"] == 1.167
 
 
 def test_autoresearch_manager_queue_and_marginal(monkeypatch):

@@ -17,7 +17,7 @@ import zhCN from 'antd/locale/zh_CN';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 
-import router from './routes';
+import router from './routes/index';
 import { useAuthStore } from './stores/auth';
 import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';

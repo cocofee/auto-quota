@@ -243,6 +243,22 @@ export interface OpenClawBatchAutoReviewResponse {
   processed_result_ids: string[];
 }
 
+export type OpenClawAuditReportAbsorbability = 'absorbable' | 'partial' | 'not_absorbable';
+export type OpenClawAuditLearningTarget = 'ExperienceDB' | 'audit_errors' | 'promotion_queue' | 'manual_only';
+
+export interface OpenClawAuditReportAnalyzeResponse {
+  absorbability: OpenClawAuditReportAbsorbability;
+  primary_target: OpenClawAuditLearningTarget;
+  learning_targets: OpenClawAuditLearningTarget[];
+  current_quota?: Record<string, unknown> | null;
+  final_quota?: Record<string, unknown> | null;
+  reason_codes: string[];
+  missing_fields: string[];
+  why: string[];
+  normalized_feedback_payload?: Record<string, unknown> | null;
+  normalized_absorbable_report?: Record<string, unknown> | null;
+}
+
 // ============================================================
 // SSE 进度事件
 // ============================================================

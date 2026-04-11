@@ -2,6 +2,92 @@
 
 根据工程量清单，自动匹配定额子目。
 
+## OpenClaw 桥接快速联调
+
+Windows PowerShell：
+
+```powershell
+$env:OPENCLAW_API_KEY = "你的X-OpenClaw-Key"
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_smoke.ps1
+```
+
+可选带任务查看审核列表：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_smoke.ps1 -TaskId "你的task_id"
+```
+
+可选拉取桥接 OpenAPI：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_smoke.ps1 -IncludeOpenApi
+```
+
+## OpenClaw 审核写链路最小脚本
+
+保存审核建议（review-draft）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_review.ps1 `
+  -Action review-draft `
+  -TaskId "你的task_id" `
+  -ResultId "你的result_id" `
+  -QuotaId "03-10-3-42" `
+  -QuotaName "法兰阀门安装 公称直径100mm以内" `
+  -QuotaUnit "个" `
+  -QuotaSource "search" `
+  -ParamScore 0.88 `
+  -RerankScore 0.88 `
+  -ReviewNote "OpenClaw 建议改判" `
+  -ReviewConfidence 88 `
+  -DecisionType "agree"
+```
+
+注意：
+
+- `review-draft` 走 `PUT /api/openclaw/tasks/{task_id}/results/{result_id}/review-draft`
+- `DecisionType` 必须使用后端认可值：`agree` / `override_within_candidates` / `retry_search_then_select` / `candidate_pool_insufficient` / `abstain`
+- `QuotaItem` 建议完整传 `quota_id / name / unit / source / param_score / rerank_score`
+- 当前懒猫部署里的 `OPENCLAW_API_KEY` 可在 `lzc-manifest.yml` 查到，前端是验收面，接口才是执行面
+
+人工二次确认（review-confirm）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_review.ps1 `
+  -Action review-confirm `
+  -TaskId "你的task_id" `
+  -ResultId "你的result_id" `
+  -Decision approve `
+  -ReviewNote "人工确认通过"
+```
+
+## OpenClaw 批量写 review-draft
+
+先 dry-run 看命中哪些条：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_batch_review.ps1 `
+  -TaskId "你的task_id" `
+  -LightStatus yellow `
+  -Limit 5 `
+  -QuotaId "03-10-3-42" `
+  -QuotaName "法兰阀门安装 公称直径100mm以内" `
+  -QuotaUnit "个" `
+  -WhatIf
+```
+
+确认没问题再正式写入：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\openclaw_bridge_batch_review.ps1 `
+  -TaskId "你的task_id" `
+  -LightStatus yellow `
+  -Limit 5 `
+  -QuotaId "03-10-3-42" `
+  -QuotaName "法兰阀门安装 公称直径100mm以内" `
+  -QuotaUnit "个"
+```
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -78,14 +164,14 @@ auto-quota/
 │   ├── bm25_engine.py       # BM25关键词搜索
 │   ├── vector_engine.py     # BGE向量语义搜索
 │   ├── param_validator.py   # 参数验证（管径、材质匹配检查）
-│   ├── llm_matcher.py       # 大模型精选（需API Key）
+│   ├── llm_verifier.py      # LLM 后验证与自动纠正（需 API Key）
 │   ├── output_writer.py     # 生成结果Excel（广联达可导入格式）
 │   ├── experience_db.py     # 经验库（越用越准）
 │   ├── feedback_learner.py  # 用户修正学习
 │   └── quota_db.py          # 定额数据库管理
 │
-├── tests/               # 测试脚本（调试用的代码放这里）
-│   └── test_accuracy.py     # 准确率测试（对比广联达标准答案）
+├── tests/               # pytest 测试用例
+│   └── test_*.py            # 按模块分组的回归/单测
 │
 ├── data/                # 数据文件
 │   ├── quota_data/          # 定额Excel源文件
@@ -146,7 +232,7 @@ auto-quota/
 ### 测试和调试
 
 - 所有测试脚本放在 `tests/` 目录下，**不要放在根目录**
-- 准确率测试：`python tests/test_accuracy.py`
+- 推荐使用 `pytest` 或按模块运行 `pytest tests/<module>`
 - 测试需要标准文件：`云计价分部分项清单带定额表.xlsx`（从广联达导出的带正确定额的清单）
 
 ## 常用命令

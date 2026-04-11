@@ -1,0 +1,473 @@
+﻿{
+  "total": 145,
+  "stats": {
+    "total": 145,
+    "matched": 132,
+    "high_conf": 36,
+    "mid_conf": 31,
+    "low_conf": 78,
+    "exp_hits": 0,
+    "review_rejected": 0,
+    "elapsed": 911.6208271980286,
+    "adaptive_strategy": {
+      "total": 145,
+      "with_strategy_count": 143,
+      "missing_strategy_count": 2,
+      "observed_time_count": 145,
+      "overall_avg_time_sec": 5.158,
+      "distribution": {
+        "standard": {
+          "count": 138,
+          "matched": 127,
+          "total_time_sec": 703.089,
+          "observed_time_count": 138,
+          "avg_time_sec": 5.095,
+          "rate": 95.2,
+          "matched_rate": 92
+        },
+        "deep": {
+          "count": 5,
+          "matched": 5,
+          "total_time_sec": 44.753,
+          "observed_time_count": 5,
+          "avg_time_sec": 8.951,
+          "rate": 3.4,
+          "matched_rate": 100
+        },
+        "unknown": {
+          "count": 2,
+          "matched": 0,
+          "total_time_sec": 0.001,
+          "observed_time_count": 2,
+          "avg_time_sec": 0.001,
+          "rate": 1.4,
+          "matched_rate": 0
+        }
+      }
+    }
+  },
+  "lightCounts": [
+    {
+      "key": "red",
+      "count": 139
+    },
+    {
+      "key": "yellow",
+      "count": 4
+    },
+    {
+      "key": "green",
+      "count": 2
+    }
+  ],
+  "finalStatusCounts": [
+    {
+      "key": "manual_review",
+      "count": 125
+    },
+    {
+      "key": "ok",
+      "count": 20
+    }
+  ],
+  "primaryReasonCounts": [
+    {
+      "key": "structured_selection",
+      "count": 103
+    },
+    {
+      "key": "param_conflict",
+      "count": 29
+    },
+    {
+      "key": "recall_failure",
+      "count": 11
+    },
+    {
+      "key": "measure_item",
+      "count": 2
+    }
+  ],
+  "issueCounts": [
+    {
+      "key": "ambiguity_review",
+      "count": 110
+    },
+    {
+      "key": "category_mismatch",
+      "count": 19
+    },
+    {
+      "key": "sleeve_mismatch",
+      "count": 17
+    },
+    {
+      "key": "connection_mismatch",
+      "count": 6
+    },
+    {
+      "key": "material_mismatch",
+      "count": 1
+    }
+  ],
+  "sectionCounts": [
+    {
+      "key": "缁欐按绯荤粺",
+      "count": 41
+    },
+    {
+      "key": "鍘嬪姏搴熸按宸ョ▼",
+      "count": 20
+    },
+    {
+      "key": "姹℃按宸ョ▼",
+      "count": 19
+    },
+    {
+      "key": "姘存车鎴胯澶?,
+      "count": 18
+    },
+    {
+      "key": "搴熸按宸ョ▼",
+      "count": 15
+    },
+    {
+      "key": "鎴峰唴鍗敓娲佸叿鍙婂帹鎴垮唴鐏跺叿",
+      "count": 10
+    },
+    {
+      "key": "闆ㄦ按宸ョ▼",
+      "count": 7
+    },
+    {
+      "key": "鎶楅渿鏀灦",
+      "count": 6
+    },
+    {
+      "key": "鍐峰嚌姘村伐绋?,
+      "count": 5
+    },
+    {
+      "key": "鐑按绯荤粺",
+      "count": 2
+    },
+    {
+      "key": "鎺柦椤圭洰",
+      "count": 2
+    }
+  ],
+  "top1Counts": [
+    {
+      "key": "A10-10-11 | 绠￠亾鏀悐鏋跺埗浣滀笌瀹夎 寮圭哀寮忕鏋?,
+      "count": 4
+    },
+    {
+      "key": "A10-10-258 | 鍫垫礊 鍏О鐩村緞锛坢m浠ュ唴锛?100",
+      "count": 4
+    },
+    {
+      "key": "A10-8-4 | 鍙橀缁欐按璁惧 璁惧璐ㄩ噺锛坱浠ュ唴锛?1",
+      "count": 4
+    },
+    {
+      "key": "A10-4-41 | 娉曞叞闃€闂ㄥ畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?80",
+      "count": 4
+    },
+    {
+      "key": "A4-8-12 | 婊戣Е绾挎媺绱ц缃?杞粦绾?,
+      "count": 4
+    },
+    {
+      "key": "A10-10-37 | 鎴愬搧闃茬伀濂楃瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?75",
+      "count": 3
+    },
+    {
+      "key": "A10-10-255 | 鍫垫礊 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+      "count": 3
+    },
+    {
+      "key": "A10-4-2 | 铻虹汗闃€闂ㄥ畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?20",
+      "count": 3
+    },
+    {
+      "key": "A10-4-6 | 铻虹汗闃€闂ㄥ畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?50",
+      "count": 3
+    },
+    {
+      "key": "A10-4-131 | 铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+      "count": 3
+    },
+    {
+      "key": "A10-1-201 | 缁欐帓姘寸閬?瀹ゅ唴 鏌旀€ч摳閾佹帓姘寸锛堟満姊版帴鍙ｏ級 鍏О鐩村緞锛坢m浠ュ唴锛?100",
+      "count": 3
+    },
+    {
+      "key": "A10-5-90 | 鍦版紡瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+      "count": 3
+    },
+    {
+      "key": "A10-1-363 | 缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?50",
+      "count": 2
+    },
+    {
+      "key": "A10-1-362 | 缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?40",
+      "count": 2
+    },
+    {
+      "key": "A10-1-262 | 缁欐帓姘寸閬?瀹ゅ唴 濉戞枡缁欐按绠★紙鐑啍杩炴帴锛?澶栧緞锛坢m浠ュ唴锛?20",
+      "count": 2
+    },
+    {
+      "key": "A10-10-257 | 鍫垫礊 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+      "count": 2
+    },
+    {
+      "key": "A10-1-200 | 缁欐帓姘寸閬?瀹ゅ唴 鏌旀€ч摳閾佹帓姘寸锛堟満姊版帴鍙ｏ級 鍏О鐩村緞锛坢m浠ュ唴锛?75",
+      "count": 2
+    },
+    {
+      "key": "A10-10-128 | 涓€鑸挗濂楃鍒朵綔瀹夎 浠嬭川绠￠亾 鍏О鐩村緞锛坢m浠ュ唴锛?100",
+      "count": 2
+    },
+    {
+      "key": "A10-5-114 | 闅旀补鍣?鍦颁笂寮?DN75",
+      "count": 2
+    },
+    {
+      "key": "A10-8-22 | 姘斿帇缃?缃愪綋鐩村緞锛坢m浠ュ唴锛?1000",
+      "count": 2
+    }
+  ],
+  "noMatchReasons": [
+    {
+      "key": "鎼滅储鏃犲尮閰嶇粨鏋?,
+      "count": 11
+    },
+    {
+      "key": "鎺柦椤癸紙绠＄悊璐圭敤锛夛紝涓嶅瀹夎瀹氶",
+      "count": 2
+    }
+  ],
+  "examplesByIssue": {
+    "ambiguity_review": [
+      {
+        "index": "1",
+        "code": "031001007001",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 93,
+        "top1_id": "A10-1-366",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?100",
+        "issue": "reason=small_score_gap; risk=high; route=installation_spec"
+      },
+      {
+        "index": "2",
+        "code": "031001007002",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 93,
+        "top1_id": "A10-1-365",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?80",
+        "issue": "reason=small_score_gap; risk=high; route=installation_spec"
+      },
+      {
+        "index": "3",
+        "code": "031001007003",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-1-353",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈤鏋跺鏂欏鍚堢锛堢數鐔旇繛鎺ワ級 澶栧緞锛坢m浠ュ唴锛?75",
+        "issue": "reason=param_mismatch; risk=high; route=installation_spec"
+      },
+      {
+        "index": "4",
+        "code": "031001007004",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 93,
+        "top1_id": "A10-1-363",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?50",
+        "issue": "reason=insufficient_candidates; risk=high; route=installation_spec"
+      },
+      {
+        "index": "5",
+        "code": "031001007005",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 93,
+        "top1_id": "A10-1-362",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈠澶嶅悎绠★紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?40",
+        "issue": "reason=small_score_gap; risk=high; route=installation_spec"
+      }
+    ],
+    "connection_mismatch": [
+      {
+        "index": "3",
+        "code": "031001007003",
+        "name": "澶嶅悎绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-1-353",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閽㈤鏋跺鏂欏鍚堢锛堢數鐔旇繛鎺ワ級 澶栧緞锛坢m浠ュ唴锛?75",
+        "issue": "杩炴帴鏂瑰紡涓嶅尮閰? 鎻忚堪鏄€岃灪绾广€?
+      },
+      {
+        "index": "29",
+        "code": "031003001010",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-4-132",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?100",
+        "issue": "杩炴帴鏂瑰紡涓嶅尮閰? 鎻忚堪鏄€屾硶鍏拌繛鎺ャ€嶏紝瀹氶鍚€岃灪绾广€?
+      },
+      {
+        "index": "30",
+        "code": "031003001011",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 55,
+        "top1_id": "A10-4-131",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+        "issue": "杩炴帴鏂瑰紡涓嶅尮閰? 鎻忚堪鏄€屾硶鍏拌繛鎺ャ€嶏紝瀹氶鍚€岃灪绾广€?
+      },
+      {
+        "index": "31",
+        "code": "031003001012",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-4-129",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+        "issue": "杩炴帴鏂瑰紡涓嶅尮閰? 鎻忚堪鏄€屾硶鍏拌繛鎺ャ€嶏紝瀹氶鍚€岃灪绾广€?
+      },
+      {
+        "index": "111",
+        "code": "031003002007",
+        "name": "鐞冨舰姝㈠洖闃€",
+        "section": "鍘嬪姏搴熸按宸ョ▼",
+        "confidence": 55,
+        "top1_id": "A10-4-131",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+        "issue": "杩炴帴鏂瑰紡涓嶅尮閰? 鎻忚堪鏄€屾硶鍏拌繛鎺ャ€嶏紝瀹氶鍚€岃灪绾广€?
+      }
+    ],
+    "material_mismatch": [
+      {
+        "index": "10",
+        "code": "031001006001",
+        "name": "濉戞枡绠?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 40,
+        "top1_id": "A10-5-18",
+        "top1_name": "娲楄劯鐩?绔嬫煴寮?鍐锋按",
+        "issue": "绠℃潗涓嶅尮閰? 鎻忚堪鏄€孭P-R銆嶏紝瀹氶搴斿惈銆屽鏂欑|濉戞枡缁欐按绠濉戞枡鎺掓按绠濉戞枡銆?
+      }
+    ],
+    "sleeve_mismatch": [
+      {
+        "index": "12",
+        "code": "030817008001",
+        "name": "濂楃鍒朵綔瀹夎",
+        "section": "缁欐按绯荤粺",
+        "confidence": 83,
+        "top1_id": "A10-10-134",
+        "top1_name": "涓€鑸挗濂楃鍒朵綔瀹夎 浠嬭川绠￠亾 鍏О鐩村緞锛坢m浠ュ唴锛?350",
+        "issue": "濂楃绫诲瀷涓嶅尮閰? 鎻忚堪鏄€屽垰鎬ч槻姘村绠°€嶏紝瀹氶鏄€屼竴鑸挗濂楃鍒朵綔瀹夎 浠嬭川绠￠亾 鍏О鐩村緞锛坢m浠ュ唴锛?350銆?
+      },
+      {
+        "index": "13",
+        "code": "030817008002",
+        "name": "濂楃鍒朵綔瀹夎",
+        "section": "缁欐按绯荤粺",
+        "confidence": 91,
+        "top1_id": "A10-10-125",
+        "top1_name": "涓€鑸挗濂楃鍒朵綔瀹夎 浠嬭川绠￠亾 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+        "issue": "濂楃绫诲瀷涓嶅尮閰? 鎻忚堪鏄€屽垰鎬ч槻姘村绠°€嶏紝瀹氶鏄€屼竴鑸挗濂楃鍒朵綔瀹夎 浠嬭川绠￠亾 鍏О鐩村緞锛坢m浠ュ唴锛?50銆?
+      },
+      {
+        "index": "14",
+        "code": "031002003001",
+        "name": "濂楃",
+        "section": "缁欐按绯荤粺",
+        "confidence": 64,
+        "top1_id": "A10-10-257",
+        "top1_name": "鍫垫礊 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+        "issue": "濂楃绫诲瀷涓嶅尮閰? 鎻忚堪鏄€岄挗濂楃銆嶏紝瀹氶鏄€屽牭娲?鍏О鐩村緞锛坢m浠ュ唴锛?80銆?
+      },
+      {
+        "index": "15",
+        "code": "031002003002",
+        "name": "濂楃",
+        "section": "缁欐按绯荤粺",
+        "confidence": 54,
+        "top1_id": "A10-10-37",
+        "top1_name": "鎴愬搧闃茬伀濂楃瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?75",
+        "issue": "濂楃绫诲瀷涓嶅尮閰? 鎻忚堪鏄€岄挗濂楃銆嶏紝瀹氶鏄€屾垚鍝侀槻鐏绠″畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?75銆?
+      },
+      {
+        "index": "16",
+        "code": "031002003003",
+        "name": "濂楃",
+        "section": "缁欐按绯荤粺",
+        "confidence": 64,
+        "top1_id": "A10-10-255",
+        "top1_name": "鍫垫礊 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+        "issue": "濂楃绫诲瀷涓嶅尮閰? 鎻忚堪鏄€岄挗濂楃銆嶏紝瀹氶鏄€屽牭娲?鍏О鐩村緞锛坢m浠ュ唴锛?50銆?
+      }
+    ],
+    "category_mismatch": [
+      {
+        "index": "19",
+        "code": "031003006001",
+        "name": "鍑忓帇鍣?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 88,
+        "top1_id": "A10-4-248",
+        "top1_name": "鍑忓帇鍣ㄧ粍鎴愬畨瑁咃紙铻虹汗杩炴帴锛?鍏О鐩村緞锛坢m浠ュ唴锛?32",
+        "issue": "绫诲埆涓嶅尮閰? 娓呭崟鏄€屽彲璋冨紡鍑忓帇闃€銆嶏紝瀹氶鏄€屽噺鍘嬪櫒缁勬垚瀹夎锛堣灪绾硅繛鎺ワ級 鍏О鐩村緞锛坢m浠ュ唴锛?32銆?
+      },
+      {
+        "index": "29",
+        "code": "031003001010",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-4-132",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?100",
+        "issue": "绫诲埆涓嶅尮閰? 娓呭崟鏄€岃繃婊ゅ櫒銆嶏紝瀹氶鏄€岃灪绾规硶鍏板畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?100銆?
+      },
+      {
+        "index": "30",
+        "code": "031003001011",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 55,
+        "top1_id": "A10-4-131",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?80",
+        "issue": "绫诲埆涓嶅尮閰? 娓呭崟鏄€岃繃婊ゅ櫒銆嶏紝瀹氶鏄€岃灪绾规硶鍏板畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?80銆?
+      },
+      {
+        "index": "31",
+        "code": "031003001012",
+        "name": "铻虹汗闃€闂?,
+        "section": "缁欐按绯荤粺",
+        "confidence": 63,
+        "top1_id": "A10-4-129",
+        "top1_name": "铻虹汗娉曞叞瀹夎 鍏О鐩村緞锛坢m浠ュ唴锛?50",
+        "issue": "绫诲埆涓嶅尮閰? 娓呭崟鏄€岃繃婊ゅ櫒銆嶏紝瀹氶鏄€岃灪绾规硶鍏板畨瑁?鍏О鐩村緞锛坢m浠ュ唴锛?50銆?
+      },
+      {
+        "index": "40",
+        "code": "031208002003",
+        "name": "闃插喕淇濇俯",
+        "section": "缁欐按绯荤粺",
+        "confidence": 56,
+        "top1_id": "A10-1-138",
+        "top1_name": "缁欐帓姘寸閬?瀹ゅ唴 閾滅锛堟哀涔欑倲鐒婏級 澶栧緞锛坢m浠ュ唴锛?76",
+        "issue": "绫诲埆涓嶅尮閰? 娓呭崟鏄€屼繚娓┿€嶏紝瀹氶鏄€岀粰鎺掓按绠￠亾 瀹ゅ唴 閾滅锛堟哀涔欑倲鐒婏級 澶栧緞锛坢m浠ュ唴锛?76銆?
+      }
+    ]
+  }
+}

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Explicit promotion rules for staging candidate generation.
+Promotion candidate builders for confirmed OpenClaw reviews.
 
-Current scope:
-- OpenClaw approved-review -> audit_errors/promotion_queue admission rules
+This module converts one approved correction into staging candidates that can be
+promoted into RuleKnowledge / MethodCards / ExperienceDB.
 """
 
 from __future__ import annotations
@@ -27,6 +27,35 @@ def _quota_changed(original_quota: dict[str, Any], corrected_quota: dict[str, An
     if not original_id:
         return True
     return original_id != corrected_id
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _clean_str(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _clean_list(value: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in _as_list(value):
+        text = _clean_str(item)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _report_promotion_hint(report: dict[str, Any] | None, hint_type: str) -> dict[str, Any]:
+    hints = _as_dict(_as_dict(report).get("promotion_hints"))
+    return _as_dict(hints.get(hint_type))
 
 
 def classify_openclaw_audit_error(match_source: str) -> dict[str, Any]:
@@ -76,20 +105,20 @@ def _build_rule_candidate_text(
 ) -> str:
     parts: list[str] = []
     if bill_name:
-        parts.append(f"当清单项涉及“{bill_name}”")
+        parts.append(f"Bill item: {bill_name}")
     if bill_desc:
-        parts.append(f"且特征为“{bill_desc[:120]}”")
+        parts.append(f"Features: {bill_desc[:120]}")
     if original_quota.get("name") or original_quota.get("quota_id"):
         parts.append(
-            f"若原候选为“{original_quota.get('name', '')}({original_quota.get('quota_id', '')})”"
+            f"If current top1 is {original_quota.get('name', '')}({original_quota.get('quota_id', '')})"
         )
     if corrected_quota.get("name") or corrected_quota.get("quota_id"):
         parts.append(
-            f"应优先复核并考虑改判为“{corrected_quota.get('name', '')}({corrected_quota.get('quota_id', '')})”"
+            f"prefer {corrected_quota.get('name', '')}({corrected_quota.get('quota_id', '')}) after review"
         )
     if note:
-        parts.append(f"依据：{note[:240]}")
-    return "，".join(part for part in parts if part).strip("，")
+        parts.append(f"Basis: {note[:240]}")
+    return "; ".join(part for part in parts if part).strip("; ")
 
 
 def _build_method_text(
@@ -99,19 +128,16 @@ def _build_method_text(
     note: str,
 ) -> str:
     parts: list[str] = []
-    if bill_name:
-        parts.append(f"审核“{bill_name}”时")
-    else:
-        parts.append("审核此类清单时")
+    parts.append(f"Review item {bill_name}" if bill_name else "Review this bill item")
     if bill_desc:
-        parts.append(f"先结合特征“{bill_desc[:120]}”判断场景")
+        parts.append(f"Check features {bill_desc[:120]}")
     if corrected_quota.get("name") or corrected_quota.get("quota_id"):
         parts.append(
-            f"再优先核对“{corrected_quota.get('name', '')}({corrected_quota.get('quota_id', '')})”是否更符合"
+            f"then verify whether {corrected_quota.get('name', '')}({corrected_quota.get('quota_id', '')}) fits better"
         )
     if note:
-        parts.append(f"人工审核依据：{note[:240]}")
-    return "，".join(part for part in parts if part).strip("，")
+        parts.append(f"Human basis: {note[:240]}")
+    return "; ".join(part for part in parts if part).strip("; ")
 
 
 def build_openclaw_promotion_candidates(
@@ -126,18 +152,22 @@ def build_openclaw_promotion_candidates(
     corrected_quota: dict[str, Any],
     final_note: str,
     audit_id: int,
+    report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     source = _normalize_source(match_source)
     changed = _quota_changed(original_quota, corrected_quota)
     note_ok = _has_meaningful_note(final_note)
-    corrected_id = str((corrected_quota or {}).get("quota_id", "")).strip()
-    corrected_name = str((corrected_quota or {}).get("name", "")).strip()
-    corrected_unit = str((corrected_quota or {}).get("unit", "")).strip()
+    corrected_id = _clean_str((corrected_quota or {}).get("quota_id"))
+    corrected_name = _clean_str((corrected_quota or {}).get("name"))
+    corrected_unit = _clean_str((corrected_quota or {}).get("unit"))
     if not changed or not note_ok or not corrected_id:
         return []
 
     candidates: list[dict[str, Any]] = []
     evidence_ref = f"task:{task_id}/result:{audit_id}"
+    rule_hint = _report_promotion_hint(report, "rule")
+    method_hint = _report_promotion_hint(report, "method")
+    experience_hint = _report_promotion_hint(report, "experience")
 
     if source.startswith("rule") or "search" in source:
         candidates.append({
@@ -149,22 +179,25 @@ def build_openclaw_promotion_candidates(
             "evidence_ref": evidence_ref,
             "candidate_type": "rule",
             "target_layer": "RuleKnowledge",
-            "candidate_title": f"{bill_name or '未命名清单'} 纠正规则候选",
+            "candidate_title": f"{bill_name or 'unnamed_bill'} correction rule",
             "candidate_summary": final_note[:300],
             "candidate_payload": {
                 "province": province,
                 "specialty": specialty,
-                "chapter": "OpenClaw审核回流",
-                "section": "",
+                "chapter": _clean_str(rule_hint.get("chapter")) or "OpenClaw Review Loop",
+                "section": _clean_str(rule_hint.get("section")),
                 "source_file": f"staging:audit_errors:{audit_id}",
-                "rule_text": _build_rule_candidate_text(
+                "rule_text": _clean_str(rule_hint.get("rule_text")) or _build_rule_candidate_text(
                     bill_name,
                     bill_desc,
                     original_quota,
                     corrected_quota,
                     final_note,
                 ),
-                "keywords": [kw for kw in [bill_name, corrected_name, corrected_id] if kw],
+                "keywords": _clean_list(rule_hint.get("keywords")) or [kw for kw in [bill_name, corrected_name, corrected_id] if kw],
+                "judgment_basis": _clean_str(rule_hint.get("judgment_basis")) or final_note[:240],
+                "core_knowledge_points": _clean_list(rule_hint.get("core_knowledge_points")),
+                "exclusion_reasons": _clean_list(rule_hint.get("exclusion_reasons")),
             },
             "priority": 30,
             "approval_required": 1,
@@ -180,23 +213,26 @@ def build_openclaw_promotion_candidates(
             "evidence_ref": evidence_ref,
             "candidate_type": "method",
             "target_layer": "MethodCards",
-            "candidate_title": f"{bill_name or '未命名清单'} 审核方法候选",
+            "candidate_title": f"{bill_name or 'unnamed_bill'} review method",
             "candidate_summary": final_note[:300],
             "candidate_payload": {
                 "province": province,
                 "specialty": specialty,
-                "category": bill_name or "OpenClaw审核方法",
-                "method_text": _build_method_text(
+                "category": _clean_str(method_hint.get("category")) or bill_name or "OpenClaw Review",
+                "method_text": _clean_str(method_hint.get("method_text")) or _build_method_text(
                     bill_name,
                     bill_desc,
                     corrected_quota,
                     final_note,
                 ),
-                "keywords": [kw for kw in [bill_name, corrected_name, corrected_id] if kw],
-                "pattern_keys": [kw for kw in [bill_name, specialty] if kw],
-                "common_errors": f"避免误判为{original_quota.get('name', '')}".strip(),
-                "sample_count": 1,
-                "confirm_rate": 1.0,
+                "keywords": _clean_list(method_hint.get("keywords")) or [kw for kw in [bill_name, corrected_name, corrected_id] if kw],
+                "pattern_keys": _clean_list(method_hint.get("pattern_keys")) or [kw for kw in [bill_name, specialty] if kw],
+                "common_errors": _clean_str(method_hint.get("common_errors")) or f"avoid misjudging as {original_quota.get('name', '')}".strip(),
+                "sample_count": int(method_hint.get("sample_count", 1) or 1),
+                "confirm_rate": float(method_hint.get("confirm_rate", 1.0) or 1.0),
+                "judgment_basis": _clean_str(method_hint.get("judgment_basis")) or final_note[:240],
+                "core_knowledge_points": _clean_list(method_hint.get("core_knowledge_points")),
+                "exclusion_reasons": _clean_list(method_hint.get("exclusion_reasons")),
             },
             "priority": 45,
             "approval_required": 1,
@@ -213,24 +249,26 @@ def build_openclaw_promotion_candidates(
             "evidence_ref": evidence_ref,
             "candidate_type": "experience",
             "target_layer": "ExperienceDB",
-            "candidate_title": f"{bill_name or '未命名清单'} 历史案例候选",
+            "candidate_title": f"{bill_name or 'unnamed_bill'} correction case",
             "candidate_summary": final_note[:300],
             "candidate_payload": {
-                "province": province,
-                "specialty": specialty,
-                "bill_text": bill_text,
-                "bill_name": bill_name,
-                "bill_desc": bill_desc,
-                "bill_unit": corrected_unit,
-                "unit": corrected_unit,
-                "quota_ids": [corrected_id],
-                "quota_names": [corrected_name] if corrected_name else [],
-                "final_quota_code": corrected_id,
-                "final_quota_name": corrected_name,
-                "project_name": task_id,
-                "summary": final_note[:300],
-                "notes": "OpenClaw审核确认后回流",
-                "confidence": 95,
+                "province": _clean_str(experience_hint.get("province")) or province,
+                "specialty": _clean_str(experience_hint.get("specialty")) or specialty,
+                "bill_text": _clean_str(experience_hint.get("bill_text")) or bill_text,
+                "bill_name": _clean_str(experience_hint.get("bill_name")) or bill_name,
+                "bill_desc": _clean_str(experience_hint.get("bill_desc")) or bill_desc,
+                "bill_code": _clean_str(experience_hint.get("bill_code")),
+                "bill_unit": _clean_str(experience_hint.get("bill_unit")) or corrected_unit,
+                "unit": _clean_str(experience_hint.get("unit")) or corrected_unit,
+                "quota_ids": _clean_list(experience_hint.get("quota_ids")) or [corrected_id],
+                "quota_names": _clean_list(experience_hint.get("quota_names")) or ([corrected_name] if corrected_name else []),
+                "final_quota_code": _clean_str(experience_hint.get("final_quota_code")) or corrected_id,
+                "final_quota_name": _clean_str(experience_hint.get("final_quota_name")) or corrected_name,
+                "project_name": _clean_str(experience_hint.get("project_name")) or task_id,
+                "summary": _clean_str(experience_hint.get("summary")) or final_note[:300],
+                "notes": _clean_str(experience_hint.get("notes")) or "OpenClaw approved correction feedback",
+                "confidence": int(experience_hint.get("confidence", 95) or 95),
+                "judgment_basis": _clean_str(experience_hint.get("judgment_basis")) or final_note[:240],
             },
             "priority": 60,
             "approval_required": 1,

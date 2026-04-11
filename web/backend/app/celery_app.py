@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from celery import Celery
+from celery.signals import worker_ready
 from loguru import logger
 from app.config import REDIS_URL, PROJECT_ROOT
 
@@ -21,6 +22,8 @@ from app.config import REDIS_URL, PROJECT_ROOT
 # Celery worker 需要 import main（现有匹配入口）和 config（定额配置）等
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.runtime_cache import start_background_prewarm
 
 # 日志持久化：Celery worker 的日志写入文件（和 Web 后端共享 /app/logs/ 目录）
 LOG_DIR = PROJECT_ROOT / "logs"
@@ -68,3 +71,9 @@ celery_app.conf.update(
     # 自动发现 app/tasks/ 目录下的任务
     include=["app.tasks.match_task", "app.tasks.benchmark_task"],
 )
+
+
+@worker_ready.connect
+def _handle_worker_ready(**_kwargs):
+    logger.info("Celery worker ready, starting runtime prewarm")
+    start_background_prewarm()

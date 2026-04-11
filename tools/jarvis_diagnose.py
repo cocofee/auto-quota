@@ -285,7 +285,7 @@ def _run_benchmark_check() -> tuple[bool, str]:
     """
     try:
         result = subprocess.run(
-            [sys.executable, "tools/run_benchmark.py", "--compare"],
+            [sys.executable, "tools/run_benchmark.py", "--profile", "full", "--compare"],
             capture_output=True, text=True, timeout=600,
             cwd=str(PROJECT_ROOT),
         )

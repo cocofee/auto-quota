@@ -1,0 +1,20 @@
+{
+  "openclaw_suggested_quotas": [
+    {
+      "quota_id": "C10-2-123",
+      "name": "给水用聚丙烯(PP-R)管道安装(热熔连接) 公称外径(mm以内) 50",
+      "unit": "",
+      "param_score": null,
+      "rerank_score": null,
+      "source": ""
+    }
+  ],
+  "openclaw_review_note": "OpenClaw 本机3210联调测试：draft 预演，不确认",
+  "openclaw_review_confidence": 95,
+  "openclaw_decision_type": "agree",
+  "openclaw_reason_codes": ["local_3210_smoke_test"],
+  "openclaw_review_payload": {
+    "channel": "local-3210",
+    "test": true
+  }
+}

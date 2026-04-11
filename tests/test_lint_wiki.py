@@ -82,3 +82,41 @@ See [[missing-page]].
     assert "missing_source_ref_target" in codes
     assert "missing_related_target" in codes
     assert "manifest_missing_file" in codes
+
+
+def test_lint_wiki_allows_source_pack_index(tmp_path):
+    project_root = tmp_path / "project"
+    wiki_root = project_root / "knowledge_wiki"
+    (wiki_root / "sources").mkdir(parents=True, exist_ok=True)
+
+    index_page = wiki_root / "sources" / "index.md"
+    index_page.write_text(
+        """---
+title: "Sources Index"
+type: "index"
+status: "reviewed"
+province: ""
+specialty: ""
+source_refs:
+  - "source_pack:index"
+source_kind: "system"
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+confidence: 100
+owner: "tester"
+tags:
+  - "sources"
+related: []
+---
+
+# Sources Index
+
+Body.
+""",
+        encoding="utf-8",
+    )
+
+    report = lint_wiki(wiki_root=wiki_root, project_root=project_root)
+
+    assert report["error_count"] == 0
+    assert report["warning_count"] == 0

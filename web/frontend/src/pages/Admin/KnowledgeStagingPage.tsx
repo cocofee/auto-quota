@@ -672,8 +672,9 @@ export default function KnowledgeStagingPage() {
       });
       message.success(reviewStatus === 'approved' ? '候选已通过审核' : '候选已驳回');
       await loadData();
-    } catch {
-      message.error('更新候选审核状态失败');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      message.error(detail ? `更新候选审核状态失败：${detail}` : '更新候选审核状态失败');
     }
   };
 

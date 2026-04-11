@@ -52,6 +52,7 @@ class UnifiedRankingPipeline:
         scored_candidates = self.scoring.score(query_item, prepared_candidates)
         filter_result = self.constraint_filter.filter(query_item, scored_candidates, top_k=top_k)
         final_candidates = list(filter_result.get("candidates") or [])
+        self._calibrate_candidate_confidence(query_item, final_candidates)
         top_candidate = final_candidates[0] if final_candidates else None
         resolved_sources = list(sources_used or self._infer_sources(prepared_candidates))
         resolved_hints = list(kb_hints or [])
@@ -83,6 +84,41 @@ class UnifiedRankingPipeline:
                 "skeleton": True,
             },
         }
+
+    def _calibrate_candidate_confidence(self, query_item: Any, candidates: list[dict[str, Any]]) -> None:
+        item = query_item if isinstance(query_item, dict) else {}
+        for index, candidate in enumerate(candidates or []):
+            current_score = float(candidate.get("filtered_score", candidate.get("unified_score", 0.0)) or 0.0)
+            next_candidate = candidates[index + 1] if index + 1 < len(candidates) else None
+            next_score = float((next_candidate or {}).get("filtered_score", (next_candidate or {}).get("unified_score", 0.0)) or 0.0)
+            score_gap = max(current_score - next_score, 0.0)
+            gap_confidence = min(score_gap / 0.12, 1.0)
+            penalty = min(max(float(candidate.get("penalty", 0.0) or 0.0), 0.0), 1.0)
+            features = dict(candidate.get("features") or {})
+            anchor_support = max(
+                float(features.get("exact_experience_anchor", 0.0) or 0.0),
+                float(features.get("exact_anchor_support", 0.0) or 0.0),
+            )
+            dirty_text_risk = float(
+                str(candidate.get("weight_template", "")).strip().lower() == "dirty_short_text"
+                or bool((item or {}).get("_is_ambiguous_short"))
+                or bool(dict((item or {}).get("_input_gate") or {}).get("is_dirty_code"))
+            )
+            base_confidence = float(candidate.get("confidence_base", candidate.get("confidence", 0.0)) or 0.0)
+            calibrated = base_confidence * 0.72 + gap_confidence * 0.18 + anchor_support * 0.08
+            calibrated -= penalty * 0.20
+            calibrated -= dirty_text_risk * 0.12
+            calibrated = max(0.0, min(calibrated, 1.0))
+            candidate["confidence"] = calibrated
+            candidate["confidence_details"] = {
+                "base_confidence": base_confidence,
+                "score_gap": score_gap,
+                "gap_confidence": gap_confidence,
+                "anchor_support": anchor_support,
+                "penalty": penalty,
+                "dirty_text_risk": dirty_text_risk,
+                "calibrated_confidence": calibrated,
+            }
 
     def _infer_sources(self, candidates: list[dict[str, Any]]) -> list[str]:
         seen: list[str] = []
@@ -122,6 +158,8 @@ class UnifiedRankingPipeline:
             "selection": {
                 "top_quota_id": str((top_candidate or {}).get("quota_id", "") or ""),
                 "top_filtered_score": float((top_candidate or {}).get("filtered_score", 0.0) or 0.0),
+                "top_confidence": float((top_candidate or {}).get("confidence", 0.0) or 0.0),
+                "top_confidence_details": dict((top_candidate or {}).get("confidence_details") or {}),
                 "top_driver": str(((top_candidate or {}).get("explanation") or {}).get("top_driver") or ""),
             },
         }

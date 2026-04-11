@@ -1,0 +1,179 @@
+{
+  "generated_at": "2026-04-06T23:03:50",
+  "source_db": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\db\\common\\knowledge_staging.db",
+  "output_dir": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\knowledge_wiki",
+  "counts": {
+    "rules": 5,
+    "cases": 5,
+    "methods": 5,
+    "concepts": 0,
+    "reviews": 7,
+    "sources": 0,
+    "inbox": 0,
+    "daily": 1,
+    "entities": 0
+  },
+  "files": [
+    {
+      "relative_path": "reviews/review-0007-照明配电箱.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "照明配电箱",
+      "source_ref": "staging:audit_errors:7"
+    },
+    {
+      "relative_path": "reviews/review-0006-电缆~敷设~.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "电缆~敷设~",
+      "source_ref": "staging:audit_errors:6"
+    },
+    {
+      "relative_path": "reviews/review-0005-配管（SC20）.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "配管（SC20）",
+      "source_ref": "staging:audit_errors:5"
+    },
+    {
+      "relative_path": "reviews/review-0004-阀.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "阀",
+      "source_ref": "staging:audit_errors:4"
+    },
+    {
+      "relative_path": "reviews/review-0003-镀锌钢管安装（DN25）（丝接）.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "镀锌钢管安装（DN25）（丝接）",
+      "source_ref": "staging:audit_errors:3"
+    },
+    {
+      "relative_path": "reviews/review-0002-线.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "线",
+      "source_ref": "staging:audit_errors:2"
+    },
+    {
+      "relative_path": "reviews/review-0001-钢塑复合管.md",
+      "category": "reviews",
+      "obsidian_dir": "50-审核沉淀",
+      "title": "钢塑复合管",
+      "source_ref": "staging:audit_errors:1"
+    },
+    {
+      "relative_path": "rules/rule-0013-电缆~敷设~-纠正规则候选.md",
+      "category": "rules",
+      "obsidian_dir": "10-规则",
+      "title": "电缆~敷设~ 纠正规则候选",
+      "source_ref": "staging:promotion_queue:13"
+    },
+    {
+      "relative_path": "rules/rule-0010-配管（SC20）-纠正规则候选.md",
+      "category": "rules",
+      "obsidian_dir": "10-规则",
+      "title": "配管（SC20） 纠正规则候选",
+      "source_ref": "staging:promotion_queue:10"
+    },
+    {
+      "relative_path": "rules/rule-0007-阀-纠正规则候选.md",
+      "category": "rules",
+      "obsidian_dir": "10-规则",
+      "title": "阀 纠正规则候选",
+      "source_ref": "staging:promotion_queue:7"
+    },
+    {
+      "relative_path": "rules/rule-0004-镀锌钢管安装（DN25）（丝接）-纠正规则候选.md",
+      "category": "rules",
+      "obsidian_dir": "10-规则",
+      "title": "镀锌钢管安装（DN25）（丝接） 纠正规则候选",
+      "source_ref": "staging:promotion_queue:4"
+    },
+    {
+      "relative_path": "rules/rule-0001-线-纠正规则候选.md",
+      "category": "rules",
+      "obsidian_dir": "10-规则",
+      "title": "线 纠正规则候选",
+      "source_ref": "staging:promotion_queue:1"
+    },
+    {
+      "relative_path": "methods/method-0014-电缆~敷设~-审核方法候选.md",
+      "category": "methods",
+      "obsidian_dir": "30-方法",
+      "title": "电缆~敷设~ 审核方法候选",
+      "source_ref": "staging:promotion_queue:14"
+    },
+    {
+      "relative_path": "methods/method-0011-配管（SC20）-审核方法候选.md",
+      "category": "methods",
+      "obsidian_dir": "30-方法",
+      "title": "配管（SC20） 审核方法候选",
+      "source_ref": "staging:promotion_queue:11"
+    },
+    {
+      "relative_path": "methods/method-0008-阀-审核方法候选.md",
+      "category": "methods",
+      "obsidian_dir": "30-方法",
+      "title": "阀 审核方法候选",
+      "source_ref": "staging:promotion_queue:8"
+    },
+    {
+      "relative_path": "methods/method-0005-镀锌钢管安装（DN25）（丝接）-审核方法候选.md",
+      "category": "methods",
+      "obsidian_dir": "30-方法",
+      "title": "镀锌钢管安装（DN25）（丝接） 审核方法候选",
+      "source_ref": "staging:promotion_queue:5"
+    },
+    {
+      "relative_path": "methods/method-0002-线-审核方法候选.md",
+      "category": "methods",
+      "obsidian_dir": "30-方法",
+      "title": "线 审核方法候选",
+      "source_ref": "staging:promotion_queue:2"
+    },
+    {
+      "relative_path": "cases/case-0015-电缆~敷设~-历史案例候选.md",
+      "category": "cases",
+      "obsidian_dir": "20-案例",
+      "title": "电缆~敷设~ 历史案例候选",
+      "source_ref": "staging:promotion_queue:15"
+    },
+    {
+      "relative_path": "cases/case-0012-配管（SC20）-历史案例候选.md",
+      "category": "cases",
+      "obsidian_dir": "20-案例",
+      "title": "配管（SC20） 历史案例候选",
+      "source_ref": "staging:promotion_queue:12"
+    },
+    {
+      "relative_path": "cases/case-0009-阀-历史案例候选.md",
+      "category": "cases",
+      "obsidian_dir": "20-案例",
+      "title": "阀 历史案例候选",
+      "source_ref": "staging:promotion_queue:9"
+    },
+    {
+      "relative_path": "cases/case-0006-镀锌钢管安装（DN25）（丝接）-历史案例候选.md",
+      "category": "cases",
+      "obsidian_dir": "20-案例",
+      "title": "镀锌钢管安装（DN25）（丝接） 历史案例候选",
+      "source_ref": "staging:promotion_queue:6"
+    },
+    {
+      "relative_path": "cases/case-0003-线-历史案例候选.md",
+      "category": "cases",
+      "obsidian_dir": "20-案例",
+      "title": "线 历史案例候选",
+      "source_ref": "staging:promotion_queue:3"
+    },
+    {
+      "relative_path": "daily/daily-20260406-staging-export.md",
+      "category": "daily",
+      "obsidian_dir": "80-日报周报",
+      "title": "2026-04-06 staging 导出日报",
+      "source_ref": "staging:export"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""
+﻿"""
 全局配置文件
 集中管理所有路径、参数、常量
 """
@@ -566,7 +566,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-6")
 # OpenAI配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = "gpt-4o"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
 
 # 通义千问(Qwen)配置 —— 阿里云DashScope
 QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
@@ -919,3 +919,4 @@ def ensure_dirs():
 
 # 导入时自动创建目录
 ensure_dirs()
+

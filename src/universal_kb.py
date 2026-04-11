@@ -121,9 +121,58 @@ class UniversalKB:
         except Exception:
             return {}
 
+    @staticmethod
+    def _vector_rebuild_keywords() -> tuple[str, ...]:
+        return (
+            "dimensionality",
+            "dimension",
+            "mismatch",
+            "mismatched types",
+            "incompatible",
+            "has no attribute",
+            "corrupt",
+            "invalid",
+            "segment",
+            "metadata segment",
+            "compactor",
+            "blob",
+            "decoding column",
+            "index",
+        )
+
+    def _should_rebuild_vector_index(self, exc: Exception | str | None) -> bool:
+        message = str(exc or "").strip().lower()
+        return any(keyword in message for keyword in self._vector_rebuild_keywords())
+
+    def _handle_vector_failure(self, exc: Exception | str | None, *, client=None) -> bool:
+        """Self-heal known Chroma metadata/index incompatibilities."""
+        if not self._should_rebuild_vector_index(exc):
+            return False
+
+        logger.warning(f"通用知识库向量索引异常，尝试自动重建: {exc}")
+        try:
+            rebuilt = self._auto_rebuild_collection(client or self._chroma_client)
+        except Exception as rebuild_exc:
+            logger.error(f"通用知识库向量索引自动重建失败: {rebuild_exc}")
+            return False
+
+        self._collection = rebuilt
+        return True
+
     def _connect(self, row_factory: bool = False):
         """统一SQLite连接参数"""
         return _db_connect(self.db_path, row_factory=row_factory)
+
+    def has_authority_records(self) -> bool:
+        conn = self._connect()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM knowledge WHERE layer = 'authority' LIMIT 1"
+            )
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()
 
     @property
     def model(self):
@@ -154,9 +203,8 @@ class UniversalKB:
             try:
                 self._collection.count()
             except (AttributeError, Exception) as probe_err:
-                if "dimensionality" in str(probe_err) or "has no attribute" in str(probe_err):
-                    logger.warning(f"通用知识库向量索引格式不兼容（{probe_err}），自动重建...")
-                    self._collection = self._auto_rebuild_collection(client)
+                if self._handle_vector_failure(probe_err, client=client):
+                    pass
                 else:
                     raise
             # 校验向量模型版本一致性（模型变更后旧索引不可信）
@@ -540,16 +588,25 @@ class UniversalKB:
         # 2. 向量相似搜索
         if self.model is None:
             return results  # 向量模型不可用，只返回精确匹配结果
-        if self.collection.count() == 0:
+        coll = self.collection
+        if coll is None:
+            return results
+        try:
+            if coll.count() == 0:
+                return results
+        except Exception as exc:
+            if self._handle_vector_failure(exc):
+                return results
+            logger.warning(f"通用知识库向量索引计数失败: {exc}")
             return results
 
         try:
             from src.model_profile import encode_queries
             query_embedding = encode_queries(self.model, [query_text])
 
-            search_results = self.collection.query(
+            search_results = coll.query(
                 query_embeddings=query_embedding.tolist(),
-                n_results=min(top_k * 3, self.collection.count()),
+                n_results=min(top_k * 3, coll.count()),
             )
 
             if not search_results or not search_results.get("ids") or not search_results.get("ids")[0]:
@@ -625,6 +682,8 @@ class UniversalKB:
             results.sort(key=_quality_score, reverse=True)
 
         except Exception as e:
+            if self._handle_vector_failure(e):
+                return results
             logger.warning(f"通用知识库向量搜索失败: {e}")
 
         return results[:top_k]

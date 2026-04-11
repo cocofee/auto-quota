@@ -19,6 +19,26 @@
 - `X-OpenClaw-Key` 解决的是 “OpenClaw 能不能接入桥接 API”
 - 真正写入 `audit_errors / promotion_queue`，发生在 **管理员确认之后**
 
+## 当前联调新增确认（2026-04-04）
+
+今天围绕真实任务 `0764f6f5-9f66-437f-b0f4-bda4c33f3efc` 做了完整联调，新增确认如下：
+
+- `review-draft` 已确认可稳定写入，前端可看到 `openclaw_suggested_quotas`
+- `review-confirm` 的真实请求契约已确认：只接受 `approve / reject`
+- `review-confirm` 不是只验证接口结构，而是已完成多条真实正式落库验证
+- 已确认多条样板进入：
+  - `review_status = corrected`
+  - `openclaw_review_status = applied`
+  - `openclaw_review_confirm_status = approved`
+- 对同一条已正式应用结果重复确认时，后端会返回：`当前建议已经正式应用，无需再次确认`
+
+这意味着当前桥接能力已经从“可接入”推进到“可闭环执行”：
+
+- OpenClaw 给草稿建议
+- 前端可见
+- 管理员二次确认
+- 正式结果落库
+
 ## 配置
 
 在 `auto-quota` 的环境变量里至少配置：
@@ -115,6 +135,7 @@ X-OpenClaw-Key: 你配置的 OPENCLAW_API_KEY
 - 还没有“后台生成 / 轮换 / 废止 OpenClaw Key”的管理页
 - `review-confirm` 目前仍然要求管理员身份，不是单靠 OpenClaw Key 就能直接完成
 - 所以当前实现是 “OpenClaw 提建议 + 管理员确认”，不是“OpenClaw 全自动直接入正式知识层”
+- 当前正式确认的主要工程风险点，已确认在“确认后同步经验库/向量写回”这条后置链；若后续继续做批量确认或审核台，需要继续保持主链与后置学习链解耦
 
 ## 说明
 

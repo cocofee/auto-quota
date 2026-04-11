@@ -1,0 +1,11 @@
+Image Title: 图纸截图样例一
+Image Path: C:\Users\Administrator\Documents\trae_projects\auto-quota\data\pdf_info_price\wuhan\page15_preview.png
+
+人工描述:
+示例图，表现桥架出线与暗配钢管节点。
+
+OCR/旁注:
+电气安装节点图
+桥架内电缆敷设
+配电箱出线口
+暗配钢管 SC20

@@ -1,0 +1,80 @@
+{
+  "generated_at": "2026-04-07T09:31:51",
+  "output_dir": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\knowledge_wiki",
+  "packs_dir": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\data\\source_packs\\packs",
+  "counts": {
+    "sources": 10
+  },
+  "files": [
+    {
+      "relative_path": "sources/index.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "Sources Index",
+      "source_ref": "source_pack:index"
+    },
+    {
+      "relative_path": "sources/source-chat-09587cc58b01.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "清单复核对话样例一",
+      "source_ref": "source_pack:chat-09587cc58b01"
+    },
+    {
+      "relative_path": "sources/source-chat-d97aa0e4b217.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "清单复核对话样例二",
+      "source_ref": "source_pack:chat-d97aa0e4b217"
+    },
+    {
+      "relative_path": "sources/source-doc-c0d82dda08e6.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "2025版山东省安装工程消耗量定额交底培训资料",
+      "source_ref": "source_pack:doc-c0d82dda08e6"
+    },
+    {
+      "relative_path": "sources/source-doc-d496cdc9b4eb.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "定额复核提示样例",
+      "source_ref": "source_pack:doc-d496cdc9b4eb"
+    },
+    {
+      "relative_path": "sources/source-doc-f76b4577f8c3.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "工程名称：办公楼机电改造",
+      "source_ref": "source_pack:doc-f76b4577f8c3"
+    },
+    {
+      "relative_path": "sources/source-image-34ba22e7b3bb.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "现场照片样例二",
+      "source_ref": "source_pack:image-34ba22e7b3bb"
+    },
+    {
+      "relative_path": "sources/source-image-524a5cf0edf5.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "图纸截图样例一",
+      "source_ref": "source_pack:image-524a5cf0edf5"
+    },
+    {
+      "relative_path": "sources/source-video-3463a8d8680a.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "消防系统精讲样例一",
+      "source_ref": "source_pack:video-3463a8d8680a"
+    },
+    {
+      "relative_path": "sources/source-video-894e1b77583d.md",
+      "category": "sources",
+      "obsidian_dir": "60-资料来源",
+      "title": "桥架敷设审核样例二",
+      "source_ref": "source_pack:video-894e1b77583d"
+    }
+  ]
+}

@@ -29,6 +29,7 @@ from openpyxl.utils import get_column_letter
 from loguru import logger
 
 import config
+from src.adaptive_strategy import summarize_adaptive_strategy_metrics
 from src.bill_reader import _is_material_code
 from src.excel_compat import convert_excel_to_xlsx
 
@@ -1777,11 +1778,35 @@ class OutputWriter:
             ["未匹配", no_match, f"{no_match * 100 // max(total, 1)}%"],
         ]
 
+        adaptive_stats = summarize_adaptive_strategy_metrics(results)
+        distribution = adaptive_stats.get("distribution") or {}
+        strategy_rows = []
+        for strategy, label in (
+            ("fast", "自适应策略-fast"),
+            ("standard", "自适应策略-standard"),
+            ("deep", "自适应策略-deep"),
+        ):
+            item = distribution.get(strategy) or {}
+            count = int(item.get("count", 0) or 0)
+            if count <= 0:
+                continue
+            avg_time = item.get("avg_time_sec")
+            avg_text = f"{avg_time:.3f}s" if isinstance(avg_time, (int, float)) else "-"
+            strategy_rows.append([
+                label,
+                count,
+                f"{item.get('rate', 0.0)}% | 均时{avg_text}",
+            ])
+        if strategy_rows:
+            stats.append(["", "", ""])
+            stats.append(["自适应策略", "数量", "占比/平均耗时"])
+            stats.extend(strategy_rows)
+
         for row_idx, row_data in enumerate(stats, start=1):
             for col_idx, value in enumerate(row_data, start=1):
                 cell = ws.cell(row=row_idx, column=col_idx, value=value)
                 cell.border = THIN_BORDER
-                if row_idx == 1:
+                if row_idx == 1 or row_data == ["自适应策略", "数量", "占比/平均耗时"]:
                     cell.font = HEADER_FONT
                     cell.fill = HEADER_FILL
                 else:

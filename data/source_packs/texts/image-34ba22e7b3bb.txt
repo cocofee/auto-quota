@@ -1,0 +1,11 @@
+Image Title: 现场照片样例二
+Image Path: C:\Users\Administrator\Documents\trae_projects\auto-quota\data\pdf_info_price\wuhan\page30_preview.png
+
+人工描述:
+现场照片类样例，人工备注关注阀门 DN50 与镀锌钢管丝接。
+
+OCR/旁注:
+给排水系统示意
+阀门 DN50
+镀锌钢管丝接
+埋地敷设

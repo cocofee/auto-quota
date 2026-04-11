@@ -270,8 +270,8 @@ goto END
 
 
 rem ============================================================
-
-rem  Full Build: 先递增版本号，再构建镜像，这样镜像里的代码版本是新的
+rem Full build flow
+rem Previous multilingual comment removed for cmd safety
 
 rem ============================================================
 
@@ -454,12 +454,12 @@ goto DO_PACK
 
 
 rem ============================================================
-
-rem  BUMP_VERSION: 准备发布版本
-
-rem  Full build 支持“重试当前版本”或“递增到新版本”，真正写 manifest/changelog
-
-rem  放到镜像推送成功之后的 DO_PACK 阶段执行，避免留下指向不存在镜像的版本文件
+rem Prepare release version metadata
+rem Previous multilingual comment removed for cmd safety
+rem Full build can retry the current version or bump to the next one
+rem Previous multilingual comment removed for cmd safety
+rem Manifest and changelog are written only after remote images are available
+rem ============================================================
 
 rem ============================================================
 
@@ -488,10 +488,7 @@ if "%releasemode%"=="1" (
 )
 
 if "%releasemode%"=="2" (
-    for /f "tokens=1,2,3 delims=." %%a in ("%VER%") do (
-        set /a "P=%%c+1"
-        set "NEW=%%a.%%b.!P!"
-    )
+    for /f "delims=" %%a in ('python tools\release_sync.py next') do set "NEW=%%a"
     echo       New:     !NEW!
     goto VERSION_READY
 )
@@ -507,27 +504,22 @@ exit /b 0
 
 
 
+rem Build LPK, install to LazyCat, then optionally commit release files
 rem ============================================================
-
-rem  DO_PACK: 打包 LPK + 安装到懒猫 + git commit
-
-rem ============================================================
-
-
 
 :DO_PACK
 
-rem Quick deploy 走这里时还没改版本，先改
+rem Quick deploy reaches this block without creating NEW first
 
 if not defined NEW (
 
-    call :READ_CURRENT_VERSION
+	call :READ_CURRENT_VERSION
 
-    call :SET_IMAGE_TAGS !VER!
+	call :SET_IMAGE_TAGS !VER!
 
-    call :ENSURE_MANIFEST_IMAGE_TAGS_MATCH_VERSION
+	call :ENSURE_RELEASE_FILES_MATCH_VERSION !VER!
 
-    if !errorlevel! neq 0 goto END
+	if !errorlevel! neq 0 goto END
 
     call :ENSURE_QUICK_PACK_SAFE
 
@@ -552,6 +544,10 @@ if defined NEW (
 set "PACK_VERSION=!NEW!"
 
 if not defined PACK_VERSION set "PACK_VERSION=!VER!"
+
+call :ENSURE_RELEASE_FILES_MATCH_VERSION !PACK_VERSION!
+
+if !errorlevel! neq 0 goto END
 
 call :VERIFY_REMOTE_IMAGES_READY
 
@@ -591,11 +587,11 @@ echo lzc-cli app install '!LPK_FILE!' --ssh-key "$HOME/.ssh/id_ed25519">> "%TEMP
 
 echo [INSTALL] exit code: !errorlevel!
 
-echo.
+rem Re-tag the pushed backend image for local docker-compose use
 echo [LOCAL] Syncing local Docker...
-rem 把刚构建的ACR镜像标记为本地docker-compose用的名字
+rem Rebuild frontend and restart local containers
 docker tag !BACKEND_IMAGE_VERSIONED! auto-quota-app:latest 2>nul
-rem 重建前端 + 重启所有容器
+rem Local container restart step
 docker-compose up -d --build frontend 2>nul
 docker-compose up -d 2>nul
 echo [OK] Local Docker synced
@@ -620,7 +616,7 @@ if defined NEW (
 
     echo [GIT] Auto commit...
 
-    git add lzc-manifest.yml web/frontend/src/constants/changelog.ts scripts/
+    git add lzc-manifest.yml web/frontend/src/constants/changelog.ts
 
     git commit -m "deploy: v!NEW!"
 
@@ -704,26 +700,13 @@ exit /b 1
 
 if defined VERSION_APPLIED exit /b 0
 
-echo [VER] Syncing manifest to version !NEW!...
+echo [VER] Syncing release files to version !NEW!...
 
-powershell -Command "$c=[System.IO.File]::ReadAllText('lzc-manifest.yml'); $c=$c -replace 'version: %VER%','version: !NEW!'; $c=[regex]::Replace($c,'(auto-quota-frontend:)[^""\r\n]+','${1}!NEW!'); $c=[regex]::Replace($c,'(auto-quota-app:)[^""\r\n]+','${1}!NEW!'); [System.IO.File]::WriteAllText('lzc-manifest.yml',$c)"
-
-if !errorlevel! neq 0 (
-    echo [FAIL] Failed to update lzc-manifest.yml
-    exit /b 1
-)
-
-if /i not "!NEW!"=="!VER!" (
-
-echo [VER] Updating changelog...
-
-python tools\bump_changelog.py !NEW!
+python tools\release_sync.py apply !NEW!
 
 if !errorlevel! neq 0 (
-    echo [FAIL] Failed to update changelog
+    echo [FAIL] Failed to sync release files
     exit /b 1
-)
-
 )
 
 set "VER=!NEW!"
@@ -757,37 +740,17 @@ exit /b 0
 
 
 
-:ENSURE_MANIFEST_IMAGE_TAGS_MATCH_VERSION
+:ENSURE_RELEASE_FILES_MATCH_VERSION
 
-set "FRONTEND_IMAGE_TAG="
-set "BACKEND_IMAGE_TAG="
+python tools\release_sync.py validate %~1
 
-for /f "tokens=2 delims=:" %%a in ('findstr /c:"auto-quota-frontend:" lzc-manifest.yml') do (
-    set "FRONTEND_IMAGE_TAG=%%a"
-)
-
-for /f "tokens=2 delims=:" %%a in ('findstr /c:"auto-quota-app:" lzc-manifest.yml') do (
-    if not defined BACKEND_IMAGE_TAG set "BACKEND_IMAGE_TAG=%%a"
-)
-
-set "FRONTEND_IMAGE_TAG=!FRONTEND_IMAGE_TAG: =!"
-set "BACKEND_IMAGE_TAG=!BACKEND_IMAGE_TAG: =!"
-
-if /i not "!FRONTEND_IMAGE_TAG!"=="!VER!" (
-    echo.
-    echo [BLOCK] Manifest version is !VER!, but frontend image tag is !FRONTEND_IMAGE_TAG!.
-    echo         Rebuild and push the frontend image first, or align lzc-manifest.yml before packing.
+if !errorlevel! neq 0 (
+    echo [BLOCK] Release files are out of sync for version %~1.
+    echo         Align lzc-manifest.yml and changelog.ts before packing.
     exit /b 1
 )
 
-if /i not "!BACKEND_IMAGE_TAG!"=="!VER!" (
-    echo.
-    echo [BLOCK] Manifest version is !VER!, but backend image tag is !BACKEND_IMAGE_TAG!.
-    echo         Rebuild and push the backend image first, or align lzc-manifest.yml before packing.
-    exit /b 1
-)
-
-echo [CHECK] Manifest image tags match current version: !VER!
+echo [CHECK] Release files match version: %~1
 
 exit /b 0
 

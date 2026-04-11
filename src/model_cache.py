@@ -13,6 +13,7 @@
     client = ModelCache.get_chroma_client(path)      # 获取ChromaDB客户端（按路径缓存）
 """
 
+import os
 import threading
 from pathlib import Path
 
@@ -40,6 +41,41 @@ class ModelCache:
     _reranker_fail_time = 0.0
     _FAIL_COOLDOWN = 60.0        # 冷却期60秒
     _FAIL_MAX_RETRIES = 3        # 连续失败3次后进入冷却
+
+    @staticmethod
+    def _is_explicit_local_model_path(model_name: str) -> bool:
+        """Distinguish filesystem paths from HuggingFace repo ids."""
+        raw_name = str(model_name or "").strip()
+        if not raw_name:
+            return False
+
+        expanded = Path(raw_name).expanduser()
+        if expanded.exists() or expanded.is_absolute():
+            return True
+        if raw_name.startswith((".", "~")):
+            return True
+        if "\\" in raw_name:
+            return True
+
+        drive, _ = os.path.splitdrive(raw_name)
+        if drive:
+            return True
+
+        # Repo ids such as "BAAI/bge-reranker-v2-m3" contain a single slash.
+        return raw_name.count("/") > 1
+
+    @classmethod
+    def _resolve_reranker_model_name(cls, model_name: str) -> str:
+        raw_name = str(model_name or "").strip()
+        if not raw_name or cls._is_explicit_local_model_path(raw_name):
+            return raw_name
+
+        bundled_dir = config.PROJECT_ROOT / "models" / Path(raw_name).name
+        if bundled_dir.exists():
+            logger.info(f"[ModelCache] Use bundled local reranker model: {bundled_dir}")
+            return str(bundled_dir)
+
+        return raw_name
 
     @classmethod
     def _in_cooldown(cls, fail_count: int, fail_time: float) -> bool:
@@ -155,9 +191,9 @@ class ModelCache:
             if cls._in_cooldown(cls._reranker_fail_count, cls._reranker_fail_time):
                 return None
 
-            model_name = config.RERANKER_MODEL_NAME
+            model_name = cls._resolve_reranker_model_name(config.RERANKER_MODEL_NAME)
             model_path = Path(str(model_name)).expanduser()
-            if any(sep in str(model_name) for sep in ("\\", "/")) and not model_path.exists():
+            if cls._is_explicit_local_model_path(model_name) and not model_path.exists():
                 logger.error(f"[ModelCache] Reranker本地路径不存在: {model_name}")
                 return None
             logger.info(f"[ModelCache] 加载Reranker模型: {model_name}")

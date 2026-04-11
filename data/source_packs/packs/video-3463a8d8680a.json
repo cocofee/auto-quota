@@ -1,0 +1,27 @@
+{
+  "source_id": "video-3463a8d8680a",
+  "source_kind": "video",
+  "title": "消防系统精讲样例一",
+  "summary": "00:00:03.000 本节先讲消火栓系统的组成，重点看水池、水泵和高位水箱三部分。 | 00:00:12.000 做造价时容易漏掉稳压装置和水泵接合器，后面会分别拆开讲。 | 00:00:25.000 如果看到泵房六管系统，一定要把吸水管、输水管和试验管分别核算。",
+  "full_text_path": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\data\\source_packs\\texts\\video-3463a8d8680a.md",
+  "evidence_refs": [
+    "video://消防系统精讲-样例一",
+    "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\test_artifacts\\p3_samples\\videos\\sample_video_01.srt"
+  ],
+  "province": "北京市建设工程施工消耗量标准(2024)",
+  "specialty": "安装",
+  "tags": [
+    "sample",
+    "p3",
+    "video",
+    "fire",
+    "transcript"
+  ],
+  "created_at": "2026-04-06",
+  "confidence": 78,
+  "metadata": {
+    "transcript_format": "srt",
+    "cue_count": 3,
+    "has_timeline": true
+  }
+}

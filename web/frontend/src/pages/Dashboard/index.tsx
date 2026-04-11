@@ -53,6 +53,8 @@ export default function DashboardPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.is_admin ?? false;
   const taskListPath = isAdmin ? '/admin/tasks' : '/tasks';
+  const recentTaskPageSize = isAdmin ? 50 : 10;
+  const statsTaskPageSize = isAdmin ? 500 : 100;
 
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
@@ -70,7 +72,7 @@ export default function DashboardPage() {
       const taskParams = isAdmin ? { all_users: true } : {};
       // 最近10个任务（用于表格展示）
       const { data } = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 10, ...taskParams },
+        params: { page: 1, size: recentTaskPageSize, ...taskParams },
       });
       setTasks(data.items);
       setTotal(data.total);
@@ -82,7 +84,7 @@ export default function DashboardPage() {
       setCompletedTotal(completedRes.data.total);
       // 加载更多已完成任务用于计算准确率（最多100个）
       const statsRes = await api.get<TaskListResponse>('/tasks', {
-        params: { page: 1, size: 100, status_filter: 'completed', ...taskParams },
+        params: { page: 1, size: statsTaskPageSize, status_filter: 'completed', ...taskParams },
       });
       setStatsTasks(statsRes.data.items);
     } catch {
@@ -90,7 +92,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, message]);
+  }, [isAdmin, message, recentTaskPageSize, statsTaskPageSize]);
 
   useEffect(() => {
     let cancelled = false;

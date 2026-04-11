@@ -377,6 +377,53 @@ def test_prepare_candidates_from_prepared_prefers_canonical_query(monkeypatch):
     assert bundle[2] == "canonical search"
 
 
+def test_prepare_candidates_from_prepared_forces_deep_strategy_passthrough(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        match_core,
+        "_prepare_candidates",
+        lambda searcher, reranker, validator, search_query, full_query, classification, **kwargs: (
+            captured.update({
+                "search_query": search_query,
+                "full_query": full_query,
+                "classification": classification,
+                "kwargs": kwargs,
+            }) or []
+        ),
+    )
+
+    prepared = {
+        "ctx": {
+            "full_query": "legacy validation",
+            "search_query": "legacy search",
+            "canonical_query": {
+                "validation_query": "canonical validation",
+                "search_query": "canonical search",
+            },
+            "item": {"adaptive_strategy": "deep"},
+            "adaptive_strategy": "deep",
+            "canonical_features": {"entity": "配管"},
+            "context_prior": {"specialty": "C10"},
+        },
+        "classification": {"primary": "C10", "fallbacks": [], "search_books": ["C10"]},
+        "exp_backup": None,
+        "rule_backup": None,
+        "adaptive_strategy": "deep",
+    }
+
+    match_core._prepare_candidates_from_prepared(
+        prepared,
+        searcher=object(),
+        reranker=object(),
+        validator=object(),
+        include_prior_candidates=False,
+    )
+
+    assert captured["kwargs"]["adaptive_strategy"] == "deep"
+    assert captured["kwargs"]["include_prior_candidates"] is True
+
+
 def test_prepare_candidates_from_prepared_attaches_supplemental_quotas(monkeypatch):
     monkeypatch.setattr(
         match_core,

@@ -56,6 +56,30 @@ def _read_result_value(result, key: str, default=None):
     return getattr(result, key, default)
 
 
+def _coerce_json_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, list) else None
+    return None
+
+
+def _coerce_json_dict(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 def _effective_confidence(result) -> int:
     if isinstance(result, (int, float)):
         try:
@@ -364,10 +388,8 @@ def _to_result_response(match_result: MatchResult) -> MatchResultResponse:
         "openclaw_suggested_quotas",
         "alternatives",
     ):
-        value = payload.get(field_name)
-        if value is not None and not isinstance(value, list):
-            payload[field_name] = None
-    reason_codes = payload.get("openclaw_reason_codes")
+        payload[field_name] = _coerce_json_list(payload.get(field_name))
+    reason_codes = _coerce_json_list(payload.get("openclaw_reason_codes"))
     if isinstance(reason_codes, list):
         payload["openclaw_reason_codes"] = [
             str(item).strip()
@@ -377,9 +399,16 @@ def _to_result_response(match_result: MatchResult) -> MatchResultResponse:
     else:
         payload["openclaw_reason_codes"] = None
     for field_name in ("openclaw_review_payload", "human_feedback_payload"):
-        value = payload.get(field_name)
-        if value is not None and not isinstance(value, dict):
-            payload[field_name] = None
+        payload[field_name] = _coerce_json_dict(payload.get(field_name))
+    if (
+        payload["openclaw_review_status"] == "pending"
+        and (
+            payload.get("openclaw_decision_type")
+            or payload.get("openclaw_suggested_quotas")
+            or payload.get("openclaw_review_payload")
+        )
+    ):
+        payload["openclaw_review_status"] = "reviewed"
     payload["knowledge_evidence"] = _extract_knowledge_evidence(match_result)
     payload["knowledge_basis"] = _extract_knowledge_basis(match_result)
     payload["knowledge_summary"] = _extract_knowledge_summary(match_result)

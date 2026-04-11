@@ -7,7 +7,7 @@ def local_match_async_client(*, timeout: float | httpx.Timeout) -> httpx.AsyncCl
     """Build an HTTP client for local/LAN match-service calls.
 
     `trust_env=False` avoids accidental proxy use from HTTP_PROXY/HTTPS_PROXY,
-    which breaks access to LAN endpoints such as `http://192.168.x.x:9100`.
+    which breaks access to LAN endpoints such as `http://192.168.x.x:9300`.
     """
     return httpx.AsyncClient(timeout=timeout, trust_env=False)
 

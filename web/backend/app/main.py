@@ -42,6 +42,8 @@ if not (PROJECT_ROOT / "config.py").exists():
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.runtime_cache import prewarm_status, start_background_prewarm
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -62,6 +64,7 @@ async def lifespan(app: FastAPI):
 
     from app.database import init_db
     await init_db()
+    start_background_prewarm()
     logger.info("数据库初始化完成")
 
     yield  # 应用运行中...
@@ -87,6 +90,20 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "Accept", "X-OpenClaw-Key"],  # 只允许必要的请求头
     max_age=3600,                                               # 预检请求缓存1小时
 )
+
+
+@app.middleware("http")
+async def force_utf8_charset(request: Request, call_next):
+    response = await call_next(request)
+    content_type = str(response.headers.get("content-type") or "")
+    lowered = content_type.lower()
+    if "charset=" in lowered:
+        return response
+
+    base_type = content_type.split(";", 1)[0].strip().lower()
+    if base_type == "application/json" or base_type.startswith("text/"):
+        response.headers["content-type"] = f"{base_type}; charset=utf-8"
+    return response
 
 
 # ============================================================
@@ -183,6 +200,7 @@ async def health_check():
         "status": "ok",
         "service": "auto-quota-api",
         "version": "1.0.0",
+        "prewarm": prewarm_status(),
     }
 
 

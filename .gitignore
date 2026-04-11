@@ -57,6 +57,18 @@ None/
 jarvis-correct-*/
 *.tar
 *.lpk
+tmp/
+test_artifacts/
+raw_files/
+pytest_tmp_knowledge_commit/
+.pytest_tmp_knowledge_commit/
+.pytest_tmp_knowledge_promotion/
+.tmp_selected_province.txt
+.tmp_selected_aux_provinces.txt
+data/*.db-wal
+data/*.db-shm
+tmp_match_pipeline_tail_backup.py.txt
+replace_picker.py
 
 # 备份和下载（非项目文件）
 backups/
@@ -94,6 +106,8 @@ data/ltr_model_v4_new.txt
 # 自动生成的同义词 / 备份文件
 data/auto_synonyms_*.json
 data/*.bak
+data/*.bak.*
+*.bak.*
 
 # 造价PDF源文件（体积大）
 data/*.pdf

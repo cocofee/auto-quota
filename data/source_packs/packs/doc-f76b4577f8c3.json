@@ -1,0 +1,23 @@
+{
+  "source_id": "doc-f76b4577f8c3",
+  "source_kind": "doc",
+  "title": "工程名称：办公楼机电改造",
+  "summary": "工程名称：办公楼机电改造 专业：安装 结论：给排水和电气清单中，容易出现“设备安装”和“配管配线”混淆。",
+  "full_text_path": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\data\\source_packs\\texts\\doc-f76b4577f8c3.md",
+  "evidence_refs": [
+    "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\test_artifacts\\p2_samples\\docs\\sample_project_summary.txt"
+  ],
+  "province": "北京市建设工程施工消耗量标准(2024)",
+  "specialty": "安装",
+  "tags": [
+    "sample",
+    "p2",
+    "project-summary",
+    "document"
+  ],
+  "created_at": "2026-04-06",
+  "confidence": 85,
+  "metadata": {
+    "input_ext": ".txt"
+  }
+}

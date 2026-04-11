@@ -81,3 +81,23 @@ def test_apply_synonyms_adds_stage3_mep_family_aliases():
     assert "轴流式通风机安装" in axial_query
     assert "离心式通风机安装" in centrifugal_query
     assert "支吊架安装" in support_query
+
+
+def test_apply_synonyms_skips_conflicting_generic_plastic_pipe_alias():
+    query = _apply_synonyms("给水塑料管 PPR", "C10")
+
+    assert "给水塑料管" in query
+    assert "雨水管" not in query
+    assert "空调" not in query
+
+
+def test_build_quota_query_keeps_ppr_water_supply_query_out_of_rainwater_family():
+    query = build_quota_query(
+        parser,
+        "给水塑料管PPR",
+        "名称：给水塑料管",
+        specialty="C10",
+    )
+
+    assert "给水" in query
+    assert "雨水" not in query

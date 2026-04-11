@@ -56,6 +56,26 @@ _DECO_CODE_PATTERN = re.compile(
 # 只加载一次，后续复用缓存
 _SYNONYMS_CACHE = None
 
+_PIPE_USAGE_TOKENS = (
+    "给水",
+    "排水",
+    "雨水",
+    "污水",
+    "废水",
+    "冷水",
+    "热水",
+    "消防",
+    "采暖",
+    "空调",
+    "凝结水",
+    "燃气",
+)
+_GENERIC_PIPE_SYNONYM_KEYS = {
+    "塑料管",
+    "钢管",
+    "复合管",
+}
+
 
 def _load_synonyms() -> dict:
     """加载工程同义词表（手工表 + 自动挖掘表合并，惰性加载）
@@ -176,6 +196,26 @@ def _is_synonym_applicable(key: str, specialty: str, scope: dict) -> bool:
     return False
 
 
+def _extract_pipe_usage_tokens(text: str) -> set[str]:
+    raw = str(text or "")
+    return {token for token in _PIPE_USAGE_TOKENS if token in raw}
+
+
+def _should_skip_conflicting_synonym(key: str, replacement: str, query: str) -> bool:
+    if key not in _GENERIC_PIPE_SYNONYM_KEYS:
+        return False
+
+    replacement_usage = _extract_pipe_usage_tokens(replacement)
+    if not replacement_usage:
+        return False
+
+    query_usage = _extract_pipe_usage_tokens(query)
+    if not query_usage:
+        return True
+
+    return not replacement_usage.issubset(query_usage)
+
+
 def _apply_synonyms(query: str, specialty: str = "") -> str:
     """应用工程同义词扩展：在原词基础上追加定额常用名
 
@@ -214,6 +254,8 @@ def _apply_synonyms(query: str, specialty: str = "") -> str:
             if replacement in query:
                 break
             if _is_synonym_applicable(key, specialty, scope):
+                if _should_skip_conflicting_synonym(key, replacement, query):
+                    continue
                 # 自映射（key==value）是"保护伞"，不追加内容，只通过break阻断
                 if key != replacement:
                     # 追加扩展词到query末尾，保留原词不丢信息

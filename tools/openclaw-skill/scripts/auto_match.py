@@ -1,4 +1,4 @@
-"""
+﻿"""
 Auto Quota OpenClaw bridge helper.
 
 This script intentionally avoids web-login / bearer-token flow and talks only to
@@ -35,14 +35,14 @@ def load_config() -> dict:
     if not CONFIG_PATH.exists():
         print(f"配置文件不存在: {CONFIG_PATH}")
         sys.exit(1)
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    return json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
 
 
 def load_processed() -> dict:
     cfg = load_config()
     history_file = Path(cfg["processed"]["history_file"])
     if history_file.exists():
-        return json.loads(history_file.read_text(encoding="utf-8"))
+        return json.loads(history_file.read_text(encoding="utf-8-sig"))
     return {"files": {}}
 
 
@@ -161,6 +161,43 @@ class AutoQuotaAPI:
     def get_provinces(self):
         return self._request("GET", "/api/openclaw/provinces")
 
+    def list_source_packs(self, query: str = "", limit: int = 20, source_kind: str = "", province: str = "", specialty: str = ""):
+        params = {"limit": str(limit)}
+        if query:
+            params["q"] = query
+        if source_kind:
+            params["source_kind"] = source_kind
+        if province:
+            params["province"] = province
+        if specialty:
+            params["specialty"] = specialty
+        query_string = urllib.parse.urlencode(params)
+        return self._request("GET", f"/api/openclaw/source-packs?{query_string}")
+
+    def get_source_pack(self, source_id: str):
+        return self._request("GET", f"/api/openclaw/source-packs/{source_id}")
+
+    def learn_source_pack(
+        self,
+        source_id: str,
+        *,
+        dry_run: bool = False,
+        llm_type: str | None = None,
+        chunk_size: int = 1800,
+        overlap: int = 240,
+        max_chunks: int = 24,
+    ):
+        payload = {
+            "dry_run": dry_run,
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+            "max_chunks": max_chunks,
+        }
+        if llm_type:
+            payload["llm_type"] = llm_type
+        return self._request("POST", f"/api/openclaw/source-packs/{source_id}/learn", data=payload)
+
+
     def search_quotas(self, keyword: str, province: str, book: str | None = None, limit: int = 20):
         params = {
             "keyword": keyword,
@@ -264,6 +301,46 @@ def format_result_summary(results_data: dict | None) -> str:
             f"  绿灯率: {green_rate}%",
         ]
     )
+
+
+def format_source_pack_list(data: dict | None) -> str:
+    if not data:
+        return "???? source packs"
+
+    items = data.get("items", [])
+    if not items:
+        return "????????"
+
+    lines = ["?????:"]
+    for item in items:
+        lines.append(
+            f"  {item.get('source_id', '')} | {item.get('title', '')} | "
+            f"{item.get('province', '')} | {item.get('specialty', '')} | {item.get('source_kind', '')}"
+        )
+    return "\n".join(lines)
+
+
+def format_source_learning_result(data: dict | None) -> str:
+    if not data:
+        return "??????"
+
+    lines = [
+        "??????:",
+        f"  source_id: {data.get('source_id', '')}",
+        f"  title: {data.get('title', '')}",
+        f"  chunks: {data.get('chunks', 0)}",
+        f"  raw_candidates: {data.get('raw_candidates', 0)}",
+        f"  merged_candidates: {data.get('merged_candidates', 0)}",
+        f"  staged: {data.get('staged', 0)}",
+    ]
+    candidates = data.get("candidates", []) or []
+    if candidates:
+        lines.append("  candidates:")
+        for item in candidates[:10]:
+            lines.append(
+                f"    - {item.get('candidate_type', '')} | {item.get('candidate_title', '')} | {item.get('target_layer', '')}"
+            )
+    return "\n".join(lines)
 
 
 def format_detail_for_review(results_data: dict | None) -> str:
@@ -483,6 +560,68 @@ def cmd_confirm(args) -> None:
     )
 
 
+def cmd_source_list(args) -> None:
+    try:
+        api = build_api_client()
+    except ValueError as exc:
+        print(exc)
+        sys.exit(1)
+
+    result = api.list_source_packs(
+        query=args.query or "",
+        limit=args.limit,
+        source_kind=args.source_kind or "",
+        province=args.province or "",
+        specialty=args.specialty or "",
+    )
+    if result is None:
+        print("?? source packs ??")
+        sys.exit(1)
+    print(format_source_pack_list(result))
+
+
+def cmd_source_show(args) -> None:
+    try:
+        api = build_api_client()
+    except ValueError as exc:
+        print(exc)
+        sys.exit(1)
+
+    result = api.get_source_pack(args.source_id)
+    if result is None:
+        print("?? source pack ??")
+        sys.exit(1)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_source_learn(args) -> None:
+    cfg = load_config()
+    learning_cfg = cfg.get("source_learning", {})
+
+    try:
+        api = build_api_client()
+    except ValueError as exc:
+        print(exc)
+        sys.exit(1)
+
+    result = api.learn_source_pack(
+        args.source_id,
+        dry_run=args.dry_run if args.dry_run else bool(learning_cfg.get("dry_run", False)),
+        llm_type=args.llm or learning_cfg.get("llm_type") or None,
+        chunk_size=args.chunk_size or int(learning_cfg.get("chunk_size", 1800)),
+        overlap=args.overlap or int(learning_cfg.get("overlap", 240)),
+        max_chunks=args.max_chunks or int(learning_cfg.get("max_chunks", 24)),
+    )
+    if result is None:
+        print("??????")
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(format_source_learning_result(result))
+
+
 def cmd_correct(args) -> None:
     try:
         api = build_api_client()
@@ -531,6 +670,24 @@ def main() -> None:
     correct_parser.add_argument("--unit", default="", help="计量单位")
     correct_parser.add_argument("--note", default="", help="审核备注")
 
+    source_list_parser = subparsers.add_parser("source-list", help="List learnable source packs")
+    source_list_parser.add_argument("--query", default="", help="Filter by title or summary text")
+    source_list_parser.add_argument("--source-kind", default="", help="Filter by source kind")
+    source_list_parser.add_argument("--province", default="", help="Filter by province")
+    source_list_parser.add_argument("--specialty", default="", help="Filter by specialty")
+    source_list_parser.add_argument("--limit", type=int, default=20, help="Max number of source packs")
+
+    source_show_parser = subparsers.add_parser("source-show", help="Show one source pack")
+    source_show_parser.add_argument("source_id", help="Source pack id")
+
+    source_learn_parser = subparsers.add_parser("source-learn", help="Extract learning candidates from one source pack")
+    source_learn_parser.add_argument("source_id", help="Source pack id")
+    source_learn_parser.add_argument("--dry-run", action="store_true", help="Preview only, do not write promotion_queue")
+    source_learn_parser.add_argument("--llm", default="", help="LLM type, for example deepseek")
+    source_learn_parser.add_argument("--chunk-size", type=int, default=0, help="Chunk size override")
+    source_learn_parser.add_argument("--overlap", type=int, default=0, help="Chunk overlap override")
+    source_learn_parser.add_argument("--max-chunks", type=int, default=0, help="Max chunks override")
+    source_learn_parser.add_argument("--json", action="store_true", help="Print raw JSON result")
     args = parser.parse_args()
 
     if args.command == "watch":
@@ -541,6 +698,12 @@ def main() -> None:
         cmd_status(args)
     elif args.command == "confirm":
         cmd_confirm(args)
+    elif args.command == "source-list":
+        cmd_source_list(args)
+    elif args.command == "source-show":
+        cmd_source_show(args)
+    elif args.command == "source-learn":
+        cmd_source_learn(args)
     elif args.command == "correct":
         cmd_correct(args)
     else:
@@ -549,3 +712,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
