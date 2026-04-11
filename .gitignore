@@ -38,6 +38,12 @@ docs/chm_dump/
 tests/debug_sheets.txt
 _tmp_*.log
 tmp_*.txt
+tmp_*
+tools/tmp_*
+config.py.corrupt-backup-*
+tmp_stage_openclaw_mojibake/
+.pytest_tmp_source_learning/
+aq-fix-*/
 
 # IDE配置
 .vscode/
