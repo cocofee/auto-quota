@@ -1,4 +1,0 @@
-manifest: ./lzc-manifest.yml
-contentdir: ./
-pkgout: ./lpk/
-icon: ./lzc-icon.png

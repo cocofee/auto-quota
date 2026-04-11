@@ -1,4 +1,4 @@
-"""
+﻿"""
 大模型配置服务
 
 管理大模型配置：存在数据库 system_settings 表中，管理员可在设置页面修改。
@@ -40,7 +40,7 @@ _DEFAULTS = {
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
-        "model": "gpt-4o",
+        "model": "gpt-5.4",
     },
 }
 
@@ -222,3 +222,4 @@ def get_verify_config_sync(session) -> dict:
     )
     db_config = {row[0]: row[1] for row in result.fetchall()}
     return _read_config(db_config, "verify", env_llm_key="VERIFY_LLM", env_fallback="AGENT_LLM")
+

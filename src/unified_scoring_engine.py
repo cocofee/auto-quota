@@ -319,27 +319,98 @@ class FeatureExtractor:
 class AdaptiveWeightCalculator:
     """Returns a stable, template-like weight map for the skeleton stage."""
 
-    _DEFAULT_WEIGHTS = {
-        "text_similarity": 0.35,
-        "param_match": 0.30,
-        "classification": 0.20,
-        "prior_knowledge": 0.10,
-        "context": 0.05,
+    _TEMPLATES = {
+        "default": {
+            "text_similarity": 0.35,
+            "param_match": 0.30,
+            "classification": 0.20,
+            "prior_knowledge": 0.10,
+            "context": 0.05,
+        },
+        "param_heavy": {
+            "text_similarity": 0.25,
+            "param_match": 0.45,
+            "classification": 0.15,
+            "prior_knowledge": 0.10,
+            "context": 0.05,
+        },
+        "prior_heavy": {
+            "text_similarity": 0.20,
+            "param_match": 0.20,
+            "classification": 0.15,
+            "prior_knowledge": 0.35,
+            "context": 0.10,
+        },
+        "classification_heavy": {
+            "text_similarity": 0.24,
+            "param_match": 0.20,
+            "classification": 0.32,
+            "prior_knowledge": 0.14,
+            "context": 0.10,
+        },
+        "dirty_short_text": {
+            "text_similarity": 0.18,
+            "param_match": 0.22,
+            "classification": 0.28,
+            "prior_knowledge": 0.12,
+            "context": 0.20,
+        },
     }
 
-    def calculate_weights(self, query_item: Any, features: dict[str, Any]) -> dict[str, float]:
-        del features
+    def calculate_weight_profile(self, query_item: Any, features: dict[str, Any]) -> tuple[str, dict[str, float]]:
         item = _as_item_dict(query_item)
-        has_main_param = bool(item.get("main_param") or item.get("params"))
-        if has_main_param:
-            return {
-                "text_similarity": 0.25,
-                "param_match": 0.45,
-                "classification": 0.15,
-                "prior_knowledge": 0.10,
-                "context": 0.05,
-            }
-        return dict(self._DEFAULT_WEIGHTS)
+        if self._has_exact_experience_path(item, features):
+            return "prior_heavy", dict(self._TEMPLATES["prior_heavy"])
+        if self._has_classification_anchor(features):
+            return "classification_heavy", dict(self._TEMPLATES["classification_heavy"])
+        if self._is_dirty_or_short_text(item):
+            return "dirty_short_text", dict(self._TEMPLATES["dirty_short_text"])
+        if self._has_main_param(item):
+            return "param_heavy", dict(self._TEMPLATES["param_heavy"])
+        return "default", dict(self._TEMPLATES["default"])
+
+    def calculate_weights(self, query_item: Any, features: dict[str, Any]) -> dict[str, float]:
+        _, weights = self.calculate_weight_profile(query_item, features)
+        return weights
+
+    def _has_main_param(self, item: dict[str, Any]) -> bool:
+        return bool(item.get("main_param") or item.get("params"))
+
+    def _has_exact_experience_path(self, item: dict[str, Any], features: dict[str, Any]) -> bool:
+        if _clip01(features.get("exact_experience_anchor", 0.0)) >= 1.0:
+            return True
+        if _clip01(features.get("from_experience", 0.0)) <= 0.0:
+            return False
+        match_source = str(item.get("match_source") or item.get("_match_source") or "").strip().lower()
+        if "experience" in match_source and "exact" in match_source:
+            return True
+        return _clip01(features.get("prior_score", 0.0)) >= 0.85
+
+    def _has_classification_anchor(self, features: dict[str, Any]) -> bool:
+        exact_anchor_support = _clip01(features.get("exact_anchor_support", 0.0))
+        if exact_anchor_support >= (1.0 / 3.0):
+            return True
+        feature_alignment_score = _clip01(features.get("feature_alignment_score", 0.0))
+        family_match = _clip01(features.get("family_match", 0.0))
+        specialty_match = _clip01(features.get("specialty_match", 0.0))
+        book_match = _clip01(features.get("book_match", 0.0))
+        return feature_alignment_score >= 0.85 and max(family_match, specialty_match, book_match) >= 1.0
+
+    def _is_dirty_or_short_text(self, item: dict[str, Any]) -> bool:
+        input_gate = dict(item.get("_input_gate") or {})
+        if input_gate.get("is_dirty_code"):
+            return True
+        if item.get("_is_ambiguous_short"):
+            return True
+
+        name_text = _normalize_text(item.get("name"))
+        name_tokens = _tokenize(name_text)
+        desc_tokens = _tokenize(item.get("description"))
+        has_main_param = self._has_main_param(item)
+        if len(name_tokens) <= 1 and len(name_text) <= 2 and not desc_tokens and not has_main_param:
+            return True
+        reason_tags = {str(tag).strip().lower() for tag in list(input_gate.get("reason_tags") or []) if str(tag).strip()}
+        return "weak_text" in reason_tags or str(input_gate.get("primary_reason") or "").strip().lower() == "dirty_input"
 
 
 class UnifiedScoringEngine:
@@ -359,7 +430,11 @@ class UnifiedScoringEngine:
         for candidate in candidates or []:
             candidate_copy = dict(candidate)
             features = self.feature_extractor.extract(query_item, candidate_copy)
-            weights = self.weight_calculator.calculate_weights(query_item, features)
+            if hasattr(self.weight_calculator, "calculate_weight_profile"):
+                weight_template, weights = self.weight_calculator.calculate_weight_profile(query_item, features)
+            else:
+                weight_template = ""
+                weights = self.weight_calculator.calculate_weights(query_item, features)
             category_scores = self._compute_category_scores(features)
             final_score = sum(
                 float(category_scores.get(category, 0.0)) * float(weights.get(category, 0.0))
@@ -367,9 +442,11 @@ class UnifiedScoringEngine:
             )
             candidate_copy["features"] = features
             candidate_copy["weights"] = weights
+            candidate_copy["weight_template"] = weight_template
             candidate_copy["category_scores"] = category_scores
             candidate_copy["unified_score"] = final_score
-            candidate_copy["confidence"] = min(max(final_score, 0.0), 1.0)
+            candidate_copy["confidence_base"] = self._estimate_base_confidence(final_score, features, weight_template)
+            candidate_copy["confidence"] = candidate_copy["confidence_base"]
             candidate_copy["explanation"] = self._build_explanation(weights, category_scores)
             scored_candidates.append(candidate_copy)
         scored_candidates.sort(key=lambda candidate: float(candidate.get("unified_score", 0.0) or 0.0), reverse=True)
@@ -436,7 +513,24 @@ class UnifiedScoringEngine:
             "context": context,
         }
 
-    def _build_explanation(self, weights: dict[str, float], category_scores: dict[str, float]) -> dict[str, Any]:
+    def _estimate_base_confidence(
+        self,
+        final_score: float,
+        features: dict[str, Any],
+        weight_template: str,
+    ) -> float:
+        confidence = 0.10 + _clip01(final_score) * 0.70
+        confidence += _clip01(features.get("exact_experience_anchor", 0.0)) * 0.10
+        confidence += _clip01(features.get("exact_anchor_support", 0.0)) * 0.08
+        confidence += _clip01(features.get("main_param_exact", 0.0)) * 0.04
+        confidence += _clip01(features.get("exact_primary_match", 0.0)) * 0.03
+        if str(weight_template or "").strip().lower() == "dirty_short_text":
+            confidence -= 0.15
+        if _clip01(features.get("scope_conflict", 0.0)) > 0.0:
+            confidence -= 0.08
+        return _clip01(confidence)
+
+    def _build_explanation(self, weights: dict[str, float], category_scores: dict[str, Any]) -> dict[str, Any]:
         contributions = []
         for category, weight in weights.items():
             score = float(category_scores.get(category, 0.0) or 0.0)

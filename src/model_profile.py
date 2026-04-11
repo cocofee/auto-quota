@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -48,9 +49,11 @@ _BGE_PROFILE = VectorModelProfile(
 )
 
 # Qwen3微调模型（v3，分层采样20万条训练，含清单库/行业数据）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_QWEN3_MODEL_DIR = _PROJECT_ROOT / "models" / "qwen3-embedding-quota-v3"
 _QWEN3_PROFILE = VectorModelProfile(
     key="qwen3",
-    model_name="models/qwen3-embedding-quota-v3",
+    model_name=str(_QWEN3_MODEL_DIR) if _QWEN3_MODEL_DIR.exists() else "models/qwen3-embedding-quota-v3",
     embedding_dim=1024,
     query_prefix="",  # Qwen3不需要查询前缀
     load_kwargs={

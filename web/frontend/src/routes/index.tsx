@@ -1,77 +1,84 @@
+import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import MainLayout from '../components/Layout/MainLayout';
-import RequireAuth from '../components/Layout/RequireAuth';
-import RequireAdmin from '../components/Layout/RequireAdmin';
-import LoginPage from '../pages/Login';
-import DashboardPage from '../pages/Dashboard';
-import TaskCreatePage from '../pages/Task/CreatePage';
-import TaskListPage from '../pages/Task/ListPage';
-import ResultsPage from '../pages/Results';
-import LogsPage from '../pages/Quota/LogsPage';
-import PurchasePage from '../pages/Quota/PurchasePage';
-import PayResultPage from '../pages/Quota/PayResultPage';
-import TaskListAll from '../pages/Admin/TaskListAll';
-import FeedbackReview from '../pages/Admin/FeedbackReview';
-import UserManage from '../pages/Admin/UserManage';
-import SettingsPage from '../pages/Admin/SettingsPage';
-import QuotaManage from '../pages/Admin/QuotaManage';
-import LogViewer from '../pages/Admin/LogViewer';
-import BillingAdmin from '../pages/Admin/BillingAdmin';
-import AdminHub from '../pages/Admin/AdminHub';
-import OpenClawReviewPage from '../pages/Admin/OpenClawReviewPage';
-import KnowledgeStagingPage from '../pages/Admin/KnowledgeStagingPage';
-import PriceBackfill from '../pages/Tools/PriceBackfill';
-import BillCompiler from '../pages/Tools/BillCompiler';
-import MaterialPrice from '../pages/Tools/MaterialPrice';
+
+type LazyModule = Promise<{ default: ComponentType<any> }>;
+
+function lazyPage(importPage: () => LazyModule) {
+  return async () => {
+    const module = await importPage();
+    return { Component: module.default };
+  };
+}
+
+function lazyWrappedPage(
+  importWrapper: () => LazyModule,
+  importPage: () => LazyModule,
+) {
+  return async () => {
+    const [wrapperModule, pageModule] = await Promise.all([importWrapper(), importPage()]);
+    const Wrapper = wrapperModule.default;
+    const Page = pageModule.default;
+
+    function WrappedPage() {
+      return (
+        <Wrapper>
+          <Page />
+        </Wrapper>
+      );
+    }
+
+    return { Component: WrappedPage };
+  };
+}
 
 const router = createBrowserRouter([
   {
     path: '/login',
-    element: <LoginPage />,
+    lazy: lazyPage(() => import('../pages/Login')),
   },
   {
     path: '/',
-    element: (
-      <RequireAuth>
-        <MainLayout />
-      </RequireAuth>
+    element: <Navigate to="/login" replace />,
+  },
+  {
+    path: '/',
+    lazy: lazyWrappedPage(
+      () => import('../components/Layout/RequireAuth'),
+      () => import('../components/Layout/MainLayout'),
     ),
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
 
-      { path: 'dashboard', element: <DashboardPage /> },
-      { path: 'tasks/create', element: <TaskCreatePage /> },
-      { path: 'tasks', element: <TaskListPage /> },
-      { path: 'tasks/:taskId/results', element: <ResultsPage /> },
+      { path: 'dashboard', lazy: lazyPage(() => import('../pages/Dashboard')) },
+      { path: 'tasks/create', lazy: lazyPage(() => import('../pages/Task/CreatePage')) },
+      { path: 'tasks', lazy: lazyPage(() => import('../pages/Task/ListPage')) },
+      { path: 'tasks/:taskId/results', lazy: lazyPage(() => import('../pages/Results')) },
 
-      { path: 'quota/logs', element: <LogsPage /> },
+      { path: 'quota/logs', lazy: lazyPage(() => import('../pages/Quota/LogsPage')) },
       {
         path: 'quota/purchase',
-        element: (
-          <RequireAdmin>
-            <PurchasePage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Quota/PurchasePage'),
         ),
       },
       {
         path: 'quota/pay-result',
-        element: (
-          <RequireAdmin>
-            <PayResultPage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Quota/PayResultPage'),
         ),
       },
 
-      { path: 'tools/price-backfill', element: <PriceBackfill /> },
-      { path: 'tools/bill-compiler', element: <BillCompiler /> },
-      { path: 'tools/material-price', element: <MaterialPrice /> },
+      { path: 'tools/price-backfill', lazy: lazyPage(() => import('../pages/Tools/PriceBackfill')) },
+      { path: 'tools/bill-compiler', lazy: lazyPage(() => import('../pages/Tools/BillCompiler')) },
+      { path: 'tools/material-price', lazy: lazyPage(() => import('../pages/Tools/MaterialPrice')) },
 
       {
         path: 'admin',
-        element: (
-          <RequireAdmin>
-            <AdminHub />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/AdminHub'),
         ),
       },
       { path: 'admin/batch', element: <Navigate to="/admin?tab=analytics" replace /> },
@@ -81,74 +88,65 @@ const router = createBrowserRouter([
       { path: 'admin/experience', element: <Navigate to="/admin?tab=experience" replace /> },
       {
         path: 'admin/knowledge-staging',
-        element: (
-          <RequireAdmin>
-            <KnowledgeStagingPage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/KnowledgeStagingPage'),
         ),
       },
       {
         path: 'admin/tasks',
-        element: (
-          <RequireAdmin>
-            <TaskListAll />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/TaskListAll'),
         ),
       },
       {
         path: 'admin/quotas',
-        element: (
-          <RequireAdmin>
-            <QuotaManage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/QuotaManage'),
         ),
       },
       {
         path: 'admin/feedback',
-        element: (
-          <RequireAdmin>
-            <FeedbackReview />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/FeedbackReview'),
         ),
       },
       {
         path: 'admin/openclaw-reviews',
-        element: (
-          <RequireAdmin>
-            <OpenClawReviewPage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/OpenClawReviewPage'),
         ),
       },
       {
         path: 'admin/users',
-        element: (
-          <RequireAdmin>
-            <UserManage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/UserManage'),
         ),
       },
       {
         path: 'admin/settings',
-        element: (
-          <RequireAdmin>
-            <SettingsPage />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/SettingsPage'),
         ),
       },
       {
         path: 'admin/logs',
-        element: (
-          <RequireAdmin>
-            <LogViewer />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/LogViewer'),
         ),
       },
       {
         path: 'admin/billing',
-        element: (
-          <RequireAdmin>
-            <BillingAdmin />
-          </RequireAdmin>
+        lazy: lazyWrappedPage(
+          () => import('../components/Layout/RequireAdmin'),
+          () => import('../pages/Admin/BillingAdmin'),
         ),
       },
     ],

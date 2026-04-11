@@ -31,18 +31,19 @@ from pathlib import Path
 
 from loguru import logger
 
+import config
+
 # 日志写入文件（logs/目录下，按天轮转，保留30天）
-config_module = __import__("config")
 logger.add(
-    str(config_module.LOG_DIR / "auto_quota_{time:YYYY-MM-DD}.log"),
+    str(config.LOG_DIR / "auto_quota_{time:YYYY-MM-DD}.log"),
     rotation="00:00",     # 每天零点新建一个日志文件
     retention="30 days",  # 保留30天
     encoding="utf-8",
     level="INFO",
 )
 
-import config
 from src.bill_reader import BillReader
+from src.adaptive_strategy import summarize_adaptive_strategy_metrics
 from src.bill_compiler import compile_items
 from src.output_writer import OutputWriter
 from src.bill_cleaner import clean_bill_items
@@ -139,6 +140,7 @@ def _build_run_stats(results: list[dict], elapsed: float) -> dict:
     review_rejected = sum(
         1 for r in results
         if r.get("bill_item", {}).get("_review_rejected"))
+    adaptive_strategy = summarize_adaptive_strategy_metrics(results)
 
     return {
         "total": total,
@@ -149,6 +151,7 @@ def _build_run_stats(results: list[dict], elapsed: float) -> dict:
         "exp_hits": exp_matched,
         "review_rejected": review_rejected,
         "elapsed": elapsed,
+        "adaptive_strategy": adaptive_strategy,
     }
 
 
@@ -176,6 +179,21 @@ def _log_run_summary(stats: dict, has_experience_db: bool):
     logger.info(f"  耗时: {elapsed:.1f}秒")
     per_item = elapsed / max(total, 1)
     logger.info(f"  平均每条: {per_item:.2f}秒/条（含初始化）")
+    adaptive_stats = stats.get("adaptive_strategy") or {}
+    strategy_distribution = adaptive_stats.get("distribution") or {}
+    if strategy_distribution:
+        logger.info("  自适应策略分布:")
+        for strategy in ("fast", "standard", "deep"):
+            item = strategy_distribution.get(strategy) or {}
+            count = int(item.get("count", 0) or 0)
+            if count <= 0:
+                continue
+            avg_time = item.get("avg_time_sec")
+            avg_time_text = f"{avg_time:.3f}s" if isinstance(avg_time, (int, float)) else "-"
+            logger.info(
+                f"    {strategy}: {count} ({item.get('rate', 0.0)}%) "
+                f"匹配率{item.get('matched_rate', 0.0)}% 平均耗时{avg_time_text}"
+            )
     if total > 0:
         init_overhead = 23  # 模型加载固定开销（秒）
         match_time = max(elapsed - init_overhead, 0)

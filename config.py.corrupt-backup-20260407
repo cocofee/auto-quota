@@ -1,0 +1,1005 @@
+﻿"""
+鍏ㄥ眬閰嶇疆鏂囦欢
+闆嗕腑绠＄悊鎵€鏈夎矾寰勩€佸弬鏁般€佸父閲?
+"""
+
+import contextvars
+import os
+import shutil
+import threading
+import time
+from pathlib import Path
+from dotenv import load_dotenv
+from loguru import logger
+
+# 鍔犺浇.env鏂囦欢涓殑API瀵嗛挜绛夋晱鎰熼厤缃?
+load_dotenv()
+
+# ============================================================
+# 璺緞閰嶇疆
+# ============================================================
+
+# 椤圭洰鏍圭洰褰?
+PROJECT_ROOT = Path(__file__).parent
+
+# 鏁版嵁鐩綍
+DATA_DIR = PROJECT_ROOT / "data"
+QUOTA_DATA_DIR = DATA_DIR / "quota_data"      # 瀹氶Excel婧愭枃浠?
+EXPERIENCE_DIR = DATA_DIR / "experience"       # 宸插畬鎴愰」鐩紙璁粌鏁版嵁锛?
+DICT_DIR = DATA_DIR / "dict"                   # jieba涓撲笟璇嶅吀
+
+# 鏁版嵁搴撶洰褰?
+DB_DIR = PROJECT_ROOT / "db"
+COMMON_DB_DIR = DB_DIR / "common"              # 閫氱敤鏁版嵁锛堢粡楠屽簱绛夛級
+PROVINCES_DB_DIR = DB_DIR / "provinces"         # 鐪佷唤鏁版嵁锛堝畾棰濆簱绛夛級
+
+# 杈撳嚭鐩綍
+OUTPUT_DIR = PROJECT_ROOT / "output"
+
+# 鐭ヨ瘑搴撶洰褰曪紙绗簩闃舵锛?KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
+
+_PROVINCE_METADATA_CACHE_TTL = max(1, int(os.getenv("PROVINCE_METADATA_CACHE_TTL", "60")))
+_province_metadata_cache: dict[str, object] = {
+    "expires_at": 0.0,
+    "data": None,
+}
+_province_metadata_lock = threading.Lock()
+
+# ============================================================
+# 褰撳墠鐪佷唤/鐗堟湰閰嶇疆锛堥粯璁ゅ寳浜?024锛?
+# ============================================================
+
+# 榛樿鐪佷唤甯搁噺锛堝懡浠よ鍜屾棫浠ｇ爜鐨勫洖閫€鍊硷級
+CURRENT_PROVINCE = "鍖椾含甯傚缓璁惧伐绋嬫柦宸ユ秷鑰楅噺鏍囧噯(2024)"
+
+# 杩愯鏃剁渷浠斤紙鐢?contextvars 瀹炵幇绾跨▼瀹夊叏锛屾敮鎸佸璇锋眰骞跺彂鍦烘櫙锛?
+_runtime_province: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    '_runtime_province', default=None)
+
+
+def set_current_province(name: str):
+    """璁剧疆杩愯鏃剁殑褰撳墠鐪佷唤锛圵eb鐣岄潰鍒囨崲鏃惰皟鐢級"""
+    _runtime_province.set(name)
+
+
+def get_current_province() -> str:
+    """鑾峰彇褰撳墠鐢熸晥鐨勭渷浠藉悕绉?
+
+    浼樺厛绾э細杩愯鏃惰缃?> 纭紪鐮侀粯璁ゅ€?
+    Web鐣岄潰閫氳繃 set_current_province() 璁剧疆锛屽懡浠よ閫氳繃 --province 鍙傛暟浼犻€?
+    """
+    return _runtime_province.get() or CURRENT_PROVINCE
+
+
+def get_province_db_dir(province=None):
+    """获取指定省份的数据库目录"""
+    province = province or get_current_province()
+    return PROVINCES_DB_DIR / province
+
+
+def get_quota_db_path(province=None):
+    """获取定额SQLite数据库路径"""
+    return get_province_db_dir(province) / "quota.db"
+
+
+def _safe_dir_name(name: str) -> str:
+    """Convert directory names to ASCII-safe variants for ChromaDB paths."""
+    import hashlib
+
+    ascii_part = "".join(c for c in name if c.isascii() and c.isalnum())
+    if ascii_part == name:
+        return name
+    hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
+    return f"{ascii_part}_{hash_suffix}" if ascii_part else f"p_{hash_suffix}"
+
+
+def _migrate_chroma_dir(new_path: Path, old_paths: list[Path], label: str) -> Path:
+    """Migrate an old ChromaDB directory into the current target path when needed."""
+    if VECTOR_MODEL_KEY != "bge":
+        return new_path
+    for old_path in old_paths:
+        if old_path.exists() and not new_path.exists():
+            try:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(str(old_path), str(new_path))
+                break
+            except Exception as e:
+                logger.warning(f"{label}向量迁移失败({e})，继续使用旧路径: {old_path}")
+                return old_path
+    return new_path
+
+
+def get_chroma_quota_dir(province=None):
+    """Get the quota ChromaDB directory for the current vector model."""
+    province = province or get_current_province()
+    safe_name = _safe_dir_name(province)
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / f"{safe_name}_quota"
+    old_paths = [
+        DB_DIR / "chroma" / f"{safe_name}_quota",
+        get_province_db_dir(province) / "chroma_quota",
+    ]
+    return _migrate_chroma_dir(new_path, old_paths, "定额库")
+
+
+def get_experience_db_path():
+    """Get the experience SQLite database path."""
+    return COMMON_DB_DIR / "experience.db"
+
+
+def get_price_reference_db_path():
+    """Get the price reference SQLite database path."""
+    return COMMON_DB_DIR / "price_reference.db"
+
+
+def get_universal_kb_path():
+    """Get the universal knowledge base SQLite database path."""
+    return COMMON_DB_DIR / "universal_kb.db"
+
+
+def get_knowledge_staging_db_path():
+    """Get the knowledge staging SQLite database path."""
+    return COMMON_DB_DIR / "knowledge_staging.db"
+
+
+def get_knowledge_staging_schema_path():
+    """Get the knowledge staging schema SQL path."""
+    return PROJECT_ROOT / "docs" / "knowledge_staging_schema_v1.sql"
+
+
+def get_chroma_experience_dir():
+    """Get the experience ChromaDB directory for the current vector model."""
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_experience"
+    old_paths = [
+        DB_DIR / "chroma" / "common_experience",
+        COMMON_DB_DIR / "chroma_experience",
+    ]
+    return _migrate_chroma_dir(new_path, old_paths, "经验库")
+
+
+def get_chroma_universal_kb_dir():
+    """Get the universal knowledge base ChromaDB directory for the current vector model."""
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_universal_kb"
+    old_paths = [
+        DB_DIR / "chroma" / "common_universal_kb",
+        COMMON_DB_DIR / "chroma_universal_kb",
+    ]
+    return _migrate_chroma_dir(new_path, old_paths, "通用知识库")
+
+
+def get_chroma_qmd_dir():
+    """Get the QMD wiki ChromaDB directory, isolated by vector model key."""
+    new_path = DB_DIR / "chroma" / VECTOR_MODEL_KEY / "common_qmd"
+    old_paths = [
+        DB_DIR / "chroma" / "common_qmd",
+        DB_DIR / "chroma" / "common_wiki",
+        COMMON_DB_DIR / "chroma_qmd",
+        COMMON_DB_DIR / "chroma_wiki",
+    ]
+    return _migrate_chroma_dir(new_path, old_paths, "QMD wiki index")
+
+
+def get_chroma_onnx_cache_dir(model_name: str = "all-MiniLM-L6-v2") -> Path:
+    """Get a writable ONNX embedding cache directory for Chroma."""
+    safe_name = _safe_dir_name(model_name)
+    path = DB_DIR / "chroma_cache" / safe_name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_current_quota_version(province=None):
+    """Get the current quota database version used for experience binding."""
+    from src.quota_db import QuotaDB
+    try:
+        db = QuotaDB(province)
+        return db.get_version()
+    except Exception:
+        return ""
+def get_quota_data_dir(province=None):
+    """鑾峰彇鎸囧畾鐪佷唤鐨勫畾棰滶xcel婧愭枃浠剁洰褰?
+
+    鏀寔涓ょ鐩綍缁撴瀯锛?
+    1. 鎵佸钩: data/quota_data/鍖椾含2024/
+    2. 宓屽: data/quota_data/鍖椾含/鍖椾含2024/
+    浼樺厛鍖归厤鎵佸钩缁撴瀯锛屾壘涓嶅埌鍐嶆壂鎻忓瓙鐩綍
+    """
+    province = province or get_current_province()
+    # 鎵佸钩缁撴瀯锛氱洿鎺ュ尮閰?
+    flat_path = QUOTA_DATA_DIR / province
+    if flat_path.exists() and flat_path.is_dir():
+        return flat_path
+    # 宓屽缁撴瀯锛氬湪鎵€鏈夊瓙鐩綍涓煡鎵?
+    if QUOTA_DATA_DIR.exists():
+        for parent in QUOTA_DATA_DIR.iterdir():
+            if parent.is_dir():
+                nested = parent / province
+                if nested.exists() and nested.is_dir():
+                    return nested
+    # 閮芥病鎵惧埌锛岃繑鍥炴墎骞宠矾寰勶紙璁╄皟鐢ㄦ柟鎶ラ敊锛?
+    return flat_path
+
+
+def list_db_provinces():
+    """鎵弿 db/provinces/ 涓嬫墍鏈夊凡鏋勫缓鐨勭渷浠芥暟鎹簱鐩綍
+
+    杩斿洖鐪佷唤鍚嶇О鍒楄〃锛堝嵆鐩綍鍚嶏級锛屽 ['鍖椾含2024娑堣€楅噺', '鍖椾含2021娑堣€楅噺', ...]
+    璺宠繃绌虹洰褰曞拰娴嬭瘯鐩綍锛堟棤 quota.db 鎴栧畾棰濇潯鏁颁负0鐨勭洰褰曪級銆?
+    """
+    return list(_get_province_metadata()["provinces"])
+
+
+def get_sibling_provinces(main_province: str) -> list[str]:
+    """鏌ユ壘涓庝富瀹氶搴撳悓鐪佷唤銆佸悓骞翠唤鐨勫厔寮熷簱锛堣嚜鍔ㄦ寕杞界敤锛?
+    渚嬪锛氳緭鍏?瀹佸瀹夎宸ョ▼璁′环瀹氶(2019)"
+    杩斿洖锛歔"瀹佸甯傛斂宸ョ▼璁′环瀹氶(2019)", "瀹佸鎴垮眿寤虹瓚瑁呴グ宸ョ▼璁′环瀹氶(2019)", ...]
+
+    鍒嗙粍瑙勫垯锛氭彁鍙栫渷浠藉悕锛堝墠2-3瀛楋級+ 骞翠唤锛堟嫭鍙蜂腑4浣嶆暟瀛楋級锛屼袱鑰呴兘鐩稿悓鎵嶇畻鍚屾壒銆?
+    """
+    import re
+
+    def _extract_region_year(name: str):
+        """从定额库名提取(省份, 年份)。"""
+        year_match = re.search(r'[（(](\d{4})[)）]', name)
+        year = year_match.group(1) if year_match else ""
+        prefix_match = re.match(
+            r'^([\u4e00-\u9fff]{2,8}?)(?:省|市|自治区|特别行政区|回族自治区|壮族自治区|维吾尔自治区)',
+            name,
+        )
+        prefix = prefix_match.group(1) if prefix_match else name[:2]
+        region = prefix[:2]
+        return region, year
+
+    main_region, main_year = _extract_region_year(main_province)
+    if not main_year:
+        return []  # 鏃犳硶鎻愬彇骞翠唤锛屼笉鍋氳嚜鍔ㄦ寕杞?
+    siblings = []
+    for p in list_db_provinces():
+        if p == main_province:
+            continue  # 璺宠繃鑷繁
+        r, y = _extract_region_year(p)
+        if r == main_region and y == main_year:
+            siblings.append(p)
+
+    return siblings
+
+
+def _split_keywords(text: str) -> list[str]:
+    """灏嗙敤鎴疯緭鍏ユ媶鎴愬叧閿瘝鍒楄〃锛堟寜涓枃/鏁板瓧/瀛楁瘝鐨勮嚜鐒惰竟鐣屾媶鍒嗭級
+
+    鐪佷唤鍚嶉€氬父鐢?鍦板尯(2瀛?+涓撲笟鍏抽敭璇?2瀛?+骞翠唤(4浣?"缁勬垚锛?
+    鎸夊瓧绗︾被鍨嬭竟鐣屾媶鍒嗗悗锛屽杩炵画涓枃鍐嶆寜2瀛椾竴缁勭粏鍒嗐€?
+
+    渚嬪:
+        "鍖椾含2024"    鈫?["鍖椾含", "2024"]
+        "骞夸笢瀹夎"    鈫?["骞夸笢", "瀹夎"]
+        "婀栧寳甯傛斂2024" 鈫?["婀栧寳", "甯傛斂", "2024"]
+        "淇籍"       鈫?["淇籍"]
+    """
+    import re
+    # 鎸夊瓧绗︾被鍨嬭竟鐣屾媶鍒嗭細杩炵画涓枃銆佽繛缁暟瀛椼€佽繛缁瓧姣嶅悇涓轰竴缁?
+    tokens = re.findall(r'[\u4e00-\u9fff]+|[0-9]+|[a-zA-Z]+', text)
+
+    keywords = []
+    for token in tokens:
+        # 绾腑鏂囦笖瓒呰繃2瀛楋細鎸?瀛椾竴缁勬媶鍒嗭紙"骞夸笢瀹夎" 鈫?"骞夸笢"+"瀹夎"锛?
+        if len(token) > 2 and all('\u4e00' <= c <= '\u9fff' for c in token):
+            for i in range(0, len(token), 2):
+                part = token[i:i+2]
+                if len(part) >= 2:
+                    keywords.append(part)
+        else:
+            keywords.append(token)
+
+    return keywords if keywords else [text]
+
+
+def resolve_province(name: str = None, interactive: bool = False,
+                     scope: str = "db") -> str:
+    """灏嗙敤鎴疯緭鍏ョ殑鐪佷唤绠€绉拌В鏋愪负瀹屾暣鐨勭渷浠界洰褰曞悕
+
+    瑙ｆ瀽浼樺厛绾?
+    1. 绮剧‘鍖归厤
+    2. 瀛愪覆鍖归厤锛氳緭鍏ユ槸鏌愪釜鐩綍鍚嶇殑瀛愪覆锛屼笖鍞竴鍖归厤
+    3. 澶氬叧閿瘝鍖归厤锛氭寜涓枃/鏁板瓧杈圭晫鎷嗗垎杈撳叆锛屽叏閮ㄥ懡涓墠绠楀尮閰?
+    4. 澶氫釜鍖归厤锛氫氦浜掓ā寮忎笅璁╃敤鎴烽€夋嫨锛屽惁鍒欐姤閿?
+    5. 鏃犲尮閰嶏細鎶ラ敊骞跺垪鍑烘墍鏈夊彲鐢ㄧ渷浠?
+
+    鍙傛暟:
+        name: 鐢ㄦ埛杈撳叆鐨勭渷浠藉悕绉?绠€绉帮紝None 琛ㄧず浣跨敤榛樿鍊兼垨浜や簰閫夋嫨
+        interactive: 鏄惁鍏佽浜や簰寮忛€夋嫨锛堝懡浠よ鍦烘櫙涓篢rue锛?
+        scope: "db" 鎼滅储宸叉瀯寤虹殑鏁版嵁搴擄紙鍖归厤鐢級锛?data" 鎼滅储婧愭枃浠剁洰褰曪紙瀵煎叆鐢級
+
+    杩斿洖: 瀹屾暣鐨勭渷浠界洰褰曞悕
+
+    绀轰緥:
+        resolve_province("鍖椾含2024")  鈫?"鍖椾含甯傚缓璁惧伐绋嬫柦宸ユ秷鑰楅噺鏍囧噯(2024)"
+        resolve_province("骞夸笢瀹夎")  鈫?"骞夸笢鐪侀€氱敤瀹夎宸ョ▼缁煎悎瀹氶(2018)"
+        resolve_province("淇籍")      鈫?"鍖椾含甯傛埧灞嬩慨宸ョ▼棰勭畻娑堣€楅噺鏍囧噯(2021)"
+        resolve_province("婀栧寳甯傛斂2024") 鈫?"婀栧寳鐪佸競鏀垮伐绋嬫秷鑰楅噺瀹氶鍙婂叏璐圭敤鍩轰环琛?2024)"
+    """
+    available = list_db_provinces() if scope == "db" else list_all_provinces()
+
+    if not available:
+        # 瀵煎叆鍦烘櫙涓嬫棤婧愭枃浠剁洰褰曟椂锛屼繚鐣欏師濮嬭緭鍏ュ仛鍏煎锛堟棫鐗堟墎骞崇粨鏋勶級
+        if scope == "data":
+            # 鏈夊悕绉板垯鍘熸牱杩斿洖锛涙棤鍚嶇О鍒欏洖閫€褰撳墠榛樿鐪佷唤锛堝吋瀹规棫鐗堢洰褰曪級
+            return name if name else get_current_province()
+        raise ValueError("娌℃湁鎵惧埌浠讳綍鐪佷唤鏁版嵁搴擄紝璇峰厛瀵煎叆瀹氶鏁版嵁")
+
+    # 鏈寚瀹氱渷浠斤細浜や簰妯″紡涓嬭鐢ㄦ埛閫夛紝鍚﹀垯浼樺厛褰撳墠榛樿锛屾壘涓嶅埌鍒欏洖閫€绗竴涓彲鐢ㄧ渷浠?
+    if not name:
+        if interactive and len(available) > 1:
+            return _interactive_select(available)
+        current = get_current_province()
+        if current in available:
+            return current
+        return available[0]
+
+    # 1. 绮剧‘鍖归厤
+    if name in available:
+        return name
+
+    # 2. 瀛愪覆鍖归厤锛堣緭鍏ユ槸鐩綍鍚嶇殑瀛愪覆锛?
+    matches = [p for p in available if name in p]
+
+    # 3. 澶氬叧閿瘝鍖归厤锛堟寜涓枃/鏁板瓧/瀛楁瘝鐨勮嚜鐒惰竟鐣屾媶鍒嗭紝鍏ㄩ儴鍛戒腑鎵嶇畻锛?
+    # 渚嬪 "骞夸笢瀹夎" 鈫?["骞夸笢", "瀹夎"]锛屽尮閰?"骞夸笢鐪侀€氱敤瀹夎宸ョ▼缁煎悎瀹氶(2018)"
+    if not matches:
+        keywords = _split_keywords(name)
+        if len(keywords) > 1:
+            matches = [p for p in available if all(kw in p for kw in keywords)]
+
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        if interactive:
+            print(f"\n'{name}' 鍖归厤鍒板涓渷浠斤細")
+            return _interactive_select(matches)
+        # 闈炰氦浜掓ā寮忥紝杩斿洖璇︾粏閿欒
+        options = "\n  ".join(matches)
+        raise ValueError(f"'{name}' 鍖归厤鍒板涓渷浠?\n  {options}\n璇疯緭鍏ユ洿绮剧‘鐨勫悕绉?)
+    else:
+        options = "\n  ".join(available)
+        raise ValueError(f"鎵句笉鍒扮渷浠?'{name}'锛屽彲鐢ㄧ渷浠?\n  {options}")
+
+
+def _interactive_select(provinces: list) -> str:
+    """浜や簰寮忛€夋嫨鐪佷唤锛堝懡浠よ鑿滃崟锛?""
+    # 榛樿鐪佷唤鎺掑湪鏈€鍓嶉潰
+    if CURRENT_PROVINCE in provinces:
+        provinces = [CURRENT_PROVINCE] + [p for p in provinces if p != CURRENT_PROVINCE]
+
+    print("\n璇烽€夋嫨鐪佷唤瀹氶搴?")
+    for i, p in enumerate(provinces):
+        default_mark = " (榛樿)" if p == CURRENT_PROVINCE else ""
+        print(f"  [{i + 1}] {p}{default_mark}")
+
+    while True:
+        try:
+            choice = input(f"\n杈撳叆缂栧彿 [1-{len(provinces)}]锛岀洿鎺ュ洖杞﹂€夐粯璁? ").strip()
+            if not choice:
+                # 鍥炶溅 = 閫夐粯璁?
+                result = CURRENT_PROVINCE if CURRENT_PROVINCE in provinces else provinces[0]
+                print(f"  鈫?宸查€夋嫨: {result}")
+                return result
+            idx = int(choice) - 1
+            if 0 <= idx < len(provinces):
+                print(f"  鈫?宸查€夋嫨: {provinces[idx]}")
+                return provinces[idx]
+            print(f"  鏃犳晥缂栧彿锛岃杈撳叆 1-{len(provinces)}")
+        except (ValueError, EOFError):
+            print(f"  鏃犳晥杈撳叆锛岃杈撳叆 1-{len(provinces)}")
+
+
+def list_all_provinces():
+    """鎵弿鎵€鏈夊彲鐢ㄧ殑鐪佷唤/鐗堟湰
+
+    鏀寔鎵佸钩鍜屽祵濂椾袱绉嶇洰褰曠粨鏋勶紝杩斿洖鐪佷唤鍚嶇О鍒楄〃銆?
+    """
+    provinces = []
+    if not QUOTA_DATA_DIR.exists():
+        return provinces
+    for item in sorted(QUOTA_DATA_DIR.iterdir()):
+        if not item.is_dir():
+            continue
+        # 妫€鏌ユ槸鍚︾洿鎺ュ惈xlsx锛堟墎骞崇粨鏋勶級
+        has_xlsx = any(item.glob("*.xlsx"))
+        if has_xlsx:
+            provinces.append(item.name)
+        else:
+            # 妫€鏌ュ瓙鐩綍锛堝祵濂楃粨鏋勶級
+            for sub in sorted(item.iterdir()):
+                if sub.is_dir() and any(sub.glob("*.xlsx")):
+                    provinces.append(sub.name)
+    return provinces
+
+
+def get_province_groups() -> dict[str, str]:
+    """鑾峰彇姣忎釜瀹氶搴撶殑鍒嗙粍鍚嶏紙鏉ヨ嚜 data/quota_data/ 鐨勭埗鏂囦欢澶瑰悕锛?
+
+    杩斿洖 {瀹氶搴撳悕: 鍒嗙粍鍚峿 鐨勬槧灏勶紝濡?{"鐭冲寲瀹夎棰勭畻2019": "鐭虫补", "鐭虫补棰勭畻2022": "鐭虫补"}
+    宓屽缁撴瀯涓嬬埗鏂囦欢澶瑰悕鍗冲垎缁勫悕锛涙墎骞崇粨鏋勶紙鏃犵埗鏂囦欢澶癸級鐢ㄥ畾棰濆簱鍚嶅墠2瀛椾綔涓哄垎缁勩€?
+    鐗规畩澶勭悊锛氭柊鐤?* 鏂囦欢澶圭粺涓€褰掑叆"鏂扮枂"鍒嗙粍锛堝湴鍖轰俊鎭€氳繃 get_province_subgroups 鑾峰彇锛夈€?
+    鍚屾椂鎵弿 db/provinces/ 涓嬪凡鏈変絾涓嶅湪 data/ 涓殑瀹氶搴擄紝鐢ㄥ墠2瀛楀厹搴曘€?
+    """
+    return dict(_get_province_metadata()["groups"])
+
+
+def get_province_subgroups() -> dict[str, str]:
+    """鑾峰彇鏂扮枂绛夌渷浠界殑瀛愬垎缁勶紙鍦板尯鍚嶏級
+
+    杩斿洖 {瀹氶搴撳悕: 鍦板尯鍚峿 鐨勬槧灏勶紝浠呭寘鍚湁瀛愬垎缁勭殑瀹氶搴撱€?
+    渚嬪 {"鍏ㄧ粺瀹夎宸ョ▼娑堣€楅噺瀹氶涔岄瞾鏈ㄩ綈浼颁环姹囨€昏〃(2020)": "涔岄瞾鏈ㄩ綈"}
+    """
+    return dict(_get_province_metadata()["subgroups"])
+
+
+def _get_province_metadata() -> dict[str, object]:
+    now = time.time()
+    cached = _province_metadata_cache.get("data")
+    expires_at = float(_province_metadata_cache.get("expires_at") or 0.0)
+    if cached is not None and now < expires_at:
+        return cached
+
+    with _province_metadata_lock:
+        cached = _province_metadata_cache.get("data")
+        expires_at = float(_province_metadata_cache.get("expires_at") or 0.0)
+        now = time.time()
+        if cached is not None and now < expires_at:
+            return cached
+
+        data = _scan_province_metadata()
+        _province_metadata_cache["data"] = data
+        _province_metadata_cache["expires_at"] = now + _PROVINCE_METADATA_CACHE_TTL
+        return data
+
+
+def _scan_province_metadata() -> dict[str, object]:
+    import sqlite3
+
+    groups: dict[str, str] = {}
+    subgroups: dict[str, str] = {}
+
+    if QUOTA_DATA_DIR.exists():
+        for item in sorted(QUOTA_DATA_DIR.iterdir()):
+            if not item.is_dir():
+                continue
+            has_xlsx = any(item.glob("*.xlsx"))
+            if has_xlsx:
+                groups[item.name] = item.name[:2]
+                continue
+
+            group_name = "鏂扮枂" if item.name.startswith("鏂扮枂-") else item.name
+            region = item.name[3:] if item.name.startswith("鏂扮枂-") else ""
+            for sub in sorted(item.iterdir()):
+                if not sub.is_dir():
+                    continue
+                groups[sub.name] = group_name
+                if region:
+                    subgroups[sub.name] = region
+
+    provinces: list[str] = []
+    if PROVINCES_DB_DIR.exists():
+        for item in sorted(PROVINCES_DB_DIR.iterdir()):
+            if not item.is_dir():
+                continue
+            quota_db = item / "quota.db"
+            if not quota_db.exists():
+                continue
+
+            try:
+                with sqlite3.connect(str(quota_db), timeout=1.0) as conn:
+                    row = conn.execute("SELECT 1 FROM quotas LIMIT 1").fetchone()
+                if row is None:
+                    continue
+            except Exception:
+                continue
+
+            provinces.append(item.name)
+            if item.name not in groups:
+                groups[item.name] = item.name[:2]
+
+    return {
+        "provinces": provinces,
+        "groups": groups,
+        "subgroups": subgroups,
+    }
+
+# 鍏煎鏃т唬鐮侊細淇濈暀QUOTA_EXCEL_FILES浣嗘爣璁颁负搴熷純
+QUOTA_EXCEL_FILES = {
+    "瀹夎": "C 閫氱敤瀹夎宸ョ▼_鍏ㄩ儴.xlsx",
+}
+
+# 瀹氶Excel鍒楁槧灏勶紙A=缂栧彿, B=鍚嶇О+鍙傛暟, C=鍗曚綅, D=宸ヤ綔绫诲瀷锛?
+QUOTA_EXCEL_COLUMNS = {
+    "id_col": 0,       # A鍒楋細瀹氶缂栧彿
+    "name_col": 1,     # B鍒楋細鍚嶇О+鐗瑰緛鍙傛暟
+    "unit_col": 2,     # C鍒楋細璁￠噺鍗曚綅
+    "type_col": 3,     # D鍒楋細宸ヤ綔绫诲瀷锛?瀹夎"/"鍦熷缓"/"甯傛斂"绛夛紝鐢ㄤ簬鑷姩璇嗗埆specialty锛?
+}
+
+# ============================================================
+# 鎼滅储寮曟搸閰嶇疆
+# ============================================================
+
+# 鍚戦噺鎼滅储閰嶇疆
+VECTOR_ENABLED = os.getenv("VECTOR_ENABLED", "true").lower() == "true"  # 鐜鍙橀噺鎺у埗锛孌ocker鍙叧闂?
+VECTOR_MODEL_KEY = os.getenv("VECTOR_MODEL_KEY", "bge").lower()  # 妯″瀷鏍囪瘑锛歜ge 鎴?qwen3
+# 楠岃瘉key鍚堟硶鎬э細蹇呴』涓巑odel_profile娉ㄥ唽琛ㄤ竴鑷达紝閬垮厤璺緞鍜屾ā鍨嬩笉鍖归厤
+_VALID_MODEL_KEYS = {"bge", "qwen3"}
+_BUNDLED_QWEN3_DIR = PROJECT_ROOT / "models" / "qwen3-embedding-quota-v3"
+_DEFAULT_VECTOR_MODEL_NAMES = {
+    "bge": "BAAI/bge-large-zh-v1.5",
+    "qwen3": str(_BUNDLED_QWEN3_DIR) if _BUNDLED_QWEN3_DIR.exists() else "models/qwen3-embedding-quota-v3",
+}
+if VECTOR_MODEL_KEY not in _VALID_MODEL_KEYS:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        f"VECTOR_MODEL_KEY={VECTOR_MODEL_KEY!r} 涓嶅湪鏀寔鍒楄〃{_VALID_MODEL_KEYS}涓紝鍥為€€鍒癰ge"
+    )
+    VECTOR_MODEL_KEY = "bge"
+VECTOR_MODEL_NAME = os.getenv("VECTOR_MODEL_NAME") or _DEFAULT_VECTOR_MODEL_NAMES[VECTOR_MODEL_KEY]
+VECTOR_TOP_K = 20                               # 鍚戦噺鎼滅储杩斿洖Top K
+VECTOR_WEIGHT = 0.7                             # 娣峰悎鎼滅储涓悜閲忕殑鏉冮噸锛堝弬鑰僌penClaw鐨?0/30閰嶆瘮锛?
+
+# BM25鎼滅储閰嶇疆
+BM25_TOP_K = 30                                 # BM25鎼滅储杩斿洖Top K
+BM25_WEIGHT = 0.3                               # 娣峰悎鎼滅储涓瑽M25鐨勬潈閲?
+
+# 娣峰悎鎼滅储閰嶇疆
+HYBRID_TOP_K = 25                               # 娣峰悎鎼滅储鏈€缁堣繑鍥濼op K
+RRF_K = 60                                      # RRF铻嶅悎鎺掑簭鐨勫父鏁発锛堟爣鍑嗗€?0锛?
+# 杩愯鏃堕鐑厤缃細鎶婇浠诲姟鍐峰惎鍔ㄥ墠绉诲埌鏈嶅姟鍚姩闃舵
+RUNTIME_PREWARM_ENABLED = os.getenv("RUNTIME_PREWARM_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+RUNTIME_PREWARM_PROVINCES = [
+    part.strip()
+    for part in os.getenv("RUNTIME_PREWARM_PROVINCES", "").split(",")
+    if part.strip()
+]
+RUNTIME_PREWARM_INCLUDE_UNIVERSAL_KB = os.getenv(
+    "RUNTIME_PREWARM_INCLUDE_UNIVERSAL_KB", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+RUNTIME_PREWARM_INCLUDE_METHOD_CARDS = os.getenv(
+    "RUNTIME_PREWARM_INCLUDE_METHOD_CARDS", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+RUNTIME_PREWARM_VECTOR_INDEX = os.getenv(
+    "RUNTIME_PREWARM_VECTOR_INDEX", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# 鑷€傚簲铻嶅悎涓庡鏌ヨ澧炲己锛堣缁冩棤鍏筹紝閫傚悎蹇€熸紨杩涳級
+HYBRID_ADAPTIVE_FUSION = True                   # 鏍规嵁query鐗瑰緛鍔ㄦ€佽皟鏁碆M25/鍚戦噺鏉冮噸
+HYBRID_MULTI_QUERY_FUSION = True                # 浣跨敤澶氭煡璇㈠彉浣撹繘琛孯RF铻嶅悎
+HYBRID_QUERY_VARIANTS = 4                       # 鏈€澶氫娇鐢ㄥ嚑涓猶uery鍙樹綋锛堝惈鏍稿績鍚嶈瘝鍙樹綋锛?HYBRID_STANDARD_QUERY_VARIANTS = int(
+    os.getenv("HYBRID_STANDARD_QUERY_VARIANTS", "3")
+)
+HYBRID_DEEP_QUERY_VARIANTS = 3                  # deep 妯″紡鍙樹綋纭笂闄愶紝浼樺厛淇濋殰鍚炲悙
+HYBRID_VARIANT_WEIGHTS = [1.0, 0.75, 0.60, 0.50] # 鍚剄uery鍙樹綋鍦≧RF涓殑鏉冮噸
+HYBRID_ADAPTIVE_BOOST = 0.18                    # 鍔ㄦ€佹潈閲嶅亸绉诲箙搴︼紙0~0.4鏇寸ǔ濡ワ級
+HYBRID_DEFER_AUX_SEARCH = True                  # 涓绘悳绱㈢粨鏋滆冻澶熷ソ鏃惰烦杩囪緟鍔╁簱鎵╂悳
+HYBRID_STANDARD_RANK_WINDOW_CAP = int(
+    os.getenv("HYBRID_STANDARD_RANK_WINDOW_CAP", "50")
+)
+HYBRID_DEEP_RANK_WINDOW_CAP = int(
+    os.getenv("HYBRID_DEEP_RANK_WINDOW_CAP", "72")
+)
+UNIVERSAL_KB_KEYWORD_TIMEOUT_SEC = float(
+    os.getenv("UNIVERSAL_KB_KEYWORD_TIMEOUT_SEC", "0.5")
+)
+UNIVERSAL_KB_KEYWORD_COOLDOWN_SEC = float(
+    os.getenv("UNIVERSAL_KB_KEYWORD_COOLDOWN_SEC", "30")
+)
+
+# 绾ц仈鎼滅储璐ㄩ噺闂ㄦ锛氫富鎼滃€欓€夎緝灏戞椂锛屾鏌op鍒嗗樊鏄惁瓒冲澶?
+# 鍊煎惈涔夛細top1涓巘op3鐨刪ybrid_score鍒嗗樊姣斾緥锛屼綆浜庢鍊煎垯缁х画鍏ㄥ簱鎼滅储
+# 0.3琛ㄧずtop1鑷冲皯姣攖op3楂?0%鐨勫垎鏁版墠璁や负鎼滅储缁撴灉纭畾
+CASCADE_QUALITY_THRESHOLD = 0.15
+HYBRID_FEEDBACK_ADAPTIVE_BIAS = True            # 浠庣敤鎴蜂慨姝?纭鏁版嵁瀛︿範鍏ㄥ眬鏉冮噸鍋忕疆
+HYBRID_FEEDBACK_BIAS_MAX = 0.08                 # 鍙嶉鍋忕疆鏈€澶у箙搴︼紙閬垮厤闇囪崱锛?
+HYBRID_FEEDBACK_BIAS_REFRESH_SEC = 300          # 鍋忕疆缂撳瓨鍒锋柊鍛ㄦ湡锛堢锛?
+HYBRID_FEEDBACK_MIN_SAMPLES = 60                # 鍚敤鍋忕疆鐨勬渶灏忔牱鏈暟
+
+# Reranker config. Default to the bundled offline model when present.
+_BUNDLED_RERANKER_DIR = PROJECT_ROOT / "models" / "bge-reranker-v2-m3"
+_DEFAULT_RERANKER_MODEL_NAME = str(_BUNDLED_RERANKER_DIR) if _BUNDLED_RERANKER_DIR.exists() else "BAAI/bge-reranker-v2-m3"
+RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", _DEFAULT_RERANKER_MODEL_NAME).strip()
+RERANKER_TOP_K = 25                              # 閲嶆帓鍚庝繚鐣欑殑鍊欓€夋暟锛堜笉鎴柇锛岃param_validator绮剧‘绛涢€夛級
+RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
+RERANKERS_MODEL_TYPE = os.getenv("RERANKERS_MODEL_TYPE", "").strip() or None
+UNIFIED_RANKING_ENABLED = os.getenv(
+    "UNIFIED_RANKING_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+UNIFIED_RANKING_SHADOW_MODE = os.getenv(
+    "UNIFIED_RANKING_SHADOW_MODE", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# ============================================================
+# 澶фā鍨婣PI閰嶇疆
+# ============================================================
+
+# 榛樿浣跨敤鐨勬ā鍨?
+DEFAULT_LLM = os.getenv("DEFAULT_LLM", "deepseek")
+
+# DeepSeek閰嶇疆
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_MODEL = "deepseek-chat"
+
+# Claude閰嶇疆锛堟敮鎸佷腑杞湇鍔★級
+# 娉ㄦ剰锛氱敤CLAUDE_鍓嶇紑鑰岄潪ANTHROPIC_鍓嶇紑锛岄伩鍏嶅拰Claude Code鑷韩鐜鍙橀噺鍐茬獊
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", "")  # 涓浆鍦板潃锛岀暀绌?瀹樻柟API
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-6")
+
+# OpenAI閰嶇疆
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = "gpt-4o"
+
+# 閫氫箟鍗冮棶(Qwen)閰嶇疆 鈥斺€?闃块噷浜慏ashScope
+QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
+QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
+
+# Kimi閰嶇疆 鈥斺€?閫氳繃闃块噷浜慏ashScope浠ｇ悊璁块棶
+KIMI_API_KEY = os.getenv("KIMI_API_KEY", "")
+KIMI_BASE_URL = os.getenv("KIMI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+KIMI_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
+
+# API璋冪敤閰嶇疆
+LLM_MAX_RETRIES = 3           # API璋冪敤鏈€澶ч噸璇曟鏁?
+LLM_TIMEOUT = 90              # API璋冪敤瓒呮椂锛堢锛?
+LLM_CONCURRENT = 5            # 骞跺彂璋冪敤鏁帮紙鎵归噺鍖归厤鏃讹級
+
+# ============================================================
+# 澶欰gent鍔ㄦ€佽矾鐢遍厤缃紙娓愯繘寮忕籂鍋忥級
+# ============================================================
+
+# 绗?灞傦細缁忛獙搴撶洿閫氱殑缃俊搴﹂槇鍊?
+EXPERIENCE_DIRECT_THRESHOLD = 90   # 缁忛獙搴撳懡涓笖缃俊搴?90%鏃剁洿鎺ヨ繑鍥?EXPERIENCE_PARALLEL_RECALL_TIMEOUT_SEC = float(
+    os.getenv("EXPERIENCE_PARALLEL_RECALL_TIMEOUT_SEC", "0.6")
+)
+EXPERIENCE_MAX_EXPANSION_STEPS = int(
+    os.getenv("EXPERIENCE_MAX_EXPANSION_STEPS", "2")
+)
+
+# 绗?灞傦細鍗旳gent鍖归厤鍚庯紝璺宠繃澶欰gent鐨勭疆淇″害闃堝€?
+SINGLE_AGENT_THRESHOLD = 85        # 鍗旳gent缃俊搴?85%鏃朵粎鍋氬弬鏁板揩閫熼獙璇?
+
+# 绗?灞傦細瑙﹀彂澶欰gent绾犲亸鐨勯槇鍊?
+MULTI_AGENT_THRESHOLD = 85         # 浣庝簬姝ゅ€煎惎鍔ㄥAgent锛堝弬鏁板鏍?瑙勫垯瀹℃牳+瑁佸垽锛?
+
+# 鏈€缁堢疆淇″害鏍囪
+CONFIDENCE_GREEN = 90     # 缁胯壊锛氳嚜鍔ㄧ‘璁?
+CONFIDENCE_YELLOW = 75    # 榛勮壊锛氬缓璁汉宸ョ‘璁わ紙涓庡墠绔?API缁熶竴锛?
+# 浣庝簬75%锛氱孩鑹诧紝闇€浜哄伐澶勭悊
+
+# ============================================================
+# Agent锛堥€犱环鍛樿淳缁存柉锛夐厤缃?
+# ============================================================
+
+# Agent榛樿浣跨敤鐨勫ぇ妯″瀷锛堝紑鍙戦樁娈电敤Claude/DeepSeek锛岀敓浜ч樁娈靛彲鍒囨崲锛?
+AGENT_LLM = os.getenv("AGENT_LLM", "deepseek")
+
+# Agent澶фā鍨嬫俯搴︼紙浣庢俯搴?鏇寸‘瀹氭€э紝楂樻俯搴?鏇村垱閫犳€э級
+AGENT_TEMPERATURE = 0.1
+
+# Agent蹇€熼€氶亾锛堥珮缃俊鍊欓€夋椂璺宠繃LLM锛屾樉钁楁彁閫燂級
+# 榛樿鍊艰鏄庯細
+#   SCORE=0.60 鈫?param_score鈮?.6鍗冲彲璧板揩閫氶亾锛堢粷澶у鏁版潯鐩烦杩嘗LM锛?
+#     - 1.0="鏃犲弬鏁板彲楠岃瘉/瀹岀編鍖归厤" 鈫?璧板揩閫氶亾
+#     - 0.6-0.7="閮ㄥ垎鍖归厤/鏈夋。浣嶆湭纭" 鈫?璧板揩閫氶亾锛堝璐ㄩ噺涓嶈揪鏍囧彲璋冮珮鍒?.85锛?
+#     - <0.6="鍙傛暟涓嶅尮閰? 鈫?璧癓LM
+#   SCORE_GAP=0.03 鈫?top1鍜宼op2鐨剅eranker鍒嗗樊鑷冲皯0.03鎵嶈蛋蹇€氶亾
+#     - reranker鍒嗘暟鏄?~1褰掍竴鍖栫殑锛坆ge-reranker-v2-m3缁弒igmoid锛?
+#     - 鍒嗗樊<0琛ㄧずreranker鍜屽弬鏁伴獙璇佸櫒鎰忚涓嶄竴鑷?鈫?蹇呴』璧癓LM
+#     - 鍒嗗樊<0.03琛ㄧず鍩烘湰骞冲眬 鈫?璧癓LM
+#     - 鍒嗗樊鈮?.03琛ㄧずreranker鏄庣‘鍋忓ソtop1 鈫?鍙蛋蹇€氶亾
+#   AUDIT_RATE=0.15 鈫?15%鎶芥鐜囷紝鐩戞帶蹇€氶亾璐ㄩ噺锛堜笉涓€鑷存椂浠LM涓哄噯锛?
+#   REQUIRE_PARAM_MATCH 鈫?娓呭崟鏈夊弬鏁颁絾top1鏃犲弬鏁版椂寮哄埗璧癓LM锛堥伩鍏嶆棤鍙傛暟鍊欓€夌洸鍖猴級
+AGENT_FASTPATH_ENABLED = os.getenv("AGENT_FASTPATH_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+AGENT_FASTPATH_SCORE = float(os.getenv("AGENT_FASTPATH_SCORE", "0.60"))
+AGENT_FASTPATH_MARGIN = float(os.getenv("AGENT_FASTPATH_MARGIN", "0.03"))
+AGENT_FASTPATH_SCORE_GAP = float(os.getenv("AGENT_FASTPATH_SCORE_GAP", "0.03"))
+AGENT_FASTPATH_AUDIT_RATE = max(0.0, min(
+    1.0, float(os.getenv("AGENT_FASTPATH_AUDIT_RATE", "0.15"))
+))
+# 娓呭崟鏈夊弬鏁颁絾top1鏃犲弬鏁版椂锛屽己鍒惰蛋LLM锛堥伩鍏嶆棤鍙傛暟鍊欓€夊洜璇箟寰楀垎楂樿€岀洸閫氾級
+AGENT_FASTPATH_REQUIRE_PARAM_MATCH = True
+
+# 浣庣疆淇″害閲嶈瘯锛欰gent杩斿洖confidence浣庝簬姝ゅ€兼椂锛岃嚜鍔ㄧ敤AI寤鸿鐨勬悳绱㈣瘝閲嶈瘯
+# 鎴栧綋AI鎺ㄨ崘鐨勫畾棰濅笉鍦ㄥ€欓€夊垪琛ㄤ腑鏃朵篃瑙﹀彂閲嶈瘯
+# 璁句负0鍏抽棴閲嶈瘯锛堝噺灏慙LM璋冪敤娆℃暟锛屾彁鍗囬€熷害锛?
+LOW_CONFIDENCE_RETRY_THRESHOLD = int(os.getenv("LOW_CONFIDENCE_RETRY_THRESHOLD", "0"))
+
+# ============================================================
+# L3 涓€鑷存€у弽鎬濓紙鍚岀被娓呭崟瀹氶涓€鑷存€ф鏌ワ級
+# ============================================================
+# 鍖归厤鍏ㄩ儴瀹屾垚鍚庯紝妫€鏌ュ悓绫绘竻鍗曟槸鍚﹀浜嗗悓涓€涓畾棰濓紝涓嶄竴鑷存椂鐢ㄥ姞鏉冩姇绁ㄧ籂姝ｃ€?
+# 绾疨ython鍚庡鐞嗭紝涓嶈皟LLM锛岃€楁椂鍙拷鐣ャ€?
+
+# 鎬诲紑鍏筹紙True=鍚敤锛孎alse=璺宠繃锛?# 榛樿鍏抽棴锛氬綋鍓嶄富闂鏄悗缃嚜鍔ㄦ敼鍒や細鍚炴帀鎼滅储/LTR 宸茬粡閫夊鐨勭粨鏋溿€?REFLECTION_ENABLED = os.getenv("REFLECTION_ENABLED", "0").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# 鎶曠エ鍐崇瓥闃堝€硷細winner绁ㄦ潈鑷冲皯鏄痳unner-up鐨勫灏戝€嶆墠绾犳
+# 浣庝簬姝ゆ瘮渚嬬殑鍙爣璁板啿绐侊紝涓嶅己鍒剁籂姝?
+REFLECTION_MIN_VOTE_RATIO = 1.5
+
+# 楂樼疆淇″害淇濇姢锛氱疆淇″害>=姝ゅ€肩殑缁撴灉涓嶈鍙嶆€濈籂姝?
+# 缁忛獙搴撶簿纭尮閰嶉€氬父>=90锛屼笉搴旇鎼滅储缁撴灉鎶曠エ鎺ㄧ炕
+REFLECTION_SKIP_HIGH_CONFIDENCE = 90
+
+# 绾犳鍚庣殑缃俊搴︽墸鍒嗭紙鎻愮ず鐢ㄦ埛鍏虫敞锛?
+REFLECTION_CONFIDENCE_PENALTY = 5
+
+# ============================================================
+# L5 璺ㄧ渷杩佺Щ瀛︿範
+# ============================================================
+
+# 閫氱敤鐭ヨ瘑搴撹嚜鍔ㄥ悓姝ワ紙鐢ㄦ埛淇鏃惰嚜鍔ㄥ悓姝ュ畾棰濆悕绉板埌鍏ㄥ浗閫氱敤鐭ヨ瘑搴擄級
+UNIVERSAL_KB_SYNC_ENABLED = True
+
+# 璺ㄧ渷缃俊搴﹂鐑紙鏂扮渷浠芥棤缁忛獙鏃讹紝鏌ュ叾浠栫渷浠界粡楠屼綔涓烘悳绱㈠弬鑰冿級
+CROSS_PROVINCE_WARMUP_ENABLED = True
+
+# 璺ㄧ渷鎼滅储鐨勬渶浣庣浉浼煎害闂ㄦ锛堟瘮鐪佸唴0.75楂橈紝闄嶄綆璇尮閰嶉闄╋級
+CROSS_PROVINCE_MIN_SIMILARITY = 0.80
+
+# 璺ㄧ渷鎼滅储鐨勬渶浣庣疆淇″害锛堝彧鐢ㄩ珮缃俊鐨勬潈濞佹暟鎹級
+CROSS_PROVINCE_MIN_CONFIDENCE = 85
+
+
+# ============================================================
+# L6 Agent鐦﹁韩
+# ============================================================
+
+# 鏄惁鍦ˋgent prompt涓敞鍏ヨ鍒欑煡璇嗭紙鍏抽棴鍚庣敱浠ｇ爜鏍￠獙鏇夸唬锛岃妭鐪亊300-500 tokens/鏉★級
+AGENT_RULES_IN_PROMPT = False
+
+# 鏄惁鍦ˋgent prompt涓敞鍏ユ柟娉曞崱鐗囷紙鍏抽棴鍚庣瓥鐣ュ凡铻嶅叆鍥哄畾鎻愮ず璇嶏紝鑺傜渷~200-400 tokens/鏉★級
+AGENT_METHOD_CARDS_IN_PROMPT = False
+
+# ============================================================
+# FinalValidator / 鍚庣疆瀹℃牳
+# ============================================================
+
+# FinalValidator 鏄惁鍏佽鑷姩鏀瑰啓 quota銆?# 榛樿鍏抽棴锛氬鏍稿眰鍏堝彧璐熻矗 pass / manual_review / reject锛岄伩鍏嶈鐩栨悳绱富閾?top1銆?FINAL_VALIDATOR_AUTO_CORRECT = os.getenv(
+    "FINAL_VALIDATOR_AUTO_CORRECT", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+QUOTA_MATCH_PRICE_VALIDATION_ENABLED = os.getenv(
+    "QUOTA_MATCH_PRICE_VALIDATION_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# ============================================================
+# LLM鍚庨獙璇侊紙鍖归厤鍚庨€愭潯瀹℃牳绾犳锛?# ============================================================
+
+# 鏄惁鍚敤LLM鍚庨獙璇侊紙鍚敤鍚庢瘡鏉″尮閰嶇粨鏋滈兘浼氱粡杩嘗LM瀹℃牳锛?
+# 榛樿鍏抽棴锛氬彧鐢?娆″ぇ妯″瀷鍖归厤锛屼笉鍐嶉澶栭獙璇侊紝澶у箙鎻愬崌閫熷害
+LLM_VERIFY_ENABLED = os.getenv("LLM_VERIFY_ENABLED", "0").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+# 楠岃瘉浣跨敤鐨勫ぇ妯″瀷锛堢┖=娌跨敤AGENT_LLM锛屾敮鎸佸尮閰嶅拰楠岃瘉鐢ㄤ笉鍚屾ā鍨嬶級
+# 渚嬪锛氬尮閰嶇敤鍗冮棶(AGENT_LLM=qwen)锛岄獙璇佺敤Kimi(VERIFY_LLM=kimi)
+VERIFY_LLM = os.getenv("VERIFY_LLM", "")
+
+# 楠岃瘉妯″瀷鐨勫叿浣撳瀷鍙凤紙绌?浣跨敤璇ュ巶鍟嗙殑榛樿鍨嬪彿锛?
+# 渚嬪锛歏ERIFY_LLM=kimi + VERIFY_MODEL=kimi-k2.5
+# 涓嶅～鍒欒嚜鍔ㄨ鍙栧搴斿巶鍟嗙殑榛樿鍨嬪彿锛堝KIMI_MODEL锛?
+VERIFY_MODEL = os.getenv("VERIFY_MODEL", "")
+
+# 璺宠繃楠岃瘉鐨勭疆淇″害闃堝€硷紙楂樹簬姝ゅ€间笉楠岃瘉锛岃妭鐪丄PI璐圭敤锛?
+# 88=鍙獙璇佷腑浣庣疆淇″害椤癸紙鎺ㄨ崘锛夛紝100=鍏ㄩ儴楠岃瘉
+VERIFY_SKIP_THRESHOLD = int(os.getenv("VERIFY_SKIP_THRESHOLD", "88"))
+
+# 楠岃瘉骞跺彂鏁帮紙骞惰楠岃瘉澶氭潯锛屽姞閫熼獙璇侀樁娈碉級
+VERIFY_CONCURRENT = int(os.getenv("VERIFY_CONCURRENT", "8"))
+
+# 楠岃瘉浠诲姟鐨刴ax_tokens锛堥獙璇佽緭鍑哄緢鐭紝涓嶉渶瑕?500锛?
+VERIFY_MAX_TOKENS = int(os.getenv("VERIFY_MAX_TOKENS", "200"))
+
+# 楠岃瘉浠诲姟鐨勮秴鏃舵椂闂达紙绉掞紝楠岃瘉姣斿尮閰嶇畝鍗曪紝涓嶉渶瑕?0绉掞級
+VERIFY_TIMEOUT = int(os.getenv("VERIFY_TIMEOUT", "30"))
+
+# 缁跨伅鎶芥鐜囷紙缃俊搴?=闃堝€肩殑涔熼殢鏈烘娊妫€涓€閮ㄥ垎锛屼繚搴曡川閲忕洃鎺э級
+VERIFY_SPOT_CHECK_RATE = float(os.getenv("VERIFY_SPOT_CHECK_RATE", "0.05"))
+
+# OPUS鍏滃簳鎼滅储锛坬uotas涓虹┖鏃禣PUS涓诲姩鐢熸垚鎼滅储璇嶉噸鎼滐紝淇绗?灞傚鏍告紡娲烇級
+VERIFY_RESCUE_MAX_PER_RUN = int(os.getenv("VERIFY_RESCUE_MAX_PER_RUN", "10"))  # 姣忔杩愯鏈€澶歳escue鍑犳潯
+VERIFY_RESCUE_CONCURRENT = int(os.getenv("VERIFY_RESCUE_CONCURRENT", "3"))     # rescue骞跺彂鏁?
+
+# ============================================================
+# L7 鎼滅储鍙洖鐜囦紭鍖?
+# ============================================================
+
+# 缁忛獙搴撴ā绯婂尮閰嶏紙閫氳繃 normalized_text 瀛楁锛屽蹇嶇┖鏍?鏍囩偣/DN鏍煎紡宸紓锛?
+EXPERIENCE_FUZZY_MATCH_ENABLED = True
+
+# 鑷姩鍚屼箟璇嶈〃锛堜粠缁忛獙搴撴寲鎺樼殑鍚屼箟璇嶏紝鐢?tools/synonym_miner.py 鐢熸垚锛?
+AUTO_SYNONYMS_ENABLED = True
+
+# BM25 鍚屼箟璇嶆墿灞曞彉浣擄紙鍦ㄦ贩鍚堟悳绱腑澧炲姞鍚屼箟璇嶅弽鍚戞浛鎹㈠彉浣擄級
+BM25_SYNONYM_EXPANSION_ENABLED = True
+
+# 鎼滅储涓婚摼鍏堥獙鍊欓€夋敞鍏ワ細鎶?universal_kb / experience 鍓嶇Щ涓哄€欓€夎ˉ寮猴紝鑰屼笉鏄彧鍋氭彁绀鸿瘝鎴栫洿閫氥€?SEARCH_PRIOR_CANDIDATES_ENABLED = os.getenv(
+    "SEARCH_PRIOR_CANDIDATES_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_EXPERIENCE_INJECTION_ENABLED = os.getenv(
+    "SEARCH_EXPERIENCE_INJECTION_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_UNIVERSAL_KB_INJECTION_ENABLED = os.getenv(
+    "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_LIGHTWEIGHT_PREP_ENABLED = os.getenv(
+    "SEARCH_LIGHTWEIGHT_PREP_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_RULE_PREMATCH_ENABLED = os.getenv(
+    "SEARCH_RULE_PREMATCH_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT = os.getenv(
+    "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_PROGRESS_LOG_INTERVAL = max(
+    1,
+    int(os.getenv("SEARCH_PROGRESS_LOG_INTERVAL", "10")),
+)
+
+# ============================================================
+# LTR v2 / 缃俊搴︽牎鍑嗭紙绗竴杞厛鍚敤 LTR锛屾牎鍑嗗櫒棰勭暀锛?# ============================================================
+
+def _first_existing_path(*candidates: Path) -> Path:
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return Path(candidate)
+    return Path(candidates[0])
+
+
+_LTR_V2_MODEL_DEFAULT = _first_existing_path(
+    OUTPUT_DIR / "ltr" / "model_v2" / "ltr_v2_model.txt",
+    DATA_DIR / "ltr_v2_model.txt",
+)
+_LTR_V2_FEATURES_DEFAULT = _first_existing_path(
+    OUTPUT_DIR / "ltr" / "model_v2" / "ltr_v2_features.json",
+    DATA_DIR / "ltr_v2_features.json",
+)
+_LTR_V2_AUTO_ENABLED = (
+    _LTR_V2_MODEL_DEFAULT.exists() and _LTR_V2_FEATURES_DEFAULT.exists()
+)
+
+LTR_V2_ENABLED = os.getenv(
+    "LTR_V2_ENABLED",
+    "1" if _LTR_V2_AUTO_ENABLED else "0",
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+LTR_V2_MODEL_PATH = Path(os.getenv(
+    "LTR_V2_MODEL_PATH",
+    str(_LTR_V2_MODEL_DEFAULT),
+))
+LTR_V2_FEATURES_PATH = Path(os.getenv(
+    "LTR_V2_FEATURES_PATH",
+    str(_LTR_V2_FEATURES_DEFAULT),
+))
+LTR_GENERICITY_STATS_PATH = Path(os.getenv(
+    "LTR_GENERICITY_STATS_PATH",
+    str(DATA_DIR / "ltr_quota_genericity.json"),
+))
+LTR_FEATURE_LOGGING = os.getenv("LTR_FEATURE_LOGGING", "0").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+LTR_FEATURE_LOG_TOPK = int(os.getenv("LTR_FEATURE_LOG_TOPK", "3"))
+LTR_GUARD_ENABLED = os.getenv("LTR_GUARD_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+LTR_GUARD_THRESHOLD = max(0.0, float(os.getenv("LTR_GUARD_THRESHOLD", "6.0")))
+PARAM_VALIDATOR_LEGACY_LTR_ENABLED = os.getenv(
+    "PARAM_VALIDATOR_LEGACY_LTR_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+
+CONSTRAINED_GATED_RANKER_ENABLED = os.getenv(
+    "CONSTRAINED_GATED_RANKER_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+CGR_ACCEPT_HEAD_ENABLED = os.getenv(
+    "CGR_ACCEPT_HEAD_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+CGR_TEMPERATURE = max(0.2, float(os.getenv("CGR_TEMPERATURE", "0.85")))
+CGR_ACCEPT_THRESHOLD = max(
+    0.0, min(1.0, float(os.getenv("CGR_ACCEPT_THRESHOLD", "0.62")))
+)
+CGR_MIN_TOP1_PROB = max(
+    0.0, min(1.0, float(os.getenv("CGR_MIN_TOP1_PROB", "0.45")))
+)
+CGR_MODEL_PATH = Path(os.getenv(
+    "CGR_MODEL_PATH",
+    str(DATA_DIR / "cgr_model.json"),
+))
+
+CONFIDENCE_CALIBRATOR_ENABLED = os.getenv(
+    "CONFIDENCE_CALIBRATOR_ENABLED", "0"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+CONFIDENCE_CALIBRATOR_PATH = Path(os.getenv(
+    "CONFIDENCE_CALIBRATOR_PATH",
+    str(DATA_DIR / "confidence_calibrator.json"),
+))
+
+# 瀛︿範绗旇鏁版嵁搴撹矾寰?
+def get_learning_notes_db_path():
+    return COMMON_DB_DIR / "learning_notes.db"
+
+# 杩涘寲瑙勫垯鏁版嵁搴撹矾寰勶紙绗簩鏈熷疄鐜帮級
+def get_evolved_rules_db_path():
+    return COMMON_DB_DIR / "evolved_rules.db"
+
+# ============================================================
+# jieba鍒嗚瘝閰嶇疆
+# ============================================================
+
+# 宸ョ▼閫犱环涓撲笟璇嶅吀璺緞
+ENGINEERING_DICT_PATH = DICT_DIR / "engineering_dict.txt"
+
+# ============================================================
+# 鏃ュ織閰嶇疆
+# ============================================================
+
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_LEVEL = "INFO"
+
+# 涓婁紶瀹夊叏闄愬埗锛圵eb椤甸潰锛?
+UPLOAD_MAX_MB = 30
+
+# ============================================================
+# 鍒濆鍖栵細纭繚蹇呰鐩綍瀛樺湪
+# ============================================================
+
+def ensure_dirs():
+    """鍒涘缓鎵€鏈夊繀瑕佺殑鐩綍锛堜笉鍚渷浠界洰褰曪紝鐪佷唤鐩綍鍦ㄥ鍏ユ椂鎸夐渶鍒涘缓锛?""
+    dirs = [
+        DATA_DIR, QUOTA_DATA_DIR, EXPERIENCE_DIR, DICT_DIR,
+        DB_DIR, COMMON_DB_DIR, PROVINCES_DB_DIR,
+        OUTPUT_DIR, KNOWLEDGE_DIR, LOG_DIR,
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+# 瀵煎叆鏃惰嚜鍔ㄥ垱寤虹洰褰?
+ensure_dirs()
+
+

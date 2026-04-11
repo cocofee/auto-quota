@@ -12,6 +12,7 @@
 """
 
 import os
+import shutil
 
 import config
 from loguru import logger
@@ -193,20 +194,20 @@ def rebuild_vector_index(self):
         return
 
     # 清空旧索引
-    import chromadb
+    shutil.rmtree(self.chroma_dir, ignore_errors=True)
     self.chroma_dir.mkdir(parents=True, exist_ok=True)
-    self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
+    from src.model_cache import ModelCache
+    path_str = str(self.chroma_dir)
+    if path_str in ModelCache._chroma_clients:
+        try:
+            del ModelCache._chroma_clients[path_str]
+        except Exception:
+            pass
+    self._chroma_client = ModelCache.get_chroma_client(path_str)
     try:
-        self._chroma_client.delete_collection("experiences")
-    except Exception as e:
-        logger.debug(f"经验库旧向量集合删除跳过: {e}")
-    try:
-        self._collection = self._chroma_client.create_collection(
+        self._collection = self._chroma_client.get_or_create_collection(
             name="experiences",
-            metadata={
-                "hnsw:space": "cosine",
-                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
-            }
+            metadata={"hnsw:space": "cosine"},
         )
     except Exception as e:
         logger.error(f"经验库向量集合创建失败: {e}")
@@ -230,7 +231,7 @@ def rebuild_vector_index(self):
     logger.info(f"GPU编码完成: {total}条, {t1-t0:.1f}秒 ({total/(t1-t0):.0f}条/秒)")
 
     # 第二阶段：批量写入ChromaDB（CPU操作，batch可以大一些）
-    write_batch = 5000  # ChromaDB写入用大batch减少事务开销
+    write_batch = 20000  # 放大写入批次，缩短重建时长并减少事务开销
     logger.info(f"第2阶段: 写入ChromaDB (batch={write_batch})...")
     for start in range(0, total, write_batch):
         end = min(start + write_batch, total)
@@ -247,6 +248,16 @@ def rebuild_vector_index(self):
             metadatas=metadatas,
         )
         logger.info(f"  写入进度: {end}/{total} ({end*100//total}%)")
+
+    try:
+        self._chroma_client.clear_system_cache()
+    except Exception as e:
+        logger.debug(f"缁忛獙搴撳悜閲忕储寮唂lush璺宠繃: {e}")
+
+    if hasattr(self, "_vector_index_disabled_until"):
+        self._vector_index_disabled_until = 0.0
+    if hasattr(self, "_vector_index_disabled_reason"):
+        self._vector_index_disabled_reason = ""
 
     t2 = _time.time()
     logger.info(f"经验库向量索引重建完成: {total}条记录, "

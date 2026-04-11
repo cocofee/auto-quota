@@ -4,18 +4,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ExperimentOutlined,
   FundOutlined,
-  RobotOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { Button, Card, Space, Tabs, Typography } from 'antd';
 import type { TabsProps } from 'antd';
 import AnalyticsPage from './AnalyticsPage';
 import ExperienceManage from './ExperienceManage';
-import OpenClawReviewPage from './OpenClawReviewPage';
 
 const DEFAULT_TAB = 'analytics';
 
-type AdminTabKey = 'analytics' | 'experience' | 'openclaw';
+type AdminTabKey = 'analytics' | 'experience';
 
 interface AdminTabDefinition {
   key: AdminTabKey;
@@ -37,12 +35,6 @@ const TAB_DEFINITIONS: AdminTabDefinition[] = [
     icon: <ExperimentOutlined />,
     children: <ExperienceManage />,
   },
-  {
-    key: 'openclaw',
-    label: 'OpenClaw 复核',
-    icon: <RobotOutlined />,
-    children: <OpenClawReviewPage />,
-  },
 ];
 
 const VALID_TABS = new Set<string>(TAB_DEFINITIONS.map((item) => item.key));
@@ -51,6 +43,10 @@ export default function AdminHub() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || '';
+  if (currentTab === 'openclaw') {
+    navigate('/admin/openclaw-reviews', { replace: true });
+    return null;
+  }
   const activeTab = VALID_TABS.has(currentTab) ? (currentTab as AdminTabKey) : DEFAULT_TAB;
 
   const items: TabsProps['items'] = useMemo(

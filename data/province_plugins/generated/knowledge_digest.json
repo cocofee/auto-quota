@@ -1,402 +1,59 @@
 {
-  "generated_at": "2026-03-25 20:36:11",
-  "source_asset_root": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\output\\benchmark_assets\\20260325_203605",
+  "generated_at": "2026-04-05 11:04:03",
+  "source_asset_root": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\output\\benchmark_assets\\20260405_110403",
   "record_counts": {
-    "synonym_records": 1785,
-    "route_records": 78,
-    "tier_records": 972
+    "synonym_records": 5,
+    "route_records": 2,
+    "tier_records": 12
   },
   "top_national_synonyms": [
     {
-      "term": "塑料管",
-      "count": 18,
+      "term": "壁式排风机",
+      "count": 1,
       "aliases": [
-        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 20/20(包含“PP-R给水管“)",
-        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 32/40(包含“PP-R给水管“)",
-        "承插塑料排水管(零件粘接),公称直径(mm以内) 50(包含“承插塑料排水管 dn50“,“承插塑料排水管件 dn50“)",
-        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 20/25mm",
-        "室内给排水、采暖管道 室内给水塑料管(热熔、电熔连接) 公称直径/管外径 15/20mm"
+        "风扇安装 排气扇"
       ]
     },
     {
-      "term": "普通灯具",
-      "count": 17,
+      "term": "天花板管道式换气扇",
+      "count": 1,
       "aliases": [
-        "吸顶灯具安装 灯罩周长(mm) ≤800",
-        "吊杆式荧光灯安装 无吊顶处 单管",
-        "半圆球吸顶灯安装 灯罩直径(mm以内) 350",
-        "led条形灯盘4000K, 36W",
-        "圆球吸顶灯 灯罩直径(mm以内) 300(包含“成套灯具“,“圆木台 275～350“)"
+        "风扇安装 天花式排气扇"
       ]
     },
     {
-      "term": "配管",
-      "count": 14,
+      "term": "柔性软风管-超高",
+      "count": 1,
       "aliases": [
-        "砖、混凝土结构暗配 可挠金属套管规格 50#",
-        "砖、混凝土结构暗配 刚性阻燃管公称直径20mm以内",
-        "砖、混凝土结构暗配 刚性阻燃管公称直径(mm以内) 20(包含“刚性阻燃管“)",
-        "半硬质阻燃管埋地敷设 半硬质塑料管公称直径32mm以内",
-        "金属软管敷设 公称管径40mm以内 每根管长1000mm以内"
+        "柔性接口及伸缩节 有法兰"
       ]
     },
     {
-      "term": "装饰灯",
-      "count": 12,
+      "term": "通风管道绝热绝热材料品种隔热棉-50",
+      "count": 1,
       "aliases": [
-        "嵌入式灯安装 顶棚嵌入式筒灯 单筒",
-        "点光源艺术装饰灯具 滑轨［示意图号］182、183、184、185、186、187185、186、187",
-        "标志、诱导装饰灯具 墙壁式 ［示意图号］171、172、173、174",
-        "LED灯带 7W/M 4000K",
-        "LED三基色柔光灯冷光灯 100W"
+        "风管纤维类制品(板)安装 其他纤维类制品(板)"
       ]
     },
     {
-      "term": "垫层",
-      "count": 11,
+      "term": "通风管道绝热绝热材料品种隔热棉-50-超高",
+      "count": 1,
       "aliases": [
-        "垫层碎石",
-        "基础、护底 干砌块石",
-        "草皮铺砂",
-        "井 垫层碎石",
-        "沟槽回填 塘碴"
-      ]
-    },
-    {
-      "term": "现浇构件钢筋",
-      "count": 11,
-      "aliases": [
-        "后浇混凝土 箍筋带肋钢筋HRB400以内 直径10mm以内",
-        "普通钢筋制作、安装 带肋钢筋",
-        "现浇构件圆钢筋 HPB300 直径（mm以内）10",
-        "箍筋 带肋钢筋 HRB400以内 直径（mm以内）6",
-        "后浇混凝土 带肋钢筋HRB400以内 直径18mm以内"
-      ]
-    },
-    {
-      "term": "砌筑井",
-      "count": 11,
-      "aliases": [
-        "圆形雨水检查井 形式 砖砌直筒式 井内径(mm) 700 适用管径(mm) ≤400 井深(m) 1.2 ",
-        "沟槽回填 塘碴",
-        "井 垫层混凝土",
-        "井 垫层碎石",
-        "沟槽回填 碎石"
-      ]
-    },
-    {
-      "term": "配线",
-      "count": 11,
-      "aliases": [
-        "管内预留铁丝",
-        "线缆敷设 RVV-3*2.5",
-        "管内穿线 多芯软导管四芯以内 导线截面1.5mm2以内",
-        "照明线路 导线截面(mm2以内) NHBV2.5",
-        "照明线路 导线截面(mm2以内) 铜芯2.5(包含“绝缘导线“)"
-      ]
-    },
-    {
-      "term": "扩声系统设备",
-      "count": 10,
-      "aliases": [
-        "音频跳线安装",
-        "会议专用设备安装 会议主控机",
-        "调音台12+4/2",
-        "会议专用设备安装 主席机、代表机移动式",
-        "壁挂式或吊装式扬声器≤25kg"
-      ]
-    },
-    {
-      "term": "插座",
-      "count": 10,
-      "aliases": [
-        "单相暗插座15A 3孔",
-        "地面插座,地面插座(包含“成套插座“)",
-        "普通插座,单相暗插座15A 3孔(包含“成套插座“)",
-        "单相暗插座15A 5孔",
-        "普通插座安装 单相带接地 暗插座电流≤15A"
+        "风管纤维类制品(板)安装 其他纤维类制品(板)"
       ]
     }
   ],
-  "top_national_route_biases": [
-    {
-      "term": "控制电缆",
-      "count": 2,
-      "preferred_books": [
-        "C4"
-      ]
-    },
-    {
-      "term": "等电位端子箱、测试板",
-      "count": 2,
-      "preferred_books": [
-        "C4"
-      ]
-    }
-  ],
-  "top_national_tier_hints": [
-    {
-      "term": "塑料管",
-      "count": 13,
-      "preferred_quota_names": [
-        "给水塑料管埋地敷设(热熔连接) 公称直径(mm以内) 32  ",
-        "给排水管道 室内塑料给水管(热熔连接) 公称外径(mm以内) 75",
-        "室内给水塑料管(热熔、电熔连接),公称直径/管外径(mm) 50/63(包含“PP-R给水管“)"
-      ]
-    },
-    {
-      "term": "配线",
-      "count": 9,
-      "preferred_quota_names": [
-        "管内穿铜芯线照明线路 导线截面(mm2以内) 1.5",
-        "硬绝缘导线管内穿线 导线截面(mm2以内) 2.5",
-        "管内穿线 照明线路 导线截面2.5mm2以内 铜芯"
-      ]
-    },
-    {
-      "term": "配电箱",
-      "count": 8,
-      "preferred_quota_names": [
-        "成套配电箱安装 悬挂、嵌入式(半周长) 2.5m",
-        "成套配电箱安装 悬挂式(半周长m以内) 1.5",
-        "成套配电箱安装 悬挂式半周长1.5m"
-      ]
-    },
-    {
-      "term": "配管",
-      "count": 8,
-      "preferred_quota_names": [
-        "镀锌电线管砖、混凝土结构暗配 公称直径(mm以内) 20",
-        "塑料管地埋敷设 塑料管公称直径(mm以内)100",
-        "塑料管地埋敷设 塑料管公称直径(mm以内)32"
-      ]
-    },
-    {
-      "term": "垫层",
-      "count": 6,
-      "preferred_quota_names": [
-        "渠(管)道垫层 砂砾石天然级配",
-        "渠(管)道垫层 碎石干铺",
-        "垫层(碎石灌砂)"
-      ]
-    },
-    {
-      "term": "复合管",
-      "count": 6,
-      "preferred_quota_names": [
-        "室内给水钢塑复合管(螺纹连接) 公称直径(mm以内) 50 设计要求管道进行消毒冲洗 人工*1.05,材料[340000110000] 含量+0.1,机械[994600040000] 含量+0.15",
-        "室内给水钢塑复合管(丝扣连接) 公称直径(mm以内) 25",
-        "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 20"
-      ]
-    },
-    {
-      "term": "套管",
-      "count": 5,
-      "preferred_quota_names": [
-        "刚性防水套管制作 公称直径(mm以内) 80",
-        "柔性防水套管制作 公称直径(mm以内) 50",
-        "柔性防水套管制作 介质管道公称直径(50mm以内）"
-      ]
-    },
-    {
-      "term": "插座",
-      "count": 5,
-      "preferred_quota_names": [
-        "插座暗装 单相 双联",
-        "普通插座安装 单相带接地 暗插座电流(A) ≤30",
-        "单相暗插座安装 单相(A以下) 16"
-      ]
-    },
-    {
-      "term": "栽植乔木",
-      "count": 5,
-      "preferred_quota_names": [
-        "起挖乔木(带土球)胸径(cm)20以内",
-        "栽植乔木(带土球)胸径(cm)17以内",
-        "栽植乔木（带土球） 土球直径120cm以内"
-      ]
-    },
-    {
-      "term": "回填方",
-      "count": 4,
-      "preferred_quota_names": [
-        "路基填筑 塘渣",
-        "沟槽回填 石屑",
-        "沟槽回填 塘碴"
-      ]
-    }
-  ],
+  "top_national_route_biases": [],
+  "top_national_tier_hints": [],
   "province_summaries": [
     {
       "province": "广东省通用安装工程综合定额(2018)",
-      "synonym_terms": 85,
-      "route_terms": 18,
-      "tier_terms": 231,
-      "synonym_count": 85,
-      "route_count": 36,
-      "tier_count": 464
-    },
-    {
-      "province": "浙江省通用安装工程预算定额(2018)",
-      "synonym_terms": 217,
-      "route_terms": 20,
-      "tier_terms": 102,
-      "synonym_count": 260,
-      "route_count": 46,
-      "tier_count": 234
-    },
-    {
-      "province": "浙江省市政工程预算定额(2018)",
-      "synonym_terms": 114,
-      "route_terms": 13,
-      "tier_terms": 30,
-      "synonym_count": 358,
-      "route_count": 34,
-      "tier_count": 120
-    },
-    {
-      "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
-      "synonym_terms": 80,
+      "synonym_terms": 5,
       "route_terms": 2,
-      "tier_terms": 136,
-      "synonym_count": 80,
-      "route_count": 4,
-      "tier_count": 274
-    },
-    {
-      "province": "福建省房屋建筑与装饰工程预算定额(2017)",
-      "synonym_terms": 82,
-      "route_terms": 0,
-      "tier_terms": 37,
-      "synonym_count": 186,
-      "route_count": 0,
-      "tier_count": 130
-    },
-    {
-      "province": "北京市建设工程施工消耗量标准(2024)",
-      "synonym_terms": 32,
-      "route_terms": 13,
-      "tier_terms": 99,
-      "synonym_count": 32,
-      "route_count": 26,
-      "tier_count": 208
-    },
-    {
-      "province": "福建省通用安装工程预算定额(2017)",
-      "synonym_terms": 80,
-      "route_terms": 0,
-      "tier_terms": 18,
-      "synonym_count": 173,
-      "route_count": 0,
-      "tier_count": 84
-    },
-    {
-      "province": "福建省市政工程预算定额(2017)",
-      "synonym_terms": 72,
-      "route_terms": 0,
-      "tier_terms": 22,
-      "synonym_count": 177,
-      "route_count": 0,
-      "tier_count": 68
-    },
-    {
-      "province": "福建省园林绿化工程预算定额(2017)",
-      "synonym_terms": 28,
-      "route_terms": 0,
-      "tier_terms": 15,
-      "synonym_count": 95,
-      "route_count": 0,
-      "tier_count": 80
-    },
-    {
-      "province": "江苏省安装工程计价定额(2014)",
-      "synonym_terms": 46,
-      "route_terms": 0,
-      "tier_terms": 10,
-      "synonym_count": 134,
-      "route_count": 0,
-      "tier_count": 40
-    },
-    {
-      "province": "广东省房屋建筑与装饰工程综合定额(2018)",
-      "synonym_terms": 68,
-      "route_terms": 0,
-      "tier_terms": 13,
-      "synonym_count": 68,
-      "route_count": 0,
-      "tier_count": 26
-    },
-    {
-      "province": "河南省通用安装工程预算定额(2016)",
-      "synonym_terms": 20,
-      "route_terms": 1,
-      "tier_terms": 36,
-      "synonym_count": 20,
-      "route_count": 2,
-      "tier_count": 72
-    },
-    {
-      "province": "宁夏安装工程计价定额(2019)",
-      "synonym_terms": 26,
-      "route_terms": 0,
-      "tier_terms": 31,
-      "synonym_count": 26,
-      "route_count": 0,
-      "tier_count": 62
-    },
-    {
-      "province": "江苏省建筑与装饰工程计价定额(2014)",
-      "synonym_terms": 23,
-      "route_terms": 2,
-      "tier_terms": 6,
-      "synonym_count": 68,
-      "route_count": 4,
-      "tier_count": 16
-    },
-    {
-      "province": "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
-      "synonym_terms": 2,
-      "route_terms": 1,
-      "tier_terms": 16,
-      "synonym_count": 2,
-      "route_count": 2,
-      "tier_count": 32
-    },
-    {
-      "province": "宁夏房屋建筑装饰工程计价定额(2019)",
-      "synonym_terms": 9,
-      "route_terms": 0,
       "tier_terms": 12,
-      "synonym_count": 9,
-      "route_count": 0,
+      "synonym_count": 5,
+      "route_count": 4,
       "tier_count": 24
-    },
-    {
-      "province": "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)",
-      "synonym_terms": 9,
-      "route_terms": 0,
-      "tier_terms": 4,
-      "synonym_count": 9,
-      "route_count": 0,
-      "tier_count": 8
-    },
-    {
-      "province": "辽宁省通用安装工程定额(2024)",
-      "synonym_terms": 3,
-      "route_terms": 1,
-      "tier_terms": 0,
-      "synonym_count": 3,
-      "route_count": 2,
-      "tier_count": 0
-    },
-    {
-      "province": "重庆市通用安装工程计价定额(2018)",
-      "synonym_terms": 0,
-      "route_terms": 0,
-      "tier_terms": 1,
-      "synonym_count": 0,
-      "route_count": 0,
-      "tier_count": 2
     }
   ]
 }

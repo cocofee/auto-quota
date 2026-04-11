@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 import time
 
 import config
@@ -302,6 +303,104 @@ def test_knowledge_staging_dashboard_stats(tmp_path):
     assert sum(item["promotion_promoted"] for item in stats["recent_activity"]) == 0
     assert stats["top_rejection_reasons"][0]["reason"] == "证据不足"
     assert stats["top_rejection_reasons"][0]["count"] == 1
+
+
+def test_knowledge_staging_auto_upgrades_legacy_promotion_review_columns(tmp_path):
+    db_path = tmp_path / "legacy_knowledge_staging.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE schema_info (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO schema_info(key, value) VALUES ('schema_version', '1');
+
+            CREATE TABLE drawing_extractions (id INTEGER PRIMARY KEY);
+            CREATE TABLE pricing_case_summaries (id INTEGER PRIMARY KEY);
+            CREATE TABLE quick_notes_structured (id INTEGER PRIMARY KEY);
+
+            CREATE TABLE audit_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                review_status TEXT NOT NULL DEFAULT 'unreviewed',
+                reviewer TEXT NOT NULL DEFAULT '',
+                reviewed_at REAL,
+                is_deleted INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE promotion_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT '',
+                source_table TEXT NOT NULL DEFAULT '',
+                source_record_id TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                owner TEXT NOT NULL DEFAULT '',
+                version INTEGER NOT NULL DEFAULT 1,
+                evidence_ref TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                content_hash TEXT NOT NULL DEFAULT '',
+                review_status TEXT NOT NULL DEFAULT 'unreviewed',
+                reviewer TEXT NOT NULL DEFAULT '',
+                reviewed_at REAL,
+                is_deleted INTEGER NOT NULL DEFAULT 0,
+                candidate_type TEXT NOT NULL DEFAULT '',
+                target_layer TEXT NOT NULL DEFAULT '',
+                candidate_title TEXT NOT NULL DEFAULT '',
+                candidate_summary TEXT NOT NULL DEFAULT '',
+                candidate_payload TEXT NOT NULL DEFAULT '{}',
+                priority INTEGER NOT NULL DEFAULT 50,
+                approval_required INTEGER NOT NULL DEFAULT 1,
+                promoted_at REAL,
+                promoted_target_id TEXT NOT NULL DEFAULT '',
+                target_version INTEGER
+            );
+
+            INSERT INTO promotion_queue (
+                source_id, source_type, source_table, source_record_id, created_at, updated_at,
+                owner, version, evidence_ref, status, content_hash, review_status, reviewer,
+                reviewed_at, is_deleted, candidate_type, target_layer, candidate_title,
+                candidate_summary, candidate_payload, priority, approval_required,
+                promoted_at, promoted_target_id, target_version
+            ) VALUES (
+                'legacy-1', 'audit_error', 'audit_errors', '1', 1, 1,
+                'tester', 1, '', 'draft', '', 'unreviewed', '',
+                NULL, 0, 'rule', 'RuleKnowledge', 'legacy candidate',
+                '', '{}', 50, 1,
+                NULL, '', NULL
+            );
+
+            CREATE VIEW v_pending_promotions AS
+            SELECT * FROM promotion_queue
+            WHERE is_deleted = 0 AND status IN ('draft', 'reviewing');
+
+            CREATE VIEW v_active_audit_errors AS
+            SELECT * FROM audit_errors
+            WHERE is_deleted = 0;
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    staging = KnowledgeStaging(db_path=db_path, schema_path=_schema_path())
+    assert staging.update_promotion_review(
+        1,
+        review_status="approved",
+        status="approved",
+        reviewer="admin",
+        review_comment="legacy upgraded",
+        rejection_reason=None,
+    )
+
+    promotion = staging.get_promotion(1)
+    assert promotion is not None
+    assert promotion["status"] == "approved"
+    assert promotion["review_status"] == "approved"
+    assert promotion["review_comment"] == "legacy upgraded"
+    assert promotion["rejection_reason"] == ""
 
 
 def test_knowledge_staging_health_report(tmp_path, monkeypatch):

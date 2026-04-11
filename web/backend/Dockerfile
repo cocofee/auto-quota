@@ -9,8 +9,8 @@
 ARG PYTHON_IMAGE=python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
-# UTF-8编码（镜像层级写死，解决celery worker中文编码ascii错误）
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+# UTF-8编码 + 北京时间
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8 PYTHONUTF8=1 TZ=Asia/Shanghai
 
 # 设置工作目录
 WORKDIR /app
@@ -23,7 +23,11 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
 # 先复制依赖文件，利用 Docker 缓存层（依赖不变时跳过安装）
 # Docker用精简版（无torch/transformers/chromadb，镜像从13GB降到~1GB）
@@ -38,6 +42,7 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ -r /ap
 # 核心匹配逻辑（src/, config.py, main.py 等）
 COPY config.py /app/config.py
 COPY main.py /app/main.py
+COPY local_match_server.py /app/local_match_server.py
 COPY docs/ /app/docs/
 COPY db/__init__.py /app/db/__init__.py
 COPY db/sqlite.py /app/db/sqlite.py

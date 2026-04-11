@@ -44,6 +44,23 @@ class KnowledgeStaging:
 
     _INIT_LOCK = threading.Lock()
     _INITIALIZED_PATHS: set[str] = set()
+    COLUMN_SPECS = {
+        "promotion_queue": {
+            "review_status": "TEXT NOT NULL DEFAULT 'unreviewed'",
+            "reviewer": "TEXT NOT NULL DEFAULT ''",
+            "reviewed_at": "REAL",
+            "review_comment": "TEXT NOT NULL DEFAULT ''",
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
+            "promoted_target_ref": "TEXT NOT NULL DEFAULT ''",
+            "promotion_trace": "TEXT NOT NULL DEFAULT ''",
+        },
+        "audit_errors": {
+            "review_status": "TEXT NOT NULL DEFAULT 'unreviewed'",
+            "reviewer": "TEXT NOT NULL DEFAULT ''",
+            "reviewed_at": "REAL",
+            "review_comment": "TEXT NOT NULL DEFAULT ''",
+        },
+    }
 
     REQUIRED_TABLES = {
         "schema_info",
@@ -177,12 +194,15 @@ class KnowledgeStaging:
         """Initialize the staging db only when the schema is missing."""
         path_key = self._path_key()
         if path_key in self._INITIALIZED_PATHS and self.db_path.exists():
+            self._upgrade_schema_if_needed()
             return
 
         with self._INIT_LOCK:
             if path_key in self._INITIALIZED_PATHS and self.db_path.exists():
+                self._upgrade_schema_if_needed()
                 return
             if self._schema_ready():
+                self._upgrade_schema_if_needed()
                 self._INITIALIZED_PATHS.add(path_key)
                 return
             self.init_db(force=True)
@@ -203,8 +223,33 @@ class KnowledgeStaging:
             conn.commit()
         finally:
             conn.close()
+        self._upgrade_schema_if_needed()
         self._INITIALIZED_PATHS.add(self._path_key())
         logger.debug(f"knowledge staging initialized: {self.db_path}")
+
+    def _upgrade_schema_if_needed(self) -> None:
+        """Backfill newly added columns for older staging databases."""
+        if not self.db_path.exists():
+            return
+
+        conn = _db_connect_init(self.db_path)
+        try:
+            changed = False
+            for table, columns in self.COLUMN_SPECS.items():
+                existing = {
+                    str(row[1])
+                    for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                for column, spec in columns.items():
+                    if column in existing:
+                        continue
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
+                    changed = True
+                    logger.info(f"knowledge staging upgraded: added {table}.{column}")
+            if changed:
+                conn.commit()
+        finally:
+            conn.close()
 
     def _connect(self, row_factory: bool = False) -> sqlite3.Connection:
         return _db_connect(self.db_path, row_factory=row_factory)

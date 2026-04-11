@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-03-24 23:19:53",
+  "asset_root": "output\\benchmark_assets\\20260324_2212_full_qwen3_v4",
+  "error_files": [
+    "output\\benchmark_assets\\20260324_2212_full_qwen3_v4\\all_errors.jsonl"
+  ],
+  "parameters": {
+    "max_neg_recall": 10,
+    "max_neg_rerank": 4,
+    "max_positive": 3,
+    "val_ratio": 0.05,
+    "test_ratio": 0.05
+  },
+  "counts": {
+    "triplets": 18121,
+    "recall_only_triplets": 10662,
+    "unique_queries": 3064,
+    "rows_used": 3066
+  },
+  "source_type_counts": {
+    "ranking_error": 7459,
+    "recall_miss": 10662
+  },
+  "split_counts": {
+    "train": 16579,
+    "val": 731,
+    "test": 811
+  },
+  "cause_counts": {
+    "wrong_tier": 1101,
+    "synonym_gap": 1841,
+    "wrong_book": 124
+  },
+  "province_top20": {
+    "浙江省通用安装工程预算定额(2018)": 432,
+    "浙江省市政工程预算定额(2018)": 421,
+    "广东省通用安装工程综合定额(2018)": 376,
+    "江西省通用安装工程消耗量定额及统一基价表(2017)": 256,
+    "福建省通用安装工程预算定额(2017)": 236,
+    "福建省市政工程预算定额(2017)": 204,
+    "福建省房屋建筑与装饰工程预算定额(2017)": 200,
+    "北京市建设工程施工消耗量标准(2024)": 157,
+    "江苏省安装工程计价定额(2014)": 154,
+    "福建省园林绿化工程预算定额(2017)": 150,
+    "重庆市通用安装工程计价定额(2018)": 146,
+    "广东省房屋建筑与装饰工程综合定额(2018)": 82,
+    "江苏省建筑与装饰工程计价定额(2014)": 73,
+    "河南省通用安装工程预算定额(2016)": 67,
+    "宁夏安装工程计价定额(2019)": 55,
+    "湖北省通用安装工程消耗量定额及全费用基价表(2024)": 20,
+    "宁夏房屋建筑装饰工程计价定额(2019)": 16,
+    "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": 12,
+    "辽宁省通用安装工程定额(2024)": 9
+  },
+  "files": {
+    "triplets": "data\\qwen3_training_triplets_v5_benchmark.jsonl",
+    "recall_only_triplets": "data\\qwen3_training_triplets_v5_recall_only.jsonl",
+    "manifest": "data\\qwen3_training_triplets_v5_benchmark_manifest.json"
+  }
+}

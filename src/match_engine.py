@@ -20,6 +20,7 @@ from contextlib import nullcontext
 from loguru import logger
 
 import config
+from src.adaptive_strategy import AdaptiveStrategy
 from src.context_builder import build_project_context, format_overview_context
 from src.context_builder import summarize_batch_context_for_trace
 from src.hybrid_searcher import HybridSearcher
@@ -27,12 +28,20 @@ from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
 from src.final_validator import FinalValidator
 from src.reasoning_agent import ReasoningAgent
+from src.runtime_cache import (
+    get_experience_db,
+    get_method_cards_db,
+    get_rule_bundle,
+    get_search_bundle,
+    get_unified_data_layer,
+)
 from src.match_core import (
     _append_trace_step,
     _finalize_trace,
     _summarize_candidates_for_trace,
     _prepare_candidates_from_prepared,
     _result_quota_signature,
+    get_fastpath_decision,
     _should_skip_agent_llm,
     _should_audit_fastpath,
     _mark_agent_fastpath,
@@ -44,6 +53,41 @@ from src.match_pipeline import (
     _apply_mode_backups,
 )
 from src.performance_monitor import PerformanceMonitor
+
+
+def _annotate_adaptive_strategies(
+    bill_items: list[dict],
+    selector: AdaptiveStrategy | None = None,
+) -> dict[str, int]:
+    selector = selector or AdaptiveStrategy()
+    counts = {"fast": 0, "standard": 0, "deep": 0, "unknown": 0}
+    for item in bill_items or []:
+        if not isinstance(item, dict):
+            counts["unknown"] += 1
+            continue
+        existing = str(item.get("adaptive_strategy") or "").strip().lower()
+        if existing in {"fast", "standard", "deep"}:
+            strategy = existing
+            decision = dict(item.get("_adaptive_strategy_meta") or {})
+            if not decision:
+                decision = {"strategy": strategy}
+        else:
+            decision = dict(selector.evaluate(item))
+            strategy = str(decision.get("strategy") or "standard").strip().lower()
+            if strategy not in {"fast", "standard", "deep"}:
+                strategy = "standard"
+            item["adaptive_strategy"] = strategy
+        item["_adaptive_strategy_meta"] = decision
+        counts[strategy] = counts.get(strategy, 0) + 1
+
+    logger.info(
+        "adaptive_strategy assigned: "
+        f"fast={counts.get('fast', 0)} "
+        f"standard={counts.get('standard', 0)} "
+        f"deep={counts.get('deep', 0)} "
+        f"unknown={counts.get('unknown', 0)}"
+    )
+    return counts
 
 
 # ============================================================
@@ -181,7 +225,10 @@ def _consume_early_result(results: list[dict], early_result: dict, early_type: s
     _append_trace_step(early_result, "early_return", early_type=early_type)
     _finalize_trace(early_result)
     results.append(early_result)
-    if early_type == "experience_exact":
+    if (
+        early_type == "experience_exact"
+        or str((early_result or {}).get("match_source", "")).startswith("experience")
+    ):
         exp_hits += 1
     elif early_type == "rule_direct":
         rule_hits += 1
@@ -242,6 +289,12 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
         lightweight_rule_prematch=lightweight_rule_prematch,
         performance_monitor=performance_monitor,
     )
+    prepared_item = ((prepared.get("ctx") or {}).get("item") if isinstance(prepared, dict) else None)
+    if isinstance(prepared_item, dict):
+        _annotate_adaptive_strategies([prepared_item])
+        if prepared_item is not item:
+            item["adaptive_strategy"] = prepared_item.get("adaptive_strategy")
+            item["_adaptive_strategy_meta"] = prepared_item.get("_adaptive_strategy_meta")
     consumed, exp_hits, rule_hits = _consume_early_result(
         results=results,
         early_result=prepared.get("early_result"),
@@ -401,13 +454,15 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
     )
     if canonical_query:
         item["canonical_query"] = canonical_query
-    reasoning_packet = ReasoningAgent().build_packet(
-        item,
-        candidates,
-        route_profile=item.get("query_route"),
-        exp_backup=exp_backup,
-        rule_backup=rule_backup,
-    )
+    performance_monitor = PerformanceMonitor()
+    with performance_monitor.measure("agent_reasoning_packet"):
+        reasoning_packet = ReasoningAgent().build_packet(
+            item,
+            candidates,
+            route_profile=item.get("query_route"),
+            exp_backup=exp_backup,
+            rule_backup=rule_backup,
+        )
 
     reference_cases = None if unified_knowledge_retriever else _get_reference_cases_cached(
         reference_cases_cache, experience_db, full_query, province=province,
@@ -429,40 +484,41 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         except Exception as e:
             logger.debug(f"方法卡片查询失败（不影响主流程）: {e}")
 
-    if unified_knowledge_retriever:
-        knowledge_context = _get_unified_knowledge_context_cached(
-            unified_knowledge_cache,
-            unified_knowledge_retriever,
-            query_text=search_query or full_query or f"{name} {desc}".strip(),
-            bill_name=name,
-            bill_desc=desc,
-            province=province,
-            specialty=item.get("specialty", ""),
-            unit=item.get("unit", ""),
-            materials_signature=item.get("materials_signature", ""),
-            cache_lock=unified_knowledge_cache_lock,
-        )
-        reference_cases = knowledge_context.get("reference_cases") or None
-        rules_context = knowledge_context.get("rules_context") or None
-        relevant_cards = knowledge_context.get("method_cards") or None
-        knowledge_evidence = knowledge_context.get("knowledge_evidence") or {}
-        knowledge_meta = knowledge_context.get("meta") or {}
-    else:
-        knowledge_evidence = {
-            "reference_cases": reference_cases or [],
-            "quota_rules": [],
-            "quota_explanations": [],
-            "method_cards": relevant_cards or [],
-            "price_references": [],
-        }
-        knowledge_meta = {
-            "reference_cases_count": len(reference_cases or []),
-            "rules_context_count": len(rules_context or []),
-            "method_cards_count": len(relevant_cards or []),
-            "quota_rules_count": 0,
-            "quota_explanations_count": 0,
-            "price_references_count": 0,
-        }
+    with performance_monitor.measure("agent_knowledge_lookup"):
+        if unified_knowledge_retriever:
+            knowledge_context = _get_unified_knowledge_context_cached(
+                unified_knowledge_cache,
+                unified_knowledge_retriever,
+                query_text=search_query or full_query or f"{name} {desc}".strip(),
+                bill_name=name,
+                bill_desc=desc,
+                province=province,
+                specialty=item.get("specialty", ""),
+                unit=item.get("unit", ""),
+                materials_signature=item.get("materials_signature", ""),
+                cache_lock=unified_knowledge_cache_lock,
+            )
+            reference_cases = knowledge_context.get("reference_cases") or None
+            rules_context = knowledge_context.get("rules_context") or None
+            relevant_cards = knowledge_context.get("method_cards") or None
+            knowledge_evidence = knowledge_context.get("knowledge_evidence") or {}
+            knowledge_meta = knowledge_context.get("meta") or {}
+        else:
+            knowledge_evidence = {
+                "reference_cases": reference_cases or [],
+                "quota_rules": [],
+                "quota_explanations": [],
+                "method_cards": relevant_cards or [],
+                "price_references": [],
+            }
+            knowledge_meta = {
+                "reference_cases_count": len(reference_cases or []),
+                "rules_context_count": len(rules_context or []),
+                "method_cards_count": len(relevant_cards or []),
+                "quota_rules_count": 0,
+                "quota_explanations_count": 0,
+                "price_references_count": 0,
+            }
 
     quota_rules = knowledge_evidence.get("quota_rules") or []
     quota_explanations = knowledge_evidence.get("quota_explanations") or []
@@ -472,18 +528,19 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         rules_context=rules_context,
         method_cards=relevant_cards,
     )
-    result = agent.match_single(
-        bill_item=item,
-        candidates=candidates,
-        reference_cases=reference_cases,
-        rules_context=prompt_rules_context,
-        method_cards=prompt_method_cards,
-        knowledge_evidence=prompt_knowledge_evidence,
-        reasoning_packet=reasoning_packet,
-        canonical_query=canonical_query,
-        search_query=search_query,
-        overview_context=overview_context,
-    )
+    with performance_monitor.measure("agent_llm_match_single"):
+        result = agent.match_single(
+            bill_item=item,
+            candidates=candidates,
+            reference_cases=reference_cases,
+            rules_context=prompt_rules_context,
+            method_cards=prompt_method_cards,
+            knowledge_evidence=prompt_knowledge_evidence,
+            reasoning_packet=reasoning_packet,
+            canonical_query=canonical_query,
+            search_query=search_query,
+            overview_context=overview_context,
+        )
     if canonical_query:
         result["canonical_query"] = canonical_query
         result.setdefault("search_query", canonical_query.get("search_query") or search_query)
@@ -501,6 +558,10 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         "price_references_count": len(knowledge_evidence.get("price_references") or []),
     }
     _append_item_review_rejection_trace(result, item)
+    result["agent_stage_performance"] = {
+        "stages": performance_monitor.snapshot(),
+        "total": sum(performance_monitor.snapshot().values()),
+    }
     _append_trace_step(
         result,
         "agent_llm",
@@ -524,6 +585,7 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
         reasoning_decision=reasoning_packet.get("decision", {}),
         reasoning_compare_points=reasoning_packet.get("compare_points", []),
         unified_knowledge_meta=knowledge_meta,
+        agent_stage_performance=result.get("agent_stage_performance") or {},
         canonical_query=canonical_query,
         query_route=item.get("query_route") or {},
         batch_context=summarize_batch_context_for_trace(item),
@@ -553,7 +615,6 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
     并按定额库类型（土建/市政/园林）挂载到主搜索器上，供 cascade_search 路由使用。
     """
     logger.info("第2步：初始化搜索引擎...")
-    searcher = HybridSearcher(resolved_province)
     validator = ParamValidator()
 
     # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
@@ -574,6 +635,7 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态
+    searcher = get_search_bundle(resolved_province, aux_provinces)
     status = searcher.get_status()
     logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
     logger.info(f"  向量索引: {status['vector_count']} 条定额")
@@ -593,18 +655,14 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
             logger.warning(f"  自动发现兄弟库失败: {e}")
             aux_provinces = []
 
-    # aux_searchers: [HybridSearcher, ...] 列表
-    # 附加到主搜索器上，cascade_search() 会在非安装项目时搜索这些库
-    searcher.aux_searchers = []
+    searcher = get_search_bundle(resolved_province, aux_provinces)
     if aux_provinces:
-        for aux_p in aux_provinces:
+        for aux_searcher, aux_p in zip(searcher.aux_searchers, aux_provinces):
             try:
-                aux_searcher = HybridSearcher(aux_p)
                 aux_status = aux_searcher.get_status()
-                searcher.aux_searchers.append(aux_searcher)
                 logger.info(f"  辅助定额库: {aux_p} ({aux_status['bm25_count']}条)")
             except Exception as e:
-                logger.warning(f"  辅助定额库 {aux_p} 初始化失败: {e}")
+                logger.warning(f"  辅助定额库 {aux_p} 状态检查失败: {e}")
 
     return searcher, validator
 
@@ -615,9 +673,9 @@ def init_experience_db(no_experience: bool, province: str = None) -> 'Experience
     if no_experience:
         return experience_db
     try:
-        from src.experience_db import ExperienceDB
-        experience_db = ExperienceDB(province=province)
-        exp_stats = experience_db.get_stats()
+        experience_db = get_experience_db(province=province)
+        exp_total = experience_db.get_total_count_fast(province=province)
+        exp_stats = {"total": exp_total}
         logger.info(f"  经验库: {exp_stats['total']} 条历史记录")
     except Exception as e:
         logger.warning(f"经验库加载失败，将跳过经验库: {e}")
@@ -748,8 +806,7 @@ def _load_rule_kb(province: str = None) -> 'RuleKnowledge | None':
 
 def _create_rule_validator_and_reranker(province: str = None) -> 'tuple[RuleValidator, Reranker]':
     """统一创建规则校验器和Reranker。"""
-    from src.reranker import Reranker
-    return RuleValidator(province=province), Reranker()
+    return get_rule_bundle(province=province)
 
 
 # ============================================================
@@ -781,7 +838,6 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
     if experience_db:
         searcher.set_experience_db(experience_db)
-
     total = len(bill_items)
     search_lightweight_prep = bool(getattr(config, "SEARCH_LIGHTWEIGHT_PREP_ENABLED", True))
     search_rule_prematch_enabled = bool(getattr(config, "SEARCH_RULE_PREMATCH_ENABLED", False))
@@ -934,22 +990,27 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # 新实例自带干净的熔断器状态，无需手动重置
 
+    bootstrap_timings_ms = {}
+
     # 初始化Agent（使用指定的或config中配置的大模型）
     agent_llm = llm_type or config.AGENT_LLM
+    _bootstrap_started_at = time.perf_counter()
     agent = AgentMatcher(llm_type=agent_llm, province=province)
+    bootstrap_timings_ms["agent_matcher"] = (time.perf_counter() - _bootstrap_started_at) * 1000
 
     # 初始化方法卡片（从经验中提炼的选定额方法论，注入Agent Prompt）
     # L6: prompt 注入可关闭，但统一知识链仍应持续检索方法卡。
     method_cards_db = None
+    _bootstrap_started_at = time.perf_counter()
     try:
-        from src.method_cards import MethodCards
-        mc = MethodCards()
+        mc = get_method_cards_db()
         mc_stats = mc.get_stats()
         if mc_stats["total_cards"] > 0:
             method_cards_db = mc
             logger.info(f"方法卡片知识源已加载: {mc_stats['total_cards']}张")
     except Exception as e:
         logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+    bootstrap_timings_ms["method_cards"] = (time.perf_counter() - _bootstrap_started_at) * 1000
     if not getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True):
         logger.info("L6: 方法卡片 prompt 注入已关闭（统一知识检索仍启用）")
 
@@ -966,20 +1027,24 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
     # 查规则知识库（Agent需要规则上下文）
     # L6: prompt 注入可关闭，但统一知识链仍应持续检索规则/解释。
+    _bootstrap_started_at = time.perf_counter()
     rule_kb = _load_rule_kb(province=province)
+    bootstrap_timings_ms["rule_kb"] = (time.perf_counter() - _bootstrap_started_at) * 1000
     if not getattr(config, "AGENT_RULES_IN_PROMPT", True):
         logger.info("L6: 规则知识 prompt 注入已关闭（统一知识检索仍启用）")
     unified_knowledge_retriever = None
     unified_data_layer = None
+    _bootstrap_started_at = time.perf_counter()
     try:
-        from src.unified_data_layer import UnifiedDataLayer
-        unified_data_layer = UnifiedDataLayer(
+        unified_data_layer = get_unified_data_layer(
             province=province,
             experience_db=experience_db,
         )
     except Exception as e:
-        logger.debug(f"缁熶竴鏁版嵁灞傚姞杞借烦杩囷紙涓嶅奖鍝嶄富娴佺▼锛? {e}")
+        logger.debug(f"统一数据层加载跳过（不影响主流程）: {e}")
         unified_data_layer = None
+    bootstrap_timings_ms["unified_data_layer"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+    _bootstrap_started_at = time.perf_counter()
     if experience_db or rule_kb or method_cards_db or unified_data_layer:
         try:
             from src.unified_knowledge import UnifiedKnowledgeRetriever
@@ -991,8 +1056,9 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 unified_data_layer=unified_data_layer,
             )
         except Exception as e:
-            logger.debug(f"缁熶竴鐭ヨ瘑鍏ュ彛鍔犺浇澶辫触锛堥檷绾х户缁級: {e}")
+            logger.debug(f"统一知识入口加载失败（降级继续）: {e}")
             unified_knowledge_retriever = None
+    bootstrap_timings_ms["unified_knowledge_retriever"] = (time.perf_counter() - _bootstrap_started_at) * 1000
     unified_knowledge_cache = {}
     unified_knowledge_cache_lock = threading.Lock()
     reference_cases_cache = {}
@@ -1000,7 +1066,16 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     rules_context_cache = {}
     rules_context_cache_lock = threading.Lock()
 
-    logger.info(f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}")
+    bootstrap_total_ms = sum(bootstrap_timings_ms.values())
+    bootstrap_summary = ", ".join(
+        f"{name}={elapsed:.1f}ms" for name, elapsed in bootstrap_timings_ms.items()
+    )
+    logger.info(
+        f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}"
+    )
+    logger.info(
+        f"agent_bootstrap_summary: total={bootstrap_total_ms:.1f}ms, {bootstrap_summary}"
+    )
 
     # 表级匹配统计（用于构建上下文摘要传给LLM，帮助保持同类清单一致性）
     match_stats = {}  # {"清单名称片段 → 定额编号": 计数}
@@ -1141,18 +1216,22 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         item["query_route"] = ctx.get("query_route")
         item["canonical_query"] = canonical_query
 
+        fastpath_decision = None
         try:
-            should_skip_agent = _should_skip_agent_llm(
+            fastpath_decision = get_fastpath_decision(
                 candidates,
                 exp_backup=exp_backup,
                 rule_backup=rule_backup,
                 route_profile=ctx.get("query_route"),
+                adaptive_strategy=item.get("adaptive_strategy"),
             )
+            should_skip_agent = bool(fastpath_decision and fastpath_decision.can_fastpath)
         except TypeError:
             should_skip_agent = _should_skip_agent_llm(
                 candidates,
                 exp_backup=exp_backup,
                 rule_backup=rule_backup,
+                adaptive_strategy=item.get("adaptive_strategy"),
             )
 
         if should_skip_agent:
@@ -1170,8 +1249,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             _update_match_stats(fast_result)
             _update_consistency_memory(consistency_memory_agent, item, fast_result)
 
-            # 质量护栏：抽检走快通道的条目（收集到LLM任务里一起并发）
-            if _should_audit_fastpath():
+            # 质量护栏：优先抽检高风险快通道，其余按比例抽检（收集到LLM任务里一起并发）
+            if _should_audit_fastpath(fastpath_decision):
                 fastpath_audit_total += 1
                 llm_tasks.append(_make_llm_task(
                     idx=idx,

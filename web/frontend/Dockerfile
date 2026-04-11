@@ -1,41 +1,47 @@
-# auto-quota 前端 Dockerfile
+# auto-quota frontend Dockerfile
 #
-# 两阶段构建：
-# 1. 构建阶段：用 Node.js 编译 TypeScript + 打包 React
-# 2. 运行阶段：用 Nginx 托管静态文件 + 反向代理 API
+# Two-stage build:
+# 1. Use Node.js to compile TypeScript and bundle the React app
+# 2. Use Nginx to serve static assets and proxy /api requests
 #
-# 构建命令（由 docker-compose 自动调用）:
+# Local build example:
 #   docker build -t autoquota-frontend web/frontend/
 
+ARG NODE_IMAGE=node:22-alpine
+ARG NGINX_IMAGE=nginx:alpine
+ARG BACKEND_UPSTREAM=backend.cloud.lazycat.app.autoquota.lzcapp:8000
+
 # ============================================================
-# 阶段1：构建 React 应用
+# Stage 1: build the React application
 # ============================================================
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/node:22-alpine AS builder
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
 
-# 先复制依赖文件（利用 Docker 缓存层）
+# Copy dependency manifests first to maximize layer cache hits
 COPY package.json package-lock.json ./
 
-# 安装依赖（使用国内npm镜像加速）
+# Use the mirror already used by this repo for faster, more stable installs
 RUN npm ci --registry=https://registry.npmmirror.com
 
-# 复制源码并构建
+# Build the production bundle
 COPY . .
 RUN npm run build
 
 # ============================================================
-# 阶段2：Nginx 托管
+# Stage 2: serve static assets with Nginx
 # ============================================================
-FROM crpi-w9u53ghdxy8m3wgg.cn-hangzhou.personal.cr.aliyuncs.com/cocofee2026/nginx:alpine
+FROM ${NGINX_IMAGE}
 
-# 复制构建产物到 Nginx 默认目录
+ARG BACKEND_UPSTREAM
+
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# 复制 Nginx 配置（反向代理 /api 到后端）
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Default upstream targets Lazycat. Local builds override it with BACKEND_UPSTREAM=backend:8000.
+COPY nginx.conf /tmp/default.conf.template
+RUN sed "s|__BACKEND_UPSTREAM__|${BACKEND_UPSTREAM}|g" /tmp/default.conf.template > /etc/nginx/conf.d/default.conf \
+    && rm -f /tmp/default.conf.template
 
-# Nginx 默认端口
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]

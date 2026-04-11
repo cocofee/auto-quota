@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from collections import Counter, defaultdict
@@ -166,31 +167,156 @@ def _diagnose_cause(record: dict, algo_id: str, algo_name: str, quotas: list[dic
     return "synonym_gap"
 
 
+def _trace_step(result: dict, stage: str) -> dict:
+    trace = result.get("trace") or {}
+    for step in reversed(list(trace.get("steps") or [])):
+        if isinstance(step, dict) and step.get("stage") == stage:
+            return step
+    return {}
+
+
+_ORACLE_DB_NAME_CACHE: dict[tuple[str, str], str | None] = {}
+
+
+def _lookup_quota_name_from_db(province: str, quota_id: str) -> str | None:
+    province = _clean_text(province)
+    quota_id = str(quota_id or "").strip()
+    if not province or not quota_id:
+        return None
+    cache_key = (province, quota_id)
+    if cache_key in _ORACLE_DB_NAME_CACHE:
+        return _ORACLE_DB_NAME_CACHE[cache_key]
+    try:
+        import config
+
+        db_path = config.get_quota_db_path(province)
+        if not Path(db_path).exists():
+            _ORACLE_DB_NAME_CACHE[cache_key] = None
+            return None
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute(
+                "SELECT name FROM quotas WHERE quota_id = ? LIMIT 1",
+                (quota_id,),
+            ).fetchone()
+    except Exception:
+        row = None
+    value = str(row[0]).strip() if row and row[0] else None
+    _ORACLE_DB_NAME_CACHE[cache_key] = value
+    return value
+
+
+def _build_oracle_alignment(record: dict) -> dict:
+    province = _clean_text(record.get("province"))
+    oracle_ids = [str(value).strip() for value in (record.get("oracle_quota_ids") or []) if str(value).strip()]
+    oracle_names = [str(value or "").strip() for value in (record.get("oracle_quota_names") or [])]
+    rows: list[dict] = []
+    status = "ok"
+    for idx, quota_id in enumerate(oracle_ids):
+        stored_name = oracle_names[idx] if idx < len(oracle_names) else ""
+        db_name = _lookup_quota_name_from_db(province, quota_id)
+        row = {
+            "quota_id": quota_id,
+            "oracle_name": stored_name,
+            "db_name": db_name or "",
+            "id_exists": bool(db_name),
+            "name_matches": bool(db_name) and (not stored_name or stored_name == db_name),
+        }
+        rows.append(row)
+        if not db_name:
+            status = "id_missing"
+            break
+        if stored_name and stored_name != db_name:
+            status = "name_mismatch"
+            break
+    return {
+        "status": status,
+        "rows": rows,
+    }
+
+
+def _diagnose_error_stage(result: dict, oracle_ids: list[str], *, algo_id: str, is_match: bool, oracle_found: bool) -> tuple[str, str]:
+    if is_match:
+        return "correct", ""
+    if not oracle_found:
+        return "retriever", "oracle_not_in_candidates"
+
+    pre_ltr_top1_id = str(result.get("pre_ltr_top1_id", "") or "")
+    post_ltr_top1_id = str(result.get("post_ltr_top1_id", "") or "")
+    post_cgr_top1_id = str(result.get("post_cgr_top1_id", "") or "")
+    post_arbiter_top1_id = str(result.get("post_arbiter_top1_id", "") or "")
+    post_explicit_top1_id = str(result.get("post_explicit_top1_id", "") or "")
+    post_anchor_top1_id = str(result.get("post_anchor_top1_id", "") or "")
+    post_final_top1_id = str(result.get("post_final_top1_id", algo_id) or algo_id or "")
+
+    final_step = _trace_step(result, "final_validate")
+    final_validation = dict(result.get("final_validation") or final_step.get("final_validation") or {})
+    vetoed = bool(final_validation.get("vetoed")) or str(final_validation.get("status") or "").strip() == "vetoed"
+
+    if pre_ltr_top1_id and pre_ltr_top1_id in oracle_ids and post_ltr_top1_id and post_ltr_top1_id not in oracle_ids:
+        return "ltr_ranker", "pre_ltr_correct_but_ltr_changed"
+    if post_ltr_top1_id and post_ltr_top1_id in oracle_ids and post_cgr_top1_id and post_cgr_top1_id not in oracle_ids:
+        return "cgr_ranker", "post_ltr_correct_but_cgr_changed"
+    if post_cgr_top1_id and post_cgr_top1_id in oracle_ids and post_arbiter_top1_id and post_arbiter_top1_id not in oracle_ids:
+        return "candidate_arbiter", "post_ltr_correct_but_arbiter_changed"
+    if post_arbiter_top1_id and post_arbiter_top1_id in oracle_ids and post_explicit_top1_id and post_explicit_top1_id not in oracle_ids:
+        return "explicit_override", "post_arbiter_correct_but_explicit_changed"
+    if post_anchor_top1_id and post_anchor_top1_id in oracle_ids and post_final_top1_id and post_final_top1_id not in oracle_ids:
+        if vetoed or final_validation:
+            return "final_validator", "post_anchor_correct_but_final_changed"
+        return "postprocess", "post_anchor_correct_but_final_changed"
+    if post_ltr_top1_id and post_ltr_top1_id in oracle_ids and post_final_top1_id and post_final_top1_id not in oracle_ids:
+        if vetoed or final_validation:
+            return "final_validator", "post_ltr_correct_but_final_changed"
+        return "postprocess", "post_ltr_correct_but_final_changed"
+    return "ranker", "oracle_in_candidates_but_not_top1"
+
+
 def _detail_from_result(record: dict, result: dict) -> dict:
     quotas = list(result.get("quotas") or [])
     algo_id = str((quotas[0].get("quota_id", "") if quotas else "") or "")
     algo_name = str((quotas[0].get("name", "") if quotas else "") or "")
     all_candidate_ids = [str(value).strip() for value in (result.get("all_candidate_ids") or []) if str(value).strip()]
     oracle_ids = [str(value).strip() for value in (record.get("oracle_quota_ids") or []) if str(value).strip()]
+    oracle_alignment = _build_oracle_alignment(record)
     oracle_found = any(value in all_candidate_ids for value in oracle_ids) if oracle_ids else False
     is_match = algo_id in oracle_ids if algo_id and oracle_ids else False
     cause = "" if is_match else _diagnose_cause(record, algo_id, algo_name, quotas)
     reasoning = dict(result.get("reasoning_decision") or {})
     accept_reason = str(reasoning.get("reason") or "")
     accepted = accept_reason == "accept_head_confident"
+    search_step = _trace_step(result, "search_select")
+    experience_review_rejected_step = _trace_step(result, "experience_review_rejected")
+    parser_trace = dict(search_step.get("parser") or {})
+    router_trace = dict(search_step.get("router") or {})
+    retriever_trace = dict(search_step.get("retriever") or {})
+    ranker_trace = dict(search_step.get("ranker") or {})
 
     if is_match:
         miss_stage = ""
     elif not oracle_found:
         miss_stage = "recall_miss"
     else:
-        post_ltr_top1_id = str(result.get("post_ltr_top1_id", "") or "")
+        stage_hits = [
+            str(result.get("post_ltr_top1_id", "") or ""),
+            str(result.get("post_cgr_top1_id", "") or ""),
+            str(result.get("post_arbiter_top1_id", "") or ""),
+            str(result.get("post_explicit_top1_id", "") or ""),
+            str(result.get("post_anchor_top1_id", "") or ""),
+        ]
         post_final_top1_id = str(result.get("post_final_top1_id", algo_id) or algo_id or "")
         miss_stage = (
             "post_rank_miss"
-            if post_ltr_top1_id and post_ltr_top1_id in oracle_ids and post_final_top1_id not in oracle_ids
+            if any(stage_id and stage_id in oracle_ids for stage_id in stage_hits) and post_final_top1_id not in oracle_ids
             else "rank_miss"
         )
+
+    error_stage, error_type = _diagnose_error_stage(
+        result,
+        oracle_ids,
+        algo_id=algo_id,
+        is_match=is_match,
+        oracle_found=oracle_found,
+    )
 
     return {
         "sample_id": str(record.get("sample_id") or ""),
@@ -204,6 +330,8 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "specialty": _clean_text(record.get("specialty")),
         "oracle_quota_ids": oracle_ids,
         "oracle_quota_names": list(record.get("oracle_quota_names") or []),
+        "oracle_status": str(oracle_alignment.get("status") or "ok"),
+        "oracle_db_rows": list(oracle_alignment.get("rows") or []),
         "algo_id": algo_id,
         "algo_name": algo_name,
         "is_match": bool(is_match),
@@ -218,10 +346,33 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "accepted": accepted,
         "accept_reason": accept_reason,
         "miss_stage": miss_stage,
+        "error_stage": error_stage,
+        "error_type": error_type,
+        "experience_review_rejected": bool(experience_review_rejected_step),
+        "experience_review_rejected_type": str(experience_review_rejected_step.get("error_type", "") or ""),
+        "experience_review_rejected_reason": str(experience_review_rejected_step.get("error_reason", "") or ""),
+        "experience_review_rejected_quota_id": str(experience_review_rejected_step.get("quota_id", "") or ""),
+        "experience_review_rejected_source": str(experience_review_rejected_step.get("experience_source", "") or ""),
+        "search_query": str(
+            parser_trace.get("search_query")
+            or parser_trace.get("validation_query")
+            or parser_trace.get("route_query")
+            or ""
+        ),
+        "parser": parser_trace,
+        "router": router_trace,
+        "retriever": retriever_trace,
+        "ranker": ranker_trace,
+        "candidate_snapshots": list(result.get("candidate_snapshots") or [])[:20],
         "pre_ltr_top1_id": str(result.get("pre_ltr_top1_id", "") or ""),
         "post_ltr_top1_id": str(result.get("post_ltr_top1_id", "") or ""),
+        "post_cgr_top1_id": str(result.get("post_cgr_top1_id", "") or ""),
         "post_arbiter_top1_id": str(result.get("post_arbiter_top1_id", "") or ""),
+        "post_explicit_top1_id": str(result.get("post_explicit_top1_id", "") or ""),
+        "post_anchor_top1_id": str(result.get("post_anchor_top1_id", "") or ""),
         "post_final_top1_id": str(result.get("post_final_top1_id", algo_id) or algo_id or ""),
+        "rank_decision_owner": str(result.get("rank_decision_owner", "") or ""),
+        "rank_top1_flip_count": int(result.get("rank_top1_flip_count", 0) or 0),
     }
 
 
@@ -257,7 +408,21 @@ def summarize_real_eval_details(province: str, details: list[dict], elapsed: flo
     accepted = sum(1 for detail in details if detail.get("accepted"))
     accepted_correct = sum(1 for detail in details if detail.get("accepted") and detail.get("is_match"))
     diagnosis = Counter(detail.get("cause", "") for detail in details if detail.get("cause"))
+    error_stage_counts = Counter(
+        detail.get("error_stage", "")
+        for detail in details
+        if detail.get("error_stage") and detail.get("error_stage") != "correct"
+    )
+    error_type_counts = Counter(detail.get("error_type", "") for detail in details if detail.get("error_type"))
     by_source = Counter(detail.get("source", "") for detail in details)
+    oracle_status_counts = Counter(detail.get("oracle_status", "ok") or "ok" for detail in details)
+    aligned_details = [detail for detail in details if str(detail.get("oracle_status") or "ok") == "ok"]
+    aligned_total = len(aligned_details)
+    aligned_correct = sum(1 for detail in aligned_details if detail.get("is_match"))
+    aligned_oracle_in = sum(1 for detail in aligned_details if detail.get("oracle_in_candidates"))
+    aligned_recall_miss = sum(1 for detail in aligned_details if detail.get("miss_stage") == "recall_miss")
+    aligned_rank_miss = sum(1 for detail in aligned_details if detail.get("miss_stage") == "rank_miss")
+    aligned_post_rank_miss = sum(1 for detail in aligned_details if detail.get("miss_stage") == "post_rank_miss")
     recall_miss = sum(1 for detail in details if detail.get("miss_stage") == "recall_miss")
     rank_miss = sum(1 for detail in details if detail.get("miss_stage") == "rank_miss")
     post_rank_miss = sum(1 for detail in details if detail.get("miss_stage") == "post_rank_miss")
@@ -278,9 +443,29 @@ def summarize_real_eval_details(province: str, details: list[dict], elapsed: flo
         "recall_miss_count": recall_miss,
         "rank_miss_count": rank_miss,
         "post_rank_miss_count": post_rank_miss,
+        "error_stage_counts": dict(sorted(error_stage_counts.items())),
+        "error_type_counts": dict(sorted(error_type_counts.items())),
         "severe_error_count": severe_error,
         "diagnosis": dict(diagnosis),
         "by_source": dict(sorted(by_source.items())),
+        "oracle_alignment": dict(sorted(oracle_status_counts.items())),
+        "aligned_total": aligned_total,
+        "aligned_correct": aligned_correct,
+        "aligned_hit_rate": round(aligned_correct / max(aligned_total, 1) * 100, 1) if aligned_total else 0.0,
+        "aligned_oracle_in_candidates": aligned_oracle_in,
+        "aligned_oracle_not_in_candidates": (
+            aligned_total
+            - aligned_correct
+            - sum(
+                1
+                for detail in aligned_details
+                if (not detail.get("is_match")) and detail.get("oracle_in_candidates")
+            )
+        ),
+        "aligned_in_pool_top1_acc": round(aligned_correct / max(aligned_oracle_in, 1), 4) if aligned_oracle_in else 0.0,
+        "aligned_recall_miss_count": aligned_recall_miss,
+        "aligned_rank_miss_count": aligned_rank_miss,
+        "aligned_post_rank_miss_count": aligned_post_rank_miss,
         "elapsed": round(elapsed, 1),
         "details": details,
     }
@@ -379,9 +564,18 @@ def run_real_eval(
     severe_error_count = sum(result["severe_error_count"] for result in province_results)
     diagnosis = Counter()
     by_source = Counter()
+    oracle_alignment = Counter()
+    aligned_total = sum(int(result.get("aligned_total", 0) or 0) for result in province_results)
+    aligned_correct = sum(int(result.get("aligned_correct", 0) or 0) for result in province_results)
+    aligned_oracle_in = sum(int(result.get("aligned_oracle_in_candidates", 0) or 0) for result in province_results)
+    aligned_oracle_not_in = sum(int(result.get("aligned_oracle_not_in_candidates", 0) or 0) for result in province_results)
+    aligned_recall_miss = sum(int(result.get("aligned_recall_miss_count", 0) or 0) for result in province_results)
+    aligned_rank_miss = sum(int(result.get("aligned_rank_miss_count", 0) or 0) for result in province_results)
+    aligned_post_rank_miss = sum(int(result.get("aligned_post_rank_miss_count", 0) or 0) for result in province_results)
     for result in province_results:
         diagnosis.update(result.get("diagnosis") or {})
         by_source.update(result.get("by_source") or {})
+        oracle_alignment.update(result.get("oracle_alignment") or {})
 
     return {
         "dataset_path": str(Path(dataset_path)),
@@ -399,6 +593,16 @@ def run_real_eval(
         "severe_error_count": severe_error_count,
         "diagnosis": dict(diagnosis),
         "by_source": dict(sorted(by_source.items())),
+        "oracle_alignment": dict(sorted(oracle_alignment.items())),
+        "aligned_total": aligned_total,
+        "aligned_correct": aligned_correct,
+        "aligned_hit_rate": round(aligned_correct / max(aligned_total, 1) * 100, 1) if aligned_total else 0.0,
+        "aligned_oracle_in_candidates": aligned_oracle_in,
+        "aligned_oracle_not_in_candidates": aligned_oracle_not_in,
+        "aligned_in_pool_top1_acc": round(aligned_correct / max(aligned_oracle_in, 1), 4) if aligned_oracle_in else 0.0,
+        "aligned_recall_miss_count": aligned_recall_miss,
+        "aligned_rank_miss_count": aligned_rank_miss,
+        "aligned_post_rank_miss_count": aligned_post_rank_miss,
         "runtime_settings": {
             "max_per_province": max_per_province,
             "hybrid_top_k": settings.get("hybrid_top_k"),
@@ -422,12 +626,166 @@ def _strip_details(payload: dict) -> dict:
     return stripped
 
 
+def _build_keyword_miss_export_rows(
+    payload: dict,
+    *,
+    cause: str = "synonym_gap",
+    miss_stage: str = "recall_miss",
+) -> list[dict]:
+    def _compact_router(detail: dict) -> dict:
+        router = dict(detail.get("router") or {})
+        classification = dict(router.get("classification") or {})
+        unified_plan = dict(router.get("unified_plan") or {})
+        return {
+            "primary_book": str(
+                classification.get("primary")
+                or unified_plan.get("primary_book")
+                or router.get("primary_book")
+                or ""
+            ),
+            "search_books": list(classification.get("search_books") or router.get("search_books") or []),
+            "hard_search_books": list(classification.get("hard_search_books") or []),
+            "advisory_search_books": list(classification.get("advisory_search_books") or []),
+            "route_mode": str(
+                classification.get("route_mode")
+                or unified_plan.get("route_mode")
+                or router.get("route_mode")
+                or ""
+            ),
+            "advisory_owner": str(router.get("advisory_owner") or ""),
+            "effective_owner": str(router.get("effective_owner") or ""),
+            "allow_cross_book_escape": bool(
+                classification.get("allow_cross_book_escape")
+                if "allow_cross_book_escape" in classification
+                else router.get("allow_cross_book_escape", True)
+            ),
+        }
+
+    def _compact_retriever(detail: dict) -> dict:
+        retriever = dict(detail.get("retriever") or {})
+        return {
+            "candidate_count": int(retriever.get("candidate_count", detail.get("candidate_count", 0)) or 0),
+            "matched_candidate_count": int(retriever.get("matched_candidate_count", 0) or 0),
+            "candidate_ids": list(retriever.get("candidate_ids") or [])[:20],
+            "authority_hit": bool(retriever.get("authority_hit")),
+            "kb_hit": bool(retriever.get("kb_hit")),
+            "scope_owner": str(retriever.get("scope_owner") or ""),
+            "escape_owner": str(retriever.get("escape_owner") or ""),
+            "used_open_search": bool(retriever.get("used_open_search")),
+            "resolved_main_books": list(retriever.get("resolved_main_books") or []),
+        }
+
+    def _compact_ranker(detail: dict) -> dict:
+        ranker = dict(detail.get("ranker") or {})
+        return {
+            "selected_quota": str(ranker.get("selected_quota") or detail.get("algo_id") or ""),
+            "score_gap": ranker.get("score_gap"),
+            "decision_owner": str(ranker.get("decision_owner") or detail.get("rank_decision_owner") or ""),
+            "top1_flip_count": int(ranker.get("top1_flip_count", detail.get("rank_top1_flip_count", 0)) or 0),
+        }
+
+    rows: list[dict] = []
+    for result in payload.get("province_results", []) or []:
+        for detail in result.get("details", []) or []:
+            if cause and str(detail.get("cause") or "") != cause:
+                continue
+            if miss_stage and str(detail.get("miss_stage") or "") != miss_stage:
+                continue
+            rows.append(
+                {
+                    "sample_id": str(detail.get("sample_id") or ""),
+                    "province": _clean_text(detail.get("province")),
+                    "source": _clean_text(detail.get("source")),
+                    "project_name": _clean_text(detail.get("project_name")),
+                    "bill_name": _clean_text(detail.get("bill_name")),
+                    "bill_text": _clean_text(detail.get("bill_text")),
+                    "specialty": _clean_text(detail.get("specialty")),
+                    "oracle_quota_ids": list(detail.get("oracle_quota_ids") or []),
+                    "oracle_quota_names": list(detail.get("oracle_quota_names") or []),
+                    "search_query": str(detail.get("search_query") or ""),
+                    "parser": dict(detail.get("parser") or {}),
+                    "router": _compact_router(detail),
+                    "retriever": _compact_retriever(detail),
+                    "ranker": _compact_ranker(detail),
+                    "candidate_count": int(detail.get("candidate_count", 0) or 0),
+                    "cause": str(detail.get("cause") or ""),
+                    "miss_stage": str(detail.get("miss_stage") or ""),
+                    "error_stage": str(detail.get("error_stage") or ""),
+                    "error_type": str(detail.get("error_type") or ""),
+                    "algo_id": str(detail.get("algo_id") or ""),
+                    "algo_name": str(detail.get("algo_name") or ""),
+                    "match_source": str(detail.get("match_source") or ""),
+                    "confidence": float(detail.get("confidence", 0.0) or 0.0),
+                }
+            )
+    return rows
+
+
+def _build_mode_comparison(closed_payload: dict, with_memory_payload: dict) -> dict:
+    closed = _strip_details(closed_payload)
+    memory = _strip_details(with_memory_payload)
+    closed_by_province = {
+        str(item.get("province") or ""): item
+        for item in closed.get("province_results", []) or []
+        if str(item.get("province") or "")
+    }
+    memory_by_province = {
+        str(item.get("province") or ""): item
+        for item in memory.get("province_results", []) or []
+        if str(item.get("province") or "")
+    }
+    province_names = sorted(set(closed_by_province) | set(memory_by_province))
+    province_deltas = []
+    for province in province_names:
+        closed_item = closed_by_province.get(province, {})
+        memory_item = memory_by_province.get(province, {})
+        province_deltas.append({
+            "province": province,
+            "closed_book_total": int(closed_item.get("total", 0) or 0),
+            "with_memory_total": int(memory_item.get("total", 0) or 0),
+            "closed_book_hit_rate": float(closed_item.get("hit_rate", 0.0) or 0.0),
+            "with_memory_hit_rate": float(memory_item.get("hit_rate", 0.0) or 0.0),
+            "hit_rate_gain": round(
+                float(memory_item.get("hit_rate", 0.0) or 0.0)
+                - float(closed_item.get("hit_rate", 0.0) or 0.0),
+                1,
+            ),
+            "closed_book_correct": int(closed_item.get("correct", 0) or 0),
+            "with_memory_correct": int(memory_item.get("correct", 0) or 0),
+            "correct_gain": int(memory_item.get("correct", 0) or 0) - int(closed_item.get("correct", 0) or 0),
+        })
+
+    return {
+        "comparison_mode": "closed_book_vs_with_memory",
+        "profile": str(closed.get("profile") or memory.get("profile") or ""),
+        "dataset_path": str(closed.get("dataset_path") or memory.get("dataset_path") or ""),
+        "closed_book": closed,
+        "with_memory": memory,
+        "delta": {
+            "total": int(memory.get("total", 0) or 0),
+            "closed_book_hit_rate": float(closed.get("hit_rate", 0.0) or 0.0),
+            "with_memory_hit_rate": float(memory.get("hit_rate", 0.0) or 0.0),
+            "hit_rate_gain": round(
+                float(memory.get("hit_rate", 0.0) or 0.0)
+                - float(closed.get("hit_rate", 0.0) or 0.0),
+                1,
+            ),
+            "closed_book_correct": int(closed.get("correct", 0) or 0),
+            "with_memory_correct": int(memory.get("correct", 0) or 0),
+            "correct_gain": int(memory.get("correct", 0) or 0) - int(closed.get("correct", 0) or 0),
+        },
+        "province_deltas": province_deltas,
+    }
+
+
 def _print_summary(payload: dict) -> None:
     print(
         f"[REAL-EVAL] profile={payload['profile']} mode={payload['eval_mode']} total={payload['total']} "
-        f"hit_rate={payload['hit_rate']}% accept_cov={payload['accept_coverage']:.4f} "
-        f"accept_prec={payload['accept_precision']:.4f}"
+        f"hit_rate={payload['hit_rate']}% aligned_hit_rate={payload.get('aligned_hit_rate', 0.0)}% "
+        f"accept_cov={payload['accept_coverage']:.4f} accept_prec={payload['accept_precision']:.4f}"
     )
+    if payload.get("oracle_alignment"):
+        print(f"  oracle_alignment={payload['oracle_alignment']}")
     if payload.get("skipped_provinces"):
         skipped = ", ".join(
             f"{item['province']}({item['sample_count']})"
@@ -437,7 +795,24 @@ def _print_summary(payload: dict) -> None:
     for result in payload.get("province_results", []):
         print(
             f"  - {result['province']}: total={result['total']} hit={result['hit_rate']}% "
-            f"oracle_in={result['oracle_in_candidates']} severe={result['severe_error_count']}"
+            f"aligned_hit={result.get('aligned_hit_rate', 0.0)}% "
+            f"oracle_in={result['oracle_in_candidates']} severe={result['severe_error_count']} "
+            f"oracle_alignment={result.get('oracle_alignment', {})}"
+        )
+
+
+def _print_comparison_summary(payload: dict) -> None:
+    delta = dict(payload.get("delta") or {})
+    print(
+        f"[REAL-EVAL-COMPARE] profile={payload.get('profile', '')} total={delta.get('total', 0)} "
+        f"closed_book={delta.get('closed_book_hit_rate', 0.0)}% "
+        f"with_memory={delta.get('with_memory_hit_rate', 0.0)}% "
+        f"gain={delta.get('hit_rate_gain', 0.0)}"
+    )
+    for item in payload.get("province_deltas", []) or []:
+        print(
+            f"  - {item['province']}: closed_book={item['closed_book_hit_rate']}% "
+            f"with_memory={item['with_memory_hit_rate']}% gain={item['hit_rate_gain']}"
         )
 
 
@@ -451,26 +826,56 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="global record limit")
     parser.add_argument("--max-per-province", type=int, default=None, help="cap per province")
     parser.add_argument("--with-experience", action="store_true", help="enable experience DB during eval")
+    parser.add_argument("--compare-modes", action="store_true", help="run both closed_book and with_memory, emit a comparison summary")
+    parser.add_argument(
+        "--keyword-miss-export-out",
+        default="",
+        help="optional filtered jsonl export for closed-book synonym_gap recall misses",
+    )
     parser.add_argument("--log-level", default="WARNING", help="loguru log level")
     parser.add_argument("--skip-unavailable-provinces", action="store_true", help="skip provinces whose local index is unavailable")
     args = parser.parse_args()
 
-    payload = run_real_eval(
-        args.dataset,
-        profile=args.profile,
-        with_experience=args.with_experience,
-        province_filters=list(args.provinces or []),
-        limit=args.limit,
-        max_per_province=args.max_per_province,
-        log_level=args.log_level,
-        skip_unavailable_provinces=args.skip_unavailable_provinces,
-    )
+    if args.compare_modes:
+        closed_payload = run_real_eval(
+            args.dataset,
+            profile=args.profile,
+            with_experience=False,
+            province_filters=list(args.provinces or []),
+            limit=args.limit,
+            max_per_province=args.max_per_province,
+            log_level=args.log_level,
+            skip_unavailable_provinces=args.skip_unavailable_provinces,
+        )
+        with_memory_payload = run_real_eval(
+            args.dataset,
+            profile=args.profile,
+            with_experience=True,
+            province_filters=list(args.provinces or []),
+            limit=args.limit,
+            max_per_province=args.max_per_province,
+            log_level=args.log_level,
+            skip_unavailable_provinces=args.skip_unavailable_provinces,
+        )
+        payload = _build_mode_comparison(closed_payload, with_memory_payload)
+    else:
+        payload = run_real_eval(
+            args.dataset,
+            profile=args.profile,
+            with_experience=args.with_experience,
+            province_filters=list(args.provinces or []),
+            limit=args.limit,
+            max_per_province=args.max_per_province,
+            log_level=args.log_level,
+            skip_unavailable_provinces=args.skip_unavailable_provinces,
+        )
 
     summary_path = Path(args.summary_out)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(_strip_details(payload), ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_body = payload if args.compare_modes else _strip_details(payload)
+    summary_path.write_text(json.dumps(summary_body, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if args.details_out:
+    if args.details_out and not args.compare_modes:
         details_path = Path(args.details_out)
         details_path.parent.mkdir(parents=True, exist_ok=True)
         with details_path.open("w", encoding="utf-8") as handle:
@@ -478,7 +883,18 @@ def main() -> int:
                 for detail in result.get("details", []):
                     handle.write(json.dumps(detail, ensure_ascii=False) + "\n")
 
-    _print_summary(payload)
+    if args.keyword_miss_export_out and not args.compare_modes:
+        export_rows = _build_keyword_miss_export_rows(payload)
+        export_path = Path(args.keyword_miss_export_out)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        with export_path.open("w", encoding="utf-8") as handle:
+            for row in export_rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    if args.compare_modes:
+        _print_comparison_summary(payload)
+    else:
+        _print_summary(payload)
     print(f"[OK] summary saved to: {summary_path}")
     return 0
 

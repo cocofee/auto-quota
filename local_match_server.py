@@ -8,7 +8,7 @@
     python local_match_server.py
     或者双击「启动匹配服务.bat」
 
-端口：9100（默认，可通过 LOCAL_MATCH_PORT 环境变量修改）
+端口：9300（默认，可通过 LOCAL_MATCH_PORT 环境变量修改）
 """
 
 import base64
@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import time
 import uuid
 import threading
@@ -72,11 +73,56 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 # 任务保留时间（秒），超时后自动清理
 TASK_TTL = 3600  # 1小时
 
-# 服务端口
-PORT = int(os.getenv("LOCAL_MATCH_PORT", "9100"))
+# 服务端口（默认 9300；若默认端口不可绑定且未显式指定 LOCAL_MATCH_PORT，则自动回退到可用端口）
+DEFAULT_PORT = 9300
+_port_env = os.getenv("LOCAL_MATCH_PORT", "").strip()
+REQUESTED_PORT = int(_port_env or str(DEFAULT_PORT))
+PORT_WAS_EXPLICITLY_SET = bool(_port_env)
+PORT = REQUESTED_PORT
 
 # 默认监听所有网卡，便于懒猫盒子/局域网访问；如需仅本机访问可显式设为 127.0.0.1
 HOST = os.getenv("LOCAL_MATCH_HOST", "0.0.0.0").strip() or "0.0.0.0"
+
+
+def _format_bind_error(exc: OSError) -> str:
+    winerror = getattr(exc, "winerror", None)
+    if winerror is not None:
+        return f"{exc} (WinError {winerror})"
+    return str(exc)
+
+
+def _can_bind(host: str, port: int) -> tuple[bool, str | None]:
+    family = socket.AF_INET6 if ":" in host and host != "0.0.0.0" else socket.AF_INET
+    bind_target = (host, port, 0, 0) if family == socket.AF_INET6 else (host, port)
+
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                except OSError:
+                    pass
+            sock.bind(bind_target)
+        return True, None
+    except OSError as exc:
+        return False, _format_bind_error(exc)
+
+
+def _resolve_listen_port(host: str, requested_port: int, port_was_explicitly_set: bool) -> tuple[int, str | None]:
+    can_bind, bind_error = _can_bind(host, requested_port)
+    if can_bind:
+        return requested_port, None
+
+    port_hint = (
+        f"LOCAL_MATCH_PORT={requested_port} 不可用"
+        if port_was_explicitly_set
+        else f"默认端口 {requested_port} 不可用"
+    )
+    raise RuntimeError(
+        f"{port_hint}，无法启动本地匹配服务。\n"
+        f"绑定失败原因: {bind_error}\n"
+        "请手动设置一个可用端口后重试，例如设置 LOCAL_MATCH_PORT=9400，并同步更新所有远程客户端的 LOCAL_MATCH_URL。"
+    )
 
 # ============================================================
 # 全局状态
@@ -282,13 +328,10 @@ async def _read_and_validate_upload(file: UploadFile, label: str) -> tuple[bytes
 
 @app.get("/health")
 def health_check(x_api_key: str = Header(default="")):
-    """健康检查 — 返回版本号和可用省份列表"""
+    """健康检查 - 返回版本号和可用省份列表"""
     _verify_api_key(x_api_key)
 
-    # 获取可用省份列表
-    provinces = config.list_db_provinces()
-    groups = config.get_province_groups()
-    subgroups = config.get_province_subgroups()
+    meta = _build_province_meta_payload()
 
     # 统计当前活跃任务数
     with _tasks_lock:
@@ -297,11 +340,24 @@ def health_check(x_api_key: str = Header(default="")):
     return {
         "status": "ok",
         "version": "1.0.0",
-        "provinces": provinces,
-        "groups": groups,
-        "subgroups": subgroups,
+        **meta,
         "active_tasks": active,
         "max_concurrent": MAX_CONCURRENT,
+    }
+
+
+@app.get("/provinces-meta")
+def provinces_meta(x_api_key: str = Header(default="")):
+    """获取省份列表和分组元数据"""
+    _verify_api_key(x_api_key)
+    return _build_province_meta_payload()
+
+
+def _build_province_meta_payload() -> dict[str, object]:
+    return {
+        "provinces": config.list_db_provinces(),
+        "groups": config.get_province_groups(),
+        "subgroups": config.get_province_subgroups(),
     }
 
 
@@ -1745,6 +1801,7 @@ def _run_match(match_id: str, params: dict):
                 )
 
     except Exception as e:
+        logger.exception(f"本地匹配任务失败: match_id={match_id}")
         # 标记失败
         with _tasks_lock:
             if match_id in _tasks:
@@ -1793,6 +1850,15 @@ def _cleanup_expired_tasks():
 
 def main():
     """启动本地匹配API服务"""
+    global PORT
+
+    selected_port, _ = _resolve_listen_port(
+        host=HOST,
+        requested_port=REQUESTED_PORT,
+        port_was_explicitly_set=PORT_WAS_EXPLICITLY_SET,
+    )
+    PORT = selected_port
+
     # 启动清理线程
     cleaner = threading.Thread(target=_cleanup_expired_tasks, daemon=True)
     cleaner.start()

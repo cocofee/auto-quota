@@ -64,6 +64,53 @@ async def _remote_store(path: str, payload: dict) -> dict:
         return {}
 
 
+async def _store_experience_now(
+    name: str,
+    desc: str,
+    quota_ids: list[str],
+    quota_names: list[str],
+    reason: str,
+    specialty: str,
+    province: str,
+    confirmed: bool,
+    feedback_payload: dict | None = None,
+) -> bool:
+    if not quota_ids:
+        return False
+
+    if _is_remote():
+        result = await _remote_store("/experience/store", {
+            "name": name,
+            "desc": desc,
+            "quota_ids": quota_ids,
+            "quota_names": quota_names,
+            "reason": reason,
+            "specialty": specialty,
+            "province": province,
+            "confirmed": confirmed,
+            "feedback_payload": feedback_payload,
+        })
+        return result.get("success", False)
+
+    from tools.jarvis_store import store_one
+
+    def _store():
+        return store_one(
+            name=name,
+            desc=desc,
+            quota_ids=quota_ids,
+            quota_names=quota_names,
+            reason=reason,
+            specialty=specialty,
+            province=province,
+            confirmed=confirmed,
+            feedback_payload=feedback_payload,
+        )
+
+    result = await asyncio.to_thread(_store)
+    return bool(result)
+
+
 async def store_experience(
     name: str,
     desc: str,
@@ -80,65 +127,37 @@ async def store_experience(
     confirmed=True → 权威层（用户确认的数据）
     confirmed=False → 候选层（系统推荐或纠正的数据）
 
-    远程模式下转发到本地匹配服务。
-    返回是否写入成功。失败不抛异常（经验库是增值功能）。
+    返回 True 表示写入成功；失败不抛异常。
     """
     if not quota_ids:
         return False
 
-    # 远程模式：转发到本地匹配服务
-    if _is_remote():
-        result = await _remote_store("/experience/store", {
-            "name": name,
-            "desc": desc,
-            "quota_ids": quota_ids,
-            "quota_names": quota_names,
-            "reason": reason,
-            "specialty": specialty,
-            "province": province,
-            "confirmed": confirmed,
-            "feedback_payload": feedback_payload,
-        })
-        return result.get("success", False)
-
-    # 本地模式：直接调用
     try:
-        from tools.jarvis_store import store_one
-
-        def _store():
-            return store_one(
-                name=name,
-                desc=desc,
-                quota_ids=quota_ids,
-                quota_names=quota_names,
-                reason=reason,
-                specialty=specialty,
-                province=province,
-                confirmed=confirmed,
-                feedback_payload=feedback_payload,
-            )
-
-        result = await asyncio.to_thread(_store)
-        return bool(result)
+        return await _store_experience_now(
+            name=name,
+            desc=desc,
+            quota_ids=quota_ids,
+            quota_names=quota_names,
+            reason=reason,
+            specialty=specialty,
+            province=province,
+            confirmed=confirmed,
+            feedback_payload=feedback_payload,
+        )
     except Exception as e:
         logger.warning(f"经验库写入失败（不影响主操作）: {e}")
         return False
 
 
-async def store_experience_batch(
+async def _store_experience_batch_now(
     records: list[dict],
     province: str,
     reason: str,
     confirmed: bool,
 ) -> int:
-    """批量写入经验库，返回成功写入的条数
-
-    records 中每条记录需包含: name, desc(可选), quota_ids, quota_names(可选), specialty(可选)
-    """
     if not records:
         return 0
 
-    # 远程模式：转发到本地匹配服务
     if _is_remote():
         result = await _remote_store("/experience/store-batch", {
             "records": records,
@@ -148,30 +167,50 @@ async def store_experience_batch(
         })
         return result.get("count", 0)
 
-    # 本地模式：直接调用
+    from tools.jarvis_store import store_one
+
+    def _store_all():
+        count = 0
+        for rec in records:
+            if rec.get("quota_ids"):
+                ok = store_one(
+                    name=rec["name"],
+                    desc=rec.get("desc", ""),
+                    quota_ids=rec["quota_ids"],
+                    quota_names=rec.get("quota_names", []),
+                    reason=reason,
+                    specialty=rec.get("specialty", ""),
+                    province=province,
+                    confirmed=confirmed,
+                    feedback_payload=rec.get("feedback_payload"),
+                )
+                if ok:
+                    count += 1
+        return count
+
+    return await asyncio.to_thread(_store_all)
+
+
+async def store_experience_batch(
+    records: list[dict],
+    province: str,
+    reason: str,
+    confirmed: bool,
+) -> int:
+    """批量写入经验库，返回成功写入的记录数。
+
+    records 中每条记录需包含: name, desc(可选), quota_ids, quota_names(可选), specialty(可选)
+    """
+    if not records:
+        return 0
+
     try:
-        from tools.jarvis_store import store_one
-
-        def _store_all():
-            count = 0
-            for rec in records:
-                if rec.get("quota_ids"):
-                    ok = store_one(
-                        name=rec["name"],
-                        desc=rec.get("desc", ""),
-                        quota_ids=rec["quota_ids"],
-                        quota_names=rec.get("quota_names", []),
-                        reason=reason,
-                        specialty=rec.get("specialty", ""),
-                        province=province,
-                        confirmed=confirmed,
-                        feedback_payload=rec.get("feedback_payload"),
-                    )
-                    if ok:
-                        count += 1
-            return count
-
-        return await asyncio.to_thread(_store_all)
+        return await _store_experience_batch_now(
+            records=records,
+            province=province,
+            reason=reason,
+            confirmed=confirmed,
+        )
     except Exception as e:
         logger.warning(f"批量经验库写入失败（不影响主操作）: {e}")
         return 0

@@ -272,7 +272,10 @@ def test_build_search_result_trace_includes_retrieval_resolution():
         ],
     )
 
-    trace_step = result["trace"]["steps"][-1]
+    trace_step = next(
+        step for step in result["trace"]["steps"]
+        if step.get("stage") == "search_select"
+    )
     assert trace_step["retriever"]["search_resolution"]["calls"][0]["resolved_books"] == ["C4"]
 
 

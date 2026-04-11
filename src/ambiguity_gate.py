@@ -25,6 +25,8 @@ class AmbiguityDecision:
     require_final_review: bool = False
     risk_level: str = "low"
     arbitration_applied: bool = False
+    audit_recommended: bool = False
+    audit_reasons: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -177,6 +179,9 @@ def analyze_ambiguity(candidates: list[dict],
             and accept_score >= config.CGR_ACCEPT_THRESHOLD
             and top_probability >= config.CGR_MIN_TOP1_PROB
         ):
+            audit_reasons: list[str] = []
+            if arbitration_applied:
+                audit_reasons.append("arbitration_applied")
             return AmbiguityDecision(
                 can_fastpath=True,
                 is_ambiguous=False,
@@ -190,6 +195,8 @@ def analyze_ambiguity(candidates: list[dict],
                 require_final_review=arbitration_applied,
                 risk_level="medium" if arbitration_applied else "low",
                 arbitration_applied=arbitration_applied,
+                audit_recommended=bool(audit_reasons),
+                audit_reasons=tuple(audit_reasons),
             )
         return AmbiguityDecision(
             can_fastpath=False,
@@ -293,6 +300,15 @@ def analyze_ambiguity(candidates: list[dict],
             arbitration_applied=True,
         )
 
+    audit_reasons: list[str] = []
+    fastpath_margin = max(safe_float(getattr(config, "AGENT_FASTPATH_MARGIN", 0.0), 0.0), 0.0)
+    if top_score < (policy.agent_fastpath_score + fastpath_margin):
+        audit_reasons.append("borderline_param_score")
+    if gap < (policy.agent_fastpath_score_gap + fastpath_margin):
+        audit_reasons.append("borderline_score_gap")
+    if arbitration_applied:
+        audit_reasons.append("arbitration_applied")
+
     return AmbiguityDecision(
         can_fastpath=True,
         is_ambiguous=False,
@@ -306,4 +322,6 @@ def analyze_ambiguity(candidates: list[dict],
         require_final_review=arbitration_applied,
         risk_level="medium" if arbitration_applied else "low",
         arbitration_applied=arbitration_applied,
+        audit_recommended=bool(audit_reasons),
+        audit_reasons=tuple(audit_reasons),
     )

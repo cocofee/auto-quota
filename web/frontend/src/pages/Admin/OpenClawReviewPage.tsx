@@ -1285,11 +1285,9 @@ export default function OpenClawReviewPage() {
             size="small"
             title={`当前任务：${normalizeDisplayText(selectedTask.name) || selectedTask.id}`}
             extra={
-              <Space>
-                <Button onClick={() => navigate(buildResultPagePath())}>
-                  打开结果页
-                </Button>
-              </Space>
+              <Button onClick={() => navigate(buildResultPagePath())}>
+                打开结果页
+              </Button>
             }
           >
             <Descriptions size="small" column={2} bordered>

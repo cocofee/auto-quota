@@ -3365,16 +3365,13 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     exp_backup = exp_result if exp_result else None
 
     if adaptive_strategy == "fast" and exp_result is None:
-        result = _build_empty_match_result(
-            item,
-            "adaptive fast strategy returned after experience miss",
-            source="adaptive_fast",
-        )
-        _append_trace_step(result, "adaptive_fast_return", reason="experience_miss")
-        return {
-            "early_result": result,
-            "early_type": "adaptive_fast",
-        }
+        adaptive_meta["downgraded_from"] = "fast"
+        adaptive_meta["downgrade_reason"] = "experience_miss"
+        adaptive_meta["strategy"] = "standard"
+        item["adaptive_strategy"] = "standard"
+        item["adaptive_strategy_meta"] = adaptive_meta
+        item["_adaptive_strategy_meta"] = adaptive_meta
+        adaptive_strategy = "standard"
 
     if exact_exp_direct and exp_result and exp_result.get("match_source") == "experience_exact":
         _append_trace_step(exp_result, "experience_exact_direct_return")

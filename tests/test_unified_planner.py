@@ -101,3 +101,23 @@ def test_unified_planner_uses_plugin_aliases_and_family_cluster_as_soft_plan():
     assert plan["allow_cross_book_escape"] is True
     assert plan["search_aliases"] == ["排气阀安装"]
     assert "C10" in plan["preferred_books"]
+
+
+def test_unified_planner_filters_broad_books_out_of_install_scope():
+    plan = build_unified_search_plan(
+        province="上海市安装工程预算定额(2016)",
+        item={
+            "name": "流量开关",
+            "description": "型号:DN50",
+        },
+        plugin_hints={
+            "source": "generated_benchmark_knowledge",
+            "preferred_books": ["D", "A"],
+            "preferred_specialties": ["D"],
+        },
+    )
+
+    assert "A" not in plan["preferred_books"]
+    assert "D" not in plan["preferred_books"]
+    assert "A" not in plan["plugin_hints"]["preferred_books"]
+    assert "D" not in plan["plugin_hints"]["preferred_books"]

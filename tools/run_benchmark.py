@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -38,6 +39,61 @@ BENCHMARK_ASSET_ROOT = PROJECT_ROOT / "output" / "benchmark_assets"
 BENCHMARK_ASSET_ALT_LIMIT = 9
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.adaptive_strategy import summarize_adaptive_strategy_metrics
+
+SCORING_MODE_ENV = "AUTO_QUOTA_SCORING_MODE"
+BENCHMARK_PROFILE_DEFAULTS = {
+    "smoke": {
+        "json_only": True,
+        "install_only": True,
+        "max_items_per_province": 10,
+    },
+    "dev": {
+        "json_only": True,
+        "install_only": True,
+        "max_items_per_province": 20,
+    },
+    "full": {
+        "json_only": False,
+        "install_only": False,
+        "max_items_per_province": None,
+    },
+}
+
+
+@contextmanager
+def _temporary_scoring_mode(scoring_mode: str | None):
+    previous = os.environ.get(SCORING_MODE_ENV)
+    if scoring_mode:
+        os.environ[SCORING_MODE_ENV] = str(scoring_mode).strip()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(SCORING_MODE_ENV, None)
+        else:
+            os.environ[SCORING_MODE_ENV] = previous
+
+
+def _resolve_benchmark_profile(args) -> str:
+    profile = str(getattr(args, "profile", "") or "").strip().lower()
+    if profile and profile != "auto":
+        return profile
+    if bool(getattr(args, "save", False)) or bool(getattr(args, "compare", False)):
+        return "full"
+    return "dev"
+
+
+def _apply_benchmark_profile(args, profile: str):
+    settings = BENCHMARK_PROFILE_DEFAULTS.get(profile, BENCHMARK_PROFILE_DEFAULTS["full"])
+    if settings.get("json_only") and not args.excel_only and not args.json_only:
+        args.json_only = True
+    if settings.get("install_only") and not args.install_only:
+        args.install_only = True
+    if args.max_items_per_province is None and settings.get("max_items_per_province") is not None:
+        args.max_items_per_province = int(settings["max_items_per_province"])
+    return args
 
 
 # ============================================================
@@ -243,7 +299,8 @@ def filter_json_papers(papers: dict,
 
 
 def run_json_paper(province: str, items: list[dict],
-                   with_experience: bool = False) -> dict:
+                   with_experience: bool = False,
+                   scoring_mode: str = "two_stage") -> dict:
     """对一个省份的JSON试卷运行搜索匹配，对比标准答案
 
     返回: {province, total, correct, wrong, hit_rate, diagnosis, elapsed, details}
@@ -294,10 +351,12 @@ def run_json_paper(province: str, items: list[dict],
 
     # 运行搜索匹配
     start = time.time()
-    results = match_search_only(
-        bill_items, searcher, validator,
-        experience_db=experience_db, province=province)
+    with _temporary_scoring_mode(scoring_mode):
+        results = match_search_only(
+            bill_items, searcher, validator,
+            experience_db=experience_db, province=province)
     elapsed = time.time() - start
+    adaptive_strategy = summarize_adaptive_strategy_metrics(results)
 
     # 逐条对比标准答案
     correct = 0
@@ -337,9 +396,24 @@ def run_json_paper(province: str, items: list[dict],
         oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
         pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
         post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
+        post_cgr_top1_id = str(result.get('post_cgr_top1_id', '') or '')
         post_arbiter_top1_id = str(result.get('post_arbiter_top1_id', '') or '')
+        post_explicit_top1_id = str(result.get('post_explicit_top1_id', '') or '')
+        post_anchor_top1_id = str(result.get('post_anchor_top1_id', '') or '')
         post_final_top1_id = str(result.get('post_final_top1_id', algo_id) or algo_id or '')
         final_changed_by = str(result.get('final_changed_by', '') or '')
+        rank_decision_owner = str(result.get('rank_decision_owner', '') or '')
+        rank_top1_flip_count = int(result.get('rank_top1_flip_count', 0) or 0)
+
+        # 仲裁器shadow分析
+        arbitration = result.get('arbitration') or {}
+        arbiter_recommended_id = str(arbitration.get('recommended_quota_id', '') or '').strip()
+        arbiter_advisory = bool(arbitration.get('advisory_applied', False))
+        arbiter_would_be_correct = bool(
+            arbiter_advisory
+            and arbiter_recommended_id
+            and arbiter_recommended_id in stored_ids
+        ) if stored_ids else False
 
         if oracle_found:
             in_pool_total += 1
@@ -355,7 +429,16 @@ def run_json_paper(province: str, items: list[dict],
             diagnosis[cause] += 1
             if oracle_found:
                 oracle_in_candidates += 1
-                if post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_final_top1_id not in stored_ids:
+                if any(
+                    stage_id and stage_id in stored_ids
+                    for stage_id in (
+                        post_ltr_top1_id,
+                        post_cgr_top1_id,
+                        post_arbiter_top1_id,
+                        post_explicit_top1_id,
+                        post_anchor_top1_id,
+                    )
+                ) and post_final_top1_id not in stored_ids:
                     post_rank_miss_count += 1
                 else:
                     rank_miss_count += 1
@@ -367,10 +450,27 @@ def run_json_paper(province: str, items: list[dict],
         if not is_match:
             if not oracle_found:
                 miss_stage = "recall_miss"
-            elif post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_final_top1_id not in stored_ids:
+            elif any(
+                stage_id and stage_id in stored_ids
+                for stage_id in (
+                    post_ltr_top1_id,
+                    post_cgr_top1_id,
+                    post_arbiter_top1_id,
+                    post_explicit_top1_id,
+                    post_anchor_top1_id,
+                )
+            ) and post_final_top1_id not in stored_ids:
                 miss_stage = "post_rank_miss"
             else:
                 miss_stage = "rank_miss"
+
+        error_stage, error_type, miss_category = _diagnose_error_stage(
+            result,
+            stored_ids,
+            algo_id=algo_id,
+            is_match=is_match,
+            oracle_found=oracle_found,
+        )
 
         details.append({
             'bill_name': card['bill_name'][:30],
@@ -394,17 +494,51 @@ def run_json_paper(province: str, items: list[dict],
             'candidate_count': result.get('candidate_count', result.get('candidates_count', len(all_cand_ids))),
             'pre_ltr_top1_id': pre_ltr_top1_id,
             'post_ltr_top1_id': post_ltr_top1_id,
+            'post_cgr_top1_id': post_cgr_top1_id,
             'post_arbiter_top1_id': post_arbiter_top1_id,
+            'post_explicit_top1_id': post_explicit_top1_id,
+            'post_anchor_top1_id': post_anchor_top1_id,
             'post_final_top1_id': post_final_top1_id,
             'final_changed_by': final_changed_by,
+            'rank_decision_owner': rank_decision_owner,
+            'rank_top1_flip_count': rank_top1_flip_count,
             'miss_stage': miss_stage,
+            'error_stage': error_stage,
+            'error_type': error_type,
+            'miss_category': miss_category,
+            'arbiter_recommended_id': arbiter_recommended_id,
+            'arbiter_advisory': arbiter_advisory,
+            'arbiter_would_be_correct': arbiter_would_be_correct,
         })
 
     total = correct + wrong
     hit_rate = correct / max(total, 1) * 100
+    error_stage_counts = Counter(
+        detail.get('error_stage', '')
+        for detail in details
+        if detail.get('error_stage') and detail.get('error_stage') != 'correct'
+    )
+    error_type_counts = Counter(detail.get('error_type', '') for detail in details if detail.get('error_type'))
+    miss_category_counts = Counter(
+        detail.get('miss_category', '')
+        for detail in details
+        if detail.get('miss_category')
+    )
+    confidence_miss_count = miss_category_counts.get('confidence_miss', 0)
+
+    # 仲裁器shadow统计
+    arbiter_advisory_total = sum(1 for d in details if d.get('arbiter_advisory'))
+    arbiter_would_be_correct = sum(1 for d in details if d.get('arbiter_would_be_correct'))
+    arbiter_would_be_wrong = arbiter_advisory_total - arbiter_would_be_correct
+    # 在rank_miss中仲裁器推荐正确的数量
+    arbiter_correct_in_rank_miss = sum(
+        1 for d in details
+        if d.get('miss_category') == 'rank_miss' and d.get('arbiter_would_be_correct')
+    )
 
     return {
         'province': province,
+        'scoring_mode': scoring_mode,
         'total': total,
         'correct': correct,
         'wrong': wrong,
@@ -416,7 +550,16 @@ def run_json_paper(province: str, items: list[dict],
         'recall_miss_count': recall_miss_count,
         'rank_miss_count': rank_miss_count,
         'post_rank_miss_count': post_rank_miss_count,
+        'confidence_miss_count': confidence_miss_count,
+        'miss_category_counts': dict(sorted(miss_category_counts.items())),
+        'error_stage_counts': dict(sorted(error_stage_counts.items())),
+        'error_type_counts': dict(sorted(error_type_counts.items())),
+        'arbiter_advisory_total': arbiter_advisory_total,
+        'arbiter_would_be_correct': arbiter_would_be_correct,
+        'arbiter_would_be_wrong': arbiter_would_be_wrong,
+        'arbiter_correct_in_rank_miss': arbiter_correct_in_rank_miss,
         'elapsed': round(elapsed, 1),
+        'adaptive_strategy': adaptive_strategy,
         'details': details,
     }
 
@@ -477,6 +620,70 @@ def _get_quota_book(qid: str) -> str:
     return ''
 
 
+def _trace_step(result: dict, stage: str) -> dict:
+    trace = result.get("trace") or {}
+    for step in reversed(list(trace.get("steps") or [])):
+        if isinstance(step, dict) and step.get("stage") == stage:
+            return step
+    return {}
+
+
+def _diagnose_error_stage(result: dict, stored_ids: list[str], *, algo_id: str, is_match: bool, oracle_found: bool) -> tuple[str, str, str]:
+    """诊断错误发生的阶段。
+
+    返回 (error_stage, error_type, miss_category) 三元组：
+    - miss_category 为统一的三分类标签：
+      recall_miss      = 正确答案不在候选池里
+      rank_miss        = 在候选池但从未排到 top1
+      confidence_miss  = 某阶段排到了 top1 但后续被覆盖（排序翻转）
+    """
+    if is_match:
+        return "correct", "", ""
+
+    if not oracle_found:
+        return "retriever", "oracle_not_in_candidates", "recall_miss"
+
+    pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
+    post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
+    post_cgr_top1_id = str(result.get('post_cgr_top1_id', '') or '')
+    post_arbiter_top1_id = str(result.get('post_arbiter_top1_id', '') or '')
+    post_explicit_top1_id = str(result.get('post_explicit_top1_id', '') or '')
+    post_anchor_top1_id = str(result.get('post_anchor_top1_id', '') or '')
+    post_final_top1_id = str(result.get('post_final_top1_id', algo_id) or algo_id or '')
+
+    final_step = _trace_step(result, "final_validate")
+    final_validation = dict(result.get("final_validation") or final_step.get("final_validation") or {})
+    vetoed = bool(final_validation.get("vetoed")) or str(final_validation.get("status") or "").strip() == "vetoed"
+
+    stage_top1_ids = [
+        pre_ltr_top1_id, post_ltr_top1_id, post_cgr_top1_id,
+        post_arbiter_top1_id, post_explicit_top1_id, post_anchor_top1_id,
+    ]
+    ever_top1 = any(sid and sid in stored_ids for sid in stage_top1_ids)
+
+    if pre_ltr_top1_id and pre_ltr_top1_id in stored_ids and post_ltr_top1_id and post_ltr_top1_id not in stored_ids:
+        return "ltr_ranker", "pre_ltr_correct_but_ltr_changed", "confidence_miss"
+    if post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_cgr_top1_id and post_cgr_top1_id not in stored_ids:
+        return "cgr_ranker", "post_ltr_correct_but_cgr_changed", "confidence_miss"
+    if post_cgr_top1_id and post_cgr_top1_id in stored_ids and post_arbiter_top1_id and post_arbiter_top1_id not in stored_ids:
+        return "candidate_arbiter", "post_ltr_correct_but_arbiter_changed", "confidence_miss"
+    if post_arbiter_top1_id and post_arbiter_top1_id in stored_ids and post_explicit_top1_id and post_explicit_top1_id not in stored_ids:
+        return "explicit_override", "post_arbiter_correct_but_explicit_changed", "confidence_miss"
+    if post_anchor_top1_id and post_anchor_top1_id in stored_ids and post_final_top1_id and post_final_top1_id not in stored_ids:
+        if vetoed or final_validation:
+            return "final_validator", "post_anchor_correct_but_final_changed", "confidence_miss"
+        return "postprocess", "post_anchor_correct_but_final_changed", "confidence_miss"
+    if post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_final_top1_id and post_final_top1_id not in stored_ids:
+        if vetoed or final_validation:
+            return "final_validator", "post_ltr_correct_but_final_changed", "confidence_miss"
+        return "postprocess", "post_ltr_correct_but_final_changed", "confidence_miss"
+
+    if ever_top1:
+        return "ranker", "ever_top1_but_final_not", "confidence_miss"
+
+    return "ranker", "oracle_in_candidates_but_not_top1", "rank_miss"
+
+
 # ============================================================
 # 第二部分：Excel数据集模式（置信度，算绿/黄/红率）
 # ============================================================
@@ -489,7 +696,8 @@ def load_excel_config() -> dict:
     return config.get("datasets", {})
 
 
-def run_excel_dataset(name: str, ds_config: dict, mode: str) -> dict | None:
+def run_excel_dataset(name: str, ds_config: dict, mode: str,
+                      scoring_mode: str = "two_stage") -> dict | None:
     """运行单个Excel数据集的benchmark"""
     path = ds_config["path"]
     if not Path(path).is_absolute():
@@ -513,12 +721,15 @@ def run_excel_dataset(name: str, ds_config: dict, mode: str) -> dict | None:
             pass
 
         start = time.time()
-        result = main_module.run(
-            input_file=path, mode=mode, province=province, interactive=False)
+        with _temporary_scoring_mode(scoring_mode):
+            result = main_module.run(
+                input_file=path, mode=mode, province=province, interactive=False)
         elapsed = time.time() - start
 
         results = result.get("results", [])
-        return _compute_excel_metrics(results, elapsed)
+        metrics = _compute_excel_metrics(results, elapsed)
+        metrics["scoring_mode"] = scoring_mode
+        return metrics
     except Exception as e:
         return {"_failed": True, "error": str(e)}
 
@@ -613,10 +824,21 @@ def _iter_benchmark_error_records(json_results: list[dict]) -> Iterable[dict]:
                 "candidate_count": int(detail.get("candidate_count", 0) or 0),
                 "pre_ltr_top1_id": str(detail.get("pre_ltr_top1_id", "") or ""),
                 "post_ltr_top1_id": str(detail.get("post_ltr_top1_id", "") or ""),
+                "post_cgr_top1_id": str(detail.get("post_cgr_top1_id", "") or ""),
                 "post_arbiter_top1_id": str(detail.get("post_arbiter_top1_id", "") or ""),
+                "post_explicit_top1_id": str(detail.get("post_explicit_top1_id", "") or ""),
+                "post_anchor_top1_id": str(detail.get("post_anchor_top1_id", "") or ""),
                 "post_final_top1_id": str(detail.get("post_final_top1_id", "") or ""),
                 "final_changed_by": str(detail.get("final_changed_by", "") or ""),
+                "rank_decision_owner": str(detail.get("rank_decision_owner", "") or ""),
+                "rank_top1_flip_count": int(detail.get("rank_top1_flip_count", 0) or 0),
                 "miss_stage": str(detail.get("miss_stage", "") or ""),
+                "error_stage": str(detail.get("error_stage", "") or ""),
+                "error_type": str(detail.get("error_type", "") or ""),
+                "miss_category": str(detail.get("miss_category", "") or ""),
+                "arbiter_recommended_id": str(detail.get("arbiter_recommended_id", "") or ""),
+                "arbiter_advisory": bool(detail.get("arbiter_advisory", False)),
+                "arbiter_would_be_correct": bool(detail.get("arbiter_would_be_correct", False)),
             }
 
 
@@ -816,6 +1038,43 @@ def print_json_summary(results: list[dict], baseline: dict = None):
               f"其中{total_oracle_in}条({oracle_rate:.0f}%)正确答案在候选中(排序问题)，"
               f"{total_oracle_out}条({100-oracle_rate:.0f}%)不在候选中(召回问题)")
 
+    # 三分类错误统计（recall_miss / rank_miss / confidence_miss）
+    miss_cats = Counter()
+    for r in results:
+        for d in r.get('details', []):
+            cat = d.get('miss_category', '')
+            if cat:
+                miss_cats[cat] += 1
+    total_miss = sum(miss_cats.values())
+    if total_miss > 0:
+        parts = []
+        for cat in ("recall_miss", "rank_miss", "confidence_miss"):
+            cnt = miss_cats.get(cat, 0)
+            pct = cnt / total_miss * 100
+            label = {
+                "recall_miss": "召回miss",
+                "rank_miss": "排序miss",
+                "confidence_miss": "置信度miss",
+            }.get(cat, cat)
+            parts.append(f"{label} {cnt}({pct:.0f}%)")
+        print(f"错误分类: {' '.join(parts)}")
+
+    # 仲裁器shadow统计
+    total_arbiter_advisory = sum(r.get('arbiter_advisory_total', 0) for r in results)
+    total_arbiter_correct = sum(r.get('arbiter_would_be_correct', 0) for r in results)
+    total_arbiter_wrong = sum(r.get('arbiter_would_be_wrong', 0) for r in results)
+    total_arbiter_correct_in_rank_miss = sum(r.get('arbiter_correct_in_rank_miss', 0) for r in results)
+    total_rank_miss = sum(r.get('rank_miss_count', 0) for r in results)
+    if total_arbiter_advisory > 0:
+        arbiter_acc = total_arbiter_correct / total_arbiter_advisory * 100
+        print(f"仲裁器shadow: 推荐{total_arbiter_advisory}次, "
+              f"正确{total_arbiter_correct}({arbiter_acc:.0f}%), "
+              f"错误{total_arbiter_wrong}")
+        if total_rank_miss > 0:
+            rank_miss_rescue = total_arbiter_correct_in_rank_miss / total_rank_miss * 100
+            print(f"  排序miss救援: rank_miss共{total_rank_miss}条, "
+                  f"仲裁器能救回{total_arbiter_correct_in_rank_miss}条({rank_miss_rescue:.0f}%)")
+
     print(f"{'='*110}")
     return {'total': total_items, 'correct': total_correct, 'rate': round(overall_rate, 1)}
 
@@ -863,6 +1122,9 @@ def _build_json_overall(json_results: list[dict]) -> dict:
     total_recall_miss = sum(r.get('recall_miss_count', 0) for r in json_results)
     total_rank_miss = sum(r.get('rank_miss_count', 0) for r in json_results)
     total_post_rank_miss = sum(r.get('post_rank_miss_count', 0) for r in json_results)
+    total_error_stage_counts = Counter()
+    for result in json_results:
+        total_error_stage_counts.update(result.get('error_stage_counts', {}) or {})
     total_oracle_in = sum(r.get('oracle_in_candidates', 0) for r in json_results)
     weighted_in_pool_num = sum(
         float(r.get('in_pool_top1_acc', 0.0)) * float(r.get('oracle_in_candidates', 0))
@@ -876,14 +1138,93 @@ def _build_json_overall(json_results: list[dict]) -> dict:
         "recall_miss_count": total_recall_miss,
         "rank_miss_count": total_rank_miss,
         "post_rank_miss_count": total_post_rank_miss,
+        "error_stage_counts": dict(sorted(total_error_stage_counts.items())),
         "in_pool_top1_acc": round(weighted_in_pool_num / max(total_oracle_in, 1), 4),
+        "adaptive_strategy": _merge_adaptive_strategy_summaries(
+            [result.get("adaptive_strategy") for result in json_results]
+        ),
+    }
+
+
+def _merge_adaptive_strategy_summaries(summaries: list[dict | None]) -> dict:
+    strategy_order = ("fast", "standard", "deep", "unknown")
+    total_results = 0
+    observed_time_count = 0
+    observed_total_time = 0.0
+    distribution = {
+        strategy: {
+            "count": 0,
+            "matched": 0,
+            "total_time_sec": 0.0,
+            "observed_time_count": 0,
+            "avg_time_sec": None,
+            "rate": 0.0,
+            "matched_rate": 0.0,
+        }
+        for strategy in strategy_order
+    }
+
+    for summary in summaries or []:
+        if not isinstance(summary, dict):
+            continue
+        total_results += int(summary.get("total", 0) or 0)
+        observed_time_count += int(summary.get("observed_time_count", 0) or 0)
+        overall_avg = summary.get("overall_avg_time_sec")
+        if isinstance(overall_avg, (int, float)):
+            observed_total_time += float(overall_avg) * int(summary.get("observed_time_count", 0) or 0)
+
+        summary_distribution = summary.get("distribution") or {}
+        for strategy in strategy_order:
+            row = summary_distribution.get(strategy)
+            if not isinstance(row, dict):
+                continue
+            merged = distribution[strategy]
+            merged["count"] += int(row.get("count", 0) or 0)
+            merged["matched"] += int(row.get("matched", 0) or 0)
+            merged["total_time_sec"] += float(row.get("total_time_sec", 0.0) or 0.0)
+            merged["observed_time_count"] += int(row.get("observed_time_count", 0) or 0)
+
+    for strategy in strategy_order:
+        row = distribution[strategy]
+        count = int(row["count"])
+        matched = int(row["matched"])
+        observed = int(row["observed_time_count"])
+        row["rate"] = round(count / total_results * 100, 1) if total_results else 0.0
+        row["matched_rate"] = round(matched / count * 100, 1) if count else 0.0
+        row["avg_time_sec"] = round(float(row["total_time_sec"]) / observed, 3) if observed else None
+        row["total_time_sec"] = round(float(row["total_time_sec"]), 3)
+
+    filtered_distribution = {
+        strategy: distribution[strategy]
+        for strategy in strategy_order
+        if distribution[strategy]["count"] or strategy == "unknown"
+    }
+    with_strategy_count = sum(
+        int(filtered_distribution.get(strategy, {}).get("count", 0) or 0)
+        for strategy in ("fast", "standard", "deep")
+    )
+    return {
+        "total": total_results,
+        "with_strategy_count": with_strategy_count,
+        "missing_strategy_count": int(filtered_distribution.get("unknown", {}).get("count", 0) or 0),
+        "observed_time_count": observed_time_count,
+        "overall_avg_time_sec": round(observed_total_time / observed_time_count, 3) if observed_time_count else None,
+        "distribution": filtered_distribution,
     }
 
 
 def build_benchmark_summary(json_results: list[dict], excel_metrics: dict,
                             baseline: dict | None = None) -> dict:
     """构建机器可读的 benchmark 摘要，供 loop runner 判定 keep/discard。"""
+    scoring_mode = ""
+    if json_results:
+        scoring_mode = str(json_results[0].get("scoring_mode", "") or "")
+    elif excel_metrics:
+        first_metric = next(iter(excel_metrics.values()), None)
+        if isinstance(first_metric, dict):
+            scoring_mode = str(first_metric.get("scoring_mode", "") or "")
     return {
+        "scoring_mode": scoring_mode,
         "json_overall": _build_json_overall(json_results),
         "json_results": json_results,
         "excel_metrics": excel_metrics,
@@ -909,6 +1250,8 @@ def _build_by_province_summary(json_results: list[dict],
             "recall_miss_count": result.get('recall_miss_count', 0),
             "rank_miss_count": result.get('rank_miss_count', 0),
             "post_rank_miss_count": result.get('post_rank_miss_count', 0),
+            "error_stage_counts": dict(sorted((result.get('error_stage_counts') or {}).items())),
+            "adaptive_strategy": result.get("adaptive_strategy", {}),
             "status": previous_status,
         }
     return summary
@@ -946,6 +1289,7 @@ def save_baseline(json_results: list[dict], excel_metrics: dict,
             "json_total": overall_json["total"],
             "json_correct": overall_json["correct"],
             "json_hit_rate": overall_json["hit_rate"],
+            "adaptive_strategy": overall_json.get("adaptive_strategy", {}),
         },
         "by_province": _build_by_province_summary(json_results, previous_baseline),
         # JSON试卷的结果
@@ -960,6 +1304,7 @@ def save_baseline(json_results: list[dict], excel_metrics: dict,
             'correct': r['correct'],
             'hit_rate': r['hit_rate'],
             'diagnosis': r['diagnosis'],
+            'adaptive_strategy': r.get('adaptive_strategy', {}),
         }
 
     for name, m in excel_metrics.items():
@@ -1071,16 +1416,23 @@ def main():
     parser.add_argument("--json-only", action="store_true", help="只跑JSON试卷")
     parser.add_argument("--with-experience", action="store_true",
                         help="启用经验库直通（默认关闭，打开后看经验库对分数的影响）")
+    parser.add_argument("--scoring-mode", choices=["single_stage", "two_stage"], default="two_stage",
+                        help="排序模式：single_stage 为旧单阶段基线，two_stage 为阶段二双阶段排序")
     parser.add_argument("--note", default="", help="跑分备注")
     parser.add_argument("--summary-json-out", default="",
                         help="把机器可读摘要写到指定 JSON 文件，供 loop runner 使用")
     parser.add_argument("--asset-out-dir", default="",
                         help="export benchmark error assets as JSONL")
+    parser.add_argument("--profile", choices=["auto", "smoke", "dev", "full"], default="auto",
+                        help="benchmark runtime preset; auto=dev for daily runs, auto=full for save/compare")
     args = parser.parse_args()
 
     if args.show_baseline:
         show_baseline()
         return 0
+
+    profile = _resolve_benchmark_profile(args)
+    args = _apply_benchmark_profile(args, profile)
 
     # 压低噪声日志
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -1092,6 +1444,8 @@ def main():
     logger.add(sys.stderr, level="WARNING")
 
     baseline = load_baseline() if args.compare else None
+    print(f"scoring_mode: {args.scoring_mode}")
+    print(f"profile: {profile}")
 
     # ---- JSON试卷 ----
     json_results = []
@@ -1124,8 +1478,12 @@ def main():
                 prov_short = province.split('(')[0].split('（')[0][:16]
                 print(f"  测试 {prov_short}（{len(items)}题）...", end='', flush=True)
 
-                result = run_json_paper(province, items,
-                                        with_experience=args.with_experience)
+                result = run_json_paper(
+                    province,
+                    items,
+                    with_experience=args.with_experience,
+                    scoring_mode=args.scoring_mode,
+                )
                 json_results.append(result)
 
                 mark = '[OK]' if result['hit_rate'] >= 50 else '[FAIL]'
@@ -1161,7 +1519,7 @@ def main():
                     continue
 
                 print(f"  运行 {name}...", end='', flush=True)
-                m = run_excel_dataset(name, ds_config, args.mode)
+                m = run_excel_dataset(name, ds_config, args.mode, scoring_mode=args.scoring_mode)
                 excel_metrics[name] = m
                 if m and not m.get("_failed"):
                     print(f" 绿率{format_rate(m['green_rate'])} "
@@ -1205,6 +1563,7 @@ def main():
 
     if args.summary_json_out:
         summary = build_benchmark_summary(json_results, excel_metrics, baseline)
+        summary["profile"] = profile
         summary_path = Path(args.summary_json_out)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(
@@ -1224,6 +1583,8 @@ def main():
         result_file = PAPERS_DIR / '_latest_result.json'
         result_file.write_text(json.dumps({
             'run_time': datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'profile': profile,
+            'scoring_mode': args.scoring_mode,
             'results': json_results,
         }, ensure_ascii=False, indent=2), encoding='utf-8')
 

@@ -1,16 +1,8 @@
 """
-Celery 匹配任务
-
-后台执行耗时的定额匹配：
-1. 更新任务状态为"运行中"
-2. 调用现有的 main.run() 函数执行匹配
-3. 保存结果到 PostgreSQL
-4. 更新任务状态为"已完成"或"已失败"
-
-Celery worker 启动命令:
-    cd web/backend
-    celery -A app.celery_app worker --loglevel=info --pool=solo
+Celery worker task for quota matching.
 """
+
+from __future__ import annotations
 
 import time
 import uuid
@@ -22,53 +14,72 @@ from loguru import logger
 from app.celery_app import celery_app
 from app.database import get_sync_session
 from app.models.task import Task
-from app.services.match_service import save_results_to_db, get_task_output_dir
+from app.services.match_service import get_task_output_dir, save_results_to_db
 
 
-def _make_progress_callback(session, task, output_dir):
-    """创建进度回调函数：每次被调用时更新数据库中的任务进度
+class TaskCancelled(BaseException):
+    """Raised to stop execution immediately after a user cancellation."""
 
-    限制更新频率（至少间隔2秒），避免频繁写数据库。
-    同时将匹配结果实时写入 results_live.jsonl（每行一条结果）。
-    """
-    last_update = [0]  # 用列表包装，让闭包可以修改
+
+def _assert_task_not_cancelled(session, task: Task) -> None:
+    session.refresh(task, attribute_names=["status"])
+    if task.status == "cancelled":
+        raise TaskCancelled(f"任务 {task.id} 已被用户取消")
+
+
+def _mark_task_cancelled(session, task_uuid: uuid.UUID, message: str) -> None:
+    task = session.get(Task, task_uuid)
+    if not task:
+        return
+    task.status = "cancelled"
+    task.progress_message = "用户取消"
+    task.error_message = message[:1000]
+    task.completed_at = datetime.now(timezone.utc)
+    session.commit()
+
+
+def _make_progress_callback(session, task: Task, output_dir: Path):
+    """Create a throttled progress callback for the local matcher."""
+    last_update = [0.0]
     live_path = output_dir / "results_live.jsonl" if output_dir else None
 
     def callback(progress, current_idx, message, result=None):
+        _assert_task_not_cancelled(session, task)
         now = time.time()
 
-        # 实时写入匹配结果（不受2秒限频，每条都写）
         if result and live_path:
             try:
                 import json as _json
-                # 提取轻量摘要（不写完整 candidates/trace）
+
                 quotas = result.get("quotas") or []
                 bill = result.get("bill_item") or {}
-                line = _json.dumps({
-                    "idx": current_idx,
-                    "quota_id": quotas[0]["quota_id"] if quotas else "",
-                    "quota_name": quotas[0]["name"] if quotas else "",
-                    "confidence": result.get("confidence", 0),
-                    "match_source": result.get("match_source", ""),
-                    "bill_name": bill.get("name", ""),
-                }, ensure_ascii=False)
+                line = _json.dumps(
+                    {
+                        "idx": current_idx,
+                        "quota_id": quotas[0]["quota_id"] if quotas else "",
+                        "quota_name": quotas[0]["name"] if quotas else "",
+                        "confidence": result.get("confidence", 0),
+                        "match_source": result.get("match_source", ""),
+                        "bill_name": bill.get("name", ""),
+                    },
+                    ensure_ascii=False,
+                )
                 with open(live_path, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
             except Exception:
-                pass  # 写入失败不影响匹配
+                pass
 
-        # 至少间隔2秒更新一次（进度>=95%时不限频，确保关键节点立即更新）
         if now - last_update[0] < 2 and progress < 95:
             return
         last_update[0] = now
+
         try:
             task.progress = progress
             task.progress_current = current_idx
             task.progress_message = message
             session.commit()
-        except Exception as e:
-            # 数据库写入失败不影响匹配主流程
-            logger.debug(f"进度更新写入DB失败（不影响匹配）: {e}")
+        except Exception as exc:
+            logger.debug(f"进度更新写入 DB 失败: {exc}")
             try:
                 session.rollback()
             except Exception:
@@ -79,38 +90,25 @@ def _make_progress_callback(session, task, output_dir):
 
 @celery_app.task(bind=True, name="execute_match")
 def execute_match(self, task_id: str, file_path: str, params: dict):
-    """后台执行定额匹配任务
-
-    参数:
-        task_id: 任务ID（UUID字符串）
-        file_path: 上传的Excel文件路径
-        params: 匹配参数字典:
-            - mode: "search" 或 "agent"
-            - province: 省份定额库名称
-            - sheet: 指定Sheet名称（可选）
-            - limit: 限制处理条数（可选）
-            - agent_llm: Agent模式大模型（可选）
-            - no_experience: 是否禁用经验库
-    """
+    """Execute a match task in the worker."""
     task_uuid = uuid.UUID(task_id)
     session = get_sync_session()
 
     try:
-        # ---- 第1步：更新状态为"运行中" ----
         task = session.get(Task, task_uuid)
         if not task:
             logger.error(f"任务 {task_id} 不存在")
             return
 
+        _assert_task_not_cancelled(session, task)
         task.status = "running"
         task.progress = 10
         task.progress_message = "正在初始化匹配引擎..."
         task.started_at = datetime.now(timezone.utc)
         session.commit()
 
-        # ---- 文件存在性检查：避免文件丢失导致任务卡死 ----
         if not Path(file_path).exists():
-            error_msg = f"上传文件不存在: {file_path}（可能已被清理或磁盘故障）"
+            error_msg = f"上传文件不存在: {file_path}"
             logger.error(f"任务 {task_id}: {error_msg}")
             task.status = "failed"
             task.error_message = error_msg
@@ -118,35 +116,44 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
             session.commit()
             return
 
-        # ---- 第2步：准备输出路径 ----
         output_dir = get_task_output_dir(task_uuid)
         json_output = str(output_dir / "results.json")
         excel_output = str(output_dir / "output.xlsx")
 
-        # ---- 第3步：选择匹配后端（本地执行 或 远程API） ----
         from app.config import MATCH_BACKEND
 
         if MATCH_BACKEND == "remote":
-            # 远程模式：把Excel发到本地电脑的匹配API
             result = _execute_remote_match(
-                session, task, task_id, file_path, params,
-                output_dir, json_output, excel_output,
+                session,
+                task,
+                task_id,
+                file_path,
+                params,
+                output_dir,
+                json_output,
+                excel_output,
             )
         else:
-            # 本地模式：在本机执行 main.run()
             result = _execute_local_match(
-                session, task, task_id, file_path, params,
-                output_dir, json_output, excel_output,
+                session,
+                task,
+                task_id,
+                file_path,
+                params,
+                output_dir,
+                json_output,
+                excel_output,
             )
 
-        # ---- 第4步：扣减用户额度（必须在保存结果之前） ----
-        # 先扣费再保存结果，防止余额不足时用户白拿匹配结果
+        _assert_task_not_cancelled(session, task)
         results_list = result.get("results", [])
         actual_count = len(results_list)
-        quota_deducted = False  # 标记是否成功扣减
+
         if actual_count > 0:
+            _assert_task_not_cancelled(session, task)
             try:
                 from app.services.quota_service import deduct_quota_sync
+
                 new_balance = deduct_quota_sync(
                     session=session,
                     user_id=task.user_id,
@@ -154,41 +161,32 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
                     task_id=str(task_uuid),
                     task_name=task.name or "未命名任务",
                 )
-                if new_balance < 0:
-                    # 余额不足，标记任务为失败，不保存匹配结果
-                    logger.warning(
-                        f"任务 {task_id}: 额度不足，无法扣减 {actual_count} 条，"
-                        f"匹配结果不予保存"
-                    )
-                    task.status = "failed"
-                    task.progress = 100
-                    task.progress_message = "额度不足"
-                    task.error_message = (
-                        f"额度不足：本次匹配 {actual_count} 条，"
-                        f"但余额不够扣减。请购买额度后重新提交任务。"
-                    )
-                    task.completed_at = datetime.now(timezone.utc)
-                    session.commit()
-                    return
-                quota_deducted = True
             except Exception as quota_err:
-                # 额度扣减异常（数据库故障等），标记任务失败，不保存结果
-                # 避免异常时用户白拿匹配结果
                 logger.error(f"任务 {task_id}: 额度扣减异常: {quota_err}")
                 task.status = "failed"
                 task.progress = 100
                 task.progress_message = "额度扣减异常"
+                task.error_message = "额度扣减出错，匹配结果未保存。请联系管理员处理。"
+                task.completed_at = datetime.now(timezone.utc)
+                session.commit()
+                return
+
+            if new_balance < 0:
+                logger.warning(f"任务 {task_id}: 额度不足，无法扣减 {actual_count} 条")
+                task.status = "failed"
+                task.progress = 100
+                task.progress_message = "额度不足"
                 task.error_message = (
-                    f"额度扣减出错，匹配结果未保存。请联系管理员处理。"
+                    f"额度不足：本次匹配 {actual_count} 条，但当前余额不足，结果未保存。"
                 )
                 task.completed_at = datetime.now(timezone.utc)
                 session.commit()
                 return
 
-        # ---- 第4.5步：保存匹配结果到数据库 ----
+        _assert_task_not_cancelled(session, task)
         save_results_to_db(session, task_uuid, results_list)
+        _assert_task_not_cancelled(session, task)
 
-        # ---- 第5步：更新任务状态为"已完成" ----
         task.status = "completed"
         task.progress = 100
         task.progress_message = "匹配完成"
@@ -200,56 +198,53 @@ def execute_match(self, task_id: str, file_path: str, params: dict):
 
         logger.info(f"任务 {task_id}: 匹配完成，共 {len(results_list)} 条结果")
 
-    except Exception as e:
-        # ---- 失败处理 ----
-        logger.error(f"任务 {task_id} 执行失败: {e}")
+    except TaskCancelled as exc:
+        logger.info(f"任务 {task_id} 已取消: {exc}")
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        try:
+            _mark_task_cancelled(session, task_uuid, str(exc))
+        except Exception as db_err:
+            logger.error(f"任务 {task_id} 更新取消状态失败: {db_err}")
+    except Exception as exc:
+        logger.error(f"任务 {task_id} 执行失败: {exc}")
         try:
             session.rollback()
             task = session.get(Task, task_uuid)
             if task:
                 task.status = "failed"
-                task.error_message = str(e)[:1000]  # 截断过长的错误信息
+                task.error_message = str(exc)[:1000]
                 task.completed_at = datetime.now(timezone.utc)
                 session.commit()
         except Exception as db_err:
             logger.error(f"任务 {task_id} 更新失败状态时出错: {db_err}")
-        raise  # 让 Celery 也记录这个异常
-
+        raise
     finally:
         session.close()
 
 
-# ============================================================
-# 本地匹配（现有逻辑，原样提取为独立函数）
-# ============================================================
-
-def _execute_local_match(session, task, task_id, file_path, params,
-                         output_dir, json_output, excel_output):
-    """在本机执行 main.run()（需要完整的匹配引擎+定额库+模型）"""
+def _execute_local_match(session, task, task_id, file_path, params, output_dir, json_output, excel_output):
+    """Run the local matcher in-process."""
     logger.info(
-        f"任务 {task_id}: 本地匹配模式 "
-        f"(mode={params.get('mode')}, province={params.get('province')})"
+        f"任务 {task_id}: 本地匹配模式 (mode={params.get('mode')}, province={params.get('province')})"
     )
 
-    import main as auto_quota_main  # 延迟导入，避免循环依赖
     import config as quota_config
+    import main as auto_quota_main
+    from src.excel_compat import ensure_openpyxl_input
 
-    # 从数据库读取大模型配置，注入到 config 模块
-    # 这样 agent_matcher.py 读 config.QWEN_API_KEY 等变量时能拿到最新值
     def _clean_ascii(val: str) -> str:
-        """清洗配置值：去除不可见非ASCII字符（BOM/零宽空格等），防止httpx头编码错误"""
         if not val or not isinstance(val, str):
             return val or ""
         for ch in ["\ufeff", "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufffe", "\u00a0"]:
             val = val.replace(ch, "")
-        val = val.strip()
-        val = val.encode("ascii", errors="ignore").decode("ascii")
-        return val
+        return val.strip().encode("ascii", errors="ignore").decode("ascii")
 
     try:
         from app.services.llm_config_service import get_llm_config_sync, get_verify_config_sync
 
-        # ---- 匹配模型配置 ----
         llm_cfg = get_llm_config_sync(session)
         llm_type = _clean_ascii(llm_cfg["llm_type"])
         api_key = _clean_ascii(llm_cfg["api_key"])
@@ -257,17 +252,13 @@ def _execute_local_match(session, task, task_id, file_path, params,
         model_name = _clean_ascii(llm_cfg["model"])
 
         if api_key:
-            key_attr = f"{llm_type.upper()}_API_KEY"
-            url_attr = f"{llm_type.upper()}_BASE_URL"
-            model_attr = f"{llm_type.upper()}_MODEL"
-            setattr(quota_config, key_attr, api_key)
+            setattr(quota_config, f"{llm_type.upper()}_API_KEY", api_key)
             if base_url:
-                setattr(quota_config, url_attr, base_url)
+                setattr(quota_config, f"{llm_type.upper()}_BASE_URL", base_url)
             if model_name:
-                setattr(quota_config, model_attr, model_name)
+                setattr(quota_config, f"{llm_type.upper()}_MODEL", model_name)
             quota_config.AGENT_LLM = llm_type
 
-        # ---- 验证模型配置 ----
         v_cfg = get_verify_config_sync(session)
         v_type = _clean_ascii(v_cfg["llm_type"])
         v_key = _clean_ascii(v_cfg["api_key"])
@@ -275,12 +266,11 @@ def _execute_local_match(session, task, task_id, file_path, params,
         v_model = _clean_ascii(v_cfg["model"])
 
         if v_type and v_key:
-            v_key_attr = f"{v_type.upper()}_API_KEY"
-            v_url_attr = f"{v_type.upper()}_BASE_URL"
-            v_model_attr = f"{v_type.upper()}_MODEL"
-            setattr(quota_config, v_key_attr, v_key)
+            setattr(quota_config, f"{v_type.upper()}_API_KEY", v_key)
             if v_url:
-                setattr(quota_config, v_url_attr, v_url)
+                setattr(quota_config, f"{v_type.upper()}_BASE_URL", v_url)
+            if v_model:
+                setattr(quota_config, f"{v_type.upper()}_MODEL", v_model)
             quota_config.VERIFY_LLM = v_type
             if v_model:
                 quota_config.VERIFY_MODEL = v_model
@@ -288,21 +278,23 @@ def _execute_local_match(session, task, task_id, file_path, params,
             quota_config.VERIFY_LLM = ""
             quota_config.VERIFY_MODEL = ""
 
-        verify_label = f"{quota_config.VERIFY_LLM}/{quota_config.VERIFY_MODEL}" if quota_config.VERIFY_LLM else "同匹配"
-        logger.info(f"任务 {task_id}: 大模型配置从数据库加载 → 匹配:{llm_type}/{model_name}，验证:{verify_label}")
-    except Exception as e:
-        logger.warning(f"任务 {task_id}: 从数据库读取大模型配置失败，使用环境变量: {e}")
+        verify_label = (
+            f"{quota_config.VERIFY_LLM}/{quota_config.VERIFY_MODEL}"
+            if getattr(quota_config, "VERIFY_LLM", "")
+            else "同匹配模型"
+        )
+        logger.info(
+            f"任务 {task_id}: 从数据库加载模型配置 -> 匹配:{llm_type}/{model_name}，验证:{verify_label}"
+        )
+    except Exception as exc:
+        logger.warning(f"任务 {task_id}: 读取模型配置失败，回退环境变量: {exc}")
 
-    # 自动挂载同批辅助定额库（同省份+同年份的兄弟库）
     province = params.get("province", "")
     aux_provinces = quota_config.get_sibling_provinces(province)
     if aux_provinces:
-        logger.info(f"任务 {task_id}: 自动挂载同批辅助库: {aux_provinces}")
+        logger.info(f"任务 {task_id}: 自动挂载同批辅助库 {aux_provinces}")
 
-    # 创建进度回调（匹配过程中实时更新数据库进度）
     progress_cb = _make_progress_callback(session, task, output_dir)
-    from src.excel_compat import ensure_openpyxl_input
-
     original_input = Path(file_path)
     processing_input, normalize_result = ensure_openpyxl_input(
         original_input,
@@ -310,10 +302,11 @@ def _execute_local_match(session, task, task_id, file_path, params,
     )
     if normalize_result:
         logger.info(
-            f"任务 {task_id}: 已自动转换为可导入的 .xlsx "
+            f"任务 {task_id}: 已自动转换为可导入 .xlsx "
             f"(method={normalize_result.method}, preserved={normalize_result.preserved_formatting})"
         )
 
+    _assert_task_not_cancelled(session, task)
     result = auto_quota_main.run(
         input_file=str(processing_input),
         mode=params.get("mode", "search"),
@@ -328,70 +321,54 @@ def _execute_local_match(session, task, task_id, file_path, params,
         interactive=False,
         progress_callback=progress_cb,
         original_file=str(original_input),
+        task_id=str(task_id),
     )
-
+    _assert_task_not_cancelled(session, task)
     return result
 
 
-# ============================================================
-# 远程匹配（HTTP转发到本地电脑的匹配API）
-# ============================================================
-
-def _execute_remote_match(session, task, task_id, file_path, params,
-                          output_dir, json_output, excel_output):
-    """远程匹配：把Excel发到本地电脑的匹配API，轮询进度，取回结果
-
-    流程：
-    1. 健康检查 → 确认本地服务在线
-    2. 上传Excel+参数 → 获取 match_id
-    3. 每3秒轮询进度 → 同步更新数据库（前端SSE自动推送）
-    4. 获取结果JSON → 下载Excel文件
-    """
+def _execute_remote_match(session, task, task_id, file_path, params, output_dir, json_output, excel_output):
+    """Forward the job to a remote match service and mirror progress locally."""
     import json as _json
-    from app.config import LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+
+    from app.config import LOCAL_MATCH_API_KEY, LOCAL_MATCH_URL
     from app.services.remote_match import RemoteMatchClient
 
     logger.info(
-        f"任务 {task_id}: 远程匹配模式 → {LOCAL_MATCH_URL} "
+        f"任务 {task_id}: 远程匹配模式 -> {LOCAL_MATCH_URL} "
         f"(mode={params.get('mode')}, province={params.get('province')})"
     )
 
     if not LOCAL_MATCH_URL:
-        raise RuntimeError(
-            "远程匹配模式需要配置 LOCAL_MATCH_URL（本地匹配服务地址）\n"
-            "例如: LOCAL_MATCH_URL=http://192.168.1.100:9100"
-        )
+        raise RuntimeError("远程匹配模式需要配置 LOCAL_MATCH_URL")
 
     client = RemoteMatchClient(base_url=LOCAL_MATCH_URL, api_key=LOCAL_MATCH_API_KEY)
+    _assert_task_not_cancelled(session, task)
 
-    # 1. 健康检查
     health = client.check_health()
     if not health:
-        raise RuntimeError(
-            "无法连接本地匹配服务，请确认：\n"
-            "1. 电脑上的匹配服务已启动（双击「启动匹配服务.bat」）\n"
-            "2. LOCAL_MATCH_URL 配置的IP地址正确\n"
-            "3. 电脑和懒猫盒子在同一个局域网"
-        )
-    logger.info(f"任务 {task_id}: 本地匹配服务在线 (版本={health.get('version')}，活跃任务={health.get('active_tasks')})")
+        raise RuntimeError("无法连接本地匹配服务，请检查 LOCAL_MATCH_URL 和服务状态")
+    logger.info(
+        f"任务 {task_id}: 本地匹配服务在线 "
+        f"(version={health.get('version')}, active_tasks={health.get('active_tasks')})"
+    )
 
-    # 2. 提交匹配任务（上传Excel+参数）
     match_id = client.submit_match(file_path, params)
-    logger.info(f"任务 {task_id}: 已提交到本地匹配服务，远程ID={match_id}")
+    logger.info(f"任务 {task_id}: 已提交到远程匹配服务，远程 ID={match_id}")
 
-    # 3. 轮询进度（每3秒一次，更新数据库让前端SSE推送）
     while True:
         time.sleep(3)
+        _assert_task_not_cancelled(session, task)
         progress = client.poll_progress(match_id)
+        _assert_task_not_cancelled(session, task)
 
-        # 更新数据库进度
         try:
             task.progress = progress.get("progress", 0)
             task.progress_current = progress.get("current_idx", 0)
             task.progress_message = progress.get("message", "")
             session.commit()
-        except Exception as e:
-            logger.debug(f"远程进度更新写入DB失败（不影响匹配）: {e}")
+        except Exception as exc:
+            logger.debug(f"远程进度写入 DB 失败: {exc}")
             try:
                 session.rollback()
             except Exception:
@@ -401,24 +378,21 @@ def _execute_remote_match(session, task, task_id, file_path, params,
         if status == "completed":
             logger.info(f"任务 {task_id}: 远程匹配完成")
             break
-        elif status == "failed":
+        if status == "failed":
             error_msg = progress.get("error", "未知错误")
             raise RuntimeError(f"远程匹配失败: {error_msg}")
 
-    # 4. 获取结果
+    _assert_task_not_cancelled(session, task)
     result = client.get_results(match_id)
+    _assert_task_not_cancelled(session, task)
     logger.info(f"任务 {task_id}: 已获取远程匹配结果，共 {len(result.get('results', []))} 条")
 
-    # 5. 保存结果到本地文件（保持和本地模式一致的文件结构）
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # 保存JSON结果
     if json_output:
         Path(json_output).parent.mkdir(parents=True, exist_ok=True)
         with open(json_output, "w", encoding="utf-8") as f:
             _json.dump(result, f, ensure_ascii=False, indent=2)
 
-    # 下载Excel文件
     client.download_excel(match_id, excel_output)
-
+    _assert_task_not_cancelled(session, task)
     return result

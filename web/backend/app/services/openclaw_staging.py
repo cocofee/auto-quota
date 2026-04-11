@@ -1,5 +1,5 @@
 """
-Best-effort mapping from real OpenClaw review outcomes into knowledge staging.
+Best-effort mapping from confirmed OpenClaw reviews into knowledge staging.
 
 This service must never block the main review-confirm flow.
 """
@@ -29,6 +29,23 @@ def _merge_notes(*parts: str) -> str:
     return "\n".join(part.strip() for part in parts if str(part or "").strip()).strip()
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _clean_str(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _extract_absorbable_report(match_result) -> dict[str, Any]:
+    payload = _as_dict(getattr(match_result, "openclaw_review_payload", None))
+    return _as_dict(payload.get("jarvis_absorbable_report"))
+
+
 def record_openclaw_approved_review(task, match_result, *, actor: str, review_note: str = "") -> dict[str, Any]:
     """
     Map a confirmed OpenClaw review into staging.
@@ -42,6 +59,19 @@ def record_openclaw_approved_review(task, match_result, *, actor: str, review_no
     corrected_quota = _top_quota(match_result.corrected_quotas or match_result.openclaw_suggested_quotas or [])
     final_note = _merge_notes(match_result.openclaw_review_note, review_note, match_result.review_note)
     audit_rule = classify_openclaw_audit_error(match_result.match_source or "")
+    report = _extract_absorbable_report(match_result)
+    report_decision = _as_dict(report.get("decision"))
+    report_judgment = _as_dict(report.get("judgment"))
+    report_learning = _as_dict(report.get("learning_record"))
+    reason_codes = [
+        _clean_str(item)
+        for item in _as_list(report_decision.get("reason_codes"))
+        if _clean_str(item)
+    ]
+    root_cause_tags = list(dict.fromkeys([*audit_rule["root_cause_tags"], *reason_codes]))
+    decision_basis = _clean_str(report_judgment.get("basis_summary")) or final_note[:500]
+    fix_target_name = _clean_str(corrected_quota.get("name")) or _clean_str(report_learning.get("final_quota_name"))
+    fix_target_code = _clean_str(corrected_quota.get("quota_id")) or _clean_str(report_learning.get("final_quota_code"))
 
     audit_id = staging.create_audit_error({
         "source_id": str(task.id),
@@ -67,10 +97,10 @@ def record_openclaw_approved_review(task, match_result, *, actor: str, review_no
         "match_source": match_result.match_source or "",
         "error_type": audit_rule["error_type"],
         "error_level": "high",
-        "root_cause": final_note[:500],
-        "root_cause_tags": audit_rule["root_cause_tags"],
-        "fix_suggestion": f"改判为 {corrected_quota.get('name', '')}({corrected_quota.get('quota_id', '')})".strip(),
-        "decision_basis": final_note[:500],
+        "root_cause": decision_basis[:500],
+        "root_cause_tags": root_cause_tags,
+        "fix_suggestion": f"override_to:{fix_target_name}({fix_target_code})".strip(),
+        "decision_basis": decision_basis[:500],
         "requires_manual_followup": 0,
         "can_promote_rule": 1 if audit_rule["can_promote_rule"] else 0,
         "can_promote_method": 1 if audit_rule["can_promote_method"] else 0,
@@ -88,6 +118,7 @@ def record_openclaw_approved_review(task, match_result, *, actor: str, review_no
         corrected_quota=corrected_quota,
         final_note=final_note,
         audit_id=audit_id,
+        report=report,
     )
     queued_layers: set[str] = set()
     for candidate in candidates:

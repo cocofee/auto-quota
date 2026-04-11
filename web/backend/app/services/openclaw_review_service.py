@@ -26,6 +26,70 @@ def _clean_str(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _quota_snapshot(item: dict[str, Any] | None) -> dict[str, Any]:
+    source = item if isinstance(item, dict) else {}
+    return {
+        "quota_id": _clean_str(source.get("quota_id")),
+        "name": _clean_str(source.get("name")),
+        "unit": _clean_str(source.get("unit")),
+        "source": _clean_str(source.get("source")),
+        "param_score": source.get("param_score"),
+        "rerank_score": source.get("rerank_score"),
+        "reason": _clean_str(source.get("reason")),
+    }
+
+
+def _bill_text(result: dict[str, Any]) -> str:
+    return " ".join(
+        part for part in [
+            _clean_str(result.get("bill_name")),
+            _clean_str(result.get("bill_description")),
+        ] if part
+    ).strip()
+
+
+def _candidate_rank(candidate_pool: list[dict[str, Any]], quota: dict[str, Any] | None) -> int | None:
+    quota_id = _clean_str((quota or {}).get("quota_id"))
+    quota_name = _clean_str((quota or {}).get("name"))
+    if not quota_id and not quota_name:
+        return None
+    for item in candidate_pool:
+        if not isinstance(item, dict):
+            continue
+        if quota_id and _clean_str(item.get("quota_id")) == quota_id:
+            return item.get("rank")
+        if quota_name and _clean_str(item.get("name")) == quota_name:
+            return item.get("rank")
+    return None
+
+
+def _compact_candidates(candidate_pool: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in candidate_pool[:limit]:
+        if not isinstance(item, dict):
+            continue
+        compact.append({
+            "rank": item.get("rank"),
+            "quota_id": _clean_str(item.get("quota_id")),
+            "name": _clean_str(item.get("name")),
+            "unit": _clean_str(item.get("unit")),
+            "source": _clean_str(item.get("source")),
+        })
+    return compact
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = _clean_str(value)
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
 def _trace_steps(match_result) -> list[dict[str, Any]]:
     trace = _as_dict(getattr(match_result, "trace", None))
     return [step for step in _as_list(trace.get("steps")) if isinstance(step, dict)]
@@ -230,7 +294,8 @@ class OpenClawReviewService:
                 "must_require_human_confirm": True,
                 "can_override_within_candidates": True,
                 "can_suggest_retry_query": True,
-                "candidate_pool_required": True,
+                "candidate_pool_required": False,
+                "independent_library_audit_enabled": True,
             },
         }
         return repair_mojibake_data(payload, preserve_newlines=True)
@@ -257,6 +322,18 @@ class OpenClawReviewService:
             "abstain",
         }
         draft_quotas = [] if allow_empty and not suggested_quotas else list(suggested_quotas or getattr(match_result, "quotas", None) or [])
+        absorbable_report = self.build_absorbable_report(
+            context,
+            decision_type=decision_type,
+            suggested_quotas=draft_quotas,
+            review_confidence=review_confidence,
+            error_stage=error_stage,
+            error_type=error_type,
+            retry_query=retry_query,
+            reason_codes=reason_codes,
+            note=note,
+            evidence=evidence,
+        )
         payload = {
             "openclaw_suggested_quotas": draft_quotas,
             "openclaw_review_note": note,
@@ -277,6 +354,143 @@ class OpenClawReviewService:
                 "suggested_quotas": draft_quotas,
                 "evidence": _as_dict(evidence),
                 "review_context": context,
+                "jarvis_absorbable_report": absorbable_report,
             },
         }
         return repair_mojibake_data(payload, preserve_newlines=True)
+
+    def build_absorbable_report(
+        self,
+        context: dict[str, Any],
+        *,
+        decision_type: str,
+        suggested_quotas: list[dict[str, Any]] | None = None,
+        review_confidence: int | None = None,
+        error_stage: str = "",
+        error_type: str = "",
+        retry_query: str = "",
+        reason_codes: list[str] | None = None,
+        note: str = "",
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        evidence_dict = _as_dict(evidence)
+        task_info = _as_dict(context.get("task"))
+        result_info = _as_dict(context.get("result"))
+        jarvis_result = _as_dict(context.get("jarvis_result"))
+        candidate_pool = [
+            item for item in _as_list(context.get("candidate_pool"))
+            if isinstance(item, dict)
+        ]
+        jarvis_quotas = _as_list(jarvis_result.get("quotas"))
+        jarvis_top1 = _quota_snapshot(_as_dict(jarvis_quotas[0] if jarvis_quotas else {}))
+        selected_source = list(suggested_quotas or []) or [jarvis_top1]
+        selected_quota = _quota_snapshot(_as_dict(selected_source[0] if selected_source else {}))
+        bill_text = _bill_text(result_info)
+        current_rank = _candidate_rank(candidate_pool, jarvis_top1)
+        selected_rank = _candidate_rank(candidate_pool, selected_quota)
+        qmd_summary = _as_dict(evidence_dict.get("qmd_summary"))
+        issue_types = _unique_strings(_as_list(evidence_dict.get("issue_types")))
+        normalized_reason_codes = _unique_strings(reason_codes or [])
+        keywords = _unique_strings([
+            result_info.get("bill_name"),
+            result_info.get("specialty"),
+            selected_quota.get("quota_id"),
+            selected_quota.get("name"),
+        ])
+        basis_points = _unique_strings([
+            *[f"issue:{item}" for item in issue_types],
+            *[f"reason:{item}" for item in normalized_reason_codes],
+            f"decision:{_clean_str(decision_type)}" if _clean_str(decision_type) else "",
+            f"error_type:{_clean_str(error_type)}" if _clean_str(error_type) else "",
+            f"current_rank:{current_rank}" if current_rank else "",
+            f"selected_rank:{selected_rank}" if selected_rank else "",
+            f"qmd_hits:{int(qmd_summary.get('count') or 0)}" if qmd_summary else "",
+        ])
+        experience_record = {
+            "province": _clean_str(task_info.get("province")),
+            "specialty": _clean_str(result_info.get("specialty")),
+            "bill_text": bill_text,
+            "bill_name": _clean_str(result_info.get("bill_name")),
+            "bill_desc": _clean_str(result_info.get("bill_description")),
+            "bill_code": _clean_str(result_info.get("bill_code")),
+            "bill_unit": _clean_str(result_info.get("bill_unit")) or _clean_str(selected_quota.get("unit")),
+            "unit": _clean_str(selected_quota.get("unit")) or _clean_str(result_info.get("bill_unit")),
+            "quota_ids": [selected_quota["quota_id"]] if selected_quota.get("quota_id") else [],
+            "quota_names": [selected_quota["name"]] if selected_quota.get("name") else [],
+            "final_quota_code": _clean_str(selected_quota.get("quota_id")),
+            "final_quota_name": _clean_str(selected_quota.get("name")),
+            "project_name": _clean_str(task_info.get("task_id")),
+            "summary": _clean_str(note)[:300],
+            "notes": _clean_str(note)[:300],
+            "confidence": max(int(review_confidence or 0), 80),
+        }
+        report = {
+            "schema_version": "openclaw_review_report.v1",
+            "task_ref": {
+                "task_id": _clean_str(task_info.get("task_id")),
+                "province": _clean_str(task_info.get("province")),
+                "mode": _clean_str(task_info.get("mode")),
+            },
+            "result_ref": {
+                "result_id": _clean_str(result_info.get("result_id")),
+                "bill_code": _clean_str(result_info.get("bill_code")),
+                "specialty": _clean_str(result_info.get("specialty")),
+            },
+            "decision": {
+                "decision_type": _clean_str(decision_type),
+                "error_stage": _clean_str(error_stage),
+                "error_type": _clean_str(error_type),
+                "review_confidence": review_confidence,
+                "retry_query": _clean_str(retry_query),
+                "reason_codes": normalized_reason_codes,
+            },
+            "bill_context": {
+                "bill_name": _clean_str(result_info.get("bill_name")),
+                "bill_description": _clean_str(result_info.get("bill_description")),
+                "bill_unit": _clean_str(result_info.get("bill_unit")),
+                "sheet_name": _clean_str(result_info.get("sheet_name")),
+                "section": _clean_str(result_info.get("section")),
+                "bill_text": bill_text,
+            },
+            "jarvis_top1": jarvis_top1,
+            "openclaw_top1": selected_quota,
+            "candidate_snapshot": {
+                "candidate_count": len(candidate_pool),
+                "current_rank": current_rank,
+                "selected_rank": selected_rank,
+                "top_candidates": _compact_candidates(candidate_pool),
+            },
+            "judgment": {
+                "basis_summary": _clean_str(note),
+                "basis_points": basis_points,
+                "issue_types": issue_types,
+                "qmd_summary": qmd_summary,
+            },
+            "learning_record": experience_record,
+            "promotion_hints": {
+                "rule": {
+                    "chapter": "OpenClaw Review Loop",
+                    "section": _clean_str(error_type) or _clean_str(decision_type),
+                    "rule_text": _clean_str(note),
+                    "judgment_basis": _clean_str(note),
+                    "core_knowledge_points": basis_points,
+                    "exclusion_reasons": normalized_reason_codes,
+                    "keywords": keywords,
+                },
+                "method": {
+                    "category": _clean_str(result_info.get("bill_name")) or "OpenClaw Review",
+                    "method_text": _clean_str(note),
+                    "judgment_basis": _clean_str(note),
+                    "keywords": keywords,
+                    "pattern_keys": _unique_strings([
+                        result_info.get("bill_name"),
+                        result_info.get("specialty"),
+                    ]),
+                    "common_errors": "；".join(normalized_reason_codes),
+                    "sample_count": 1,
+                    "confirm_rate": round(max(float(review_confidence or 80) / 100.0, 0.7), 2),
+                },
+                "experience": experience_record,
+            },
+        }
+        return repair_mojibake_data(report, preserve_newlines=True)

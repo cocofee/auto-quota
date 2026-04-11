@@ -2363,14 +2363,14 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
     return True
 
 
-def _should_skip_agent_llm(candidates: list[dict],
-                           exp_backup: dict = None,
-                           rule_backup: dict = None,
-                           route_profile=None,
-                           adaptive_strategy: str | None = None) -> bool:
-    """显式歧义门控：高置信候选走快通道，歧义候选交给 Agent。"""
+def get_fastpath_decision(candidates: list[dict],
+                          exp_backup: dict = None,
+                          rule_backup: dict = None,
+                          route_profile=None,
+                          adaptive_strategy: str | None = None):
+    """返回快通道判定详情，供主流程决定是否跳过LLM以及是否优先抽检。"""
     if str(adaptive_strategy or "").strip().lower() == "deep":
-        return False
+        return None
 
     decision = analyze_ambiguity(
         candidates,
@@ -2380,18 +2380,37 @@ def _should_skip_agent_llm(candidates: list[dict],
     )
     if decision.top_quota_id:
         logger.debug(
-            "FastPath判定: quota={} reason={} gap={:.3f} candidates={}".format(
+            "FastPath判定: quota={} reason={} gap={:.3f} candidates={} audit={}".format(
                 decision.top_quota_id,
                 decision.reason,
                 decision.top_score_gap,
                 decision.candidates_count,
+                getattr(decision, "audit_recommended", False),
             )
         )
-    return decision.can_fastpath
+    return decision
 
 
-def _should_audit_fastpath() -> bool:
-    """按配置比例抽检快速通道结果。"""
+def _should_skip_agent_llm(candidates: list[dict],
+                           exp_backup: dict = None,
+                           rule_backup: dict = None,
+                           route_profile=None,
+                           adaptive_strategy: str | None = None) -> bool:
+    """显式歧义门控：高置信候选走快通道，歧义候选交给 Agent。"""
+    decision = get_fastpath_decision(
+        candidates,
+        exp_backup=exp_backup,
+        rule_backup=rule_backup,
+        route_profile=route_profile,
+        adaptive_strategy=adaptive_strategy,
+    )
+    return bool(decision and decision.can_fastpath)
+
+
+def _should_audit_fastpath(decision=None) -> bool:
+    """按风险优先、其余按配置比例抽检快速通道结果。"""
+    if getattr(decision, "audit_recommended", False):
+        return True
     rate = safe_float(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
     if rate <= 0:
         return False

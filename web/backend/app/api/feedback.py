@@ -24,8 +24,10 @@ from app.models.task import Task
 from app.models.user import User
 from app.auth.deps import get_current_user
 from app.auth.permissions import require_admin
+from app.api.file_intake import ingest
 from app.config import UPLOAD_DIR
 from app.api.shared import get_user_task
+from app.text_utils import normalize_client_filename, repair_mojibake_text
 
 router = APIRouter()
 
@@ -67,7 +69,7 @@ async def upload_feedback(
     # 保存上传文件
     feedback_dir = UPLOAD_DIR / "feedback" / str(task_id)
     feedback_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name  # 去掉目录部分
+    safe_name = normalize_client_filename(file.filename, "feedback.xlsx")
     # 额外安全校验：文件名不能为空或特殊值
     if not safe_name or safe_name in (".", ".."):
         raise HTTPException(status_code=400, detail="文件名非法")
@@ -109,11 +111,30 @@ async def upload_feedback(
     task.feedback_uploaded_at = datetime.now(timezone.utc)
     await db.flush()
 
-    # 调用核心学习函数（同步操作，放线程池避免阻塞）
+    # 调用统一入口，先抽取记录，再统一写入 learning pipeline
     def _learn():
         from src.feedback_learner import FeedbackLearner
         fl = FeedbackLearner()
-        return fl.learn_from_corrected_excel(str(save_path))
+        payload = fl.extract_learning_records_from_corrected_excel(str(save_path))
+        ingest_result = ingest(
+            records=payload["records"],
+            ingest_intent="learning",
+            evidence_level="user_corrected",
+            business_type="feedback_corrected_excel",
+            actor=(getattr(user, "email", None) or getattr(user, "nickname", None) or str(user.id)),
+            source_context={
+                "project_name": normalize_client_filename(file.filename, "feedback.xlsx"),
+                "province": repair_mojibake_text(task.province) or "",
+                "parse_status": "parsed",
+                "source": "user_correction",
+            },
+        )
+        return {
+            "total": payload["total"],
+            "learned": ingest_result.written_learning,
+            "skipped": ingest_result.skipped,
+            "warnings": ingest_result.warnings,
+        }
 
     try:
         stats = await asyncio.to_thread(_learn)
@@ -174,9 +195,9 @@ async def list_feedback(
     items = [
         {
             "task_id": t.id,
-            "task_name": t.name,
-            "original_filename": t.original_filename,
-            "province": t.province,
+            "task_name": repair_mojibake_text(t.name) or "",
+            "original_filename": normalize_client_filename(t.original_filename, "unknown.xlsx"),
+            "province": repair_mojibake_text(t.province) or "",
             "feedback_uploaded_at": t.feedback_uploaded_at,
             "feedback_stats": t.feedback_stats,
         }
@@ -210,9 +231,9 @@ async def feedback_details(
 
     return {
         "task_id": task.id,
-        "task_name": task.name,
-        "original_filename": task.original_filename,
-        "province": task.province,
+        "task_name": repair_mojibake_text(task.name) or "",
+        "original_filename": normalize_client_filename(task.original_filename, "unknown.xlsx"),
+        "province": repair_mojibake_text(task.province) or "",
         "mode": task.mode,
         "feedback_uploaded_at": task.feedback_uploaded_at,
         "feedback_stats": task.feedback_stats,
@@ -248,7 +269,7 @@ async def import_quota_excel(
     # 保存上传文件到临时目录
     import_dir = UPLOAD_DIR / "imports"
     import_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename).name
+    safe_name = normalize_client_filename(file.filename, "feedback_import.xlsx")
     if not safe_name or safe_name in (".", ".."):
         raise HTTPException(status_code=400, detail="文件名非法")
 
@@ -286,11 +307,30 @@ async def import_quota_excel(
 
     logger.info(f"导入Excel已保存: {save_path}（{size} bytes）, 省份={province}")
 
-    # 调用 FeedbackLearner.import_completed_project() 导入经验库
+    # 调用统一入口导入 completed_project 学习样本
     def _import():
         from src.feedback_learner import FeedbackLearner
         fl = FeedbackLearner()
-        return fl.import_completed_project(str(save_path), project_name=safe_name)
+        payload = fl.extract_completed_project_records(str(save_path), project_name=safe_name)
+        ingest_result = ingest(
+            records=payload["records"],
+            ingest_intent="learning",
+            evidence_level="completed_project",
+            business_type="completed_project_excel",
+            actor=(getattr(admin, "email", None) or getattr(admin, "nickname", None) or str(admin.id)),
+            source_context={
+                "project_name": safe_name,
+                "province": province,
+                "parse_status": "parsed",
+                "source": "completed_project",
+            },
+        )
+        return {
+            "total": payload["total"],
+            "added": ingest_result.written_learning,
+            "skipped": ingest_result.skipped,
+            "warnings": ingest_result.warnings,
+        }
 
     try:
         stats = await asyncio.to_thread(_import)

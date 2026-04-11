@@ -183,6 +183,8 @@ def _check_source_ref_exists(source_ref: str, project_root: Path) -> bool | None
         source_id = text.split(":", 1)[1].strip()
         if not source_id:
             return False
+        if source_id == "index":
+            return None
         return (project_root / "data" / "source_packs" / "packs" / f"{source_id}.json").exists()
     if text.startswith(("staging:", "task:", "result:", "openclaw:", "experience_db:", "rule_knowledge:", "method_cards:")):
         return None
@@ -360,3 +362,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

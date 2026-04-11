@@ -1,27 +1,32 @@
-{
+﻿{
     "_说明": "Auto Quota OpenClaw Skill 配置文件",
-
     "api": {
         "_说明": "Auto Quota OpenClaw 桥接地址与凭证",
-        "base_url": "https://autoquota.microfeicat2025.heiyu.space",
-        "openclaw_api_key": ""
+        "base_url": "http://127.0.0.1:3210",
+        "openclaw_api_key": "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0"
     },
-
     "match": {
         "_说明": "匹配参数默认值",
         "default_province": "北京2024",
         "mode": "search",
         "use_experience": true
     },
-
     "wechat": {
         "_说明": "微信文件监控目录（远程微信容器内的文件接收路径）",
-        "watch_dir": "/lzcapp/data/cloud.lazycat.catlink.wechat/xwechat_files/summerfly2008_9de8/msg/file",
+        "watch_dir": "F:\\jarvis",
         "scan_interval_seconds": 30
     },
-
     "processed": {
         "_说明": "已处理文件记录（自动维护，不要手动编辑）",
-        "history_file": "/home/node/.openclaw/workspace/skills/auto-quota-watcher/scripts/processed.json"
+        "history_file": "C:\\Users\\Administrator\\.openclaw\\workspace\\skills\\auto-quota-watcher\\scripts\\processed.json"
+    },
+    "source_learning": {
+        "_??": "????????",
+        "llm_type": "openai",
+        "chunk_size": 1800,
+        "overlap": 240,
+        "max_chunks": 24,
+        "dry_run": false
     }
 }
+

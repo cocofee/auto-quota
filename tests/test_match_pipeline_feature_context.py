@@ -65,11 +65,12 @@ def test_build_classification_backfills_borrow_priority_when_specialty_exists():
 
     assert classification["primary"] == "C10"
     assert classification["confidence"] == "high"
-    assert classification["fallbacks"][:3] == ["C9", "C8", "C13"]
+    assert classification["fallbacks"][:3] == ["C9", "C13", "C12"]
     assert classification["route_mode"] == "strict"
     assert classification["allow_cross_book_escape"] is False
     assert classification["hard_book_constraints"] == ["C10"]
     assert classification["search_books"][0] == "C10"
+    assert "C8" not in classification["search_books"]
 
 
 def test_build_classification_passes_context_and_canonical_features(monkeypatch):
@@ -273,14 +274,12 @@ def test_build_classification_backfills_search_books_from_unified_plan_when_clas
         province="上海市安装工程预算定额(2016)",
     )
 
-    assert classification["primary"] == "A"
-    assert classification["candidate_books"] == ["A"]
-    assert classification["search_books"] == ["A"]
+    assert classification["primary"] in {"", None}
+    assert classification["candidate_books"] == []
+    assert classification["search_books"] == []
     assert classification["hard_search_books"] == []
-    assert classification["advisory_search_books"] == ["A"]
-    assert classification["route_mode"] == "moderate"
-    assert classification["allow_cross_book_escape"] is True
-    assert classification["routing_evidence"]["A"] == ["unified_plan:province_plugin"]
+    assert classification["advisory_search_books"] == []
+    assert classification["route_mode"] == "open"
 
 
 def test_build_classification_does_not_backfill_from_generated_benchmark_plan_only(monkeypatch):
@@ -343,9 +342,9 @@ def test_build_classification_prefers_broad_unified_plan_over_soft_standard_rout
         province="上海市安装工程预算定额(2016)",
     )
 
-    assert classification["primary"] == "A"
-    assert classification["candidate_books"] == ["A"]
-    assert classification["search_books"] == ["A"]
+    assert classification["primary"] == "C11"
+    assert classification["candidate_books"][0] == "C11"
+    assert classification["search_books"][0] == "C11"
     assert classification["route_mode"] == "moderate"
 
 
@@ -414,6 +413,32 @@ def test_build_classification_keeps_seeded_specialty_without_strong_override(mon
     assert classification["route_mode"] == "moderate"
     assert classification["allow_cross_book_escape"] is True
     assert classification["hard_book_constraints"] == []
+    assert "C8" not in classification["search_books"]
+
+
+def test_build_classification_keeps_c8_borrow_for_strong_industrial_pipe_signal(monkeypatch):
+    def fake_classify(name, desc, section_title=None, province=None, bill_code=None,
+                      context_prior=None, canonical_features=None, sheet_name=None):
+        return {
+            "primary": "C10",
+            "fallbacks": ["C9", "C8", "C13"],
+            "search_books": ["C10", "C9", "C8", "C13"],
+            "route_mode": "moderate",
+            "allow_cross_book_escape": True,
+            "hard_book_constraints": [],
+        }
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    classification = _build_classification(
+        {"specialty": "C10"},
+        name="焊接法兰阀门",
+        desc="工业管道 蒸汽 DN50",
+        section="",
+    )
+
+    assert classification["primary"] == "C10"
+    assert "C8" in classification["search_books"]
 
 
 def test_build_classification_relaxes_bare_seeded_specialty_without_supporting_context():

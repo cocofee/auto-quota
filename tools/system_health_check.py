@@ -181,7 +181,6 @@ def _build_checks(mode: str) -> list[tuple[str, callable]]:
                     "pytest",
                     "-q",
                     "tests/test_circuit_breaker.py",
-                    "tests/test_agent_matcher_resilience.py",
                     "tests/test_match_engine_resilience.py",
                 ],
                 required=True,

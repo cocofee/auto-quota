@@ -10,7 +10,9 @@ from src.specialty_classifier import (
     BORROW_PRIORITY,
     FAMILY_ALLOWED_BOOKS,
     SYSTEM_HINT_TO_BOOK,
+    book_matches_province_scope,
     parse_section_title,
+    province_uses_standard_route_books,
 )
 from src.subject_family_guard import should_suppress_family_hint
 
@@ -34,6 +36,21 @@ def _normalize_book_code(value: str) -> str:
 
 def _normalize_book_list(values) -> list[str]:
     return dedupe_keep_order(_normalize_book_code(value) for value in (values or []))
+
+
+def _filter_books_by_province_scope(values, province: str) -> list[str]:
+    books = _normalize_book_list(values)
+    province = str(province or "").strip()
+    if not province:
+        return books
+    if not province_uses_standard_route_books(province):
+        return [book for book in books if book not in BORROW_PRIORITY]
+    filtered: list[str] = []
+    for book in books:
+        if book in BORROW_PRIORITY and not book_matches_province_scope(book, province):
+            continue
+        filtered.append(book)
+    return filtered
 
 
 def _book_from_system_hint(value: str) -> str:
@@ -68,27 +85,27 @@ def build_unified_search_plan(
     desc = str(item.get("description") or "").strip()
     batch_context = dict(context_prior.get("batch_context") or {})
 
-    explicit_books = _normalize_book_list([
+    explicit_books = _filter_books_by_province_scope([
         parse_section_title(section),
         parse_section_title(sheet_name),
-    ])
-    strong_system_books = _normalize_book_list([
+    ], province)
+    strong_system_books = _filter_books_by_province_scope([
         _book_from_system_hint(detect_system_hint(section)),
         _book_from_system_hint(detect_system_hint(sheet_name)),
         _book_from_system_hint(batch_context.get("section_system_hint")),
         _book_from_system_hint(batch_context.get("sheet_system_hint")),
-    ])
-    item_system_books = _normalize_book_list([
+    ], province)
+    item_system_books = _filter_books_by_province_scope([
         _book_from_system_hint(detect_system_hint(name, desc)),
         _book_from_system_hint(detect_system_hint(desc)),
-    ])
+    ], province)
 
-    soft_system_books = _normalize_book_list([
+    soft_system_books = _filter_books_by_province_scope([
         _book_from_system_hint(context_prior.get("system_hint")),
         _book_from_system_hint(batch_context.get("neighbor_system_hint")),
         _book_from_system_hint(batch_context.get("project_system_hint")),
         *item_system_books,
-    ])
+    ], province)
 
     family = str(
         canonical_features.get("family")
@@ -98,9 +115,18 @@ def build_unified_search_plan(
     suppress_family_hint = should_suppress_family_hint(family, context_prior)
     if suppress_family_hint:
         family = ""
-    family_books = _normalize_book_list(FAMILY_ALLOWED_BOOKS.get(family, ()))
+    family_books = _filter_books_by_province_scope(FAMILY_ALLOWED_BOOKS.get(family, ()), province)
 
     seed_specialty = _normalize_book_code(item.get("specialty") or context_prior.get("specialty"))
+    if (
+        seed_specialty
+        and province
+        and (
+            (not province_uses_standard_route_books(province))
+            or (not book_matches_province_scope(seed_specialty, province))
+        )
+    ):
+        seed_specialty = ""
     if suppress_family_hint and plugin_hints.get("source") == "generated_benchmark_knowledge":
         plugin_hints = dict(plugin_hints)
         for key in (
@@ -113,8 +139,8 @@ def build_unified_search_plan(
             plugin_hints[key] = []
         plugin_hints["family_hint_suppressed"] = True
 
-    plugin_books = _normalize_book_list(plugin_hints.get("preferred_books", []))
-    plugin_specialties = _normalize_book_list(plugin_hints.get("preferred_specialties", []))
+    plugin_books = _filter_books_by_province_scope(plugin_hints.get("preferred_books", []), province)
+    plugin_specialties = _filter_books_by_province_scope(plugin_hints.get("preferred_specialties", []), province)
     search_aliases = dedupe_keep_order(plugin_hints.get("synonym_aliases", []))[:3]
 
     primary_book = next(
@@ -132,9 +158,12 @@ def build_unified_search_plan(
         ),
         "",
     )
-    borrow_books = BORROW_PRIORITY.get(primary_book, [])[:2] if primary_book else []
+    borrow_books = _filter_books_by_province_scope(
+        BORROW_PRIORITY.get(primary_book, [])[:2] if primary_book else [],
+        province,
+    )
 
-    preferred_books = _normalize_book_list(
+    preferred_books = _filter_books_by_province_scope(
         explicit_books
         + strong_system_books
         + plugin_books
@@ -143,9 +172,9 @@ def build_unified_search_plan(
         + ([primary_book] if primary_book else [])
         + list(borrow_books)
         + soft_system_books
-    )[:6]
+    , province)[:6]
 
-    hard_books = _normalize_book_list(explicit_books + strong_system_books)
+    hard_books = _filter_books_by_province_scope(explicit_books + strong_system_books, province)
 
     route_mode = "open"
     if hard_books:
@@ -169,8 +198,9 @@ def build_unified_search_plan(
 
     merged_plugin_hints = dict(plugin_hints)
     if preferred_books:
-        merged_plugin_hints["preferred_books"] = dedupe_keep_order(
-            list(plugin_hints.get("preferred_books", []) or []) + preferred_books
+        merged_plugin_hints["preferred_books"] = _filter_books_by_province_scope(
+            list(plugin_hints.get("preferred_books", []) or []) + preferred_books,
+            province,
         )[:6]
     if search_aliases:
         merged_plugin_hints["synonym_aliases"] = search_aliases

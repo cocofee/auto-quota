@@ -231,7 +231,7 @@ async def _forward_to_local_service(endpoint: str, file_content: bytes,
                 detail="无法连接本地匹配服务，请确认：\n"
                        "1. 本地电脑已运行 local_match_server.py\n"
                        "2. LOCAL_MATCH_URL 配置正确\n"
-                       "3. 防火墙允许9100端口",
+                       "3. 防火墙允许 LOCAL_MATCH_URL 对应端口",
             )
 
     if resp.status_code != 200:

@@ -26,3 +26,37 @@ def test_cascade_recall_parallel_collects_channels():
     assert [item["id"] for item in results["bm25"]] == [2]
     assert [item["id"] for item in results["structural"]] == [3]
     assert [item["id"] for item in results["vector"]] == [4]
+
+
+def test_recall_vector_candidates_degrades_when_vector_index_count_fails(monkeypatch):
+    db = ExperienceDB.__new__(ExperienceDB)
+    db._collection = None
+    db._chroma_client = None
+    db._vector_index_disabled_until = 0.0
+    db._vector_index_disabled_reason = ""
+    db._vector_rebuild_in_progress = False
+    db._collection_lock = None
+    db._model = object()
+    scheduled = {"called": False}
+
+    class BrokenCollection:
+        def count(self):
+            raise RuntimeError("disk I/O error")
+
+    monkeypatch.setattr(
+        ExperienceDB,
+        "collection",
+        property(lambda self: BrokenCollection()),
+    )
+    monkeypatch.setattr(
+        db,
+        "_schedule_vector_rebuild",
+        lambda: scheduled.__setitem__("called", True),
+    )
+
+    results = db._recall_vector_candidates("test", top_k=5, province="TestProvince")
+
+    assert results == []
+    assert db._vector_index_disabled()
+    assert "disk I/O error" in db._vector_index_disabled_reason
+    assert scheduled["called"] is True

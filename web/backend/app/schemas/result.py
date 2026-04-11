@@ -1,6 +1,4 @@
-"""
-匹配结果相关的请求/响应数据结构。
-"""
+"""Schemas for match result APIs."""
 
 import uuid
 from datetime import datetime
@@ -10,14 +8,14 @@ from pydantic import BaseModel, Field
 
 
 class QuotaItem(BaseModel):
-    """定额项信息。用于 quotas / corrected_quotas / openclaw_suggested_quotas。"""
+    """Quota info used by quotas/corrected_quotas/openclaw_suggested_quotas."""
 
-    quota_id: str = Field(min_length=1, max_length=50, description="定额编号，如 C10-2-45")
-    name: str = Field(min_length=1, max_length=200, description="定额名称")
-    unit: str = Field(default="", description="计量单位")
-    param_score: float | None = Field(default=None, description="参数匹配度(0~1)")
-    rerank_score: float | None = Field(default=None, description="重排得分(0~1)")
-    source: str = Field(default="", description="匹配来源")
+    quota_id: str = Field(min_length=1, max_length=50, description="quota code, for example C10-2-45")
+    name: str = Field(min_length=1, max_length=200, description="quota name")
+    unit: str = Field(default="", description="measurement unit")
+    param_score: float | None = Field(default=None, description="parameter match score, 0-1")
+    rerank_score: float | None = Field(default=None, description="rerank score, 0-1")
+    source: str = Field(default="", description="match source")
 
 
 OpenClawReviewStatus = Literal["pending", "reviewed", "applied", "rejected"]
@@ -42,7 +40,7 @@ OpenClawErrorType = Literal[
 
 
 class MatchResultResponse(BaseModel):
-    """单条匹配结果。"""
+    """One match result."""
 
     id: uuid.UUID
     index: int
@@ -95,7 +93,7 @@ class MatchResultResponse(BaseModel):
 
 
 class ResultListResponse(BaseModel):
-    """匹配结果列表。"""
+    """Match result list."""
 
     items: list[MatchResultResponse]
     total: int
@@ -103,69 +101,84 @@ class ResultListResponse(BaseModel):
 
 
 class CorrectResultRequest(BaseModel):
-    """正式确认或正式纠正。"""
+    """Formal confirmation or correction."""
 
     corrected_quotas: list[QuotaItem] | None = Field(
-        default=None, description="正式纠正后的定额列表；确认时可不传"
+        default=None,
+        description="final corrected quota list",
     )
-    review_note: str = Field(default="", max_length=500, description="审核备注")
+    review_note: str = Field(default="", max_length=500, description="review note")
     review_status: str | None = Field(
-        default=None, description="直接设置正式审核状态（confirmed/corrected）"
+        default=None,
+        description="optional explicit formal review status, for example confirmed/corrected",
     )
 
 
 class ConfirmResultsRequest(BaseModel):
-    """批量确认匹配结果。"""
+    """Batch confirm match results."""
 
     result_ids: list[uuid.UUID] = Field(
-        min_length=1, max_length=500, description="要确认的结果 ID 列表（1-500 条）"
+        min_length=1,
+        max_length=500,
+        description="result ids to confirm, 1-500",
     )
 
 
 class OpenClawReviewDraftRequest(BaseModel):
-    """OpenClaw 审核建议草稿。只保存建议，不改正式纠正结果。"""
+    """OpenClaw review draft. Saves draft only, does not apply formal correction."""
 
     openclaw_suggested_quotas: list[QuotaItem] | None = Field(
         default=None,
-        description="OpenClaw 建议的定额列表；旧版接口建议继续传，结构化 agree 场景可省略",
+        description="OpenClaw suggested quota list; optional for agree when current top1 is kept",
     )
-    openclaw_review_note: str = Field(default="", max_length=500, description="OpenClaw 审核备注")
+    openclaw_review_note: str = Field(default="", max_length=500, description="OpenClaw review note")
     openclaw_review_confidence: int | None = Field(
-        default=None, ge=0, le=100, description="OpenClaw 对本次建议的置信度(0-100)"
+        default=None,
+        ge=0,
+        le=100,
+        description="OpenClaw confidence for this draft, 0-100",
     )
     openclaw_decision_type: OpenClawDecisionType | None = Field(
         default=None,
-        description="结构化复判类型：agree / override_within_candidates / retry_search_then_select / candidate_pool_insufficient / abstain",
+        description=(
+            "structured decision type: agree / override_within_candidates / "
+            "retry_search_then_select / candidate_pool_insufficient / abstain"
+        ),
     )
     openclaw_error_stage: OpenClawErrorStage | None = Field(
         default=None,
-        description="OpenClaw 判断错误主要发生的阶段",
+        description="where OpenClaw thinks the main error happened",
     )
     openclaw_error_type: OpenClawErrorType | None = Field(
         default=None,
-        description="OpenClaw 判断的错误类型",
+        description="what kind of error OpenClaw thinks it is",
     )
     openclaw_retry_query: str = Field(
         default="",
         max_length=500,
-        description="OpenClaw 建议的重搜 query；只保存建议，不代表已执行",
+        description="suggested retry query; saved as draft only and not executed automatically",
     )
     openclaw_reason_codes: list[str] | None = Field(
         default=None,
-        description="结构化原因码列表，供后续统计和回流使用",
+        description="structured reason code list for analytics and learning loop",
     )
     openclaw_review_payload: dict | None = Field(
         default=None,
-        description="OpenClaw 完整结构化审核 payload",
+        description="full structured OpenClaw review payload",
     )
 
 
 class OpenClawReviewConfirmRequest(BaseModel):
-    """人工二次确认 OpenClaw 审核建议。"""
+    """Human confirmation for one OpenClaw review draft."""
 
-    decision: str = Field(description="approve 或 reject")
-    review_note: str = Field(default="", max_length=500, description="人工确认备注")
+    decision: str = Field(description="approve or reject")
+    review_note: str = Field(default="", max_length=500, description="human confirmation note")
     human_feedback_payload: dict | None = Field(
         default=None,
-        description="人工确认后沉淀的结构化错因/反馈信息",
+        description=(
+            "structured human feedback payload. Recommended protocol: "
+            "lobster_review_feedback.v1 with fields source, adopt_openclaw, "
+            "final_quota/final_quotas, manual_reason_codes, manual_note, "
+            "promotion_decision. See docs/lobster_review_feedback_protocol.md"
+        ),
     )

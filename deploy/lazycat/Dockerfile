@@ -32,8 +32,8 @@ RUN npm run build
 # ============================================================
 FROM ${PYTHON_IMAGE}
 
-# 设置UTF-8编码（避免中文乱码）
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+# 设置UTF-8编码 + 北京时间
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8 TZ=Asia/Shanghai
 
 WORKDIR /app
 
@@ -45,7 +45,11 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gcc \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
 # 安装Python依赖（核心匹配引擎 + Web后端）
 COPY requirements.txt /app/requirements.txt
@@ -63,6 +67,7 @@ COPY deploy/lazycat/nginx.conf /etc/nginx/conf.d/default.conf
 # 复制后端代码
 COPY config.py /app/config.py
 COPY main.py /app/main.py
+COPY local_match_server.py /app/local_match_server.py
 COPY docs/ /app/docs/
 COPY db/__init__.py /app/db/__init__.py
 COPY db/sqlite.py /app/db/sqlite.py
