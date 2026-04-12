@@ -84,6 +84,37 @@ async def _remote_post(path: str, payload: dict) -> dict:
         raise HTTPException(502, f"连接本地匹配服务失败: {e}")
 
 
+def _material_hint_family(name: str) -> str:
+    value = _normalize_material_hint(name)
+    pipe_names = {"复合管", "钢管", "塑料管", "塑料给水管", "管材"}
+    valve_names = {"阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀", "法兰减压阀", "过滤器"}
+    if value in {_normalize_material_hint(x) for x in pipe_names}:
+        return "pipe"
+    if value in {_normalize_material_hint(x) for x in valve_names}:
+        return "valve"
+    return ""
+
+
+def _is_compatible_material_hint(material_name: str, candidate_name: str) -> bool:
+    text = str(candidate_name or "").strip()
+    if not text:
+        return False
+
+    family = _material_hint_family(material_name)
+    if not family:
+        return True
+
+    if family == "pipe":
+        if any(token in text for token in ("刷", "漆", "涂", "标识", "油")):
+            return False
+        return any(token in text for token in ("管", "管材"))
+
+    if family == "valve":
+        return any(token in text for token in ("阀", "过滤器", "减压"))
+
+    return True
+
+
 # ============================================================
 # 1. 获取省份列表
 # ============================================================
@@ -572,6 +603,7 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     candidate_spec = info["spec"]
     candidate_type = info["type"]
     candidate_material = info["material"]
+    candidate_connection = info["connection"]
     if not candidate_name and not candidate_spec and not candidate_type:
         return "", ""
 
@@ -582,21 +614,108 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     suggested_name = ""
     if _should_use_bill_type_for_material(material_name) and candidate_type:
         suggested_name = candidate_type
-        if candidate_material and candidate_material not in suggested_name:
+        if _should_prefix_connection(candidate_type) and candidate_connection and candidate_connection not in suggested_name:
+            conn_prefix = _connection_prefix(candidate_connection)
+            if conn_prefix and conn_prefix not in suggested_name:
+                suggested_name = f"{conn_prefix}{suggested_name}"
+        if _should_prefix_material(candidate_type) and candidate_material and candidate_material not in suggested_name:
             suggested_name = f"{candidate_material}{suggested_name}"
-    elif _is_generic_material_name(material_name) and candidate_name:
+    elif (
+        _is_generic_material_name(material_name)
+        and bill_name
+        and _is_specific_lookup_name(bill_name)
+        and _is_compatible_material_hint(material_name, bill_name)
+    ):
+        suggested_name = bill_name.strip()
+    elif (
+        _is_generic_material_name(material_name)
+        and candidate_name
+        and _is_compatible_material_hint(material_name, candidate_name)
+    ):
         suggested_name = candidate_name
     elif normalized_material and normalized_bill and normalized_material == normalized_bill and candidate_name:
         suggested_name = candidate_name
     elif normalized_material and normalized_candidate and normalized_material == normalized_candidate:
         suggested_name = candidate_name
 
+    if suggested_name and _normalize_material_hint(suggested_name) == normalized_material:
+        suggested_name = ""
+
     return suggested_name, candidate_spec
 
 
 def _extract_material_from_desc(desc: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    if desc:
+        for raw_line in desc.splitlines():
+            line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
+            if not line:
+                continue
+            parts = re.split(r"[:：]", line, maxsplit=1)
+            if len(parts) != 2:
+                continue
+            key = _normalize_desc_key(parts[0].strip())
+            value = parts[1].strip()
+            if key and value:
+                pairs[key] = value
+
+    if pairs:
+        combined = ""
+        for key in ("材质规格", "材质及规格", "材质型号", "规格压力等级"):
+            if pairs.get(key):
+                combined = pairs[key]
+                break
+
+        candidate_type = ""
+        for key in ("类型", "类别", "名称"):
+            if pairs.get(key):
+                candidate_type = pairs[key].strip()
+                break
+
+        candidate_material = ""
+        for key in ("材质", "材质要求"):
+            if pairs.get(key):
+                candidate_material = pairs[key].strip()
+                break
+
+        candidate_connection = ""
+        for key in ("连接形式", "连接方式"):
+            if pairs.get(key):
+                candidate_connection = pairs[key].strip()
+                break
+
+        name = ""
+        spec = ""
+        if combined:
+            name, spec = _split_material_and_spec(combined)
+
+        if not name and candidate_material:
+            name = candidate_material
+
+        if not spec:
+            for key in ("规格型号", "规格", "型号", "公称直径", "规格压力等级"):
+                raw_spec = pairs.get(key, "").strip()
+                if not raw_spec:
+                    continue
+                if not name:
+                    maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
+                    if maybe_spec:
+                        name = maybe_name
+                        spec = maybe_spec
+                        break
+                spec = raw_spec
+                break
+
+        return {
+            "name": name.strip(),
+            "spec": spec.strip(),
+            "type": candidate_type,
+            "material": candidate_material,
+            "connection": candidate_connection,
+        }
+
     if not desc:
-        return {"name": "", "spec": "", "type": "", "material": ""}
+        return {"name": "", "spec": "", "type": "", "material": "", "connection": ""}
 
     pairs: dict[str, str] = {}
     for raw_line in desc.splitlines():
@@ -629,6 +748,12 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
             candidate_material = pairs[key].strip()
             break
 
+    candidate_connection = ""
+    for key in ("连接形式", "连接方式"):
+        if pairs.get(key):
+            candidate_connection = pairs[key].strip()
+            break
+
     name = ""
     spec = ""
     if combined:
@@ -648,6 +773,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
         "spec": spec.strip(),
         "type": candidate_type,
         "material": candidate_material,
+        "connection": candidate_connection,
     }
 
 
@@ -657,7 +783,9 @@ def _split_material_and_spec(text: str) -> tuple[str, str]:
         return "", ""
 
     patterns = [
+        r"^(?P<name>.+?)(?P<spec>DN\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
         r"^(?P<name>.+?)\s+(?P<spec>DN\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
+        r"^(?P<name>.+?)(?P<spec>De\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
         r"^(?P<name>.+?)\s+(?P<spec>De\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
         r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\.\d+)?(?:mm|mm2|㎡|m2))$",
         r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\*\d+){1,3})$",
@@ -674,6 +802,15 @@ def _normalize_material_hint(text: str) -> str:
 
 
 def _is_generic_material_name(name: str) -> bool:
+    generic_names = {
+        "复合管", "管材", "管件", "钢管", "塑料管", "塑料给水管",
+        "阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀",
+        "法兰减压阀", "过滤器", "螺纹过滤器", "法兰过滤器",
+    }
+    value = _normalize_material_hint(name)
+    if value in {_normalize_material_hint(x) for x in generic_names}:
+        return True
+
     value = _normalize_material_hint(name)
     generic_names = {
         "复合管", "管材", "管件", "钢管", "塑料管", "阀门", "法兰", "桥架",
@@ -683,11 +820,61 @@ def _is_generic_material_name(name: str) -> bool:
 
 
 def _should_use_bill_type_for_material(name: str) -> bool:
+    generic_valve_names = {
+        "阀门", "螺纹阀门", "减压器", "减压阀", "螺纹减压阀",
+        "法兰阀门", "法兰减压阀", "过滤器",
+    }
+    value = _normalize_material_hint(name)
+    if value in {_normalize_material_hint(x) for x in generic_valve_names}:
+        return True
+
     value = _normalize_material_hint(name)
     generic_valve_names = {
         "阀门", "螺纹阀门", "减压阀", "螺纹减压阀", "法兰阀门", "法兰减压阀",
     }
     return value in {_normalize_material_hint(x) for x in generic_valve_names}
+
+
+def _connection_prefix(connection: str) -> str:
+    text = str(connection or "")
+    if "法兰" in text:
+        return "法兰"
+    if "螺纹" in text:
+        return "螺纹"
+    if "沟槽" in text:
+        return "沟槽"
+    if "焊接" in text:
+        return "焊接"
+
+    text = str(connection or "")
+    if "法兰" in text:
+        return "法兰"
+    if "螺纹" in text:
+        return "螺纹"
+    if "沟槽" in text:
+        return "沟槽"
+    if "焊接" in text:
+        return "焊接"
+    return ""
+
+
+def _normalize_desc_key(text: str) -> str:
+    return re.sub(r"[\s、，,：:/（）\(\)\-]", "", str(text or ""))
+
+
+def _is_specific_lookup_name(name: str) -> bool:
+    value = str(name or "").strip()
+    return bool(value) and not _is_generic_material_name(value)
+
+
+def _should_prefix_connection(candidate_type: str) -> bool:
+    value = _normalize_material_hint(candidate_type)
+    return value in {_normalize_material_hint(x) for x in {"过滤器", "阀门", "减压阀", "减压器"}}
+
+
+def _should_prefix_material(candidate_type: str) -> bool:
+    value = str(candidate_type or "").strip()
+    return "阀" in value or "减压器" in value
 
 
 # ============================================================
