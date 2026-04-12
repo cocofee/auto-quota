@@ -587,19 +587,21 @@ export default function MaterialPrice() {
           return <span style={{ fontSize: 13, color: '#555', paddingLeft: 8 }}>{row._raw.name}</span>;
         }
         return (
-          <div style={{ paddingLeft: 16, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-            <span style={{ color: '#d97706', marginRight: 4 }}>◆</span>
+          <div style={{ paddingLeft: 16, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' }}>
+            <span style={{ color: '#d97706', marginRight: 4, flex: '0 0 auto' }}>◆</span>
             <Input
               size="small"
               value={row.edited_name}
               onChange={(e) => handleMaterialName(row._rowKey, e.target.value)}
               placeholder="主材名称"
+              style={{ flex: '1 1 220px', minWidth: 160 }}
             />
             <Input
               size="small"
               value={row.edited_spec}
               onChange={(e) => handleMaterialSpec(row._rowKey, e.target.value)}
               placeholder="规格型号"
+              style={{ flex: '0 0 132px', minWidth: 132 }}
             />
           </div>
         );

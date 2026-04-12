@@ -567,8 +567,12 @@ def _is_material_row(code: str, name: str) -> bool:
 
 
 def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc: str) -> tuple[str, str]:
-    candidate_name, candidate_spec = _extract_material_from_desc(desc)
-    if not candidate_name and not candidate_spec:
+    info = _extract_material_from_desc(desc)
+    candidate_name = info["name"]
+    candidate_spec = info["spec"]
+    candidate_type = info["type"]
+    candidate_material = info["material"]
+    if not candidate_name and not candidate_spec and not candidate_type:
         return "", ""
 
     normalized_material = _normalize_material_hint(material_name)
@@ -576,7 +580,11 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     normalized_candidate = _normalize_material_hint(candidate_name)
 
     suggested_name = ""
-    if _is_generic_material_name(material_name) and candidate_name:
+    if _should_use_bill_type_for_material(material_name) and candidate_type:
+        suggested_name = candidate_type
+        if candidate_material and candidate_material not in suggested_name:
+            suggested_name = f"{candidate_material}{suggested_name}"
+    elif _is_generic_material_name(material_name) and candidate_name:
         suggested_name = candidate_name
     elif normalized_material and normalized_bill and normalized_material == normalized_bill and candidate_name:
         suggested_name = candidate_name
@@ -586,9 +594,9 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     return suggested_name, candidate_spec
 
 
-def _extract_material_from_desc(desc: str) -> tuple[str, str]:
+def _extract_material_from_desc(desc: str) -> dict[str, str]:
     if not desc:
-        return "", ""
+        return {"name": "", "spec": "", "type": "", "material": ""}
 
     pairs: dict[str, str] = {}
     for raw_line in desc.splitlines():
@@ -609,10 +617,25 @@ def _extract_material_from_desc(desc: str) -> tuple[str, str]:
             combined = pairs[key]
             break
 
+    candidate_type = ""
+    for key in ("类型", "类别", "名称"):
+        if pairs.get(key):
+            candidate_type = pairs[key].strip()
+            break
+
+    candidate_material = ""
+    for key in ("材质", "材质要求"):
+        if pairs.get(key):
+            candidate_material = pairs[key].strip()
+            break
+
     name = ""
     spec = ""
     if combined:
         name, spec = _split_material_and_spec(combined)
+
+    if not name and candidate_material:
+        name = candidate_material
 
     if not spec:
         for key in ("规格型号", "规格", "型号"):
@@ -620,7 +643,12 @@ def _extract_material_from_desc(desc: str) -> tuple[str, str]:
                 spec = pairs[key].strip()
                 break
 
-    return name.strip(), spec.strip()
+    return {
+        "name": name.strip(),
+        "spec": spec.strip(),
+        "type": candidate_type,
+        "material": candidate_material,
+    }
 
 
 def _split_material_and_spec(text: str) -> tuple[str, str]:
@@ -629,8 +657,8 @@ def _split_material_and_spec(text: str) -> tuple[str, str]:
         return "", ""
 
     patterns = [
-        r"^(?P<name>.+?)\s+(?P<spec>DN\d+[A-Za-z0-9\-\./]*)$",
-        r"^(?P<name>.+?)\s+(?P<spec>De\d+[A-Za-z0-9\-\./]*)$",
+        r"^(?P<name>.+?)\s+(?P<spec>DN\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
+        r"^(?P<name>.+?)\s+(?P<spec>De\d+[A-Za-z0-9\-\./]*(?:\s+[A-Za-z0-9\-\./]+)*)$",
         r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\.\d+)?(?:mm|mm2|㎡|m2))$",
         r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\*\d+){1,3})$",
     ]
@@ -652,6 +680,14 @@ def _is_generic_material_name(name: str) -> bool:
         "电缆", "电线", "配电箱", "灯具", "喷头", "风口", "水表",
     }
     return value in {_normalize_material_hint(x) for x in generic_names}
+
+
+def _should_use_bill_type_for_material(name: str) -> bool:
+    value = _normalize_material_hint(name)
+    generic_valve_names = {
+        "阀门", "螺纹阀门", "减压阀", "螺纹减压阀", "法兰阀门", "法兰减压阀",
+    }
+    return value in {_normalize_material_hint(x) for x in generic_valve_names}
 
 
 # ============================================================
