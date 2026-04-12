@@ -122,6 +122,36 @@ def test_non_valve_accessories_keep_name_but_inherit_spec():
     assert suggested_spec == "DN32"
 
 
+def test_non_generic_rows_do_not_get_renamed_from_bill_context():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "法兰压盖",
+        "镀锌钢管",
+        "1.规格:DN100\n2.连接形式:法兰连接",
+    )
+    assert suggested_name == ""
+    assert suggested_spec == "DN100"
+
+
+def test_generic_pipe_prefers_specific_bill_name_and_spec():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "钢管",
+        "镀锌钢管",
+        "1.安装部位:室外\n2.介质:雨水\n3.规格、压力等级:内外壁镀锌钢管DN100\n4.连接形式:沟槽连接",
+    )
+    assert suggested_name == "镀锌钢管"
+    assert suggested_spec == "DN100"
+
+
+def test_generic_filter_uses_connection_type_and_spec():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "法兰阀门",
+        "法兰阀门",
+        "1.类型:过滤器\n2.规格、压力等级:DN100\n3.连接形式:法兰连接",
+    )
+    assert suggested_name == "法兰过滤器"
+    assert suggested_spec == "DN100"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()
