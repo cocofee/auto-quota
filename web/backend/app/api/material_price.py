@@ -50,6 +50,37 @@ def _get_db():
     return MaterialDB(str(_MATERIAL_DB_PATH))
 
 
+def _load_material_price_cache() -> dict:
+    cache_path = Path(__file__).resolve().parents[4] / "data" / "material_prices.json"
+    if not cache_path.exists():
+        return {}
+    try:
+        import json as _json
+        data = _json.loads(cache_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _material_db_ready() -> bool:
+    import sqlite3
+
+    if not _MATERIAL_DB_PATH.exists() or _MATERIAL_DB_PATH.stat().st_size <= 0:
+        return False
+
+    try:
+        conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_fact'"
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 async def _remote_get(path: str, params: dict = None) -> dict:
     """转发GET请求到本地匹配服务"""
     import httpx
@@ -125,6 +156,13 @@ async def get_provinces():
     if _is_remote():
         return await _remote_get("/material-price/provinces")
 
+    if not _material_db_ready():
+        cache = _load_material_price_cache()
+        count = len(cache)
+        if count > 0:
+            return {"provinces": [{"name": "全国", "count": count}], "fallback": "json_cache"}
+        return {"provinces": []}
+
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
     try:
@@ -151,6 +189,9 @@ async def get_cities(province: str = Query(..., description="省份名称")):
     """返回指定省份下有价格数据的城市列表"""
     if _is_remote():
         return await _remote_get("/material-price/cities", {"province": province})
+
+    if not _material_db_ready():
+        return {"cities": []}
 
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
@@ -185,6 +226,18 @@ async def get_periods(
         if city:
             params["city"] = city
         return await _remote_get("/material-price/periods", params)
+
+    if not _material_db_ready():
+        cache = _load_material_price_cache()
+        latest = ""
+        for item in cache.values():
+            if isinstance(item, dict):
+                date_val = str(item.get("query_date") or "").strip()
+                if date_val and date_val > latest:
+                    latest = date_val
+        if latest:
+            return {"periods": [{"start": latest, "end": latest, "count": len(cache), "label": latest}]}
+        return {"periods": []}
 
     import sqlite3
     conn = sqlite3.connect(str(_MATERIAL_DB_PATH))
@@ -1208,21 +1261,10 @@ def _do_lookup(materials: list[dict], province: str, city: str,
     price_type: all=不限, info=只查信息价, market=只查市场价
     级联策略：信息价 → 市场价(企业集采库) → 广材网缓存
     """
-    import sqlite3
-
-    db = _get_db()
-    conn = sqlite3.connect(str(db.db_path))
-    conn.row_factory = sqlite3.Row
+    db = _get_db() if _material_db_ready() else None
 
     # 加载广材网缓存（作为第三层兜底）
-    _gldjc_cache: dict = {}
-    _gldjc_cache_path = Path(__file__).resolve().parents[4] / "data" / "material_prices.json"
-    if _gldjc_cache_path.exists():
-        try:
-            import json as _json
-            _gldjc_cache = _json.loads(_gldjc_cache_path.read_text(encoding="utf-8"))
-        except Exception:
-            _gldjc_cache = {}
+    _gldjc_cache: dict = _load_material_price_cache()
 
     # 价格类型映射到 source_type 过滤条件
     source_filter = None
@@ -1245,7 +1287,9 @@ def _do_lookup(materials: list[dict], province: str, city: str,
         kwargs = dict(province=province, spec=spec, target_unit=unit)
         if source_filter:
             kwargs["source_type"] = source_filter
-        price_info = db.search_price_by_name(name, **kwargs)
+        price_info = None
+        if db is not None:
+            price_info = db.search_price_by_name(name, **kwargs)
 
         if price_info:
             results.append({
@@ -1263,7 +1307,7 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                     kwargs2 = dict(province=province, spec=extracted_spec, target_unit=unit)
                     if source_filter:
                         kwargs2["source_type"] = source_filter
-                    price_info2 = db.search_price_by_name(short_name, **kwargs2)
+                    price_info2 = db.search_price_by_name(short_name, **kwargs2) if db is not None else None
                     if price_info2:
                         results.append({
                             **mat,
@@ -1275,8 +1319,16 @@ def _do_lookup(materials: list[dict], province: str, city: str,
             # 广材网缓存兜底（第三层）
             if _gldjc_cache and price_type != "info":
                 # 广材网是市场价，信息价模式下不查
-                cache_key = f"{name}|{unit}"
-                cached = _gldjc_cache.get(cache_key)
+                cache_keys = [
+                    f"{name} {spec}|{unit}".strip(),
+                    f"{name}{spec}|{unit}".strip(),
+                    f"{name}|{unit}",
+                ]
+                cached = None
+                for cache_key in cache_keys:
+                    cached = _gldjc_cache.get(cache_key)
+                    if cached:
+                        break
                 if cached and cached.get("price_with_tax"):
                     results.append({
                         **mat,
@@ -1287,7 +1339,6 @@ def _do_lookup(materials: list[dict], province: str, city: str,
 
             results.append({**mat, "lookup_price": None, "lookup_source": "未查到"})
 
-    conn.close()
     return results
 
 
