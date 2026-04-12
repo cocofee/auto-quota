@@ -152,6 +152,26 @@ def test_generic_filter_uses_connection_type_and_spec():
     assert suggested_spec == "DN100"
 
 
+def test_upvc_pipe_rows_keep_material_family_and_spec():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "塑料排水管",
+        "套管",
+        "1.介质:排水\n2.材质、规格:U-PVC De110\n3.连接形式:承插式胶粘剂粘接",
+    )
+    assert suggested_name == "U-PVC塑料排水管"
+    assert suggested_spec == "De110"
+
+
+def test_device_rows_merge_material_name_and_device_name():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "不锈钢",
+        "地漏",
+        "1.名称:地漏\n2.材质:不锈钢\n3.型号、规格:DN50",
+    )
+    assert suggested_name == "不锈钢地漏"
+    assert suggested_spec == "DN50"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()

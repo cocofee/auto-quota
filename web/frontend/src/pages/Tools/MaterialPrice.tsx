@@ -140,6 +140,31 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
 }
 
 /** 从 lookup_source 提取价格类型标签 */
+function formatMaterialInput(name: string, spec: string): string {
+  return [name.trim(), spec.trim()].filter(Boolean).join(' ');
+}
+
+function splitMaterialInput(value: string): { name: string; spec: string } {
+  const text = value.trim();
+  if (!text) return { name: '', spec: '' };
+
+  const patterns = [
+    /^(.*?)[\s]*(DN\d+[A-Za-z0-9\-./]*)$/i,
+    /^(.*?)[\s]*(De\d+[A-Za-z0-9\-./]*(?:\s+[A-Za-z0-9\-./]+)*)$/i,
+    /^(.*?)[\s]*(\d+(?:\.\d+)?(?:mm|mm2|㎡|m2))$/i,
+    /^(.*?)[\s]*(\d+(?:\*\d+){1,3})$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const matched = text.match(pattern);
+    if (matched) {
+      return { name: matched[1].trim(), spec: matched[2].trim() };
+    }
+  }
+
+  return { name: text, spec: '' };
+}
+
 function priceSourceTag(source: string | null): React.ReactNode {
   if (!source) return null;
   if (source.includes('信息价')) return <Tag color="blue" style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>信息价</Tag>;
@@ -337,18 +362,21 @@ export default function MaterialPrice() {
     );
   }, []);
 
-  const handleMaterialName = useCallback((rowKey: string, name: string) => {
-    setDisplayRows(prev =>
-      prev.map(r =>
-        r._rowType === 'material' && r._rowKey === rowKey ? { ...r, edited_name: name } : r
-      ),
-    );
-  }, []);
-
   const handleMaterialSpec = useCallback((rowKey: string, spec: string) => {
     setDisplayRows(prev =>
       prev.map(r =>
         r._rowType === 'material' && r._rowKey === rowKey ? { ...r, edited_spec: spec } : r
+      ),
+    );
+  }, []);
+
+  const handleMaterialCombined = useCallback((rowKey: string, value: string) => {
+    const { name, spec } = splitMaterialInput(value);
+    setDisplayRows(prev =>
+      prev.map(r =>
+        r._rowType === 'material' && r._rowKey === rowKey
+          ? { ...r, edited_name: name, edited_spec: spec }
+          : r
       ),
     );
   }, []);
@@ -591,17 +619,17 @@ export default function MaterialPrice() {
             <span style={{ color: '#d97706', marginRight: 4, flex: '0 0 auto' }}>◆</span>
             <Input
               size="small"
-              value={row.edited_name}
-              onChange={(e) => handleMaterialName(row._rowKey, e.target.value)}
+              value={formatMaterialInput(row.edited_name, row.edited_spec)}
+              onChange={(e) => handleMaterialCombined(row._rowKey, e.target.value)}
               placeholder="主材名称"
-              style={{ flex: '1 1 220px', minWidth: 160 }}
+              style={{ flex: '1 1 360px', minWidth: 240 }}
             />
             <Input
               size="small"
               value={row.edited_spec}
               onChange={(e) => handleMaterialSpec(row._rowKey, e.target.value)}
               placeholder="规格型号"
-              style={{ flex: '0 0 132px', minWidth: 132 }}
+              style={{ display: 'none' }}
             />
           </div>
         );
