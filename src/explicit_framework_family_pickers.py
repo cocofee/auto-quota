@@ -547,7 +547,7 @@ def _build_support_picker_context(text: str, rules: dict) -> dict | None:
     prefer_side = "\u4fa7\u5411" in text
     prefer_longitudinal = "\u7eb5\u5411" in text
     prefer_single = "\u5355\u7ba1" in text
-    prefer_multi = "\u591a\u7ba1" in text
+    prefer_multi = any(keyword in text for keyword in ("\u591a\u7ba1", "\u53cc\u7ba1", "\u4e24\u7ba1", "\u591a\u7ba1\u9053", "\u4e24\u7ba1\u9053"))
     prefer_door_frame = "\u95e8\u578b" in text
     generic_pipe_support = any(keyword in text for keyword in ("\u6309\u9700\u5236\u4f5c", "\u4e00\u822c\u7ba1\u67b6"))
     prefer_equipment = bill_support_scope == "\u8bbe\u5907\u652f\u67b6" or any(
@@ -921,9 +921,9 @@ def _score_support_candidate(candidate: dict, context: dict, candidate_context: 
         elif "\u591a\u7ba1" in quota_name:
             score -= 6
     if context.get("prefer_multi"):
-        if "\u591a\u7ba1" in quota_name:
+        if any(word in quota_name for word in ("\u591a\u7ba1", "\u591a\u6839")):
             score += 6
-        elif "\u5355\u7ba1" in quota_name:
+        elif any(word in quota_name for word in ("\u5355\u7ba1", "\u5355\u6839")):
             score -= 6
     if context.get("prefer_fabrication"):
         if "\u5236\u4f5c" in quota_name:

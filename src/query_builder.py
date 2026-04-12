@@ -1935,26 +1935,48 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     - 闸阀/蝶阀等泛称在定额库中搜不到，必须规范化为法兰/螺纹阀门
     - 过滤器/软接头/倒流防止器等有独立的定额体系
     """
+    # --- 提取真实设备名（清单常在"名称："或"类型："后给具体设备名） ---
+    # 例如 "碳钢阀门 名称：280℃防火阀" → real_type = "280℃防火阀"
+    # 例如 "螺纹阀门 类型:截止阀 规格:DN32" → real_type = "截止阀"
+    def _extract_inline_field_value(*labels: str) -> str:
+        for label in labels:
+            match = re.search(
+                rf'(?:^|\s)\d*[.、．]?\s*{label}[：:]\s*(.+?)'
+                rf'(?=(?:\s+\d*[.、．]?\s*(?:名称|类型|规格|压力|连接方式|连接形式|安装部位|其它)[：:])|//|$)',
+                full_text,
+            )
+            if match:
+                value = match.group(1).strip()
+                if value:
+                    return value
+        return ""
+
+    real_type = _extract_inline_field_value("名称", "类型")
+    if real_type:
+        real_type = re.sub(r'-超高$', '', real_type).strip()  # 去掉超高后缀
+
     # --- 前置检查：是否含阀门相关关键词 ---
     # 消声百叶有独立定额"消声百叶安装"，不走阀门路由
     if "消声百叶" in name:
         return None
-    if not any(kw in name for kw in ("阀门", "阀", "过滤器", "软接头", "倒流防止")):
+    valve_like_text = f"{name} {real_type}"
+    if not any(kw in valve_like_text for kw in ("阀门", "阀", "过滤器", "软接头", "倒流防止", "除污器")):
         return None
 
-    # --- 提取真实设备名（清单常在"名称："或"类型："后给具体设备名） ---
-    # 例如 "碳钢阀门 名称：280℃防火阀" → real_type = "280℃防火阀"
-    # 例如 "螺纹阀门 类型:截止阀 规格:DN32" → real_type = "截止阀"
-    real_type = ""
-    rt_match = re.search(
-        r'(?:名称[、,]?类型|名称|类型)[：:]\s*(.+?)(?:\s+(?:规格|压力|名称|类型)|$)',
-        full_text)
-    if rt_match:
-        real_type = rt_match.group(1).strip()
-        real_type = re.sub(r'-超高$', '', real_type).strip()  # 去掉超高后缀
-
     dn = params.get("dn")
-    connection = params.get("connection", "")
+    explicit_connection = _extract_inline_field_value("连接方式", "连接形式")
+    if not explicit_connection:
+        connection_match = re.search(
+            r'连接(?:方式|形式)[：:]\s*([^\s/，,；;]+(?:连接)?)',
+            full_text,
+        )
+        if connection_match:
+            explicit_connection = connection_match.group(1).strip()
+    connection = explicit_connection or params.get("connection", "")
+    if not dn:
+        dn_match = re.search(r'\b(?:DN|De)\s*(\d+(?:\.\d+)?)\b', full_text, flags=re.IGNORECASE)
+        if dn_match:
+            dn = int(float(dn_match.group(1)))
 
     # 清单名的基础部分（去掉"名称：xxx"/"类型：xxx"后缀）
     # "碳钢阀门 名称：280℃防火阀" → "碳钢阀门"
@@ -2011,27 +2033,41 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     if "减压孔板" in _check:
         return _apply_synonyms("减压孔板", specialty)
 
-    # === 3. 过滤器 → 按类型和DN分流 ===
-    if "过滤器" in _check:
+    # === 3. 过滤器 → 优先走过滤器家族，不落到普通法兰/管道路由 ===
+    if any(keyword in _check for keyword in ("过滤器", "除污器")):
         # 空气过滤器/油过滤器等设备类有专用定额，不按阀门处理
         if any(prefix in _check for prefix in ("空气", "油", "活性炭", "初效", "中效", "高效")):
             return None  # 交给后续逻辑保留原名搜索
-        # Y形/管道过滤器：小口径按螺纹阀门，大口径按法兰阀门
-        _dn_val = int(dn) if dn else 25  # 过滤器默认小口径
-        if _dn_val >= 50:
-            return _apply_synonyms("法兰阀门安装", specialty)
-        return _apply_synonyms("螺纹阀门", specialty)
+
+        if "除污器" in _check:
+            base = "法兰除污器"
+        elif any(keyword in _check for keyword in ("Y型过滤器", "Y形过滤器", "管道过滤器")):
+            base = "Y型过滤器安装"
+        else:
+            base = "过滤器安装"
+
+        _dn_val = int(dn) if dn else 25
+        if "法兰" in connection:
+            conn = "法兰连接"
+        elif "螺纹" in connection or "丝扣" in connection:
+            conn = "螺纹连接"
+        else:
+            conn = "法兰连接" if _dn_val >= 50 else "螺纹连接"
+
+        if "安装" in base:
+            return _apply_synonyms(f"{base}({conn})", specialty)
+        return _apply_synonyms(base, specialty)
 
     # === 4. 软接头 → 按连接方式分流 ===
-    if "软接头" in name:
+    if "软接头" in _check:
         _dn_val = int(dn) if dn else 50
         if "法兰" in connection:
-            conn_type = "法兰连接"
+            return _apply_synonyms("法兰式软接头安装", specialty)
         elif "螺纹" in connection:
-            conn_type = "螺纹连接"
-        else:
-            conn_type = "法兰连接" if _dn_val >= 50 else "螺纹连接"
-        return _apply_synonyms(f"软接头({conn_type})", specialty)
+            return _apply_synonyms("螺纹式软接头安装", specialty)
+        if _dn_val >= 50:
+            return _apply_synonyms("法兰式软接头安装", specialty)
+        return _apply_synonyms("螺纹式软接头安装", specialty)
 
     # === 5. 塑料阀门（PPR/PP-R）→ 阀门家族，不落到塑料管 ===
     _plastic_valve_check = (real_type or _name_base or "").upper()
@@ -2082,23 +2118,23 @@ def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
         if surface_process or any(keyword in full_text for keyword in ("按需制作", "一般管架")):
             return f"管道支架{action} 一般管架"
     if prefer_aseismic and name_has_support_anchor:
-        support_parts = ["抗震支架"]
+        support_parts = ["抗震支架", "抗震支吊架", "单向支撑"]
         if prefer_bridge:
-            support_parts.append("桥架")
+            support_parts.extend(["桥架", "桥架(线槽)系统"])
         elif "风管" in full_text:
-            support_parts.append("风管")
+            support_parts.append("风管系统")
         elif any(keyword in full_text for keyword in ("管道", "水管", "消防管", "给水", "排水")):
-            support_parts.append("管道")
+            support_parts.extend(["管道", "管道系统"])
         if "侧向" in full_text:
             support_parts.append("侧向")
         elif "纵向" in full_text:
             support_parts.append("纵向")
         elif "门型" in full_text:
             support_parts.append("门型")
-        if "多管" in full_text:
-            support_parts.append("多管")
-        elif "单管" in full_text:
-            support_parts.append("单管")
+        if any(keyword in full_text for keyword in ("多管", "多管道", "双管", "两管", "两管道")):
+            support_parts.extend(["多管", "多根"])
+        elif any(keyword in full_text for keyword in ("单管", "单管道")):
+            support_parts.extend(["单管", "单根"])
         return " ".join(support_parts)
     if prefer_bridge and name_has_support_anchor:
         return f"电缆桥架支撑架{action}"
@@ -2109,7 +2145,7 @@ def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
 
 def _build_surface_process_query(name: str, full_text: str, params: dict) -> str | None:
     """Keep standalone coating/marking items out of generic installation routes."""
-    text = full_text or ""
+    text = " ".join(part for part in (name or "", full_text or "") if part)
     name_text = name or ""
     if not any(keyword in text for keyword in ("刷油", "防腐", "油漆", "标识", "色环")):
         return None
@@ -2738,9 +2774,9 @@ def build_quota_query(parser, name: str, description: str = "",
     # 例如"连接方式:卡压式连接"在parser中未被识别，导致query丢失关键区分词
     if not connection:
         _conn_match = re.search(
-            r'连接方式[：:]\s*'
+            r'连接(?:方式|形式)[：:]\s*'
             r'(卡压式?连接|环压式?连接|焊接|螺纹连接|法兰连接'
-            r'|热熔连接|粘接|承插连接|沟槽连接|卡箍连接'
+            r'|热熔连接|粘接|承插连接|沟槽连接|卡箍连接|丝扣连接'
             r'|对接电弧焊|承插氩弧焊|对焊连接)',
             full_text)
         if _conn_match:
@@ -2927,6 +2963,56 @@ def build_quota_query(parser, name: str, description: str = "",
         and not is_window_item
     ):
         reset_query_seed = False
+
+        _inline_subject_match = re.search(
+            r'(?:^|\s)\d*[.、．]?\s*(?:名称|类型)[：:]\s*(.+?)'
+            r'(?=(?:\s+\d*[.、．]?\s*(?:名称|名称、类型|类型|规格|规格、压力等级|型号|型号、规格|压力|压力等级|连接方式|连接形式|安装部位|其它)[：:])|//|$)',
+            full_text,
+        )
+        _inline_subject = _inline_subject_match.group(1).strip() if _inline_subject_match else ""
+        _compact_valve_text = re.sub(r"\s+", "", full_text)
+        if not _inline_subject:
+            if any(token in _compact_valve_text for token in ("名称:过滤器", "名称：过滤器", "类型:过滤器", "类型：过滤器")):
+                _inline_subject = "过滤器"
+            elif any(token in _compact_valve_text for token in ("名称:除污器", "名称：除污器", "类型:除污器", "类型：除污器")):
+                _inline_subject = "除污器"
+            elif any(token in _compact_valve_text for token in ("名称:软接头安装", "名称：软接头安装", "类型:软接头安装", "类型：软接头安装")):
+                _inline_subject = "软接头安装"
+        _inline_conn = fields.get("连接方式", "") or fields.get("连接形式", "") or params.get("connection", "")
+        if not _inline_conn:
+            _inline_conn_match = re.search(
+                r'连接(?:方式|形式)[：:]\s*([^\s/，,；;]+(?:连接)?)',
+                full_text,
+            )
+            if _inline_conn_match:
+                _inline_conn = _inline_conn_match.group(1).strip()
+        if not _inline_conn:
+            if any(token in _compact_valve_text for token in ("连接方式:法兰连接", "连接方式：法兰连接", "连接形式:法兰连接", "连接形式：法兰连接")):
+                _inline_conn = "法兰连接"
+            elif any(token in _compact_valve_text for token in ("连接方式:螺纹连接", "连接方式：螺纹连接", "连接形式:螺纹连接", "连接形式：螺纹连接", "连接方式:丝扣连接", "连接方式：丝扣连接", "连接形式:丝扣连接", "连接形式：丝扣连接")):
+                _inline_conn = "螺纹连接"
+
+        if any(keyword in _inline_subject for keyword in ("过滤器", "除污器")):
+            if "法兰" in _inline_conn:
+                name = "过滤器安装(法兰连接)"
+            elif "螺纹" in _inline_conn or "丝扣" in _inline_conn:
+                name = "过滤器安装(螺纹连接)"
+            else:
+                _dn_val = int(dn) if dn else 25
+                name = "过滤器安装(法兰连接)" if _dn_val >= 50 else "过滤器安装(螺纹连接)"
+            material = ""
+            reset_query_seed = True
+        elif "软接头" in _inline_subject:
+            if "法兰" in _inline_conn:
+                name = "法兰式软接头安装"
+            elif "螺纹" in _inline_conn or "丝扣" in _inline_conn:
+                name = "螺纹式软接头安装"
+            else:
+                _dn_val = int(dn) if dn else 50
+                name = "法兰式软接头安装" if _dn_val >= 50 else "螺纹式软接头安装"
+            material = ""
+            reset_query_seed = True
+
         # 阀门类清单名称规范化：清单常写"碳钢阀门"/"不锈钢阀门"等材质+阀门泛称，
         # 但定额名统一叫"法兰阀门安装"/"螺纹阀门安装"。直接在路由中替换，
         # 避免依赖_apply_synonyms（可能被其他同义词抢先匹配导致失效）

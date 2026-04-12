@@ -169,7 +169,7 @@ def _pick_explicit_support_family_candidate(bill_text: str,
     prefer_side = "侧向" in text
     prefer_longitudinal = "纵向" in text
     prefer_single = "单管" in text
-    prefer_multi = "多管" in text
+    prefer_multi = any(keyword in text for keyword in ("多管", "双管", "两管", "多管道", "两管道"))
     prefer_door_frame = "门型" in text
     generic_pipe_support = any(keyword in text for keyword in ("按需制作", "一般管架"))
     prefer_equipment = bill_support_scope == "设备支架" or any(
@@ -198,7 +198,7 @@ def _pick_explicit_support_family_candidate(bill_text: str,
 
     support_anchor_words = ("支架", "吊架", "支吊架", "支撑架", "管架", "抗震")
     surface_process_words = ("除锈", "刷油", "油漆", "防锈漆", "红丹", "银粉漆", "调和漆")
-    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管")
+    support_special_shape_words = ("木垫式", "弹簧式", "侧向", "纵向", "门型", "单管", "多管", "双管", "两管")
     support_action_words = ("制作", "安装", "制作安装", "制安")
     equipment_support_words = ("设备支架", "设备吊架", "设备及部件支架")
     bridge_support_words = ("桥架支撑架", "电缆桥架")
@@ -330,9 +330,9 @@ def _pick_explicit_support_family_candidate(bill_text: str,
             elif "多管" in quota_name:
                 score -= 6
         if prefer_multi:
-            if "多管" in quota_name:
+            if any(word in quota_name for word in ("多管", "多根")):
                 score += 6
-            elif "单管" in quota_name:
+            elif any(word in quota_name for word in ("单管", "单根")):
                 score -= 6
         if prefer_fabrication:
             if "制作" in quota_name:
