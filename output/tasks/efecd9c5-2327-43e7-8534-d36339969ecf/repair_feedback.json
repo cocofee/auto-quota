@@ -1,0 +1,37 @@
+{
+  "task_id": "efecd9c5-2327-43e7-8534-d36339969ecf",
+  "status": "done",
+  "implemented_by": "codex",
+  "changed_files": [
+    "src/query_builder.py",
+    "src/explicit_equipment_family_pickers.py",
+    "src/match_pipeline.py",
+    "src/specialty_classifier.py",
+    "tests/test_query_builder_pipe_routes.py",
+    "tests/test_explicit_equipment_family_pickers.py",
+    "tests/test_specialty_classifier_conflicts.py"
+  ],
+  "result_summary": [
+    "在 query_builder 中新增刷油/标识专用查询入口，避免这类条目落入普通管道安装检索。",
+    "扩展管道保温路由，覆盖防结露/防冻/保冷，并排除设备绝热与直埋保温管误召回。",
+    "收紧套管/堵洞显式路由，避免给排水附(配)件、雨水斗、地漏等仅因“含预留孔洞/含套管”说明被误导到套管类。",
+    "新增设备类显式 family picker，并接入 match_pipeline，优先识别水箱、气压罐、变频泵组/给水设备、水泵。",
+    "将 specialty_classifier 中“软接头”项目级覆盖从 C4 修正为 C10，消除给排水软接头跨到电气册的硬误导。"
+  ],
+  "validation_result": {
+    "passed": [
+      "pytest tests/test_query_builder_pipe_routes.py tests/test_query_builder_valves.py tests/test_explicit_equipment_family_pickers.py tests/test_specialty_classifier_conflicts.py",
+      "python -m py_compile src/query_builder.py src/explicit_equipment_family_pickers.py src/match_pipeline.py src/specialty_classifier.py tests/test_query_builder_pipe_routes.py tests/test_query_builder_valves.py tests/test_explicit_equipment_family_pickers.py tests/test_specialty_classifier_conflicts.py"
+    ],
+    "blocked": [
+      "pytest tests/test_match_pipeline_installation_family_picks.py",
+      "pytest tests/test_match_pipeline_plumbing_accessory_pick.py"
+    ],
+    "blocked_reason": "仓库当前缺少 db.sqlite 模块；这两个现有测试文件在导入 src.match_pipeline 时即失败，属于环境级问题，不是本次补丁引入。"
+  },
+  "remaining_issues": [
+    "未对整份 lobster 审核样本做端到端重跑，本次采用源码级最小补丁和定向测试验证。",
+    "match_pipeline 相关整文件测试仍受仓库环境缺少 db.sqlite 的问题阻断，后续若补齐该模块，建议补跑对应回归。",
+    "抗震支吊架路径本次未新增独立源码补丁；当前仓库已有相关分流逻辑，但仍建议在环境补齐后做整链路复核。"
+  ]
+}

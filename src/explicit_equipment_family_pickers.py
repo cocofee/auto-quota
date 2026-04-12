@@ -332,6 +332,80 @@ def _pick_explicit_valve_family_candidate(bill_text: str,
     return pick_best_candidate(scored)
 
 
+def _pick_explicit_equipment_family_candidate(bill_text: str,
+                                              candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if not text:
+        return None
+    if "水泵接合器" in text:
+        return None
+    if any(
+        keyword in text
+        for keyword in ("坐便", "坐便器", "蹲便", "蹲便器", "小便器", "连体水箱", "高水箱", "低水箱", "隐蔽水箱", "隐藏水箱")
+    ):
+        return None
+
+    category = ""
+    expected_words: list[str] = []
+    prefer_words: list[str] = []
+    forbidden_words = ["风机", "风口", "风阀", "水泵接合器", "水表", "阀门"]
+
+    if "气压罐" in text:
+        category = "pressure_tank"
+        expected_words = ["气压罐"]
+        forbidden_words.extend(["水箱", "便器", "风机"])
+    elif "水箱" in text:
+        category = "water_tank"
+        expected_words = ["水箱"]
+        prefer_words = ["生活", "不锈钢", "整体"]
+        forbidden_words.extend(["气压罐", "连体水箱", "高水箱", "低水箱", "隐藏水箱", "隐蔽水箱", "便器"])
+    elif any(keyword in text for keyword in ("变频泵组", "变频给水设备", "变频供水设备", "稳压设备", "加压泵组")):
+        category = "pump_group"
+        expected_words = ["变频"]
+        prefer_words = ["泵组", "给水设备", "供水设备", "稳压设备"]
+        forbidden_words.extend(["气压罐", "水箱", "风机"])
+    elif any(keyword in text for keyword in ("潜污泵", "潜水泵", "排污泵", "污水泵", "水泵", "离心泵")):
+        category = "pump"
+        expected_words = ["泵"]
+        prefer_words = ["潜污泵", "潜水泵", "排污泵", "污水泵", "水泵", "离心泵"]
+        forbidden_words.extend(["气压罐", "水箱", "风机"])
+    else:
+        return None
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for candidate in candidates:
+        quota_name = candidate.get("name", "") or ""
+        score = 0
+        score += sum(10 for word in expected_words if word and word in quota_name)
+        score += sum(5 for word in prefer_words if word and word in quota_name)
+        score -= sum(12 for word in forbidden_words if word and word in quota_name)
+
+        if category == "water_tank":
+            if "水箱" in quota_name:
+                score += 10
+            if any(keyword in quota_name for keyword in ("制作", "安装", "整体")):
+                score += 2
+        elif category == "pressure_tank":
+            if "气压罐" in quota_name:
+                score += 12
+        elif category == "pump_group":
+            if any(keyword in quota_name for keyword in ("变频", "泵组", "给水设备", "供水设备", "稳压设备")):
+                score += 12
+            if "水泵" in quota_name and not any(keyword in quota_name for keyword in ("变频", "泵组", "给水设备", "供水设备")):
+                score -= 8
+        elif category == "pump":
+            if any(keyword in quota_name for keyword in ("潜污泵", "潜水泵", "排污泵", "污水泵", "水泵", "离心泵")):
+                score += 10
+            if "机组" in quota_name:
+                score -= 6
+
+        if score <= 0:
+            continue
+        scored.append(score_candidate(candidate, score))
+
+    return pick_best_candidate(scored)
+
+
 def _promote_explicit_distribution_box_candidate(item: dict,
                                                  candidates: list[dict]) -> tuple[list[dict], dict]:
     ordered = [dict(candidate) for candidate in (candidates or [])]

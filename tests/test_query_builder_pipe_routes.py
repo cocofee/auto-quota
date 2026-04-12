@@ -61,6 +61,44 @@ def test_build_quota_query_prefers_pipe_rubber_insulation_family():
     assert "直埋保温管" not in query
 
 
+def test_build_quota_query_prefers_condensation_insulation_route():
+    query = build_quota_query(
+        parser,
+        "防结露保温",
+        "绝热材料品种:离心玻璃棉 保冷层厚度:30mm 部位:给水管道防结露",
+        specialty="C10",
+    )
+
+    assert "管道绝热" in query
+    assert "保冷" in query
+
+
+def test_build_quota_query_prefers_surface_process_route_over_pipe_install():
+    query = build_quota_query(
+        parser,
+        "废水管道标识刷调和漆（黄棕色）",
+        "管道标识 色环 调和漆",
+        specialty="C10",
+    )
+
+    assert "管道标识" in query
+    assert "色环" in query
+    assert "调和漆" in query
+
+
+def test_build_quota_query_does_not_route_accessory_with_included_hole_to_sleeve():
+    query = build_quota_query(
+        parser,
+        "给、排水附(配)件",
+        "型号、规格:87型雨水斗 DN100 含预留孔洞",
+        specialty="C10",
+    )
+
+    assert "雨水斗" in query
+    assert "套管" not in query
+    assert "堵洞" not in query
+
+
 def test_build_quota_query_prefers_explicit_composite_pipe_route():
     query = build_quota_query(
         parser,
