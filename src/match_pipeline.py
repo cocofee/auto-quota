@@ -42,6 +42,7 @@ from src.explicit_framework_family_pickers import (
     _pick_explicit_wiring_family_candidate,
 )
 from src.explicit_equipment_family_pickers import (
+    _pick_explicit_equipment_family_candidate,
     _promote_explicit_distribution_box_candidate,
 )
 from src.explicit_terminal_family_pickers import (
@@ -346,6 +347,10 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     sanitary_candidate = _pick_explicit_sanitary_family_candidate(bill_text, candidates)
     if sanitary_candidate is not None:
         return _guard_explicit_candidate(item, top_candidate, sanitary_candidate)
+
+    equipment_candidate = _pick_explicit_equipment_family_candidate(bill_text, candidates)
+    if equipment_candidate is not None:
+        return _guard_explicit_candidate(item, top_candidate, equipment_candidate)
 
     lamp_candidate = _pick_explicit_lamp_family_candidate(bill_text, candidates)
     if lamp_candidate is not None:

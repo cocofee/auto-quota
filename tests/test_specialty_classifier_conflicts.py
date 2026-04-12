@@ -32,3 +32,13 @@ def test_bill_code_keeps_mechanical_when_text_signal_is_not_strong_enough():
 
     assert result["primary"] == "C1"
     assert "清单编码匹配" in result["reason"]
+
+
+def test_soft_joint_item_override_routes_to_plumbing_book():
+    result = classify(
+        "软接头",
+        "名称:橡胶软接头 规格:DN100 连接形式:法兰连接",
+    )
+
+    assert result["primary"] == "C10"
+    assert "项目级覆盖" in result["reason"]

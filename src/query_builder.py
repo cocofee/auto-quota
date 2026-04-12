@@ -2107,7 +2107,49 @@ def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
     return None
 
 
-def _build_pipe_insulation_query(name: str, full_text: str, params: dict) -> str | None:
+def _build_surface_process_query(name: str, full_text: str, params: dict) -> str | None:
+    """Keep standalone coating/marking items out of generic installation routes."""
+    text = full_text or ""
+    name_text = name or ""
+    if not any(keyword in text for keyword in ("刷油", "防腐", "油漆", "标识", "色环")):
+        return None
+
+    if (
+        any(keyword in text for keyword in ("支架", "吊架", "支吊架", "设备"))
+        and any(keyword in text for keyword in ("制作", "安装"))
+        and not any(keyword in name_text for keyword in ("刷油", "防腐", "标识", "色环"))
+    ):
+        return None
+
+    if "标识" in text or "色环" in text:
+        parts = ["管道标识", "色环"]
+    elif "金属结构" in text:
+        parts = ["金属结构刷油"]
+    elif any(keyword in text for keyword in ("管道", "给水", "排水", "消防", "阀门", "法兰")):
+        parts = ["管道刷油"]
+    elif "设备" in text:
+        parts = ["设备刷油"]
+    else:
+        return None
+
+    if "红丹" in text or "防锈漆" in text:
+        parts.append("红丹防锈漆" if "红丹" in text else "防锈漆")
+    elif "调和漆" in text:
+        parts.append("调和漆")
+    elif "银粉漆" in text:
+        parts.append("银粉漆")
+
+    surface_process = str(params.get("surface_process") or "")
+    if surface_process:
+        for segment in (part.strip() for part in surface_process.split("/") if part.strip()):
+            if segment != "刷油" and segment not in parts:
+                parts.append(segment)
+                break
+
+    return " ".join(parts)
+
+
+def _build_pipe_insulation_query(name: str, full_text: str, params: dict, specialty: str = "") -> str | None:
     """管道橡塑绝热优先命中管道保温家族，避免被直埋保温管劫持。"""
     if not any(keyword in full_text for keyword in ("绝热", "保温", "保冷")):
         return None
@@ -2126,6 +2168,45 @@ def _build_pipe_insulation_query(name: str, full_text: str, params: dict) -> str
         base = "橡塑板安装(管道、风管) 风管"
     else:
         base = "橡塑管壳安装(管道) 管道"
+
+    dn = params.get("dn")
+    if dn:
+        base = f"{base} DN{int(dn)}"
+    return base
+
+
+def _build_pipe_insulation_query_v2(name: str, full_text: str, params: dict, specialty: str = "") -> str | None:
+    """Prefer pipe insulation families before generic install routes."""
+    if not any(keyword in full_text for keyword in ("绝热", "保温", "保冷", "防结露", "防冻")):
+        return None
+
+    scope_text = f"{name} {full_text}"
+    has_pipe_context = any(
+        keyword in scope_text
+        for keyword in ("管道", "给水", "排水", "采暖", "消防", "风管", "阀门", "法兰")
+    )
+    has_equipment_context = any(
+        keyword in scope_text
+        for keyword in ("设备", "机组", "容器", "储罐", "水箱", "气压罐", "塔器", "换热器")
+    )
+    if has_equipment_context:
+        return None
+    if not has_pipe_context:
+        if not specialty.startswith("C10") or not any(keyword in scope_text for keyword in ("防结露", "防冻", "保冷")):
+            return None
+    if any(keyword in full_text for keyword in ("直埋保温管", "聚氨酯直埋", "外护管")):
+        return None
+
+    if any(keyword in scope_text for keyword in ("阀门", "法兰")) and "橡塑" in full_text:
+        base = "橡塑板安装(阀门、法兰) 阀门"
+    elif "风管" in scope_text:
+        base = "橡塑板安装(管道、风管) 风管" if "橡塑" in full_text else "风管绝热"
+    elif "橡塑" in full_text:
+        base = "橡塑管壳安装(管道) 管道"
+    elif any(keyword in scope_text for keyword in ("防结露", "保冷")):
+        base = "管道绝热 保冷"
+    else:
+        base = "管道绝热"
 
     dn = params.get("dn")
     if dn:
@@ -2705,6 +2786,16 @@ def build_quota_query(parser, name: str, description: str = "",
     if finalized_prioritized_rule_match:
         return finalized_prioritized_rule_match
 
+    surface_process_query = None if protect_primary_subject else _build_surface_process_query(name, full_text, params)
+    if surface_process_query:
+        return _finalize_query(
+            surface_process_query,
+            specialty=specialty,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            apply_synonyms=False,
+        )
+
     support_route_text = full_text
     if not any(keyword in (name or "") for keyword in ("支架", "吊架", "支吊架", "支撑架")):
         support_route_text = guarded_full_text
@@ -2738,7 +2829,12 @@ def build_quota_query(parser, name: str, description: str = "",
             apply_synonyms=False,
         )
 
-    pipe_insulation_query = None if protect_primary_subject else _build_pipe_insulation_query(name, full_text, params)
+    pipe_insulation_query = None if protect_primary_subject else _build_pipe_insulation_query_v2(
+        name,
+        full_text,
+        params,
+        specialty,
+    )
     if pipe_insulation_query:
         return _finalize_query(
             pipe_insulation_query,
@@ -2749,9 +2845,39 @@ def build_quota_query(parser, name: str, description: str = "",
         )
 
     sleeve_text = guarded_full_text
+    name_has_sleeve_anchor = any(keyword in (name or "") for keyword in ("套管", "堵洞", "封堵", "孔洞"))
+    sleeve_note_only = (
+        any(keyword in sleeve_text for keyword in ("含预留孔洞", "含套管", "综合单价中含", "不再另计"))
+        and not name_has_sleeve_anchor
+    )
+    accessory_boundary_item = any(
+        keyword in sleeve_text
+        for keyword in (
+            "给、排水附",
+            "给、排水附件",
+            "给、排水附(配)件",
+            "给、排水附（配）件",
+            "附件",
+            "附(配)件",
+            "附（配）件",
+            "地漏",
+            "雨水斗",
+            "溢流斗",
+            "清扫口",
+            "水龙头",
+            "坐便器",
+            "蹲便器",
+            "小便器",
+        )
+    )
     is_explicit_sleeve = (
         any(keyword in sleeve_text for keyword in ("套管", "堵洞", "封堵"))
         and not any(keyword in sleeve_text for keyword in ("可挠金属套管", "电气配管", "导管", "穿线管"))
+        and not sleeve_note_only
+        and not (
+            accessory_boundary_item
+            and any(keyword in sleeve_text for keyword in ("含预留孔洞", "含套管", "综合单价中含", "不再另计"))
+        )
     )
     if is_explicit_sleeve and not protect_primary_subject:
         sleeve_parts = []
