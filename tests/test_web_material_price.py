@@ -94,6 +94,34 @@ def test_parse_sheet_prefills_z_material_name_and_spec_from_bill_desc():
     assert materials[1]["suggested_spec"] == "DN100"
 
 
+def test_extract_material_from_desc_supports_separate_material_and_spec_fields():
+    info = material_price_api._extract_material_from_desc(
+        "1.安装部位:室内\n2.介质:给水（冷水）\n3.材质:PPR管\n4.规格:De25 S5"
+    )
+    assert info["name"] == "PPR管"
+    assert info["spec"] == "De25 S5"
+
+
+def test_valve_rows_use_bill_type_for_generic_valve_names():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "螺纹阀门",
+        "减压器组成安装",
+        "1.类型:可调式减压阀\n2.材质:黄铜\n3.规格:DN32\n4.连接形式:螺纹连接",
+    )
+    assert suggested_name == "黄铜可调式减压阀"
+    assert suggested_spec == "DN32"
+
+
+def test_non_valve_accessories_keep_name_but_inherit_spec():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "螺纹Y型过滤器",
+        "减压器组成安装",
+        "1.类型:可调式减压阀\n2.材质:黄铜\n3.规格:DN32\n4.连接形式:螺纹连接",
+    )
+    assert suggested_name == ""
+    assert suggested_spec == "DN32"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()
