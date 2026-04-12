@@ -39,6 +39,8 @@ interface RawRow {
   sheet: string;
   code?: string;
   name: string;
+  name_col?: number | null;
+  spec_col?: number | null;
   desc?: string;       // 清单行的项目特征描述
   spec?: string;
   unit?: string;
@@ -75,6 +77,8 @@ interface MaterialDisplayRow {
   _rowKey: string;
   _raw: RawRow;
   _sectionKey: string;
+  edited_name: string;
+  edited_spec: string;
   lookup_price: number | null;
   lookup_source: string | null;
   user_price: number | null;
@@ -101,6 +105,8 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         _rowKey: `${r.sheet}-${r.row}`,
         _raw: r,
         _sectionKey: '',
+        edited_name: r.name,
+        edited_spec: r.spec || '',
         lookup_price: r.lookup_price ?? null,
         lookup_source: r.lookup_source ?? null,
         user_price: null,
@@ -122,6 +128,8 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
     } else if (r.type === 'material') {
       rows.push({
         _rowType: 'material', _rowKey: key, _raw: r, _sectionKey: currentSectionKey,
+        edited_name: r.name,
+        edited_spec: r.spec || '',
         lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null, user_price: null,
       });
     }
@@ -288,7 +296,9 @@ export default function MaterialPrice() {
     try {
       const res = await api.post('/tools/material-price/lookup', {
         materials: materialRows.map(m => ({
-          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
+          name: m.edited_name.trim() || m._raw.name,
+          spec: m.edited_spec.trim(),
+          unit: m._raw.unit || '',
         })),
         province: selectedProvince,
         city: selectedCity,
@@ -325,13 +335,31 @@ export default function MaterialPrice() {
     );
   }, []);
 
+  const handleMaterialName = useCallback((rowKey: string, name: string) => {
+    setDisplayRows(prev =>
+      prev.map(r =>
+        r._rowType === 'material' && r._rowKey === rowKey ? { ...r, edited_name: name } : r
+      ),
+    );
+  }, []);
+
+  const handleMaterialSpec = useCallback((rowKey: string, spec: string) => {
+    setDisplayRows(prev =>
+      prev.map(r =>
+        r._rowType === 'material' && r._rowKey === rowKey ? { ...r, edited_spec: spec } : r
+      ),
+    );
+  }, []);
+
   // 导出
   const handleExport = async () => {
     if (contributeEnabled) {
       const userItems = materialRows
         .filter(m => m.user_price != null && m.user_price > 0)
         .map(m => ({
-          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
+          name: m.edited_name.trim() || m._raw.name,
+          spec: m.edited_spec.trim(),
+          unit: m._raw.unit || '',
           price: m.user_price, province: selectedProvince, city: selectedCity,
         }));
       if (userItems.length > 0) {
@@ -345,8 +373,22 @@ export default function MaterialPrice() {
       const exportMaterials = materialRows
         .map(m => {
           const finalPrice = m.user_price ?? m.lookup_price ?? null;
-          if (finalPrice == null || m._raw.price_col == null) return null;
-          return { row: m._raw.row, sheet: m._raw.sheet, price_col: m._raw.price_col, final_price: finalPrice };
+          const finalName = m.edited_name.trim() || m._raw.name;
+          const finalSpec = m.edited_spec.trim();
+          const originalSpec = m._raw.spec || '';
+          const nameChanged = finalName !== m._raw.name;
+          const specChanged = finalSpec !== originalSpec;
+          if (finalPrice == null && !nameChanged && !specChanged) return null;
+          return {
+            row: m._raw.row,
+            sheet: m._raw.sheet,
+            name_col: m._raw.name_col,
+            final_name: finalName,
+            spec_col: m._raw.spec_col,
+            final_spec: finalSpec,
+            price_col: m._raw.price_col,
+            final_price: finalPrice,
+          };
         }).filter(Boolean);
       try {
         const res = await api.post('/tools/material-price/export', {
@@ -393,7 +435,9 @@ export default function MaterialPrice() {
     try {
       const res = await api.post('/tools/material-price/gldjc-lookup', {
         materials: batch.map(m => ({
-          name: m._raw.name, spec: m._raw.spec || '', unit: m._raw.unit || '',
+          name: m.edited_name.trim() || m._raw.name,
+          spec: m.edited_spec.trim(),
+          unit: m._raw.unit || '',
           _rowKey: m._rowKey,  // 传回rowKey方便前端定位
         })),
         cookie: gldjcCookie,
@@ -541,13 +585,21 @@ export default function MaterialPrice() {
           return <span style={{ fontSize: 13, color: '#555', paddingLeft: 8 }}>{row._raw.name}</span>;
         }
         return (
-          <span style={{ paddingLeft: 16 }}>
+          <div style={{ paddingLeft: 16, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
             <span style={{ color: '#d97706', marginRight: 4 }}>◆</span>
-            {row._raw.name}
-            {row._raw.spec && (
-              <span style={{ color: '#94a3b8', marginLeft: 6, fontSize: 12 }}>{row._raw.spec}</span>
-            )}
-          </span>
+            <Input
+              size="small"
+              value={row.edited_name}
+              onChange={(e) => handleMaterialName(row._rowKey, e.target.value)}
+              placeholder="主材名称"
+            />
+            <Input
+              size="small"
+              value={row.edited_spec}
+              onChange={(e) => handleMaterialSpec(row._rowKey, e.target.value)}
+              placeholder="规格型号"
+            />
+          </div>
         );
       },
     },

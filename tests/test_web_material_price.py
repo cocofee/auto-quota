@@ -1,0 +1,108 @@
+# -*- coding: utf-8 -*-
+
+from pathlib import Path
+import sys
+
+import openpyxl
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.append(str(BACKEND_ROOT))
+
+from app.api import material_price as material_price_api  # noqa: E402
+
+
+def test_parse_sheet_exposes_material_name_and_spec_columns(tmp_path: Path):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "镀锌钢管", "DN25", "m", 12, 18.5])
+
+    result = material_price_api._parse_sheet(ws)
+
+    assert len(result["materials"]) == 1
+    material = result["materials"][0]
+    assert material["name"] == "镀锌钢管"
+    assert material["name_col"] == 2
+    assert material["spec_col"] == 3
+    assert material["price_col"] == 6
+
+
+def test_write_material_updates_writes_name_spec_and_price(tmp_path: Path):
+    file_path = tmp_path / "reviewed.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "原主材名", "DN25", "m", 12, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "name_col": 2,
+                "spec_col": 3,
+                "final_spec": "DN32",
+                "final_name": "镀锌钢管",
+                "price_col": 6,
+                "final_price": 18.5,
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=2).value == "镀锌钢管"
+    assert ws2.cell(row=2, column=3).value == "DN32"
+    assert ws2.cell(row=2, column=6).value == 18.5
+    wb2.close()
+
+
+def test_z_prefix_rows_are_treated_as_material_targets():
+    assert material_price_api._classify_row("031001007001", "复合管", "1") == "bill"
+    assert material_price_api._classify_row("A10-1-366", "给排水管道", "") == "quota"
+    assert material_price_api._classify_row("Z1728A01B01BY", "复合管", "") == "material"
+    assert material_price_api._classify_row("Z1811A07B01BF", "给水室内钢塑复合管螺纹管件", "") == "material"
+
+
+def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
+    file_path = tmp_path / "reviewed-no-spec.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["编码", "名称", "单价"])
+    ws.append(["M001", "原主材", None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "Sheet1",
+                "name_col": 2,
+                "final_name": "镀锌钢管",
+                "spec_col": None,
+                "final_spec": "DN32",
+                "price_col": 3,
+                "final_price": 18.5,
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["Sheet1"]
+    assert ws2.cell(row=2, column=2).value == "镀锌钢管 DN32"
+    assert ws2.cell(row=2, column=3).value == 18.5
+    wb2.close()

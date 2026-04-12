@@ -399,7 +399,9 @@ def _parse_sheet(ws) -> dict:
                 "sheet": ws.title,
                 "code": code_val,
                 "name": name_val,
+                "name_col": col_map.get("name"),
                 "spec": spec_val,
+                "spec_col": col_map.get("spec"),
                 "unit": unit_val,
                 "qty": qty_val,
                 "existing_price": price_val,
@@ -425,7 +427,9 @@ def _parse_sheet(ws) -> dict:
                 "sheet": ws.title,
                 "code": code_val,
                 "name": name_val,
+                "name_col": col_map.get("name"),
                 "spec": spec_val,
+                "spec_col": col_map.get("spec"),
                 "unit": unit_val,
                 "qty": qty_val,
                 "existing_price": price_val,
@@ -519,6 +523,8 @@ def _is_material_row(code: str, name: str) -> bool:
     if c.upper().startswith("ZCGL"):
         return True
     if c.upper().startswith("ZC"):
+        return True
+    if re.fullmatch(r"Z[0-9A-Z]+", c.upper()):
         return True
     if "Z@" in c or "@" in c:
         return True
@@ -878,7 +884,7 @@ async def export_with_prices(body: dict):
 
     # 在线程池中写入价格
     try:
-        written = await asyncio.to_thread(_do_write_prices, tmp_path, materials)
+        written = await asyncio.to_thread(_do_write_material_updates, tmp_path, materials)
         logger.info(f"智能填主材导出：写入 {written} 个价格")
 
         # 生成下载文件名（用原始文件名，不是临时文件名）
@@ -938,6 +944,70 @@ def _do_write_prices(excel_path: str, materials: list[dict]) -> int:
             cell = ws.cell(row=row, column=price_col, value=round(price_val, 2))
             cell.number_format = '0.00'
             written += 1
+
+    wb.save(excel_path)
+    wb.close()
+    return written
+
+
+def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
+    """Write edited material names and prices back into the reviewed Excel."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_path)
+    written = 0
+
+    sheet_materials: dict[str, list[dict]] = {}
+    for mat in materials:
+        sheet_name = mat.get("sheet", "")
+        if sheet_name not in sheet_materials:
+            sheet_materials[sheet_name] = []
+        sheet_materials[sheet_name].append(mat)
+
+    for sheet_name, mats in sheet_materials.items():
+        if sheet_name not in wb.sheetnames:
+            logger.warning(f"sheet [{sheet_name}] not found, skipped {len(mats)} material rows")
+            continue
+
+        ws = wb[sheet_name]
+        for mat in mats:
+            row = mat.get("row")
+            if row is None:
+                continue
+
+            row_written = False
+
+            name_col = mat.get("name_col")
+            final_name = str(mat.get("final_name") or "").strip()
+            spec_col = mat.get("spec_col")
+            final_spec = str(mat.get("final_spec") or "").strip()
+            write_name = final_name
+            if spec_col is None and final_spec and final_spec not in final_name:
+                write_name = f"{final_name} {final_spec}".strip()
+
+            if name_col is not None and write_name:
+                ws.cell(row=row, column=name_col, value=write_name)
+                row_written = True
+
+            if spec_col is not None:
+                ws.cell(row=row, column=spec_col, value=final_spec)
+                row_written = True
+
+            price_col = mat.get("price_col")
+            final_price = mat.get("final_price")
+            if price_col is not None and final_price is not None:
+                try:
+                    price_val = float(final_price)
+                except (ValueError, TypeError):
+                    price_val = None
+
+                if price_val is not None:
+                    cell = ws.cell(row=row, column=price_col, value=round(price_val, 2))
+                    cell.number_format = '0.00'
+                    row_written = True
+
+            if row_written:
+                written += 1
 
     wb.save(excel_path)
     wb.close()
