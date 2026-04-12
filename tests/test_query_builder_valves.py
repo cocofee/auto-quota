@@ -4,7 +4,7 @@
 测试 _build_valve_query 的各个路由分支：
 1. 通风类阀门拦截（防火阀/调节阀）
 2. 特殊设备（倒流防止器/自动排气阀/减压孔板）
-3. 过滤器 → 螺纹阀门
+3. 过滤器 → 过滤器家族
 4. 软接头 → 连接方式分流
 5. 法兰套件 → 塑料法兰
 6. 管道阀门规范化（闸阀/蝶阀等泛称）
@@ -80,21 +80,64 @@ def test_pressure_orifice():
 # === 3. 过滤器 ===
 
 def test_y_filter():
-    """Y型过滤器（小口径）→ 螺纹阀门"""
+    """Y型过滤器（小口径）→ 过滤器家族"""
     query = build_quota_query(parser, "Y型过滤器")
-    assert "螺纹阀门" in query
+    assert "过滤器" in query
+    assert "螺纹连接" in query
 
 
 def test_y_filter_with_type():
-    """Y型过滤器 类型：Y型过滤器 → 螺纹阀门"""
+    """Y型过滤器 类型：Y型过滤器 → 过滤器家族"""
     query = build_quota_query(parser, "Y型过滤器 类型：Y型过滤器")
-    assert "螺纹阀门" in query
+    assert "过滤器" in query
 
 
 def test_y_filter_large_dn():
-    """Y形过滤器 DN125 → 大口径走法兰阀门"""
+    """Y形过滤器 DN125 → 大口径走法兰过滤器"""
     query = build_quota_query(parser, "Y形过滤器", "规格:DN125")
-    assert "法兰" in query
+    assert "过滤器" in query
+    assert "法兰连接" in query
+
+
+def test_generic_item_with_filter_type_routes_to_filter_family():
+    """清单名泛化但类型=过滤器时，不应落到法兰安装或给排水管道。"""
+    query = build_quota_query(
+        parser,
+        "法兰安装",
+        "类型:过滤器 连接形式:法兰连接 安装部位:室内 规格、压力等级:DN100 其它:包括配套的法兰、螺栓螺母、垫片",
+        specialty="C10",
+    )
+    assert "过滤器" in query
+    assert "法兰连接" in query
+    assert "给排水管道" not in query
+    assert "平焊法兰安装" not in query
+
+
+def test_generic_item_with_numbered_name_field_routes_to_filter_family():
+    """单行编号描述里的“名称:过滤器”也应被识别为过滤器家族。"""
+    query = build_quota_query(
+        parser,
+        "法兰安装",
+        "1.名称:过滤器 2.规格、压力等级:DN100 3.连接形式:法兰连接 4.安装部位:室内",
+        specialty="C10",
+    )
+    assert "过滤器" in query
+    assert "法兰安装" not in query
+    assert "给排水管道" not in query
+
+
+def test_threaded_valve_named_item_with_filter_type_still_routes_to_filter_family():
+    """人工复核表中的“螺纹阀门 + 类型:过滤器 + 法兰连接”也应命中过滤器家族。"""
+    query = build_quota_query(
+        parser,
+        "螺纹阀门",
+        "1、类型:过滤器 2、规格、压力等级:DN100 3、连接形式:法兰连接 4、安装部位:室内 5.其它：包括配套的法兰、螺栓螺母、垫片",
+        specialty="C10",
+    )
+    assert "过滤器" in query
+    assert "法兰连接" in query
+    assert "给排水管道" not in query
+    assert "平焊法兰安装" not in query
 
 
 def test_air_filter_not_intercepted():
@@ -124,6 +167,34 @@ def test_flexible_joint_large_dn():
                               "公称直径:DN100")
     assert "软接头" in query
     assert "法兰" in query
+
+
+def test_generic_item_with_numbered_name_field_routes_to_soft_joint_family():
+    """泛称清单名 + 单行编号描述里的“名称:软接头安装”应直达软接头家族。"""
+    query = build_quota_query(
+        parser,
+        "法兰安装",
+        "1.名称:软接头安装 2.规格:DN70 3.连接方式:法兰连接 4.安装部位:室内 5.其它:包括配套的法兰、螺栓螺母、垫片",
+        specialty="C10",
+    )
+    assert "软接头" in query
+    assert "法兰式" in query
+    assert "DN70" not in query
+    assert "给排水管道" not in query
+
+
+def test_threaded_valve_named_item_with_soft_joint_name_still_routes_to_soft_joint_family():
+    """即使清单名是“螺纹阀门”，真实名称写在描述里时也不应落回普通阀门。"""
+    query = build_quota_query(
+        parser,
+        "螺纹阀门",
+        "1.名称:软接头安装 2.规格:DN70 3.连接方式:法兰连接 4.安装部位:室内 5.其它：包括配套的法兰、螺栓螺母、垫片",
+        specialty="C10",
+    )
+    assert "软接头" in query
+    assert "法兰式" in query
+    assert "DN70" not in query
+    assert "给排水管道" not in query
 
 
 def test_ppr_plastic_valve_keeps_valve_family():

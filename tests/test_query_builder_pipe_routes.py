@@ -86,6 +86,20 @@ def test_build_quota_query_prefers_surface_process_route_over_pipe_install():
     assert "调和漆" in query
 
 
+def test_build_quota_query_uses_name_text_for_marking_paint_route():
+    query = build_quota_query(
+        parser,
+        "冷给水管道标识刷调和漆（蓝色）",
+        "涂刷遍数、漆膜厚度:包括识别色、环圈、识别符号浅蓝色标识环,色环间距10m。编码",
+        specialty="C10",
+    )
+
+    assert "管道标识" in query
+    assert "色环" in query
+    assert "调和漆" in query
+    assert "给排水管道" not in query
+
+
 def test_build_quota_query_does_not_route_accessory_with_included_hole_to_sleeve():
     query = build_quota_query(
         parser,
@@ -97,6 +111,35 @@ def test_build_quota_query_does_not_route_accessory_with_included_hole_to_sleeve
     assert "雨水斗" in query
     assert "套管" not in query
     assert "堵洞" not in query
+
+
+def test_build_quota_query_keeps_multi_pipe_aseismic_support_anchor():
+    query = build_quota_query(
+        parser,
+        "抗震支架",
+        "名称:多管道抗震支架 规格:DN100",
+        specialty="C10",
+    )
+
+    assert "抗震支架" in query
+    assert "抗震支吊架" in query
+    assert "管道" in query
+    assert "多管" in query
+    assert "多根" in query
+
+
+def test_build_quota_query_maps_two_pipe_aseismic_support_to_multi_anchor():
+    query = build_quota_query(
+        parser,
+        "水管两管侧向支吊架",
+        "型号:GN-SCDN80 材质要求:抗震支吊架材料 其他详见图纸并满足规范要求",
+        specialty="C10",
+    )
+
+    assert "抗震支架" in query
+    assert "侧向" in query
+    assert "多管" in query
+    assert "多根" in query
 
 
 def test_build_quota_query_prefers_explicit_composite_pipe_route():

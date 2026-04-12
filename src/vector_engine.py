@@ -1,15 +1,12 @@
 """
-向量搜索引擎
-功能：
-1. 加载BGE-large-zh-v1.5模型（中文向量模型，本地GPU运行）
-2. 将所有定额文本向量化并存入ChromaDB
-3. 支持语义搜索查询，返回Top K相似定额
-
-向量搜索的优势：能理解语义（"水泵"和"离心泵"是相关的），
-而不只是匹配关键词。与BM25互补使用效果最好。
+Vector search engine backed by ChromaDB.
 """
 
+import gc
 import os
+import shutil
+import time
+from pathlib import Path
 
 from loguru import logger
 
@@ -18,22 +15,15 @@ from db.sqlite import connect as _db_connect
 
 
 class VectorEngine:
-    """BGE向量搜索引擎（基于ChromaDB）"""
+    """BGE vector search engine."""
 
-    # 运行级熔断标志：向量模型不可用时只警告一次，后续静默跳过
     _model_unavailable_warned = False
     _model_skip_count = 0
 
     def __init__(self, province: str = None):
-        """
-        参数:
-            province: 省份名称，默认用config配置
-        """
         self.province = province or config.get_current_province()
         self.db_path = config.get_quota_db_path(self.province)
         self.chroma_dir = config.get_chroma_quota_dir(self.province)
-
-        # 模型和数据库对象（延迟加载）
         self._model = None
         self._collection = None
         self._chroma_client = None
@@ -51,45 +41,142 @@ class VectorEngine:
         return (float(candidate.get("vector_score", 0.0) or 0.0),)
 
     def _connect(self, row_factory: bool = False):
-        """统一SQLite连接参数"""
         return _db_connect(self.db_path, row_factory=row_factory)
+
+    @staticmethod
+    def _vector_rebuild_keywords() -> tuple[str, ...]:
+        return (
+            "_type",
+            "dimensionality",
+            "dimension",
+            "mismatch",
+            "incompatible",
+            "has no attribute",
+            "corrupt",
+            "invalid",
+            "segment",
+            "metadata segment",
+            "compactor",
+            "blob",
+            "decoding column",
+            "index",
+        )
+
+    def _should_rebuild_vector_index(self, exc: Exception | str | None) -> bool:
+        message = str(exc or "").strip().lower()
+        return any(keyword in message for keyword in self._vector_rebuild_keywords())
+
+    @staticmethod
+    def _release_chroma_client(client) -> None:
+        if client is None:
+            return
+        try:
+            system = getattr(client, "_system", None)
+        except Exception:
+            system = None
+        if system is not None:
+            try:
+                system.stop()
+            except Exception:
+                pass
+            try:
+                system.reset_state()
+            except Exception:
+                pass
+        try:
+            client.clear_system_cache()
+        except Exception:
+            pass
+
+    def _reset_cached_chroma_client(self) -> None:
+        from src.model_cache import ModelCache
+
+        path_str = str(self.chroma_dir)
+        cached_client = ModelCache._chroma_clients.get(path_str)
+        for client in (self._chroma_client, cached_client):
+            self._release_chroma_client(client)
+        if path_str in ModelCache._chroma_clients:
+            del ModelCache._chroma_clients[path_str]
+        self._chroma_client = None
+        self._collection = None
+
+    def _recreate_collection(self):
+        from src.model_cache import ModelCache
+
+        self._reset_cached_chroma_client()
+        gc.collect()
+
+        chroma_path = Path(str(self.chroma_dir))
+        if chroma_path.exists():
+            removed = False
+            last_exc = None
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(chroma_path)
+                    removed = True
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    gc.collect()
+                    time.sleep(0.2 * (attempt + 1))
+            if not removed:
+                logger.warning(f"Failed to remove broken vector index dir: {last_exc}")
+            else:
+                logger.info(f"Removed broken vector index dir: {chroma_path}")
+
+        client = ModelCache.get_chroma_client(str(self.chroma_dir))
+        collection = client.create_collection(
+            name="quotas",
+            metadata={
+                "hnsw:space": "cosine",
+                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
+            },
+        )
+        self._chroma_client = client
+        self._collection = collection
+        return collection
 
     @property
     def model(self):
-        """从全局 ModelCache 获取BGE向量模型（避免重复加载）"""
         if self._model is None:
             from src.model_cache import ModelCache
+
             self._model = ModelCache.get_vector_model()
         return self._model
 
     @property
     def collection(self):
-        """延迟初始化ChromaDB collection（通过全局ModelCache获取客户端，避免级联崩溃）"""
         from src.model_cache import ModelCache
+
         client = ModelCache.get_chroma_client(str(self.chroma_dir))
-        # 客户端变了（被重建过），需要刷新collection
-        if client is not self._chroma_client:
+        needs_refresh = client is not self._chroma_client or self._collection is None
+        if needs_refresh:
+            try:
+                collection = client.get_or_create_collection(
+                    name="quotas",
+                    metadata={"hnsw:space": "cosine"},
+                )
+                collection.count()
+            except Exception as exc:
+                if not self._should_rebuild_vector_index(exc):
+                    raise
+                try:
+                    client.clear_system_cache()
+                except Exception:
+                    pass
+                logger.warning(f"Broken vector collection detected, rebuilding: {exc}")
+                return self._recreate_collection()
+
             self._chroma_client = client
-            self._collection = client.get_or_create_collection(
-                name="quotas",
-                metadata={"hnsw:space": "cosine"}  # 使用余弦相似度
-            )
+            self._collection = collection
         return self._collection
 
     def build_index(self, batch_size: int = 256):
-        """
-        构建向量索引：读取所有定额 → BGE向量化 → 存入ChromaDB
+        logger.info("Start building vector index...")
 
-        参数:
-            batch_size: 批量向量化的大小（越大越快，但更耗显存）
-        """
-        logger.info("开始构建向量索引...")
-
-        # 从数据库读取数据（包含book和specialty字段，用于ChromaDB的metadata过滤）
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            # 检测book和specialty列是否存在
             col_info = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
             has_book_col = "book" in col_info
             has_specialty_col = "specialty" in col_info
@@ -105,46 +192,69 @@ class VectorEngine:
             conn.close()
 
         if not rows:
-            logger.error("数据库中没有定额数据，请先运行定额导入")
+            logger.error("No quota data found in database, import quotas first")
             return
 
         total = len(rows)
-        logger.info(f"共{total}条定额需要向量化")
+        logger.info(f"Need to vectorize {total} quotas")
 
-        # 清空旧索引（重建时）
-        import chromadb
+        from src.model_cache import ModelCache
+
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
-        self._chroma_client = chromadb.PersistentClient(path=str(self.chroma_dir))
-        # 删除并重建collection
-        try:
-            self._chroma_client.delete_collection("quotas")
-        except Exception as e:
-            logger.debug(f"向量索引旧集合删除跳过: {e}")
-        self._collection = self._chroma_client.create_collection(
-            name="quotas",
-            metadata={
-                "hnsw:space": "cosine",
-                "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
-            }
-        )
+        self._reset_cached_chroma_client()
+        client = ModelCache.get_chroma_client(str(self.chroma_dir))
 
-        # 分批向量化并存入ChromaDB
+        rebuild_required = False
+        try:
+            client.delete_collection("quotas")
+        except Exception as exc:
+            if self._should_rebuild_vector_index(exc):
+                rebuild_required = True
+                logger.warning(f"Vector collection metadata mismatch, rebuilding dir: {exc}")
+            else:
+                logger.debug(f"Skip deleting old vector collection: {exc}")
+
+        if rebuild_required:
+            try:
+                client.clear_system_cache()
+            except Exception:
+                pass
+            self._recreate_collection()
+        else:
+            try:
+                self._collection = client.create_collection(
+                    name="quotas",
+                    metadata={
+                        "hnsw:space": "cosine",
+                        "vector_model": os.getenv("VECTOR_MODEL_KEY", "bge"),
+                    },
+                )
+                self._chroma_client = client
+            except Exception as exc:
+                if not self._should_rebuild_vector_index(exc):
+                    raise
+                try:
+                    client.clear_system_cache()
+                except Exception:
+                    pass
+                logger.warning(f"Failed to create vector collection, rebuilding dir: {exc}")
+                self._recreate_collection()
+
         for start in range(0, total, batch_size):
             end = min(start + batch_size, total)
             batch_rows = rows[start:end]
-
             ids = [str(row["id"]) for row in batch_rows]
             texts = [row["search_text"] for row in batch_rows]
 
-            # 文档端向量化（统一入口，自动处理前缀差异）
             from src.model_profile import encode_documents
+
             embeddings = encode_documents(
-                self.model, texts,
+                self.model,
+                texts,
                 batch_size=batch_size,
                 show_progress=False,
             )
 
-            # 每条定额的元数据（book + specialty），用于搜索时过滤
             metadatas = []
             for row in batch_rows:
                 meta = {}
@@ -152,7 +262,6 @@ class VectorEngine:
                 meta["specialty"] = (row["specialty"] or "") if has_specialty_col else ""
                 metadatas.append(meta)
 
-            # 存入ChromaDB（带metadata，支持后续按册过滤查询）
             self.collection.add(
                 ids=ids,
                 documents=texts,
@@ -160,47 +269,33 @@ class VectorEngine:
                 metadatas=metadatas,
             )
 
-            logger.info(f"  向量化进度: {end}/{total} ({end * 100 // total}%)")
+            logger.info(f"Vector build progress: {end}/{total} ({end * 100 // total}%)")
 
-        logger.info(f"向量索引构建完成: {total}条 → {self.chroma_dir}")
+        logger.info(f"Vector index build complete: {total} -> {self.chroma_dir}")
 
     def encode_queries(self, queries: list[str]) -> list:
-        """
-        批量编码多个查询文本（一次GPU调用，比逐条快很多）
-
-        参数:
-            queries: 查询文本列表
-
-        返回:
-            向量列表，与输入一一对应
-        """
-        # 向量模型不可用时快速返回（不重复报错）
         if self.model is None:
             if not VectorEngine._model_unavailable_warned:
-                logger.warning("[VectorEngine] 向量模型不可用，本轮所有向量搜索将跳过（仅BM25兜底）")
+                logger.warning(
+                    "[VectorEngine] vector model unavailable, all vector searches "
+                    "will be skipped for this run"
+                )
                 VectorEngine._model_unavailable_warned = True
             VectorEngine._model_skip_count += 1
             return [None] * len(queries)
-        query_prefix = ""  # 前缀由model_profile统一管理
+
         from src.model_profile import encode_queries
-        embeddings = encode_queries(self.model, queries)
-        return embeddings
 
-    def search(self, query: str, top_k: int = None, books: list[str] = None,
-               specialty: str = None, precomputed_embedding=None) -> list[dict]:
-        """
-        向量语义搜索
+        return encode_queries(self.model, queries)
 
-        参数:
-            query: 搜索文本（清单描述）
-            top_k: 返回前K条结果
-            books: 限定搜索的册号列表（如["C10", "C8"]），为None时搜索全库
-            specialty: 限定搜索的专业（如"安装"、"土建"），为None时不按专业过滤
-            precomputed_embedding: 预计算的向量（跳过encode步骤，用于批量优化）
-
-        返回:
-            匹配结果列表，每条包含 {id, quota_id, name, unit, vector_score, ...}
-        """
+    def search(
+        self,
+        query: str,
+        top_k: int = None,
+        books: list[str] = None,
+        specialty: str = None,
+        precomputed_embedding=None,
+    ) -> list[dict]:
         top_k = top_k or config.VECTOR_TOP_K
         collection_size = self.collection.count()
         fetch_k = min(
@@ -208,32 +303,27 @@ class VectorEngine:
             max(collection_size, int(top_k)),
         )
 
-        # 检查索引是否存在（Web端可能没有GPU构建索引，静默降级到纯BM25）
         if collection_size == 0:
-            logger.debug("向量索引为空，跳过向量搜索（纯BM25模式）")
+            logger.debug("Vector index empty, skip vector search")
             return []
 
-        # 使用预计算的向量，或者现场编码
         if precomputed_embedding is not None:
             import numpy as np
+
             query_embedding = np.array(precomputed_embedding).reshape(1, -1)
         elif self.model is not None:
             from src.model_profile import encode_queries
+
             query_embedding = encode_queries(self.model, [query])
         else:
-            # 向量模型不可用且无预计算向量，无法执行向量搜索
             VectorEngine._model_skip_count += 1
             return []
 
-        # 构建过滤条件（specialty优先，book其次）
         where_filter = None
         conditions = []
         if specialty:
             conditions.append({"specialty": specialty})
         if books:
-            # P1修复：book过滤时也包含book为空的定额（可能属于任何册）
-            # 原逻辑：只匹配指定book → book=""的定额永远搜不到
-            # 新逻辑：匹配指定book OR book为空
             books_with_empty = list(books) + [""]
             if len(books_with_empty) == 1:
                 conditions.append({"book": books_with_empty[0]})
@@ -245,17 +335,15 @@ class VectorEngine:
         elif len(conditions) > 1:
             where_filter = {"$and": conditions}
 
-        # ChromaDB查询（带可选的册号过滤）
         try:
             results = self.collection.query(
                 query_embeddings=query_embedding.tolist(),
                 n_results=fetch_k,
                 where=where_filter,
             )
-        except Exception as e:
-            # 旧向量集合可能没有book metadata，过滤会报错
+        except Exception as exc:
             if where_filter:
-                logger.warning(f"向量搜索按册过滤失败({e})，降级为全库搜索（旧索引兼容）")
+                logger.warning(f"Vector search with filter failed, fallback to full index: {exc}")
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
                     n_results=fetch_k,
@@ -263,62 +351,49 @@ class VectorEngine:
             else:
                 raise
 
-        # 按册过滤后结果为空时，只在确认是旧索引缺metadata时才降级
         if where_filter and (not results or not results.get("ids") or not results.get("ids")[0]):
-            # 检查是否是旧索引：采样多条记录，看是否全部缺少有效book metadata
-            # 只看一条不准（可能刚好取到非C*开头的合法空book记录）
             try:
                 sample = self.collection.peek(limit=10)
                 sample_metas = sample.get("metadatas", []) if sample else []
-                # 统计有有效book值的记录数
-                valid_book_count = sum(
-                    1 for m in sample_metas if m and m.get("book", "").strip()
-                )
-                # 采样中无任何有效book → 旧索引
-                is_old_index = (valid_book_count == 0)
-            except Exception as e:
-                logger.debug(f"向量索引metadata采样失败，按旧索引兼容处理: {e}")
+                valid_book_count = sum(1 for meta in sample_metas if meta and meta.get("book", "").strip())
+                is_old_index = valid_book_count == 0
+            except Exception as exc:
+                logger.debug(f"Vector metadata sampling failed, assume old index: {exc}")
                 is_old_index = True
 
             if is_old_index:
-                logger.warning("旧索引缺少book metadata，降级为全库搜索")
+                logger.warning("Old vector index missing book metadata, fallback to full index")
                 results = self.collection.query(
                     query_embeddings=query_embedding.tolist(),
                     n_results=fetch_k,
                 )
             else:
-                # 正常情况：该册确实没有匹配结果，保持空（不跨专业污染）
-                logger.info(f"向量搜索按册过滤({books})后无匹配结果")
+                logger.info(f"Vector search returned no match after book filter: {books}")
 
         if not results or not results.get("ids") or not results.get("ids")[0]:
             return []
 
-        # 获取匹配的数据库ID和相似度分数
         matched_ids = results.get("ids", [[]])[0]
         raw_distances = results["distances"][0] if results.get("distances") else []
 
-        # 防御性对齐：部分后端/旧索引场景可能出现 ids 与 distances 数量不一致
         if len(raw_distances) != len(matched_ids):
             logger.warning(
-                f"向量检索返回长度不一致: ids={len(matched_ids)}, "
-                f"distances={len(raw_distances)}，已按最低相似度补齐/截断"
+                "Vector search returned mismatched ids/distances lengths: "
+                f"ids={len(matched_ids)}, distances={len(raw_distances)}"
             )
-        distances = list(raw_distances[:len(matched_ids)])
+        distances = list(raw_distances[: len(matched_ids)])
         if len(distances) < len(matched_ids):
-            # 缺失距离按最大距离1.0处理（相似度0），避免虚高置信度
             distances.extend([1.0] * (len(matched_ids) - len(distances)))
 
-        # 余弦距离 → 相似度分数（1-distance，因为用的cosine space）
-        scores = [max(0.0, min(1.0, 1 - d)) for d in distances]
+        scores = [max(0.0, min(1.0, 1 - distance)) for distance in distances]
 
-        # 查询数据库获取完整定额信息
         db_ids = []
         score_map = {}
-        for mid, score in zip(matched_ids, scores):
+        for matched_id, score in zip(matched_ids, scores):
             try:
-                db_id = int(mid)
+                db_id = int(matched_id)
             except (TypeError, ValueError):
-                logger.warning(f"向量检索返回非法ID，已跳过: {mid!r}")
+                logger.warning(f"Skip invalid vector result id: {matched_id!r}")
                 continue
             db_ids.append(db_id)
             score_map[db_id] = score
@@ -335,52 +410,25 @@ class VectorEngine:
         finally:
             conn.close()
 
-        # 组装结果，保持分数排序
-        results = []
+        merged = []
         for db_id in db_ids:
             if db_id in rows:
                 result = rows[db_id]
                 result["vector_score"] = score_map[db_id]
-                results.append(result)
+                merged.append(result)
 
-        # 先按身份排序，再按分数排序，保证同分截断稳定。
-        results.sort(key=self._stable_result_identity)
-        results.sort(key=self._vector_result_sort_key, reverse=True)
-
-        return results[:top_k]
+        merged.sort(key=self._stable_result_identity)
+        merged.sort(key=self._vector_result_sort_key, reverse=True)
+        return merged[:top_k]
 
     def get_index_count(self) -> int:
-        """获取向量索引中的文档数量"""
         try:
             return self.collection.count()
-        except Exception as e:
-            logger.debug(f"向量索引计数失败，按0返回: {e}")
+        except Exception as exc:
+            logger.debug(f"Vector index count failed, fallback to 0: {exc}")
             return 0
 
 
-# ================================================================
-# 命令行入口：构建向量索引并测试搜索
-# ================================================================
-
 if __name__ == "__main__":
-    import json
-
     engine = VectorEngine()
-
-    # 构建索引
     engine.build_index()
-
-    # 测试搜索
-    test_queries = [
-        "镀锌钢管DN150沟槽连接管道安装",
-        "干式变压器800kva安装",
-        "电力电缆截面185敷设",
-        "柔性防水套管DN125制作",
-        "离心泵消防泵安装",
-    ]
-
-    for query in test_queries:
-        results = engine.search(query, top_k=3)
-        logger.info(f"\n搜索: '{query}'")
-        for r in results:
-            logger.info(f"  [{r['vector_score']:.4f}] {r['quota_id']} | {r['name'][:60]} | {r['unit']}")
