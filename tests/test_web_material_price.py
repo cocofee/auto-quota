@@ -73,6 +73,27 @@ def test_z_prefix_rows_are_treated_as_material_targets():
     assert material_price_api._classify_row("Z1811A07B01BF", "给水室内钢塑复合管螺纹管件", "") == "material"
 
 
+def test_parse_sheet_prefills_z_material_name_and_spec_from_bill_desc():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "安装工程"
+    ws.append(["序号", "项目编码", "项目名称", "项目特征描述", "计量单位", "工程量", "综合单价"])
+    ws.append(["1", "031001007001", "复合管", "1.安装部位:室内\n2.介质:给水（冷水）\n3.材质、规格:衬塑钢管 DN100", "m", 14.03, None])
+    ws.append(["", "A10-1-366", "给排水管道 室内 钢塑复合管（螺纹连接） 公称直径（mm以内）100", "", "10m", 1.403, None])
+    ws.append(["", "Z1728A01B01BY", "复合管", "", "m", 10.02, None])
+    ws.append(["", "Z1811A07B01BF", "给水室内钢塑复合管螺纹管件", "", "个", 4.15, None])
+
+    result = material_price_api._parse_sheet(ws)
+
+    materials = [m for m in result["materials"] if m["code"].startswith("Z")]
+    assert len(materials) == 2
+    assert materials[0]["suggested_name"] == "衬塑钢管"
+    assert materials[0]["suggested_spec"] == "DN100"
+    assert materials[1]["name"] == "给水室内钢塑复合管螺纹管件"
+    assert materials[1]["suggested_name"] == ""
+    assert materials[1]["suggested_spec"] == "DN100"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()

@@ -356,6 +356,7 @@ def _parse_sheet(ws) -> dict:
             break
 
     # 遍历数据行
+    current_bill: dict | None = None
     for row_idx in range(header_row + 1, ws.max_row + 1):
         code_val = ""
         if "code" in col_map:
@@ -421,6 +422,12 @@ def _parse_sheet(ws) -> dict:
         row_type = _classify_row(code_val, name_val, seq_val)
 
         if row_type == "material":
+            suggested_name = ""
+            suggested_spec = ""
+            if current_bill:
+                suggested_name, suggested_spec = _suggest_material_from_bill_context(
+                    name_val, current_bill.get("name", ""), current_bill.get("desc", "")
+                )
             mat = {
                 "type": "material",
                 "row": row_idx,
@@ -428,8 +435,10 @@ def _parse_sheet(ws) -> dict:
                 "code": code_val,
                 "name": name_val,
                 "name_col": col_map.get("name"),
+                "suggested_name": suggested_name,
                 "spec": spec_val,
                 "spec_col": col_map.get("spec"),
+                "suggested_spec": suggested_spec,
                 "unit": unit_val,
                 "qty": qty_val,
                 "existing_price": price_val,
@@ -444,6 +453,10 @@ def _parse_sheet(ws) -> dict:
             desc_val = ""
             if desc_col is not None:
                 desc_val = str(ws.cell(row=row_idx, column=desc_col).value or "").strip()
+            current_bill = {
+                "name": name_val,
+                "desc": desc_val,
+            }
             all_rows.append({
                 "type": "bill",
                 "row": row_idx,
@@ -465,6 +478,7 @@ def _parse_sheet(ws) -> dict:
                 "qty": qty_val,
             })
         elif row_type == "section":
+            current_bill = None
             all_rows.append({
                 "type": "section",
                 "row": row_idx,
@@ -550,6 +564,94 @@ def _is_material_row(code: str, name: str) -> bool:
                 return True
 
     return False
+
+
+def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc: str) -> tuple[str, str]:
+    candidate_name, candidate_spec = _extract_material_from_desc(desc)
+    if not candidate_name and not candidate_spec:
+        return "", ""
+
+    normalized_material = _normalize_material_hint(material_name)
+    normalized_bill = _normalize_material_hint(bill_name)
+    normalized_candidate = _normalize_material_hint(candidate_name)
+
+    suggested_name = ""
+    if _is_generic_material_name(material_name) and candidate_name:
+        suggested_name = candidate_name
+    elif normalized_material and normalized_bill and normalized_material == normalized_bill and candidate_name:
+        suggested_name = candidate_name
+    elif normalized_material and normalized_candidate and normalized_material == normalized_candidate:
+        suggested_name = candidate_name
+
+    return suggested_name, candidate_spec
+
+
+def _extract_material_from_desc(desc: str) -> tuple[str, str]:
+    if not desc:
+        return "", ""
+
+    pairs: dict[str, str] = {}
+    for raw_line in desc.splitlines():
+        line = re.sub(r"^\s*\d+[\.、]\s*", "", raw_line.strip())
+        if not line:
+            continue
+        parts = re.split(r"[:：]", line, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        key = parts[0].strip()
+        value = parts[1].strip()
+        if key and value:
+            pairs[key] = value
+
+    combined = ""
+    for key in ("材质、规格", "材质规格", "材质/规格", "材质及规格", "材质、型号", "材质"):
+        if pairs.get(key):
+            combined = pairs[key]
+            break
+
+    name = ""
+    spec = ""
+    if combined:
+        name, spec = _split_material_and_spec(combined)
+
+    if not spec:
+        for key in ("规格型号", "规格", "型号"):
+            if pairs.get(key):
+                spec = pairs[key].strip()
+                break
+
+    return name.strip(), spec.strip()
+
+
+def _split_material_and_spec(text: str) -> tuple[str, str]:
+    value = str(text or "").strip()
+    if not value:
+        return "", ""
+
+    patterns = [
+        r"^(?P<name>.+?)\s+(?P<spec>DN\d+[A-Za-z0-9\-\./]*)$",
+        r"^(?P<name>.+?)\s+(?P<spec>De\d+[A-Za-z0-9\-\./]*)$",
+        r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\.\d+)?(?:mm|mm2|㎡|m2))$",
+        r"^(?P<name>.+?)\s+(?P<spec>\d+(?:\*\d+){1,3})$",
+    ]
+    for pattern in patterns:
+        matched = re.match(pattern, value, flags=re.IGNORECASE)
+        if matched:
+            return matched.group("name").strip(), matched.group("spec").strip()
+    return value, ""
+
+
+def _normalize_material_hint(text: str) -> str:
+    return re.sub(r"[\s\-\(\)（）]", "", str(text or "")).lower()
+
+
+def _is_generic_material_name(name: str) -> bool:
+    value = _normalize_material_hint(name)
+    generic_names = {
+        "复合管", "管材", "管件", "钢管", "塑料管", "阀门", "法兰", "桥架",
+        "电缆", "电线", "配电箱", "灯具", "喷头", "风口", "水表",
+    }
+    return value in {_normalize_material_hint(x) for x in generic_names}
 
 
 # ============================================================

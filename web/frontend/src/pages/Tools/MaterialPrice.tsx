@@ -41,8 +41,10 @@ interface RawRow {
   name: string;
   name_col?: number | null;
   spec_col?: number | null;
+  suggested_name?: string;
   desc?: string;       // 清单行的项目特征描述
   spec?: string;
+  suggested_spec?: string;
   unit?: string;
   qty?: number | null;
   existing_price?: number | null;
@@ -105,8 +107,8 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         _rowKey: `${r.sheet}-${r.row}`,
         _raw: r,
         _sectionKey: '',
-        edited_name: r.name,
-        edited_spec: r.spec || '',
+        edited_name: r.suggested_name || r.name,
+        edited_spec: r.suggested_spec ?? (r.spec || ''),
         lookup_price: r.lookup_price ?? null,
         lookup_source: r.lookup_source ?? null,
         user_price: null,
@@ -128,8 +130,8 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
     } else if (r.type === 'material') {
       rows.push({
         _rowType: 'material', _rowKey: key, _raw: r, _sectionKey: currentSectionKey,
-        edited_name: r.name,
-        edited_spec: r.spec || '',
+        edited_name: r.suggested_name || r.name,
+        edited_spec: r.suggested_spec ?? (r.spec || ''),
         lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null, user_price: null,
       });
     }
