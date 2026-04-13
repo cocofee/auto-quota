@@ -25,19 +25,25 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
     prefer_words: list[str] = []
     if sanitary_subtype == "坐便器":
         expected_words.extend(["坐式大便器", "坐便器"])
-        forbidden_words.extend(["蹲式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
+        forbidden_words.extend(["蹲式大便器", "小便器", "洗脸盆", "洗发盆", "洗涤盆", "净身盆", "水龙头"])
     elif sanitary_subtype == "蹲便器":
         expected_words.extend(["蹲式大便器", "蹲便器"])
-        forbidden_words.extend(["坐式大便器", "小便器", "洗脸盆", "洗涤盆", "水龙头"])
+        forbidden_words.extend(["坐式大便器", "小便器", "洗脸盆", "洗发盆", "洗涤盆", "净身盆", "水龙头"])
     elif sanitary_subtype == "小便器":
         expected_words.append("小便器")
-        forbidden_words.extend(["大便器", "洗脸盆", "洗涤盆", "水龙头"])
+        forbidden_words.extend(["大便器", "洗脸盆", "洗发盆", "洗涤盆", "净身盆", "水龙头"])
     elif sanitary_subtype == "洗脸盆":
-        expected_words.append("洗脸盆")
-        forbidden_words.extend(["洗涤盆", "水龙头", "大便器", "小便器"])
+        expected_words.extend(["洗脸盆", "洗手盆"])
+        forbidden_words.extend(["洗发盆", "净身盆", "洗涤盆", "水龙头", "大便器", "小便器"])
+    elif sanitary_subtype == "洗发盆":
+        expected_words.append("洗发盆")
+        forbidden_words.extend(["洗脸盆", "洗手盆", "洗涤盆", "净身盆", "大便器", "小便器"])
     elif sanitary_subtype == "洗涤盆":
         expected_words.append("洗涤盆")
-        forbidden_words.extend(["洗脸盆", "水龙头", "大便器", "小便器"])
+        forbidden_words.extend(["洗脸盆", "洗发盆", "净身盆", "水龙头", "大便器", "小便器"])
+    elif sanitary_subtype == "净身盆":
+        expected_words.append("净身盆")
+        forbidden_words.extend(["洗脸盆", "洗发盆", "洗涤盆", "大便器", "小便器"])
     if any(keyword in text for keyword in ("水龙头", "龙头")):
         expected_words.append("水龙头")
         forbidden_words.extend(["控制器", "探测器", "侵入"])
@@ -78,9 +84,15 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
         candidate_water_mode = str(candidate_params.get("sanitary_water_mode") or "")
         candidate_nozzle_mode = str(candidate_params.get("sanitary_nozzle_mode") or "")
         candidate_tank_mode = str(candidate_params.get("sanitary_tank_mode") or "")
+        candidate_subtype = str(candidate_params.get("sanitary_subtype") or "")
         score = sum(8 for word in expected_words if word and word in quota_name)
         score -= sum(8 for word in forbidden_words if word and word in quota_name)
         score += sum(3 for word in prefer_words if word and word in quota_name)
+        if sanitary_subtype and candidate_subtype:
+            if sanitary_subtype == candidate_subtype:
+                score += 12
+            else:
+                score -= 12
         if sanitary_mount_mode and candidate_mount_mode:
             if sanitary_mount_mode == candidate_mount_mode:
                 score += 10
