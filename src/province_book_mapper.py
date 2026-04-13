@@ -13,6 +13,12 @@ from src.specialty_classifier import detect_db_type
 _available_books_cache: dict[str, set[str]] = {}
 _available_books_lock = threading.Lock()
 
+_INSTALL_ROUTE_BOOK_OVERRIDES: dict[str, dict[str, list[str]]] = {
+    "安徽省安装工程计价定额(2018)": {
+        "C12": ["A11"],
+    },
+}
+
 
 def _province_key(province: str | None) -> str:
     return str(province or config.get_current_province() or "").strip()
@@ -40,6 +46,21 @@ def normalize_route_book_code(value: object) -> str:
 
 def normalize_db_book_code(value: object) -> str:
     return str(value or "").strip().upper()
+
+
+def _build_install_db_book_reverse_overrides() -> dict[str, dict[str, str]]:
+    return {
+        province: {
+            normalize_db_book_code(db_book): normalize_route_book_code(route_book)
+            for route_book, db_books in route_overrides.items()
+            for db_book in db_books
+            if normalize_db_book_code(db_book) and normalize_route_book_code(route_book)
+        }
+        for province, route_overrides in _INSTALL_ROUTE_BOOK_OVERRIDES.items()
+    }
+
+
+_INSTALL_DB_BOOK_REVERSE_OVERRIDES = _build_install_db_book_reverse_overrides()
 
 
 def get_available_db_books(province: str | None = None) -> set[str]:
@@ -108,6 +129,19 @@ def map_route_book_to_db_books(
     if db_type != "install":
         return [normalized]
 
+    province_overrides = _INSTALL_ROUTE_BOOK_OVERRIDES.get(province_name, {})
+    override_books = [
+        normalize_db_book_code(book)
+        for book in province_overrides.get(normalized, [])
+        if normalize_db_book_code(book)
+    ]
+    if override_books:
+        if not available:
+            return override_books
+        filtered_overrides = [book for book in override_books if book in available]
+        if filtered_overrides:
+            return filtered_overrides
+
     match = re.match(r"^C(\d+)$", normalized)
     if not match:
         return [normalized]
@@ -137,6 +171,10 @@ def map_db_book_to_route_book(
     db_type = detect_db_type(province_name)
     if db_type != "install":
         return normalize_route_book_code(normalized)
+
+    reverse_overrides = _INSTALL_DB_BOOK_REVERSE_OVERRIDES.get(province_name, {})
+    if normalized in reverse_overrides:
+        return reverse_overrides[normalized]
 
     match = re.match(r"^A0*(\d+)$", normalized)
     if match:
