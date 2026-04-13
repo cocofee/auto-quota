@@ -25,6 +25,37 @@ class _HealthyCollection:
         self.add_calls.append(kwargs)
 
 
+class _SchemaBrokenQueryCollection:
+    metadata = {}
+
+    def __init__(self):
+        self.query_calls = 0
+
+    def count(self):
+        return 1
+
+    def query(self, **kwargs):
+        del kwargs
+        self.query_calls += 1
+        raise RuntimeError(
+            "Database error: error returned from database: (code: 1) no such column: collections.schema_str"
+        )
+
+
+class _SearchHealthyCollection:
+    metadata = {}
+
+    def __init__(self):
+        self.query_calls = []
+
+    def count(self):
+        return 1
+
+    def query(self, **kwargs):
+        self.query_calls.append(kwargs)
+        return {"ids": [["1"]], "distances": [[0.2]]}
+
+
 class _BrokenClient:
     def __init__(self):
         self.delete_calls = 0
@@ -187,6 +218,47 @@ def test_vector_engine_build_index_rebuilds_on_type_metadata_mismatch(tmp_path, 
     assert healthy_client.created == 1
     assert len(healthy_collection.add_calls) == 1
     assert healthy_collection.add_calls[0]["ids"] == ["1"]
+
+
+def test_vector_engine_detects_schema_str_mismatch(tmp_path):
+    engine = _make_engine(tmp_path)
+
+    assert engine._should_rebuild_vector_index(
+        "Database error: error returned from database: (code: 1) no such column: collections.schema_str"
+    )
+
+
+def test_vector_engine_search_rebuilds_on_schema_str_query_failure(tmp_path, monkeypatch):
+    engine = _make_engine(tmp_path)
+    engine._connect = lambda row_factory=False: _FakeConn(
+        [{"id": 1, "name": "test quota", "quota_id": "Q-1"}]
+    )
+    broken_collection = _SchemaBrokenQueryCollection()
+    healthy_collection = _SearchHealthyCollection()
+    shared_client = object()
+    rebuild_calls = {"value": 0}
+
+    from src.model_cache import ModelCache
+
+    engine._collection = broken_collection
+    engine._chroma_client = shared_client
+
+    monkeypatch.setattr(ModelCache, "get_chroma_client", lambda path: shared_client)
+
+    def _fake_build_index(batch_size=256):
+        del batch_size
+        rebuild_calls["value"] += 1
+        engine._collection = healthy_collection
+
+    monkeypatch.setattr(engine, "build_index", _fake_build_index)
+
+    results = engine.search("test quota", top_k=1, precomputed_embedding=[0.1, 0.2, 0.3])
+
+    assert rebuild_calls["value"] == 1
+    assert broken_collection.query_calls == 1
+    assert len(healthy_collection.query_calls) == 1
+    assert results[0]["id"] == 1
+    assert results[0]["vector_score"] == 0.8
 
 
 def test_release_chroma_client_stops_underlying_system():

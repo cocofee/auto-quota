@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,12 +40,12 @@ async def _commit_feedback_upload(
     save_path: Path,
     stats: dict | None = None,
 ) -> None:
-    """Stage the uploaded file marker without committing the request transaction early."""
+    """Persist upload marker immediately so detached learning jobs can observe it."""
     task.feedback_path = str(save_path)
     task.feedback_uploaded_at = datetime.now(timezone.utc)
     if stats is not None:
         task.feedback_stats = stats
-    await db.flush()
+    await db.commit()
 
 
 async def _commit_feedback_stats(
@@ -145,7 +145,6 @@ async def _process_feedback_upload(
 @router.post("/tasks/{task_id}/feedback/upload")
 async def upload_feedback(
     task_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(description="纠正后的 Excel 文件"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -205,14 +204,13 @@ async def upload_feedback(
         stats={"status": "processing"},
     )
 
-    background_tasks.add_task(
-        _process_feedback_upload,
+    asyncio.create_task(_process_feedback_upload(
         task_id,
         save_path=str(save_path),
         actor=(getattr(user, "email", None) or getattr(user, "nickname", None) or str(user.id)),
         project_name=normalize_client_filename(file.filename, "feedback.xlsx"),
         province=repair_mojibake_text(task.province) or "",
-    )
+    ))
 
     return {
         "message": "反馈文件已上传，正在后台学习",

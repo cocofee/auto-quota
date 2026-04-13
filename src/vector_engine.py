@@ -47,6 +47,8 @@ class VectorEngine:
     def _vector_rebuild_keywords() -> tuple[str, ...]:
         return (
             "_type",
+            "schema_str",
+            "no such column: collections.schema_str",
             "dimensionality",
             "dimension",
             "mismatch",
@@ -65,6 +67,17 @@ class VectorEngine:
     def _should_rebuild_vector_index(self, exc: Exception | str | None) -> bool:
         message = str(exc or "").strip().lower()
         return any(keyword in message for keyword in self._vector_rebuild_keywords())
+
+    def _heal_vector_index(self, exc: Exception | str | None) -> bool:
+        if not self._should_rebuild_vector_index(exc):
+            return False
+        logger.warning(f"Broken vector index detected, rebuilding from quota DB: {exc}")
+        try:
+            self.build_index()
+            return True
+        except Exception as rebuild_exc:
+            logger.error(f"Vector index rebuild failed: {rebuild_exc}")
+            return False
 
     @staticmethod
     def _release_chroma_client(client) -> None:
@@ -158,14 +171,13 @@ class VectorEngine:
                 )
                 collection.count()
             except Exception as exc:
-                if not self._should_rebuild_vector_index(exc):
+                if not self._heal_vector_index(exc):
                     raise
-                try:
-                    client.clear_system_cache()
-                except Exception:
-                    pass
-                logger.warning(f"Broken vector collection detected, rebuilding: {exc}")
-                return self._recreate_collection()
+                client = ModelCache.get_chroma_client(str(self.chroma_dir))
+                collection = client.get_or_create_collection(
+                    name="quotas",
+                    metadata={"hnsw:space": "cosine"},
+                )
 
             self._chroma_client = client
             self._collection = collection
@@ -297,7 +309,12 @@ class VectorEngine:
         precomputed_embedding=None,
     ) -> list[dict]:
         top_k = top_k or config.VECTOR_TOP_K
-        collection_size = self.collection.count()
+        try:
+            collection_size = self.collection.count()
+        except Exception as exc:
+            if not self._heal_vector_index(exc):
+                raise
+            collection_size = self.collection.count()
         fetch_k = min(
             max(int(top_k), max(int(top_k) * 10, int(top_k) + 32, 64)),
             max(collection_size, int(top_k)),
@@ -335,19 +352,21 @@ class VectorEngine:
         elif len(conditions) > 1:
             where_filter = {"$and": conditions}
 
-        try:
-            results = self.collection.query(
+        def _query_collection(active_filter):
+            return self.collection.query(
                 query_embeddings=query_embedding.tolist(),
                 n_results=fetch_k,
-                where=where_filter,
+                where=active_filter,
             )
+
+        try:
+            results = _query_collection(where_filter)
         except Exception as exc:
-            if where_filter:
+            if self._heal_vector_index(exc):
+                results = _query_collection(where_filter)
+            elif where_filter:
                 logger.warning(f"Vector search with filter failed, fallback to full index: {exc}")
-                results = self.collection.query(
-                    query_embeddings=query_embedding.tolist(),
-                    n_results=fetch_k,
-                )
+                results = _query_collection(None)
             else:
                 raise
 
@@ -363,10 +382,7 @@ class VectorEngine:
 
             if is_old_index:
                 logger.warning("Old vector index missing book metadata, fallback to full index")
-                results = self.collection.query(
-                    query_embeddings=query_embedding.tolist(),
-                    n_results=fetch_k,
-                )
+                results = _query_collection(None)
             else:
                 logger.info(f"Vector search returned no match after book filter: {books}")
 

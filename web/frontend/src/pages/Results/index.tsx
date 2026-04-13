@@ -12,7 +12,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Input, Select,
+  Alert, Card, Table, Tag, Button, Space, Typography, App, Tooltip, Pagination, Input, Select, Upload,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -24,6 +24,7 @@ import {
   DownOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
@@ -348,6 +349,7 @@ export default function ResultsPage() {
   });
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [feedbackUploading, setFeedbackUploading] = useState(false);
 
   // 红灯行展开候选定额的状态（key = result.id）
   const [inlineQuotaKeywords, setInlineQuotaKeywords] = useState<Record<string, string>>({});
@@ -387,6 +389,32 @@ export default function ResultsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const uploadFeedback = useCallback(async (file: File) => {
+    if (!taskId) return;
+    setFeedbackUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post(`/tasks/${taskId}/feedback/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000,
+      });
+      const stats = data.stats || {};
+      if (stats.status === 'processing') {
+        message.success('反馈文件已上传，系统正在后台学习');
+      } else {
+        message.success(`已识别 ${stats.total || 0} 条，学习 ${stats.learned || 0} 条`);
+      }
+      loadData();
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail || getErrorMessage(err, '反馈上传失败'));
+      loadData();
+    } finally {
+      setFeedbackUploading(false);
+    }
+  }, [taskId, message, loadData]);
 
   useEffect(() => {
     if (targetResultId) return;
@@ -543,6 +571,49 @@ export default function ResultsPage() {
     }
     return counts;
   }, [displayRows]);
+
+  const reviewedCount = summary.confirmed + summary.corrected;
+  const feedbackStatus = task?.feedback_stats?.status;
+  const feedbackAction = task?.feedback_path ? (
+    feedbackStatus === 'learn_failed' ? (
+      <Tooltip title={task.feedback_stats?.error || '上次反馈学习失败，请重新上传'}>
+        <Upload
+          accept=".xlsx"
+          showUploadList={false}
+          beforeUpload={(file) => {
+            void uploadFeedback(file as unknown as File);
+            return false;
+          }}
+        >
+          <Button icon={<UploadOutlined />} size="small" danger loading={feedbackUploading}>
+            重新反馈
+          </Button>
+        </Upload>
+      </Tooltip>
+    ) : (
+      <Button
+        icon={<UploadOutlined />}
+        size="small"
+        disabled
+        loading={feedbackStatus === 'processing' || feedbackUploading}
+      >
+        {feedbackStatus === 'processing' ? '反馈处理中' : '已反馈'}
+      </Button>
+    )
+  ) : (
+    <Upload
+      accept=".xlsx"
+      showUploadList={false}
+      beforeUpload={(file) => {
+        void uploadFeedback(file as unknown as File);
+        return false;
+      }}
+    >
+      <Button icon={<UploadOutlined />} size="small" loading={feedbackUploading}>
+        上传反馈
+      </Button>
+    </Upload>
+  );
 
   // ============================================================
   // 管理员操作
@@ -1484,6 +1555,7 @@ export default function ResultsPage() {
             )}
           </Space>
           <Space>
+            {task?.status === 'completed' && feedbackAction}
             {isAdmin && (
               <>
                 <Button
@@ -1522,6 +1594,19 @@ export default function ResultsPage() {
           />
         )}
         {/* 置信度快捷筛选 */}
+        {task?.status === 'completed' && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="审核与反馈说明"
+            description={
+              reviewedCount > 0
+                ? `当前任务已审核 ${reviewedCount} 条。网页内“确认/纠正”会直接回写经验库；只有下载 Excel 离线修改后，才需要再上传反馈 Excel。`
+                : '网页内“确认/纠正”会直接回写经验库；只有下载 Excel 离线修改后，才需要再上传反馈 Excel。'
+            }
+          />
+        )}
         <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
           {([
             ...(isAdmin ? [{ key: 'need_review', label: '先看要核对的项', color: '#d97706', count: reviewFocusCount }] : []),
