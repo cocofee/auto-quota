@@ -124,6 +124,7 @@ export default function FeedbackReview() {
       const { data } = await api.post('/admin/feedback/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         params: { province: importProvince },
+        timeout: 600000,
       });
       const stats = data.stats || {};
       message.success(
