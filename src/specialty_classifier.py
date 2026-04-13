@@ -578,6 +578,49 @@ def classify_by_bill_code(bill_code: str) -> str | None:
 _category_routing_cache: dict | None = None  # tier1路由表
 _category_routing_tier2_cache: dict | None = None  # tier2路由表
 
+_AMBIGUOUS_CATEGORY_ROUTE_WORDS = {"弯头", "手动", "软管"}
+_INDUSTRIAL_PIPE_ROUTE_HINTS = (
+    "工业管道",
+    "不锈钢",
+    "无缝",
+    "焊接",
+    "氩弧焊",
+    "法兰",
+    "介质",
+    "DN",
+    "PN",
+    "HG/T",
+    "弯头",
+    "三通",
+    "大小头",
+    "异径",
+    "管件",
+    "金属编织",
+    "过滤器",
+    "蝶阀",
+    "球阀",
+)
+_HVAC_AIR_SIDE_HINTS = (
+    "风管",
+    "通风",
+    "风口",
+    "散流器",
+    "百叶",
+    "风阀",
+    "防火阀",
+    "排烟",
+    "新风",
+    "风机盘管",
+    "导流叶片",
+)
+_HVAC_VALVE_HINTS = (
+    "风阀",
+    "防火阀",
+    "排烟阀",
+    "调节阀",
+    "多叶调节阀",
+)
+
 
 def _load_category_routing() -> tuple[dict, dict]:
     """加载品类词路由表（data/category_routing.json）
@@ -616,7 +659,57 @@ def _load_category_routing() -> tuple[dict, dict]:
     return _category_routing_cache, _category_routing_tier2_cache
 
 
-def classify_by_category_words(bill_name: str) -> tuple[str | None, str]:
+def _looks_like_industrial_pipe_context(
+    bill_name: str,
+    bill_desc: str = "",
+    bill_code: str = "",
+) -> bool:
+    text = f"{bill_name} {bill_desc}".strip()
+    if any(token in text for token in _HVAC_AIR_SIDE_HINTS):
+        return False
+    if any(token in text for token in _INDUSTRIAL_PIPE_ROUTE_HINTS):
+        return True
+    clean_code = re.sub(r"[^0-9]", "", str(bill_code or ""))
+    return clean_code.startswith("0308")
+
+
+def _should_suppress_category_route(
+    word: str,
+    routed_book: str,
+    *,
+    bill_name: str,
+    bill_desc: str = "",
+    bill_code: str = "",
+) -> bool:
+    if word not in _AMBIGUOUS_CATEGORY_ROUTE_WORDS:
+        return False
+
+    text = f"{bill_name} {bill_desc}".strip()
+    looks_like_industrial = _looks_like_industrial_pipe_context(
+        bill_name,
+        bill_desc=bill_desc,
+        bill_code=bill_code,
+    )
+
+    if word == "弯头" and routed_book == "C7":
+        return looks_like_industrial
+
+    if word == "软管" and routed_book == "C10":
+        return looks_like_industrial
+
+    if word == "手动" and routed_book == "C7":
+        has_valve_signal = any(token in text for token in ("阀", "阀门", "蝶阀", "球阀"))
+        has_hvac_valve_signal = any(token in text for token in _HVAC_VALVE_HINTS)
+        return has_valve_signal and not has_hvac_valve_signal and looks_like_industrial
+
+    return False
+
+
+def classify_by_category_words(
+    bill_name: str,
+    bill_desc: str = "",
+    bill_code: str = "",
+) -> tuple[str | None, str]:
     """用品类关键词判断专业册号
 
     从清单名称中提取关键词，查找品类词路由表（从9.8万条经验库挖掘）。
@@ -643,17 +736,30 @@ def classify_by_category_words(bill_name: str) -> tuple[str | None, str]:
         # 按词长降序匹配，优先长词（更精确）
         for word in sorted(routing.keys(), key=len, reverse=True):
             if word in bill_name:
+                routed_book = routing[word]
+                if _should_suppress_category_route(
+                    word,
+                    routed_book,
+                    bill_name=bill_name,
+                    bill_desc=bill_desc,
+                    bill_code=bill_code,
+                ):
+                    logger.debug(
+                        f"category route suppressed: '{bill_name}' matched '{word}' -> {routed_book}"
+                    )
+                    continue
                 logger.debug(
-                    f"品类词路由({tier_name}): '{bill_name}' 中 '{word}' → {routing[word]}"
+                    f"品类词路由({tier_name}): '{bill_name}' 中 '{word}' → {routed_book}"
                 )
-                return routing[word], tier_name
+                return routed_book, tier_name
 
     return None, ""
 
 
 def _resolve_code_text_conflict(code_book: str | None,
                                 bill_name: str,
-                                bill_desc: str = "") -> tuple[str | None, str]:
+                                bill_desc: str = "",
+                                bill_code: str = "") -> tuple[str | None, str]:
     """Resolve conflicts between bill-code routing and explicit text signals.
 
     In practice some uploaded bills carry stale or generic GB codes while the
@@ -670,7 +776,11 @@ def _resolve_code_text_conflict(code_book: str | None,
         return None, ""
 
     text = f"{bill_name} {bill_desc}".strip()
-    cat_book, cat_tier = classify_by_category_words(bill_name)
+    cat_book, cat_tier = classify_by_category_words(
+        bill_name,
+        bill_desc=bill_desc,
+        bill_code=bill_code,
+    )
     keyword_book, keyword_score, matched_keyword = _keyword_match(text) if text else (None, 0, "")
 
     # Strongest case: mined category routing explicitly points to another book.
@@ -1051,6 +1161,7 @@ def _classify_v2(bill_name: str,
                 code_book,
                 bill_name,
                 bill_desc,
+                bill_code=bill_code,
             )
             if preferred_book and preferred_book in BOOKS:
                 _add_book_score(
@@ -1076,7 +1187,11 @@ def _classify_v2(bill_name: str,
                     f"清单编码匹配:{bill_code[:4]}",
                 )
 
-    cat_book, cat_tier = classify_by_category_words(bill_name)
+    cat_book, cat_tier = classify_by_category_words(
+        bill_name,
+        bill_desc=bill_desc,
+        bill_code=bill_code,
+    )
     if cat_book and cat_book in BOOKS:
         cat_delta = 2.8 if cat_tier == "tier1" else 1.6
         _add_book_score(

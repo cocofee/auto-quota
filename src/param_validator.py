@@ -1521,6 +1521,36 @@ class ParamValidator:
             "exact_anchor_count": 0,
         }
 
+    @staticmethod
+    def _collect_subject_terms(features: dict | None) -> set[str]:
+        features = dict(features or {})
+        parts = [
+            features.get("raw_text", ""),
+            features.get("normalized_text", ""),
+            features.get("canonical_name", ""),
+            features.get("entity", ""),
+        ]
+        parts.extend(features.get("traits") or [])
+        text = " ".join(str(part or "") for part in parts)
+        terms: set[str] = set()
+        for term in ("盲板", "盲法兰", "法兰盖"):
+            if term in text:
+                terms.add(term)
+        return terms
+
+    @classmethod
+    def _find_required_subject_hard_conflict(cls,
+                                             bill_canonical_features: dict,
+                                             candidate_features: dict) -> str:
+        blind_terms = {"盲板", "盲法兰", "法兰盖"}
+        bill_terms = cls._collect_subject_terms(bill_canonical_features)
+        if not (bill_terms & blind_terms):
+            return ""
+        candidate_terms = cls._collect_subject_terms(candidate_features)
+        if candidate_terms & blind_terms:
+            return ""
+        return "专名冲突:盲板!=普通法兰"
+
     def _score_feature_alignment(self, bill_canonical_features: dict,
                                  candidate_features: dict) -> dict:
         bill_canonical_features = dict(bill_canonical_features or {})
@@ -1529,6 +1559,19 @@ class ParamValidator:
         details: list[str] = []
         hard_conflict = False
         exact_anchor_count = 0
+
+        required_subject_conflict = self._find_required_subject_hard_conflict(
+            bill_canonical_features=bill_canonical_features,
+            candidate_features=candidate_features,
+        )
+        if required_subject_conflict:
+            return {
+                "score": 0.0,
+                "detail": required_subject_conflict,
+                "hard_conflict": True,
+                "comparable_count": 1,
+                "exact_anchor_count": 0,
+            }
 
         family_alignment = self._score_family_alignment(
             bill_canonical_features=bill_canonical_features,

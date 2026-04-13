@@ -3,9 +3,41 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 type LazyModule = Promise<{ default: ComponentType<any> }>;
 
+const CHUNK_RELOAD_KEY = 'jarvis:chunk-reload-once';
+
+function isDynamicImportFetchError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return (
+    message.includes('Failed to fetch dynamically imported module') ||
+    message.includes('error loading dynamically imported module') ||
+    message.includes('Importing a module script failed')
+  );
+}
+
+async function loadWithChunkRecovery<T>(loader: () => Promise<T>): Promise<T> {
+  try {
+    const result = await loader();
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    }
+    return result;
+  } catch (error) {
+    if (
+      typeof window !== 'undefined' &&
+      isDynamicImportFetchError(error) &&
+      window.sessionStorage.getItem(CHUNK_RELOAD_KEY) !== '1'
+    ) {
+      window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+      window.location.reload();
+      return new Promise<T>(() => {});
+    }
+    throw error;
+  }
+}
+
 function lazyPage(importPage: () => LazyModule) {
   return async () => {
-    const module = await importPage();
+    const module = await loadWithChunkRecovery(importPage);
     return { Component: module.default };
   };
 }
@@ -15,7 +47,9 @@ function lazyWrappedPage(
   importPage: () => LazyModule,
 ) {
   return async () => {
-    const [wrapperModule, pageModule] = await Promise.all([importWrapper(), importPage()]);
+    const [wrapperModule, pageModule] = await loadWithChunkRecovery(
+      () => Promise.all([importWrapper(), importPage()]),
+    );
     const Wrapper = wrapperModule.default;
     const Page = pageModule.default;
 
