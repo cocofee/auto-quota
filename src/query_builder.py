@@ -1388,9 +1388,15 @@ def _build_primary_subject_quota_aliases(primary_subject: str,
             _push("UPS不停电装置调试", with_specs=True)
         _push("UPS不停电装置")
 
-    if "清扫口" in combined:
-        _push("地面扫除口安装", with_specs=True)
+    if "清扫口" in combined or "扫除口" in combined:
+        if "地面" in combined:
+            _push("地面扫除口安装", with_specs=True)
+        _push("清扫口安装", with_specs=True)
+        if "塑料" in combined:
+            _push("塑料清扫口安装", with_specs=True)
+            _push("塑料清扫口")
         _push("扫除口")
+        _push("清扫口")
 
     if "地漏" in combined:
         if any(token in combined for token in ("防爆", "防爆型")):
@@ -1671,11 +1677,13 @@ def _build_sanitary_query(name: str,
     subtype = str(params.get("sanitary_subtype") or "")
     if not subtype and any(token in full_text for token in ("\u62d6\u5e03\u6c60", "\u62d6\u628a\u6c60")):
         subtype = "\u62d6\u5e03\u6c60"
+    if not subtype and any(token in full_text for token in ("清扫口", "扫除口")):
+        subtype = "清扫口"
     water_mode = str(params.get("sanitary_water_mode") or "")
     nozzle_mode = str(params.get("sanitary_nozzle_mode") or "")
     tank_mode = str(params.get("sanitary_tank_mode") or "")
     if not subtype and not any(keyword in full_text for keyword in (
-        "便器", "洗脸盆", "洗面盆", "洗手盆", "洗涤盆", "水槽", "拖布池", "拖把池", "地漏", "水龙头", "龙头",
+        "便器", "洗脸盆", "洗面盆", "洗手盆", "洗发盆", "洗涤盆", "净身盆", "水槽", "拖布池", "拖把池", "地漏", "清扫口", "扫除口", "水龙头", "龙头",
     )):
         return None
 
@@ -1695,8 +1703,14 @@ def _build_sanitary_query(name: str,
             query_parts.append("小便器安装")
     elif subtype == "洗脸盆":
         query_parts.append("洗脸盆")
+        if "洗手盆" in full_text:
+            query_parts.append("洗手盆")
+    elif subtype == "洗发盆":
+        query_parts.append("洗发盆")
     elif subtype == "洗涤盆":
         query_parts.append("洗涤盆")
+    elif subtype == "净身盆":
+        query_parts.append("净身盆")
     elif subtype == "拖布池":
         query_parts.append("\u5176\u4ed6\u6210\u54c1\u536b\u751f\u5668\u5177")
         query_parts.append("成品拖布池安装")
@@ -1704,6 +1718,10 @@ def _build_sanitary_query(name: str,
         query_parts.append("淋浴器安装")
     elif subtype == "地漏":
         query_parts.append("地漏安装")
+    elif subtype == "清扫口":
+        query_parts.append("清扫口安装")
+        if "塑料" in full_text:
+            query_parts.append("塑料清扫口")
 
     if not query_parts:
         return None
@@ -1716,6 +1734,9 @@ def _build_sanitary_query(name: str,
         query_parts.append("脚踏开关")
     if "自闭阀" in full_text:
         query_parts.append("自闭阀")
+    flush_mode = str(params.get("sanitary_flush_mode") or "")
+    if subtype in {"坐便器", "蹲便器", "小便器"} and flush_mode:
+        query_parts.append(flush_mode)
     if tank_mode:
         query_parts.append(tank_mode)
     if water_mode:
@@ -3240,6 +3261,11 @@ def build_quota_query(parser, name: str, description: str = "",
 
         if dn:
             query_parts.append(f"DN{dn}")
+
+        if any(token in full_text for token in ("清扫口", "扫除口")):
+            query_parts.append("清扫口安装")
+            if "塑料" in full_text:
+                query_parts.append("塑料清扫口")
 
         if valve_type and valve_type not in "".join(query_parts):
             query_parts.append(valve_type)
