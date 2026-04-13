@@ -172,6 +172,46 @@ def test_device_rows_merge_material_name_and_device_name():
     assert suggested_spec == "DN50"
 
 
+def test_plastic_valve_rows_use_desc_type_when_name_is_generic_family():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "塑料阀门",
+        "塑料阀门 De50 PE",
+        "1.类型:泄水阀\n2.规格:De50 PE\n3.连接形式:熔接",
+    )
+    assert suggested_name == "泄水阀"
+    assert suggested_spec == "De50 PE"
+
+
+def test_installation_item_name_yields_material_name_from_desc():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "绿地灌溉管线安装",
+        "绿地灌溉管线安装 De16",
+        "1.材质:滴水管PE\n2.规格:De16*1.6MPa\n3.连接形式:热熔连接\n4.压力试验及吹、洗设计要求:符合设计及相关规范\n5.安装部位:明敷\n6.介质:水",
+    )
+    assert suggested_name == "滴水管PE"
+    assert suggested_spec == "De16"
+
+
+def test_installation_item_name_does_not_override_to_bare_material_token():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "绿地灌溉管线安装",
+        "绿地灌溉管线安装 De16",
+        "1.材质:PE\n2.规格:De16\n3.连接形式:热熔连接",
+    )
+    assert suggested_name == ""
+    assert suggested_spec == "De16"
+
+
+def test_qualified_valve_name_keeps_original_material_qualifier():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "黄铜减压阀",
+        "减压器组成安装",
+        "1.类型:可调式减压阀\n2.规格:DN32\n3.连接形式:螺纹连接",
+    )
+    assert suggested_name == ""
+    assert suggested_spec == "DN32"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()
