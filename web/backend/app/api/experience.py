@@ -5,7 +5,9 @@
 """
 
 import asyncio
+from pathlib import Path
 import re
+import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -17,6 +19,10 @@ from app.models.user import User
 from app.services.local_http import local_match_async_client
 
 router = APIRouter()
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_BILL_LIBRARY_DB_PATH = _PROJECT_ROOT / "data" / "bill_library.db"
+_MATERIAL_DB_PATH = _PROJECT_ROOT / "db" / "common" / "material.db"
 
 
 def _safe_list(raw) -> list[str]:
@@ -78,6 +84,65 @@ def _filter_records_by_category(records: list[dict], category: str | None) -> li
     if not category or category == "all":
         return records
     return [record for record in records if _infer_record_category(record) == category]
+
+
+def _count_sqlite_rows(db_path: Path, table: str) -> int:
+    if not db_path.exists() or db_path.stat().st_size <= 0:
+        return 0
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+            (table,),
+        ).fetchone()
+        if not exists:
+            return 0
+        row = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception as exc:
+        logger.warning(f"获取历史资料统计失败: db={db_path} table={table} err={exc}")
+        return 0
+    finally:
+        conn.close()
+
+
+def _get_historical_source_stats() -> tuple[dict[str, dict], int]:
+    source_defs = {
+        "bill_items": {
+            "label": "历史清单项",
+            "db_path": _BILL_LIBRARY_DB_PATH,
+            "table": "bill_items",
+        },
+        "bill_descriptions": {
+            "label": "清单描述样本",
+            "db_path": _BILL_LIBRARY_DB_PATH,
+            "table": "bill_descriptions",
+        },
+        "price_facts": {
+            "label": "主材价格事实",
+            "db_path": _MATERIAL_DB_PATH,
+            "table": "price_fact",
+        },
+        "material_master": {
+            "label": "材料主档",
+            "db_path": _MATERIAL_DB_PATH,
+            "table": "material_master",
+        },
+    }
+
+    stats: dict[str, dict] = {}
+    total = 0
+    for key, source in source_defs.items():
+        count = _count_sqlite_rows(source["db_path"], source["table"])
+        total += count
+        stats[key] = {
+            "label": source["label"],
+            "count": count,
+            "table": source["table"],
+            "db_path": str(source["db_path"]),
+        }
+    return stats, total
 
 
 def _extract_province_name(name: str | None) -> str:
@@ -239,7 +304,11 @@ async def experience_stats(
     try:
         def _query():
             db = _get_experience_db()
-            return db.get_stats()
+            stats = db.get_stats()
+            historical_sources, historical_total = _get_historical_source_stats()
+            stats["historical_sources"] = historical_sources
+            stats["historical_total"] = historical_total
+            return stats
 
         return await asyncio.to_thread(_query)
     except Exception:

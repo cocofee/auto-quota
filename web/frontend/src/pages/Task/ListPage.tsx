@@ -256,7 +256,9 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       });
       loadTasks(); // 刷新列表，更新反馈状态
     } catch (err: unknown) {
-      message.error(getErrorMessage(err, '反馈上传失败'));
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      message.error(detail || getErrorMessage(err, '反馈上传失败'));
+      loadTasks();
     } finally {
       setUploadingTaskIds((prev) => {
         const next = new Set(prev);
@@ -495,9 +497,17 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
               </Button>
               {/* 上传反馈按钮：已上传过的显示"已反馈"（禁用） */}
               {record.feedback_path ? (
-                <Button type="link" size="small" disabled>
-                  已反馈
-                </Button>
+                record.feedback_stats?.status === 'learn_failed' ? (
+                  <Tooltip title={record.feedback_stats?.error || '反馈文件已上传，但自动学习失败，请到管理员反馈页排查'}>
+                    <Button type="link" size="small" danger disabled>
+                      反馈异常
+                    </Button>
+                  </Tooltip>
+                ) : (
+                  <Button type="link" size="small" disabled>
+                    已反馈
+                  </Button>
+                )
               ) : (
                 <Upload
                   accept=".xlsx"

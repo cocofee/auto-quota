@@ -50,6 +50,16 @@ export type MatchMode = 'search' | 'agent';
 /** 任务状态 */
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+export interface TaskFeedbackStats {
+  total?: number;
+  learned?: number;
+  skipped?: number;
+  warnings?: string[];
+  status?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
 /** 任务信息（对应后端 TaskResponse） */
 export interface TaskInfo {
   id: string;
@@ -73,7 +83,7 @@ export interface TaskInfo {
   // 反馈上传相关
   feedback_path: string | null;
   feedback_uploaded_at: string | null;
-  feedback_stats: { total: number; learned: number } | null;
+  feedback_stats: TaskFeedbackStats | null;
   // 用户信息（管理员视图）
   username: string | null;
 }
