@@ -1987,12 +1987,14 @@ def _build_valve_query(name: str, full_text: str, params: dict,
     real_type = _extract_inline_field_value("名称", "类型")
     if real_type:
         real_type = re.sub(r'-超高$', '', real_type).strip()  # 去掉超高后缀
+    normalized_name = name.replace("\u789f\u9600", "\u8776\u9600")
+    normalized_real_type = real_type.replace("\u789f\u9600", "\u8776\u9600") if real_type else ""
 
     # --- 前置检查：是否含阀门相关关键词 ---
     # 消声百叶有独立定额"消声百叶安装"，不走阀门路由
     if "消声百叶" in name:
         return None
-    valve_like_text = f"{name} {real_type}"
+    valve_like_text = f"{normalized_name} {normalized_real_type}"
     if not any(kw in valve_like_text for kw in ("阀门", "阀", "过滤器", "软接头", "倒流防止", "除污器")):
         return None
 
@@ -2013,18 +2015,18 @@ def _build_valve_query(name: str, full_text: str, params: dict,
 
     # 清单名的基础部分（去掉"名称：xxx"/"类型：xxx"后缀）
     # "碳钢阀门 名称：280℃防火阀" → "碳钢阀门"
-    _name_base = re.split(r'\s+(?:名称|类型|规格)', name)[0].strip()
+    _name_base = re.split(r'\s+(?:名称|类型|规格)', normalized_name)[0].strip()
 
     # === 1. 通风类阀门拦截（防火阀/调节阀/排烟阀） ===
     # 这些走周长分档（WxH→周长），不走DN分档
     # 不拦截会被管道路由覆盖成"法兰阀门安装"，导致搜索完全偏离
     _vent_kw = ("防火阀", "排烟阀", "调节阀", "排烟口", "排烟防火", "风量调节")
-    _vent_check = real_type if real_type else _name_base
+    _vent_check = normalized_real_type if normalized_real_type else _name_base
     # 排除水系统调节阀（动态平衡阀/电动调节阀等），这些按管道阀门处理
     _not_vent = ("动态平衡", "静态平衡", "压差", "温控", "恒温", "比例")
     if any(kw in _vent_check for kw in _vent_kw) and not any(ex in _vent_check for ex in _not_vent):
         # 清理真实设备名：去温度（280℃）、去型号前缀（MEE-、FVD-）
-        vent_name = real_type or _name_base
+        vent_name = normalized_real_type or _name_base
         vent_name = re.sub(r'\d+℃', '', vent_name)
         vent_name = re.sub(r'^[A-Za-z]+-', '', vent_name).strip()
         # 风量调节阀/多叶调节阀 → 多叶调节阀安装
@@ -2033,7 +2035,7 @@ def _build_valve_query(name: str, full_text: str, params: dict,
         return _apply_synonyms("防火调节阀安装 周长", specialty)
 
     # 通风止回阀（有周长参数的止回阀→风管止回阀，与管道止回阀用DN的不同）
-    _stop_check = real_type if real_type else _name_base
+    _stop_check = normalized_real_type if normalized_real_type else _name_base
     if "止回阀" in _stop_check:
         perimeter = params.get("perimeter")
         if perimeter or specialty == "C7":
@@ -2045,7 +2047,7 @@ def _build_valve_query(name: str, full_text: str, params: dict,
         return _apply_synonyms("防火调节阀安装 周长", specialty)
 
     # === 2. 特殊设备（有专用定额，不走通用阀门路由） ===
-    _check = real_type or _name_base
+    _check = normalized_real_type or _name_base
 
     # 倒流防止器 → "倒流防止器组成与安装(连接方式)"
     if "倒流防止" in _check:
@@ -3081,6 +3083,10 @@ def build_quota_query(parser, name: str, description: str = "",
             material = ""
             reset_query_seed = True
 
+        normalized_valve_name = name.replace("\u789f\u9600", "\u8776\u9600")
+        if normalized_valve_name != name:
+            name = normalized_valve_name
+            reset_query_seed = True
         # 阀门类清单名称规范化：清单常写"碳钢阀门"/"不锈钢阀门"等材质+阀门泛称，
         # 但定额名统一叫"法兰阀门安装"/"螺纹阀门安装"。直接在路由中替换，
         # 避免依赖_apply_synonyms（可能被其他同义词抢先匹配导致失效）
@@ -3106,7 +3112,7 @@ def build_quota_query(parser, name: str, description: str = "",
         # 定额不按阀门类型（闸阀/蝶阀）分类，而是按连接方式（法兰/螺纹）分类
         # 大口径(DN≥50)通常法兰连接，小口径(DN<50)通常螺纹连接
         # "闸阀""蝶阀"在定额库中完全搜不到，必须替换
-        _generic_valves = ("闸阀", "蝶阀", "止回阀", "球阀", "截止阀",
+        _generic_valves = ("闸阀", "蝶阀", "\u789f\u9600", "止回阀", "球阀", "截止阀",
                            "防护闸阀", "涡流蝶阀", "浮球阀", "电磁阀",
                            "信号蝶阀", "减压阀", "安全阀", "平衡阀",
                            "排气阀", "放气阀", "放空阀")
@@ -3960,3 +3966,4 @@ def build_quota_query(parser, name: str, description: str = "",
         apply_synonyms=not is_floor_outlet,
     )
     return _apply_demolition_postprocess(query, _is_demolition)
+

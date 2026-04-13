@@ -673,6 +673,43 @@ def _looks_like_industrial_pipe_context(
     return clean_code.startswith("0308")
 
 
+
+def _should_expand_c8_accessory_search(
+    bill_name: str,
+    bill_desc: str = "",
+    bill_code: str = "",
+    *,
+    hard_constraints: list[str] | tuple[str, ...] = (),
+) -> bool:
+    normalized_constraints = _normalize_books(hard_constraints)
+    if "C8" not in normalized_constraints:
+        return False
+    if any(book != "C8" for book in normalized_constraints):
+        return False
+    if not _looks_like_industrial_pipe_context(
+        bill_name,
+        bill_desc=bill_desc,
+        bill_code=bill_code,
+    ):
+        return False
+
+    normalized_text = f"{bill_name} {bill_desc}".replace("\u789f\u9600", "\u8776\u9600")
+    if any(token in normalized_text for token in _HVAC_AIR_SIDE_HINTS):
+        return False
+
+    accessory_hints = (
+        "\u9600",
+        "\u9600\u95e8",
+        "\u8776\u9600",
+        "\u6b62\u56de\u9600",
+        "\u7403\u9600",
+        "\u622a\u6b62\u9600",
+        "\u8fc7\u6ee4\u5668",
+        "\u9664\u6c61\u5668",
+        "\u8f6f\u63a5\u5934",
+    )
+    return any(token in normalized_text for token in accessory_hints)
+
 def _should_suppress_category_route(
     word: str,
     routed_book: str,
@@ -1124,6 +1161,13 @@ def _classify_v2(bill_name: str,
         context_prior=context_prior,
         canonical_features=canonical_features,
     )
+    if _should_expand_c8_accessory_search(
+        bill_name,
+        bill_desc=bill_desc,
+        bill_code=bill_code,
+        hard_constraints=hard_constraints,
+    ):
+        hard_constraints = _normalize_books([*hard_constraints, "C10"])
     if override_book:
         hard_constraints = [override_book]
 
@@ -1548,3 +1592,4 @@ if __name__ == "__main__":
         primary_name = result["primary_name"] or ""
         print(f"  {name} | {section or '-'} => {primary} {primary_name} "
               f"({result['confidence']}) | {result['reason']}")
+
