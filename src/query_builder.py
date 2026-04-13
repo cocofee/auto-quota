@@ -1591,6 +1591,39 @@ def _build_query_quota_alias_seed_terms(raw_input_name: str, primary_profile: di
             break
     return selected
 
+def _expand_filter_query_aliases(base_query: str, subject_text: str, conn: str) -> str:
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        clean = str(term or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            terms.append(clean)
+
+    _add(base_query)
+    normalized_subject = str(subject_text or "")
+    normalized_conn = str(conn or "").strip()
+    if not normalized_conn:
+        if "法兰" in base_query:
+            normalized_conn = "法兰连接"
+        elif any(keyword in base_query for keyword in ("螺纹", "丝扣")):
+            normalized_conn = "螺纹连接"
+    if normalized_conn and any(keyword in normalized_subject for keyword in ("Y型过滤器", "Y形过滤器")):
+        _add(f"除污器组成安装({normalized_conn})")
+    return " ".join(terms)
+
+
+
+
+def _apply_demolition_postprocess(query: str, is_demolition: bool) -> str:
+    if not is_demolition:
+        return query
+    normalized_query = str(query or "").replace("安装", "").strip()
+    normalized_query = re.sub(r"\s+", " ", normalized_query)
+    if "拆除" not in normalized_query:
+        normalized_query = f"{normalized_query} 拆除".strip()
+    return normalized_query
 
 def _should_apply_discovered_subject(name: str, fields: dict, subject_info: dict) -> bool:
     raw_name = _normalize_primary_guard_text(name)
@@ -2055,8 +2088,10 @@ def _build_valve_query(name: str, full_text: str, params: dict,
             conn = "法兰连接" if _dn_val >= 50 else "螺纹连接"
 
         if "安装" in base:
-            return _apply_synonyms(f"{base}({conn})", specialty)
-        return _apply_synonyms(base, specialty)
+            query = _expand_filter_query_aliases(f"{base}({conn})", _check, conn)
+            return _apply_synonyms(query, specialty)
+        query = _expand_filter_query_aliases(base, _check, conn)
+        return _apply_synonyms(query, specialty)
 
     # === 4. 软接头 → 按连接方式分流 ===
     if "软接头" in _check:
@@ -2688,7 +2723,27 @@ def build_quota_query(parser, name: str, description: str = "",
     if finalized_pre_route_match:
         return finalized_pre_route_match
 
-    # 提取安装部位（室内/室外）
+    protection_scope = ""
+    has_protection_route_hint = (
+        any(keyword in full_text for keyword in ("保温外壳", "防潮层"))
+        or ("保护层" in full_text and not any(keyword in full_text for keyword in ("绝热", "保温", "保冷")))
+    )
+    if has_protection_route_hint:
+        if any(keyword in full_text for keyword in ("管道", "管子", "外径", "DN")):
+            protection_scope = "管道"
+        elif "设备" in full_text:
+            protection_scope = "设备"
+        protection_parts = ["防潮层、保护层安装"]
+        if "不锈钢" in full_text:
+            protection_parts.append("不锈钢板")
+        elif "铝板" in full_text:
+            protection_parts.append("铝板")
+        if protection_scope:
+            protection_parts.append(protection_scope)
+        protection_parts.append("保温外壳")
+        protection_query = _apply_synonyms(" ".join(_dedupe_terms(protection_parts)), specialty)
+        return _apply_demolition_postprocess(protection_query, _is_demolition)
+
     location = ""
     loc_match = re.search(r'安装部位[：:]\s*(室内|室外|户内|户外)', full_text)
     if loc_match:
@@ -2972,11 +3027,22 @@ def build_quota_query(parser, name: str, description: str = "",
         _inline_subject = _inline_subject_match.group(1).strip() if _inline_subject_match else ""
         _compact_valve_text = re.sub(r"\s+", "", full_text)
         if not _inline_subject:
-            if any(token in _compact_valve_text for token in ("名称:过滤器", "名称：过滤器", "类型:过滤器", "类型：过滤器")):
+            if any(token in _compact_valve_text for token in (
+                "名称:Y型过滤器", "名称：Y型过滤器", "类型:Y型过滤器", "类型：Y型过滤器", "种类:Y型过滤器", "种类：Y型过滤器",
+                "名称:Y形过滤器", "名称：Y形过滤器", "类型:Y形过滤器", "类型：Y形过滤器", "种类:Y形过滤器", "种类：Y形过滤器",
+            )):
+                _inline_subject = "Y型过滤器"
+            elif any(token in _compact_valve_text for token in (
+                "名称:过滤器", "名称：过滤器", "类型:过滤器", "类型：过滤器", "种类:过滤器", "种类：过滤器",
+            )):
                 _inline_subject = "过滤器"
-            elif any(token in _compact_valve_text for token in ("名称:除污器", "名称：除污器", "类型:除污器", "类型：除污器")):
+            elif any(token in _compact_valve_text for token in (
+                "名称:除污器", "名称：除污器", "类型:除污器", "类型：除污器", "种类:除污器", "种类：除污器",
+            )):
                 _inline_subject = "除污器"
-            elif any(token in _compact_valve_text for token in ("名称:软接头安装", "名称：软接头安装", "类型:软接头安装", "类型：软接头安装")):
+            elif any(token in _compact_valve_text for token in (
+                "名称:软接头安装", "名称：软接头安装", "类型:软接头安装", "类型：软接头安装", "种类:软接头安装", "种类：软接头安装",
+            )):
                 _inline_subject = "软接头安装"
         _inline_conn = fields.get("连接方式", "") or fields.get("连接形式", "") or params.get("connection", "")
         if not _inline_conn:
@@ -2993,13 +3059,15 @@ def build_quota_query(parser, name: str, description: str = "",
                 _inline_conn = "螺纹连接"
 
         if any(keyword in _inline_subject for keyword in ("过滤器", "除污器")):
+            filter_base = "Y型过滤器安装" if any(keyword in _inline_subject for keyword in ("Y型过滤器", "Y形过滤器")) else "过滤器安装"
             if "法兰" in _inline_conn:
-                name = "过滤器安装(法兰连接)"
+                name = f"{filter_base}(法兰连接)"
             elif "螺纹" in _inline_conn or "丝扣" in _inline_conn:
-                name = "过滤器安装(螺纹连接)"
+                name = f"{filter_base}(螺纹连接)"
             else:
                 _dn_val = int(dn) if dn else 25
-                name = "过滤器安装(法兰连接)" if _dn_val >= 50 else "过滤器安装(螺纹连接)"
+                name = f"{filter_base}(法兰连接)" if _dn_val >= 50 else f"{filter_base}(螺纹连接)"
+            name = _expand_filter_query_aliases(name, _inline_subject, _inline_conn)
             material = ""
             reset_query_seed = True
         elif "软接头" in _inline_subject:
@@ -3891,13 +3959,4 @@ def build_quota_query(parser, name: str, description: str = "",
         context_prior=context_prior,
         apply_synonyms=not is_floor_outlet,
     )
-
-    # 拆除项后处理：去掉同义词追加的"安装"，确保"拆除"在query中
-    # 例如 "拆除马桶 坐式大便器安装" → "拆除马桶 坐式大便器 拆除"
-    if _is_demolition:
-        query = query.replace("安装", "").strip()
-        query = re.sub(r'\s+', ' ', query)
-        if "拆除" not in query:
-            query = f"{query} 拆除"
-
-    return query
+    return _apply_demolition_postprocess(query, _is_demolition)
