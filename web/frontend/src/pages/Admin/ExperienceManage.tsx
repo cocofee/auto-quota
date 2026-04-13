@@ -49,6 +49,8 @@ interface ExperienceStats {
   by_specialty?: Record<string, number>;
   avg_confidence?: number;
   vector_count?: number;
+  historical_total?: number;
+  historical_sources?: Record<string, { label: string; count: number; table?: string; db_path?: string }>;
 }
 
 interface ExperienceMaterial {
@@ -413,6 +415,40 @@ export default function ExperienceManage() {
     });
     return { billCount, quotaCount, materialCount };
   }, [displayRows]);
+
+  const historicalSourceCards = useMemo(() => {
+    const sources = stats?.historical_sources || {};
+    return [
+      {
+        key: 'bill_items',
+        title: sources.bill_items?.label || '历史清单项',
+        value: sources.bill_items?.count || 0,
+        color: '#1677ff',
+        prefix: <DatabaseOutlined />,
+      },
+      {
+        key: 'price_facts',
+        title: sources.price_facts?.label || '主材价格事实',
+        value: sources.price_facts?.count || 0,
+        color: '#d97706',
+        prefix: <ThunderboltOutlined />,
+      },
+      {
+        key: 'bill_descriptions',
+        title: sources.bill_descriptions?.label || '清单描述样本',
+        value: sources.bill_descriptions?.count || 0,
+        color: '#7c3aed',
+        prefix: <DatabaseOutlined />,
+      },
+      {
+        key: 'material_master',
+        title: sources.material_master?.label || '材料主档',
+        value: sources.material_master?.count || 0,
+        color: '#0f766e',
+        prefix: <DatabaseOutlined />,
+      },
+    ];
+  }, [stats]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -800,6 +836,7 @@ export default function ExperienceManage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {false && (
       <Card size="small">
         <div style={{ display: 'grid', gap: 6, color: '#475569', fontSize: 13, lineHeight: 1.7 }}>
           <div style={{ fontWeight: 600, color: '#0f172a' }}>这里是人工维护的正式经验库。</div>
@@ -807,6 +844,7 @@ export default function ExperienceManage() {
           <div>系统新产出的候选知识，请到“候选知识晋升”页面确认后，再决定是否写入正式层。</div>
         </div>
       </Card>
+      )}
 
       <style>{`
         .exp-preview-table .ant-table {
@@ -837,6 +875,31 @@ export default function ExperienceManage() {
           border-left: 3px solid #fbbf24;
         }
       `}</style>
+
+      <Row gutter={[12, 12]}>
+        <Col xs={12} sm={6}>
+          <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
+            <Statistic
+              title="历史资料条目"
+              value={stats?.historical_total || 0}
+              prefix={<ThunderboltOutlined />}
+              valueStyle={{ fontSize: 28, color: '#1677ff' }}
+            />
+          </Card>
+        </Col>
+        {historicalSourceCards.map((item) => (
+          <Col xs={12} sm={6} key={item.key}>
+            <Card loading={statsLoading} styles={{ body: { padding: '16px 20px' } }}>
+              <Statistic
+                title={item.title}
+                value={item.value}
+                prefix={item.prefix}
+                valueStyle={{ fontSize: 24, color: item.color }}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
 
       <Row gutter={[12, 12]}>
         <Col xs={12} sm={6}>
