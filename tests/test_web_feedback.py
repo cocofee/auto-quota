@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 def _make_task(
     status="completed",
     feedback_path=None,
+    feedback_stats=None,
     province="北京市建设工程施工消耗量标准(2024)",
 ):
     """构造模拟的 Task 对象"""
@@ -30,7 +31,7 @@ def _make_task(
     task.status = status
     task.feedback_path = feedback_path
     task.feedback_uploaded_at = None
-    task.feedback_stats = None
+    task.feedback_stats = feedback_stats
     task.province = province
     task.name = "测试任务"
     task.original_filename = "测试清单.xlsx"
@@ -49,7 +50,7 @@ def _validate_feedback_upload(task):
     """
     if task.status != "completed":
         return False, "只有已完成的任务才能上传反馈"
-    if task.feedback_path:
+    if task.feedback_path and (task.feedback_stats or {}).get("status") != "learn_failed":
         return False, "该任务已上传过反馈，不能重复上传"
     return True, None
 
@@ -111,6 +112,17 @@ class TestFeedbackValidation:
         ok, error = _validate_feedback_upload(task)
         assert ok is False
         assert "重复" in error
+
+    def test_failed_feedback_can_retry(self):
+        """学习失败后的反馈允许重新上传"""
+        task = _make_task(
+            status="completed",
+            feedback_path="/some/path.xlsx",
+            feedback_stats={"status": "learn_failed"},
+        )
+        ok, error = _validate_feedback_upload(task)
+        assert ok is True
+        assert error is None
 
 
 # ============================================================

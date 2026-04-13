@@ -247,13 +247,20 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
       formData.append('file', file);
       const { data } = await api.post(`/tasks/${taskId}/feedback/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000, // 学习过程可能较慢，设2分钟超时
+        timeout: 600000,
       });
       const stats = data.stats || {};
-      Modal.success({
-        title: '反馈上传成功',
-        content: `已从Excel中识别 ${stats.total || 0} 条清单，学习了 ${stats.learned || 0} 条经验。`,
-      });
+      if (stats.status === 'processing') {
+        Modal.success({
+          title: '反馈已上传',
+          content: '文件已上传到服务器，系统正在后台学习。稍后刷新任务列表即可看到结果。',
+        });
+      } else {
+        Modal.success({
+          title: '反馈上传成功',
+          content: `已从Excel中识别 ${stats.total || 0} 条清单，学习了 ${stats.learned || 0} 条经验。`,
+        });
+      }
       loadTasks(); // 刷新列表，更新反馈状态
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -498,11 +505,24 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
               {/* 上传反馈按钮：已上传过的显示"已反馈"（禁用） */}
               {record.feedback_path ? (
                 record.feedback_stats?.status === 'learn_failed' ? (
-                  <Tooltip title={record.feedback_stats?.error || '反馈文件已上传，但自动学习失败，请到管理员反馈页排查'}>
-                    <Button type="link" size="small" danger disabled>
-                      反馈异常
-                    </Button>
+                  <Tooltip title={record.feedback_stats?.error || '上次反馈学习失败，请重新上传'}>
+                    <Upload
+                      accept=".xlsx"
+                      showUploadList={false}
+                      beforeUpload={(file) => {
+                        uploadFeedback(record.id, file as unknown as File);
+                        return false;
+                      }}
+                    >
+                      <Button type="link" size="small" danger icon={<UploadOutlined />}>
+                        重新反馈
+                      </Button>
+                    </Upload>
                   </Tooltip>
+                ) : record.feedback_stats?.status === 'processing' ? (
+                  <Button type="link" size="small" disabled loading>
+                    反馈处理中
+                  </Button>
                 ) : (
                   <Button type="link" size="small" disabled>
                     已反馈
