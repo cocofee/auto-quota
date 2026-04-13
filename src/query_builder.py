@@ -2243,6 +2243,31 @@ def _build_surface_process_query(name: str, full_text: str, params: dict) -> str
     return " ".join(parts)
 
 
+def _extract_pipe_fitting_shape_terms(name: str, full_text: str, fields: dict) -> list[str]:
+    text = " ".join(part for part in (name or "", full_text or "") if part)
+    if not any(keyword in (name or "") for keyword in ("管件", "板卷管件", "管道附件")):
+        return []
+
+    ordered_terms = [
+        ("90°弯头", ("90°弯头", "90度弯头")),
+        ("45°弯头", ("45°弯头", "45度弯头")),
+        ("三通", ("三通",)),
+        ("异径管", ("异径管", "异径", "变径")),
+        ("盲板", ("盲板",)),
+        ("弯头", ("弯头",)),
+    ]
+    hits: list[str] = []
+    for canonical, aliases in ordered_terms:
+        if any(alias in text for alias in aliases):
+            hits.append(canonical)
+            break
+
+    spec_text = str(fields.get("规格") or fields.get("型号、规格") or "")
+    if spec_text and "三通" in spec_text and "三通" not in hits:
+        hits.append("三通")
+    return hits
+
+
 def _build_pipe_insulation_query(name: str, full_text: str, params: dict, specialty: str = "") -> str | None:
     """管道橡塑绝热优先命中管道保温家族，避免被直埋保温管劫持。"""
     if not any(keyword in full_text for keyword in ("绝热", "保温", "保冷")):
@@ -2900,7 +2925,8 @@ def build_quota_query(parser, name: str, description: str = "",
     if finalized_prioritized_rule_match:
         return finalized_prioritized_rule_match
 
-    surface_process_query = None if protect_primary_subject else _build_surface_process_query(name, full_text, params)
+    explicit_surface_process_name = any(keyword in (raw_input_name or name or "") for keyword in ("刷油", "防腐", "标识", "色环"))
+    surface_process_query = None if (protect_primary_subject and not explicit_surface_process_name) else _build_surface_process_query(name, full_text, params)
     if surface_process_query:
         return _finalize_query(
             surface_process_query,
@@ -2913,7 +2939,8 @@ def build_quota_query(parser, name: str, description: str = "",
     support_route_text = full_text
     if not any(keyword in (name or "") for keyword in ("支架", "吊架", "支吊架", "支撑架")):
         support_route_text = guarded_full_text
-    support_query = None if protect_primary_subject else _build_support_query(name, support_route_text, params)
+    explicit_support_name = any(keyword in (raw_input_name or name or "") for keyword in ("支架", "吊架", "支吊架", "支撑架"))
+    support_query = None if (protect_primary_subject and not explicit_support_name) else _build_support_query(name, support_route_text, params)
     if support_query:
         return _finalize_query(
             support_query,
@@ -3261,6 +3288,10 @@ def build_quota_query(parser, name: str, description: str = "",
 
         if dn:
             query_parts.append(f"DN{dn}")
+
+        for fitting_term in _extract_pipe_fitting_shape_terms(name, full_text, fields):
+            if fitting_term not in "".join(query_parts):
+                query_parts.append(fitting_term)
 
         if any(token in full_text for token in ("清扫口", "扫除口")):
             query_parts.append("清扫口安装")

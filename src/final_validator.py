@@ -173,6 +173,31 @@ class FinalValidator:
         vetoed = False
         result["final_review_correction"] = {}
         confidence_score = _safe_confidence(result.get("confidence_score", result.get("confidence")))
+        is_skip_measure = str(result.get("match_source") or "").strip() == "skip_measure"
+        if is_skip_measure:
+            merged_tags = merge_reason_tags(result.get("reason_tags") or [], ["measure_item", "abstained", "light_green"])
+            result["reason_tags"] = merged_tags
+            result["confidence_score"] = confidence_score
+            result["review_risk"] = "low"
+            result["light_status"] = "green"
+            result["confidence"] = confidence_score
+            result["price_validation"] = {"status": "skipped"}
+            result["final_validation"] = {
+                "status": "ok",
+                "corrected": False,
+                "vetoed": False,
+                "advisory_applied": False,
+                "recommended_action": "",
+                "recommended_fallback_quota_id": "",
+                "recommended_fallback_quota_name": "",
+                "recommended_fallback_unit": "",
+                "issues": [],
+                "confidence_score": confidence_score,
+                "review_risk": "low",
+                "light_status": "green",
+                "price_validation": {"status": "skipped"},
+            }
+            return result
 
         ambiguity_issue = self._check_reasoning_review(result)
         if ambiguity_issue:

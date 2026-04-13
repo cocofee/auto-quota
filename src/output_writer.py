@@ -477,6 +477,9 @@ def safe_excel_text(value):
 class OutputWriter:
     """匹配结果Excel输出，保留原始清单结构"""
 
+    def __init__(self, include_materials: bool = False):
+        self.include_materials = bool(include_materials)
+
     @staticmethod
     def _convert_xls_for_output(xls_path: str, output_xlsx_path: str):
         """将 .xls 文件转换为 .xlsx 格式（用于输出保留结构）"""
@@ -723,11 +726,14 @@ class OutputWriter:
         return safe_excel_text(result_text)
 
     @staticmethod
-    def _get_material_text(result: dict) -> str:
+    def _get_material_text(result: dict, include_materials: bool = True) -> str:
         """鑾峰彇涓绘潗鏂囨湰锛氫紭鍏堢敤杈撳叆鏂囦欢涓绘潗锛屽叾娆＄粡楠屽簱锛屾渶鍚庝粠娓呭崟鎻忚堪鎻愬彇
 
         缁熶竴鍏ュ彛锛屼笁澶凮鍒楀啓鍏ョ偣閮借皟鐢ㄨ繖涓柟娉曘€?
         """
+        if not include_materials:
+            return ""
+
         # 浼樺厛鐢ㄨ緭鍏ユ枃浠朵腑鎻愬彇鐨勪富鏉愶紙source_materials锛夛紝涓庝富鏉愯鍙ｅ緞涓€鑷?
         bill_item = result.get("bill_item", {})
         source_mats_raw = bill_item.get("source_materials")
@@ -1064,7 +1070,7 @@ class OutputWriter:
             self._write_bill_extra_info(ws, row_idx, result, extra_start)
 
             # 要插入的行数（定额行+主材行，无定额不插入行）
-            materials = _resolve_output_materials(result)
+            materials = _resolve_output_materials(result) if self.include_materials else []
             quota_rows = len(quotas) if quotas else 0
             mat_rows = len(materials) if quotas else 0
             num_insert = quota_rows + mat_rows
@@ -1417,7 +1423,7 @@ class OutputWriter:
             current_row += 1
 
         # 写入主材行（定额之后）
-        materials = _resolve_output_materials(result)
+        materials = _resolve_output_materials(result) if self.include_materials else []
         for mat in materials:
             self._write_single_material_row(ws, current_row, mat)
             current_row += 1
@@ -1680,7 +1686,7 @@ class OutputWriter:
             self._write_alternative_cells(
                 ws, current_row, start_col=12, alternatives=result.get("alternatives", [])
             )
-            ws.cell(row=current_row, column=15, value=self._get_material_text(result))
+            ws.cell(row=current_row, column=15, value=self._get_material_text(result, include_materials=self.include_materials))
 
             self._apply_row_style(ws, current_row, 1, 15, {4, 15})
             if quotas:
