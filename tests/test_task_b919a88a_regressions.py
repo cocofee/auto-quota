@@ -4,6 +4,7 @@ from src.province_book_mapper import map_db_book_to_route_book, map_route_book_t
 from src.query_builder import build_quota_query
 from src.specialty_classifier import classify
 from src.text_parser import TextParser
+from src.match_pipeline import _build_classification
 
 
 parser = TextParser()
@@ -152,3 +153,57 @@ def test_y_filter_alias_uses_inferred_threaded_connection():
     assert "Y型过滤器安装(螺纹连接)" in query
     assert "除污器组成安装(螺纹连接)" in query
     assert "除污器组成安装(法兰连接)" not in query
+
+
+def test_manual_diefa_query_normalizes_to_valve_installation():
+    query = build_quota_query(
+        parser,
+        "\u624b\u52a8\u789f\u9600",
+        "\u89c4\u683c:DN100 \u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170",
+        specialty="C8",
+    )
+
+    assert "\u6cd5\u5170\u9600\u95e8\u5b89\u88c5" in query
+
+
+def test_industrial_manual_valve_keeps_c8_primary_and_adds_c10_search():
+    result = classify(
+        "\u624b\u52a8\u789f\u9600",
+        "\u89c4\u683c:DN100 \u4ecb\u8d28:\u6c34 \u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170",
+        bill_code="030807003017",
+    )
+
+    assert result["primary"] == "C8"
+    assert "C10" in result["search_books"]
+
+
+def test_industrial_y_filter_adds_c10_borrow_search():
+    result = classify(
+        "\u0059\u578b\u8fc7\u6ee4\u5668",
+        "\u89c4\u683c:DN100 \u4ecb\u8d28:\u6c34 \u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170",
+        bill_code="030807001003",
+    )
+
+    assert result["primary"] == "C8"
+    assert "C10" in result["search_books"]
+
+
+def test_seeded_c8_accessory_scope_keeps_primary_but_retains_c10_search():
+    classification = _build_classification(
+        {
+            "specialty": "C8",
+            "specialty_fallbacks": ["C10", "C13", "C12"],
+            "code": "030807003017",
+            "context_prior": {},
+            "canonical_features": {},
+        },
+        "\u624b\u52a8\u789f\u9600",
+        "\u89c4\u683c:DN100 \u4ecb\u8d28:\u6c34 \u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170",
+        section="",
+        sheet_name="\u8868-08",
+        province="\u5b89\u5fbd\u7701\u5b89\u88c5\u5de5\u7a0b\u8ba1\u4ef7\u5b9a\u989d(2018)",
+    )
+
+    assert classification["primary"] == "C8"
+    assert "C10" in classification["search_books"]
+    assert "C10" in classification["hard_book_constraints"]

@@ -926,6 +926,89 @@ def _build_seeded_specialty_classification(primary: str, fallbacks: list[str], *
     return classification
 
 
+
+def _should_expand_seeded_c8_accessory_scope(
+    primary: str,
+    fallbacks: list[str],
+    name: str,
+    desc: str,
+    section: str,
+    sheet_name: str = "",
+) -> bool:
+    if str(primary or "").strip() != "C8":
+        return False
+    if "C10" not in [str(book or "").strip() for book in fallbacks or []]:
+        return False
+
+    text = " ".join(
+        str(value or "").strip()
+        for value in (name, desc, section, sheet_name)
+        if str(value or "").strip()
+    ).replace("\u789f\u9600", "\u8776\u9600")
+    hvac_hints = (
+        "\u98ce\u9600",
+        "\u9632\u706b\u9600",
+        "\u6392\u70df",
+        "\u98ce\u7ba1",
+        "\u591a\u53f6\u8c03\u8282\u9600",
+    )
+    if any(token in text for token in hvac_hints):
+        return False
+
+    accessory_hints = (
+        "\u9600",
+        "\u9600\u95e8",
+        "\u8776\u9600",
+        "\u6b62\u56de\u9600",
+        "\u7403\u9600",
+        "\u622a\u6b62\u9600",
+        "\u8fc7\u6ee4\u5668",
+        "\u9664\u6c61\u5668",
+        "\u8f6f\u63a5\u5934",
+    )
+    return any(token in text for token in accessory_hints)
+def _merge_seeded_classification_scope(classification: dict, inferred: dict) -> dict:
+    base = dict(classification or {})
+    inferred = dict(inferred or {})
+    primary = str(base.get("primary") or "").strip()
+    inferred_primary = str(inferred.get("primary") or "").strip()
+    inferred_hard = _dedupe_books(inferred.get("hard_book_constraints") or inferred.get("hard_search_books") or [])
+    inferred_search = _dedupe_books(inferred.get("search_books") or inferred.get("candidate_books") or [])
+    if not inferred_hard and primary == "C8" and "C10" in inferred_search:
+        inferred_hard = ["C8", "C10"]
+    if not primary or inferred_primary != primary:
+        return base
+    if len(inferred_hard) <= 1 or primary not in inferred_hard:
+        return base
+
+    inferred_search = _dedupe_books(inferred.get("search_books") or inferred.get("candidate_books") or [])
+    if not inferred_search:
+        inferred_search = [primary] + [book for book in inferred_hard if book != primary]
+    if len(inferred_search) <= 1:
+        return base
+
+    base["fallbacks"] = [book for book in inferred_search if book != primary]
+    base["candidate_books"] = list(inferred.get("candidate_books") or inferred_search)
+    base["search_books"] = list(inferred_search)
+    base["hard_book_constraints"] = list(inferred_hard)
+    base["hard_search_books"] = _dedupe_books(inferred.get("hard_search_books") or inferred_hard)
+    base["advisory_search_books"] = _dedupe_books(
+        inferred.get("advisory_search_books")
+        or [book for book in inferred_search if book not in inferred_hard]
+    )
+    base["route_mode"] = str(inferred.get("route_mode") or base.get("route_mode") or "")
+    base["allow_cross_book_escape"] = bool(
+        inferred.get("allow_cross_book_escape", base.get("allow_cross_book_escape", True))
+    )
+    if inferred.get("routing_evidence"):
+        base["routing_evidence"] = dict(inferred.get("routing_evidence") or {})
+    if inferred.get("book_scores"):
+        base["book_scores"] = dict(inferred.get("book_scores") or {})
+    if inferred.get("reason"):
+        base["reason"] = str(inferred.get("reason") or base.get("reason") or "")
+    if inferred.get("confidence"):
+        base["confidence"] = inferred.get("confidence")
+    return base
 def _should_override_seeded_specialty(seed_primary: str, inferred: dict) -> bool:
     seed_primary = str(seed_primary or "").strip()
     inferred = dict(inferred or {})
@@ -1409,6 +1492,19 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
     if primary:
         if _is_seeded_specialty_trustworthy(item, primary, section, sheet_name, province=province):
             classification = _build_seeded_specialty_classification(primary, fallbacks, strict=True)
+            if _should_expand_seeded_c8_accessory_scope(primary, fallbacks, name, desc, section, sheet_name):
+                expanded_hard = ["C8", "C10"]
+                classification["search_books"] = _dedupe_books(expanded_hard + list(classification.get("search_books") or []))
+                classification["candidate_books"] = _dedupe_books(
+                    list(classification.get("candidate_books") or [])
+                    + [book for book in fallbacks if str(book).strip()]
+                )
+                classification["hard_book_constraints"] = list(expanded_hard)
+                classification["hard_search_books"] = list(expanded_hard)
+                classification["advisory_search_books"] = [
+                    book for book in classification["search_books"]
+                    if book not in expanded_hard
+                ]
         elif (
             primary in BORROW_PRIORITY
             and _is_standard_seeded_specialty(primary)
@@ -1418,6 +1514,7 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
             classification = _build_seeded_specialty_classification(primary, fallbacks, strict=False)
         else:
             classification = {"primary": None, "fallbacks": []}
+    classification = _merge_seeded_classification_scope(classification, inferred)
     if not classification["primary"] or _should_override_seeded_specialty(primary, inferred):
         classification = inferred
     unified_plan_fallback = _build_unified_plan_fallback_classification(item, province)
