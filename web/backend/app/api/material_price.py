@@ -673,7 +673,18 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
                 suggested_name = f"{conn_prefix}{suggested_name}"
         if _should_prefix_material(candidate_type) and candidate_material and candidate_material not in suggested_name:
             suggested_name = f"{candidate_material}{suggested_name}"
-    elif _should_prefix_material_family(material_name, candidate_name):
+    elif (
+        candidate_name
+        and not _looks_like_bare_material_token(candidate_name)
+        and _looks_like_installation_item_name(material_name)
+        and _is_compatible_material_hint(material_name, candidate_name)
+    ):
+        suggested_name = candidate_name
+    elif (
+        candidate_name
+        and not _looks_like_bare_material_token(candidate_name)
+        and _should_prefix_material_family(material_name, candidate_name)
+    ):
         suggested_name = f"{candidate_name}{material_name.strip()}"
     elif _should_merge_device_name(material_name, bill_name, candidate_type, candidate_material):
         device_name = candidate_type.strip() or bill_name.strip()
@@ -1082,9 +1093,22 @@ def _is_generic_material_name(name: str) -> bool:
 
 def _should_use_bill_type_for_material(name: str) -> bool:
     generic_valve_names = {
-        "阀门", "螺纹阀门", "减压器", "减压阀", "螺纹减压阀", "法兰阀门", "法兰减压阀", "过滤器",
+        "阀门", "螺纹阀门", "减压器", "减压阀",
+        "螺纹减压阀", "法兰阀门", "法兰减压阀", "过滤器",
     }
-    return _normalize_material_hint(name) in {_normalize_material_hint(x) for x in generic_valve_names}
+    normalized = _normalize_material_hint(name)
+    if normalized in {_normalize_material_hint(x) for x in generic_valve_names}:
+        return True
+
+    raw = re.sub(r"[\s\-\(\)\uFF08\uFF09]", "", str(name or ""))
+    prefix_tokens = [
+        "ppr", "pe", "pex", "pert", "pvc", "upvc", "cpvc", "hdpe", "frpp", "pp", "abs",
+        "塑料", "法兰", "螺纹", "沟槽", "焊接", "热熔", "熔接", "电熔", "承插",
+    ]
+    suffix_tokens = ["阀门", "过滤器", "减压阀", "减压器"]
+    prefix_pattern = "|".join(re.escape(x) for x in prefix_tokens)
+    suffix_pattern = "|".join(re.escape(x) for x in suffix_tokens)
+    return bool(re.fullmatch(rf"(?i)(?:{prefix_pattern})+(?:{suffix_pattern})", raw))
 
 
 def _connection_prefix(connection: str) -> str:
@@ -1113,6 +1137,23 @@ def _should_prefix_connection(candidate_type: str) -> bool:
 def _should_prefix_material(candidate_type: str) -> bool:
     value = str(candidate_type or "").strip()
     return "阀" in value or "减压器" in value
+
+
+def _looks_like_installation_item_name(name: str) -> bool:
+    text = str(name or "").strip()
+    if not text:
+        return False
+    tokens = ("安装", "敷设", "管线", "组成")
+    return any(token in text for token in tokens)
+
+
+def _looks_like_bare_material_token(name: str) -> bool:
+    value = _normalize_material_hint(name)
+    bare_tokens = {
+        "pe", "pvc", "upvc", "cpvc", "ppr", "hdpe", "pert", "pex", "frpp", "pp", "abs", "pb",
+        "塑料", "钢", "钢材", "钢制", "不锈钢", "铜", "黄铜", "铸铁", "球墨铸铁",
+    }
+    return value in {_normalize_material_hint(x) for x in bare_tokens}
 
 
 def _looks_like_material_family_token(name: str) -> bool:

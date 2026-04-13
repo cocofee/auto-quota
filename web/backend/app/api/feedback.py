@@ -32,6 +32,28 @@ from app.text_utils import normalize_client_filename, repair_mojibake_text
 router = APIRouter()
 
 
+async def _commit_feedback_upload(
+    db: AsyncSession,
+    task: Task,
+    *,
+    save_path: Path,
+) -> None:
+    """Stage the uploaded file marker without making failed learning runs permanent."""
+    task.feedback_path = str(save_path)
+    task.feedback_uploaded_at = datetime.now(timezone.utc)
+    await db.flush()
+
+
+async def _commit_feedback_stats(
+    db: AsyncSession,
+    task: Task,
+    stats: dict,
+) -> None:
+    """Persist feedback learning stats or failure metadata."""
+    task.feedback_stats = stats
+    await db.commit()
+
+
 # ============================================================
 # 端点1：用户上传纠正Excel
 # ============================================================
@@ -107,9 +129,7 @@ async def upload_feedback(
 
     # 先更新 Task 记录（标记已上传），防止学习失败时状态不一致
     # （如果不先保存 feedback_path，学习失败后文件被清理，但经验库可能已部分写入）
-    task.feedback_path = str(save_path)
-    task.feedback_uploaded_at = datetime.now(timezone.utc)
-    await db.flush()
+    await _commit_feedback_upload(db, task, save_path=save_path)
 
     # 调用统一入口，先抽取记录，再统一写入 learning pipeline
     def _learn():
@@ -140,17 +160,22 @@ async def upload_feedback(
         stats = await asyncio.to_thread(_learn)
     except Exception as e:
         logger.error(f"反馈学习失败: {e}")
+        # Clear the marker on failure so the user can retry the upload.
+        task.feedback_path = None
+        task.feedback_uploaded_at = None
         # 学习失败但文件已保存，记录错误状态（不删除文件，保留人工排查）
-        task.feedback_stats = {"error": str(e)[:500], "status": "learn_failed"}
-        await db.flush()
+        await _commit_feedback_stats(
+            db,
+            task,
+            {"error": str(e)[:500], "status": "learn_failed"},
+        )
         raise HTTPException(
             status_code=500,
             detail="反馈文件已保存，但自动学习失败。管理员可手动处理。"
         )
 
     # 更新学习统计
-    task.feedback_stats = stats
-    await db.flush()
+    await _commit_feedback_stats(db, task, stats)
 
     return {"message": "反馈上传成功", "stats": stats}
 
