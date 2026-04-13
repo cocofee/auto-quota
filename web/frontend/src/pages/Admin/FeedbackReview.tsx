@@ -22,7 +22,12 @@ interface FeedbackItem {
   original_filename: string;
   province: string;
   feedback_uploaded_at: string | null;
-  feedback_stats: { total: number; learned: number } | null;
+  feedback_stats: {
+    total?: number;
+    learned?: number;
+    status?: string;
+    error?: string;
+  } | null;
 }
 
 /** 反馈详情 */
@@ -33,7 +38,12 @@ interface FeedbackDetail {
   province: string;
   mode: string;
   feedback_uploaded_at: string | null;
-  feedback_stats: { total: number; learned: number } | null;
+  feedback_stats: {
+    total?: number;
+    learned?: number;
+    status?: string;
+    error?: string;
+  } | null;
   task_stats: Record<string, unknown> | null;
   created_at: string;
   completed_at: string | null;
@@ -162,11 +172,19 @@ export default function FeedbackReview() {
       width: 180,
       render: (_: unknown, record: FeedbackItem) => {
         if (!record.feedback_stats) return '-';
-        const { total: t, learned } = record.feedback_stats;
+        const { total: t, learned, status, error } = record.feedback_stats;
         return (
           <>
-            <Tag color="blue">{t} 条清单</Tag>
-            <Tag color="green">{learned} 条学习</Tag>
+            {status === 'processing' ? (
+              <Tag color="gold">处理中</Tag>
+            ) : status === 'learn_failed' ? (
+              <Tag color="red" title={error || '自动学习失败'}>学习失败</Tag>
+            ) : (
+              <>
+                <Tag color="blue">{t ?? 0} 条清单</Tag>
+                <Tag color="green">{learned ?? 0} 条学习</Tag>
+              </>
+            )}
           </>
         );
       },
