@@ -687,21 +687,34 @@ def _ensure_item_feature_context(item: dict,
             item["context_prior"] = context_prior
 
         full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
+        parsed_params = text_parser.parse(full_text)
         params = item.get("params")
-        if not isinstance(params, dict) or not params:
-            params = text_parser.parse(full_text)
-            item["params"] = params
+        if not isinstance(params, dict):
+            params = dict(parsed_params)
+        else:
+            merged_params = dict(params)
+            for key, value in (parsed_params or {}).items():
+                if key not in merged_params or merged_params.get(key) in (None, "", [], {}):
+                    merged_params[key] = value
+            params = merged_params
+        item["params"] = params
 
-        canonical_features = item.get("canonical_features")
-        if isinstance(canonical_features, dict) and canonical_features:
-            return
-
-        item["canonical_features"] = text_parser.parse_canonical(
+        parsed_canonical = text_parser.parse_canonical(
             full_text,
             specialty=item.get("specialty", ""),
             context_prior=context_prior,
             params=params,
         )
+        canonical_features = item.get("canonical_features")
+        if isinstance(canonical_features, dict) and canonical_features:
+            merged_canonical = dict(parsed_canonical)
+            for key, value in canonical_features.items():
+                if value not in (None, "", [], {}):
+                    merged_canonical[key] = value
+            item["canonical_features"] = merged_canonical
+            return
+
+        item["canonical_features"] = parsed_canonical
 
 
 def _build_item_context(item: dict,
