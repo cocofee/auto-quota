@@ -17,7 +17,7 @@ from app.api.feedback import (
 )
 
 
-def test_commit_feedback_upload_only_flushes_marker():
+def test_commit_feedback_upload_persists_marker_immediately():
     task = SimpleNamespace(feedback_path=None, feedback_uploaded_at=None)
     db = AsyncMock()
 
@@ -26,8 +26,7 @@ def test_commit_feedback_upload_only_flushes_marker():
     assert task.feedback_path == str(Path('/tmp/feedback.xlsx'))
     assert task.feedback_uploaded_at is not None
     assert task.feedback_uploaded_at.tzinfo == timezone.utc
-    db.flush.assert_awaited_once()
-    db.commit.assert_not_awaited()
+    db.commit.assert_awaited_once()
 
 
 def test_commit_feedback_upload_can_stage_processing_status():
@@ -44,8 +43,7 @@ def test_commit_feedback_upload_can_stage_processing_status():
     )
 
     assert task.feedback_stats == {'status': 'processing'}
-    db.flush.assert_awaited_once()
-    db.commit.assert_not_awaited()
+    db.commit.assert_awaited_once()
 
 
 def test_commit_feedback_stats_persists_error_state():
