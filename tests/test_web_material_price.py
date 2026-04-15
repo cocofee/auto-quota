@@ -245,3 +245,136 @@ def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_pa
     assert ws2.cell(row=2, column=2).value == "镀锌钢管 DN32"
     assert ws2.cell(row=2, column=3).value == 18.5
     wb2.close()
+
+
+def test_write_material_updates_inserts_gldjc_link_after_spec_column(tmp_path: Path):
+    file_path = tmp_path / "reviewed-link.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单价"])
+    ws.append(["26010101", "原主材名", "DN25", None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "镀锌钢管",
+                "spec_col": 3,
+                "final_spec": "DN32",
+                "price_col": 4,
+                "final_price": 18.5,
+                "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1",
+                "lookup_label": "贵盈 | 镀锌钢管 DN32 | m | 18.50",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=False)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=1, column=5).value == "广材网链接"
+    assert ws2.cell(row=2, column=2).value == "镀锌钢管"
+    assert ws2.cell(row=2, column=3).value == "DN32"
+    assert ws2.cell(row=2, column=4).value == 18.5
+    assert ws2.cell(row=2, column=5).value == "贵盈 | 镀锌钢管 DN32 | m | 18.50"
+    assert ws2.cell(row=2, column=5).hyperlink.target == "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1"
+    wb2.close()
+
+
+def test_write_material_updates_inserts_gldjc_link_after_name_when_no_spec_column(tmp_path: Path):
+    file_path = tmp_path / "reviewed-link-no-spec.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["编码", "名称", "单价"])
+    ws.append(["M001", "原主材", None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "Sheet1",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "镀锌钢管",
+                "spec_col": None,
+                "final_spec": "DN32",
+                "price_col": 3,
+                "final_price": 18.5,
+                "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1",
+                "lookup_label": "贵盈 | 镀锌钢管 DN32 | m | 18.50",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=False)
+    ws2 = wb2["Sheet1"]
+    assert ws2.cell(row=1, column=4).value == "广材网链接"
+    assert ws2.cell(row=2, column=2).value == "镀锌钢管 DN32"
+    assert ws2.cell(row=2, column=3).value == 18.5
+    assert ws2.cell(row=2, column=4).value == "贵盈 | 镀锌钢管 DN32 | m | 18.50"
+    assert ws2.cell(row=2, column=4).hyperlink.target == "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1"
+    wb2.close()
+
+
+def test_pipe_fitting_row_uses_specific_name_from_desc_name_field():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "法兰铸铁管件",
+        "法兰铸铁管件",
+        "1.名称:VSSJAF-10型双法兰传力接头\n2.规格:DN700，P=1.0MPa",
+    )
+    assert suggested_name == "VSSJAF-10型双法兰传力接头"
+    assert suggested_spec == "DN700"
+
+
+def test_pipe_fitting_row_builds_specific_shape_from_spec_and_material():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "碳钢对焊管件",
+        "碳钢对焊管件",
+        "1.材质:碳钢\n2.规格:三通 DN600\n3.焊接方法:电弧焊",
+    )
+    assert suggested_name == "碳钢对焊三通"
+    assert suggested_spec == "DN600"
+
+
+def test_pipe_fitting_row_supports_single_line_numbered_desc():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "碳钢对焊管件",
+        "碳钢对焊管件 DN600",
+        "1.材质:碳钢 2.规格:三通 DN600 3.焊接方法:电弧焊",
+    )
+    assert suggested_name == "碳钢对焊三通"
+    assert suggested_spec == "DN600"
+
+
+def test_specific_pipe_fitting_name_gets_material_prefix():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "90°弯头",
+        "90°弯头 DN200",
+        "1.材质:碳钢\n2.规格:90°弯头 DN200\n3.连接方式:电弧焊",
+    )
+    assert suggested_name == "碳钢90°弯头"
+    assert suggested_spec == "DN200"
+
+
+def test_composite_material_name_can_still_use_specific_pipe_fitting_type():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "钢板(综合)",
+        "90°弯头 DN200",
+        "1.材质:碳钢\n2.规格:90°弯头 DN200\n3.连接方式:电弧焊",
+    )
+    assert suggested_name == "碳钢90°弯头"
+    assert suggested_spec == "DN200"
