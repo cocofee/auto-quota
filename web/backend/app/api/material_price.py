@@ -21,6 +21,7 @@ import re
 import uuid as _uuid_mod
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -60,6 +61,23 @@ def _load_material_price_cache() -> dict:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _build_gldjc_search_url(name: str = "", spec: str = "", keyword: str = "", province_code: str = "1") -> str:
+    search_keyword = str(keyword or "").strip()
+    material_name = str(name or "").strip()
+    material_spec = str(spec or "").strip()
+
+    if not search_keyword:
+        if material_spec and material_spec not in material_name:
+            search_keyword = f"{material_name} {material_spec}".strip()
+        else:
+            search_keyword = material_name
+
+    if not search_keyword:
+        return ""
+
+    return f"https://www.gldjc.com/scj/so.html?keyword={quote(search_keyword, safe='')}&l={province_code}"
 
 
 def _material_db_ready() -> bool:
@@ -482,6 +500,7 @@ def _parse_sheet(ws) -> dict:
                 "type": "material",
                 "row": row_idx,
                 "sheet": ws.title,
+                "header_row": header_row,
                 "code": code_val,
                 "name": name_val,
                 "name_col": col_map.get("name"),
@@ -493,6 +512,8 @@ def _parse_sheet(ws) -> dict:
                 "price_col": price_col,
                 "lookup_price": None,
                 "lookup_source": None,
+                "lookup_url": None,
+                "lookup_label": None,
             }
             materials.append(mat)
             all_rows.append(mat)
@@ -516,6 +537,7 @@ def _parse_sheet(ws) -> dict:
                 "type": "material",
                 "row": row_idx,
                 "sheet": ws.title,
+                "header_row": header_row,
                 "code": code_val,
                 "name": name_val,
                 "name_col": col_map.get("name"),
@@ -529,6 +551,8 @@ def _parse_sheet(ws) -> dict:
                 "price_col": price_col,
                 "lookup_price": None,
                 "lookup_source": None,
+                "lookup_url": None,
+                "lookup_label": None,
             }
             materials.append(mat)
             all_rows.append(mat)
@@ -673,6 +697,14 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
                 suggested_name = f"{conn_prefix}{suggested_name}"
         if _should_prefix_material(candidate_type) and candidate_material and candidate_material not in suggested_name:
             suggested_name = f"{candidate_material}{suggested_name}"
+    elif _should_use_pipe_fitting_type(material_name, candidate_type, candidate_name):
+        suggested_name = _compose_pipe_fitting_name(
+            material_name,
+            candidate_type or candidate_name,
+            candidate_material,
+        )
+    elif _should_prefix_specific_pipe_fitting(material_name, bill_name, candidate_type, candidate_material):
+        suggested_name = _compose_specific_pipe_fitting_name(candidate_type, candidate_material)
     elif (
         candidate_name
         and not _looks_like_bare_material_token(candidate_name)
@@ -682,8 +714,8 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
         suggested_name = candidate_name
     elif (
         candidate_name
-        and not _looks_like_bare_material_token(candidate_name)
         and _should_prefix_material_family(material_name, candidate_name)
+        and (not _looks_like_bare_material_token(candidate_name) or _is_generic_material_name(material_name))
     ):
         suggested_name = f"{candidate_name}{material_name.strip()}"
     elif _should_merge_device_name(material_name, bill_name, candidate_type, candidate_material):
@@ -711,6 +743,8 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
         suggested_name = candidate_name
 
     if suggested_name and _normalize_material_hint(suggested_name) == normalized_material:
+        suggested_name = ""
+    if suggested_name and _is_generic_pipe_fitting_name(material_name) and _looks_like_bare_material_token(suggested_name):
         suggested_name = ""
 
     return suggested_name, candidate_spec
@@ -821,7 +855,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
             break
 
     candidate_connection = ""
-    for key in ("连接形式", "连接方式"):
+    for key in ("连接形式", "连接方式", "接口形式", "接口方式", "焊接方法", "焊接方式"):
         if pairs.get(key):
             candidate_connection = pairs[key].strip()
             break
@@ -1015,7 +1049,8 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
         return {"name": "", "spec": "", "type": "", "material": "", "connection": ""}
 
     pairs: dict[str, str] = {}
-    for raw_line in desc.splitlines():
+    normalized_desc = re.sub(r"(?<!\S)(\d+)\.\s*", r"\n\1.", str(desc or ""))
+    for raw_line in normalized_desc.splitlines():
         line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
         if not line:
             continue
@@ -1064,12 +1099,14 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
             raw_spec = pairs.get(key, "").strip()
             if not raw_spec:
                 continue
-            if not name:
-                maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
-                if maybe_spec:
+            maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
+            if maybe_spec:
+                if maybe_name and not candidate_type:
+                    candidate_type = maybe_name
+                if maybe_name and (not name or _looks_like_bare_material_token(name)):
                     name = maybe_name
-                    spec = maybe_spec
-                    break
+                spec = maybe_spec
+                break
             spec = raw_spec
             break
 
@@ -1185,6 +1222,94 @@ def _should_merge_device_name(material_name: str, bill_name: str, candidate_type
     if candidate_material and material_text == candidate_material.strip():
         return True
     return any(token in material_text for token in ("不锈钢", "黄铜", "陶瓷", "塑料", "铸铁", "木质", "+"))
+
+
+def _is_generic_pipe_fitting_name(name: str) -> bool:
+    text = str(name or "").strip()
+    if "管件" not in text:
+        return False
+    specific_tokens = ("弯头", "三通", "四通", "异径", "盲板", "接头", "补偿器", "伸缩节", "止流器")
+    return not any(token in text for token in specific_tokens)
+
+
+def _should_use_pipe_fitting_type(material_name: str, candidate_type: str, candidate_name: str) -> bool:
+    if not _is_generic_pipe_fitting_name(material_name):
+        return False
+    explicit_type = str(candidate_type or "").strip()
+    if explicit_type:
+        return _is_specific_pipe_fitting_type(explicit_type) or _is_specific_lookup_name(explicit_type)
+    return _is_specific_pipe_fitting_type(candidate_name)
+
+
+def _is_specific_pipe_fitting_type(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    specific_tokens = (
+        "弯头", "三通", "四通", "异径", "大小头", "盲板", "法兰", "接头",
+        "传力接头", "补偿器", "伸缩节", "止流器", "短管",
+    )
+    return any(token in value for token in specific_tokens)
+
+
+def _compose_pipe_fitting_name(material_name: str, fitting_type: str, candidate_material: str) -> str:
+    fitting = str(fitting_type or "").strip()
+    if not fitting:
+        return ""
+    if re.search(r"[A-Za-z0-9]", fitting):
+        return fitting
+    if any(token in fitting for token in ("传力接头", "补偿器", "伸缩节", "止流器")):
+        return fitting
+
+    material_prefix = ""
+    material_text = str(candidate_material or "").strip()
+    if material_text and material_text not in fitting:
+        material_prefix = material_text
+
+    qualifier = ""
+    for token in ("对焊", "承插", "法兰", "螺纹", "沟槽", "焊接"):
+        if token in str(material_name or "") and token not in fitting:
+            qualifier = token
+            break
+
+    return f"{material_prefix}{qualifier}{fitting}".strip()
+
+
+def _should_prefix_specific_pipe_fitting(
+    material_name: str,
+    bill_name: str,
+    candidate_type: str,
+    candidate_material: str,
+) -> bool:
+    fitting = str(candidate_type or "").strip()
+    material_text = str(candidate_material or "").strip()
+    if not fitting or not material_text:
+        return False
+    if not _is_specific_pipe_fitting_type(fitting):
+        return False
+    if material_text in fitting:
+        return False
+
+    normalized_fitting = _normalize_material_hint(fitting)
+    normalized_material_name = _normalize_material_hint(material_name)
+    normalized_bill_name = _normalize_material_hint(bill_name)
+    if normalized_material_name == normalized_fitting:
+        return True
+    if normalized_bill_name == normalized_fitting:
+        return True
+    if fitting and fitting in str(bill_name or ""):
+        return True
+    return "综合" in str(material_name or "")
+
+
+def _compose_specific_pipe_fitting_name(candidate_type: str, candidate_material: str) -> str:
+    fitting = str(candidate_type or "").strip()
+    material_text = str(candidate_material or "").strip()
+    if not fitting:
+        return ""
+    if not material_text or material_text in fitting:
+        return fitting
+    return f"{material_text}{fitting}"
 
 
 @router.get("/material-price/from-task/{task_id}")
@@ -1337,6 +1462,8 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                 **mat,
                 "lookup_price": price_info["price"],
                 "lookup_source": price_info.get("source", "价格库"),
+                "lookup_url": None,
+                "lookup_label": None,
             })
         else:
             # 尝试从名称中提取规格再查一次
@@ -1354,6 +1481,8 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                             **mat,
                             "lookup_price": price_info2["price"],
                             "lookup_source": price_info2.get("source", "价格库"),
+                            "lookup_url": None,
+                            "lookup_label": None,
                         })
                         continue
 
@@ -1375,10 +1504,19 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                         **mat,
                         "lookup_price": cached["price_with_tax"],
                         "lookup_source": "广材网市场价",
+                        "lookup_url": str(
+                            cached.get("gldjc_url")
+                            or _build_gldjc_search_url(
+                                name=name,
+                                spec=spec,
+                                keyword=str(cached.get("searched_keyword") or ""),
+                            )
+                        ).strip() or None,
+                        "lookup_label": str(cached.get("match_label") or cached.get("match_detail") or "查看").strip(),
                     })
                     continue
 
-            results.append({**mat, "lookup_price": None, "lookup_source": "未查到"})
+            results.append({**mat, "lookup_price": None, "lookup_source": "未查到", "lookup_url": None, "lookup_label": None})
 
     return results
 
@@ -1579,12 +1717,34 @@ def _do_write_prices(excel_path: str, materials: list[dict]) -> int:
     return written
 
 
+def _shift_column_for_link_insertions(col, anchor_cols: list[int]) -> int | None:
+    if col is None:
+        return None
+    try:
+        col_idx = int(col)
+    except (TypeError, ValueError):
+        return None
+    return col_idx + sum(1 for anchor in anchor_cols if anchor < col_idx)
+
+
+def _resolve_link_column(anchor_col, anchor_cols: list[int]) -> int | None:
+    if anchor_col is None:
+        return None
+    try:
+        anchor_idx = int(anchor_col)
+    except (TypeError, ValueError):
+        return None
+    return anchor_idx + 1 + sum(1 for anchor in anchor_cols if anchor < anchor_idx)
+
+
 def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
     """Write edited material names and prices back into the reviewed Excel."""
     import openpyxl
+    from openpyxl.styles import Font
 
     wb = openpyxl.load_workbook(excel_path)
     written = 0
+    link_font = Font(color="0563C1", underline="single")
 
     sheet_materials: dict[str, list[dict]] = {}
     for mat in materials:
@@ -1599,6 +1759,21 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
             continue
 
         ws = wb[sheet_name]
+        link_col = None
+        link_header_row = 1
+        for mat in mats:
+            lookup_url = str(mat.get("lookup_url") or "").strip()
+            if not lookup_url:
+                continue
+            header_row = mat.get("header_row")
+            try:
+                link_header_row = int(header_row) if header_row is not None else 1
+            except (TypeError, ValueError):
+                link_header_row = 1
+            link_col = ws.max_column + 1
+            ws.cell(row=link_header_row, column=link_col, value="广材网链接")
+            break
+
         for mat in mats:
             row = mat.get("row")
             if row is None:
@@ -1620,6 +1795,14 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
 
             if spec_col is not None:
                 ws.cell(row=row, column=spec_col, value=final_spec)
+                row_written = True
+
+            lookup_url = str(mat.get("lookup_url") or "").strip()
+            if lookup_url and link_col is not None:
+                link_text = str(mat.get("lookup_label") or lookup_url).strip() or lookup_url
+                link_cell = ws.cell(row=row, column=link_col, value=link_text)
+                link_cell.hyperlink = lookup_url
+                link_cell.font = link_font
                 row_written = True
 
             price_col = mat.get("price_col")
@@ -1722,7 +1905,7 @@ def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
 
     from gldjc_price import (
         parse_material, search_material_web, filter_and_score,
-        get_median_price, determine_confidence,
+        get_top_price_result, build_match_label, determine_confidence,
         load_cache, save_cache, update_cache, check_cache,
     )
     import requests as _requests
@@ -1749,18 +1932,25 @@ def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
         name = mat.get("name", "").strip()
         unit = mat.get("unit", "").strip()
         spec = mat.get("spec", "").strip()
+        lookup_url = _build_gldjc_search_url(name=name, spec=spec)
 
         if not name:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空", "gldjc_url": None})
             continue
 
         # 先查缓存（未过期+非低置信度）
         cached = check_cache(cache, name, unit)
-        if cached and cached.get("price_with_tax") and cached.get("confidence") != "低":
+        if (
+            cached
+            and cached.get("price_with_tax")
+            and (cached.get("match_label") or cached.get("gldjc_url"))
+        ):
             results.append({
                 **mat,
                 "gldjc_price": cached["price_with_tax"],
                 "gldjc_source": f"广材网缓存({cached.get('confidence', '中')})",
+                "gldjc_url": str(cached.get("gldjc_url") or lookup_url).strip() or None,
+                "gldjc_label": str(cached.get("match_label") or cached.get("match_detail") or "查看").strip(),
             })
             continue
 
@@ -1769,18 +1959,21 @@ def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
             results.append({
                 **mat, "gldjc_price": None,
                 "gldjc_source": f"已达单次上限{MAX_BATCH}条，请分批查询",
+                "gldjc_url": lookup_url,
             })
             continue
 
         # 被封检测：之前发现异常则不再请求
         if blocked:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）", "gldjc_url": lookup_url})
             continue
 
         # 实时搜索广材网
         parsed = parse_material(name, spec)
         base_name = parsed["base_name"]
         specs = parsed["specs"]
+        link_keyword = parsed["search_keywords"][0] if parsed["search_keywords"] else (f"{base_name} {specs[0]}".strip() if specs else base_name)
+        lookup_url = _build_gldjc_search_url(name=name, spec=spec, keyword=link_keyword)
 
         all_results = []
         searched_keyword = ""
@@ -1829,8 +2022,9 @@ def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": 0,
                 "searched_keyword": searched_keyword,
+                "gldjc_url": lookup_url,
             })
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网未找到"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网未找到", "gldjc_url": lookup_url})
             continue
 
         # 打分过滤
@@ -1839,40 +2033,58 @@ def _do_gldjc_lookup(materials: list[dict], cookie: str) -> list[dict]:
         price_source = scored if scored else all_results
         if not scored:
             confidence = "低"
+        selected_result = get_top_price_result(price_source)
+        selected_price = None
+        if selected_result:
+            try:
+                selected_price = round(float(selected_result.get("market_price")), 2)
+            except (TypeError, ValueError):
+                selected_price = None
+        match_label = build_match_label(
+            selected_result,
+            fallback_text=f"{searched_keyword or name} | {confidence}",
+        )
+        match_status = "精确匹配" if confidence == "高" else ("模糊匹配" if confidence == "中" else "低置信度")
 
-        median = get_median_price(price_source)
-
-        if median and confidence in ("高", "中"):
+        if selected_price:
             update_cache(cache, name, unit, {
-                "price_with_tax": median,
-                "price_without_tax": round(median / 1.13, 2),
+                "price_with_tax": selected_price,
+                "price_without_tax": round(selected_price / 1.13, 2),
                 "confidence": confidence,
-                "match_status": "精确匹配" if confidence == "高" else "模糊匹配",
+                "match_status": match_status,
                 "source": "广材网",
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": len(price_source),
                 "searched_keyword": searched_keyword,
+                "gldjc_url": lookup_url,
+                "match_label": match_label,
             })
             results.append({
                 **mat,
-                "gldjc_price": median,
+                "gldjc_price": selected_price,
                 "gldjc_source": f"广材网市场价({confidence})",
+                "gldjc_url": lookup_url,
+                "gldjc_label": match_label,
             })
         else:
             update_cache(cache, name, unit, {
-                "price_with_tax": median,
-                "price_without_tax": round(median / 1.13, 2) if median else None,
+                "price_with_tax": selected_price,
+                "price_without_tax": round(selected_price / 1.13, 2) if selected_price else None,
                 "confidence": "低",
                 "match_status": "低置信度",
                 "source": "广材网",
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": len(price_source),
                 "searched_keyword": searched_keyword,
+                "gldjc_url": lookup_url,
+                "match_label": match_label,
             })
             results.append({
                 **mat,
                 "gldjc_price": None,
                 "gldjc_source": "广材网低置信度",
+                "gldjc_url": lookup_url,
+                "gldjc_label": match_label,
             })
 
         # 每10条保存一次缓存（防中途中断丢数据）
