@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,102 @@ from app.models.user import User
 from app.text_utils import normalize_client_filename, repair_mojibake_text
 
 router = APIRouter()
+
+_SKIP_FEEDBACK_SHEETS = {"待审核", "统计汇总"}
+
+
+def _normalize_feedback_text(value) -> str:
+    text = repair_mojibake_text(str(value or "")) or ""
+    return re.sub(r"\s+", "", text).strip().lower()
+
+
+def _normalize_feedback_sheet_name(value) -> str:
+    text = _normalize_feedback_text(value)
+    if not text:
+        return ""
+    text = re.sub(r"[()（）\[\]【】+\-_/\\:：,，.。]", "", text)
+    text = text.replace("含分部小计", "")
+    return text
+
+
+def _normalize_feedback_quantity(value) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _normalize_feedback_text(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _row_signature(row: dict) -> tuple[str, str, str, str]:
+    return (
+        _normalize_feedback_text(row.get("code")),
+        _normalize_feedback_text(row.get("name")),
+        _normalize_feedback_text(row.get("unit")),
+        _normalize_feedback_quantity(row.get("quantity")),
+    )
+
+
+def _sheet_names_compatible(source_sheets: list[str], feedback_sheets: list[str]) -> bool:
+    if not source_sheets or not feedback_sheets:
+        return False
+    source_norm = [_normalize_feedback_sheet_name(name) for name in source_sheets if name]
+    feedback_norm = [_normalize_feedback_sheet_name(name) for name in feedback_sheets if name]
+    if not source_norm or not feedback_norm:
+        return False
+    for left in source_norm:
+        for right in feedback_norm:
+            if left == right or left in right or right in left:
+                return True
+    return False
+
+
+def _validate_feedback_alignment(
+    *,
+    source_rows: list[dict],
+    source_sheets: list[str],
+    feedback_rows: list[dict],
+    feedback_sheets: list[str],
+) -> None:
+    if not source_rows:
+        raise ValueError("原任务未识别到有效清单项，无法核对反馈文件")
+    if not feedback_rows:
+        raise ValueError("反馈文件中未识别到清单项，请上传该任务导出的结果表并在其基础上修改")
+
+    source_sheet_ok = _sheet_names_compatible(source_sheets, feedback_sheets)
+    sample_size = min(8, len(source_rows), len(feedback_rows))
+    sequential_matches = 0
+    for idx in range(sample_size):
+        if _row_signature(source_rows[idx]) == _row_signature(feedback_rows[idx]):
+            sequential_matches += 1
+
+    source_sample = {_row_signature(row) for row in source_rows[:8]}
+    feedback_sample = {_row_signature(row) for row in feedback_rows[:20]}
+    overlap_matches = len(source_sample & feedback_sample)
+
+    threshold = max(2, sample_size // 2 + sample_size % 2)
+    if source_sheet_ok and (sequential_matches >= threshold or overlap_matches >= threshold):
+        return
+
+    source_preview = " / ".join(
+        f"{row.get('code') or ''} {row.get('name') or ''}".strip()
+        for row in source_rows[:3]
+    )
+    feedback_preview = " / ".join(
+        f"{row.get('code') or ''} {row.get('name') or ''}".strip()
+        for row in feedback_rows[:3]
+    )
+    raise ValueError(
+        "反馈文件与原任务清单不一致。"
+        f"原表页: {', '.join(source_sheets) or '无'}；"
+        f"反馈表页: {', '.join(feedback_sheets) or '无'}；"
+        f"原任务前几项: {source_preview or '无'}；"
+        f"反馈前几项: {feedback_preview or '无'}。"
+        "请上传该任务导出的结果表并在其基础上修改后再上传。"
+    )
 
 
 async def _commit_feedback_upload(
@@ -60,6 +157,82 @@ async def _commit_feedback_stats(
 
 def _can_retry_feedback_upload(task: Task) -> bool:
     return bool((task.feedback_stats or {}).get("status") == "learn_failed")
+
+
+def _load_task_source_rows(task: Task) -> tuple[list[dict], list[str]]:
+    from src.bill_reader import BillReader
+
+    source_path = Path(str(getattr(task, "file_path", "") or ""))
+    if not source_path.exists():
+        raise ValueError("原任务原始清单文件不存在，无法核对反馈文件")
+
+    items = BillReader().read_file(str(source_path), sheet_name=getattr(task, "sheet", None))
+    rows = [
+        {
+            "sheet_name": item.get("sheet_name") or "",
+            "code": item.get("code") or "",
+            "name": item.get("name") or "",
+            "unit": item.get("unit") or "",
+            "quantity": item.get("quantity"),
+        }
+        for item in items
+        if isinstance(item, dict) and (item.get("code") or item.get("name"))
+    ]
+
+    sheet_names: list[str] = []
+    for row in rows:
+        sheet_name = repair_mojibake_text(row.get("sheet_name")) or str(row.get("sheet_name") or "")
+        if sheet_name and sheet_name not in sheet_names:
+            sheet_names.append(sheet_name)
+    return rows, sheet_names
+
+
+def _load_feedback_rows(feedback_path: str) -> tuple[list[dict], list[str]]:
+    import openpyxl
+
+    path = Path(feedback_path)
+    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    try:
+        rows: list[dict] = []
+        sheet_names: list[str] = []
+        for ws in wb.worksheets:
+            title = repair_mojibake_text(ws.title) or ws.title or ""
+            if title in _SKIP_FEEDBACK_SHEETS:
+                continue
+            if title not in sheet_names:
+                sheet_names.append(title)
+            for row in ws.iter_rows(min_row=1, values_only=True):
+                cells = list(row) if row else []
+                first_cell = str(cells[0]).strip() if len(cells) > 0 and cells[0] is not None else ""
+                code_cell = str(cells[1]).strip() if len(cells) > 1 and cells[1] is not None else ""
+                name_cell = str(cells[2]).strip() if len(cells) > 2 and cells[2] is not None else ""
+                unit_cell = str(cells[4]).strip() if len(cells) > 4 and cells[4] is not None else ""
+                quantity_cell = cells[5] if len(cells) > 5 else None
+                if not (first_cell.isdigit() and name_cell):
+                    continue
+                rows.append(
+                    {
+                        "sheet_name": title,
+                        "code": code_cell,
+                        "name": name_cell,
+                        "unit": unit_cell,
+                        "quantity": quantity_cell,
+                    }
+                )
+        return rows, sheet_names
+    finally:
+        wb.close()
+
+
+def _validate_feedback_file_matches_task(task: Task, feedback_path: str) -> None:
+    source_rows, source_sheets = _load_task_source_rows(task)
+    feedback_rows, feedback_sheets = _load_feedback_rows(feedback_path)
+    _validate_feedback_alignment(
+        source_rows=source_rows,
+        source_sheets=source_sheets,
+        feedback_rows=feedback_rows,
+        feedback_sheets=feedback_sheets,
+    )
 
 
 def _learn_feedback_records(
@@ -196,6 +369,12 @@ async def upload_feedback(
         )
 
     logger.info(f"反馈 Excel 已保存: {save_path} ({size} bytes)")
+
+    try:
+        await asyncio.to_thread(_validate_feedback_file_matches_task, task, str(save_path))
+    except ValueError as exc:
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
 
     await _commit_feedback_upload(
         db,
