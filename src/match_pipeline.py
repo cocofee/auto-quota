@@ -13,6 +13,8 @@
 """
 
 import re
+import threading
+import time
 from contextlib import nullcontext
 
 from loguru import logger
@@ -1782,35 +1784,51 @@ def _carry_ranking_snapshot(target: dict, source: dict, *, changed_by: str = "")
 # ============================================================
 
 _RULE_INJECTION_VALIDATOR: ParamValidator | None = None
+_RULE_INJECTION_VALIDATOR_LOCK = threading.Lock()
 _PRICE_VALIDATOR = None
-_PRICE_VALIDATOR_LOAD_ATTEMPTED = False
+_PRICE_VALIDATOR_LOCK = threading.Lock()
+_PRICE_VALIDATOR_LAST_FAILURE_AT: float | None = None
+_PRICE_VALIDATOR_RETRY_INTERVAL_SECONDS = 30.0
 
 
 def _get_rule_injection_validator() -> ParamValidator:
     global _RULE_INJECTION_VALIDATOR
-    if _RULE_INJECTION_VALIDATOR is None:
-        _RULE_INJECTION_VALIDATOR = ParamValidator()
+    if _RULE_INJECTION_VALIDATOR is not None:
+        return _RULE_INJECTION_VALIDATOR
+    with _RULE_INJECTION_VALIDATOR_LOCK:
+        if _RULE_INJECTION_VALIDATOR is None:
+            _RULE_INJECTION_VALIDATOR = ParamValidator()
     return _RULE_INJECTION_VALIDATOR
 
 
 def _get_price_validator():
-    global _PRICE_VALIDATOR, _PRICE_VALIDATOR_LOAD_ATTEMPTED
+    global _PRICE_VALIDATOR, _PRICE_VALIDATOR_LAST_FAILURE_AT
     if _PRICE_VALIDATOR is not None:
         return _PRICE_VALIDATOR
-    if _PRICE_VALIDATOR_LOAD_ATTEMPTED:
-        return None
     if not bool(getattr(config, "QUOTA_MATCH_PRICE_VALIDATION_ENABLED", False)):
-        _PRICE_VALIDATOR_LOAD_ATTEMPTED = True
         return None
-    _PRICE_VALIDATOR_LOAD_ATTEMPTED = True
-    try:
-        from src.price_reference_db import PriceReferenceDB
-        from src.price_validator import PriceValidator
 
-        _PRICE_VALIDATOR = PriceValidator(PriceReferenceDB())
-    except Exception as exc:
-        logger.warning(f"price validator unavailable, skip price validation: {exc}")
-        _PRICE_VALIDATOR = None
+    with _PRICE_VALIDATOR_LOCK:
+        if _PRICE_VALIDATOR is not None:
+            return _PRICE_VALIDATOR
+
+        if (
+            _PRICE_VALIDATOR_LAST_FAILURE_AT is not None
+            and time.monotonic() - _PRICE_VALIDATOR_LAST_FAILURE_AT < _PRICE_VALIDATOR_RETRY_INTERVAL_SECONDS
+        ):
+            return None
+
+        try:
+            from src.price_reference_db import PriceReferenceDB
+            from src.price_validator import PriceValidator
+
+            _PRICE_VALIDATOR = PriceValidator(PriceReferenceDB())
+            _PRICE_VALIDATOR_LAST_FAILURE_AT = None
+        except Exception as exc:
+            _PRICE_VALIDATOR_LAST_FAILURE_AT = time.monotonic()
+            logger.warning(f"price validator unavailable, skip price validation: {exc}")
+            _PRICE_VALIDATOR = None
+
     return _PRICE_VALIDATOR
 
 
