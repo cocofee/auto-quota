@@ -49,6 +49,47 @@ def test_search_material_web_extracts_detail_url():
     assert results[0]["detail_url"] == "https://www.gldjc.com/info/123.html"
 
 
+def test_build_approximate_price_candidates_rejects_wrong_fitting():
+    gldjc_price = importlib.import_module("gldjc_price")
+
+    candidates = gldjc_price.build_approximate_price_candidates(
+        [
+            {
+                "spec": "品种 : TY三通 | 接口形式 : W1型 | 公称直径DN(mm) : 20",
+                "brand": "新兴",
+                "unit": "个",
+                "market_price": 327.22,
+            }
+        ],
+        target_unit="个",
+        request_name="室外塑料给水管热熔管件",
+        request_spec="De16",
+    )
+
+    assert candidates == []
+
+
+def test_build_approximate_price_candidates_accepts_close_pipe_match():
+    gldjc_price = importlib.import_module("gldjc_price")
+
+    candidates = gldjc_price.build_approximate_price_candidates(
+        [
+            {
+                "spec": "PE给水管 De16 PN1.6MPa",
+                "brand": "品牌A",
+                "unit": "m",
+                "market_price": 2.83,
+            }
+        ],
+        target_unit="m",
+        request_name="室外塑料给水管",
+        request_spec="De16",
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["market_price"] == 2.83
+
+
 def test_remote_lookup_does_not_use_gldjc_market_cache(monkeypatch):
     server = _load_local_match_server(monkeypatch)
 
@@ -214,7 +255,7 @@ def test_remote_gldjc_lookup_converts_ton_price_to_meter(monkeypatch):
     assert "由t换算" in row["gldjc_label"]
 
 
-def test_remote_gldjc_lookup_falls_back_to_approximate_price(monkeypatch):
+def test_remote_gldjc_lookup_leaves_price_blank_for_wrong_fitting(monkeypatch):
     server = _load_local_match_server(monkeypatch)
     gldjc_price = importlib.import_module("gldjc_price")
 
@@ -260,10 +301,10 @@ def test_remote_gldjc_lookup_falls_back_to_approximate_price(monkeypatch):
     result = server.material_price_gldjc_lookup(req, x_api_key=server.API_KEY)
 
     row = result["results"][0]
-    assert row["gldjc_price"] == 41.61
-    assert row["gldjc_source"] == "广材网近似价(江西)"
-    assert row["gldjc_url"] is not None
-    assert row["gldjc_label"].startswith("近似价 | ")
+    assert row["gldjc_price"] is None
+    assert row["gldjc_source"] == "未查到"
+    assert row["gldjc_url"] is None
+    assert row["gldjc_label"] is None
 
 
 def test_remote_lookup_passes_city_and_period_to_db(monkeypatch):
