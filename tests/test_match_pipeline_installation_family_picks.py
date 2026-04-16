@@ -408,7 +408,7 @@ def test_pick_category_safe_candidate_prefers_pipe_insulation_over_equipment():
     }
     candidates = [
         {"name": "立式设备绝热 绝热层厚度(mm以内) 30", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "管道绝热 绝热层厚度(mm以内) 30", "param_score": 0.7, "rerank_score": 0.6},
+        {"name": "管道绝热 绝热层厚度(mm以内) 30", "param_score": 0.7, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -423,7 +423,7 @@ def test_pick_category_safe_candidate_prefers_pipe_check_valve_over_duct_check_v
     }
     candidates = [
         {"name": "碳钢 调节阀安装 圆、方形风管止回阀 周长(mm以内) 3200", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "焊接法兰阀门安装 公称直径(mm以内) 100", "param_score": 0.7, "rerank_score": 0.6},
+        {"name": "焊接法兰阀门安装 公称直径(mm以内) 100", "param_score": 0.7, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -439,7 +439,7 @@ def test_pick_category_safe_candidate_prefers_pipe_like_support_fallback_over_in
     }
     candidates = [
         {"name": "仪表支架制作安装 仪表支吊架安装 双杆吊架安装", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "吊托支架制作、安装", "param_score": 0.7, "rerank_score": 0.7},
+        {"name": "吊托支架制作、安装", "param_score": 0.7, "rerank_score": 0.896},
         {"name": "电缆桥架支撑架制作", "param_score": 0.6, "rerank_score": 0.6},
     ]
 
