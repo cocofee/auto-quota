@@ -1488,11 +1488,13 @@ class HybridSearcher:
             r"\d+(\.\d+)?\s*(mm2|mm²|kva|kv|kw|a|m)",
             r"[A-Za-z]{1,8}[-_/]*\d+([*×xX/]\d+)*",
         ]
-        hits = 0
+        regex_hits = 0
         for p in patterns:
             if re.search(p, text, flags=re.IGNORECASE):
-                hits += 1
-        hits = HybridSearcher._count_spec_signals(text)
+                regex_hits += 1
+        # Preserve regex detection as a local fallback instead of letting
+        # routed signal counting silently overwrite it.
+        hits = max(regex_hits, HybridSearcher._count_spec_signals(text))
         chinese_len = len(re.findall(r"[\u4e00-\u9fff]", text))
         return hits >= 2 or (hits >= 1 and chinese_len <= 20)
 
@@ -2120,7 +2122,8 @@ class HybridSearcher:
             bm25_rank = None
             vector_rank = None
             rrf_score = 0.0
-            base_result = None
+            bm25_base_result = None
+            vector_base_result = None
             bm25_score = None
             vector_score = None
 
@@ -2131,8 +2134,7 @@ class HybridSearcher:
                     if bm25_rank is None or rank < bm25_rank:
                         bm25_rank = rank
                         bm25_score = result.get("bm25_score", 0)
-                    if base_result is None:
-                        base_result = result
+                        bm25_base_result = result
 
             for run_weight, rank_map in vector_rank_maps:
                 if db_id in rank_map:
@@ -2141,8 +2143,12 @@ class HybridSearcher:
                     if vector_rank is None or rank < vector_rank:
                         vector_rank = rank
                         vector_score = result.get("vector_score", 0)
-                    # 优先以向量结果作为基础，信息通常更完整
-                    base_result = result
+                        # Prefer the best-ranked vector variant as the base result.
+                        vector_base_result = result
+
+            # Prefer vector metadata when available, but only from the best-ranked
+            # variant on that retrieval path to avoid cross-variant field mixing.
+            base_result = vector_base_result or bm25_base_result
 
             if base_result is None:
                 continue

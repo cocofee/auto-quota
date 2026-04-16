@@ -30,3 +30,13 @@ def test_semantic_query_biases_toward_vector():
 
     assert vector_weight > bm25_weight
     assert reason == "semantic_heavy"
+
+
+def test_is_spec_heavy_text_keeps_regex_fallback_when_router_signal_misses(monkeypatch):
+    monkeypatch.setattr(
+        HybridSearcher,
+        "_count_spec_signals",
+        staticmethod(lambda text: 0),
+    )
+
+    assert HybridSearcher._is_spec_heavy_text("WDZN-BYJ 3x4+2x2.5 配线")
