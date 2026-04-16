@@ -27,6 +27,7 @@ import { getErrorMessage } from '../../utils/error';
 import { useAuthStore } from '../../stores/auth';
 
 const { Dragger } = Upload;
+const GLDJC_BATCH_SIZE = 30;
 
 // ============================================================
 // 数据类型
@@ -37,6 +38,7 @@ interface RawRow {
   type: 'section' | 'bill' | 'quota' | 'material';
   row: number;
   sheet: string;
+  header_row?: number;
   code?: string;
   name: string;
   name_col?: number | null;
@@ -45,12 +47,24 @@ interface RawRow {
   desc?: string;       // 清单行的项目特征描述
   spec?: string;
   suggested_spec?: string;
+  normalized_name?: string;
+  normalized_spec?: string;
+  critical_spec_text?: string;
+  normalized_query_text?: string;
+  object_type?: string;
+  family?: string;
+  normalization_confidence?: string;
+  connection_hint?: string;
+  material_hint?: string;
+  desc_type_hint?: string;
   unit?: string;
   qty?: number | null;
   existing_price?: number | null;
   price_col?: number | null;
   lookup_price?: number | null;
   lookup_source?: string | null;
+  lookup_url?: string | null;
+  lookup_label?: string | null;
 }
 
 // 前端展示行
@@ -81,8 +95,16 @@ interface MaterialDisplayRow {
   _sectionKey: string;
   edited_name: string;
   edited_spec: string;
+  normalized_name: string;
+  normalized_spec: string;
+  critical_spec_text: string;
+  object_type: string;
+  family: string;
+  normalization_confidence: string;
   lookup_price: number | null;
   lookup_source: string | null;
+  lookup_url: string | null;
+  lookup_label: string | null;
   user_price: number | null;
 }
 
@@ -107,10 +129,18 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         _rowKey: `${r.sheet}-${r.row}`,
         _raw: r,
         _sectionKey: '',
-        edited_name: r.suggested_name || r.name,
-        edited_spec: r.suggested_spec ?? (r.spec || ''),
+        edited_name: r.normalized_name || r.suggested_name || r.name,
+        edited_spec: r.normalized_spec ?? r.suggested_spec ?? (r.spec || ''),
+        normalized_name: r.normalized_name || r.suggested_name || r.name,
+        normalized_spec: r.normalized_spec ?? r.suggested_spec ?? (r.spec || ''),
+        critical_spec_text: r.critical_spec_text || '',
+        object_type: r.object_type || '',
+        family: r.family || '',
+        normalization_confidence: r.normalization_confidence || '',
         lookup_price: r.lookup_price ?? null,
         lookup_source: r.lookup_source ?? null,
+        lookup_url: r.lookup_url ?? null,
+        lookup_label: r.lookup_label ?? null,
         user_price: null,
       });
     }
@@ -130,9 +160,19 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
     } else if (r.type === 'material') {
       rows.push({
         _rowType: 'material', _rowKey: key, _raw: r, _sectionKey: currentSectionKey,
-        edited_name: r.suggested_name || r.name,
-        edited_spec: r.suggested_spec ?? (r.spec || ''),
-        lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null, user_price: null,
+        edited_name: r.normalized_name || r.suggested_name || r.name,
+        edited_spec: r.normalized_spec ?? r.suggested_spec ?? (r.spec || ''),
+        normalized_name: r.normalized_name || r.suggested_name || r.name,
+        normalized_spec: r.normalized_spec ?? r.suggested_spec ?? (r.spec || ''),
+        critical_spec_text: r.critical_spec_text || '',
+        object_type: r.object_type || '',
+        family: r.family || '',
+        normalization_confidence: r.normalization_confidence || '',
+        lookup_price: r.lookup_price ?? null,
+        lookup_source: r.lookup_source ?? null,
+        lookup_url: r.lookup_url ?? null,
+        lookup_label: r.lookup_label ?? null,
+        user_price: null,
       });
     }
   }
@@ -173,6 +213,47 @@ function priceSourceTag(source: string | null): React.ReactNode {
   return <Tag style={{ fontSize: 11, margin: 0, lineHeight: '16px', padding: '0 4px' }}>{source.slice(0, 4)}</Tag>;
 }
 
+function formatLookupSummary(row: MaterialDisplayRow): string {
+  if (row.lookup_label?.trim()) return row.lookup_label.trim();
+  if (row.lookup_price == null && !row.lookup_source) return '';
+
+  const materialText = [row.edited_name.trim(), row.edited_spec.trim()].filter(Boolean).join(' ');
+  const parts = [
+    row.lookup_source?.trim() || '',
+    materialText,
+    row._raw.unit?.trim() || '',
+    row.lookup_price != null ? row.lookup_price.toFixed(2) : '',
+  ].filter(Boolean);
+
+  return parts.join(' | ');
+}
+
+function buildExportLookupLabel(row: MaterialDisplayRow, finalPrice: number | null): string | null {
+  const isManualOverride = row.user_price != null;
+  if (isManualOverride) return null;
+  if (finalPrice == null) return row.lookup_label?.trim() || null;
+
+  const parts = [
+    row.lookup_source?.trim() || '',
+    [row.edited_name.trim(), row.edited_spec.trim()].filter(Boolean).join(' '),
+    row._raw.unit?.trim() || '',
+    finalPrice.toFixed(2),
+  ].filter(Boolean);
+
+  const text = parts.join(' | ').trim();
+  return text || null;
+}
+
+function formatNormalizationSummary(row: MaterialDisplayRow): string {
+  const parts = [
+    [row.normalized_name.trim(), row.normalized_spec.trim()].filter(Boolean).join(' '),
+    row.critical_spec_text.trim(),
+    row.object_type.trim(),
+    row.normalization_confidence.trim(),
+  ].filter(Boolean);
+  return parts.join(' | ');
+}
+
 // ============================================================
 // 页面组件
 // ============================================================
@@ -207,8 +288,8 @@ export default function MaterialPrice() {
   const [selectedCity, setSelectedCity] = useState<string>('');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
 
-  // 价格类型：all=不限, info=信息价, market=市场价
-  const [priceType, setPriceType] = useState<string>('all');
+  // 普通查价固定走信息价。
+  const [priceType] = useState<string>('info');
 
   // 查价状态
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -221,6 +302,15 @@ export default function MaterialPrice() {
   const [gldjcCookie, setGldjcCookie] = useState(() => localStorage.getItem('gldjc_cookie') || '');
   const [gldjcLoading, setGldjcLoading] = useState(false);
   const [gldjcProgress, setGldjcProgress] = useState('');
+  const [gldjcVerifyLoading, setGldjcVerifyLoading] = useState(false);
+  const [gldjcVerifyResult, setGldjcVerifyResult] = useState<null | {
+    ok: boolean;
+    status: string;
+    message: string;
+    keyword?: string;
+    scope?: string;
+    url?: string;
+  }>(null);
 
   // 分部折叠状态
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -326,6 +416,9 @@ export default function MaterialPrice() {
           name: m.edited_name.trim() || m._raw.name,
           spec: m.edited_spec.trim(),
           unit: m._raw.unit || '',
+          object_type: m.object_type || '',
+          family: m.family || '',
+          critical_spec_text: m.critical_spec_text || '',
         })),
         province: selectedProvince,
         city: selectedCity,
@@ -339,7 +432,13 @@ export default function MaterialPrice() {
           if (row._rowType === 'material') {
             const r = results[matIdx] || {};
             matIdx++;
-            return { ...row, lookup_price: r.lookup_price ?? null, lookup_source: r.lookup_source ?? null };
+            return {
+              ...row,
+              lookup_price: r.lookup_price ?? null,
+              lookup_source: r.lookup_source ?? null,
+              lookup_url: r.lookup_url ?? null,
+              lookup_label: r.lookup_label ?? null,
+            };
           }
           return row;
         });
@@ -408,16 +507,22 @@ export default function MaterialPrice() {
           const originalSpec = m._raw.spec || '';
           const nameChanged = finalName !== m._raw.name;
           const specChanged = finalSpec !== originalSpec;
-          if (finalPrice == null && !nameChanged && !specChanged) return null;
+          const isManualOverride = m.user_price != null;
+          const lookupUrl = isManualOverride ? '' : (m.lookup_url?.trim() || '');
+          if (finalPrice == null && !nameChanged && !specChanged && !lookupUrl) return null;
           return {
             row: m._raw.row,
             sheet: m._raw.sheet,
+            header_row: m._raw.header_row,
             name_col: m._raw.name_col,
             final_name: finalName,
             spec_col: m._raw.spec_col,
             final_spec: finalSpec,
             price_col: m._raw.price_col,
             final_price: finalPrice,
+            lookup_url: lookupUrl || null,
+            lookup_label: buildExportLookupLabel(m, finalPrice),
+            critical_spec_text: m.critical_spec_text || '',
           };
         }).filter(Boolean);
       try {
@@ -434,7 +539,7 @@ export default function MaterialPrice() {
         a.download = filename;
         a.click();
         window.URL.revokeObjectURL(url);
-        message.success(`导出成功，已写入 ${exportMaterials.length} 个主材价格`);
+        message.success(`导出成功，已写回 ${exportMaterials.length} 条主材结果`);
       } catch (err) {
         message.error(getErrorMessage(err, '导出失败'));
       }
@@ -455,47 +560,98 @@ export default function MaterialPrice() {
       message.warning('请先输入广材网Cookie');
       return;
     }
-    // 单次上限30条（和后端一致）
-    const batch = unfound.slice(0, 30);
+    // 单次请求上限30条，前端会自动拆批连续查询
+    const batchSize = GLDJC_BATCH_SIZE;
+    const batches: MaterialDisplayRow[][] = [];
+    for (let i = 0; i < unfound.length; i += batchSize) {
+      batches.push(unfound.slice(i, i + batchSize));
+    }
     // 保存cookie到localStorage
     localStorage.setItem('gldjc_cookie', gldjcCookie);
     setGldjcModalOpen(false);
     setGldjcLoading(true);
-    setGldjcProgress(`正在查询 ${batch.length} 条，每条5~8秒...`);
+    setGldjcProgress(`正在查询 1/${batches.length} 批，共${unfound.length} 条...`);
     try {
-      const res = await api.post('/tools/material-price/gldjc-lookup', {
-        materials: batch.map(m => ({
-          name: m.edited_name.trim() || m._raw.name,
-          spec: m.edited_spec.trim(),
-          unit: m._raw.unit || '',
-          _rowKey: m._rowKey,  // 传回rowKey方便前端定位
-        })),
-        cookie: gldjcCookie,
-      }, { timeout: 600000 });  // 10分钟超时（大批量查价）
-      const results: Array<{ _rowKey?: string; gldjc_price?: number | null; gldjc_source?: string }> = res.data.results || [];
-      // 用rowKey更新对应行的价格
-      const priceMap = new Map<string, { price: number; source: string }>();
-      for (const r of results) {
-        if (r._rowKey && r.gldjc_price != null) {
-          priceMap.set(r._rowKey, { price: r.gldjc_price, source: r.gldjc_source || '广材网市场价' });
-        }
-      }
-      setDisplayRows(prev =>
-        prev.map(row => {
-          if (row._rowType === 'material' && priceMap.has(row._rowKey)) {
-            const { price, source } = priceMap.get(row._rowKey)!;
-            return { ...row, lookup_price: price, lookup_source: source };
+      let totalFound = 0;
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const currentBatch = batches[batchIndex];
+        setGldjcProgress(`正在查询 ${batchIndex + 1}/${batches.length} 批，当前 ${currentBatch.length} 条，共${unfound.length} 条...`);
+        const batchRes = await api.post('/tools/material-price/gldjc-lookup', {
+          materials: currentBatch.map(m => ({
+            name: m.edited_name.trim() || m._raw.name,
+            spec: m.edited_spec.trim(),
+            unit: m._raw.unit || '',
+            _rowKey: m._rowKey,
+          })),
+          cookie: gldjcCookie,
+          province: selectedProvince,
+          city: selectedCity,
+          period_end: selectedPeriod,
+        }, { timeout: 600000 });
+        const batchResults: Array<{ _rowKey?: string; gldjc_price?: number | null; gldjc_source?: string; gldjc_url?: string | null; gldjc_label?: string | null }> = batchRes.data.results || [];
+        const batchResultMap = new Map<string, { price: number | null; source: string | null; url: string | null; label: string | null }>();
+        for (const item of batchResults) {
+          if (item._rowKey) {
+            batchResultMap.set(item._rowKey, {
+              price: item.gldjc_price ?? null,
+              source: item.gldjc_source || null,
+              url: item.gldjc_url ?? null,
+              label: item.gldjc_label ?? null,
+            });
           }
-          return row;
-        })
-      );
-      const found = res.data.found || 0;
-      message.success(`广材网查价完成：${found}/${unfound.length}条查到价格`);
+        }
+        setDisplayRows(prev =>
+          prev.map(row => {
+            if (row._rowType === 'material' && batchResultMap.has(row._rowKey)) {
+              const { price, source, url, label } = batchResultMap.get(row._rowKey)!;
+              return { ...row, lookup_price: price, lookup_source: source, lookup_url: url, lookup_label: label };
+            }
+            return row;
+          })
+        );
+        totalFound += batchRes.data.found || 0;
+      }
+      message.success(`广材网查价完成：${totalFound}/${unfound.length}条查到价格`);
+      return;
     } catch (err) {
       message.error(getErrorMessage(err, '广材网查价失败'));
     } finally {
       setGldjcLoading(false);
       setGldjcProgress('');
+    }
+  };
+
+  const handleGldjcCookieVerify = async () => {
+    if (!gldjcCookie.trim()) {
+      message.warning('请先输入广材网Cookie');
+      return;
+    }
+    localStorage.setItem('gldjc_cookie', gldjcCookie);
+    setGldjcVerifyLoading(true);
+    setGldjcVerifyResult(null);
+    try {
+      const res = await api.post('/tools/material-price/gldjc-cookie-verify', {
+        cookie: gldjcCookie,
+        province: selectedProvince,
+        city: selectedCity,
+      }, { timeout: 60000 });
+      setGldjcVerifyResult(res.data || null);
+      if (res.data?.status === 'valid') {
+        message.success('Cookie验证通过');
+      } else if (res.data?.status === 'invalid') {
+        message.error(res.data?.message || 'Cookie已失效');
+      } else {
+        message.warning(res.data?.message || 'Cookie疑似受限');
+      }
+    } catch (err) {
+      setGldjcVerifyResult({
+        ok: false,
+        status: 'error',
+        message: getErrorMessage(err, 'Cookie验证失败'),
+      });
+      message.error(getErrorMessage(err, 'Cookie验证失败'));
+    } finally {
+      setGldjcVerifyLoading(false);
     }
   };
 
@@ -635,6 +791,48 @@ export default function MaterialPrice() {
         );
       },
     },
+    {
+      title: '标准化结果',
+      key: 'normalized_summary',
+      width: 260,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+      render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType !== 'material') return null;
+        const summary = formatNormalizationSummary(row);
+        if (!summary) return <span style={{ color: '#ccc' }}>—</span>;
+
+        return (
+          <Tooltip title={summary}>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: '#334155',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {[row.normalized_name, row.normalized_spec].filter(Boolean).join(' ')}
+              </div>
+              {row.critical_spec_text ? (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: '#64748b',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  关键规格: {row.critical_spec_text}
+                </div>
+              ) : null}
+            </div>
+          </Tooltip>
+        );
+      },
+    },
     // 项目特征（只在清单行显示）
     {
       title: '项目特征',
@@ -695,6 +893,45 @@ export default function MaterialPrice() {
           );
         }
         return <span style={{ color: '#ccc' }}>—</span>;
+      },
+    },
+    {
+      title: '核对信息',
+      key: 'lookup_detail',
+      width: 320,
+      onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
+      render: (_: unknown, row: DisplayRow) => {
+        if (row._rowType !== 'material') return null;
+        const summary = formatLookupSummary(row);
+        if (!row.lookup_url && !summary) return <span style={{ color: '#ccc' }}>—</span>;
+
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            {row.lookup_url ? (
+              <Tooltip title={summary || row.lookup_url}>
+                <a href={row.lookup_url} target="_blank" rel="noreferrer" style={{ flex: '0 0 auto' }}>
+                  查看
+                </a>
+              </Tooltip>
+            ) : null}
+            {summary ? (
+              <Tooltip title={summary}>
+                <span
+                  style={{
+                    color: '#666',
+                    fontSize: 12,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    minWidth: 0,
+                  }}
+                >
+                  {summary}
+                </span>
+              </Tooltip>
+            ) : null}
+          </div>
+        );
       },
     },
     // 手填价格
@@ -847,15 +1084,12 @@ export default function MaterialPrice() {
             options={periods.map(p => ({ value: p.end, label: p.label }))}
           />
 
-          {/* 价格类型 */}
+          {/* 普通查价固定为信息价 */}
           <Radio.Group
             value={priceType}
-            onChange={e => setPriceType(e.target.value)}
             optionType="button" buttonStyle="solid" size="middle"
           >
-            <Radio.Button value="all">不限</Radio.Button>
             <Radio.Button value="info">信息价</Radio.Button>
-            <Radio.Button value="market">市场价</Radio.Button>
           </Radio.Group>
 
           {/* 查价按钮 */}
@@ -1029,11 +1263,15 @@ export default function MaterialPrice() {
       >
         <div style={{ marginBottom: 12 }}>
           <p style={{ marginBottom: 8, color: '#666' }}>
-            将对 <b>{Math.min(emptyCount, 30)}</b> 条未查到价格的材料实时搜索广材网。
-            {emptyCount > 30 && <span style={{ color: '#d97706' }}>（单次上限30条，共{emptyCount}条待查，可分批操作）</span>}
+            将对 <b>{emptyCount}</b> 条未查到价格的材料实时搜索广材网。
+            {emptyCount > GLDJC_BATCH_SIZE && (
+              <span style={{ color: '#d97706' }}>
+                （系统会自动分成{Math.ceil(emptyCount / GLDJC_BATCH_SIZE)}批连续查询，每批最多{GLDJC_BATCH_SIZE}条，无需手工分批）
+              </span>
+            )}
           </p>
           <p style={{ marginBottom: 4, fontSize: 12, color: '#999' }}>
-            每条间隔5~8秒（随机模拟人工），预计 <b>{Math.ceil(Math.min(emptyCount, 30) * 6.5 / 60)}</b> 分钟。
+            每条间隔5~8秒（随机模拟人工，避免过快触发限制），预计 <b>{Math.ceil(emptyCount * 6.5 / 60)}</b> 分钟。
             查到的价格自动缓存，下次不再重复查。
           </p>
           <p style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
@@ -1045,6 +1283,25 @@ export default function MaterialPrice() {
             value={gldjcCookie}
             onChange={e => setGldjcCookie(e.target.value)}
           />
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Button loading={gldjcVerifyLoading} onClick={handleGldjcCookieVerify}>
+              验证 Cookie
+            </Button>
+            {gldjcVerifyResult && (
+              <span style={{ fontSize: 12, color: gldjcVerifyResult.status === 'valid' ? '#15803d' : gldjcVerifyResult.status === 'invalid' ? '#dc2626' : '#d97706' }}>
+                {gldjcVerifyResult.status === 'valid' ? '有效' : gldjcVerifyResult.status === 'invalid' ? '失效' : '受限'}：
+                {gldjcVerifyResult.message}
+                {gldjcVerifyResult.scope ? ` | ${gldjcVerifyResult.scope}` : ''}
+                {gldjcVerifyResult.keyword ? ` | 测试材料: ${gldjcVerifyResult.keyword}` : ''}
+                {gldjcVerifyResult.url ? (
+                  <>
+                    {' | '}
+                    <a href={gldjcVerifyResult.url} target="_blank" rel="noreferrer">查看链接</a>
+                  </>
+                ) : null}
+              </span>
+            )}
+          </div>
         </div>
       </Modal>
     </div>

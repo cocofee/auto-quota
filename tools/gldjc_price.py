@@ -23,11 +23,12 @@ import argparse
 import hashlib
 from pathlib import Path
 from datetime import datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import requests
 import openpyxl
 from openpyxl.styles import PatternFill, Font
+from lxml import html as lxml_html
 
 # ========== 配置 ==========
 
@@ -94,6 +95,36 @@ UNIT_COMPAT_GROUPS = [
     {"副", "付", "对"},                        # 成对计量
 ]
 
+_UNIT_ALIASES = {
+    "吨": "t",
+    "t": "t",
+    "kg": "kg",
+    "公斤": "kg",
+    "千克": "kg",
+    "米": "m",
+    "m": "m",
+    "平方米": "m2",
+    "㎡": "m2",
+    "m²": "m2",
+    "立方米": "m3",
+    "m³": "m3",
+    "m3": "m3",
+    "百米": "百米",
+    "千米": "km",
+    "km": "km",
+    "条公里": "km",
+}
+
+# 镀锌钢管理论重量表（GB/T 3091，每米公斤数）
+_PIPE_WEIGHT_PER_METER = {
+    "DN15": 1.357, "DN20": 1.764, "DN25": 2.554,
+    "DN32": 3.306, "DN40": 3.84,  "DN50": 5.33,
+    "DN65": 7.09,  "DN70": 7.09,  "DN80": 8.47,
+    "DN100": 12.15, "DN125": 15.04, "DN150": 19.26,
+    "DN200": 30.97, "DN250": 42.56, "DN300": 54.90,
+}
+_GALVANIZED_PIPE_FACTOR = 1.06
+
 # 名称中的修饰词（拆解时去掉，只保留核心品名）
 NOISE_PREFIXES = [
     # 镀锌/防腐类
@@ -105,11 +136,9 @@ NOISE_PREFIXES = [
     "国标", "非标", "加厚", "普通", "优质", "标准", "一级", "二级",
     "A型", "B型", "C型", "I型", "II型",
     # 工艺类
-    "焊接", "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔",
-    "涂塑", "衬塑", "内衬",
+    "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔",
     # 其他修饰
     "柔性", "刚性", "单壁", "双壁", "薄壁", "厚壁",
-    "无缝", "有缝", "直缝",
     "阻燃", "耐火", "低烟无卤",
 ]
 
@@ -367,6 +396,277 @@ def is_non_material(name: str) -> bool:
     return False
 
 
+def _extract_dn(text: str) -> str | None:
+    if not text:
+        return None
+    matched = re.search(r"[Dd][Nn]\s*(\d+)", text)
+    if matched:
+        return f"DN{matched.group(1)}"
+    return None
+
+
+def _normalize_unit(unit: str) -> str:
+    raw = str(unit or "").strip().lower()
+    if not raw:
+        return ""
+    raw = (
+        raw.replace("／", "/")
+        .replace(" ", "")
+        .replace("（", "(")
+        .replace("）", ")")
+    )
+    return _UNIT_ALIASES.get(raw, raw)
+
+
+def _is_supported_steel_pipe(name: str, spec: str) -> bool:
+    text = f"{name} {spec}"
+    return (
+        "钢管" in text
+        or _extract_dn(text) is not None
+        or re.search(r'(?:Φ|φ)?\s*\d+(?:\.\d+)?\s*[×xX\*]\s*\d+(?:\.\d+)?', text) is not None
+    )
+
+
+def _extract_pipe_outer_diameter_and_thickness(name: str, spec: str) -> tuple[float | None, float | None]:
+    text = f"{name} {spec}"
+    matched = re.search(
+        r'(?:外径\s*)?(?:Φ|φ)?\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[×xX\*]\s*(\d+(?:\.\d+)?)',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if matched:
+        return float(matched.group(1)), float(matched.group(2))
+    return None, None
+
+
+def _estimate_pipe_weight_kg_per_m(name: str, spec: str) -> float | None:
+    text = f"{name} {spec}"
+    if not _is_supported_steel_pipe(name, spec):
+        return None
+
+    outer_diameter, thickness = _extract_pipe_outer_diameter_and_thickness(name, spec)
+    factor = _GALVANIZED_PIPE_FACTOR if "镀锌" in text else 1.0
+
+    if outer_diameter and thickness and outer_diameter > thickness > 0:
+        base_weight = (outer_diameter - thickness) * thickness * 0.02466
+        return round(base_weight * factor, 4)
+
+    dn = _extract_dn(text)
+    if dn:
+        if "无缝" in text:
+            return None
+        return _PIPE_WEIGHT_PER_METER.get(dn)
+
+    return None
+
+
+def _convert_ton_to_meter(ton_price: float, name: str, spec: str) -> float | None:
+    weight = _estimate_pipe_weight_kg_per_m(name, spec)
+    if not weight:
+        return None
+    return round(ton_price * weight / 1000, 2)
+
+
+def _try_convert_price(price: float, from_unit: str, to_unit: str,
+                       name: str = "", spec: str = "") -> float | None:
+    fu = _normalize_unit(from_unit)
+    tu = _normalize_unit(to_unit)
+
+    if not fu or not tu:
+        return None
+    if fu == tu:
+        return round(price, 2)
+    if fu == "t" and tu == "m":
+        return _convert_ton_to_meter(price, name, spec)
+    if fu == "t" and tu == "kg":
+        return round(price / 1000, 2)
+    if fu == "百米" and tu == "m":
+        return round(price / 100, 2)
+    if fu == "km" and tu == "m":
+        return round(price / 1000, 2)
+    return None
+
+
+def _normalize_material_hint(text: str) -> str:
+    return re.sub(r"[\s\-\(\)（）/]", "", str(text or "")).lower()
+
+
+def _detect_material_family(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+
+    fitting_tokens = ("管件", "弯头", "三通", "四通", "异径", "大小头", "法兰", "接头", "补偿器", "伸缩节", "止流器", "短管")
+    valve_tokens = ("阀", "过滤器", "减压")
+    device_tokens = ("地漏", "洁具", "器具", "洗脸盆", "蹲便器", "坐便器")
+
+    if any(token in value for token in fitting_tokens):
+        return "fitting"
+    if any(token in value for token in valve_tokens):
+        return "valve"
+    if any(token in value for token in device_tokens):
+        return "device"
+    if any(token in value for token in ("管", "管材")):
+        return "pipe"
+    return ""
+
+
+def _looks_like_installation_item_name(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    install_tokens = ("安装", "敷设", "铺设", "组装", "调试", "管线", "组成")
+    if not any(token in value for token in install_tokens):
+        return False
+    if _detect_material_family(value):
+        return False
+    if _extract_material_tokens(value):
+        return False
+    return True
+
+
+def _extract_material_tokens(text: str) -> set[str]:
+    raw = str(text or "").upper()
+    token_groups = (
+        "HDPE",
+        "PE-RT",
+        "PE",
+        "PPR",
+        "PP-R",
+        "UPVC",
+        "U-PVC",
+        "PVC",
+        "CPVC",
+        "PVC-U",
+        "PVC-C",
+        "球墨铸铁",
+        "铸铁",
+        "不锈钢",
+        "镀锌",
+        "衬塑",
+        "涂塑",
+        "钢塑复合",
+        "PSP",
+        "无缝",
+        "焊接",
+        "钢塑复合",
+        "铜",
+        "黄铜",
+    )
+    found: set[str] = set()
+    for token in token_groups:
+        if token in raw:
+            normalized = token.replace("-", "")
+            if normalized == "PPR":
+                found.add("PPR")
+            elif normalized in {"UPVC", "PVCU"}:
+                found.add("UPVC")
+            elif normalized in {"CPVC", "PVCC"}:
+                found.add("CPVC")
+            else:
+                found.add(normalized)
+    return found
+
+
+def _infer_pipe_material_signature(name: str) -> str:
+    text = str(name or "").strip().upper()
+    if not text:
+        return ""
+    if any(token in text for token in ("衬塑钢管", "钢塑复合", "PSP", "涂塑钢管", "涂覆钢管", "涂覆碳钢管", "衬塑", "涂塑", "内衬塑")):
+        return "composite_steel_pipe"
+    if "不锈钢" in text and "管" in text:
+        return "stainless_steel_pipe"
+    if "镀锌" in text:
+        return "galvanized_steel_pipe"
+    if "无缝" in text:
+        return "seamless_steel_pipe"
+    if "焊接" in text:
+        return "welded_steel_pipe"
+    if "钢管" in text:
+        return "steel_pipe"
+    return ""
+
+
+def _pipe_signature_compatible(request_name: str, candidate_name: str) -> bool | None:
+    request_signature = _infer_pipe_material_signature(request_name)
+    candidate_signature = _infer_pipe_material_signature(candidate_name)
+    if not request_signature or not candidate_signature:
+        return None
+    if request_signature == candidate_signature:
+        return True
+    if request_signature == "steel_pipe" and candidate_signature in {"galvanized_steel_pipe", "welded_steel_pipe", "seamless_steel_pipe"}:
+        return True
+    if candidate_signature == "steel_pipe" and request_signature in {"galvanized_steel_pipe", "welded_steel_pipe", "seamless_steel_pipe"}:
+        return True
+    return False
+
+
+def _has_conflicting_scene(target_text: str, candidate_text: str) -> bool:
+    target = str(target_text or "")
+    candidate = str(candidate_text or "")
+    scene_pairs = (
+        ("给水", "排水"),
+        ("排水", "给水"),
+        ("雨水", "给水"),
+        ("给水", "雨水"),
+    )
+    return any(left in target and right in candidate for left, right in scene_pairs)
+
+
+def _has_accessory_tokens(candidate_text: str) -> bool:
+    candidate = str(candidate_text or "")
+    accessory_tokens = (
+        "管卡", "卡箍", "吊卡", "支架", "托架", "套管", "胶水",
+        "螺栓", "螺母", "垫片", "抱箍", "管夹", "码钉",
+    )
+    return any(token in candidate for token in accessory_tokens)
+
+
+def _is_compatible_result(base_name: str, result_spec: str) -> bool:
+    candidate = str(result_spec or "").strip()
+    if not candidate:
+        return False
+
+    if _looks_like_installation_item_name(base_name):
+        return False
+
+    target_family = _detect_material_family(base_name)
+    candidate_family = _detect_material_family(candidate)
+    if target_family == "pipe" and candidate_family != "pipe":
+        return False
+    if target_family == "fitting" and candidate_family != "fitting":
+        return False
+    if target_family == "valve" and candidate_family != "valve":
+        return False
+    if target_family == "device" and candidate_family != "device":
+        return False
+    if target_family and candidate_family and target_family != candidate_family:
+        return False
+
+    if target_family == "pipe" and "管件" in candidate:
+        return False
+    if target_family in {"pipe", "fitting"} and _has_accessory_tokens(candidate):
+        return False
+
+    if "热熔管件" in str(base_name or "") and any(token in candidate for token in ("法兰管卡", "U型管卡", "管卡")):
+        return False
+
+    pipe_signature_ok = _pipe_signature_compatible(base_name, candidate)
+    if pipe_signature_ok is False:
+        return False
+
+    target_tokens = _extract_material_tokens(base_name)
+    candidate_tokens = _extract_material_tokens(candidate)
+    if target_tokens and candidate_tokens and not (target_tokens & candidate_tokens):
+        if pipe_signature_ok is not True:
+            return False
+
+    if _has_conflicting_scene(base_name, candidate):
+        return False
+
+    return True
+
+
 # ========== 结果过滤与打分 ==========
 
 def check_unit_compatible(unit_a: str, unit_b: str) -> bool:
@@ -384,19 +684,104 @@ def check_unit_compatible(unit_a: str, unit_b: str) -> bool:
     return False
 
 
+def _normalize_spec_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").upper())
+
+
+def _spec_contains_exact(result_spec: str, target_spec: str) -> bool:
+    result_text = _normalize_spec_text(result_spec)
+    target_text = _normalize_spec_text(target_spec)
+    if not result_text or not target_text:
+        return False
+
+    pattern = re.escape(target_text)
+    if target_text[0].isdigit():
+        pattern = rf"(?<!\d){pattern}"
+    if target_text[-1].isdigit():
+        pattern = rf"{pattern}(?!\d)"
+
+    if re.search(pattern, result_text) is not None:
+        return True
+
+    # DN/De 同口径兼容，并支持“DN(mm):50 / 公称直径DN(mm):50”这类广材网写法
+    matched = re.fullmatch(r"(DN|DE)(\d+(?:\.\d+)?)", target_text)
+    if matched:
+        prefix = matched.group(1)
+        size = matched.group(2)
+        alt_prefix = "DE" if prefix == "DN" else "DN"
+        loose_patterns = [
+            rf"{prefix}\D*{re.escape(size)}(?!\d)",
+            rf"{alt_prefix}\D*{re.escape(size)}(?!\d)",
+        ]
+        for loose_pattern in loose_patterns:
+            if re.search(loose_pattern, result_text) is not None:
+                return True
+
+    return False
+
+
 def check_spec_match(result_spec: str, target_specs: list[str]) -> bool:
     """检查搜索结果的规格描述是否包含目标规格"""
     if not target_specs:
         return True  # 没有目标规格，不做过滤
-    spec_text = result_spec.upper()
     for ts in target_specs:
-        if ts.upper() in spec_text:
+        if _spec_contains_exact(result_spec, ts):
             return True
     return False
 
 
+def _extract_spec_numeric_values(text: str) -> list[float]:
+    source = _normalize_spec_text(text)
+    values: list[float] = []
+    for matched in re.findall(r"(?:DN|DE|Φ|φ)\D*(\d+(?:\.\d+)?)", source, flags=re.IGNORECASE):
+        try:
+            values.append(float(matched))
+        except ValueError:
+            continue
+    return values
+
+
+def _score_relaxed_spec_match(result_spec: str, target_specs: list[str]) -> float | None:
+    if not target_specs:
+        return 0
+
+    result_values = _extract_spec_numeric_values(result_spec)
+    if not result_values:
+        return 0
+
+    best_score: float | None = None
+    for target_spec in target_specs:
+        target_values = _extract_spec_numeric_values(target_spec)
+        if not target_values:
+            continue
+        for target_value in target_values:
+            for result_value in result_values:
+                diff = abs(result_value - target_value)
+                ratio = diff / max(target_value, 1.0)
+                candidate_score: float | None
+                if diff == 0:
+                    candidate_score = 25
+                elif diff <= 1 or ratio <= 0.03:
+                    candidate_score = 15
+                elif diff <= 3 or ratio <= 0.08:
+                    candidate_score = 8
+                elif diff <= 5 and ratio <= 0.15:
+                    candidate_score = 3
+                else:
+                    candidate_score = None
+
+                if candidate_score is not None and (best_score is None or candidate_score > best_score):
+                    best_score = candidate_score
+
+    if best_score is not None:
+        return best_score
+    return None
+
+
 def filter_and_score(results: list[dict], target_unit: str,
-                     target_specs: list[str], base_name: str) -> list[dict]:
+                     target_specs: list[str], base_name: str,
+                     request_name: str = "", request_spec: str = "",
+                     allow_relaxed_spec: bool = False) -> list[dict]:
     """
     对广材网搜索结果进行过滤和打分
 
@@ -409,37 +794,163 @@ def filter_and_score(results: list[dict], target_unit: str,
     返回：打分后的结果列表（只保留>=40分的），按分数降序
     """
     scored = []
-    for r in results:
+    request_name = request_name or base_name
+    request_spec = request_spec or " ".join(target_specs)
+
+    for original_result in results:
+        r = dict(original_result)
         score = 10  # 基础分
+        unit_match = False
+        result_spec = r.get("spec", "")
+        spec_match = check_spec_match(result_spec, target_specs)
+        raw_unit = str(r.get("unit") or "").strip()
+        raw_price = r.get("market_price")
+
+        try:
+            numeric_price = round(float(raw_price), 2)
+        except (TypeError, ValueError):
+            continue
+
+        if not _is_compatible_result(base_name, result_spec):
+            continue
 
         # 单位打分（最关键）
-        if target_unit and r.get("unit"):
-            if check_unit_compatible(target_unit, r["unit"]):
+        if target_unit and raw_unit:
+            if check_unit_compatible(target_unit, raw_unit):
                 score += 40
-            elif r["unit"].strip():
-                # 单位明确不兼容，扣分
-                score -= 20
+                unit_match = True
+                r["_raw_unit"] = raw_unit
+                r["_raw_market_price"] = numeric_price
+            else:
+                converted_price = _try_convert_price(
+                    numeric_price,
+                    raw_unit,
+                    target_unit,
+                    request_name,
+                    request_spec,
+                )
+                if converted_price is None:
+                    # 单位明确不兼容，直接淘汰，避免数量级错误
+                    continue
+                score += 35
+                unit_match = True
+                r["_raw_unit"] = raw_unit
+                r["_raw_market_price"] = numeric_price
+                r["_converted_from_unit"] = raw_unit
+                r["unit"] = target_unit
+                r["market_price"] = converted_price
 
-        # 规格打分
-        if check_spec_match(r.get("spec", ""), target_specs):
+        # 有明确目标规格时，优先精确命中；拿不到时允许退到可解释的近似口径
+        if target_specs and not spec_match:
+            if not allow_relaxed_spec:
+                continue
+            relaxed_spec_score = _score_relaxed_spec_match(result_spec, target_specs)
+            if relaxed_spec_score is None:
+                continue
+            score += relaxed_spec_score
+            r["_relaxed_spec_match"] = True
+        elif spec_match:
             score += 30
 
         # 品名关键词打分
         if base_name and len(base_name) >= 2:
-            spec_text = r.get("spec", "")
+            spec_text = result_spec
             # 检查品名关键字是否出现在结果的规格描述中
             name_chars = set(base_name)
             match_count = sum(1 for c in name_chars if c in spec_text)
             if match_count >= len(name_chars) * 0.5:
                 score += 20
 
+        target_material_tokens = _extract_material_tokens(base_name)
+        result_material_tokens = _extract_material_tokens(result_spec)
+        if target_material_tokens and result_material_tokens and (target_material_tokens & result_material_tokens):
+            score += 20
+
+        if "_raw_market_price" not in r:
+            r["_raw_market_price"] = numeric_price
+        if "_raw_unit" not in r:
+            r["_raw_unit"] = raw_unit
+        if r.get("market_price") in (None, ""):
+            r["market_price"] = numeric_price
+
         r["score"] = score
+        r["_unit_match"] = unit_match
+        r["_spec_match"] = spec_match
         scored.append(r)
 
     # 只保留>=40分的（至少单位要兼容）
     filtered = [r for r in scored if r["score"] >= 40]
     filtered.sort(key=lambda x: x["score"], reverse=True)
     return filtered
+
+
+def build_approximate_price_candidates(results: list[dict], target_unit: str,
+                                       request_name: str = "", request_spec: str = "") -> list[dict]:
+    """Build looser fallback candidates when strict filtering returns nothing.
+
+    This path still requires unit compatibility or a supported unit conversion,
+    but it no longer rejects results only because the material subtype/spec text
+    is imperfect. The caller should mark the output as an approximate price.
+    """
+    candidates = []
+
+    for original_result in results:
+        r = dict(original_result)
+        raw_unit = str(r.get("unit") or "").strip()
+        raw_price = r.get("market_price")
+        result_spec = str(r.get("spec") or "").strip()
+
+        try:
+            numeric_price = round(float(raw_price), 2)
+        except (TypeError, ValueError):
+            continue
+
+        score = 10.0
+        if target_unit:
+            if raw_unit and check_unit_compatible(target_unit, raw_unit):
+                score += 40
+                r["_unit_match"] = True
+            else:
+                converted_price = _try_convert_price(
+                    numeric_price,
+                    raw_unit,
+                    target_unit,
+                    request_name,
+                    request_spec,
+                )
+                if converted_price is None:
+                    continue
+                score += 35
+                r["_unit_match"] = True
+                r["_converted_from_unit"] = raw_unit
+                r["unit"] = target_unit
+                r["market_price"] = converted_price
+
+        if "_raw_market_price" not in r:
+            r["_raw_market_price"] = numeric_price
+        if "_raw_unit" not in r:
+            r["_raw_unit"] = raw_unit
+        if r.get("market_price") in (None, ""):
+            r["market_price"] = numeric_price
+
+        if request_spec and _spec_contains_exact(result_spec, request_spec):
+            score += 20
+
+        request_tokens = _extract_material_tokens(request_name)
+        result_tokens = _extract_material_tokens(result_spec)
+        shared_tokens = request_tokens & result_tokens
+        if shared_tokens:
+            score += min(20, 8 * len(shared_tokens))
+
+        if _detect_material_family(request_name) and _detect_material_family(request_name) == _detect_material_family(result_spec):
+            score += 10
+
+        r["score"] = score
+        r["_approximate_match"] = True
+        candidates.append(r)
+
+    candidates.sort(key=lambda item: float(item.get("score", 0) or 0), reverse=True)
+    return candidates
 
 
 def determine_confidence(scored_results: list[dict], target_unit: str,
@@ -456,6 +967,11 @@ def determine_confidence(scored_results: list[dict], target_unit: str,
 
     top = scored_results[0]
     count = len(scored_results)
+
+    if target_unit and not top.get("_unit_match"):
+        return "低"
+    if target_specs and not top.get("_spec_match"):
+        return "低"
 
     if top["score"] >= 80 and count >= 3:
         return "高"
@@ -490,16 +1006,117 @@ def search_material_web(session: requests.Session, keyword: str,
     if "请登录" in html or "login" in html.lower() and "token" not in html.lower():
         print("\n  [警告] Cookie可能已失效，建议更换Cookie后重试")
 
-    # 从SSR渲染的HTML中提取结构化数据
+    def _clean_text(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    def _extract_first_text(node, xpath_expr: str) -> str:
+        texts = node.xpath(xpath_expr)
+        for text in texts:
+            cleaned = _clean_text(text if isinstance(text, str) else getattr(text, "text_content", lambda: "")())
+            if cleaned:
+                return cleaned
+        return ""
+
+    def _extract_unit(card_node) -> str:
+        unit_texts = card_node.xpath(
+            ".//*[contains(@class,'colspan-cell') and contains(@class,'pure-text')]//text()"
+        )
+        for raw in unit_texts:
+            candidate = _clean_text(raw)
+            if not candidate:
+                continue
+            if re.fullmatch(r"[A-Za-z㎡m³m²tT个件台套只块组卷盘付副对根条支桶瓶千克公斤吨百米千米公里]+", candidate):
+                return candidate
+        return ""
+
+    def _extract_detail_url(card_node) -> str:
+        raw_candidates = card_node.xpath(
+            "self::a[@href]/@href"
+            " | .//a[@href]/@href"
+            " | self::*[@data-href]/@data-href"
+            " | .//*[@data-href]/@data-href"
+            " | self::*[@data-url]/@data-url"
+            " | .//*[@data-url]/@data-url"
+        )
+        normalized: list[str] = []
+        for raw in raw_candidates:
+            href = _clean_text(raw)
+            if not href or href in {"#", "/"}:
+                continue
+            if href.lower().startswith("javascript:"):
+                continue
+            normalized.append(urljoin("https://www.gldjc.com/", href))
+
+        if not normalized:
+            return ""
+
+        for href in normalized:
+            if any(flag in href for flag in ("/info/", "/xunjia/", "/scj/", "detail")):
+                return href
+        return normalized[0]
+
+    def _find_price_card(price_node):
+        current = price_node
+        best = None
+        while current is not None:
+            try:
+                has_spec = bool(current.xpath(".//*[contains(@class,'m-detail-content')]"))
+            except Exception:
+                has_spec = False
+            if has_spec:
+                best = current
+                has_price_block = bool(current.xpath(".//*[contains(@class,'price-block')]"))
+                if has_price_block:
+                    return current
+            current = current.getparent()
+        return best
+
+    try:
+        tree = lxml_html.fromstring(html)
+        price_nodes = tree.xpath("//span[contains(@class,'change-point')]")
+        results = []
+        for price_node in price_nodes:
+            price_text = _clean_text(price_node.text_content())
+            if not re.fullmatch(r"\d+(?:\.\d+)?", price_text):
+                continue
+            try:
+                price_val = float(price_text)
+            except ValueError:
+                continue
+
+            card = _find_price_card(price_node)
+            if card is None:
+                continue
+
+            spec = _extract_first_text(card, ".//*[contains(@class,'m-detail-content')]//text()")
+            if not spec:
+                continue
+
+            brand = _extract_first_text(card, ".//*[contains(@class,'brand-box')]//text()")
+            unit = _extract_unit(card)
+            detail_url = _extract_detail_url(card)
+
+            results.append({
+                "keyword": keyword,
+                "spec": spec,
+                "brand": brand,
+                "unit": unit,
+                "market_price": price_val,
+                "detail_url": detail_url,
+            })
+
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # 兜底：保留旧正则逻辑，防止页面结构轻微变化时完全失效
     specs_raw = re.findall(r'class="m-detail-content"[^>]*>(.*?)</div>', html, re.DOTALL)
     specs = [re.sub(r'<[^>]+>', '', s).strip() for s in specs_raw]
-
     brands = re.findall(r'class="brand-box"[^>]*>\s*(\S+)\s*<div', html, re.DOTALL)
-
     price_matches = re.findall(
         r'class="price-block"[^>]*><span[^>]*class="change-point"[^>]*>([0-9.]+)</span>', html
     )
-
     units = re.findall(r'class="colspan-cell width-56 pure-text"[^>]*>\s*([^<\s]+)\s*</div>', html)
 
     results = []
@@ -508,32 +1125,149 @@ def search_material_web(session: requests.Session, keyword: str,
             price_val = float(price_matches[i])
         except ValueError:
             continue
-
-        item = {
+        results.append({
             "keyword": keyword,
             "spec": specs[i] if i < len(specs) else "",
             "brand": brands[i] if i < len(brands) else "",
             "unit": units[i] if i < len(units) else "",
             "market_price": price_val,
-        }
-        results.append(item)
+        })
 
     return results
 
 
 def get_median_price(prices: list[dict], price_field: str = "market_price") -> float | None:
-    """取中档价格：去掉最高和最低，取中间值"""
+    """取真实中位价对应的数值，不做均值计算。"""
     valid_prices = [p[price_field] for p in prices if p.get(price_field)]
     if not valid_prices:
         return None
 
     valid_prices.sort()
+    return float(valid_prices[(len(valid_prices) - 1) // 2])
 
-    if len(valid_prices) <= 2:
-        return round(sum(valid_prices) / len(valid_prices), 2)
 
-    trimmed = valid_prices[1:-1]
-    return round(sum(trimmed) / len(trimmed), 2)
+def get_top_price_result(prices: list[dict], price_field: str = "market_price") -> dict | None:
+    """取排序后的首条结果，保证价格和搜索页可直接对应。"""
+    if not prices:
+        return None
+    top = prices[0]
+    if not top.get(price_field):
+        return None
+    return top
+
+
+def _build_price_clusters(prices: list[dict], price_field: str = "market_price") -> list[list[dict]]:
+    priced_items: list[tuple[float, dict]] = []
+    for item in prices:
+        raw_price = item.get(price_field)
+        if raw_price in (None, ""):
+            continue
+        try:
+            price_val = float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        priced_items.append((price_val, item))
+
+    if not priced_items:
+        return []
+
+    priced_items.sort(key=lambda pair: pair[0])
+    clusters: list[list[dict]] = []
+    current_cluster: list[dict] = [priced_items[0][1]]
+    current_prices: list[float] = [priced_items[0][0]]
+
+    for price_val, item in priced_items[1:]:
+        cluster_max = max(current_prices)
+        cluster_min = min(current_prices)
+        price_span_ratio = (price_val - cluster_max) / max(cluster_min, 1.0)
+        price_gap = price_val - cluster_max
+
+        if price_gap <= 5 or price_span_ratio <= 0.15:
+            current_cluster.append(item)
+            current_prices.append(price_val)
+            continue
+
+        clusters.append(current_cluster)
+        current_cluster = [item]
+        current_prices = [price_val]
+
+    clusters.append(current_cluster)
+    return clusters
+
+
+def get_representative_price_result(prices: list[dict], price_field: str = "market_price") -> dict | None:
+    """优先取直接报价中的低位密集合理簇，避免高价/换算价把结果带偏。"""
+    if not prices:
+        return None
+
+    direct_prices = [item for item in prices if not item.get("_converted_from_unit")]
+    pool = direct_prices or prices
+
+    clusters = _build_price_clusters(pool, price_field=price_field)
+    if not clusters:
+        return get_top_price_result(pool, price_field=price_field)
+
+    def _cluster_sort_key(cluster: list[dict]) -> tuple:
+        cluster_prices = []
+        cluster_score = 0.0
+        for item in cluster:
+            try:
+                cluster_prices.append(float(item.get(price_field)))
+            except (TypeError, ValueError):
+                continue
+            cluster_score = max(cluster_score, float(item.get("score", 0) or 0))
+        min_price = min(cluster_prices) if cluster_prices else float("inf")
+        return (-len(cluster), -cluster_score, min_price)
+
+    best_cluster = sorted(clusters, key=_cluster_sort_key)[0]
+
+    best = None
+    best_key = None
+    for item in best_cluster:
+        raw_price = item.get(price_field)
+        if raw_price in (None, ""):
+            continue
+        try:
+            price_val = float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        key = (
+            price_val,
+            -float(item.get("score", 0) or 0),
+        )
+        if best_key is None or key < best_key:
+            best = item
+            best_key = key
+
+    return best or get_top_price_result(pool, price_field=price_field)
+
+
+def build_match_label(result: dict | None, fallback_text: str = "查看") -> str:
+    if not isinstance(result, dict):
+        return fallback_text
+
+    brand = str(result.get("brand") or "").strip()
+    spec = str(result.get("spec") or "").strip()
+    unit = str(result.get("unit") or "").strip()
+    price = result.get("market_price")
+
+    parts = []
+    if brand:
+        parts.append(brand)
+    if spec:
+        parts.append(spec[:40])
+    if unit:
+        if result.get("_converted_from_unit"):
+            parts.append(f"{unit}(由{result['_converted_from_unit']}换算)")
+        else:
+            parts.append(unit)
+    if price not in (None, ""):
+        try:
+            parts.append(f"{float(price):.2f}")
+        except (TypeError, ValueError):
+            pass
+
+    return " | ".join(parts) if parts else fallback_text
 
 
 def build_gldjc_url(keyword: str, province_code: str = "1") -> str:
@@ -562,12 +1296,103 @@ def save_cache(cache: dict):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def get_cache_key(name: str, unit: str) -> str:
-    """生成缓存key（材料名+单位）"""
-    return f"{name.strip()}|{unit.strip()}"
+_PROVINCE_AREA_CODES = {
+    "全国": "1",
+    "北京": "110000",
+    "天津": "120000",
+    "河北": "130000",
+    "山西": "140000",
+    "内蒙古": "150000",
+    "辽宁": "210000",
+    "吉林": "220000",
+    "黑龙江": "230000",
+    "上海": "310000",
+    "江苏": "320000",
+    "浙江": "330000",
+    "安徽": "340000",
+    "福建": "350000",
+    "江西": "360000",
+    "山东": "370000",
+    "河南": "410000",
+    "湖北": "420000",
+    "湖南": "430000",
+    "广东": "440000",
+    "广西": "450000",
+    "海南": "460000",
+    "重庆": "500000",
+    "四川": "510000",
+    "贵州": "520000",
+    "云南": "530000",
+    "西藏": "540000",
+    "陕西": "610000",
+    "甘肃": "620000",
+    "青海": "630000",
+    "宁夏": "640000",
+    "新疆": "650000",
+    "香港": "810000",
+    "澳门": "820000",
+    "台湾": "710000",
+}
 
 
-def check_cache(cache: dict, name: str, unit: str) -> dict | None:
+def _normalize_cache_spec(spec: str) -> str:
+    return re.sub(r"\s+", "", str(spec or "").strip()).upper()
+
+
+def _normalize_cache_region(region: str) -> str:
+    return re.sub(r"\s+", "", str(region or "").strip())
+
+
+def _normalize_region_name(name: str) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    replacements = (
+        "省", "市", "壮族自治区", "回族自治区", "维吾尔自治区",
+        "自治区", "特别行政区", "地区", "盟",
+    )
+    for token in replacements:
+        text = text.replace(token, "")
+    return text.strip()
+
+
+def resolve_gldjc_area_code(province: str = "", city: str = "") -> str:
+    normalized_province = _normalize_region_name(province)
+    if normalized_province in _PROVINCE_AREA_CODES:
+        return _PROVINCE_AREA_CODES[normalized_province]
+    return "1"
+
+
+def build_region_search_plans(search_keywords: list[str], province: str = "", city: str = "") -> list[dict]:
+    plans: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    province_code = resolve_gldjc_area_code(province=province, city="")
+    province_name = _normalize_region_name(province)
+
+    def _add(keyword: str, area_code: str, scope: str):
+        key = (keyword, area_code)
+        if not keyword or key in seen:
+            return
+        seen.add(key)
+        plans.append({"keyword": keyword, "area_code": area_code, "scope": scope})
+
+    if province_code != "1":
+        for kw in search_keywords:
+            _add(kw, province_code, province_name or "全国")
+
+    for kw in search_keywords:
+        _add(kw, "1", "全国")
+
+    return plans
+
+
+def get_cache_key(name: str, unit: str, spec: str = "", region: str = "") -> str:
+    """生成缓存key（材料名+规格+单位+地区）。"""
+    return f"{name.strip()}|{_normalize_cache_spec(spec)}|{unit.strip()}|{_normalize_cache_region(region)}"
+
+
+def check_cache(cache: dict, name: str, unit: str, spec: str = "", region: str = "") -> dict | None:
     """
     查缓存：有且未过期返回缓存数据，否则返回None
 
@@ -584,7 +1409,7 @@ def check_cache(cache: dict, name: str, unit: str) -> dict | None:
         }
     }
     """
-    key = get_cache_key(name, unit)
+    key = get_cache_key(name, unit, spec, region=region)
     if key not in cache:
         return None
 
@@ -604,9 +1429,9 @@ def check_cache(cache: dict, name: str, unit: str) -> dict | None:
     return entry
 
 
-def update_cache(cache: dict, name: str, unit: str, data: dict):
+def update_cache(cache: dict, name: str, unit: str, data: dict, spec: str = "", region: str = ""):
     """更新缓存"""
-    key = get_cache_key(name, unit)
+    key = get_cache_key(name, unit, spec, region=region)
     cache[key] = data
 
 
@@ -689,7 +1514,7 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
 
     # 创建session，注入cookie
     session = requests.Session()
-    for part in cookie_str.split("; "):
+    for part in re.split(r";\s*", cookie_str):
         if "=" in part:
             key, value = part.split("=", 1)
             session.cookies.set(key.strip(), value.strip())
@@ -740,7 +1565,11 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
 
         # 查缓存
         if use_cache:
-            cached = check_cache(cache, name, unit)
+            cached = (
+                check_cache(cache, name, unit, spec_col, region=province_code)
+                or check_cache(cache, name, unit, spec_col, region="全国")
+                or check_cache(cache, name, unit, spec_col)
+            )
             if cached:
                 price_tax = cached.get("price_with_tax")
                 price_notax = cached.get("price_without_tax")
@@ -818,20 +1647,26 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": 0,
                 "searched_keyword": searched_keyword,
-            })
+            }, spec=spec_col, region=province_code)
             time.sleep(delay + random.uniform(0, 1))
             continue
 
         # 过滤+打分
-        scored = filter_and_score(all_results, unit, specs, base_name)
+        scored = filter_and_score(all_results, unit, specs, base_name, request_name=name, request_spec=spec_col)
         confidence = determine_confidence(scored, unit, specs)
 
-        # 用过滤后的结果取价（如果过滤后没有合格的，用原始结果但降低置信度）
-        price_source = scored if scored else all_results
+        # 只允许使用通过过滤的结果取价；宁可留空，也不回填错误价格
+        price_source = scored
         if not scored:
             confidence = "低"
 
-        median = get_median_price(price_source)
+        selected_result = get_representative_price_result(price_source)
+        selected_price = None
+        if selected_result:
+            try:
+                selected_price = round(float(selected_result.get("market_price")), 2)
+            except (TypeError, ValueError):
+                selected_price = None
 
         # 生成匹配说明
         if scored:
@@ -849,8 +1684,8 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
         else:
             match_status = "低置信度"
 
-        # 高/中置信度填价，低置信度不填价只给链接
-        if confidence in ("高", "中") and median:
+        # 只要广材网抓到了可用价格就填，低置信度也回填，避免留空
+        if selected_price:
             tax_rate = 1.13  # 默认13%增值税
             # 如果Excel里有税率列，用Excel里的
             if "tax_rate" in col_map:
@@ -858,17 +1693,17 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
                 if tr and float(tr) > 0:
                     tax_rate = 1 + float(tr) / 100 if float(tr) > 1 else 1 + float(tr)
 
-            price_notax = round(median / tax_rate, 2)
-            ws.cell(row=row_idx, column=col_map["price_with_tax"], value=median)
+            price_notax = round(selected_price / tax_rate, 2)
+            ws.cell(row=row_idx, column=col_map["price_with_tax"], value=selected_price)
             ws.cell(row=row_idx, column=col_map["price_without_tax"], value=price_notax)
 
-            fill = FILL_GREEN if confidence == "高" else FILL_YELLOW
-            print(f"含税 {median} 元（{confidence}，{len(price_source)}条报价）")
+            fill = FILL_GREEN if confidence == "高" else (FILL_YELLOW if confidence == "中" else FILL_RED)
+            print(f"含税 {selected_price} 元（{confidence}，{len(price_source)}条报价）")
             stats["成功"] += 1
 
             # 更新缓存
             update_cache(cache, name, unit, {
-                "price_with_tax": median,
+                "price_with_tax": selected_price,
                 "price_without_tax": price_notax,
                 "confidence": confidence,
                 "match_status": match_status,
@@ -877,16 +1712,17 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
                 "result_count": len(price_source),
                 "match_detail": match_detail,
                 "searched_keyword": searched_keyword,
-            })
+                "match_label": build_match_label(selected_result),
+            }, spec=spec_col, region=province_code)
         else:
-            # 低置信度：不填价格，只给链接
+            # 完全没有价格才留空
             fill = FILL_RED
             print(f"低置信度，不填价（{match_detail}）")
             stats["需核对"] += 1
 
             update_cache(cache, name, unit, {
-                "price_with_tax": median,  # 存着但不写入Excel
-                "price_without_tax": round(median / 1.13, 2) if median else None,
+                "price_with_tax": selected_price,  # 存着但不写入Excel
+                "price_without_tax": round(selected_price / 1.13, 2) if selected_price else None,
                 "confidence": "低",
                 "match_status": match_status,
                 "source": "广材网",
@@ -894,7 +1730,8 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
                 "result_count": len(price_source),
                 "match_detail": match_detail,
                 "searched_keyword": searched_keyword,
-            })
+                "match_label": build_match_label(selected_result, fallback_text=match_detail),
+            }, spec=spec_col, region=province_code)
 
         # 写匹配状态和置信度
         ws.cell(row=row_idx, column=col_map["match_status"], value=match_status)

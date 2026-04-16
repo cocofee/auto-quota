@@ -1467,7 +1467,104 @@ class _MaterialLookupRequest(_BaseModel):
     province: str
     city: str = ""
     period_end: str = ""
-    price_type: str = "all"  # all=不限, info=信息价, market=市场价
+    price_type: str = "info"  # info=信息价, market=市场价；普通查价默认只查信息价
+
+
+def _build_gldjc_search_url(name: str = "", spec: str = "", keyword: str = "", province_code: str = "1") -> str:
+    from urllib.parse import quote
+
+    search_keyword = str(keyword or "").strip()
+    material_name = str(name or "").strip()
+    material_spec = str(spec or "").strip()
+
+    if not search_keyword:
+        if material_spec and material_spec not in material_name:
+            search_keyword = f"{material_name} {material_spec}".strip()
+        else:
+            search_keyword = material_name
+
+    if not search_keyword:
+        return ""
+
+    return f"https://www.gldjc.com/scj/so.html?keyword={quote(search_keyword, safe='')}&l={province_code}"
+
+
+def _load_material_price_cache() -> dict:
+    cache_path = Path(__file__).resolve().parent / "data" / "material_prices.json"
+    if not cache_path.exists():
+        return {}
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_lookup_label(
+    *,
+    name: str = "",
+    spec: str = "",
+    unit: str = "",
+    price: object = None,
+    source: str = "",
+    match_label: str = "",
+) -> str | None:
+    explicit_label = str(match_label or "").strip()
+    if explicit_label:
+        return explicit_label
+
+    material_text = " ".join(part for part in [str(name or "").strip(), str(spec or "").strip()] if part).strip()
+    parts: list[str] = []
+
+    if str(source or "").strip():
+        parts.append(str(source).strip())
+    if material_text:
+        parts.append(material_text)
+    if str(unit or "").strip():
+        parts.append(str(unit).strip())
+
+    try:
+        if price is not None and str(price).strip() != "":
+            parts.append(f"{float(price):.2f}")
+    except (TypeError, ValueError):
+        pass
+
+    return " | ".join(parts) if parts else None
+
+
+def _spec_contains_exact(result_spec: str, target_spec: str) -> bool:
+    result_text = re.sub(r"\s+", "", str(result_spec or "").upper())
+    target_text = re.sub(r"\s+", "", str(target_spec or "").upper())
+    if not result_text or not target_text:
+        return False
+
+    pattern = re.escape(target_text)
+    if target_text[0].isdigit():
+        pattern = rf"(?<!\d){pattern}"
+    if target_text[-1].isdigit():
+        pattern = rf"{pattern}(?!\d)"
+    return re.search(pattern, result_text) is not None
+
+
+def _is_usable_gldjc_cache_entry(spec: str, unit: str, cached: dict) -> bool:
+    if not isinstance(cached, dict):
+        return False
+    if not cached.get("price_with_tax"):
+        return False
+
+    matched_unit = str(cached.get("matched_unit") or "").strip()
+    if unit and matched_unit and matched_unit != unit:
+        return False
+
+    matched_spec = str(cached.get("matched_spec") or "").strip()
+    if spec:
+        if not matched_spec:
+            return False
+        if not _spec_contains_exact(matched_spec, spec):
+            return False
+
+    return True
 
 
 @app.post("/material-price/lookup")
@@ -1482,12 +1579,14 @@ def material_price_lookup(
     db = MaterialDB()
 
     province = req.get("province", "")
+    city = req.get("city", "")
+    period_end = req.get("period_end", "")
     materials = req.get("materials", [])
 
-    # 价格类型映射
+    # 普通查价默认只查信息价；不再走市场价缓存兜底。
     source_filter = ""
-    price_type = req.get("price_type", "all")
-    if price_type == "info":
+    price_type = req.get("price_type", "info")
+    if price_type in {"all", "info"}:
         source_filter = "government"
     elif price_type == "market":
         source_filter = "market"
@@ -1498,10 +1597,11 @@ def material_price_lookup(
         spec = mat.get("spec", "").strip()
         unit = mat.get("unit", "").strip()
         if not name:
-            results.append({**mat, "lookup_price": None, "lookup_source": "名称为空"})
+            results.append({**mat, "lookup_price": None, "lookup_source": "名称为空", "lookup_url": None, "lookup_label": None})
             continue
         price_info = db.search_price_by_name(
-            name, province=province, spec=spec, target_unit=unit,
+            name, province=province, city=city, period_end=period_end,
+            spec=spec, target_unit=unit,
             source_type=source_filter
         )
         if price_info:
@@ -1509,27 +1609,43 @@ def material_price_lookup(
                 **mat,
                 "lookup_price": price_info["price"],
                 "lookup_source": price_info.get("source", "价格库"),
+                "lookup_url": None,
+                "lookup_label": _build_lookup_label(
+                    name=name,
+                    spec=spec,
+                    unit=price_info.get("unit") or unit,
+                    price=price_info.get("price"),
+                    source=price_info.get("source", "价格库"),
+                ),
             })
-        else:
-            # 从名称中提取规格再查一次
-            m = _re.search(r'[Dd][Nn]\s*\d+|De\s*\d+|Φ\s*\d+|\d+mm', name)
-            if m:
-                extracted_spec = m.group(0).replace(" ", "")
-                short_name = name[:m.start()].strip()
-                if short_name:
-                    price_info2 = db.search_price_by_name(
-                        short_name, province=province,
-                        spec=extracted_spec, target_unit=unit,
-                        source_type=source_filter
-                    )
-                    if price_info2:
-                        results.append({
-                            **mat,
-                            "lookup_price": price_info2["price"],
-                            "lookup_source": price_info2.get("source", "价格库"),
-                        })
-                        continue
-            results.append({**mat, "lookup_price": None, "lookup_source": "未查到"})
+            continue
+        # 从名称中提取规格再查一次
+        m = _re.search(r'[Dd][Nn]\s*\d+|De\s*\d+|Φ\s*\d+|\d+mm', name)
+        if m:
+            extracted_spec = m.group(0).replace(" ", "")
+            short_name = name[:m.start()].strip()
+            if short_name:
+                price_info2 = db.search_price_by_name(
+                    short_name, province=province, city=city, period_end=period_end,
+                    spec=extracted_spec, target_unit=unit,
+                    source_type=source_filter
+                )
+                if price_info2:
+                    results.append({
+                        **mat,
+                        "lookup_price": price_info2["price"],
+                        "lookup_source": price_info2.get("source", "价格库"),
+                        "lookup_url": None,
+                        "lookup_label": _build_lookup_label(
+                            name=short_name,
+                            spec=extracted_spec,
+                            unit=price_info2.get("unit") or unit,
+                            price=price_info2.get("price"),
+                            source=price_info2.get("source", "价格库"),
+                        ),
+                    })
+                    continue
+        results.append({**mat, "lookup_price": None, "lookup_source": "未查到", "lookup_url": None, "lookup_label": None})
 
     found = sum(1 for r in results if r.get("lookup_price") is not None)
     return {
@@ -1589,6 +1705,136 @@ def material_price_contribute(
 class _GldjcLookupRequest(_BaseModel):
     materials: list[dict]
     cookie: str
+    province: str = ""
+    city: str = ""
+    period_end: str = ""
+
+
+class _GldjcCookieVerifyRequest(_BaseModel):
+    cookie: str
+    province: str = ""
+    city: str = ""
+
+
+def _build_gldjc_session(cookie: str):
+    import requests as _requests
+
+    session = _requests.Session()
+    for part in re.split(r";\s*", str(cookie or "").strip()):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            session.cookies.set(key.strip(), value.strip())
+    return session
+
+
+def _analyze_gldjc_verify_response(html: str, result_count: int) -> tuple[str, str]:
+    text = str(html or "")
+    lower = text.lower()
+    if "请登录" in text or "登录后" in text or ("login" in lower and "token" not in lower):
+        return "invalid", "Cookie已失效，请重新复制完整Cookie"
+    if any(flag in text for flag in ("访问过于频繁", "请求过于频繁", "安全验证", "行为验证", "验证码")):
+        return "limited", "广材网当前触发限制，请稍后重试或更换Cookie"
+    if result_count > 0:
+        return "valid", "Cookie有效"
+    return "limited", "未命中测试结果，疑似Cookie受限或页面异常"
+
+
+def _verify_gldjc_cookie(cookie: str, province: str = "", city: str = "") -> dict:
+    import sys
+    import requests as _requests
+
+    tools_dir = str(Path(__file__).resolve().parent / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+
+    from gldjc_price import SEARCH_URL, _get_headers, resolve_gldjc_area_code
+
+    verify_keyword = "焊接钢管 DN80"
+    session = _build_gldjc_session(cookie)
+
+    region_plans: list[tuple[str, str]] = []
+    province_code = resolve_gldjc_area_code(province=province, city="")
+    if province_code and province_code != "1":
+        region_plans.append((province or "省级", province_code))
+    region_plans.append(("全国", "1"))
+
+    seen_codes: set[str] = set()
+    checks: list[dict] = []
+
+    for scope_label, area_code in region_plans:
+        if area_code in seen_codes:
+            continue
+        seen_codes.add(area_code)
+        try:
+            resp = session.get(
+                SEARCH_URL,
+                params={"keyword": verify_keyword, "l": area_code},
+                headers=_get_headers(),
+                timeout=20,
+            )
+            resp.raise_for_status()
+        except _requests.RequestException as e:
+            return {
+                "ok": False,
+                "status": "limited",
+                "message": f"请求广材网失败: {e}",
+                "keyword": verify_keyword,
+                "scope": scope_label,
+                "area_code": area_code,
+                "url": _build_gldjc_search_url(keyword=verify_keyword, province_code=area_code),
+                "checks": checks,
+            }
+
+        html = resp.text or ""
+        result_count = len(re.findall(r'class="price-block"', html))
+        status, message = _analyze_gldjc_verify_response(html, result_count)
+        check = {
+            "scope": scope_label,
+            "area_code": area_code,
+            "result_count": result_count,
+            "status": status,
+            "url": _build_gldjc_search_url(keyword=verify_keyword, province_code=area_code),
+        }
+        checks.append(check)
+
+        if status == "valid":
+            return {
+                "ok": True,
+                "status": status,
+                "message": message,
+                "keyword": verify_keyword,
+                "scope": scope_label,
+                "area_code": area_code,
+                "url": check["url"],
+                "checks": checks,
+            }
+        if status == "invalid":
+            return {
+                "ok": False,
+                "status": status,
+                "message": message,
+                "keyword": verify_keyword,
+                "scope": scope_label,
+                "area_code": area_code,
+                "url": check["url"],
+                "checks": checks,
+            }
+
+    last_check = checks[-1] if checks else {
+        "scope": province or "全国",
+        "area_code": province_code or "1",
+        "url": _build_gldjc_search_url(keyword=verify_keyword, province_code=province_code or "1"),
+    }
+    return {
+        "ok": False,
+        "status": "limited",
+        "message": "未命中测试结果，疑似Cookie受限或页面异常",
+        "keyword": verify_keyword,
+        "scope": last_check["scope"],
+        "area_code": last_check["area_code"],
+        "url": last_check["url"],
+        "checks": checks,
+    }
 
 @app.post("/material-price/gldjc-lookup")
 def material_price_gldjc_lookup(
@@ -1600,6 +1846,8 @@ def material_price_gldjc_lookup(
 
     cookie = req.cookie.strip()
     materials = req.materials
+    province = req.province.strip()
+    city = req.city.strip()
     if not cookie:
         raise HTTPException(400, "请输入广材网Cookie")
     if not materials:
@@ -1615,15 +1863,16 @@ def material_price_gldjc_lookup(
 
     from gldjc_price import (
         parse_material, search_material_web, filter_and_score,
-        get_median_price, determine_confidence,
-        load_cache, save_cache, update_cache, check_cache,
+        get_representative_price_result, build_match_label, determine_confidence,
+        build_approximate_price_candidates,
+        load_cache, save_cache, update_cache, check_cache, build_region_search_plans,
     )
     import requests as _requests
     from datetime import datetime
 
     # 创建带Cookie的session
     session = _requests.Session()
-    for part in cookie.split("; "):
+    for part in re.split(r";\s*", cookie):
         if "=" in part:
             key, value = part.split("=", 1)
             session.cookies.set(key.strip(), value.strip())
@@ -1639,40 +1888,45 @@ def material_price_gldjc_lookup(
         name = mat.get("name", "").strip()
         unit = mat.get("unit", "").strip()
         spec = mat.get("spec", "").strip()
+        lookup_url = _build_gldjc_search_url(name=name, spec=spec)
 
         if not name:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "名称为空", "gldjc_url": None})
             continue
 
-        # 先查缓存
-        cached = check_cache(cache, name, unit)
-        if cached and cached.get("price_with_tax") and cached.get("confidence") != "低":
-            results.append({
-                **mat,
-                "gldjc_price": cached["price_with_tax"],
-                "gldjc_source": f"广材网缓存({cached.get('confidence', '中')})",
-            })
-            continue
+        # 实时查价默认绕过旧缓存，避免历史误匹配结果被重复复用
 
         if net_requests >= MAX_BATCH:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": f"已达单次上限{MAX_BATCH}条"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": f"已达单次上限{MAX_BATCH}条", "gldjc_url": lookup_url})
             continue
 
         if blocked:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）"})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）", "gldjc_url": lookup_url})
             continue
 
         # 实时搜索广材网
         parsed = parse_material(name, spec)
         base_name = parsed["base_name"]
         specs = parsed["specs"]
+        search_plans = build_region_search_plans(parsed["search_keywords"], province=province, city=city)
+        link_keyword = parsed["search_keywords"][0] if parsed["search_keywords"] else (f"{base_name} {specs[0]}".strip() if specs else base_name)
+        link_plan = search_plans[0] if search_plans else {"keyword": link_keyword, "area_code": "1", "scope": "全国"}
+        lookup_url = _build_gldjc_search_url(name=name, spec=spec, keyword=link_plan["keyword"], province_code=link_plan["area_code"])
         all_results = []
         searched_keyword = ""
+        searched_scope = ""
+        searched_area_code = link_plan["area_code"]
 
-        for kw in parsed["search_keywords"]:
-            if kw in search_dedup:
-                all_results = search_dedup[kw]
+        for plan in search_plans:
+            kw = plan["keyword"]
+            area_code = plan["area_code"]
+            scope = plan["scope"]
+            dedup_key = f"{area_code}|{kw}"
+            if dedup_key in search_dedup:
+                all_results = search_dedup[dedup_key]
                 searched_keyword = kw
+                searched_scope = scope
+                searched_area_code = area_code
                 if all_results:
                     break
                 continue
@@ -1680,10 +1934,12 @@ def material_price_gldjc_lookup(
             if net_requests > 0:
                 time.sleep(random.uniform(5, 8))
 
-            web_results = search_material_web(session, kw)
+            web_results = search_material_web(session, kw, area_code)
             net_requests += 1
             searched_keyword = kw
-            search_dedup[kw] = web_results
+            searched_scope = scope
+            searched_area_code = area_code
+            search_dedup[dedup_key] = web_results
 
             if not web_results and net_requests >= 3:
                 recent_empty = sum(1 for r in list(search_dedup.values())[-3:] if not r)
@@ -1702,37 +1958,102 @@ def material_price_gldjc_lookup(
                 "match_status": "未匹配", "source": "广材网",
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": 0, "searched_keyword": searched_keyword,
-            })
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网未找到"})
+                "gldjc_url": None,
+            }, spec=spec, region=searched_scope or province or "全国")
+            results.append({**mat, "gldjc_price": None, "gldjc_source": "未查到", "gldjc_url": None, "gldjc_label": None})
             continue
 
-        scored = filter_and_score(all_results, unit, specs, base_name)
-        confidence = determine_confidence(scored, unit, specs)
-        price_source = scored if scored else all_results
+        scored = filter_and_score(all_results, unit, specs, base_name, request_name=name, request_spec=spec)
         if not scored:
+            scored = filter_and_score(
+                all_results,
+                unit,
+                specs,
+                base_name,
+                request_name=name,
+                request_spec=spec,
+                allow_relaxed_spec=True,
+            )
+        confidence = determine_confidence(scored, unit, specs)
+        approximate_candidates = []
+        price_source = scored
+        if not price_source:
+            approximate_candidates = build_approximate_price_candidates(
+                all_results,
+                unit,
+                request_name=name,
+                request_spec=spec,
+            )
+            price_source = approximate_candidates
             confidence = "低"
-        median = get_median_price(price_source)
+        used_approximate = bool(approximate_candidates)
+        selected_result = get_representative_price_result(price_source)
+        exact_detail_url = str(
+            (selected_result or {}).get("detail_url")
+            or (selected_result or {}).get("url")
+            or ""
+        ).strip()
+        selected_price = None
+        if selected_result:
+            try:
+                selected_price = round(float(selected_result.get("market_price")), 2)
+            except (TypeError, ValueError):
+                selected_price = None
+        match_label = build_match_label(
+            selected_result,
+            fallback_text=(searched_keyword or name),
+        )
+        if used_approximate:
+            match_status = "近似匹配"
+            if match_label:
+                match_label = f"近似价 | {match_label}"
+        else:
+            match_status = "精确匹配" if confidence == "高" else ("模糊匹配" if confidence == "中" else "低置信度")
 
-        if median and confidence in ("高", "中"):
+        scope_label = searched_scope or province or "全国"
+        lookup_url = exact_detail_url or _build_gldjc_search_url(
+            name=name,
+            spec=spec,
+            keyword=searched_keyword or link_keyword,
+            province_code=searched_area_code or "1",
+        )
+
+        if selected_price:
             update_cache(cache, name, unit, {
-                "price_with_tax": median,
-                "price_without_tax": round(median / 1.13, 2),
+                "price_with_tax": selected_price,
+                "price_without_tax": round(selected_price / 1.13, 2),
                 "confidence": confidence,
-                "match_status": "精确匹配" if confidence == "高" else "模糊匹配",
+                "match_status": match_status,
                 "source": "广材网",
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": len(price_source), "searched_keyword": searched_keyword,
+                "gldjc_url": lookup_url,
+                "match_label": match_label,
+            }, spec=spec, region=scope_label)
+            results.append({
+                **mat,
+                "gldjc_price": selected_price,
+                "gldjc_source": f"{'广材网近似价' if used_approximate else '广材网市场价'}({scope_label})",
+                "gldjc_url": lookup_url,
+                "gldjc_label": match_label,
             })
-            results.append({**mat, "gldjc_price": median, "gldjc_source": f"广材网市场价({confidence})"})
         else:
             update_cache(cache, name, unit, {
-                "price_with_tax": median,
-                "price_without_tax": round(median / 1.13, 2) if median else None,
+                "price_with_tax": selected_price,
+                "price_without_tax": round(selected_price / 1.13, 2) if selected_price else None,
                 "confidence": "低", "match_status": "低置信度", "source": "广材网",
                 "query_date": datetime.now().strftime("%Y-%m-%d"),
                 "result_count": len(price_source), "searched_keyword": searched_keyword,
+                "gldjc_url": None,
+                "match_label": None,
+            }, spec=spec, region=scope_label)
+            results.append({
+                **mat,
+                "gldjc_price": None,
+                "gldjc_source": "未查到",
+                "gldjc_url": None,
+                "gldjc_label": None,
             })
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "广材网低置信度"})
 
         if net_requests % 10 == 0:
             save_cache(cache)
@@ -1743,6 +2064,23 @@ def material_price_gldjc_lookup(
 
     found = sum(1 for r in results if r.get("gldjc_price"))
     return {"results": results, "total": len(results), "found": found}
+
+
+@app.post("/material-price/gldjc-cookie-verify")
+def material_price_gldjc_cookie_verify(
+    req: _GldjcCookieVerifyRequest,
+    x_api_key: str = Header(default=""),
+):
+    """广材网Cookie快速校验接口。"""
+    _verify_api_key(x_api_key)
+    cookie = req.cookie.strip()
+    province = req.province.strip()
+    city = req.city.strip()
+
+    if not cookie:
+        raise HTTPException(400, "请输入广材网Cookie")
+
+    return _verify_gldjc_cookie(cookie, province=province, city=city)
 
 
 # ============================================================
