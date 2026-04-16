@@ -2091,6 +2091,16 @@ class HybridSearcher:
         merged.sort(key=lambda x: x[rrf_key], reverse=True)
         return merged
 
+    @staticmethod
+    def _rrf_result_identity(result: dict) -> str:
+        source_province = str(
+            result.get("source_province")
+            or result.get("_source_province")
+            or result.get("province")
+            or ""
+        ).strip()
+        return f"{source_province}:{result['id']}"
+
     def _rrf_fusion_multi_query(self, bm25_runs: list[dict], vector_runs: list[dict],
                                 bm25_weight: float, vector_weight: float,
                                 k: int = 60) -> list[dict]:
@@ -2104,32 +2114,33 @@ class HybridSearcher:
         for run in bm25_runs:
             rank_map = {}
             for rank, result in enumerate(run.get("results", []), start=1):
-                db_id = result["id"]
-                rank_map[db_id] = (rank, result)
-                all_ids.add(db_id)
+                unified_id = self._rrf_result_identity(result)
+                rank_map[unified_id] = (rank, result)
+                all_ids.add(unified_id)
             bm25_rank_maps.append((max(float(run.get("weight", 1.0)), 0.05), rank_map))
 
         for run in vector_runs:
             rank_map = {}
             for rank, result in enumerate(run.get("results", []), start=1):
-                db_id = result["id"]
-                rank_map[db_id] = (rank, result)
-                all_ids.add(db_id)
+                unified_id = self._rrf_result_identity(result)
+                rank_map[unified_id] = (rank, result)
+                all_ids.add(unified_id)
             vector_rank_maps.append((max(float(run.get("weight", 1.0)), 0.05), rank_map))
 
         scored_results = []
-        for db_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
+        for unified_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
             bm25_rank = None
             vector_rank = None
             rrf_score = 0.0
+            db_id = unified_id
             bm25_base_result = None
             vector_base_result = None
             bm25_score = None
             vector_score = None
 
             for run_weight, rank_map in bm25_rank_maps:
-                if db_id in rank_map:
-                    rank, result = rank_map[db_id]
+                if unified_id in rank_map:
+                    rank, result = rank_map[unified_id]
                     rrf_score += (bm25_weight * run_weight) / (k + rank)
                     if bm25_rank is None or rank < bm25_rank:
                         bm25_rank = rank
@@ -2137,8 +2148,8 @@ class HybridSearcher:
                         bm25_base_result = result
 
             for run_weight, rank_map in vector_rank_maps:
-                if db_id in rank_map:
-                    rank, result = rank_map[db_id]
+                if unified_id in rank_map:
+                    rank, result = rank_map[unified_id]
                     rrf_score += (vector_weight * run_weight) / (k + rank)
                     if vector_rank is None or rank < vector_rank:
                         vector_rank = rank
@@ -2189,32 +2200,33 @@ class HybridSearcher:
         # rank从1开始（排名第1是最好的）
         bm25_rank_map = {}  # {db_id: (rank, result_dict)}
         for rank, result in enumerate(bm25_results, start=1):
-            db_id = result["id"]
-            bm25_rank_map[db_id] = (rank, result)
+            unified_id = self._rrf_result_identity(result)
+            bm25_rank_map[unified_id] = (rank, result)
 
         vector_rank_map = {}  # {db_id: (rank, result_dict)}
         for rank, result in enumerate(vector_results, start=1):
-            db_id = result["id"]
-            vector_rank_map[db_id] = (rank, result)
+            unified_id = self._rrf_result_identity(result)
+            vector_rank_map[unified_id] = (rank, result)
 
         # 收集所有出现过的ID（去重合并）
         all_ids = set(bm25_rank_map.keys()) | set(vector_rank_map.keys())
 
         # 计算每条结果的RRF融合分数
         scored_results = []
-        for db_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
+        for unified_id in sorted(all_ids, key=lambda value: (str(type(value)), str(value))):
             bm25_rank = None
             vector_rank = None
             rrf_score = 0.0
+            db_id = unified_id
 
             # BM25排名贡献
-            if db_id in bm25_rank_map:
-                bm25_rank = bm25_rank_map[db_id][0]
+            if unified_id in bm25_rank_map:
+                bm25_rank = bm25_rank_map[unified_id][0]
                 rrf_score += bm25_weight / (k + bm25_rank)
 
             # 向量排名贡献
-            if db_id in vector_rank_map:
-                vector_rank = vector_rank_map[db_id][0]
+            if unified_id in vector_rank_map:
+                vector_rank = vector_rank_map[unified_id][0]
                 rrf_score += vector_weight / (k + vector_rank)
 
             # 选一个完整的结果字典作为基础（优先用向量的，因为它有更多语义信息）
