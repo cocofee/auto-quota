@@ -568,6 +568,39 @@ def _extract_material_tokens(text: str) -> set[str]:
     return found
 
 
+def _extract_semantic_keywords(text: str) -> set[str]:
+    raw = str(text or "")
+    keyword_groups = (
+        "热熔",
+        "电熔",
+        "承插",
+        "法兰",
+        "沟槽",
+        "螺纹",
+        "给水",
+        "排水",
+        "雨水",
+        "三通",
+        "四通",
+        "弯头",
+        "直接",
+        "直通",
+        "异径",
+        "大小头",
+        "套管",
+        "地漏",
+        "雨水斗",
+        "闸阀",
+        "蝶阀",
+        "球阀",
+        "止回阀",
+        "截止阀",
+        "过滤器",
+        "管件",
+    )
+    return {token for token in keyword_groups if token in raw}
+
+
 def _infer_pipe_material_signature(name: str) -> str:
     text = str(name or "").strip().upper()
     if not text:
@@ -893,16 +926,37 @@ def build_approximate_price_candidates(results: list[dict], target_unit: str,
     is imperfect. The caller should mark the output as an approximate price.
     """
     candidates = []
+    request_family = _detect_material_family(request_name)
+    request_tokens = _extract_material_tokens(request_name)
+    request_keywords = _extract_semantic_keywords(request_name)
 
     for original_result in results:
         r = dict(original_result)
         raw_unit = str(r.get("unit") or "").strip()
         raw_price = r.get("market_price")
         result_spec = str(r.get("spec") or "").strip()
+        candidate_family = _detect_material_family(result_spec)
+        result_tokens = _extract_material_tokens(result_spec)
+        result_keywords = _extract_semantic_keywords(result_spec)
+        exact_spec_match = bool(request_spec and _spec_contains_exact(result_spec, request_spec))
+        relaxed_spec_score = _score_relaxed_spec_match(result_spec, [request_spec]) if request_spec else None
+        shared_material_tokens = request_tokens & result_tokens
+        shared_keywords = request_keywords & result_keywords
 
         try:
             numeric_price = round(float(raw_price), 2)
         except (TypeError, ValueError):
+            continue
+
+        if request_family and candidate_family and request_family != candidate_family:
+            continue
+        if request_tokens and result_tokens and not shared_material_tokens:
+            continue
+        if request_family in {"fitting", "valve", "device"} and request_keywords and not shared_keywords:
+            continue
+        if request_spec and not exact_spec_match and relaxed_spec_score is None:
+            continue
+        if not shared_material_tokens and not shared_keywords and not exact_spec_match and relaxed_spec_score is None:
             continue
 
         score = 10.0
@@ -933,16 +987,18 @@ def build_approximate_price_candidates(results: list[dict], target_unit: str,
         if r.get("market_price") in (None, ""):
             r["market_price"] = numeric_price
 
-        if request_spec and _spec_contains_exact(result_spec, request_spec):
+        if exact_spec_match:
             score += 20
+        elif relaxed_spec_score is not None:
+            score += relaxed_spec_score
 
-        request_tokens = _extract_material_tokens(request_name)
-        result_tokens = _extract_material_tokens(result_spec)
-        shared_tokens = request_tokens & result_tokens
-        if shared_tokens:
-            score += min(20, 8 * len(shared_tokens))
+        if shared_material_tokens:
+            score += min(20, 8 * len(shared_material_tokens))
 
-        if _detect_material_family(request_name) and _detect_material_family(request_name) == _detect_material_family(result_spec):
+        if shared_keywords:
+            score += min(20, 8 * len(shared_keywords))
+
+        if request_family and request_family == candidate_family:
             score += 10
 
         r["score"] = score
