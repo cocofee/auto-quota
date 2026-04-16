@@ -52,6 +52,7 @@ from src.explicit_terminal_family_pickers import (
 )
 from src.context_builder import build_context_prior, summarize_batch_context_for_trace
 from src.adaptive_strategy import AdaptiveStrategy
+from src.confidence_utils import apply_confidence_penalty
 from src.ltr_ranker import rerank_candidates_with_ltr
 from src.explicit_mep_family_pickers import (
     _pick_explicit_bridge_family_candidate,
@@ -1831,7 +1832,7 @@ def _apply_price_validation(result: dict, item: dict, best: dict | None) -> dict
 
     previous_confidence = float(result.get("confidence", 0) or 0.0)
     penalty = float(validation.get("confidence_penalty", -10) or 0.0)
-    adjusted_confidence = max(0.0, min(100.0, previous_confidence + penalty))
+    adjusted_confidence = apply_confidence_penalty(previous_confidence, penalty)
     validation["previous_confidence"] = previous_confidence
     validation["adjusted_confidence"] = adjusted_confidence
     result["confidence"] = adjusted_confidence

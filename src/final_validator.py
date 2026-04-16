@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import config
 
+from src.confidence_utils import apply_confidence_penalty
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags, tags_for_issue
 from src.review_checkers import (
     check_category_mismatch,
@@ -223,7 +224,10 @@ class FinalValidator:
         price_validation = self._validate_price(item, result)
         if price_validation.get("status") == "price_mismatch":
             confidence_score = _safe_confidence(
-                confidence_score + int(price_validation.get("confidence_penalty", 0) or 0)
+                apply_confidence_penalty(
+                    confidence_score,
+                    price_validation.get("confidence_penalty", 0),
+                )
             )
             issues.append(
                 ValidationIssue(
