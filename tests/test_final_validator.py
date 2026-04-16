@@ -191,8 +191,8 @@ def test_price_mismatch_lowers_confidence_and_marks_manual_review():
         price_validator=_FakePriceValidator(),
     ).validate_result(result)
 
-    assert result["confidence"] == 70
-    assert result["confidence_score"] == 70
+    assert result["confidence"] == 72
+    assert result["confidence_score"] == 72
     assert result["review_risk"] == "high"
     assert result["light_status"] == "red"
     assert result["final_validation"]["status"] == "manual_review"

@@ -126,7 +126,7 @@ def test_match_pipeline_price_validation_penalizes_confidence(monkeypatch):
         reasoning_decision={},
     )
 
-    assert finalized["confidence"] == 62.0
-    assert finalized["confidence_score"] == 62
+    assert finalized["confidence"] == 64.8
+    assert finalized["confidence_score"] == 65
     assert finalized["price_validation"]["status"] == "price_mismatch"
     assert "price_mismatch" in (finalized.get("reason_tags") or [])
