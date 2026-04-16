@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import asyncio
 from pathlib import Path
 import sys
 
@@ -89,9 +90,61 @@ def test_parse_sheet_prefills_z_material_name_and_spec_from_bill_desc():
     assert len(materials) == 2
     assert materials[0]["suggested_name"] == "衬塑钢管"
     assert materials[0]["suggested_spec"] == "DN100"
+    assert materials[0]["normalized_name"] == "衬塑钢管"
+    assert materials[0]["normalized_spec"] == "DN100"
+    assert materials[0]["object_type"] == "pipe"
+    assert materials[0]["normalization_confidence"] == "medium"
     assert materials[1]["name"] == "给水室内钢塑复合管螺纹管件"
     assert materials[1]["suggested_name"] == ""
     assert materials[1]["suggested_spec"] == "DN100"
+    assert materials[1]["normalized_name"] == "给水室内钢塑复合管螺纹管件"
+    assert materials[1]["normalized_spec"] == "DN100"
+
+
+def test_build_normalized_material_fields_preserves_critical_spec():
+    normalized = material_price_api._build_normalized_material_fields(
+        "绿地灌溉管线安装",
+        "",
+        "绿地灌溉管线安装 De16",
+        "1.材质:滴水管PE\n2.规格:De16*1.6MPa\n3.连接形式:热熔连接",
+    )
+
+    assert normalized["suggested_name"] == "滴水管PE"
+    assert normalized["suggested_spec"] == "De16"
+    assert normalized["normalized_name"] == "滴水管PE"
+    assert normalized["normalized_spec"] == "De16"
+    assert normalized["critical_spec_text"] == "1.6MPa"
+    assert normalized["normalized_query_text"] == "滴水管PE De16 1.6MPa"
+    assert normalized["object_type"] == "pipe"
+    assert normalized["normalization_confidence"] == "high"
+
+
+def test_build_normalized_material_fields_keeps_pipe_fitting_name_when_desc_suggests_pipe():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u7ed9\u6c34\u70ed\u7194\u7ba1\u4ef6",
+        "",
+        "\u7ed9\u6c34\u7ba1HDPE De32",
+        "1.\u6750\u8d28:\u7ed9\u6c34\u7ba1HDPE\n2.\u89c4\u683c:De32*1.60MPa\n3.\u8fde\u63a5\u5f62\u5f0f:\u70ed\u7194\u8fde\u63a5",
+    )
+
+    assert normalized["suggested_name"] == ""
+    assert normalized["suggested_spec"] == "De32"
+    assert normalized["normalized_name"] == "\u7ed9\u6c34\u70ed\u7194\u7ba1\u4ef6"
+    assert normalized["normalized_spec"] == "De32"
+    assert normalized["object_type"] == "pipe_fitting"
+
+
+def test_build_normalized_material_fields_prefers_specific_equipment_name_from_desc():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u79bb\u5fc3\u5f0f\u6cf5",
+        "",
+        "\u79bb\u5fc3\u5f0f\u6cf5",
+        "1.\u540d\u79f0:\u79fb\u52a8\u5f0f\u6f5c\u6c34\u6392\u6c61\u6cf5\uff08\u8bbe\u5907\u7532\u4f9b\uff09\n2.\u578b\u53f7\u3001\u7535\u673a\u529f\u7387:Q=50m3/h,H=0.1MPa,N=5kw",
+    )
+
+    assert normalized["suggested_name"] == "\u79fb\u52a8\u5f0f\u6f5c\u6c34\u6392\u6c61\u6cf5"
+    assert normalized["normalized_name"] == "\u79fb\u52a8\u5f0f\u6f5c\u6c34\u6392\u6c61\u6cf5"
+    assert normalized["object_type"] == "equipment"
 
 
 def test_extract_material_from_desc_supports_separate_material_and_spec_fields():
@@ -182,6 +235,29 @@ def test_plastic_valve_rows_use_desc_type_when_name_is_generic_family():
     assert suggested_spec == "De50 PE"
 
 
+def test_metal_valve_rows_use_desc_type_when_name_is_generic_family():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "\u91d1\u5c5e\u9600\u95e8",
+        "\u91d1\u5c5e\u9600\u95e8",
+        "1.\u7c7b\u578b:\u95f8\u9600\n2.\u6750\u8d28:\u7403\u58a8\u94f8\u94c1\n3.\u89c4\u683c\u3001\u538b\u529b\u7b49\u7ea7:DN100 1.0MPa\n4.\u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170\u8fde\u63a5\n5.\u542b\u6cd5\u5170",
+    )
+    assert suggested_name == "\u7403\u58a8\u94f8\u94c1\u95f8\u9600"
+    assert suggested_spec == "DN100"
+
+
+def test_flanged_generic_valve_keeps_specific_valve_name_after_normalization():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u6cd5\u5170\u9600\u95e8",
+        "",
+        "\u91d1\u5c5e\u9600\u95e8",
+        "1.\u7c7b\u578b:\u95f8\u9600\n2.\u6750\u8d28:\u7403\u58a8\u94f8\u94c1\n3.\u89c4\u683c\u3001\u538b\u529b\u7b49\u7ea7:DN100 1.0MPa\n4.\u8fde\u63a5\u5f62\u5f0f:\u6cd5\u5170\u8fde\u63a5\n5.\u542b\u6cd5\u5170",
+    )
+    assert normalized["suggested_name"] == "\u7403\u58a8\u94f8\u94c1\u95f8\u9600"
+    assert normalized["normalized_name"] == "\u7403\u58a8\u94f8\u94c1\u95f8\u9600"
+    assert normalized["normalized_spec"] == "DN100"
+    assert normalized["object_type"] == "valve"
+
+
 def test_installation_item_name_yields_material_name_from_desc():
     suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
         "绿地灌溉管线安装",
@@ -200,6 +276,57 @@ def test_installation_item_name_does_not_override_to_bare_material_token():
     )
     assert suggested_name == ""
     assert suggested_spec == "De16"
+
+
+def test_spec_like_material_name_falls_back_to_specific_bill_name():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "DN100*DN100*DN80",
+        "不锈钢无缝三通",
+        "1.规格:DN100*DN100*DN80\n2.介质:水\n3.连接形式:氩弧焊",
+    )
+    assert suggested_name == "不锈钢无缝三通"
+    assert suggested_spec == "DN100*DN100*DN80"
+
+
+def test_generic_material_name_prefers_specific_desc_name_over_generic_bill_name():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "塑料给水管",
+        "给排水管道 室内塑料给水管（热熔连接）",
+        "1.名称:PP-R管\n2.规格、压力等级:dn25, PN16\n3.连接形式:热熔",
+    )
+    assert suggested_name == "PP-R管"
+    assert suggested_spec == "dn25"
+
+
+def test_spec_like_material_name_can_fall_back_to_bill_name_without_desc():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "DN100*DN100*DN80",
+        "不锈钢无缝三通",
+        "",
+    )
+    assert suggested_name == "不锈钢无缝三通"
+    assert suggested_spec == "DN100*DN100*DN80"
+
+
+def test_generic_material_name_with_inline_spec_prefers_specific_desc_name():
+    suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
+        "塑料给水管 dn25",
+        "给排水管道 室内塑料给水管（热熔连接）",
+        "1.名称:PP-R管\n2.规格、压力等级:dn25, PN16\n3.连接形式:热熔",
+    )
+    assert suggested_name == "PP-R管"
+    assert suggested_spec == "dn25"
+
+
+def test_build_normalized_material_fields_uses_bill_fallback_when_raw_name_is_only_spec():
+    normalized = material_price_api._build_normalized_material_fields(
+        "DN100*DN100*DN80",
+        "",
+        "不锈钢无缝三通",
+        "",
+    )
+    assert normalized["normalized_name"] == "不锈钢无缝三通"
+    assert normalized["normalized_spec"] == "DN100*DN100*DN80"
 
 
 def test_qualified_valve_name_keeps_original_material_qualifier():
@@ -330,6 +457,45 @@ def test_write_material_updates_inserts_gldjc_link_after_name_when_no_spec_colum
     wb2.close()
 
 
+def test_write_material_updates_strips_critical_spec_from_export_link_label(tmp_path: Path):
+    file_path = tmp_path / "reviewed-link-sanitized.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单价"])
+    ws.append(["26010101", "原主材名", "De63", None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "给水管HDPE",
+                "spec_col": 3,
+                "final_spec": "De63",
+                "price_col": 4,
+                "final_price": 128.82,
+                "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=HDPE%20De63&l=440000",
+                "lookup_label": "广东信息价 | 给水管HDPE De63 | 关键规格: 1.60MPa | m | 128.82",
+                "critical_spec_text": "1.60MPa",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=False)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=5).value == "广东信息价 | 给水管HDPE De63 | m | 128.82"
+    assert ws2.cell(row=2, column=5).hyperlink.target == "https://www.gldjc.com/scj/so.html?keyword=HDPE%20De63&l=440000"
+    wb2.close()
+
+
 def test_pipe_fitting_row_uses_specific_name_from_desc_name_field():
     suggested_name, suggested_spec = material_price_api._suggest_material_from_bill_context(
         "法兰铸铁管件",
@@ -378,3 +544,144 @@ def test_composite_material_name_can_still_use_specific_pipe_fitting_type():
     )
     assert suggested_name == "碳钢90°弯头"
     assert suggested_spec == "DN200"
+
+
+def test_do_lookup_does_not_use_gldjc_market_cache(monkeypatch):
+    monkeypatch.setattr(material_price_api, "_material_db_ready", lambda: False)
+    monkeypatch.setattr(
+        material_price_api,
+        "_load_material_price_cache",
+        lambda: {
+            "泄水阀|DE63|个|广东": {
+                "price_with_tax": 128.82,
+                "searched_keyword": "泄水阀 De63",
+                "gldjc_url": "https://www.gldjc.com/scj/so.html?keyword=%E6%B3%84%E6%B0%B4%E9%98%80%20De63&l=440000",
+                "match_label": "品牌A | 泄水阀 De63 | 个 | 128.82",
+            },
+            "泄水阀|DE63|个|全国": {
+                "price_with_tax": 3489.00,
+                "searched_keyword": "泄水阀 De63",
+                "gldjc_url": "https://www.gldjc.com/scj/so.html?keyword=%E6%B3%84%E6%B0%B4%E9%98%80%20De63&l=1",
+                "match_label": "品牌B | 泄水阀 De63 | 个 | 3489.00",
+            },
+        },
+    )
+
+    results = material_price_api._do_lookup(
+        [{"name": "泄水阀", "spec": "De63", "unit": "个"}],
+        province="广东",
+        city="",
+        period_end="",
+        price_type="all",
+    )
+
+    assert results[0]["lookup_price"] is None
+    assert results[0]["lookup_source"] == "未查到"
+    assert results[0]["lookup_label"] is None
+    assert results[0]["lookup_url"] is None
+
+
+def test_do_lookup_builds_summary_label_for_db_results(monkeypatch):
+    class _FakeDB:
+        def search_price_by_name(self, name: str, **kwargs):
+            assert name == "镀锌钢管"
+            assert kwargs["province"] == "广东"
+            assert kwargs["spec"] == "DN32"
+            assert kwargs["target_unit"] == "m"
+            assert kwargs["object_type"] == "pipe"
+            return {
+                "price": 18.5,
+                "unit": "m",
+                "source": "广东信息价",
+            }
+
+    monkeypatch.setattr(material_price_api, "_material_db_ready", lambda: True)
+    monkeypatch.setattr(material_price_api, "_get_db", lambda: _FakeDB())
+    monkeypatch.setattr(material_price_api, "_load_material_price_cache", lambda: {})
+
+    results = material_price_api._do_lookup(
+        [{"name": "镀锌钢管", "spec": "DN32", "unit": "m"}],
+        province="广东",
+        city="",
+        period_end="",
+        price_type="all",
+    )
+
+    assert results[0]["lookup_price"] == 18.5
+    assert results[0]["lookup_source"] == "广东信息价"
+    assert results[0]["lookup_label"] == "广东信息价 | 镀锌钢管 DN32 | m | 18.50"
+    assert results[0]["lookup_url"] is None
+
+
+def test_do_lookup_passes_city_and_period_to_db(monkeypatch):
+    class _FakeDB:
+        def search_price_by_name(self, name: str, **kwargs):
+            assert name == "焊接钢管"
+            assert kwargs["province"] == "江西"
+            assert kwargs["city"] == "九江"
+            assert kwargs["period_end"] == "2025-08-31"
+            assert kwargs["spec"] == "DN80"
+            assert kwargs["target_unit"] == "m"
+            return {
+                "price": 28.04,
+                "unit": "m",
+                "source": "江西九江信息价(2025-08-31)",
+            }
+
+    monkeypatch.setattr(material_price_api, "_material_db_ready", lambda: True)
+    monkeypatch.setattr(material_price_api, "_get_db", lambda: _FakeDB())
+    monkeypatch.setattr(material_price_api, "_load_material_price_cache", lambda: {})
+
+    results = material_price_api._do_lookup(
+        [{"name": "焊接钢管", "spec": "DN80", "unit": "m"}],
+        province="江西",
+        city="九江",
+        period_end="2025-08-31",
+        price_type="info",
+    )
+
+    assert results[0]["lookup_price"] == 28.04
+    assert results[0]["lookup_source"] == "江西九江信息价(2025-08-31)"
+
+
+def test_gldjc_cookie_verify_forwards_to_local_match_service(monkeypatch):
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "ok": True,
+                "status": "valid",
+                "message": "Cookie有效",
+                "keyword": "焊接钢管 DN80",
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            assert url.endswith("/material-price/gldjc-cookie-verify")
+            assert json["cookie"] == "token=bearer test"
+            assert json["province"] == "江西"
+            assert json["city"] == "九江"
+            return _FakeResponse()
+
+    monkeypatch.setattr(material_price_api, "_is_remote", lambda: True)
+    monkeypatch.setattr(material_price_api, "LOCAL_MATCH_URL", "http://match-service:9300")
+    monkeypatch.setattr(material_price_api, "LOCAL_MATCH_API_KEY", "test-key")
+    monkeypatch.setattr(material_price_api, "local_match_async_client", lambda timeout=60.0: _FakeClient())
+
+    result = asyncio.run(
+        material_price_api.gldjc_cookie_verify({
+            "cookie": "token=bearer test",
+            "province": "江西",
+            "city": "九江",
+        })
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "valid"
