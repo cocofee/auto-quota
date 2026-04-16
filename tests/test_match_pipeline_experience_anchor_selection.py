@@ -262,6 +262,35 @@ def test_run_rank_pipeline_exposes_unified_ranking_flags_without_changing_behavi
     assert ranking_meta["unified_ranking_error"] == ""
 
 
+def test_run_rank_pipeline_uses_category_safe_candidate_for_selected_best(monkeypatch):
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        match_pipeline,
+        "_pick_category_safe_candidate",
+        lambda item, candidates: dict(candidates[1]),
+    )
+
+    ordered, ranking_meta, arbitration, explicit_override, best = match_pipeline._run_rank_pipeline(
+        {"name": "测试项", "query_route": {"route": "installation_spec"}},
+        [
+            _candidate("Q-KEEP", param_match=True, param_score=0.88, rerank_score=0.88),
+            _candidate("Q-ALT", param_match=True, param_score=0.70, rerank_score=0.87),
+        ],
+        reservoir=[
+            _candidate("Q-KEEP", param_match=True, param_score=0.88, rerank_score=0.88),
+            _candidate("Q-ALT", param_match=True, param_score=0.70, rerank_score=0.87),
+        ],
+        allow_arbiter=True,
+        allow_explicit=True,
+    )
+
+    assert ordered[0]["quota_id"] == "Q-KEEP"
+    assert best["quota_id"] == "Q-ALT"
+    assert ranking_meta["selected_top1_id"] == "Q-ALT"
+    assert arbitration["applied"] is False
+    assert explicit_override == {}
+
+
 def test_build_search_result_records_unified_ranking_shadow_without_overriding_selected_result(monkeypatch):
     _patch_pipeline(monkeypatch)
     monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", False)
@@ -455,3 +484,35 @@ def test_run_rank_pipeline_skips_legacy_rank_stages_when_unified_primary_enabled
     assert arbitration["legacy_stage_disabled"] is True
     assert explicit_override["reason"] == "skipped_by_unified_primary"
     assert explicit_override["legacy_stage_disabled"] is True
+
+
+def test_run_rank_pipeline_uses_category_safe_candidate_in_unified_primary_mode(monkeypatch):
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", True)
+    monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", False)
+    monkeypatch.setattr(
+        match_pipeline,
+        "_pick_category_safe_candidate",
+        lambda item, candidates: dict(candidates[1]),
+    )
+
+    ordered, ranking_meta, arbitration, explicit_override, best = match_pipeline._run_rank_pipeline(
+        {"name": "测试项", "query_route": {"route": "installation_spec"}},
+        [
+            _candidate("Q-SEED", param_match=True, param_score=0.92, rerank_score=0.92),
+            _candidate("Q-ALT", param_match=True, param_score=0.71, rerank_score=0.91),
+        ],
+        reservoir=[
+            _candidate("Q-SEED", param_match=True, param_score=0.92, rerank_score=0.92),
+            _candidate("Q-ALT", param_match=True, param_score=0.71, rerank_score=0.91),
+        ],
+        allow_arbiter=True,
+        allow_explicit=True,
+    )
+
+    assert ordered[0]["quota_id"] == "Q-SEED"
+    assert best["quota_id"] == "Q-ALT"
+    assert ranking_meta["selected_top1_id"] == "Q-ALT"
+    assert ranking_meta["unified_ranking_mode"] == "enabled"
+    assert arbitration["reason"] == "skipped_by_unified_primary"
+    assert explicit_override["reason"] == "skipped_by_unified_primary"

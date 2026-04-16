@@ -267,6 +267,13 @@ def _guard_explicit_candidate(item: dict,
                               hybrid_margin: float = 0.005) -> dict | None:
     if explicit_candidate is None:
         return None
+    if not isinstance(top_candidate, dict) or not top_candidate:
+        return explicit_candidate
+
+    top_score = _safe_candidate_hybrid_score(top_candidate)
+    explicit_score = _safe_candidate_hybrid_score(explicit_candidate)
+    if (top_score - explicit_score) > hybrid_margin:
+        return top_candidate
     return explicit_candidate
 
 
@@ -2894,9 +2901,7 @@ def _run_rank_pipeline(item: dict,
             "reason": "skipped_by_unified_primary",
             "legacy_stage_disabled": True,
         }
-        best = ordered[0] if ordered else None
-        if not best:
-            best = _pick_category_safe_candidate(item, ordered)
+        best = _pick_category_safe_candidate(item, ordered) if ordered else None
         if best:
             ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
         return ordered, ranking_meta, arbitration, explicit_override, best
@@ -2948,9 +2953,7 @@ def _run_rank_pipeline(item: dict,
 
     ranking_meta["post_anchor_top1_id"] = _top_candidate_id(ordered)
 
-    best = ordered[0] if ordered else None
-    if not best:
-        best = _pick_category_safe_candidate(item, ordered)
+    best = _pick_category_safe_candidate(item, ordered) if ordered else None
     if best:
         ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
     return ordered, ranking_meta, arbitration, explicit_override, best

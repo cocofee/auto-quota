@@ -11,12 +11,27 @@ def test_pick_category_safe_candidate_prefers_hidden_pc_conduit_family():
     }
     candidates = [
         {"name": "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构明配 外径(mm) 25", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构暗配 外径(mm) 25", "param_score": 0.9, "rerank_score": 0.7},
+        {"name": "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构暗配 外径(mm) 25", "param_score": 0.9, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
 
     assert picked["name"] == "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构暗配 外径(mm) 25"
+
+
+def test_pick_category_safe_candidate_keeps_top1_when_explicit_gap_exceeds_guard_margin():
+    item = {
+        "name": "电气配管 PC25",
+        "description": "配置形式:暗配",
+    }
+    candidates = [
+        {"name": "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构明配 外径(mm) 25", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构暗配 外径(mm) 25", "param_score": 0.9, "rerank_score": 0.89},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "塑料管敷设 刚性阻燃管敷设 砖、混凝土结构明配 外径(mm) 25"
 
 
 def test_pick_category_safe_candidate_prefers_sc_conduit_over_explosion_proof_family():
@@ -26,7 +41,7 @@ def test_pick_category_safe_candidate_prefers_sc_conduit_over_explosion_proof_fa
     }
     candidates = [
         {"name": "防爆钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤65", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20", "param_score": 0.8, "rerank_score": 0.7},
+        {"name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤20", "param_score": 0.8, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -60,7 +75,7 @@ def test_pick_category_safe_candidate_can_promote_exact_conduit_family_beyond_to
         {"name": "钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤40", "param_score": 0.7, "rerank_score": 0.7},
         {"name": "钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤50", "param_score": 0.6, "rerank_score": 0.6},
         {"name": "钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤65", "param_score": 0.5, "rerank_score": 0.5},
-        {"name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25", "param_score": 0.4, "rerank_score": 0.4},
+        {"name": "镀锌钢管敷设 砖、混凝土结构暗配 公称直径(DN) ≤25", "param_score": 0.4, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -75,7 +90,7 @@ def test_pick_category_safe_candidate_prefers_plastic_sleeve_family_for_pvc_slee
     }
     candidates = [
         {"name": "一般钢套管制作安装 介质管道公称直径(mm以内) 125", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "一般塑料套管制作安装 介质管道公称直径(mm以内) 100", "param_score": 0.8, "rerank_score": 0.7},
+        {"name": "一般塑料套管制作安装 介质管道公称直径(mm以内) 100", "param_score": 0.8, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -102,7 +117,7 @@ def test_pick_category_safe_candidate_prefers_cast_iron_drain_pipe_over_composit
     }
     candidates = [
         {"name": "给排水管道 室内钢塑复合管(螺纹连接) 公称直径(mm以内) 65", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "给排水管道 室内柔性铸铁排水管(机械接口) 公称直径(mm以内) 75", "param_score": 0.7, "rerank_score": 0.6},
+        {"name": "给排水管道 室内柔性铸铁排水管(机械接口) 公称直径(mm以内) 75", "param_score": 0.7, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -117,7 +132,7 @@ def test_pick_category_safe_candidate_prefers_general_steel_sleeve_over_waterpro
     }
     candidates = [
         {"name": "刚性防水套管制作 介质管道公称直径(mm以内) 32", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "一般钢套管制作安装 介质管道公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.6},
+        {"name": "一般钢套管制作安装 介质管道公称直径(mm以内) 32", "param_score": 0.7, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -132,7 +147,7 @@ def test_pick_category_safe_candidate_prefers_hole_blocking_over_sleeve_family()
     }
     candidates = [
         {"name": "刚性防水套管制作 介质管道公称直径(mm以内) 200", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "堵洞(公称直径200mm以内)", "param_score": 0.7, "rerank_score": 0.6},
+        {"name": "堵洞(公称直径200mm以内)", "param_score": 0.7, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
@@ -152,7 +167,7 @@ def test_pick_category_safe_candidate_prefers_pipe_run_over_pipe_fitting():
     }
     candidates = [
         {"name": "低压管件 金属骨架复合管件（热熔焊） 管外径（mm以内） 25", "param_score": 0.9, "rerank_score": 0.9},
-        {"name": "给排水管道 室内钢塑复合管(热熔连接) 公称直径(mm以内) 25", "param_score": 0.8, "rerank_score": 0.6},
+        {"name": "给排水管道 室内钢塑复合管(热熔连接) 公称直径(mm以内) 25", "param_score": 0.8, "rerank_score": 0.896},
     ]
 
     picked = _pick_category_safe_candidate(item, candidates)
