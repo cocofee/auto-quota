@@ -153,6 +153,13 @@ def _normalize_material_family_token(token: str) -> str:
 
 
 def _build_lookup_name_variants(name: str, object_type: str = "") -> list[str]:
+    """为材料名称生成查询变体（用于数据库 fuzzy 命中）。
+
+    之前只在 object_type == "pipe" 时生成 family token 变体，导致
+    "PPR 给水管件" 这种 pipe_fitting 行拿不到 "PPR管件"/"PPR弯头" 变体，
+    数据库侧命中率偏低。这里把条件放宽到 pipe/pipe_fitting/material 三类，
+    并为管件额外追加 "{family}管件/{family}弯头/{family}三通" 之类常见写法。
+    """
     base_name = str(name or "").strip()
     if not base_name:
         return []
@@ -167,19 +174,34 @@ def _build_lookup_name_variants(name: str, object_type: str = "") -> list[str]:
     _append(base_name)
 
     family_token = _normalize_material_family_token(_extract_material_family_token(base_name))
-    if family_token and object_type == "pipe":
+    # 把条件从 "仅 pipe" 放宽到 pipe / pipe_fitting / material / 空
+    eligible_types = {"pipe", "pipe_fitting", "material", ""}
+    if family_token and object_type in eligible_types:
         family_pattern = re.escape(family_token).replace(r"\-", "-?")
         stripped = re.sub(family_pattern, "", base_name, count=1, flags=re.IGNORECASE).strip(" -_/")
         stripped = re.sub(r"\s+", "", stripped)
         if stripped:
             _append(f"{family_token}{stripped}")
             _append(f"{stripped}{family_token}")
-        _append(f"{family_token}管")
-        if "给水" in base_name:
-            _append(f"{family_token}给水管")
-        if any(token in base_name for token in ("滴灌", "滴水", "灌溉")):
-            _append(f"{family_token}滴水管")
-            _append(f"{family_token}灌溉管")
+
+        # 管道类变体（保留原逻辑）
+        if object_type in {"pipe", "material", ""}:
+            _append(f"{family_token}管")
+            if "给水" in base_name:
+                _append(f"{family_token}给水管")
+            if "排水" in base_name:
+                _append(f"{family_token}排水管")
+            if any(token in base_name for token in ("滴灌", "滴水", "灌溉")):
+                _append(f"{family_token}滴水管")
+                _append(f"{family_token}灌溉管")
+
+        # 管件类变体（新增）
+        if object_type in {"pipe_fitting", "material", ""}:
+            _append(f"{family_token}管件")
+            # 根据原始名里的具体管件类型衍生
+            for fitting_kw in ("弯头", "三通", "四通", "异径", "大小头", "接头", "法兰"):
+                if fitting_kw in base_name:
+                    _append(f"{family_token}{fitting_kw}")
 
     return variants
 
@@ -311,17 +333,21 @@ async def _remote_post(path: str, payload: dict) -> dict:
 
 
 def _material_hint_family(name: str) -> str:
+    """判定材料归属族（合并版：pipe/valve/device，原本两份定义的并集）。"""
     value = _normalize_material_hint(name)
-    pipe_names = {"复合管", "钢管", "塑料管", "塑料给水管", "管材"}
+    pipe_names = {"复合管", "钢管", "塑料管", "塑料给水管", "塑料排水管", "管材", "管件"}
     valve_names = {"阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀", "法兰减压阀", "过滤器"}
     if value in {_normalize_material_hint(x) for x in pipe_names}:
         return "pipe"
     if value in {_normalize_material_hint(x) for x in valve_names}:
         return "valve"
+    if any(token in str(name or "") for token in ("地漏", "盆", "洁具", "卫生器具", "器具")):
+        return "device"
     return ""
 
 
 def _is_compatible_material_hint(material_name: str, candidate_name: str) -> bool:
+    """判定候选名称与目标材料是否属于兼容品类（合并版）。"""
     text = str(candidate_name or "").strip()
     if not text:
         return False
@@ -333,10 +359,16 @@ def _is_compatible_material_hint(material_name: str, candidate_name: str) -> boo
     if family == "pipe":
         if any(token in text for token in ("刷", "漆", "涂", "标识", "油")):
             return False
-        return any(token in text for token in ("管", "管材"))
+        # 塑料族 token 本身就可代表管材（如候选只写 "PPR"/"PVC"）
+        if _looks_like_material_family_token(text):
+            return True
+        return any(token in text for token in ("管", "管材", "管件"))
 
     if family == "valve":
         return any(token in text for token in ("阀", "过滤器", "减压"))
+
+    if family == "device":
+        return any(token in text for token in ("地漏", "盆", "洁具", "器", "卫生"))
 
     return True
 
@@ -1004,93 +1036,32 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
 
 
 def _extract_material_from_desc(desc: str) -> dict[str, str]:
-    pairs: dict[str, str] = {}
-    if desc:
-        for raw_line in desc.splitlines():
-            line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
-            if not line:
-                continue
-            parts = re.split(r"[:：]", line, maxsplit=1)
-            if len(parts) != 2:
-                continue
-            key = _normalize_desc_key(parts[0].strip())
-            value = parts[1].strip()
-            if key and value:
-                pairs[key] = value
+    """从清单项目特征描述里提取 name/spec/type/material/connection。
 
-    if pairs:
-        combined = ""
-        for key in ("材质规格", "材质及规格", "材质型号", "规格压力等级"):
-            if pairs.get(key):
-                combined = pairs[key]
-                break
-
-        candidate_type = ""
-        for key in ("类型", "类别", "名称"):
-            if pairs.get(key):
-                candidate_type = pairs[key].strip()
-                break
-
-        candidate_material = ""
-        for key in ("材质", "材质要求"):
-            if pairs.get(key):
-                candidate_material = pairs[key].strip()
-                break
-
-        candidate_connection = ""
-        for key in ("连接形式", "连接方式"):
-            if pairs.get(key):
-                candidate_connection = pairs[key].strip()
-                break
-
-        name = ""
-        spec = ""
-        if combined:
-            name, spec = _split_material_and_spec(combined)
-
-        if not name and candidate_material:
-            name = candidate_material
-
-        if not spec:
-            for key in ("规格型号", "规格", "型号", "公称直径", "规格压力等级"):
-                raw_spec = pairs.get(key, "").strip()
-                if not raw_spec:
-                    continue
-                if not name:
-                    maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
-                    if maybe_spec:
-                        name = maybe_name
-                        spec = maybe_spec
-                        break
-                spec = raw_spec
-                break
-
-        return {
-            "name": name.strip(),
-            "spec": _clean_material_spec(spec),
-            "type": candidate_type,
-            "material": candidate_material,
-            "connection": candidate_connection,
-        }
-
+    合并版：
+      - 保留第二版的"1." → 换行修复（规避 OCR 把多行特征挤到一行）；
+      - 保留第二版的"型号规格"额外 key 和从规格反向拆名的能力；
+      - 保留第一版更全的"连接形式"候选 key（接口形式/焊接方法等）。
+    """
     if not desc:
         return {"name": "", "spec": "", "type": "", "material": "", "connection": ""}
 
     pairs: dict[str, str] = {}
-    for raw_line in desc.splitlines():
-        line = re.sub(r"^\s*\d+[\.、]\s*", "", raw_line.strip())
+    normalized_desc = re.sub(r"(?<!\S)(\d+)\.\s*", r"\n\1.", str(desc or ""))
+    for raw_line in normalized_desc.splitlines():
+        line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
         if not line:
             continue
         parts = re.split(r"[:：]", line, maxsplit=1)
         if len(parts) != 2:
             continue
-        key = parts[0].strip()
+        key = _normalize_desc_key(parts[0].strip())
         value = parts[1].strip()
         if key and value:
             pairs[key] = value
 
     combined = ""
-    for key in ("材质、规格", "材质规格", "材质/规格", "材质及规格", "材质、型号", "材质"):
+    for key in ("材质规格", "材质及规格", "材质型号", "规格压力等级"):
         if pairs.get(key):
             combined = pairs[key]
             break
@@ -1122,10 +1093,20 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
         name = candidate_material
 
     if not spec:
-        for key in ("规格型号", "规格", "型号"):
-            if pairs.get(key):
-                spec = pairs[key].strip()
+        for key in ("型号规格", "规格型号", "规格", "型号", "公称直径", "规格压力等级"):
+            raw_spec = pairs.get(key, "").strip()
+            if not raw_spec:
+                continue
+            maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
+            if maybe_spec:
+                if maybe_name and not candidate_type:
+                    candidate_type = maybe_name
+                if maybe_name and (not name or _looks_like_bare_material_token(name)):
+                    name = maybe_name
+                spec = maybe_spec
                 break
+            spec = raw_spec
+            break
 
     return {
         "name": name.strip(),
@@ -1183,50 +1164,52 @@ def _normalize_material_hint(text: str) -> str:
 
 
 def _is_generic_material_name(name: str) -> bool:
+    """是否为泛名（需要借助清单项目特征描述补充具体材料）。
+
+    合并版：
+      - 取两版通用名的并集（管材族 + 阀门族 + 电气/消防族）；
+      - 遇到 "法兰阀门/螺纹减压阀" 这种组合词，交由 _should_use_bill_type_for_material 兜底。
+    """
+    if _should_use_bill_type_for_material(name):
+        return True
     generic_names = {
-        "复合管", "管材", "管件", "钢管", "塑料管", "塑料给水管",
+        # 管道族
+        "复合管", "管材", "管件", "钢管", "塑料管", "塑料给水管", "塑料排水管",
+        # 阀门/过滤/减压族
         "阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀",
         "法兰减压阀", "过滤器", "螺纹过滤器", "法兰过滤器",
+        # 电气/消防/暖通族（这些常靠项目特征描述补全）
+        "桥架", "电缆", "电线", "配电箱", "灯具", "喷头", "风口", "水表",
+        "法兰",
     }
-    value = _normalize_material_hint(name)
-    if value in {_normalize_material_hint(x) for x in generic_names}:
-        return True
-
-    value = _normalize_material_hint(name)
-    generic_names = {
-        "复合管", "管材", "管件", "钢管", "塑料管", "阀门", "法兰", "桥架",
-        "电缆", "电线", "配电箱", "灯具", "喷头", "风口", "水表",
-    }
-    return value in {_normalize_material_hint(x) for x in generic_names}
+    return _normalize_material_hint(name) in {_normalize_material_hint(x) for x in generic_names}
 
 
 def _should_use_bill_type_for_material(name: str) -> bool:
+    """是否应从清单行的"类型/类别"字段取具体材料名（合并版，带 regex 兜底）。"""
     generic_valve_names = {
-        "阀门", "螺纹阀门", "减压器", "减压阀", "螺纹减压阀",
-        "法兰阀门", "法兰减压阀", "过滤器",
+        "阀门", "螺纹阀门", "减压器", "减压阀",
+        "螺纹减压阀", "法兰阀门", "法兰减压阀", "过滤器",
     }
-    value = _normalize_material_hint(name)
-    if value in {_normalize_material_hint(x) for x in generic_valve_names}:
+    normalized = _normalize_material_hint(name)
+    if normalized in {_normalize_material_hint(x) for x in generic_valve_names}:
         return True
 
-    value = _normalize_material_hint(name)
-    generic_valve_names = {
-        "阀门", "螺纹阀门", "减压阀", "螺纹减压阀", "法兰阀门", "法兰减压阀",
-    }
-    return value in {_normalize_material_hint(x) for x in generic_valve_names}
+    # 诸如 "法兰阀门"、"螺纹减压阀"、"PPR 阀门" 之类"前缀+阀/减/过滤"的组合
+    raw = re.sub(r"[\s\-\(\)\uFF08\uFF09]", "", str(name or ""))
+    prefix_tokens = [
+        "ppr", "pe", "pex", "pert", "pvc", "upvc", "cpvc", "hdpe", "frpp", "pp", "abs",
+        "塑料", "金属", "钢制",
+        "法兰", "螺纹", "沟槽", "焊接", "热熔", "熔接", "电熔", "承插",
+    ]
+    suffix_tokens = ["阀门", "过滤器", "减压阀", "减压器"]
+    prefix_pattern = "|".join(re.escape(x) for x in prefix_tokens)
+    suffix_pattern = "|".join(re.escape(x) for x in suffix_tokens)
+    return bool(re.fullmatch(rf"(?i)(?:{prefix_pattern})+(?:{suffix_pattern})", raw))
 
 
 def _connection_prefix(connection: str) -> str:
-    text = str(connection or "")
-    if "法兰" in text:
-        return "法兰"
-    if "螺纹" in text:
-        return "螺纹"
-    if "沟槽" in text:
-        return "沟槽"
-    if "焊接" in text:
-        return "焊接"
-
+    """从连接形式文本（如"法兰连接"）提取前缀词。"""
     text = str(connection or "")
     if "法兰" in text:
         return "法兰"
@@ -1261,24 +1244,15 @@ def _should_prefix_material(candidate_type: str) -> bool:
 # ============================================================
 # 4b. 从任务结果中提取主材行
 # ============================================================
-def _normalize_desc_key(text: str) -> str:
-    return re.sub(r"[\s、，,：:/（）\(\)\-]", "", str(text or ""))
-
-
-def _material_hint_family(name: str) -> str:
-    value = _normalize_material_hint(name)
-    pipe_names = {"复合管", "钢管", "塑料管", "塑料给水管", "塑料排水管", "管材", "管件"}
-    valve_names = {"阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀", "法兰减压阀", "过滤器"}
-    if value in {_normalize_material_hint(x) for x in pipe_names}:
-        return "pipe"
-    if value in {_normalize_material_hint(x) for x in valve_names}:
-        return "valve"
-    if any(token in str(name or "") for token in ("地漏", "盆", "洁具", "卫生器具", "器具")):
-        return "device"
-    return ""
+# _normalize_desc_key / _material_hint_family 已在文件顶部定义，此处不再重复。
 
 
 def _looks_like_installation_item_name(name: str) -> bool:
+    """判定是否为"安装项"（例如"管道敷设"），用于避免把这类行当材料去查价。
+
+    注意：之前文件里还有另一个弱化版本的同名函数（只判定 4 个关键词），
+    会覆盖这份更严谨的实现，导致塑料管的安装项被误判。已合并保留此版本。
+    """
     text = str(name or "").strip()
     if not text:
         return False
@@ -1293,8 +1267,20 @@ def _looks_like_installation_item_name(name: str) -> bool:
 
 
 def _spec_contains_exact(result_spec: str, target_spec: str) -> bool:
-    result_text = re.sub(r"\s+", "", str(result_spec or "").upper())
-    target_text = re.sub(r"\s+", "", str(target_spec or "").upper())
+    """判断 target_spec 是否作为"整词"出现在 result_spec 中。
+
+    先做一次规格归一化（×/x/X/* → X，φ/Φ → PHI），避免
+    "DN25×2.75" 和 "DN25x2.75" 被当成两个不同规格。
+    """
+
+    def _normalize(text: str) -> str:
+        value = re.sub(r"\s+", "", str(text or "").upper())
+        value = value.replace("×", "X").replace("*", "X")
+        value = value.replace("Φ", "PHI").replace("φ", "PHI")
+        return value
+
+    result_text = _normalize(result_spec)
+    target_text = _normalize(target_spec)
     if not result_text or not target_text:
         return False
 
@@ -1304,6 +1290,42 @@ def _spec_contains_exact(result_spec: str, target_spec: str) -> bool:
     if target_text[-1].isdigit():
         pattern = rf"{pattern}(?!\d)"
     return re.search(pattern, result_text) is not None
+
+
+# 单位兼容组（与 gldjc_price.UNIT_COMPAT_GROUPS 保持一致）
+# 注意：t 和 kg 不能放一组（差1000倍），m 和 m² 也不能放一组
+_UNIT_COMPAT_GROUPS = [
+    {"kg", "千克", "公斤"},
+    {"t", "吨"},
+    {"个", "只", "套", "台", "件", "组", "块"},
+    {"m", "米"},
+    {"m²", "㎡", "平方米", "m2"},
+    {"m³", "立方米", "m3"},
+    {"根", "条", "支"},
+    {"桶", "瓶"},
+    {"卷", "盘"},
+    {"副", "付", "对"},
+]
+
+
+def check_unit_compatible(unit_a: str, unit_b: str) -> bool:
+    """检查两个单位是否兼容（同组内视为兼容）。
+
+    本文件的 _is_usable_gldjc_cache_entry 会调用它判定广材网缓存能否使用；
+    之前此函数未定义，导致有 matched_unit 的缓存行直接抛 NameError，
+    等同于整条广材网缓存兜底路径不可用。
+    """
+    if not unit_a or not unit_b:
+        return False
+    a = str(unit_a).strip().lower()
+    b = str(unit_b).strip().lower()
+    if a == b:
+        return True
+    for group in _UNIT_COMPAT_GROUPS:
+        lower_group = {u.lower() for u in group}
+        if a in lower_group and b in lower_group:
+            return True
+    return False
 
 
 def _is_usable_gldjc_cache_entry(name: str, spec: str, unit: str, cached: dict) -> bool:
@@ -1328,104 +1350,7 @@ def _is_usable_gldjc_cache_entry(name: str, spec: str, unit: str, cached: dict) 
     return True
 
 
-def _is_compatible_material_hint(material_name: str, candidate_name: str) -> bool:
-    text = str(candidate_name or "").strip()
-    if not text:
-        return False
-
-    family = _material_hint_family(material_name)
-    if not family:
-        return True
-
-    if family == "pipe":
-        if any(token in text for token in ("刷", "漆", "涂", "标识", "油")):
-            return False
-        if _looks_like_material_family_token(text):
-            return True
-        return any(token in text for token in ("管", "管材", "管件"))
-
-    if family == "valve":
-        return any(token in text for token in ("阀", "过滤器", "减压"))
-
-    if family == "device":
-        return any(token in text for token in ("地漏", "盆", "洁具", "器", "卫生"))
-
-    return True
-
-
-def _extract_material_from_desc(desc: str) -> dict[str, str]:
-    if not desc:
-        return {"name": "", "spec": "", "type": "", "material": "", "connection": ""}
-
-    pairs: dict[str, str] = {}
-    normalized_desc = re.sub(r"(?<!\S)(\d+)\.\s*", r"\n\1.", str(desc or ""))
-    for raw_line in normalized_desc.splitlines():
-        line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
-        if not line:
-            continue
-        parts = re.split(r"[:：]", line, maxsplit=1)
-        if len(parts) != 2:
-            continue
-        key = _normalize_desc_key(parts[0].strip())
-        value = parts[1].strip()
-        if key and value:
-            pairs[key] = value
-
-    combined = ""
-    for key in ("材质规格", "材质及规格", "材质型号", "规格压力等级"):
-        if pairs.get(key):
-            combined = pairs[key]
-            break
-
-    candidate_type = ""
-    for key in ("类型", "类别", "名称"):
-        if pairs.get(key):
-            candidate_type = pairs[key].strip()
-            break
-
-    candidate_material = ""
-    for key in ("材质", "材质要求"):
-        if pairs.get(key):
-            candidate_material = pairs[key].strip()
-            break
-
-    candidate_connection = ""
-    for key in ("连接形式", "连接方式"):
-        if pairs.get(key):
-            candidate_connection = pairs[key].strip()
-            break
-
-    name = ""
-    spec = ""
-    if combined:
-        name, spec = _split_material_and_spec(combined)
-
-    if not name and candidate_material:
-        name = candidate_material
-
-    if not spec:
-        for key in ("型号规格", "规格型号", "规格", "型号", "公称直径", "规格压力等级"):
-            raw_spec = pairs.get(key, "").strip()
-            if not raw_spec:
-                continue
-            maybe_name, maybe_spec = _split_material_and_spec(raw_spec)
-            if maybe_spec:
-                if maybe_name and not candidate_type:
-                    candidate_type = maybe_name
-                if maybe_name and (not name or _looks_like_bare_material_token(name)):
-                    name = maybe_name
-                spec = maybe_spec
-                break
-            spec = raw_spec
-            break
-
-    return {
-        "name": name.strip(),
-        "spec": _clean_material_spec(spec),
-        "type": candidate_type,
-        "material": candidate_material,
-        "connection": candidate_connection,
-    }
+# _is_compatible_material_hint 和 _extract_material_from_desc 的第二版已并入顶部定义，移除重复。
 
 
 def _extract_critical_spec_text(raw_spec: str, main_spec: str = "") -> str:
@@ -1696,72 +1621,10 @@ def _is_viable_material_candidate(name: str) -> bool:
     return True
 
 
-def _is_generic_material_name(name: str) -> bool:
-    if _should_use_bill_type_for_material(name):
-        return True
-    generic_names = {
-        "复合管", "管材", "管件", "钢管", "塑料管", "塑料给水管", "塑料排水管",
-        "阀门", "螺纹阀门", "法兰阀门", "减压器", "减压阀", "螺纹减压阀",
-        "法兰减压阀", "过滤器", "螺纹过滤器", "法兰过滤器",
-    }
-    return _normalize_material_hint(name) in {_normalize_material_hint(x) for x in generic_names}
-
-
-def _should_use_bill_type_for_material(name: str) -> bool:
-    generic_valve_names = {
-        "阀门", "螺纹阀门", "减压器", "减压阀",
-        "螺纹减压阀", "法兰阀门", "法兰减压阀", "过滤器",
-    }
-    normalized = _normalize_material_hint(name)
-    if normalized in {_normalize_material_hint(x) for x in generic_valve_names}:
-        return True
-
-    raw = re.sub(r"[\s\-\(\)\uFF08\uFF09]", "", str(name or ""))
-    prefix_tokens = [
-        "ppr", "pe", "pex", "pert", "pvc", "upvc", "cpvc", "hdpe", "frpp", "pp", "abs",
-        "塑料", "金属", "钢制",
-        "法兰", "螺纹", "沟槽", "焊接", "热熔", "熔接", "电熔", "承插",
-    ]
-    suffix_tokens = ["阀门", "过滤器", "减压阀", "减压器"]
-    prefix_pattern = "|".join(re.escape(x) for x in prefix_tokens)
-    suffix_pattern = "|".join(re.escape(x) for x in suffix_tokens)
-    return bool(re.fullmatch(rf"(?i)(?:{prefix_pattern})+(?:{suffix_pattern})", raw))
-
-
-def _connection_prefix(connection: str) -> str:
-    text = str(connection or "")
-    if "法兰" in text:
-        return "法兰"
-    if "螺纹" in text:
-        return "螺纹"
-    if "沟槽" in text:
-        return "沟槽"
-    if "焊接" in text:
-        return "焊接"
-    return ""
-
-
-def _is_specific_lookup_name(name: str) -> bool:
-    value = str(name or "").strip()
-    return bool(value) and not _is_generic_material_name(value)
-
-
-def _should_prefix_connection(candidate_type: str) -> bool:
-    value = _normalize_material_hint(candidate_type)
-    return value in {_normalize_material_hint(x) for x in {"过滤器", "阀门", "减压阀", "减压器"}}
-
-
-def _should_prefix_material(candidate_type: str) -> bool:
-    value = str(candidate_type or "").strip()
-    return "阀" in value or "减压器" in value
-
-
-def _looks_like_installation_item_name(name: str) -> bool:
-    text = str(name or "").strip()
-    if not text:
-        return False
-    tokens = ("安装", "敷设", "管线", "组成")
-    return any(token in text for token in tokens)
+# _is_generic_material_name / _should_use_bill_type_for_material /
+# _connection_prefix / _is_specific_lookup_name / _should_prefix_connection /
+# _should_prefix_material / _looks_like_installation_item_name
+# 的重复定义已清理，统一使用文件上方的唯一实现。
 
 
 def _looks_like_bare_material_token(name: str) -> bool:

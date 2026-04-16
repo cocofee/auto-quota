@@ -126,6 +126,8 @@ _PIPE_WEIGHT_PER_METER = {
 _GALVANIZED_PIPE_FACTOR = 1.06
 
 # 名称中的修饰词（拆解时去掉，只保留核心品名）
+# 注意：连接形式（法兰/螺纹/沟槽/承插/热熔/卡压/丝接）从这里拆出去了！
+# 这些词决定价格差异，不能当噪声处理。
 NOISE_PREFIXES = [
     # 镀锌/防腐类
     "热浸锌", "热浸镀锌", "热镀锌", "冷镀锌", "电镀锌",
@@ -135,12 +137,38 @@ NOISE_PREFIXES = [
     # 品质/规格类
     "国标", "非标", "加厚", "普通", "优质", "标准", "一级", "二级",
     "A型", "B型", "C型", "I型", "II型",
-    # 工艺类
-    "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔",
     # 其他修饰
     "柔性", "刚性", "单壁", "双壁", "薄壁", "厚壁",
     "阻燃", "耐火", "低烟无卤",
 ]
+
+# 连接形式（决定价格的关键字段，不当噪声删；参与打分）
+CONNECTION_FORMS = [
+    "丝接", "螺纹", "法兰", "卡压", "沟槽", "承插", "热熔", "电熔",
+    "熔接", "焊接", "对焊", "承插焊", "卡箍",
+]
+
+
+def _extract_connection_form(text: str) -> str:
+    """从名称/规格中识别连接形式，返回规范化名（为空表示未识别）。
+
+    识别后用于：(1) 不从 base_name 里删掉；(2) 在打分时作硬约束/加分项。
+    """
+    if not text:
+        return ""
+    for form in CONNECTION_FORMS:
+        if form in text:
+            # 归一化同义连接形式
+            if form in {"丝接", "螺纹"}:
+                return "螺纹"
+            if form in {"熔接", "热熔"}:
+                return "热熔"
+            if form in {"对焊", "承插焊", "焊接"}:
+                return "焊接"
+            if form in {"卡箍", "卡压"}:
+                return "卡压"
+            return form
+    return ""
 
 # 广材网品名映射（清单常见写法 → 广材网能搜到的关键词）
 # 这张表解决"清单写A，广材网只认B"的问题
@@ -526,45 +554,49 @@ def _looks_like_installation_item_name(text: str) -> bool:
 
 
 def _extract_material_tokens(text: str) -> set[str]:
+    """从名称/规格文本中识别材料 token 集合。
+
+    注意：按"长度优先"匹配，命中后从 raw 中消耗该区段，避免
+      "UPVC 排水管" 同时命中 UPVC 和 PVC 导致它被判为与普通 PVC 兼容。
+    """
     raw = str(text or "").upper()
-    token_groups = (
-        "HDPE",
-        "PE-RT",
-        "PE",
-        "PPR",
-        "PP-R",
-        "UPVC",
-        "U-PVC",
-        "PVC",
-        "CPVC",
-        "PVC-U",
-        "PVC-C",
-        "球墨铸铁",
-        "铸铁",
-        "不锈钢",
-        "镀锌",
-        "衬塑",
-        "涂塑",
-        "钢塑复合",
-        "PSP",
-        "无缝",
-        "焊接",
-        "钢塑复合",
-        "铜",
-        "黄铜",
-    )
+    # 按长度降序排列，长 token 优先；同组同义词共用一个归一化 key
+    token_map = [
+        # (原始 token, 归一化 key)
+        ("球墨铸铁", "球墨铸铁"),
+        ("钢塑复合", "钢塑复合"),
+        ("PVC-U", "UPVC"),
+        ("U-PVC", "UPVC"),
+        ("UPVC", "UPVC"),
+        ("PVC-C", "CPVC"),
+        ("CPVC", "CPVC"),
+        ("PE-RT", "PERT"),
+        ("PERT", "PERT"),
+        ("HDPE", "HDPE"),
+        ("PP-R", "PPR"),
+        ("PPR", "PPR"),
+        ("不锈钢", "不锈钢"),
+        ("镀锌", "镀锌"),
+        ("铸铁", "铸铁"),
+        ("衬塑", "衬塑"),
+        ("涂塑", "涂塑"),
+        ("黄铜", "黄铜"),
+        ("无缝", "无缝"),
+        ("焊接", "焊接"),
+        ("PSP", "PSP"),
+        ("PVC", "PVC"),  # 注意：放在 UPVC/CPVC/PVC-U/PVC-C 之后，避免误吞
+        ("PE", "PE"),    # 放在 HDPE/PE-RT 之后
+        ("铜", "铜"),
+    ]
     found: set[str] = set()
-    for token in token_groups:
-        if token in raw:
-            normalized = token.replace("-", "")
-            if normalized == "PPR":
-                found.add("PPR")
-            elif normalized in {"UPVC", "PVCU"}:
-                found.add("UPVC")
-            elif normalized in {"CPVC", "PVCC"}:
-                found.add("CPVC")
-            else:
-                found.add(normalized)
+    consumed = raw
+    for token, key in token_map:
+        if token in consumed:
+            found.add(key)
+            # 从 consumed 里抹掉已匹配的 token，避免后续短 token 重复命中
+            consumed = consumed.replace(token, " " * len(token))
+
+    # UPVC/CPVC 被记为单独的族，不应再留 "PVC" 作为同族（已在消耗步骤中避免）
     return found
 
 
@@ -718,7 +750,17 @@ def check_unit_compatible(unit_a: str, unit_b: str) -> bool:
 
 
 def _normalize_spec_text(text: str) -> str:
-    return re.sub(r"\s+", "", str(text or "").upper())
+    """归一化规格文本，统一尺寸分隔符和直径符号。
+
+    ×/x/X/* → X，φ/Φ → PHI；空白全部去掉、字母转大写。
+    这样 "DN25×2.75"、"DN25x2.75"、"DN25*2.75" 会被视为同一规格。
+    """
+    value = re.sub(r"\s+", "", str(text or "").upper())
+    if not value:
+        return ""
+    value = value.replace("×", "X").replace("*", "X")
+    value = value.replace("Φ", "PHI").replace("φ", "PHI")
+    return value
 
 
 def _spec_contains_exact(result_spec: str, target_spec: str) -> bool:
@@ -899,6 +941,19 @@ def filter_and_score(results: list[dict], target_unit: str,
         if target_material_tokens and result_material_tokens and (target_material_tokens & result_material_tokens):
             score += 20
 
+        # 连接形式打分：法兰/螺纹/沟槽/承插/热熔/卡压决定价差，必须当硬约束
+        # 参考源：request_name + 原始请求名 + 请求规格，候选源：result_spec
+        target_conn = _extract_connection_form(f"{request_name} {base_name} {request_spec}")
+        candidate_conn = _extract_connection_form(result_spec)
+        if target_conn and candidate_conn:
+            if target_conn == candidate_conn:
+                score += 15
+                r["_conn_match"] = True
+            else:
+                # 连接形式明确冲突 → 减 25 分，阀门/管件族会直接掉到 40 分门槛以下
+                score -= 25
+                r["_conn_mismatch"] = (target_conn, candidate_conn)
+
         if "_raw_market_price" not in r:
             r["_raw_market_price"] = numeric_price
         if "_raw_unit" not in r:
@@ -1026,10 +1081,13 @@ def determine_confidence(scored_results: list[dict], target_unit: str,
 
     if target_unit and not top.get("_unit_match"):
         return "低"
-    if target_specs and not top.get("_spec_match"):
+    if target_specs and not top.get("_spec_match") and not top.get("_relaxed_spec_match"):
         return "低"
 
-    if top["score"] >= 80 and count >= 3:
+    # 连接形式冲突或规格只是松弛命中 → 置信度封顶"中"
+    relaxed_or_conflict = top.get("_relaxed_spec_match") or top.get("_conn_mismatch")
+
+    if not relaxed_or_conflict and top["score"] >= 80 and count >= 3:
         return "高"
     elif top["score"] >= 50 and count >= 2:
         return "中"
@@ -1392,7 +1450,26 @@ _PROVINCE_AREA_CODES = {
 
 
 def _normalize_cache_spec(spec: str) -> str:
-    return re.sub(r"\s+", "", str(spec or "").strip()).upper()
+    """归一化缓存规格 key，避免同一规格因书写差异被存成多份缓存。
+
+    做的事：
+      - 去空白、转大写；
+      - 尺寸分隔符 ×/x/X/* → 统一为 X；
+      - 直径符号 φ/Φ → 统一为 PHI；
+      - DN/DE 保持大写（由 upper() 已处理）。
+
+    示例：
+      "DN25×2.75"、"dn25x2.75"、"DN25*2.75"  →  "DN25X2.75"
+      "Φ10mm"、"φ10MM"、"PHI10MM"             →  "PHI10MM"
+    """
+    text = re.sub(r"\s+", "", str(spec or "").strip()).upper()
+    if not text:
+        return ""
+    # 尺寸分隔符统一
+    text = text.replace("×", "X").replace("*", "X")
+    # 直径符号统一
+    text = text.replace("Φ", "PHI").replace("φ", "PHI")
+    return text
 
 
 def _normalize_cache_region(region: str) -> str:
@@ -1707,8 +1784,19 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
             time.sleep(delay + random.uniform(0, 1))
             continue
 
-        # 过滤+打分
-        scored = filter_and_score(all_results, unit, specs, base_name, request_name=name, request_spec=spec_col)
+        # 过滤+打分：先严格匹配，失败再退到松弛规格匹配
+        scored = filter_and_score(all_results, unit, specs, base_name,
+                                  request_name=name, request_spec=spec_col)
+        if not scored and specs:
+            # 第一轮全被规格过滤掉，尝试放宽（DN25 也可匹配到 DN25x2.75 之类）
+            scored = filter_and_score(all_results, unit, specs, base_name,
+                                      request_name=name, request_spec=spec_col,
+                                      allow_relaxed_spec=True)
+            if scored:
+                # 标记这些结果是松弛命中，在输出层提示用户核对
+                for r in scored:
+                    r["_relaxed_spec_match"] = True
+
         confidence = determine_confidence(scored, unit, specs)
 
         # 只允许使用通过过滤的结果取价；宁可留空，也不回填错误价格
