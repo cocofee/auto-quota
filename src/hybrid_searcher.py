@@ -17,6 +17,7 @@ RRF算法原理：
 - k=60是标准常数，防止排名第1的权重过大
 """
 
+import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -154,6 +155,63 @@ class HybridSearcher:
             setter = getattr(aux_searcher, "set_experience_db", None)
             if callable(setter):
                 setter(experience_db)
+
+    @staticmethod
+    def _normalize_session_cache_key_part(value):
+        if isinstance(value, dict):
+            return {
+                str(key): HybridSearcher._normalize_session_cache_key_part(value[key])
+                for key in sorted(value, key=lambda item: str(item))
+            }
+        if isinstance(value, (list, tuple)):
+            return [HybridSearcher._normalize_session_cache_key_part(item) for item in value]
+        if isinstance(value, set):
+            normalized = [
+                HybridSearcher._normalize_session_cache_key_part(item)
+                for item in value
+            ]
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True),
+            )
+        if isinstance(value, float):
+            return round(value, 8)
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        return str(value)
+
+    def _build_session_cache_key(self, *,
+                                 query: str,
+                                 books: list[str] | None,
+                                 top_k: int,
+                                 adaptive_strategy: str,
+                                 primary_query_profile: dict | None,
+                                 query_features: dict | None,
+                                 route_profile: dict | None,
+                                 rank_window: int,
+                                 bm25_weight: float,
+                                 vector_weight: float,
+                                 weight_reason: str,
+                                 bm25_top_k: int,
+                                 vector_top_k: int) -> str:
+        payload = {
+            "query": str(query or ""),
+            "books": sorted(str(book).strip() for book in (books or []) if str(book).strip()),
+            "top_k": int(top_k),
+            "adaptive_strategy": str(adaptive_strategy or "standard").strip().lower(),
+            "primary_query_profile": dict(primary_query_profile or {}),
+            "query_features": dict(query_features or {}),
+            "route_profile": dict(route_profile or {}),
+            "rank_window": int(rank_window),
+            "bm25_weight": float(bm25_weight),
+            "vector_weight": float(vector_weight),
+            "weight_reason": str(weight_reason or ""),
+            "bm25_top_k": int(bm25_top_k),
+            "vector_top_k": int(vector_top_k),
+            "vector_enabled": bool(config.VECTOR_ENABLED),
+        }
+        normalized = self._normalize_session_cache_key_part(payload)
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _stable_result_identity(candidate: dict) -> tuple[str, str, str]:
@@ -1088,7 +1146,18 @@ class HybridSearcher:
             bm25_weight=base_bm25_weight,
             vector_weight=base_vector_weight,
         )
-
+        bm25_top_k = self._resolve_engine_top_k(
+            engine="bm25",
+            top_k=top_k,
+            rank_window=rank_window,
+            adaptive_strategy=adaptive_strategy,
+        )
+        vector_top_k = self._resolve_engine_top_k(
+            engine="vector",
+            top_k=top_k,
+            rank_window=rank_window,
+            adaptive_strategy=adaptive_strategy,
+        )
         # 非标准编号定额库（宁夏/甘肃/深圳等地方定额）：book翻译
         # API层传来的books带C前缀（如["C10"]），但这些省份的book是纯数字
         # match_core.py已有翻译逻辑，翻译后的books是纯数字（如["10"]），不需要再处理
@@ -1102,17 +1171,21 @@ class HybridSearcher:
             )
 
         # 会话缓存检查：相同query+books组合复用搜索结果
-        books_key = ",".join(sorted(books)) if books else ""
-        primary_key = "|".join(
-            str(value).strip()
-            for value in (
-                primary_query_profile.get("primary_text", ""),
-                primary_query_profile.get("primary_subject", ""),
-                " ".join(primary_query_profile.get("decisive_terms", []) or []),
-            )
-            if str(value).strip()
+        cache_key = self._build_session_cache_key(
+            query=query,
+            books=books,
+            top_k=top_k,
+            adaptive_strategy=adaptive_strategy,
+            primary_query_profile=primary_query_profile,
+            query_features=query_features,
+            route_profile=route_profile,
+            rank_window=rank_window,
+            bm25_weight=bm25_weight,
+            vector_weight=vector_weight,
+            weight_reason=weight_reason,
+            bm25_top_k=bm25_top_k,
+            vector_top_k=vector_top_k,
         )
-        cache_key = f"{query}|{books_key}|{top_k}|{primary_key}"
         cached = self._session_cache.get(cache_key)
         if cached is not None:
             import copy
@@ -1184,19 +1257,6 @@ class HybridSearcher:
         vector_runs = []
         total_bm25_hits = 0
         total_vector_hits = 0
-        bm25_top_k = self._resolve_engine_top_k(
-            engine="bm25",
-            top_k=top_k,
-            rank_window=rank_window,
-            adaptive_strategy=adaptive_strategy,
-        )
-        vector_top_k = self._resolve_engine_top_k(
-            engine="vector",
-            top_k=top_k,
-            rank_window=rank_window,
-            adaptive_strategy=adaptive_strategy,
-        )
-
         # 向量搜索开关（环境变量VECTOR_ENABLED=false可关闭，Docker/懒猫无GPU时用）
         vector_enabled = config.VECTOR_ENABLED
 
