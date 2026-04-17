@@ -141,6 +141,28 @@ class TestConnectionHardFail:
             "即使DN精确匹配，连接方式不匹配也应导致param_match=False"
 
 
+class TestTierUpHardFail:
+    """鏋侀檺鍚戜笂鍙栨。搴旇Е鍙戠‖澶辫触"""
+
+    def setup_method(self):
+        self.validator = ParamValidator()
+
+    def test_tier_up_score_returns_zero_for_extreme_ratio(self):
+        """ratio >= 4 鐨勮秴妗ｄ笉搴旇 0.55 鍦版澘鎵樹綇"""
+        score = self.validator._tier_up_score(25, 25000)
+        assert score == 0.0
+
+    def test_extreme_tier_up_sets_param_match_false_even_with_exact_other_param(self):
+        """鍗充娇鏈夊叾浠栫簿纭尮閰嶏紝鏋侀檺瓒呮。涔熷簲鐩存帴澶辫触"""
+        bill_params = {"dn": 25, "circuits": 2}
+        quota_params = {"dn": 25000, "circuits": 2}
+        is_match, score, detail = self.validator._check_params(bill_params, quota_params)
+        assert is_match is False
+        assert score == pytest.approx(0.5, abs=0.01)
+        assert "DN25" in detail
+        assert "向上取档" in detail
+
+
 class TestSortingFusion:
     """排序融合 reranker 分数测试"""
 

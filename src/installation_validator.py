@@ -464,6 +464,8 @@ class InstallationValidator:
             if bill_value < quota_value:
                 tier_score = self._tier_up_score(float(bill_value), float(quota_value))
                 score_sum += tier_score
+                if hard_match and tier_score == 0.0:
+                    hard_fail = True
                 details.append(f"{label}{bill_value}{unit_text}→{quota_value}{unit_text} 向上取档")
                 continue
 
