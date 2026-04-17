@@ -14,8 +14,10 @@
 
 import math
 import re
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Literal
 
 import jieba
 import numpy as np
@@ -34,9 +36,44 @@ from src.installation_validator import InstallationValidator
 from src.specialty_classifier import get_book_from_quota_id
 
 
+ValidationTier = Literal["hard_pass", "hard_fail", "soft_match", "soft_penalty"]
+SignalState = Literal["pass", "fail", "unknown"]
+
+
+@dataclass
+class ValidationResult:
+    tier: ValidationTier
+    hard_signals: dict[str, SignalState] = field(default_factory=dict)
+    soft_score: float = 0.0
+    soft_signals: dict[str, float] = field(default_factory=dict)
+    reason_chain: list[str] = field(default_factory=list)
+
+    @property
+    def has_hard_fail(self) -> bool:
+        return any(state == "fail" for state in self.hard_signals.values())
+
+    @property
+    def is_match(self) -> bool:
+        return not self.has_hard_fail
+
+    @property
+    def detail(self) -> str:
+        return "; ".join(part for part in self.reason_chain if part)
+
+    def to_dict(self) -> dict:
+        return {
+            "tier": self.tier,
+            "hard_signals": dict(self.hard_signals),
+            "soft_score": float(self.soft_score),
+            "soft_signals": dict(self.soft_signals),
+            "reason_chain": list(self.reason_chain),
+        }
+
+
 class ParamValidator:
     """候选定额的参数验证器"""
     _RECTIFY_REORDER_ENABLED = False
+    _HARD_PENALTY_THRESHOLD = 0.3
     TIER_PARAMS = [
         "dn",
         "cable_section",
@@ -431,23 +468,37 @@ class ParamValidator:
                 # 即使无参数，仍需检查品类冲突（如"喷淋泵"不应配"喷头"定额）
                 cat_penalty, cat_detail = self._check_category_conflict(
                     query_text, c.get("name", ""))
+                if self._record_penalty_signal(
+                    c,
+                    signal_name="category_conflict",
+                    penalty=cat_penalty,
+                    detail=cat_detail,
+                ):
+                    c["param_match"] = False
                 if cat_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - cat_penalty)
                     c["param_detail"] += f"; {cat_detail}"
-                    if cat_penalty >= 0.3:
-                        c["param_match"] = False
-                        c["param_tier"] = 0  # 品类冲突降为硬失败层（如"普通插座"不应配"防爆插座"）
                 neg_penalty, neg_detail = self._check_negative_keywords(
                     query_text, c.get("name", ""))
+                if self._record_penalty_signal(
+                    c,
+                    signal_name="negative_keywords",
+                    penalty=neg_penalty,
+                    detail=neg_detail,
+                ):
+                    c["param_match"] = False
                 if neg_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - neg_penalty)
                     c["param_detail"] += f"; {neg_detail}"
-                    if neg_penalty >= 0.3:
-                        c["param_match"] = False
-                        c["param_tier"] = 0  # 负向关键词降为硬失败层
                 # 介质冲突检查（给水≠采暖≠排水≠消防）
                 usage_penalty, usage_detail = self._check_usage_conflict(
                     query_text, c.get("name", ""))
+                self._record_penalty_signal(
+                    c,
+                    signal_name="usage_conflict",
+                    penalty=usage_penalty,
+                    detail=usage_detail,
+                )
                 if usage_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - usage_penalty)
                     c["param_detail"] += f"; {usage_detail}"
@@ -537,24 +588,40 @@ class ParamValidator:
             # 负向关键词检查：清单没提到"防爆"/"铜制"，定额却包含 → 降分
             neg_penalty, neg_detail = self._check_negative_keywords(
                 query_text, candidate.get("name", ""))
+            if self._record_penalty_signal(
+                candidate,
+                signal_name="negative_keywords",
+                penalty=neg_penalty,
+                detail=neg_detail,
+            ):
+                is_match = False
             if neg_penalty > 0:
                 score = max(0.0, score - neg_penalty)
                 detail += f"; {neg_detail}"
-                if neg_penalty >= 0.3:
-                    is_match = False  # 重罚时直接标记不匹配
 
             # 品类互斥检查：清单核心品类和定额核心品类冲突 → 降分
             cat_penalty, cat_detail = self._check_category_conflict(
                 query_text, candidate.get("name", ""))
+            if self._record_penalty_signal(
+                candidate,
+                signal_name="category_conflict",
+                penalty=cat_penalty,
+                detail=cat_detail,
+            ):
+                is_match = False
             if cat_penalty > 0:
                 score = max(0.0, score - cat_penalty)
                 detail += f"; {cat_detail}"
-                if cat_penalty >= 0.3:
-                    is_match = False
 
             # 介质冲突检查（给水≠采暖≠排水≠消防）
             usage_penalty, usage_detail = self._check_usage_conflict(
                 query_text, candidate.get("name", ""))
+            self._record_penalty_signal(
+                candidate,
+                signal_name="usage_conflict",
+                penalty=usage_penalty,
+                detail=usage_detail,
+            )
             if usage_penalty > 0:
                 score = max(0.0, score - usage_penalty)
                 detail += f"; {usage_detail}"
@@ -1186,6 +1253,9 @@ class ParamValidator:
         1. param_tier=0（硬失败）永远排最后（业务规则不让模型越界）
         2. tier>0的候选用LTR模型打分排序
         """
+        for candidate in candidates:
+            self._hydrate_candidate_validation(candidate)
+
         self._load_ltr_model()
 
         if self._ltr_model is not None:
@@ -2766,6 +2836,145 @@ class ParamValidator:
         # 定额有参数且匹配通过 → 精确匹配层
         return 2
 
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @classmethod
+    def _is_hard_penalty(cls, penalty: float) -> bool:
+        return float(penalty or 0.0) >= cls._HARD_PENALTY_THRESHOLD
+
+    @classmethod
+    def _record_penalty_signal(
+        cls,
+        candidate: dict,
+        *,
+        signal_name: str,
+        penalty: float,
+        detail: str,
+    ) -> bool:
+        candidate[f"{signal_name}_penalty"] = float(penalty or 0.0)
+        candidate[f"{signal_name}_detail"] = str(detail or "")
+        hard_conflict = cls._is_hard_penalty(penalty)
+        candidate[f"{signal_name}_hard_conflict"] = hard_conflict
+        return hard_conflict
+
+    @classmethod
+    def _resolve_validation_tier(cls, result: ValidationResult) -> ValidationTier:
+        if result.has_hard_fail:
+            return "hard_fail"
+        if any(state == "pass" for state in result.hard_signals.values()):
+            return "hard_pass"
+        if cls._clamp01(result.soft_score) >= 0.5:
+            return "soft_match"
+        return "soft_penalty"
+
+    @classmethod
+    def _make_validation_result(
+        cls,
+        *,
+        hard_signals: dict[str, SignalState] | None = None,
+        soft_score: float = 0.0,
+        soft_signals: dict[str, float] | None = None,
+        reason_chain: list[str] | None = None,
+    ) -> ValidationResult:
+        result = ValidationResult(
+            tier="soft_penalty",
+            hard_signals=dict(hard_signals or {}),
+            soft_score=cls._clamp01(soft_score),
+            soft_signals=dict(soft_signals or {}),
+            reason_chain=list(reason_chain or []),
+        )
+        result.tier = cls._resolve_validation_tier(result)
+        return result
+
+    def _store_validation_result(self, candidate: dict, result: ValidationResult) -> None:
+        detail = result.detail
+        candidate["param_validation"] = result.to_dict()
+        candidate["param_validation_tier"] = result.tier
+        candidate["param_hard_fail"] = result.has_hard_fail
+        candidate["param_score"] = result.soft_score
+        candidate["param_detail"] = detail
+        candidate["param_match"] = result.is_match
+        candidate["param_tier"] = self._determine_param_tier(
+            result.is_match, result.soft_score, detail)
+
+    def _hydrate_candidate_validation(self, candidate: dict) -> None:
+        if isinstance(candidate.get("param_validation"), dict):
+            return
+
+        hard_signals: dict[str, SignalState] = {}
+        for signal_name, conflict_key, comparable_key in (
+            ("feature_alignment", "feature_alignment_hard_conflict", "feature_alignment_comparable_count"),
+            ("context_alignment", "context_alignment_hard_conflict", "context_alignment_comparable_count"),
+            ("logic_alignment", "logic_hard_conflict", "logic_comparable_count"),
+        ):
+            if candidate.get(conflict_key):
+                hard_signals[signal_name] = "fail"
+            elif int(candidate.get(comparable_key, 0) or 0) > 0:
+                hard_signals[signal_name] = "pass"
+            else:
+                hard_signals[signal_name] = "unknown"
+
+        for signal_name in ("negative_keywords", "category_conflict", "usage_conflict"):
+            penalty = float(candidate.get(f"{signal_name}_penalty", 0.0) or 0.0)
+            detail = str(candidate.get(f"{signal_name}_detail", "") or "").strip()
+            if candidate.get(f"{signal_name}_hard_conflict"):
+                hard_signals[signal_name] = "fail"
+            elif penalty > 0 or detail:
+                hard_signals[signal_name] = "pass"
+            else:
+                hard_signals[signal_name] = "unknown"
+
+        if candidate.get("param_match", True):
+            structured_state: SignalState = "pass"
+        elif any(state == "fail" for state in hard_signals.values()):
+            structured_state = "unknown"
+        else:
+            structured_state = "fail"
+        hard_signals["structured_params"] = structured_state
+
+        soft_signals: dict[str, float] = {}
+        for signal_name, key in (
+            ("feature_alignment", "feature_alignment_score"),
+            ("context_alignment", "context_alignment_score"),
+            ("logic_alignment", "logic_score"),
+        ):
+            if candidate.get(key) is not None:
+                soft_signals[signal_name] = self._clamp01(candidate.get(key))
+        for signal_name in ("negative_keywords", "category_conflict", "usage_conflict"):
+            penalty = float(candidate.get(f"{signal_name}_penalty", 0.0) or 0.0)
+            if penalty > 0:
+                soft_signals[f"{signal_name}_penalty"] = self._clamp01(penalty)
+
+        detail = str(candidate.get("param_detail", "") or "").strip()
+        result = self._make_validation_result(
+            hard_signals=hard_signals,
+            soft_score=self._clamp01(candidate.get("param_score", 0.0) or 0.0),
+            soft_signals=soft_signals,
+            reason_chain=[part.strip() for part in detail.split(";") if part.strip()],
+        )
+        self._store_validation_result(candidate, result)
+
+    def _check_params_result(self, bill_params: dict, quota_params: dict,
+                             bill_canonical_features: dict | None = None,
+                             quota_canonical_features: dict | None = None,
+                             context_prior: dict | None = None) -> ValidationResult:
+        is_match, score, detail = self._check_params(
+            bill_params,
+            quota_params,
+            bill_canonical_features=bill_canonical_features,
+            quota_canonical_features=quota_canonical_features,
+            context_prior=context_prior,
+        )
+        hard_state: SignalState = "pass" if is_match else "fail"
+        return self._make_validation_result(
+            hard_signals={"structured_params": hard_state},
+            soft_score=score,
+            soft_signals={"structured_params": self._clamp01(score)},
+            reason_chain=[detail] if detail else [],
+        )
+
     def _check_params(self, bill_params: dict, quota_params: dict,
                       bill_canonical_features: dict | None = None,
                       quota_canonical_features: dict | None = None,
@@ -3233,7 +3442,7 @@ class ParamValidator:
             return True, 0.8, "无共同参数可对比"
 
         final_score = score_sum / check_count
-        is_match = not has_hard_fail and final_score >= 0.5
+        is_match = not has_hard_fail
         detail_str = "; ".join(details)
         return is_match, final_score, detail_str
 
