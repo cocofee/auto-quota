@@ -159,6 +159,42 @@ def test_parse_sheet_recognizes_bill_rows_without_seq_header():
     assert quota_rows[0]["desc"] == "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石"
 
 
+def test_parse_sheet_does_not_guess_price_col_for_mixed_table():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["", "项目编码", "项目名称", "项目特征描述", "单位", "工程量", "航管综合楼/电气工程"])
+    ws.append(["1", "030402011001", "成套配电箱", "1.名称:成套配电箱\n2.型号:1FAL", "台", 2, 1])
+    ws.append(["", "C4-315", "成套配电箱安装 半周长(m) 1.5", "", "台", 2, None])
+    ws.append(["", "补充主材003@1", "成套配电箱", "", "台", 2, None])
+
+    result = material_price_api._parse_sheet(ws)
+
+    material_rows = [row for row in result["materials"] if row["type"] == "material"]
+    assert len(material_rows) == 1
+    assert material_rows[0]["price_col"] is None
+
+
+def test_parse_sheet_reads_price_column_beyond_first_15_columns():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    headers = ["", "项目编码", "项目名称", "项目特征描述", "单位", "工程量"]
+    headers.extend([f"项目列{i}" for i in range(7, 37)])
+    headers.append("主材单价")
+    ws.append(headers)
+    ws.append(["1", "030402011001", "成套配电箱", "1.名称:成套配电箱\n2.型号:1FAL", "台", 2] + [None] * 30 + [None])
+    ws.append(["", "C4-315", "成套配电箱安装 半周长(m) 1.5", "", "台", 2] + [None] * 30 + [None])
+    ws.append(["", "补充主材003@1", "成套配电箱 1FAL", "", "台", 2] + [None] * 30 + [14525.66])
+
+    result = material_price_api._parse_sheet(ws)
+
+    material_rows = [row for row in result["materials"] if row["type"] == "material"]
+    assert len(material_rows) == 1
+    assert material_rows[0]["price_col"] == 37
+    assert material_rows[0]["existing_price"] == 14525.66
+
+
 def test_build_normalized_material_fields_preserves_critical_spec():
     normalized = material_price_api._build_normalized_material_fields(
         "绿地灌溉管线安装",
@@ -506,6 +542,43 @@ def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_pa
     ws2 = wb2["Sheet1"]
     assert ws2.cell(row=2, column=2).value == "镀锌钢管 DN32"
     assert ws2.cell(row=2, column=3).value == 18.5
+    wb2.close()
+
+
+def test_write_material_updates_inserts_price_column_when_missing(tmp_path: Path):
+    file_path = tmp_path / "reviewed-insert-price.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["", "编码", "项目名称", "项目特征", "单位", "工程量", "航管综合楼/电气工程"])
+    ws.append(["", "补充主材003@1", "成套配电箱", "", "台", 2, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "标准组价数据",
+                "header_row": 1,
+                "name_col": 3,
+                "final_name": "成套配电箱",
+                "spec_col": None,
+                "final_spec": "1FAL",
+                "price_col": None,
+                "final_price": 888.88,
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["标准组价数据"]
+    assert ws2.cell(row=1, column=8).value == "主材单价"
+    assert ws2.cell(row=2, column=3).value == "成套配电箱 1FAL"
+    assert ws2.cell(row=2, column=8).value == 888.88
     wb2.close()
 
 
