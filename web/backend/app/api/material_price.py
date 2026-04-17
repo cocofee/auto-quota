@@ -659,11 +659,15 @@ def _parse_sheet(ws) -> dict:
         price_col = col_map["qty"] + 1
 
     # 也检测"项目特征描述"列（用于清单行展示）
+    # 任务导出的结果表常见双行表头/合并表头，描述列不一定落在第一行。
     desc_col = None
-    for col_idx in range(1, min(15, ws.max_column + 1)):
-        val = str(ws.cell(row=header_row, column=col_idx).value or "").strip()
-        if val in ("项目特征描述", "项目特征", "特征描述"):
-            desc_col = col_idx
+    for scan_row in range(header_row, min(header_row + 2, ws.max_row + 1)):
+        for col_idx in range(1, min(20, ws.max_column + 1)):
+            val = str(ws.cell(row=scan_row, column=col_idx).value or "").strip()
+            if val in ("项目特征描述", "项目特征", "特征描述", "描述"):
+                desc_col = col_idx
+                break
+        if desc_col is not None:
             break
 
     # 遍历数据行
@@ -767,6 +771,7 @@ def _parse_sheet(ws) -> dict:
                 "header_row": header_row,
                 "code": code_val,
                 "name": name_val,
+                "desc": current_bill.get("desc", "") if current_bill else "",
                 "name_col": col_map.get("name"),
                 "suggested_name": suggested_name,
                 "spec": spec_val,
@@ -819,6 +824,7 @@ def _parse_sheet(ws) -> dict:
                 "sheet": ws.title,
                 "code": code_val,
                 "name": name_val,
+                "desc": current_bill.get("desc", "") if current_bill else "",
                 "unit": unit_val,
                 "qty": qty_val,
             })
@@ -849,10 +855,10 @@ def _classify_row(code: str, name: str, seq: str) -> str:
     if _is_material_row(c, name):
         return "material"
 
-    # 清单行：有序号（A列有数字）且编码像项目编码（9-12位数字）
-    if seq and re.fullmatch(r"\d+", seq):
-        if re.fullmatch(r"\d{9,15}", c):
-            return "bill"
+    # 清单行：项目编码通常就是 9-15 位纯数字。
+    # 不能强依赖"序号"表头，因为不少导出表首列为空表头，但数据区仍然有序号。
+    if re.fullmatch(r"\d{9,15}", c):
+        return "bill"
 
     # 定额行：编码像定额编号（如C10-2-123、A-9-63、SC20）
     if c and re.match(r"^[A-Za-z]{1,4}\d", c):
@@ -918,10 +924,11 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     candidate_type = info["type"]
     candidate_material = info["material"]
     candidate_connection = info["connection"]
+    candidate_model = str(info.get("model") or "").strip()
     raw_material_name = str(material_name or "").strip()
     cleaned_material_name = _strip_inline_spec_from_name(raw_material_name) or raw_material_name
     bill_candidate_name = _normalize_bill_candidate_name(bill_name)
-    fallback_spec = candidate_spec or _extract_inline_material_spec(raw_material_name)
+    fallback_spec = candidate_spec or candidate_model or _extract_inline_material_spec(raw_material_name)
     if not fallback_spec and bill_candidate_name != str(bill_name or "").strip():
         fallback_spec = _extract_inline_material_spec(bill_name)
     if not candidate_name and not candidate_spec and not candidate_type and not _is_viable_material_candidate(bill_candidate_name):
@@ -1034,6 +1041,14 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
         if len(raw_spec) > len(fallback_spec):
             fallback_spec = raw_spec
 
+    if (
+        suggested_name
+        and candidate_model
+        and "配电箱" in suggested_name
+        and candidate_model not in fallback_spec
+    ):
+        fallback_spec = candidate_model
+
     return suggested_name, fallback_spec
 
 
@@ -1046,7 +1061,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
       - 保留第一版更全的"连接形式"候选 key（接口形式/焊接方法等）。
     """
     if not desc:
-        return {"name": "", "spec": "", "type": "", "material": "", "connection": ""}
+        return {"name": "", "spec": "", "type": "", "material": "", "connection": "", "model": ""}
 
     pairs: dict[str, str] = {}
     normalized_desc = re.sub(r"(?<!\S)(\d+)\.\s*", r"\n\1.", str(desc or ""))
@@ -1094,6 +1109,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
     if not name and candidate_material:
         name = candidate_material
 
+    model = ""
     if not spec:
         for key in ("型号规格", "规格型号", "规格", "型号", "公称直径", "规格压力等级"):
             raw_spec = pairs.get(key, "").strip()
@@ -1114,7 +1130,13 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
             if _is_placeholder_material_spec(cleaned_raw_spec):
                 continue
             spec = cleaned_raw_spec
+            if key == "型号" and cleaned_raw_spec:
+                model = cleaned_raw_spec
             break
+    elif pairs.get("型号"):
+        cleaned_model = _clean_material_spec(pairs.get("型号", "").strip())
+        if cleaned_model and not _is_placeholder_material_spec(cleaned_model):
+            model = cleaned_model
 
     return {
         "name": name.strip(),
@@ -1122,6 +1144,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
         "type": candidate_type,
         "material": candidate_material,
         "connection": candidate_connection,
+        "model": model.strip(),
     }
 
 
@@ -1700,11 +1723,32 @@ def _should_prefix_material_family(material_name: str, candidate_name: str) -> b
     return _normalize_material_hint(candidate_name) not in _normalize_material_hint(material_text)
 
 
+def _is_conduit_accessory_name(name: str) -> bool:
+    text = str(name or "").strip()
+    if not text:
+        return False
+    accessory_tokens = (
+        "锁紧螺母",
+        "管接头",
+        "护口",
+        "接线盒",
+        "接线箱",
+        "线盒",
+        "拉线盒",
+        "过线盒",
+        "分线盒",
+        "86盒",
+    )
+    return any(token in text for token in accessory_tokens)
+
+
 def _should_use_conduit_material_name(material_name: str, bill_name: str, candidate_material: str) -> bool:
     material_text = str(material_name or "").strip()
     bill_text = str(bill_name or "").strip()
     candidate = str(candidate_material or "").strip()
     if not candidate:
+        return False
+    if _is_conduit_accessory_name(material_text):
         return False
     if any(token in candidate for token in ("综合考虑", "详见")):
         return False
@@ -1747,7 +1791,7 @@ def _should_use_specific_equipment_name(material_name: str, bill_name: str, cand
     candidate = _clean_equipment_candidate_name(candidate_type or candidate_name)
     if not reference_name or not candidate:
         return False
-    equipment_tokens = ("泵", "风机", "机组", "设备", "水箱", "换热器", "冷水机", "空调")
+    equipment_tokens = ("泵", "风机", "机组", "设备", "水箱", "换热器", "冷水机", "空调", "配电箱", "配电柜", "控制箱", "控制柜")
     if not any(token in candidate for token in equipment_tokens):
         return False
     if _normalize_material_hint(candidate) == _normalize_material_hint(reference_name):

@@ -101,6 +101,64 @@ def test_parse_sheet_prefills_z_material_name_and_spec_from_bill_desc():
     assert materials[1]["normalized_spec"] == "DN100"
 
 
+def test_parse_sheet_reads_project_feature_from_second_header_row():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "任务结果"
+    ws.append(["序号", "项目编码", "项目名称", "", "计量单位", "工程量"])
+    ws.append(["", "", "", "项目特征描述", "", ""])
+    ws.append(["1", "030404017001", "成套配电箱", "1.名称:成套配电箱\n2.型号:1FAPZ2", "台", 1])
+    ws.append(["", "A10-1", "成套配电箱安装 悬挂、嵌入式", "", "台", 1])
+    ws.append(["", "Z001", "成套配电箱", "", "台", 1])
+
+    result = material_price_api._parse_sheet(ws)
+
+    bill_rows = [row for row in result["all_rows"] if row["type"] == "bill"]
+    assert len(bill_rows) == 1
+    assert bill_rows[0]["desc"] == "1.名称:成套配电箱\n2.型号:1FAPZ2"
+
+
+def test_parse_sheet_propagates_bill_desc_to_quota_and_material_rows():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "任务结果"
+    ws.append(["序号", "项目编码", "项目名称", "项目特征描述", "计量单位", "工程量"])
+    ws.append(["1", "030404017001", "成套配电箱", "1.名称:成套配电箱\n2.型号:1FAPZ2", "台", 1])
+    ws.append(["", "A10-1", "成套配电箱安装 悬挂、嵌入式", "", "台", 1])
+    ws.append(["", "Z001", "成套配电箱", "", "台", 1])
+
+    result = material_price_api._parse_sheet(ws)
+
+    quota_rows = [row for row in result["all_rows"] if row["type"] == "quota"]
+    material_rows = [row for row in result["all_rows"] if row["type"] == "material"]
+
+    assert len(quota_rows) == 1
+    assert quota_rows[0]["desc"] == "1.名称:成套配电箱\n2.型号:1FAPZ2"
+    assert len(material_rows) == 1
+    assert material_rows[0]["desc"] == "1.名称:成套配电箱\n2.型号:1FAPZ2"
+
+
+def test_parse_sheet_recognizes_bill_rows_without_seq_header():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["", "项目编码", "项目名称", "项目特征描述", "单位", "工程量"])
+    ws.append(["", "", "整个项目", "", "", ""])
+    ws.append(["1", "010501001001", "基础垫层", "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石", "m3", 5.48])
+    ws.append(["", "D5-3", "管道(渠)垫层及基础 垫层 碎石", "", "10m3", 0.548])
+
+    result = material_price_api._parse_sheet(ws)
+
+    bill_rows = [row for row in result["all_rows"] if row["type"] == "bill"]
+    quota_rows = [row for row in result["all_rows"] if row["type"] == "quota"]
+
+    assert len(bill_rows) == 1
+    assert bill_rows[0]["code"] == "010501001001"
+    assert bill_rows[0]["desc"] == "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石"
+    assert len(quota_rows) == 1
+    assert quota_rows[0]["desc"] == "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石"
+
+
 def test_build_normalized_material_fields_preserves_critical_spec():
     normalized = material_price_api._build_normalized_material_fields(
         "绿地灌溉管线安装",
@@ -352,6 +410,15 @@ def test_distribution_box_prefers_model_over_placeholder_spec():
     assert normalized["normalized_query_text"] == "成套配电箱 1FAPZ2"
 
 
+def test_extract_distribution_box_model_from_desc():
+    info = material_price_api._extract_material_from_desc(
+        "1.名称:成套配电箱\n2.型号:1FAPZ2\n3.规格:综合考虑\n4.安装方式:悬挂安装"
+    )
+
+    assert info["type"] == "成套配电箱"
+    assert info["model"] == "1FAPZ2"
+
+
 def test_conduit_prefers_material_token_for_jdg_pipe():
     normalized = material_price_api._build_normalized_material_fields(
         "配管",
@@ -378,6 +445,20 @@ def test_conduit_prefers_material_token_for_sc_pipe():
     assert normalized["normalized_spec"] == "100"
     assert normalized["normalized_query_text"] == "SC 100"
     assert normalized["object_type"] == "pipe"
+
+
+def test_conduit_accessory_keeps_original_name_but_inherits_spec():
+    normalized = material_price_api._build_normalized_material_fields(
+        "镀锌锁紧螺母",
+        "",
+        "砖、混凝土结构暗配 薄壁钢管公称口径(mm以内) 32",
+        "1.名称:配管\n2.材质:JDG\n3.规格:32\n4.配置形式:暗配\n5.开槽修复:开槽、修复综合考虑\n6.其他:详见图纸及设计验收规范",
+    )
+
+    assert normalized["suggested_name"] == ""
+    assert normalized["normalized_name"] == "镀锌锁紧螺母"
+    assert normalized["normalized_spec"] == "32"
+    assert normalized["normalized_query_text"] == "镀锌锁紧螺母 32"
 
 
 def test_smoke_valve_keeps_model_size_from_desc():
