@@ -27,6 +27,7 @@ import { COLORS } from '../../utils/experience';
 import type { TaskInfo, TaskListResponse, TaskStatus } from '../../types';
 import { STATUS_MAP, STATUS_OPTIONS } from '../../constants/task';
 import { getErrorMessage } from '../../utils/error';
+import { downloadTaskResultExcel } from '../../utils/download';
 
 /** 从定额库全名提取简短标签，如 "广东·安装" */
 function shortenProvince(full: string): string {
@@ -221,20 +222,9 @@ export default function TaskListPage({ adminView = false }: TaskListPageProps) {
   /** 下载Excel结果 */
   const downloadExcel = async (taskId: string, filename: string) => {
     try {
-      const response = await api.get(`/tasks/${taskId}/export-final?materials=true`, {
-        responseType: 'blob',
-      });
-      // 创建下载链接
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${filename}_定额匹配结果.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      message.error('下载失败');
+      await downloadTaskResultExcel(taskId, `${filename}_定额匹配结果.xlsx`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : getErrorMessage(err, '下载失败'));
     }
   };
 

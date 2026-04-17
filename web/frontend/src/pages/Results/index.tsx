@@ -34,6 +34,7 @@ import {
   confidenceToStars,
 } from '../../utils/experience';
 import { getErrorMessage } from '../../utils/error';
+import { downloadTaskResultExcel } from '../../utils/download';
 import type {
   MatchResult, ResultListResponse, TaskInfo, ReviewStatus, QuotaItem,
 } from '../../types';
@@ -817,18 +818,14 @@ export default function ResultsPage() {
 
   /** 下载Excel */
   const downloadExcel = async () => {
+    if (!taskId) {
+      message.error('缺少任务 ID，无法下载');
+      return;
+    }
     try {
-      const response = await api.get(`/tasks/${taskId}/export-final?materials=true`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${task?.name || 'result'}_定额匹配结果.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      message.error('下载失败');
+      await downloadTaskResultExcel(taskId, `${task?.name || 'result'}_定额匹配结果.xlsx`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : getErrorMessage(err, '下载失败'));
     }
   };
 

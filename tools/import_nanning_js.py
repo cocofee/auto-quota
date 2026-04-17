@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import sys
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -56,51 +56,71 @@ JS_URL_TEMPLATE = (
     "zjxx{period}/mobile/javascript/search_config.js"
 )
 
+NANNING_DIR = PROJECT_ROOT / "data" / "pdf_info_price" / "nanning"
+PROVINCE = "\u5e7f\u897f"
+CITY = "\u5357\u5b81"
+
 
 # ======== 下载和解析JS ========
 
-def fetch_text_pages(period: str, verbose: bool = False) -> list:
-    """
-    下载一期电子书的JS文本，返回每页文本列表
+def _extract_text_pages_from_content(content: str, verbose: bool = False) -> list:
+    """Load textForPages from search_text.js content."""
+    m = re.search(r'var\s+textForPages\s*=\s*(\[.*\])', content, re.DOTALL)
+    if not m:
+        print("  ??? textForPages ??")
+        return []
 
-    period: 期号，如 "202512-2"
-    返回: ["", "第1页文本", "第2页文本", ...]
+    try:
+        pages = json.loads(m.group(1))
+    except json.JSONDecodeError as e:
+        print(f"  JSON????: {e}")
+        return []
+
+    if verbose:
+        print(f"  ?{len(pages)}???")
+    return pages
+
+
+def _load_text_pages_from_file(filepath: Path, verbose: bool = False) -> list:
+    """???search_text.js????????"""
+    try:
+        content = filepath.read_text(encoding="utf-8-sig")
+    except Exception as e:
+        print(f"  ????: {e}")
+        return []
+
+    if verbose:
+        print(f"  ??????: {filepath}")
+    return _extract_text_pages_from_content(content, verbose=verbose)
+
+
+def fetch_text_pages(period: str, verbose: bool = False, local_file: Path | None = None) -> list:
     """
+    ????????JS???????????
+
+    period: ???? "202512-2"
+    ??: ["", "?1???", "?2???", ...]
+    """
+    if local_file:
+        return _load_text_pages_from_file(local_file, verbose=verbose)
+
     url = JS_URL_TEMPLATE.format(period=period)
     if verbose:
-        print(f"  下载: {url}")
+        print(f"  ??: {url}")
 
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     })
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            content = resp.read().decode("utf-8-sig")  # BOM头
+            content = resp.read().decode("utf-8-sig")  # BOM?
     except Exception as e:
-        print(f"  下载失败: {e}")
+        print(f"  ????: {e}")
         return []
 
-    # 提取 textForPages 数组
-    m = re.search(r'var\s+textForPages\s*=\s*(\[.*\])', content, re.DOTALL)
-    if not m:
-        print("  未找到 textForPages 变量")
-        return []
-
-    try:
-        pages = json.loads(m.group(1))
-    except json.JSONDecodeError as e:
-        print(f"  JSON解析失败: {e}")
-        return []
-
-    if verbose:
-        print(f"  共{len(pages)}页文本")
-
-    return pages
+    return _extract_text_pages_from_content(content, verbose=verbose)
 
 
-# ======== 文本解析 ========
-
-# 已知的单位关键词（用于从段落流中识别"单位"字段）
 _UNIT_SET = {
     '吨', 't', '㎡', 'm', '米', '100m', 'km', '块', '件', '套',
     '个', '根', '张', '把', '付', '副', '对', '组', '台', '只',
@@ -495,18 +515,13 @@ def parse_page_text(text: str, carry_name: str = "") -> tuple:
     return records, current_name
 
 
-def extract_nanning_period(period: str, verbose: bool = False) -> list:
-    """
-    提取一期南宁信息价的所有记录
-
-    返回：标准记录列表（和import_price_pdf的import_to_db兼容）
-    """
-    pages = fetch_text_pages(period, verbose=verbose)
+def _build_records_from_pages(pages: list, verbose: bool = False) -> list:
+    """???????????????"""
     if not pages:
         return []
 
     all_records = []
-    carry_name = ""  # 跨页继承的材料名
+    carry_name = ""  # ????????
 
     for i, text in enumerate(pages):
         if not text or not text.strip():
@@ -514,7 +529,7 @@ def extract_nanning_period(period: str, verbose: bool = False) -> list:
 
         records, carry_name = parse_page_text(text, carry_name)
         if records and verbose:
-            print(f"  第{i+1}页: {len(records)}条记录")
+            print(f"  ?{i+1}?: {len(records)}???")
 
         for rec in records:
             name = rec["name"]
@@ -523,40 +538,26 @@ def extract_nanning_period(period: str, verbose: bool = False) -> list:
             price = rec["price_incl"]
 
             # ---- 数据清洗 ----
-            # 跳过垃圾名称
             if name in ('‖', '综合', '大厂', '线材', '高速'):
                 continue
-            # 跳过表头/公式类名称
             if any(kw in name for kw in ('元/', '比例', '用量', '平米含量', '（元')):
                 continue
-            # 清理规格中的"‖"同上符号
             spec = spec.replace('‖', '').strip()
-            # 跳过规格异常长的记录（多半是解析错乱）
             if len(spec) > 50:
                 continue
-            # 跳过明显不合理的价格（单条>50000的只有钢材按吨计有可能）
-            if price > 50000:
+            if price > 50000 or price <= 0:
                 continue
-            # 跳过价格为0的记录
-            if price <= 0:
-                continue
-            # 如果单位为空但规格里包含单位，尝试提取
             if not unit and spec:
                 for u in ('吨', '块', '㎡', 'm', '个', '根', '套', '张', '条', '株'):
-                    # 规格末尾可能有 "块    0.86" 这样的格式
                     m = re.search(r'\s+(' + re.escape(u) + r')\s+[\d.]+$', spec)
                     if m:
                         unit = m.group(1)
-                        # 去掉规格里的单位+价格部分
                         spec = spec[:m.start()].strip()
                         break
 
-            # 无单位的记录质量通常很差（解析错位），加强过滤
             if not unit:
-                # 价格<50的无单位记录大概率是规格数字被误当价格
                 if price < 50:
                     continue
-                # 名称太短或看起来像表头/序号的跳过
                 if len(name) <= 2:
                     continue
 
@@ -568,13 +569,21 @@ def extract_nanning_period(period: str, verbose: bool = False) -> list:
                 "price": price,
                 "category": category,
                 "tax_included": True,
-                "city": "南宁",
+                "city": CITY,
             })
 
     return all_records
 
 
-# ======== 导入数据库 ========
+def extract_nanning_period(period: str, verbose: bool = False, local_file: Path | None = None) -> list:
+    """
+    ??????????????
+
+    ???????????import_price_pdf?import_to_db???
+    """
+    pages = fetch_text_pages(period, verbose=verbose, local_file=local_file)
+    return _build_records_from_pages(pages, verbose=verbose)
+
 
 def import_to_db(records: list, province: str, period: str,
                  source_file: str, dry_run: bool = False) -> dict:
@@ -597,7 +606,7 @@ def _period_to_date_range(period: str) -> str:
 
 
 def _generate_periods(year: int) -> list:
-    """生成一年的全部24期期号"""
+    """???????24???"""
     periods = []
     for month in range(1, 13):
         periods.append(f"{year}{month:02d}-1")
@@ -605,24 +614,41 @@ def _generate_periods(year: int) -> list:
     return periods
 
 
-# ======== 主入口 ========
+def _infer_period_from_file(filepath: Path) -> str:
+    """Dry run only; do not write DB"""
+    m = re.search(r'(\d{6})_(\d)_search_text\.js$', filepath.name)
+    if not m:
+        raise ValueError(f"??????????: {filepath.name}")
+    return f"{m.group(1)}-{m.group(2)}"
+
+
+def _iter_local_files(file_arg: str | None, dir_arg: str | None) -> list[Path]:
+    """????search_text.js??"""
+    files: list[Path] = []
+    if file_arg:
+        files.append(Path(file_arg))
+    if dir_arg:
+        files.extend(sorted(Path(dir_arg).glob('*_search_text.js')))
+    return files
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="南宁信息价导入工具 — 从电子书JS提取材料价格导入主材库"
+        description="????????? ? ????JS???????????"
     )
-    parser.add_argument("--period", "-p", help="单期期号（如 202512-2）")
-    parser.add_argument("--batch", "-b", help="批量期号（逗号分隔，如 202501-1,202501-2）")
-    parser.add_argument("--year", "-y", type=int, help="导入整年（自动生成24期，如 2025）")
-    parser.add_argument("--dry-run", action="store_true", help="试运行：只看结果，不写库")
-    parser.add_argument("--verbose", "-v", action="store_true", help="显示详细信息")
+    parser.add_argument("--period", "-p", help="?????? 202512-2?")
+    parser.add_argument("--batch", "-b", help="??????????? 202501-1,202501-2?")
+    parser.add_argument("--year", "-y", type=int, help="?????????24??? 2025?")
+    parser.add_argument("--file", help="Local search_text.js file path")
+    parser.add_argument("--dir", help="Directory of local search_text.js cache files")
+    parser.add_argument("--dry-run", action="store_true", help="Dry run only; do not write DB")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show verbose logs")
 
     args = parser.parse_args()
 
-    if not args.period and not args.batch and not args.year:
-        parser.error("请指定 --period、--batch 或 --year")
+    if not args.period and not args.batch and not args.year and not args.file and not args.dir:
+        parser.error("Specify --period, --batch, --year, --file, or --dir")
 
-    # 收集期号
     periods = []
     if args.period:
         periods.append(args.period)
@@ -630,64 +656,82 @@ def main():
         periods.extend(args.batch.split(","))
     if args.year:
         periods.extend(_generate_periods(args.year))
-
-    # 去重
     periods = list(dict.fromkeys(periods))
 
-    print(f"共{len(periods)}期待处理")
-    print(f"省份: 广西 | 城市: 南宁")
+    local_files = _iter_local_files(args.file, args.dir)
+    if not periods and not local_files and NANNING_DIR.exists():
+        local_files = sorted(NANNING_DIR.glob('*_search_text.js'))
+
+    if local_files:
+        print(f"Local file mode: {len(local_files)} file(s)")
+    else:
+        print(f"Remote period mode: {len(periods)} period(s)")
+    print(f"Province: {PROVINCE} | City: {CITY}")
     print()
 
     total_imported = 0
-
+    tasks = []
     for period in periods:
         period = period.strip()
+        tasks.append({
+            "period": period,
+            "source_file": f"nanning_{period}.js",
+            "local_file": None,
+        })
+    for path in local_files:
+        tasks.append({
+            "period": _infer_period_from_file(path),
+            "source_file": path.name,
+            "local_file": path,
+        })
+
+    for task in tasks:
+        period = task["period"]
         date_range = _period_to_date_range(period)
-        half = "上半月" if period.endswith("-1") else "下半月"
+        half = "???" if period.endswith("-1") else "???"
 
         print(f"{'='*50}")
-        print(f"期号: {period} ({date_range} {half})")
+        print(f"Period: {period} ({date_range} {half})")
+        if task["local_file"]:
+            print(f"Local file: {task['local_file']}")
         print(f"{'='*50}")
 
-        # 提取
-        records = extract_nanning_period(period, verbose=args.verbose)
-        print(f"提取 {len(records)} 条记录")
+        records = extract_nanning_period(period, verbose=args.verbose, local_file=task["local_file"])
+        print(f"Extracted {len(records)} record(s)")
 
         if not records:
-            print("无记录，跳过")
+            print("Show verbose logs")
             print()
             continue
 
-        # 导入
-        source_file = f"nanning_{period}.js"
         stats = import_to_db(
             records,
-            province="广西",
+            province=PROVINCE,
             period=date_range,
-            source_file=source_file,
+            source_file=task["source_file"],
             dry_run=args.dry_run,
         )
 
         if not args.dry_run:
-            print(f"导入完成: 成功{stats['imported']} "
-                  f"跳过{stats['skipped']} "
-                  f"过滤{stats['junk_filtered']} "
-                  f"失败{stats['errors']}")
+            print(f"Import done: ok={stats['imported']} "
+                  f"skip={stats['skipped']} "
+                  f"junk={stats['junk_filtered']} "
+                  f"err={stats['errors']}")
             total_imported += stats["imported"]
 
         print()
 
-    # 最终汇总
-    if not args.dry_run and len(periods) > 1:
+    if not args.dry_run and len(tasks) > 1:
         print(f"\n{'='*50}")
-        print(f"全部完成！共导入 {total_imported} 条")
+        print(f"All done. Total imported records: {total_imported}")
 
         db = MaterialDB()
         s = db.stats()
-        print(f"\n主材库当前统计:")
+        print(f"\n???????:")
         for k, v in s.items():
             print(f"  {k}: {v}")
 
 
 if __name__ == "__main__":
     main()
+
