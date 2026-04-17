@@ -2529,18 +2529,9 @@ class ParamValidator:
         return max_penalty, "; ".join(details)
 
     # ── 介质/用途冲突检查 ──────────────────────────────────────
-    # 互斥组：同组内的用途互相冲突
+    # 单一互斥分区：分区内用途两两互斥
     # 例如清单说"给水"，定额名含"采暖" → 应该降分
-    _USAGE_CONFLICT_GROUPS = [
-        # 给水 vs 采暖（河南等省份分开计定额）
-        {"给水", "采暖"},
-        # 给水 vs 排水（不同管道体系）
-        {"给水", "排水"},
-        # 消防 vs 给水/采暖/排水（消防是独立体系）
-        {"消防", "给水"},
-        {"消防", "采暖"},
-        {"消防", "排水"},
-    ]
+    _USAGE_PARTITION = {"给水", "采暖", "排水", "消防"}
 
     @classmethod
     def _check_usage_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
@@ -2557,32 +2548,25 @@ class ParamValidator:
         quota_lower = quota_name.lower()
 
         # 从清单文本提取介质/用途
-        bill_usages = set()
-        for usage_kw in ("给水", "采暖", "排水", "消防"):
-            if usage_kw in bill_lower:
-                bill_usages.add(usage_kw)
+        bill_usages = {
+            usage_kw for usage_kw in cls._USAGE_PARTITION if usage_kw in bill_lower
+        }
 
         if not bill_usages:
             return 0.0, ""  # 清单没指定介质，不检查
 
         # 从定额名称提取用途
-        quota_usages = set()
-        for usage_kw in ("给水", "采暖", "排水", "消防"):
-            if usage_kw in quota_lower:
-                quota_usages.add(usage_kw)
+        quota_usages = {
+            usage_kw for usage_kw in cls._USAGE_PARTITION if usage_kw in quota_lower
+        }
 
         if not quota_usages:
             return 0.0, ""  # 定额没指定用途（通用定额），不惩罚
 
-        # 检查互斥组
-        for group in cls._USAGE_CONFLICT_GROUPS:
-            # 清单介质在组内，且定额用途也在组内，但两者不同
-            bill_in = bill_usages & group
-            quota_in = quota_usages & group
-            if bill_in and quota_in and not (bill_in & quota_in):
-                conflict_bill = "/".join(bill_in)
-                conflict_quota = "/".join(quota_in)
-                return 0.25, f"介质冲突: 清单'{conflict_bill}'≠定额'{conflict_quota}'"
+        if bill_usages and quota_usages and not (bill_usages & quota_usages):
+            conflict_bill = "/".join(sorted(bill_usages))
+            conflict_quota = "/".join(sorted(quota_usages))
+            return 0.25, f"介质冲突: 清单'{conflict_bill}'≠定额'{conflict_quota}'"
 
         return 0.0, ""
 
