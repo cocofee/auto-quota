@@ -96,6 +96,13 @@ def _resolve_run_province(province: str, interactive, json_output):
     return resolved_province
 
 
+def _reset_searcher_runtime_state(searcher):
+    """重置缓存搜索器上的请求级状态，避免跨 run 污染。"""
+    resetter = getattr(searcher, "reset_runtime_state", None)
+    if callable(resetter):
+        resetter()
+
+
 def _load_bill_items_for_run(input_path: Path, sheet=None, limit=None,
                              province=None):
     """读取并清洗清单数据，按需截断数量。"""
@@ -321,6 +328,7 @@ def run(input_file, mode="agent", output=None,
 
     # 2. 初始化搜索引擎
     searcher, validator = init_search_components(resolved_province, aux_provinces)
+    _reset_searcher_runtime_state(searcher)
 
     # 初始化经验库（可选）
     experience_db = init_experience_db(no_experience, province=resolved_province)
