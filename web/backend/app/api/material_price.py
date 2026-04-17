@@ -935,7 +935,9 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
     material_name_is_generic = _is_effective_generic_material_name(raw_material_name)
 
     suggested_name = ""
-    if _should_use_bill_type_for_material(reference_name) and candidate_type:
+    if _should_use_conduit_material_name(reference_name, bill_candidate_name or bill_name, candidate_material):
+        suggested_name = candidate_material.strip()
+    elif _should_use_bill_type_for_material(reference_name) and candidate_type:
         suggested_name = candidate_type
         if _should_prefix_connection(candidate_type) and candidate_connection and candidate_connection not in suggested_name:
             conn_prefix = _connection_prefix(candidate_connection)
@@ -1103,9 +1105,15 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
                     candidate_type = maybe_name
                 if maybe_name and (not name or _looks_like_bare_material_token(name)):
                     name = maybe_name
-                spec = maybe_spec
+                cleaned_spec = _clean_material_spec(maybe_spec)
+                if _is_placeholder_material_spec(cleaned_spec):
+                    continue
+                spec = cleaned_spec
                 break
-            spec = raw_spec
+            cleaned_raw_spec = _clean_material_spec(raw_spec)
+            if _is_placeholder_material_spec(cleaned_raw_spec):
+                continue
+            spec = cleaned_raw_spec
             break
 
     return {
@@ -1157,6 +1165,27 @@ def _clean_material_spec(spec: str) -> str:
         return matched.group(1).strip()
 
     return value
+
+
+def _is_placeholder_material_spec(spec: str) -> bool:
+    value = re.sub(r"\s+", "", str(spec or "")).lower()
+    if not value:
+        return True
+    placeholder_tokens = (
+        "综合考虑",
+        "详见图纸",
+        "详见设计",
+        "按设计要求",
+        "按图纸",
+        "见图纸",
+        "详设计图纸",
+        "详施工图",
+        "未注明",
+        "未详",
+        "见设计说明",
+        "按系统图",
+    )
+    return any(token in value for token in placeholder_tokens)
 
 
 def _normalize_material_hint(text: str) -> str:
@@ -1669,6 +1698,21 @@ def _should_prefix_material_family(material_name: str, candidate_name: str) -> b
     if not any(token in material_text for token in ("管", "管件")):
         return False
     return _normalize_material_hint(candidate_name) not in _normalize_material_hint(material_text)
+
+
+def _should_use_conduit_material_name(material_name: str, bill_name: str, candidate_material: str) -> bool:
+    material_text = str(material_name or "").strip()
+    bill_text = str(bill_name or "").strip()
+    candidate = str(candidate_material or "").strip()
+    if not candidate:
+        return False
+    if any(token in candidate for token in ("综合考虑", "详见")):
+        return False
+    conduit_tokens = ("配管", "线管", "导管", "电管", "穿线管", "钢管公称口径", "薄壁钢管")
+    text = f"{material_text} {bill_text}"
+    if not any(token in text for token in conduit_tokens):
+        return False
+    return True
 
 
 def _should_merge_device_name(material_name: str, bill_name: str, candidate_type: str, candidate_material: str) -> bool:

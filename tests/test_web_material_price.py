@@ -339,6 +339,60 @@ def test_qualified_valve_name_keeps_original_material_qualifier():
     assert suggested_spec == "DN32"
 
 
+def test_distribution_box_prefers_model_over_placeholder_spec():
+    normalized = material_price_api._build_normalized_material_fields(
+        "成套配电箱",
+        "",
+        "成套配电箱安装 半周长(m) 1.5",
+        "1.名称:成套配电箱\n2.型号:1FAPZ2\n3.规格:综合考虑\n4.电压(kV):1KV\n5.安装方式:悬挂安装\n6.其他:详见图纸及设计验收规范",
+    )
+
+    assert normalized["normalized_name"] == "成套配电箱"
+    assert normalized["normalized_spec"] == "1FAPZ2"
+    assert normalized["normalized_query_text"] == "成套配电箱 1FAPZ2"
+
+
+def test_conduit_prefers_material_token_for_jdg_pipe():
+    normalized = material_price_api._build_normalized_material_fields(
+        "配管",
+        "",
+        "砖、混凝土结构暗配 薄壁钢管公称口径(mm以内) 32",
+        "1.名称:配管\n2.材质:JDG\n3.规格:32\n4.配置形式:暗配\n5.开槽修复:开槽、修复综合考虑\n6.其他:详见图纸及设计验收规范",
+    )
+
+    assert normalized["normalized_name"] == "JDG"
+    assert normalized["normalized_spec"] == "32"
+    assert normalized["normalized_query_text"] == "JDG 32"
+    assert normalized["object_type"] == "pipe"
+
+
+def test_conduit_prefers_material_token_for_sc_pipe():
+    normalized = material_price_api._build_normalized_material_fields(
+        "配管",
+        "",
+        "砖、混凝土结构暗配 钢管公称口径(mm以内) 100",
+        "1.名称:配管\n2.材质:SC\n3.规格:100\n4.配置形式:暗配\n5.开槽修复:开槽、修复综合考虑\n6.其他:详见图纸及设计验收规范",
+    )
+
+    assert normalized["normalized_name"] == "SC"
+    assert normalized["normalized_spec"] == "100"
+    assert normalized["normalized_query_text"] == "SC 100"
+    assert normalized["object_type"] == "pipe"
+
+
+def test_smoke_valve_keeps_model_size_from_desc():
+    normalized = material_price_api._build_normalized_material_fields(
+        "电动排烟阀",
+        "",
+        "排烟阀、排烟口 周长(mm) ≤2000",
+        "1.名称:电动排烟阀\n2.型号:630*320\n3.其他:详见图纸及设计验收规范",
+    )
+
+    assert normalized["normalized_name"] == "电动排烟阀"
+    assert normalized["normalized_spec"] == "630*320"
+    assert normalized["normalized_query_text"] == "电动排烟阀 630*320"
+
+
 def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_path: Path):
     file_path = tmp_path / "reviewed-no-spec.xlsx"
     wb = openpyxl.Workbook()
