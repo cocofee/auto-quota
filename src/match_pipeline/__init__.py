@@ -6,6 +6,7 @@ import threading
 import config
 
 from src.adaptive_strategy import AdaptiveStrategy
+from src.ambiguity_gate import analyze_ambiguity
 from src.candidate_arbiter import arbitrate_candidates
 from src.ltr_ranker import rerank_candidates_with_ltr
 from src.match_core import try_experience_exact_match, try_experience_match

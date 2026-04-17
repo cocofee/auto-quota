@@ -1706,9 +1706,9 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         include_prior_candidates: bool = True,
                         adaptive_strategy: str = "standard",
                         performance_monitor: PerformanceMonitor | None = None) -> list[dict]:
-    """????????? ? ?? ? Reranker?? ? ?????"""
+    """Run hybrid search, rerank, and parameter validation for candidate preparation."""
     with (
-        performance_monitor.measure("????")
+        performance_monitor.measure("混合搜索")
         if performance_monitor is not None else nullcontext()
     ):
         search_top_k = _resolve_adaptive_search_top_k(adaptive_strategy)
@@ -1781,7 +1781,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
     # ???????????????????
     if candidates and len(candidates) > 1:
         with (
-            performance_monitor.measure("????")
+            performance_monitor.measure("重排")
             if performance_monitor is not None else nullcontext()
         ):
             prerank_candidates = list(candidates)
@@ -1802,7 +1802,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         search_books = classification.get("search_books", []) if classification else []
         candidates = measure_call(
             performance_monitor,
-            "????",
+            "候选打分",
             _validate_candidates_with_context,
             validator,
             full_query,
