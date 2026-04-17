@@ -530,6 +530,30 @@ def _normalize_classification(classification: dict) -> dict:
     return _normalize_routing_classification(classification)
 
 
+def _sanitize_cross_province_hints(raw_hints: object, *, limit: int = 5) -> list[str]:
+    if isinstance(raw_hints, str):
+        candidates = [raw_hints]
+    elif isinstance(raw_hints, (list, tuple, set)):
+        candidates = list(raw_hints)
+    else:
+        return []
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for hint in candidates:
+        text = " ".join(str(hint or "").split()).strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
 def _validate_candidates_with_context(validator: ParamValidator,
                                       full_query: str,
                                       candidates: list[dict],
@@ -562,8 +586,8 @@ def _validate_candidates_with_context(validator: ParamValidator,
 # 经验库匹配
 # ============================================================
 
-def _validate_experience_params(exp_result: dict, item: dict,
-                                rule_validator=None, is_exact=False) -> dict:
+def _validate_experience_params_legacy(exp_result: dict, item: dict,
+                                       rule_validator=None, is_exact=False) -> dict:
     """
     验证经验库匹配结果的参数是否正确
 
@@ -650,6 +674,54 @@ def _validate_experience_params(exp_result: dict, item: dict,
     return exp_result  # 参数验证通过，接受经验库结果
 
 
+def _validate_experience_params(exp_result: dict, item: dict,
+                                rule_validator=None, is_exact=False) -> dict:
+    """Validate every quota attached to an experience hit."""
+    _ = is_exact
+    quotas = exp_result.get("quotas", [])
+    if not quotas:
+        return exp_result
+
+    bill_text = f"{item.get('name', '')} {item.get('description', '')}".strip()
+    bill_params = text_parser.parse(bill_text)
+
+    for index, quota in enumerate(quotas):
+        quota_id = quota.get("quota_id", "")
+        quota_name = quota.get("name", "")
+
+        if rule_validator and rule_validator.rules and quota_id:
+            family = rule_validator.family_index.get(quota_id)
+            if family:
+                tiers = family.get("tiers")
+                if tiers:
+                    bill_value = rule_validator._extract_param_value(bill_text, family)
+                    if bill_value is not None:
+                        correct_tier = rule_validator._find_correct_tier(bill_value, tiers)
+                        if correct_tier is not None:
+                            correct_quota_id = rule_validator._find_quota_by_tier(
+                                family, correct_tier)
+                            if correct_quota_id and correct_quota_id != quota_id:
+                                logger.info(
+                                    f"经验库参数校验失败: '{bill_text[:40]}' "
+                                    f"第{index + 1}条定额参数值{bill_value}→应套档位{correct_tier}, "
+                                    f"但经验库给的是{quota_id}, 拒绝经验库结果")
+                                return None
+
+        if quota_name and bill_params:
+            quota_params = text_parser.parse(quota_name)
+            if quota_params:
+                is_match, score = text_parser.params_match(bill_params, quota_params)
+                if not is_match:
+                    logger.info(
+                        f"经验库参数校验失败(方法2): '{bill_text[:40]}' "
+                        f"第{index + 1}条定额{quota_id or '<missing>'} "
+                        f"清单参数{bill_params} vs 定额'{quota_name[:30]}'参数{quota_params}, "
+                        f"score={score:.2f}, 拒绝经验库结果")
+                    return None
+
+    return exp_result
+
+
 def try_experience_match(query: str, item: dict, experience_db,
                          rule_validator=None, province: str = None) -> dict:
     """
@@ -693,12 +765,13 @@ def try_experience_match(query: str, item: dict, experience_db,
                         else:
                             names = []
                         hint_keywords.extend(names)
-                    if hint_keywords:
+                    sanitized_hints = _sanitize_cross_province_hints(hint_keywords)
+                    if sanitized_hints:
                         # 存到item上，供后续搜索使用（不直通）
-                        item["_cross_province_hints"] = hint_keywords[:5]
+                        item["_cross_province_hints"] = sanitized_hints
                         logger.debug(
                             f"L5跨省预热: {query[:30]} → "
-                            f"提示={hint_keywords[:3]}")
+                            f"提示={sanitized_hints[:3]}")
             except (KeyError, TypeError, ValueError, AttributeError,
                     OSError, RuntimeError, ImportError) as e:
                 logger.debug(f"L5跨省搜索跳过: {e}")
@@ -2202,12 +2275,19 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
 
     # L5跨省预热：如果经验库miss时留下了跨省提示，增强搜索查询
     item = ctx.get("item", {})
-    cross_hints = item.get("_cross_province_hints", []) if isinstance(item, dict) else []
+    cross_hints = []
+    if isinstance(item, dict):
+        cross_hints = _sanitize_cross_province_hints(item.get("_cross_province_hints", []))
+        if cross_hints:
+            item["_cross_province_hints"] = cross_hints
+        else:
+            item.pop("_cross_province_hints", None)
     if cross_hints:
         # 取前3个提示关键词追加到搜索查询（不影响原始query）
-        # 防御：确保每个元素都是字符串
-        hint_text = " ".join(str(h) for h in cross_hints[:3] if h)
-        search_query = f"{search_query} {hint_text}"
+        appended_hints = [hint for hint in cross_hints[:3] if hint and hint not in search_query]
+        if appended_hints:
+            hint_text = " ".join(appended_hints)
+            search_query = f"{search_query} {hint_text}"
 
     # L6局部上下文提示：短名称歧义项从邻居获取的提示词
     context_hints = item.get("_context_hints", []) if isinstance(item, dict) else []
