@@ -91,9 +91,8 @@ def test_validate_experience_params_exact_still_checks_when_family_missing(monke
     assert len(parse_calls) >= 2
 
 
-def test_validate_experience_params_exact_relaxed_when_family_available(monkeypatch):
-    """方法1(family)验证通过后，方法2仍然执行但用宽松模式：
-    只拦截硬参数超档(score=0.0)，放行软参数差异(score>0.0)。"""
+def test_validate_experience_params_exact_rejects_soft_mismatch_when_family_available(monkeypatch):
+    """Exact text match should still reject soft parameter mismatches."""
     exp_result = {
         "quotas": [
             {"quota_id": "Q-1", "name": "配电箱安装 规格(回路以内) 8"},
@@ -117,7 +116,17 @@ def test_validate_experience_params_exact_relaxed_when_family_available(monkeypa
         def _find_quota_by_tier(family: dict, tier: int):
             return "Q-1"
 
-    # 方法2现在会执行（不再跳过），但宽松模式下软差异不拦截
+    def fake_parse(text: str):
+        if "7鍥炶矾" in text:
+            return {"circuits": 7, "material": "rf"}
+        return {"circuits": 8, "material": "coax"}
+
+    def fake_params_match(bill_params: dict, quota_params: dict):
+        return False, 0.3
+
+    monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(match_core.text_parser, "params_match", fake_params_match)
+
     validated = match_core._validate_experience_params(
         exp_result,
         item,
@@ -125,7 +134,7 @@ def test_validate_experience_params_exact_relaxed_when_family_available(monkeypa
         is_exact=True,
     )
 
-    assert validated == exp_result
+    assert validated is None
 
 
 def test_normalize_bill_name_preserves_special_lamp_semantics():

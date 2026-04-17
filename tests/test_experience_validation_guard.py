@@ -293,14 +293,14 @@ def test_exact_rule_validated_but_dn_hard_mismatch(monkeypatch):
     assert result is None, "精确匹配+方法1确认，但DN硬超档(score=0.0)仍应拒绝"
 
 
-# ===== 测试场景9：精确匹配 + 方法1确认 + 材质软差异 → 放行 =====
+# ===== 测试场景9：精确匹配 + 方法1确认 + 材质软差异 → 拒绝 =====
 
-def test_exact_rule_validated_material_soft_mismatch_passes(monkeypatch):
+def test_exact_rule_validated_material_soft_mismatch_rejects(monkeypatch):
     """
     F2修复验证：精确匹配+方法1确认，材质名称差异（非硬超档）→ 放行不误杀
 
     场景：用户确认的映射中，清单写"射频同轴电缆"，定额写"同轴电缆"，
-    params_match 返回 (False, 0.3)，属于材质软差异，不应误杀。
+    params_match 返回 (False, 0.3)，属于材质软差异，也应拒绝。
     """
     exp_result = {
         "quotas": [{"quota_id": "Q-RIGHT", "name": "同轴电缆布线"}]
@@ -334,7 +334,7 @@ def test_exact_rule_validated_material_soft_mismatch_passes(monkeypatch):
     result = match_core._validate_experience_params(
         exp_result, item, rule_validator=validator2, is_exact=True
     )
-    assert result is not None, "精确匹配+方法1确认+材质软差异(score=0.3)应放行不误杀"
+    assert result is None, "精确匹配+方法1确认+材质软差异(score=0.3)也应拒绝"
 
 
 # ===== 测试场景10：非精确匹配 + 材质软差异 → 仍拒绝（行为不变） =====
