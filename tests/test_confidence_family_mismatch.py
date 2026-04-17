@@ -40,7 +40,20 @@ def test_calculate_confidence_keeps_hard_conflict_param_mismatch_low():
         family_hard_conflict=True,
     )
 
-    assert confidence == 47
+    assert confidence == 55
+
+
+def test_calculate_confidence_hard_conflict_without_supporting_signals_stays_at_base():
+    confidence = calculate_confidence(
+        0.40,
+        param_match=False,
+        name_bonus=0.0,
+        rerank_score=0.0,
+        family_aligned=True,
+        family_hard_conflict=True,
+    )
+
+    assert confidence == 20
 
 
 def test_infer_confidence_family_alignment_accepts_strong_feature_aligned_fallback():

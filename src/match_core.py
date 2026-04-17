@@ -157,7 +157,12 @@ def calculate_confidence(param_score: float, param_match: bool = True,
         # 参数不匹配：封顶50，确保不会进绿灯区
         mismatch_base = max(int(ps * 50), 15)
         if family_hard_conflict:
-            return mismatch_base
+            # Keep hard conflicts capped, but do not ignore corroborating signals
+            # entirely in case the family classifier itself is wrong.
+            name_part = min(nb / 0.3, 1.0) * 10.0
+            rerank_part = rr * 8.0
+            confidence = min(55.0, mismatch_base + name_part + rerank_part)
+            return max(int(confidence), 15)
         if not family_aligned:
             return min(mismatch_base, 58)
 
