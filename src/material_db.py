@@ -19,6 +19,7 @@
 import sqlite3
 import re
 import json
+import math
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -26,19 +27,30 @@ from typing import Optional
 _UNIT_ALIASES = {
     "m": "m",
     "米": "m",
+    "meter": "m",
+    "meters": "m",
     "t": "t",
     "吨": "t",
+    "ton": "t",
+    "tons": "t",
+    "tonne": "t",
+    "tonnes": "t",
     "kg": "kg",
     "公斤": "kg",
     "千克": "kg",
+    "㎏": "kg",
     "100m": "100m",
     "百米": "100m",
     "km": "km",
     "千米": "km",
     "公里": "km",
     "m2": "m2",
+    "㎡": "m2",
+    "m²": "m2",
     "平方米": "m2",
     "m3": "m3",
+    "m³": "m3",
+    "㎥": "m3",
     "立方米": "m3",
 }
 
@@ -53,6 +65,7 @@ _PIPE_WEIGHT_PER_METER = {
     "DN100": 12.15, "DN125": 15.04, "DN150": 19.26,
     "DN200": 30.97, "DN250": 42.56, "DN300": 54.90,
 }
+_GALVANIZED_PIPE_FACTOR = 1.06
 
 
 def _extract_dn(text: str) -> Optional[str]:
@@ -67,7 +80,7 @@ def _extract_dn(text: str) -> Optional[str]:
 
 
 def _normalize_unit(unit: str) -> str:
-    """统一单位别名，避免不同写法导致换算分支失效。"""
+    """统一单位别名，避免“吨/t”“米/m”等写法不同导致误判。"""
     raw = str(unit or "").strip().lower()
     if not raw:
         return ""
@@ -77,15 +90,68 @@ def _normalize_unit(unit: str) -> str:
         .replace("（", "(")
         .replace("）", ")")
     )
+    if raw == "米":
+        return "m"
+    if raw == "吨":
+        return "t"
+    if raw in {"公斤", "千克"}:
+        return "kg"
+    if raw == "百米":
+        return "100m"
+    if raw in {"千米", "公里"}:
+        return "km"
+    if raw == "平方米":
+        return "m2"
+    if raw == "立方米":
+        return "m3"
     return _UNIT_ALIASES.get(raw, raw)
+
+
+def _is_supported_steel_pipe(name: str, spec: str) -> bool:
+    text = f"{name} {spec}"
+    return (
+        "钢管" in text
+        or _extract_dn(text) is not None
+        or re.search(r'(?:Φ|φ)?\s*\d+(?:\.\d+)?\s*[×xX\*]\s*\d+(?:\.\d+)?', text) is not None
+    )
+
+
+def _extract_pipe_outer_diameter_and_thickness(name: str, spec: str) -> tuple[Optional[float], Optional[float]]:
+    text = f"{name} {spec}"
+    matched = re.search(
+        r'(?:外径\s*)?(?:Φ|φ)?\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*[×xX\*]\s*(\d+(?:\.\d+)?)',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if matched:
+        return float(matched.group(1)), float(matched.group(2))
+    return None, None
+
+
+def _estimate_pipe_weight_kg_per_m(name: str, spec: str) -> Optional[float]:
+    text = f"{name} {spec}"
+    if not _is_supported_steel_pipe(name, spec):
+        return None
+
+    outer_diameter, thickness = _extract_pipe_outer_diameter_and_thickness(name, spec)
+    factor = _GALVANIZED_PIPE_FACTOR if "镀锌" in text else 1.0
+
+    if outer_diameter and thickness and outer_diameter > thickness > 0:
+        base_weight = (outer_diameter - thickness) * thickness * 0.02466
+        return round(base_weight * factor, 4)
+
+    dn = _extract_dn(text)
+    if dn:
+        if "无缝" in text:
+            return None
+        return _PIPE_WEIGHT_PER_METER.get(dn)
+
+    return None
 
 
 def _convert_ton_to_meter(ton_price: float, name: str, spec: str) -> Optional[float]:
     """把吨价换算成米价（钢管类），查不到DN规格就返回None"""
-    dn = _extract_dn(spec) or _extract_dn(name)
-    if not dn:
-        return None
-    weight = _PIPE_WEIGHT_PER_METER.get(dn)
+    weight = _estimate_pipe_weight_kg_per_m(name, spec)
     if not weight:
         return None
     # 米价 = 吨价 × 每米重量(kg) ÷ 1000
@@ -218,8 +284,113 @@ def _get_material_alias(name: str) -> Optional[str]:
     return None
 
 
+def _normalize_lookup_spec_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).upper()
+
+
+def _extract_primary_spec_token(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+
+    patterns = [
+        r"[Dd][Nn]\s*\d+(?:\.\d+)?",
+        r"[Dd][Ee]\s*\d+(?:\.\d+)?",
+        r"Φ\s*\d+(?:\.\d+)?",
+        r"\d+(?:\.\d+)?\s*MM",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, value, flags=re.IGNORECASE)
+        if matched:
+            return _normalize_lookup_spec_text(matched.group(0))
+    return _normalize_lookup_spec_text(value)
+
+
+def _spec_boundary_matches(candidate_spec: str, target_spec: str) -> bool:
+    candidate = _normalize_lookup_spec_text(candidate_spec)
+    target = _normalize_lookup_spec_text(target_spec)
+    if not candidate or not target:
+        return False
+    if candidate == target:
+        return True
+
+    pattern = re.escape(target)
+    if target[0].isdigit():
+        pattern = rf"(?<!\d){pattern}"
+    if target[-1].isdigit():
+        pattern = rf"{pattern}(?!\d)"
+    return re.search(pattern, candidate) is not None
+
+
+def _infer_lookup_object_type(name: str) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    if any(token in text for token in ("阀", "过滤器", "减压器", "减压阀", "止回")):
+        return "valve"
+    if any(token in text for token in ("管件", "弯头", "三通", "四通", "异径", "接头", "法兰", "补偿器", "传力接头")):
+        return "pipe_fitting"
+    if "管" in text:
+        return "pipe"
+    if any(token in text for token in ("泵", "风机", "机组", "水箱", "设备")):
+        return "equipment"
+    if any(token in text for token in ("地漏", "洁具", "器具", "龙头", "表")):
+        return "device"
+    return "material"
+
+
+def _object_type_compatible(request_object_type: str, candidate_name: str) -> bool:
+    request_type = str(request_object_type or "").strip()
+    if not request_type:
+        return True
+
+    candidate_type = _infer_lookup_object_type(candidate_name)
+    if request_type == "pipe":
+        return candidate_type == "pipe"
+    if request_type == "pipe_fitting":
+        return candidate_type == "pipe_fitting"
+    if request_type == "valve":
+        return candidate_type == "valve"
+    if request_type == "equipment":
+        return candidate_type == "equipment"
+    if request_type == "device":
+        return candidate_type == "device"
+    return True
+
+
 # 数据库路径
 DB_PATH = Path(__file__).parent.parent / "db" / "common" / "material.db"
+
+
+def _infer_pipe_material_signature(name: str) -> str:
+    text = str(name or "").strip().upper()
+    if not text:
+        return ""
+    if any(token in text for token in ("衬塑", "钢塑复合", "PSP", "涂塑", "内衬塑", "复合管")):
+        return "composite_steel_pipe"
+    if "镀锌" in text:
+        return "galvanized_steel_pipe"
+    if "无缝" in text:
+        return "seamless_steel_pipe"
+    if "焊接" in text:
+        return "welded_steel_pipe"
+    if "钢管" in text:
+        return "steel_pipe"
+    return ""
+
+
+def _material_name_compatible(request_name: str, candidate_name: str) -> bool:
+    request_signature = _infer_pipe_material_signature(request_name)
+    candidate_signature = _infer_pipe_material_signature(candidate_name)
+    if not request_signature or not candidate_signature:
+        return True
+    if request_signature == candidate_signature:
+        return True
+    if request_signature == "steel_pipe" and candidate_signature in {"galvanized_steel_pipe", "welded_steel_pipe", "seamless_steel_pipe"}:
+        return True
+    if candidate_signature == "steel_pipe" and request_signature in {"galvanized_steel_pipe", "welded_steel_pipe", "seamless_steel_pipe"}:
+        return True
+    return False
 
 
 class MaterialDB:
@@ -488,9 +659,12 @@ class MaterialDB:
             conn.close()
 
     def search_price_by_name(self, name: str, province: str = "",
+                             city: str = "",
+                             period_end: str = "",
                              spec: str = "",
                              target_unit: str = "",
-                             source_type: str = "") -> Optional[dict]:
+                             source_type: str = "",
+                             object_type: str = "") -> Optional[dict]:
         """按材料名查价格（给输出Excel主材行填单价用）
 
         匹配策略（由精到粗，命中即返回）：
@@ -511,92 +685,159 @@ class MaterialDB:
         name = name.strip()
         spec = spec.strip() if spec else ""
         target_unit = target_unit.strip() if target_unit else ""
+        object_type = object_type.strip() if object_type else ""
         conn = self._conn()
         try:
+            def _enrich_price(price: dict, matched_name: str, matched_spec: str) -> dict:
+                return {
+                    **price,
+                    "matched_name": matched_name,
+                    "matched_spec": matched_spec,
+                    "matched_object_type": _infer_lookup_object_type(matched_name),
+                }
+
+            def _search_candidate_rows(rows) -> Optional[dict]:
+                for row in rows:
+                    row_name = str(row["name"] or "").strip()
+                    row_spec = str(row["spec"] or "").strip()
+                    if not _material_name_compatible(name, row_name):
+                        continue
+                    if object_type and not _object_type_compatible(object_type, row_name):
+                        continue
+                    if spec and not _spec_boundary_matches(row_spec or row_name, spec):
+                        continue
+                    price = self._get_price_v2(
+                        conn, row["id"], province, city, period_end,
+                        target_unit, row_name, row_spec or spec,
+                        source_type=source_type)
+                    if price:
+                        return _enrich_price(price, row_name, row_spec)
+                return None
+
             # 策略1：name+spec精确匹配
             if spec:
                 mid = self._find_material_id(conn, name, spec)
                 if mid:
-                    price = self._get_price(conn, mid, province,
-                                            target_unit, name, spec,
-                                            source_type=source_type)
-                    if price:
-                        return price
+                    row = conn.execute(
+                        "SELECT name, spec FROM material_master WHERE id=?",
+                        (mid,)
+                    ).fetchone()
+                    matched_name = str((row["name"] if row else name) or name).strip()
+                    matched_spec = str((row["spec"] if row else spec) or spec).strip()
+                    if _material_name_compatible(name, matched_name):
+                        price = self._get_price_v2(conn, mid, province, city, period_end,
+                                                target_unit, matched_name, matched_spec or spec,
+                                                source_type=source_type)
+                        if price:
+                            return _enrich_price(price, matched_name, matched_spec or spec)
 
-            # 策略2：只用name匹配（spec为空或策略1没找到价格）
-            mid = self._find_material_id(conn, name, "")
-            if mid:
-                mat_spec = self._get_material_spec(conn, mid)
-                price = self._get_price(conn, mid, province,
-                                        target_unit, name, mat_spec or spec,
-                                        source_type=source_type)
-                if price:
-                    return price
+                # 同名候选中做规格边界匹配，避免 De63 错落到 De630
+                exact_rows = conn.execute(
+                    """SELECT id, name, spec FROM material_master
+                       WHERE name=? ORDER BY LENGTH(spec) ASC, id ASC LIMIT 20""",
+                    (name,)
+                ).fetchall()
+                matched = _search_candidate_rows(exact_rows)
+                if matched:
+                    return matched
 
-            # 策略3：模糊匹配（name LIKE '%keyword%'），取第一个有价格的
-            rows = conn.execute(
-                """SELECT id, name, spec FROM material_master
-                   WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
-                (f"%{name}%",)
-            ).fetchall()
-            for row in rows:
-                price = self._get_price(
-                    conn, row["id"], province,
-                    target_unit, row["name"], row["spec"] or spec,
-                    source_type=source_type)
-                if price:
-                    return price
+                # 带规格时不允许直接退回 name-only，继续走模糊候选但仍要求规格命中
+                fuzzy_rows = conn.execute(
+                    """SELECT id, name, spec FROM material_master
+                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC, LENGTH(spec) ASC LIMIT 20""",
+                    (f"%{name}%",)
+                ).fetchall()
+                matched = _search_candidate_rows(fuzzy_rows)
+                if matched:
+                    return matched
+
+            if not spec:
+                # 策略2：只用name匹配
+                mid = self._find_material_id(conn, name, "")
+                if mid:
+                    mat_spec = self._get_material_spec(conn, mid)
+                    if _material_name_compatible(name, name):
+                        price = self._get_price_v2(conn, mid, province, city, period_end,
+                                                target_unit, name, mat_spec or spec,
+                                                source_type=source_type)
+                        if price and _object_type_compatible(object_type, name):
+                            return _enrich_price(price, name, mat_spec or spec)
+
+                # 策略3：模糊匹配（name LIKE '%keyword%'），取第一个有价格的
+                rows = conn.execute(
+                    """SELECT id, name, spec FROM material_master
+                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                    (f"%{name}%",)
+                ).fetchall()
+                matched = _search_candidate_rows(rows)
+                if matched:
+                    return matched
 
             # 策略4：清洗品名后再查（去修饰词+去规格）
             clean = _clean_material_name(name)
             if clean and clean != name:
-                # 精确匹配清洗后的名称
-                mid = self._find_material_id(conn, clean, "")
-                if mid:
-                    mat_spec = self._get_material_spec(conn, mid)
-                    price = self._get_price(conn, mid, province,
-                                            target_unit, clean, mat_spec or spec,
-                                            source_type=source_type)
-                    if price:
-                        return price
-                # 模糊匹配清洗后的名称
-                rows = conn.execute(
-                    """SELECT id, name, spec FROM material_master
-                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
-                    (f"%{clean}%",)
-                ).fetchall()
-                for row in rows:
-                    price = self._get_price(
-                        conn, row["id"], province,
-                        target_unit, row["name"], row["spec"] or spec,
-                        source_type=source_type)
-                    if price:
-                        return price
+                if spec:
+                    exact_rows = conn.execute(
+                        """SELECT id, name, spec FROM material_master
+                           WHERE name=? ORDER BY LENGTH(spec) ASC, id ASC LIMIT 20""",
+                        (clean,)
+                    ).fetchall()
+                    matched = _search_candidate_rows(exact_rows)
+                    if matched:
+                        return matched
+
+                if not spec:
+                    # 精确匹配清洗后的名称
+                    mid = self._find_material_id(conn, clean, "")
+                    if mid:
+                        mat_spec = self._get_material_spec(conn, mid)
+                        if _material_name_compatible(name, clean):
+                            price = self._get_price_v2(conn, mid, province, city, period_end,
+                                                    target_unit, clean, mat_spec or spec,
+                                                    source_type=source_type)
+                            if price and _object_type_compatible(object_type, clean):
+                                return _enrich_price(price, clean, mat_spec or spec)
+                    # 模糊匹配清洗后的名称
+                    rows = conn.execute(
+                        """SELECT id, name, spec FROM material_master
+                           WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                        (f"%{clean}%",)
+                    ).fetchall()
+                    matched = _search_candidate_rows(rows)
+                    if matched:
+                        return matched
 
             # 策略5：同义词/别名匹配
             alias = _get_material_alias(clean or name)
-            if alias and alias != name and alias != clean:
-                mid = self._find_material_id(conn, alias, "")
-                if mid:
-                    mat_spec = self._get_material_spec(conn, mid)
-                    price = self._get_price(conn, mid, province,
-                                            target_unit, alias, mat_spec or spec,
-                                            source_type=source_type)
-                    if price:
-                        return price
-                # 模糊
-                rows = conn.execute(
-                    """SELECT id, name, spec FROM material_master
-                       WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
-                    (f"%{alias}%",)
-                ).fetchall()
-                for row in rows:
-                    price = self._get_price(
-                        conn, row["id"], province,
-                        target_unit, row["name"], row["spec"] or spec,
-                        source_type=source_type)
-                    if price:
-                        return price
+            if alias and alias != name and alias != clean and _material_name_compatible(name, alias):
+                if spec:
+                    exact_rows = conn.execute(
+                        """SELECT id, name, spec FROM material_master
+                           WHERE name=? ORDER BY LENGTH(spec) ASC, id ASC LIMIT 20""",
+                        (alias,)
+                    ).fetchall()
+                    matched = _search_candidate_rows(exact_rows)
+                    if matched:
+                        return matched
+
+                if not spec:
+                    mid = self._find_material_id(conn, alias, "")
+                    if mid:
+                        mat_spec = self._get_material_spec(conn, mid)
+                        price = self._get_price_v2(conn, mid, province, city, period_end,
+                                                target_unit, alias, mat_spec or spec,
+                                                source_type=source_type)
+                        if price and _object_type_compatible(object_type, alias):
+                            return _enrich_price(price, alias, mat_spec or spec)
+                    # 模糊
+                    rows = conn.execute(
+                        """SELECT id, name, spec FROM material_master
+                           WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 10""",
+                        (f"%{alias}%",)
+                    ).fetchall()
+                    matched = _search_candidate_rows(rows)
+                    if matched:
+                        return matched
 
             return None
         finally:
@@ -611,6 +852,7 @@ class MaterialDB:
             ).fetchone()
             if row:
                 return row["id"]
+            return None
         # 不带spec查
         row = conn.execute(
             "SELECT id FROM material_master WHERE name=? ORDER BY id LIMIT 1",
@@ -645,7 +887,7 @@ class MaterialDB:
                     """SELECT price_incl_tax, unit, province, source_type
                        FROM price_fact
                        WHERE material_id=? AND province=?
-                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib')
+                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
                          AND usable_for_quote=1
                        ORDER BY created_at DESC LIMIT 1""",
                     (material_id, province),
@@ -655,8 +897,8 @@ class MaterialDB:
                 """SELECT price_incl_tax, unit, province, source_type
                    FROM price_fact
                    WHERE material_id=?
-                     AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib')
-                     AND usable_for_quote=1
+                      AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
+                      AND usable_for_quote=1
                    ORDER BY created_at DESC LIMIT 1""",
                 (material_id,),
                 lambda r: f"{r['province'] or ''}市场价",
@@ -720,10 +962,16 @@ class MaterialDB:
             raw_price = row["price_incl_tax"]
             price_unit = (row["unit"] or "").strip()
             source = source_fn(row)
+            normalized_price_unit = _normalize_unit(price_unit)
+            normalized_target_unit = _normalize_unit(target_unit)
 
             # 单位一致，直接返回
-            if not target_unit or price_unit == target_unit:
-                return {"price": raw_price, "unit": price_unit, "source": source}
+            if not normalized_target_unit or normalized_price_unit == normalized_target_unit:
+                return {
+                    "price": raw_price,
+                    "unit": target_unit or price_unit,
+                    "source": source,
+                }
 
             # 尝试单位换算
             converted = _try_convert_price(
@@ -738,6 +986,234 @@ class MaterialDB:
         return None
 
     # ======== 别名操作 ========
+
+    def _get_price_v2(self, conn, material_id: int, province: str,
+                      city: str = "", period_end: str = "",
+                      target_unit: str = "", name: str = "",
+                      spec: str = "", source_type: str = "") -> Optional[dict]:
+        """查材料价格，优先精确地区/期次，其次省级，再全国兜底。"""
+        province = str(province or "").strip()
+        city = str(city or "").strip()
+        period_end = str(period_end or "").strip()
+
+        def _source_label(row, kind: str, include_period: bool) -> str:
+            province_text = str(row["province"] or "").strip()
+            city_text = str(row["city"] or "").strip()
+            parts: list[str] = []
+            if province_text:
+                parts.append(province_text)
+            if city_text and city_text != province_text:
+                parts.append(city_text)
+            prefix = "".join(parts) or "全国"
+            if include_period:
+                row_period = str(row["period_end"] or "").strip()
+                if row_period:
+                    return f"{prefix}{kind}({row_period})"
+            return f"{prefix}{kind}"
+
+        if source_type == "market":
+            queries = self._build_price_queries_v2(
+                material_id=material_id,
+                province=province,
+                city=city,
+                period_end=period_end,
+                price_mode="market",
+                source_label_builder=_source_label,
+            )
+        elif source_type == "government":
+            queries = self._build_price_queries_v2(
+                material_id=material_id,
+                province=province,
+                city=city,
+                period_end=period_end,
+                price_mode="government",
+                source_label_builder=_source_label,
+            )
+        else:
+            queries = self._build_price_queries_v2(
+                material_id=material_id,
+                province=province,
+                city=city,
+                period_end=period_end,
+                price_mode="government",
+                source_label_builder=_source_label,
+            )
+            queries.extend(
+                self._build_price_queries_v2(
+                    material_id=material_id,
+                    province=province,
+                    city=city,
+                    period_end=period_end,
+                    price_mode="market",
+                    source_label_builder=_source_label,
+                )
+            )
+
+        for sql, params, source_fn in queries:
+            row = conn.execute(sql, params).fetchone()
+            if not row:
+                continue
+
+            raw_price = row["price_incl_tax"]
+            price_unit = (row["unit"] or "").strip()
+            source = source_fn(row)
+            normalized_price_unit = _normalize_unit(price_unit)
+            normalized_target_unit = _normalize_unit(target_unit)
+
+            if not normalized_target_unit or normalized_price_unit == normalized_target_unit:
+                return {
+                    "price": raw_price,
+                    "unit": target_unit or price_unit,
+                    "source": source,
+                }
+
+            converted = _try_convert_price(raw_price, price_unit, target_unit, name, spec)
+            if converted is not None:
+                return {
+                    "price": converted,
+                    "unit": target_unit,
+                    "source": f"{source}({price_unit}->{target_unit})",
+                }
+
+        return None
+
+    def _build_price_queries_v2(self, material_id: int, province: str, city: str,
+                                period_end: str, price_mode: str,
+                                source_label_builder) -> list[tuple[str, tuple, object]]:
+        queries: list[tuple[str, tuple, object]] = []
+
+        if price_mode == "market":
+            if province and city:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                       FROM price_fact
+                       WHERE material_id=? AND province=? AND city=?
+                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
+                         AND usable_for_quote=1
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (material_id, province, city),
+                    lambda r: source_label_builder(r, "市场价", False),
+                ))
+            if province:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                       FROM price_fact
+                       WHERE material_id=? AND province=? AND IFNULL(city,'')=''
+                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
+                         AND usable_for_quote=1
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (material_id, province),
+                    lambda r: source_label_builder(r, "市场价", False),
+                ))
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                       FROM price_fact
+                       WHERE material_id=? AND province=?
+                         AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
+                         AND usable_for_quote=1
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (material_id, province),
+                    lambda r: source_label_builder(r, "市场价", False),
+                ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=?
+                      AND source_type IN ('market_web','manual_quote','historical_project','enterprise_price_lib','user_contribute')
+                      AND usable_for_quote=1
+                   ORDER BY created_at DESC LIMIT 1""",
+                (material_id,),
+                lambda r: source_label_builder(r, "市场价", False),
+            ))
+            return queries
+
+        if province and city and period_end:
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND city=? AND period_end=?
+                     AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                   ORDER BY created_at DESC LIMIT 1""",
+                (material_id, province, city, period_end),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+        if province and period_end:
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND IFNULL(city,'')='' AND period_end=?
+                     AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                   ORDER BY created_at DESC LIMIT 1""",
+                (material_id, province, period_end),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND period_end=?
+                     AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                   ORDER BY CASE WHEN IFNULL(city,'')=? THEN 0 WHEN IFNULL(city,'')='' THEN 1 ELSE 2 END,
+                            created_at DESC
+                   LIMIT 1""",
+                (material_id, province, period_end, city),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+        if province and city:
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND city=?
+                     AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                   ORDER BY period_end DESC, created_at DESC LIMIT 1""",
+                (material_id, province, city),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+        if province:
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND IFNULL(city,'')=''
+                     AND source_type IN ('official_info','info_price') AND usable_for_quote=1
+                   ORDER BY period_end DESC, created_at DESC LIMIT 1""",
+                (material_id, province),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND province=? AND source_type IN ('official_info','info_price')
+                     AND usable_for_quote=1
+                   ORDER BY CASE WHEN IFNULL(city,'')='' THEN 0 WHEN IFNULL(city,'')=? THEN 1 ELSE 2 END,
+                            period_end DESC, created_at DESC
+                   LIMIT 1""",
+                (material_id, province, city),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+        if not province:
+            if period_end:
+                queries.append((
+                    """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                       FROM price_fact
+                       WHERE material_id=? AND period_end=? AND source_type IN ('official_info','info_price')
+                         AND usable_for_quote=1
+                       ORDER BY CASE WHEN IFNULL(city,'')='' THEN 0 ELSE 1 END,
+                                created_at DESC
+                       LIMIT 1""",
+                    (material_id, period_end),
+                    lambda r: source_label_builder(r, "信息价", True),
+                ))
+            queries.append((
+                """SELECT price_incl_tax, unit, province, city, period_end, source_type
+                   FROM price_fact
+                   WHERE material_id=? AND source_type IN ('official_info','info_price')
+                     AND usable_for_quote=1
+                   ORDER BY CASE WHEN IFNULL(city,'')='' THEN 0 ELSE 1 END,
+                            period_end DESC, created_at DESC
+                   LIMIT 1""",
+                (material_id,),
+                lambda r: source_label_builder(r, "信息价", True),
+            ))
+        return queries
 
     def add_alias(self, material_id: int, alias_name: str,
                   alias_spec: str = "", source: str = "manual"):
@@ -784,6 +1260,7 @@ class MaterialDB:
 
         source_type: 'official_info' | 'market_web' | 'manual_quote' | 'historical_project'
                      | 'enterprise_price_lib'（企业集采价格库）
+                     | 'user_contribute'（用户补充报价）
         authority_level: 'official' | 'verified' | 'reference'
         usable_for_quote: 1=可用于报价, 0=仅参考（如2023年旧价格）
         dedup: True时，同材料+同价格+同来源文件不重复插入
