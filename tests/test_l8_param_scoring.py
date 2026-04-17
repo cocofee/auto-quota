@@ -155,6 +155,24 @@ class TestUsageConflict:
         assert detail == ""
 
 
+class TestNegativeKeywordCopperMaterialConflict:
+    def test_copper_candidate_is_not_penalized_when_bill_omits_material(self):
+        penalty, detail = ParamValidator._check_negative_keywords(
+            "电缆敷设 WDZ-YJY-4*25+1*16",
+            "铜带连接",
+        )
+        assert penalty == 0.0
+        assert detail == ""
+
+    def test_copper_candidate_is_penalized_when_bill_explicitly_requires_aluminum(self):
+        penalty, detail = ParamValidator._check_negative_keywords(
+            "电力电缆 材质:铝芯 型号:YJLV",
+            "铜排安装",
+        )
+        assert penalty == pytest.approx(0.3, abs=0.001)
+        assert detail == "清单材质=铝 vs 定额材质=铜"
+
+
 class TestTierUpHardFail:
     """鏋侀檺鍚戜笂鍙栨。搴旇Е鍙戠‖澶辫触"""
 

@@ -2477,6 +2477,10 @@ class ParamValidator:
         """
         bill_lower = bill_text.lower()
         quota_lower = quota_name.lower()
+        copper_penalty, copper_detail = ParamValidator._check_copper_material_conflict(
+            bill_text=bill_text,
+            quota_name=quota_name,
+        )
 
         # 排除性关键词列表：(关键词, 惩罚分, 豁免词, 同义词)
         # 豁免词：如果清单包含豁免词，则不惩罚
@@ -2502,6 +2506,8 @@ class ParamValidator:
 
         for rule in NEGATIVE_RULES:
             kw = rule["keyword"]
+            if kw == "铜":
+                continue
             # 定额名称包含该关键词
             if kw not in quota_lower:
                 continue
@@ -2526,7 +2532,26 @@ class ParamValidator:
                 max_penalty = penalty
                 details = [f"清单无'{kw}'但定额含'{kw}' 罚分-{penalty}"]
 
+        if copper_penalty > max_penalty:
+            return copper_penalty, copper_detail
+
         return max_penalty, "; ".join(details)
+
+    @staticmethod
+    def _check_copper_material_conflict(bill_text: str, quota_name: str) -> tuple[float, str]:
+        """仅在清单明确给出非铜导体时，处罚含“铜”的定额。"""
+        if "铜" not in quota_name:
+            return 0.0, ""
+
+        quota_without_exempt = quota_name.replace("铜芯", "")
+        if "铜" not in quota_without_exempt:
+            return 0.0, ""
+
+        explicit_non_copper_markers = ("铝芯", "铝导体", "铝线")
+        if any(marker in bill_text for marker in explicit_non_copper_markers):
+            return 0.3, "清单材质=铝 vs 定额材质=铜"
+
+        return 0.0, ""
 
     # ── 介质/用途冲突检查 ──────────────────────────────────────
     # 单一互斥分区：分区内用途两两互斥
