@@ -581,6 +581,19 @@ def test_do_lookup_does_not_use_gldjc_market_cache(monkeypatch):
     assert results[0]["lookup_url"] is None
 
 
+def test_gldjc_cache_entry_accepts_convertible_weight_units():
+    assert material_price_api._is_usable_gldjc_cache_entry(
+        "镀锌焊接钢管",
+        "DN25",
+        "kg",
+        {
+            "price_with_tax": 3663.72,
+            "matched_unit": "t",
+            "matched_spec": "镀锌焊接钢管 DN25",
+        },
+    ) is True
+
+
 def test_do_lookup_builds_summary_label_for_db_results(monkeypatch):
     class _FakeDB:
         def search_price_by_name(self, name: str, **kwargs):
