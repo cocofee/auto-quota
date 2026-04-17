@@ -255,6 +255,12 @@ class ParamValidator:
         frozenset(("electrical_box", "cable_family")),
         frozenset(("electrical_box", "protection_device")),
         frozenset(("cable_head_accessory", "cable_family")),
+        frozenset(("pipe_run", "pipe_sleeve")),
+        frozenset(("pipe_run", "valve_body")),
+        frozenset(("pipe_run", "valve_accessory")),
+        frozenset(("pipe_run", "sanitary_accessory")),
+        frozenset(("pipe_sleeve", "sanitary_accessory")),
+        frozenset(("sanitary_fixture", "sanitary_accessory")),
     }
     _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
         "bridge_raceway",
@@ -263,6 +269,7 @@ class ParamValidator:
         "valve_accessory",
         "air_device",
         "sanitary_fixture",
+        "sanitary_accessory",
         "electrical_box",
         "protection_device",
         "conduit_raceway",
@@ -2500,6 +2507,17 @@ class ParamValidator:
         # 消防品类：防火阀和普通风阀是不同专业
         # 注意：不排斥"调节阀"，因为定额名就叫"防火调节阀安装"
         "防火阀": ["蝶阀", "球阀"],
+        # 卫生器具本体与独立附件/配件边界
+        "洗脸盆": ["水龙头", "龙头", "冲洗阀", "冲洗装置"],
+        "洗涤盆": ["水龙头", "龙头"],
+        "拖布池": ["水龙头", "龙头"],
+        "坐便器": ["冲洗阀", "冲洗装置"],
+        "蹲便器": ["冲洗阀", "冲洗装置"],
+        "小便器": ["冲洗阀", "冲洗装置"],
+        "水龙头": ["洗脸盆", "洗涤盆", "拖布池", "坐便器", "蹲便器", "小便器"],
+        "龙头": ["洗脸盆", "洗涤盆", "拖布池", "坐便器", "蹲便器", "小便器"],
+        "冲洗阀": ["坐便器", "蹲便器", "小便器", "洗脸盆"],
+        "冲洗装置": ["坐便器", "蹲便器", "小便器", "洗脸盆"],
     }
 
     def _materials_compatible(self, mat1: str, mat2: str) -> bool:
@@ -2666,6 +2684,33 @@ class ParamValidator:
         return 0.0, ""
 
     @classmethod
+    def _extract_main_sanitary_fixture_from_intent(cls, bill_text: str) -> str:
+        if not bill_text:
+            return ""
+
+        primary_text = re.split(
+            r"(?:名称|类型(?:、规格)?|规格(?:、类型)?|型号(?:、规格)?|规格(?:、型号)?|材质(?:、规格)?|设置方式(?:、部位)?|安装部位|配置形式|部位|电压等级|类别)\s*[:：]",
+            bill_text,
+            maxsplit=1,
+        )[0].strip()
+        if any(keyword in primary_text for keyword in ("水龙头", "龙头", "冲洗阀", "冲洗装置")):
+            return ""
+        for fixture in cls.CATEGORY_HARD_REJECTS:
+            if fixture in primary_text:
+                return fixture
+
+        try:
+            features = text_parser.parse_canonical(primary_text or bill_text)
+        except Exception:
+            features = {}
+
+        entity = str(features.get("entity") or "")
+        family = str(features.get("family") or "")
+        if family == "sanitary_fixture" and entity in cls.CATEGORY_HARD_REJECTS:
+            return entity
+        return ""
+
+    @classmethod
     def _check_category_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
         """
         品类互斥检查：清单核心品类和定额核心品类冲突时降分
@@ -2676,6 +2721,14 @@ class ParamValidator:
 
         返回: (惩罚分数, 说明文本)
         """
+        sanitary_fixture_main = cls._extract_main_sanitary_fixture_from_intent(bill_text)
+        if sanitary_fixture_main:
+            if sanitary_fixture_main in quota_name:
+                return 0.0, ""
+            for reject_kw in cls.CATEGORY_HARD_REJECTS.get(sanitary_fixture_main, []):
+                if reject_kw in quota_name:
+                    return 0.3, f"品类硬排斥: 清单主实体'{sanitary_fixture_main}' ≠ 定额含'{reject_kw}'"
+
         # 找清单命中的品类
         bill_category = None
         for conflict_group in cls.CATEGORY_CONFLICTS:
@@ -2689,6 +2742,8 @@ class ParamValidator:
         if not bill_category:
             # 组内没命中，继续检查跨品类硬排斥
             for bill_kw, reject_list in cls.CATEGORY_HARD_REJECTS.items():
+                if bill_kw in {"洗脸盆", "洗涤盆", "拖布池", "坐便器", "蹲便器", "小便器"} and bill_kw != sanitary_fixture_main:
+                    continue
                 if bill_kw in bill_text:
                     for reject_kw in reject_list:
                         if reject_kw in quota_name:
@@ -2707,6 +2762,8 @@ class ParamValidator:
         # 组内没冲突，继续检查跨品类硬排斥
         # 例如："泵"在组2匹配到了，但定额含"喷头"（组6），组内检查拦不住
         for bill_kw, reject_list in cls.CATEGORY_HARD_REJECTS.items():
+            if bill_kw in {"洗脸盆", "洗涤盆", "拖布池", "坐便器", "蹲便器", "小便器"} and bill_kw != sanitary_fixture_main:
+                continue
             if bill_kw in bill_text:
                 for reject_kw in reject_list:
                     if reject_kw in quota_name:

@@ -72,6 +72,13 @@ def test_build_primary_query_profile_adds_floor_drain_family_aliases():
     assert "地漏安装" in profile["quota_aliases"]
 
 
+def test_build_primary_query_profile_adds_fire_collar_aliases():
+    profile = build_primary_query_profile("阻火圈", "阻火圈 DN100")
+
+    assert "阻火圈安装 DN100" in profile["quota_aliases"]
+    assert "阻火圈安装" in profile["quota_aliases"]
+
+
 def test_build_primary_query_profile_adds_sanitary_flush_pipe_family_aliases():
     profile = build_primary_query_profile("大便槽冲洗管", "大便槽冲洗管 大便冲洗管 DN32")
 

@@ -180,7 +180,7 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     sanitary_candidate = _pick_explicit_sanitary_family_candidate(bill_text, candidates)
     if sanitary_candidate is not None:
-        return _guard_explicit_candidate(item, top_candidate, sanitary_candidate)
+        return sanitary_candidate
 
     equipment_candidate = _pick_explicit_equipment_family_candidate(bill_text, candidates)
     if equipment_candidate is not None:

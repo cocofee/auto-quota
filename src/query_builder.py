@@ -1389,8 +1389,7 @@ def _build_primary_subject_quota_aliases(primary_subject: str,
         _push("UPS不停电装置")
 
     if "清扫口" in combined or "扫除口" in combined:
-        if "地面" in combined:
-            _push("地面扫除口安装", with_specs=True)
+        _push("地面扫除口安装", with_specs=True)
         _push("清扫口安装", with_specs=True)
         if "塑料" in combined:
             _push("塑料清扫口安装", with_specs=True)
@@ -1403,6 +1402,10 @@ def _build_primary_subject_quota_aliases(primary_subject: str,
             _push("防爆地漏", with_specs=True)
         _push("地漏安装", with_specs=True)
         _push("地漏")
+
+    if "阻火圈" in combined:
+        _push("阻火圈安装", with_specs=True)
+        _push("阻火圈")
 
     if "冲洗管" in combined and "大便槽" in combined:
         _push("大便冲洗管", with_specs=True)
@@ -1679,11 +1682,13 @@ def _build_sanitary_query(name: str,
         subtype = "\u62d6\u5e03\u6c60"
     if not subtype and any(token in full_text for token in ("清扫口", "扫除口")):
         subtype = "清扫口"
+    if not subtype and "阻火圈" in full_text:
+        subtype = "阻火圈"
     water_mode = str(params.get("sanitary_water_mode") or "")
     nozzle_mode = str(params.get("sanitary_nozzle_mode") or "")
     tank_mode = str(params.get("sanitary_tank_mode") or "")
     if not subtype and not any(keyword in full_text for keyword in (
-        "便器", "洗脸盆", "洗面盆", "洗手盆", "洗发盆", "洗涤盆", "净身盆", "水槽", "拖布池", "拖把池", "地漏", "清扫口", "扫除口", "水龙头", "龙头",
+        "便器", "洗脸盆", "洗面盆", "洗手盆", "洗发盆", "洗涤盆", "净身盆", "水槽", "拖布池", "拖把池", "地漏", "清扫口", "扫除口", "阻火圈", "水龙头", "龙头",
     )):
         return None
 
@@ -1722,6 +1727,8 @@ def _build_sanitary_query(name: str,
         query_parts.append("清扫口安装")
         if "塑料" in full_text:
             query_parts.append("塑料清扫口")
+    elif subtype == "阻火圈":
+        query_parts.append("阻火圈安装")
 
     if not query_parts:
         return None
