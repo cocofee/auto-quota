@@ -21,6 +21,7 @@ import time
 import random
 import argparse
 import hashlib
+import platform
 from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import quote, urljoin
@@ -40,6 +41,10 @@ CACHE_FILE = Path(__file__).parent.parent / "data" / "material_prices.json"
 
 # 缓存有效期（天）
 CACHE_EXPIRE_DAYS = 30
+
+
+class GldjcCookieInvalidError(RuntimeError):
+    """Raised when Guangcai returns a login page instead of search results."""
 
 # 请求头（模拟浏览器）
 HEADERS = {
@@ -319,6 +324,53 @@ def _get_synonym(base_name: str) -> str | None:
     return None
 
 
+_VALVE_CORE_NAMES = (
+    "自动排气阀",
+    "快速排气阀",
+    "止回阀",
+    "截止阀",
+    "减压阀",
+    "减压器",
+    "安全阀",
+    "电磁阀",
+    "平衡阀",
+    "浮球阀",
+    "过滤器",
+    "闸阀",
+    "蝶阀",
+    "球阀",
+    "阀门",
+)
+
+_VALVE_SEARCH_PREFIX_NOISE = (
+    "黄铜",
+    "青铜",
+    "紫铜",
+    "铜",
+    "铸钢",
+    "铸铁",
+    "球墨铸铁",
+    "碳钢",
+    "不锈钢",
+    "钢制",
+    "金属",
+    "塑料",
+    "PPR",
+    "PE",
+    "UPVC",
+    "CPVC",
+    "HDPE",
+)
+
+
+def _extract_valve_core_name(base_name: str) -> str:
+    text = str(base_name or "").strip()
+    for token in _VALVE_CORE_NAMES:
+        if token in text:
+            return token
+    return ""
+
+
 # ========== 名称拆解 ==========
 
 def parse_material(name: str, spec_col: str = "") -> dict:
@@ -384,6 +436,36 @@ def parse_material(name: str, spec_col: str = "") -> dict:
             search_keywords.append(f"{mapped_name} {specs[0]}")
         search_keywords.append(mapped_name)
 
+    if _detect_material_family(base_name) == "valve":
+        core_name = _extract_valve_core_name(base_name)
+        if core_name and core_name not in {base_name, mapped_name}:
+            if specs:
+                search_keywords.append(f"{core_name} {specs[0]}")
+            search_keywords.append(core_name)
+
+        if core_name and base_name.endswith(core_name):
+            prefix = base_name[: -len(core_name)].strip()
+            if prefix and prefix not in CONNECTION_FORMS and prefix not in {"法兰", "螺纹", "沟槽", "焊接"}:
+                family_name = f"{prefix}阀门"
+                if family_name not in {base_name, mapped_name, core_name}:
+                    if specs:
+                        search_keywords.append(f"{family_name} {specs[0]}")
+                    search_keywords.append(family_name)
+
+        stripped_name = base_name
+        for noise in _VALVE_SEARCH_PREFIX_NOISE:
+            stripped_name = stripped_name.replace(noise, "")
+        stripped_name = stripped_name.strip()
+        if stripped_name and stripped_name not in {base_name, mapped_name, core_name}:
+            if specs:
+                search_keywords.append(f"{stripped_name} {specs[0]}")
+            search_keywords.append(stripped_name)
+
+        if core_name and core_name != "阀门":
+            if specs:
+                search_keywords.append(f"阀门 {specs[0]}")
+            search_keywords.append("阀门")
+
     # 工程同义词：从Jarvis的同义词表查一个别名
     synonym = _get_synonym(base_name)
     if synonym and synonym != base_name and synonym != mapped_name:
@@ -418,8 +500,27 @@ def is_non_material(name: str) -> bool:
 
     返回 True 表示应该跳过
     """
+    text = str(name or "").strip()
+    if not text:
+        return False
+
+    if not any(kw in text for kw in NON_MATERIAL_KEYWORDS):
+        return False
+
+    # 含有明确材料/设备特征时，不因为“制作/试压/冲洗”等工序词被误杀。
+    if _detect_material_family(text):
+        return False
+    if _extract_material_tokens(text):
+        return False
+    if _extract_semantic_keywords(text):
+        return False
+    if any(pattern and re.search(pattern, text, re.IGNORECASE) for pattern in SPEC_PATTERNS):
+        return False
+    if any(token in text for token in ("管", "阀", "风口", "风阀", "水表", "电缆", "电线", "桥架", "线槽", "地漏", "喷头", "龙头", "洁具")):
+        return False
+
     for kw in NON_MATERIAL_KEYWORDS:
-        if kw in name:
+        if kw in text:
             return True
     return False
 
@@ -444,6 +545,41 @@ def _normalize_unit(unit: str) -> str:
         .replace("）", ")")
     )
     return _UNIT_ALIASES.get(raw, raw)
+
+
+def _console_safe_text(text: str) -> str:
+    value = str(text or "")
+    if platform.system() != "Windows":
+        return value
+    return value.encode("gbk", errors="replace").decode("gbk")
+
+
+def _normalize_cli_province_code(province: str) -> str:
+    raw = str(province or "").strip()
+    if not raw:
+        return "1"
+    if re.fullmatch(r"\d+", raw):
+        return raw
+    return resolve_gldjc_area_code(province=raw, city="")
+
+
+def _parse_tax_rate_multiplier(value) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    has_percent = "%" in raw
+    normalized = raw.replace("%", "").strip()
+    try:
+        numeric = float(normalized)
+    except (TypeError, ValueError):
+        return None
+
+    if numeric <= 0:
+        return None
+
+    rate = numeric / 100 if has_percent or numeric > 1 else numeric
+    return 1 + rate
 
 
 def _is_supported_steel_pipe(name: str, spec: str) -> bool:
@@ -583,6 +719,21 @@ def _extract_material_tokens(text: str) -> set[str]:
         ("黄铜", "黄铜"),
         ("无缝", "无缝"),
         ("焊接", "焊接"),
+        ("自动排气阀", "自动排气阀"),
+        ("快速排气阀", "快速排气阀"),
+        ("止回阀", "止回阀"),
+        ("截止阀", "截止阀"),
+        ("减压阀", "减压阀"),
+        ("减压器", "减压器"),
+        ("安全阀", "安全阀"),
+        ("电磁阀", "电磁阀"),
+        ("平衡阀", "平衡阀"),
+        ("浮球阀", "浮球阀"),
+        ("过滤器", "过滤器"),
+        ("闸阀", "闸阀"),
+        ("蝶阀", "蝶阀"),
+        ("球阀", "球阀"),
+        ("阀门", "阀门"),
         ("PSP", "PSP"),
         ("PVC", "PVC"),  # 注意：放在 UPVC/CPVC/PVC-U/PVC-C 之后，避免误吞
         ("PE", "PE"),    # 放在 HDPE/PE-RT 之后
@@ -1117,8 +1268,9 @@ def search_material_web(session: requests.Session, keyword: str,
     html = resp.text
 
     # 检测是否被踢出登录（Cookie失效）
-    if "请登录" in html or "login" in html.lower() and "token" not in html.lower():
-        print("\n  [警告] Cookie可能已失效，建议更换Cookie后重试")
+    html_lower = html.lower()
+    if "请登录" in html or (("login" in html_lower or "登录" in html) and "token" not in html_lower):
+        raise GldjcCookieInvalidError("广材网 Cookie 已失效或未登录，请更换 Cookie 后重试")
 
     def _clean_text(value: str) -> str:
         return re.sub(r"\s+", " ", str(value or "")).strip()
@@ -1490,6 +1642,9 @@ def _normalize_region_name(name: str) -> str:
 
 
 def resolve_gldjc_area_code(province: str = "", city: str = "") -> str:
+    raw_province = str(province or "").strip()
+    if re.fullmatch(r"\d+", raw_province):
+        return raw_province
     normalized_province = _normalize_region_name(province)
     if normalized_province in _PROVINCE_AREA_CODES:
         return _PROVINCE_AREA_CODES[normalized_province]
@@ -1600,6 +1755,8 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
     if not output_path:
         output_path = str(input_file.with_stem(input_file.stem + "_含价格"))
 
+    province_code = _normalize_cli_province_code(province_code)
+
     # 读取Excel
     wb = openpyxl.load_workbook(input_path)
     ws = wb.active
@@ -1676,7 +1833,7 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
             continue
 
         current = row_idx - 1
-        display_name = name.encode('gbk', errors='replace').decode('gbk')
+        display_name = _console_safe_text(name)
 
         # 跳过已经有价格的行
         existing_price = ws.cell(row=row_idx, column=col_map["price_with_tax"]).value
@@ -1728,25 +1885,44 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
         specs = parsed["specs"]
 
         # 广材网链接（不管能不能查到价格，都给链接）
-        link_keyword = f"{base_name} {specs[0]}" if specs else base_name
-        link_url = build_gldjc_url(link_keyword, province_code)
+        search_plans = build_region_search_plans(parsed["search_keywords"], province=province_code)
+        link_plan = search_plans[0] if search_plans else {
+            "keyword": f"{base_name} {specs[0]}" if specs else base_name,
+            "area_code": province_code,
+            "scope": province_code,
+        }
+        link_keyword = link_plan["keyword"]
+        link_url = build_gldjc_url(link_keyword, link_plan["area_code"])
 
         # 分层搜索：先精确（品名+规格），再宽泛（纯品名）
         all_results = []
         searched_keyword = ""
-        for kw in parsed["search_keywords"]:
-            if kw in search_cache:
+        searched_area_code = link_plan["area_code"]
+        for plan in search_plans:
+            kw = plan["keyword"]
+            area_code = plan["area_code"]
+            cache_key = f"{area_code}|{kw}"
+            if cache_key in search_cache:
                 # 本次运行内去重
-                all_results = search_cache[kw]
+                all_results = search_cache[cache_key]
                 searched_keyword = kw
+                searched_area_code = area_code
                 break
 
-            print(f"  [{current}/{total}] 搜索: {kw.encode('gbk', errors='replace').decode('gbk')}...",
+            print(f"  [{current}/{total}] 搜索: {_console_safe_text(kw)}...",
                   end=" ", flush=True)
 
-            results = search_material_web(session, kw, province_code)
-            search_cache[kw] = results
+            try:
+                results = search_material_web(session, kw, area_code)
+            except GldjcCookieInvalidError:
+                wb.save(output_path)
+                if use_cache:
+                    save_cache(cache)
+                raise
+
+            search_cache[cache_key] = results
             searched_keyword = kw
+            searched_area_code = area_code
 
             if results:
                 all_results = results
@@ -1755,6 +1931,9 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
             # 没搜到，降级到下一个关键词
             print("未找到，降级...", end=" ", flush=True)
             time.sleep(delay * 0.5 + random.uniform(0, 0.5))
+
+        if searched_keyword:
+            link_url = build_gldjc_url(searched_keyword, searched_area_code or province_code)
 
         if not all_results:
             # 所有关键词都没搜到
@@ -1834,8 +2013,9 @@ def process_excel(input_path: str, cookie_str: str, output_path: str = None,
             # 如果Excel里有税率列，用Excel里的
             if "tax_rate" in col_map:
                 tr = ws.cell(row=row_idx, column=col_map["tax_rate"]).value
-                if tr and float(tr) > 0:
-                    tax_rate = 1 + float(tr) / 100 if float(tr) > 1 else 1 + float(tr)
+                parsed_tax_rate = _parse_tax_rate_multiplier(tr)
+                if parsed_tax_rate:
+                    tax_rate = parsed_tax_rate
 
             price_notax = round(selected_price / tax_rate, 2)
             ws.cell(row=row_idx, column=col_map["price_with_tax"], value=selected_price)
@@ -1936,15 +2116,19 @@ def main():
     parser.add_argument("--output", "-o",
                         help="输出Excel路径（默认原文件名_含价格）")
     parser.add_argument("--province", default="1",
-                        help="省份代码（1=全国，默认）")
+                        help="省份名称或广材网区域码（如 湖北 / 420000 / 1=全国）")
     parser.add_argument("--delay", type=float, default=3.0,
                         help="请求间隔秒数（默认3秒）")
     parser.add_argument("--no-cache", action="store_true",
                         help="不使用缓存，强制重新查询广材网")
 
     args = parser.parse_args()
-    process_excel(args.excel, args.cookie, args.output,
-                  args.province, args.delay, not args.no_cache)
+    try:
+        process_excel(args.excel, args.cookie, args.output,
+                      args.province, args.delay, not args.no_cache)
+    except GldjcCookieInvalidError as exc:
+        print(f"\n[错误] {exc}")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

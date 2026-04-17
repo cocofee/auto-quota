@@ -1328,6 +1328,26 @@ def check_unit_compatible(unit_a: str, unit_b: str) -> bool:
     return False
 
 
+def _is_convertible_price_unit(target_unit: str, source_unit: str, name: str = "", spec: str = "") -> bool:
+    if not target_unit or not source_unit:
+        return False
+    if check_unit_compatible(target_unit, source_unit):
+        return True
+
+    import sys
+
+    tools_dir = str(Path(__file__).resolve().parents[4] / "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+
+    try:
+        from gldjc_price import _try_convert_price
+    except Exception:
+        return False
+
+    return _try_convert_price(1.0, source_unit, target_unit, name, spec) is not None
+
+
 def _is_usable_gldjc_cache_entry(name: str, spec: str, unit: str, cached: dict) -> bool:
     if not isinstance(cached, dict):
         return False
@@ -1337,7 +1357,7 @@ def _is_usable_gldjc_cache_entry(name: str, spec: str, unit: str, cached: dict) 
         return False
 
     matched_unit = str(cached.get("matched_unit") or "").strip()
-    if unit and matched_unit and not check_unit_compatible(unit, matched_unit):
+    if unit and matched_unit and not _is_convertible_price_unit(unit, matched_unit, name, spec):
         return False
 
     matched_spec = str(cached.get("matched_spec") or "").strip()
@@ -2563,6 +2583,7 @@ def _do_gldjc_lookup(
         parse_material, search_material_web, filter_and_score,
         get_representative_price_result, build_match_label, determine_confidence,
         build_approximate_price_candidates,
+        GldjcCookieInvalidError,
         load_cache, save_cache, update_cache, check_cache, build_region_search_plans,
     )
     import requests as _requests
@@ -2584,6 +2605,7 @@ def _do_gldjc_lookup(
     # 计数：实际发起的网络请求数（不含缓存命中）
     net_requests = 0
     blocked = False  # 是否被封/登录失效
+    blocked_reason = "已暂停（疑似被限制）"
 
     for i, mat in enumerate(materials):
         name = mat.get("name", "").strip()
@@ -2608,7 +2630,7 @@ def _do_gldjc_lookup(
 
         # 被封检测：之前发现异常则不再请求
         if blocked:
-            results.append({**mat, "gldjc_price": None, "gldjc_source": "已暂停（疑似被限制）", "gldjc_url": lookup_url})
+            results.append({**mat, "gldjc_price": None, "gldjc_source": blocked_reason, "gldjc_url": lookup_url})
             continue
 
         # 实时搜索广材网
@@ -2649,7 +2671,13 @@ def _do_gldjc_lookup(
                 delay = random.uniform(5, 8)
                 time.sleep(delay)
 
-            web_results = search_material_web(session, kw, area_code)
+            try:
+                web_results = search_material_web(session, kw, area_code)
+            except GldjcCookieInvalidError as exc:
+                logger.warning(f"广材网 Cookie 失效，停止后续查询: {exc}")
+                blocked = True
+                blocked_reason = str(exc)
+                break
             net_requests += 1
             searched_keyword = kw
             searched_scope = scope
@@ -2673,6 +2701,10 @@ def _do_gldjc_lookup(
 
             # 关键词降级间隔（较短，因为主间隔已经够长）
             time.sleep(random.uniform(1, 2))
+
+        if blocked and not all_results:
+            results.append({**mat, "gldjc_price": None, "gldjc_source": blocked_reason, "gldjc_url": lookup_url, "gldjc_label": None})
+            continue
 
         if not all_results:
             # 搜不到，缓存"未匹配"避免重复搜
