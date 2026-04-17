@@ -1190,7 +1190,12 @@ class HybridSearcher:
         if cached is not None:
             import copy
             logger.debug(f"搜索缓存命中: '{query[:20]}...' ({len(cached)}条)")
-            return copy.deepcopy(cached)  # 深拷贝避免后续修改影响缓存
+            finalized = self._finalize_candidates(
+                copy.deepcopy(cached),
+                query_text=query,
+                expected_books=books,
+            )
+            return finalized[:top_k]
 
         # ============================================================
         # 第0步：查通用知识库获取搜索增强关键词
@@ -1400,10 +1405,13 @@ class HybridSearcher:
                 for k in keys_to_remove:
                     del self._session_cache[k]
                 logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
-            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
-            finalized = finalized[:top_k]
-            self._session_cache[cache_key] = copy.deepcopy(finalized)
-            return finalized
+            self._session_cache[cache_key] = copy.deepcopy(top_results)
+            finalized = self._finalize_candidates(
+                copy.deepcopy(self._session_cache[cache_key]),
+                query_text=query,
+                expected_books=books,
+            )
+            return finalized[:top_k]
 
         return self._finalize_candidates(top_results, query_text=query, expected_books=books)[:top_k]
 
