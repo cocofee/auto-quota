@@ -156,6 +156,21 @@ class HybridSearcher:
             if callable(setter):
                 setter(experience_db)
 
+    def reset_runtime_state(self, *, include_aux: bool = True) -> None:
+        """清理跨请求不应复用的易失状态，保留省份级索引本体。"""
+        session_cache = getattr(self, "_session_cache", None)
+        if isinstance(session_cache, dict):
+            session_cache.clear()
+        else:
+            self._session_cache = {}
+
+        if not include_aux:
+            return
+        for aux_searcher in list(getattr(self, "aux_searchers", []) or []):
+            resetter = getattr(aux_searcher, "reset_runtime_state", None)
+            if callable(resetter):
+                resetter()
+
     @staticmethod
     def _normalize_session_cache_key_part(value):
         if isinstance(value, dict):
