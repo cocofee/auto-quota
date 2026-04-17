@@ -618,12 +618,13 @@ def _parse_sheet(ws) -> dict:
         return {"materials": [], "all_rows": [], "is_mixed": False}
 
     # 建立列映射——扫描表头行及下一行（处理双行表头）
-    _PRICE_KEYWORDS = ("单价", "综合单价", "不含税单价", "含税单价",
+    _PRICE_KEYWORDS = ("单价", "主材单价", "材料单价", "综合单价", "不含税单价", "含税单价",
                        "市场价", "信息价", "除税单价", "除税信息价")
     # 也检测"序号"列（用于判断清单行，但不作为code列）
     seq_col = None
+    scan_col_limit = min(max(ws.max_column, 20), 80)
     for scan_row in range(header_row, min(header_row + 2, ws.max_row + 1)):
-        for col_idx in range(1, min(15, ws.max_column + 1)):
+        for col_idx in range(1, scan_col_limit + 1):
             val = str(ws.cell(row=scan_row, column=col_idx).value or "").strip()
             if not val:
                 continue
@@ -654,15 +655,17 @@ def _parse_sheet(ws) -> dict:
         return {"materials": [], "all_rows": [], "is_mixed": False}
 
     # 确定价格列位置
+    # 纯材料表通常是「数量」后一列就是单价；混合表右侧常常是分项目列，
+    # 不能把 qty+1 误当成价格列，否则导出时会把价格写进项目分列。
     price_col = col_map.get("price")
-    if price_col is None and "qty" in col_map:
+    if price_col is None and is_pure_material_table and "qty" in col_map:
         price_col = col_map["qty"] + 1
 
     # 也检测"项目特征描述"列（用于清单行展示）
     # 任务导出的结果表常见双行表头/合并表头，描述列不一定落在第一行。
     desc_col = None
     for scan_row in range(header_row, min(header_row + 2, ws.max_row + 1)):
-        for col_idx in range(1, min(20, ws.max_column + 1)):
+        for col_idx in range(1, scan_col_limit + 1):
             val = str(ws.cell(row=scan_row, column=col_idx).value or "").strip()
             if val in ("项目特征描述", "项目特征", "特征描述", "描述"):
                 desc_col = col_idx
@@ -2368,19 +2371,31 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
             continue
 
         ws = wb[sheet_name]
+        header_row = 1
+        for mat in mats:
+            raw_header_row = mat.get("header_row")
+            try:
+                header_row = int(raw_header_row) if raw_header_row is not None else 1
+            except (TypeError, ValueError):
+                header_row = 1
+            break
+
+        inserted_price_col = None
+        need_insert_price_col = any(
+            mat.get("final_price") is not None and mat.get("price_col") is None
+            for mat in mats
+        )
+        if need_insert_price_col:
+            inserted_price_col = ws.max_column + 1
+            ws.cell(row=header_row, column=inserted_price_col, value="主材单价")
+
         link_col = None
-        link_header_row = 1
         for mat in mats:
             lookup_url = str(mat.get("lookup_url") or "").strip()
             if not lookup_url:
                 continue
-            header_row = mat.get("header_row")
-            try:
-                link_header_row = int(header_row) if header_row is not None else 1
-            except (TypeError, ValueError):
-                link_header_row = 1
             link_col = ws.max_column + 1
-            ws.cell(row=link_header_row, column=link_col, value="广材网链接")
+            ws.cell(row=header_row, column=link_col, value="广材网链接")
             break
 
         for mat in mats:
@@ -2417,7 +2432,7 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
                 link_cell.font = link_font
                 row_written = True
 
-            price_col = mat.get("price_col")
+            price_col = mat.get("price_col") if mat.get("price_col") is not None else inserted_price_col
             final_price = mat.get("final_price")
             if price_col is not None and final_price is not None:
                 try:
