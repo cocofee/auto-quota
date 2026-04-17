@@ -1,5 +1,5 @@
-import api from '../services/api';
-import { getErrorMessage } from './error';
+import api from '../services/api.ts';
+import { getErrorMessage } from './error.ts';
 
 interface AxiosBlobLikeError {
   response?: {
@@ -21,7 +21,12 @@ function triggerBrowserDownload(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url);
 }
 
-export async function getDownloadErrorMessage(err: unknown, fallback = '下载失败'): Promise<string> {
+function isExportFinalUnsupported(err: unknown): boolean {
+  const status = (err as AxiosBlobLikeError)?.response?.status;
+  return status === 404 || status === 405 || status === 501;
+}
+
+export async function getDownloadErrorMessage(err: unknown, fallback = '涓嬭浇澶辫触'): Promise<string> {
   const axiosErr = err as AxiosBlobLikeError;
   const data = axiosErr?.response?.data;
 
@@ -49,23 +54,23 @@ export async function getDownloadErrorMessage(err: unknown, fallback = '下载�
 }
 
 export async function downloadTaskResultExcel(taskId: string, filename: string): Promise<void> {
-  const endpoints = [
-    `/tasks/${taskId}/export-final?materials=true`,
-    `/tasks/${taskId}/export?materials=true`,
-  ];
-
-  let lastError: unknown = null;
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await api.get(endpoint, { responseType: 'blob' });
-      triggerBrowserDownload(new Blob([response.data]), filename);
-      return;
-    } catch (err) {
-      lastError = err;
+  try {
+    const response = await api.get(`/tasks/${taskId}/export-final?materials=true`, { responseType: 'blob' });
+    triggerBrowserDownload(new Blob([response.data]), filename);
+    return;
+  } catch (err) {
+    if (!isExportFinalUnsupported(err)) {
+      const message = await getDownloadErrorMessage(err, '涓嬭浇澶辫触');
+      throw new Error(message);
     }
   }
 
-  const message = await getDownloadErrorMessage(lastError, '下载失败');
-  throw new Error(message);
+  try {
+    const response = await api.get(`/tasks/${taskId}/export?materials=true`, { responseType: 'blob' });
+    triggerBrowserDownload(new Blob([response.data]), filename);
+    return;
+  } catch (err) {
+    const message = await getDownloadErrorMessage(err, '涓嬭浇澶辫触');
+    throw new Error(message);
+  }
 }
