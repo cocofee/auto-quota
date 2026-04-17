@@ -2195,13 +2195,13 @@ class ParamValidator:
             if target_value <= candidate_value:
                 score = 1.0 if target_value == candidate_value else self._tier_up_score(
                     target_value, candidate_value)
-                return score, f"{label}<={candidate_value:g}", False, target_value == candidate_value
+                return score, f"{label}<={candidate_value:g}", score == 0.0, target_value == candidate_value
             return 0.0, f"{label}{target_value:g}>{candidate_value:g}", True, False
 
         if mode == "upper_strict":
             if target_value < candidate_value:
                 score = self._tier_up_score(target_value, candidate_value)
-                return score, f"{label}<{candidate_value:g}", False, False
+                return score, f"{label}<{candidate_value:g}", score == 0.0, False
             return 0.0, f"{label}{target_value:g}>={candidate_value:g}", True, False
 
         if mode == "lower":
@@ -2718,6 +2718,8 @@ class ParamValidator:
             return 0.0
 
         # score = 1.0 - 0.1 * log2(ratio)，限制在 [0.55, 1.0]
+        if ratio >= 4.0:
+            return 0.0
         score = 1.0 - 0.1 * math.log2(ratio)
         return max(0.55, min(1.0, score))
 
@@ -2777,6 +2779,13 @@ class ParamValidator:
         check_count = 0
         has_hard_fail = False  # 是否有硬性不匹配
 
+        def tier_up_score_hard_fail(bill_value: float, quota_value: float) -> float:
+            nonlocal has_hard_fail
+            tier_score = self._tier_up_score(bill_value, quota_value)
+            if tier_score == 0.0:
+                has_hard_fail = True
+            return tier_score
+
         install_result = self._get_installation_validator().validate(
             bill_params=bill_params,
             quota_params=quota_params,
@@ -2809,7 +2818,7 @@ class ParamValidator:
                 elif bill_dn < quota_dn:
                     # 向上取档：定额用"以内"标注，取紧邻的下一档是正确行为
                     # 根据偏差比例评分：越接近满分越高
-                    tier_score = self._tier_up_score(bill_dn, quota_dn)
+                    tier_score = tier_up_score_hard_fail(bill_dn, quota_dn)
                     score_sum += tier_score
                     details.append(f"DN{bill_dn}→DN{quota_dn} 向上取档")
                 else:
@@ -2835,7 +2844,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"截面{bill_sec}={quota_sec} 精确匹配")
                 elif bill_sec < quota_sec:
-                    tier_score = self._tier_up_score(bill_sec, quota_sec)
+                    tier_score = tier_up_score_hard_fail(bill_sec, quota_sec)
                     score_sum += tier_score
                     details.append(f"截面{bill_sec}→{quota_sec} 向上取档")
                 else:
@@ -2857,7 +2866,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"容量{bill_kva}kVA={quota_kva}kVA 精确匹配")
                 elif bill_kva < quota_kva:
-                    tier_score = self._tier_up_score(bill_kva, quota_kva)
+                    tier_score = tier_up_score_hard_fail(bill_kva, quota_kva)
                     score_sum += tier_score
                     details.append(f"容量{bill_kva}→{quota_kva}kVA 向上取档")
                 else:
@@ -2879,7 +2888,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"功率{bill_kw}kW={quota_kw}kW 精确匹配")
                 elif bill_kw < quota_kw:
-                    tier_score = self._tier_up_score(bill_kw, quota_kw)
+                    tier_score = tier_up_score_hard_fail(bill_kw, quota_kw)
                     score_sum += tier_score
                     details.append(f"功率{bill_kw}→{quota_kw}kW 向上取档")
                 else:
@@ -2900,7 +2909,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"回路{bill_cir}={quota_cir} 精确匹配")
                 elif bill_cir < quota_cir:
-                    tier_score = self._tier_up_score(bill_cir, quota_cir)
+                    tier_score = tier_up_score_hard_fail(bill_cir, quota_cir)
                     score_sum += tier_score
                     details.append(f"回路{bill_cir}→{quota_cir} 向上取档")
                 else:
@@ -2922,7 +2931,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"电流{bill_amp}A={quota_amp}A 精确匹配")
                 elif bill_amp < quota_amp:
-                    tier_score = self._tier_up_score(bill_amp, quota_amp)
+                    tier_score = tier_up_score_hard_fail(bill_amp, quota_amp)
                     score_sum += tier_score
                     details.append(f"电流{bill_amp}A→{quota_amp}A 向上取档")
                 else:
@@ -3030,7 +3039,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"周长{bill_p}={quota_p} 精确匹配")
                 elif bill_p <= quota_p:
-                    tier_score = self._tier_up_score(bill_p, quota_p)
+                    tier_score = tier_up_score_hard_fail(bill_p, quota_p)
                     score_sum += tier_score
                     details.append(f"周长{bill_p}→{quota_p} 向上取档")
                 else:
@@ -3053,7 +3062,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"半周长{bill_hp}={quota_hp} 精确匹配")
                 elif bill_hp <= quota_hp:
-                    tier_score = self._tier_up_score(bill_hp, quota_hp)
+                    tier_score = tier_up_score_hard_fail(bill_hp, quota_hp)
                     score_sum += tier_score
                     details.append(f"半周长{bill_hp}→{quota_hp} 向上取档")
                 else:
@@ -3076,7 +3085,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"桥架宽高和{bill_bridge}={quota_bridge} 精确匹配")
                 elif bill_bridge <= quota_bridge:
-                    tier_score = self._tier_up_score(bill_bridge, quota_bridge)
+                    tier_score = tier_up_score_hard_fail(bill_bridge, quota_bridge)
                     score_sum += tier_score
                     details.append(f"桥架宽高和{bill_bridge}→{quota_bridge} 向上取档")
                 else:
@@ -3097,7 +3106,7 @@ class ParamValidator:
                 score_sum += 1.0
                 details.append(f"大边长{bill_ls}={quota_ls} 精确匹配")
             elif bill_ls <= quota_ls:
-                tier_score = self._tier_up_score(bill_ls, quota_ls)
+                tier_score = tier_up_score_hard_fail(bill_ls, quota_ls)
                 score_sum += tier_score
                 details.append(f"大边长{bill_ls}→{quota_ls} 向上取档")
             else:
@@ -3130,7 +3139,7 @@ class ParamValidator:
                 score_sum += 1.0
                 details.append(f"站数{bill_stops}={quota_stops} 精确匹配")
             elif bill_stops < quota_stops:
-                tier_score = self._tier_up_score(bill_stops, quota_stops)
+                tier_score = tier_up_score_hard_fail(bill_stops, quota_stops)
                 score_sum += tier_score
                 details.append(f"站数{bill_stops}→{quota_stops} 向上取档")
             else:
@@ -3169,7 +3178,7 @@ class ParamValidator:
                     score_sum += 1.0
                     details.append(f"扁钢宽{bill_gbw}={quota_gbw} 精确匹配")
                 elif bill_gbw < quota_gbw:
-                    tier_score = self._tier_up_score(bill_gbw, quota_gbw)
+                    tier_score = tier_up_score_hard_fail(bill_gbw, quota_gbw)
                     score_sum += tier_score
                     details.append(f"扁钢宽{bill_gbw}→{quota_gbw} 向上取档")
                 else:
@@ -3193,7 +3202,7 @@ class ParamValidator:
                     details.append(f"联数{bill_sg}={quota_sg} 精确匹配")
                 elif bill_sg < quota_sg:
                     # 向上取档（如单联清单匹配≤3联定额）
-                    tier_score = self._tier_up_score(bill_sg, quota_sg)
+                    tier_score = tier_up_score_hard_fail(bill_sg, quota_sg)
                     score_sum += tier_score
                     details.append(f"联数{bill_sg}→{quota_sg} 向上取档")
                 else:
