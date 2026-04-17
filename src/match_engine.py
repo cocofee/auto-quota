@@ -1604,7 +1604,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     original_search_query=search_query,
                 )
                 return result, 0, 0
-            if llm_circuit_open:
+            if llm_circuit_open and False:
                 _attach_agent_retry_trace(
                     result,
                     trigger=retry_reason,
@@ -1633,6 +1633,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                     attempt=current_retry_attempts,
                     max_attempts=max_retry_attempts,
                     original_search_query=search_query,
+                )
+                return result, 0, 0
+            if llm_circuit_open and retry_plan.get("source") == "llm":
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=False,
+                    status="skipped_llm_circuit_open",
+                    attempt=current_retry_attempts,
+                    max_attempts=max_retry_attempts,
+                    original_search_query=search_query,
+                    strategy=retry_plan.get("strategy"),
+                    strategy_source=retry_plan.get("source"),
                 )
                 return result, 0, 0
 
