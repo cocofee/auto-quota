@@ -336,3 +336,102 @@ def test_feature_alignment_rejects_sleeve_for_drain_pipe_query():
     assert results[0]["quota_id"] == "C10-PIPE"
     wrong = next(item for item in results if item["quota_id"] == "C10-SLEEVE")
     assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_rejects_faucet_for_fixture_query():
+    validator = ParamValidator()
+    canonical_features = parser.parse_canonical(
+        "洗脸盆 规格、类型:台式洗脸盆 附件名称、数量:含感应水龙头及配件",
+        specialty="C10",
+    )
+
+    results = validator.validate_candidates(
+        query_text="洗脸盆 规格、类型:台式洗脸盆 附件名称、数量:含感应水龙头及配件",
+        candidates=[
+            {
+                "quota_id": "C10-FAUCET",
+                "name": "水龙头安装 公称直径(mm) 15",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "C10-FIXTURE",
+                "name": "洗脸盆 台式洗脸盆",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+        canonical_features=canonical_features,
+        context_prior={"specialty": "C10"},
+    )
+
+    assert results[0]["quota_id"] == "C10-FIXTURE"
+    wrong = next(item for item in results if item["quota_id"] == "C10-FAUCET")
+    assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_feature_alignment_keeps_faucet_when_fixture_only_in_descriptor():
+    validator = ParamValidator()
+    query_text = (
+        "浴室柜龙头（公卫） 类型:洗脸盆冷热龙头（公卫） "
+        "型号、规格:DN15 本体和附件供应及安装"
+    )
+    canonical_features = parser.parse_canonical(query_text, specialty="C10")
+
+    results = validator.validate_candidates(
+        query_text=query_text,
+        candidates=[
+            {
+                "quota_id": "C10-FAUCET",
+                "name": "水龙头安装 公称直径(mm) 15",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "C10-FIXTURE",
+                "name": "洗脸盆 台式洗脸盆",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+        canonical_features=canonical_features,
+        context_prior={"specialty": "C10"},
+    )
+
+    assert results[0]["quota_id"] == "C10-FAUCET"
+    faucet = next(item for item in results if item["quota_id"] == "C10-FAUCET")
+    assert faucet.get("feature_alignment_hard_conflict") is not True
+
+
+def test_feature_alignment_rejects_pipe_for_fire_collar_query():
+    validator = ParamValidator()
+    canonical_features = parser.parse_canonical(
+        "阻火圈 DN100",
+        specialty="C10",
+        params={"dn": 100},
+    )
+
+    results = validator.validate_candidates(
+        query_text="阻火圈 DN100",
+        candidates=[
+            {
+                "quota_id": "C10-PIPE",
+                "name": "给排水管道 室内塑料排水管(承插连接) 公称外径(mm以内) 110",
+                "rerank_score": 0.95,
+                "hybrid_score": 0.95,
+            },
+            {
+                "quota_id": "C10-FIRE-COLLAR",
+                "name": "阻火圈安装 公称直径(mm以内) 100",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+        bill_params={"dn": 100},
+        canonical_features=canonical_features,
+        context_prior={"specialty": "C10"},
+    )
+
+    assert results[0]["quota_id"] == "C10-FIRE-COLLAR"
+    wrong = next(item for item in results if item["quota_id"] == "C10-PIPE")
+    assert wrong["feature_alignment_hard_conflict"] is True

@@ -239,6 +239,9 @@ def _build_plumbing_accessory_picker_context(text: str, rules: dict) -> dict | N
             prefer_words.append("\u65b9\u5f62")
         if "\u4fa7\u6392" in text:
             prefer_words.append("\u4fa7\u6392")
+    elif "\u963b\u706b\u5708" in text:
+        expected_words.extend(["\u963b\u706b\u5708"])
+        forbidden_words.extend(["\u6392\u6c34\u7ba1", "\u7ed9\u6c34\u7ba1", "\u4fdd\u62a4\u7ba1", "\u5957\u7ba1"])
     elif any(keyword in text for keyword in ("\u6e05\u626b\u53e3", "\u626b\u9664\u53e3", "\u5730\u9762\u6e05\u626b\u53e3")):
         expected_words.extend(["\u6e05\u626b\u53e3", "\u626b\u9664\u53e3"])
         forbidden_words.extend(["\u6d88\u58f0\u5668", "\u6392\u6c34\u7ba1", "\u7ed9\u6c34\u7ba1"])

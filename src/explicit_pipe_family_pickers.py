@@ -87,9 +87,17 @@ def _pick_explicit_pipe_run_candidate(bill_text: str,
     if not text:
         return None
 
+    upper_text = text.upper()
+    prefer_silenced_drainage = (
+        any(word in upper_text for word in ("FRPF", "HTPP"))
+        or any(word in text for word in ("静音排水", "静音管", "复合静音管", "内螺旋管"))
+    )
     if any(word in text for word in ("电气配管", "配管", "导管", "穿线管", "桥架", "线槽", "金属软管", "可挠金属套管")):
         return None
-    if any(word in text for word in PIPE_ACCESSORY_WORDS):
+    accessory_words = PIPE_ACCESSORY_WORDS
+    if prefer_silenced_drainage or any(word in text for word in ("法兰压盖", "柔性承插")):
+        accessory_words = tuple(word for word in PIPE_ACCESSORY_WORDS if word != "法兰")
+    if any(word in text for word in accessory_words):
         return None
     if not any(word in text for word in ("管", "给水", "排水", "污水", "废水", "雨水", "复合管", "钢管", "塑料管", "铸铁管")):
         return None
@@ -124,6 +132,19 @@ def _pick_explicit_pipe_run_candidate(bill_text: str,
         score += sum(8 for word in usage_words if word in quota_name)
         score += sum(3 for word in location_words if word in quota_name)
 
+        quota_upper = quota_name.upper()
+        if prefer_silenced_drainage:
+            if any(word in quota_upper for word in ("FRPF", "HTPP")) or "静音" in quota_name:
+                score += 14
+            else:
+                score -= 12
+            if "保护管" in quota_name:
+                score -= 18
+            if "热熔连接" in quota_name:
+                score -= 10
+            if "给水" in quota_name:
+                score -= 8
+
         if bill_material:
             if bill_material in quota_name:
                 score += 10
@@ -138,6 +159,11 @@ def _pick_explicit_pipe_run_candidate(bill_text: str,
             elif connections_compatible(bill_connection, candidate_connection):
                 score += 4
             else:
+                score -= 6
+        if any(word in text for word in ("法兰压盖", "柔性承插")):
+            if any(word in quota_name for word in ("法兰压盖", "承插")):
+                score += 6
+            elif candidate_connection == "热熔连接":
                 score -= 6
 
         if bill_dn is not None:

@@ -107,6 +107,17 @@ def test_parse_canonical_detects_faucet_entity_and_plumbing_system():
     assert features["system"] == "给排水"
 
 
+def test_parse_canonical_prefers_primary_faucet_subject_over_fixture_in_type_field():
+    parser = TextParser()
+    features = parser.parse_canonical(
+        "浴室柜龙头（公卫） 类型:洗脸盆冷热龙头（公卫） 型号、规格:DN15",
+        specialty="C10",
+    )
+
+    assert features["entity"] == "水龙头"
+    assert features["family"] == "sanitary_accessory"
+
+
 def test_parse_canonical_keeps_conduit_surface_method_and_entity_system_fallback():
     parser = TextParser()
     features = parser.parse_canonical("JDG20 暗敷")
@@ -256,6 +267,8 @@ def test_parse_canonical_extracts_filter_soft_joint_and_sink_entities():
     filter_item = parser.parse_canonical("Y型过滤器安装(法兰连接) 公称直径(mm以内) 50", specialty="C10")
     soft_joint = parser.parse_canonical("可曲挠橡胶接头安装 公称直径(mm以内) 100", specialty="C10")
     sink = parser.parse_canonical("单孔水槽 插材质:不锈钢 组装形式:成品", specialty="C10")
+    fire_collar = parser.parse_canonical("阻火圈 DN100", specialty="C10")
+    floor_drain = parser.parse_canonical("方形地漏DN50", specialty="C10")
 
     assert filter_item["entity"] == "过滤器"
     assert filter_item["family"] == "valve_accessory"
@@ -266,6 +279,9 @@ def test_parse_canonical_extracts_filter_soft_joint_and_sink_entities():
     assert sink["entity"] == "洗涤盆"
     assert sink["family"] == "sanitary_fixture"
     assert sink["system"] == "给排水"
+    assert fire_collar["entity"] == "阻火圈"
+    assert fire_collar["family"] == "sanitary_accessory"
+    assert floor_drain["family"] == "sanitary_accessory"
 
 
 def test_parse_canonical_extracts_bridge_and_ventilation_subtypes():

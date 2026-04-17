@@ -16,6 +16,21 @@ def test_pick_category_safe_candidate_prefers_floor_drain_over_drain_bolt_family
     assert "地漏" in picked["name"]
 
 
+def test_pick_category_safe_candidate_prefers_fire_collar_over_pipe_family():
+    item = {
+        "name": "阻火圈",
+        "description": "规格:DN100",
+    }
+    candidates = [
+        {"name": "室内塑料排水管(承插连接) 公称直径(mm以内) 100", "param_score": 0.9, "rerank_score": 0.9},
+        {"name": "阻火圈安装 公称直径(mm以内) 100", "param_score": 0.6, "rerank_score": 0.5},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert "阻火圈" in picked["name"]
+
+
 def test_pick_category_safe_candidate_prefers_filter_family_over_water_hammer():
     item = {
         "name": "过滤器",

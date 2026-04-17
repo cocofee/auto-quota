@@ -1514,6 +1514,7 @@ class TextParser:
             ("拖布池", ("拖布池", "拖把池")),
             ("淋浴器", ("淋浴器", "淋浴喷头")),
             ("地漏", ("地漏",)),
+            ("阻火圈", ("阻火圈",)),
         )
         for canonical, aliases in subtype_rules:
             if any(alias in text for alias in aliases):

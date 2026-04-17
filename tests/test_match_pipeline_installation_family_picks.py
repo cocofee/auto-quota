@@ -8,6 +8,7 @@ from src.match_pipeline import (
     _pick_explicit_lamp_family_candidate,
     _pick_explicit_motor_family_candidate,
     _pick_explicit_network_device_candidate,
+    _pick_explicit_pipe_run_candidate,
     _pick_explicit_sanitary_family_candidate,
     _pick_explicit_support_family_candidate,
     _pick_explicit_valve_family_candidate,
@@ -314,6 +315,19 @@ def test_pick_explicit_valve_family_candidate_prefers_ppr_plastic_valve_over_pla
     )
 
     assert picked["name"] == "塑料阀门安装 公称直径(mm以内) 32"
+
+
+def test_pick_explicit_pipe_run_candidate_prefers_frpf_silenced_pipe_over_generic_pipe_and_protection_pipe():
+    picked = _pick_explicit_pipe_run_candidate(
+        "塑料管 介质:排水 材质、规格:FRPF静音排水管 De110 连接形式:法兰压盖锁紧闭合式柔性承插连接",
+        [
+            {"name": "塑料管道保护管制作安装 公称直径(mm以内) 110", "param_score": 0.9, "rerank_score": 0.9},
+            {"name": "给排水管道 室内塑料排水管(热熔连接) 公称外径(mm以内) 110", "param_score": 0.8, "rerank_score": 0.8},
+            {"name": "给排水管道 室内FRPF静音排水管(承插连接) 公称外径(mm以内) 110", "param_score": 0.6, "rerank_score": 0.5},
+        ],
+    )
+
+    assert picked["name"] == "给排水管道 室内FRPF静音排水管(承插连接) 公称外径(mm以内) 110"
 
 
 def test_pick_explicit_wiring_family_candidate_prefers_pipe_wiring_family():

@@ -390,6 +390,169 @@ def _canonical_query_views(canonical_query: dict | None,
     return payload, validation_query, resolved_search_query
 
 
+_AGENT_RETRY_QUOTA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+
+
+def _normalize_retry_query_text(value: object) -> str:
+    return " ".join(str(value or "").replace("\u3000", " ").split()).strip()
+
+
+def _retry_query_key(value: object) -> str:
+    return _normalize_retry_query_text(value).casefold()
+
+
+def _is_valid_retry_query(query: str, *, allow_quota_id: bool = False) -> bool:
+    if not query:
+        return False
+    if any(ch in query for ch in ("\r", "\n", "\t")):
+        return False
+    if query.startswith(("{", "[")):
+        return False
+    if len(query) > 120:
+        return False
+    if allow_quota_id and _AGENT_RETRY_QUOTA_ID_RE.fullmatch(query):
+        return True
+    return len(query) >= 2
+
+
+def _build_agent_retry_payload(*,
+                               strategy: str,
+                               query: object,
+                               source: str,
+                               detail: str,
+                               dedupe_against: list[str] | None = None,
+                               allow_quota_id: bool = False) -> dict | None:
+    normalized_query = _normalize_retry_query_text(query)
+    if not _is_valid_retry_query(normalized_query, allow_quota_id=allow_quota_id):
+        return None
+    blocked = {_retry_query_key(value) for value in (dedupe_against or []) if value}
+    if _retry_query_key(normalized_query) in blocked:
+        return None
+    return {
+        "strategy": strategy,
+        "query": normalized_query,
+        "source": source,
+        "detail": detail,
+    }
+
+
+def _agent_retry_from_validation_query(context: dict) -> dict | None:
+    return _build_agent_retry_payload(
+        strategy="canonical_validation",
+        query=context.get("validation_query", ""),
+        source="deterministic",
+        detail="fallback to canonical validation query with route/section context",
+        dedupe_against=[context.get("search_query", "")],
+    )
+
+
+def _agent_retry_from_primary_profile(context: dict) -> dict | None:
+    profile = dict((context.get("canonical_query") or {}).get("primary_query_profile") or {})
+    terms: list[str] = []
+    for value in [profile.get("primary_subject"), *(profile.get("decisive_terms") or []), *(profile.get("key_specs") or [])]:
+        token = _normalize_retry_query_text(value)
+        if token and token not in terms:
+            terms.append(token)
+    if not terms:
+        return None
+    return _build_agent_retry_payload(
+        strategy="primary_profile_core",
+        query=" ".join(terms[:6]),
+        source="deterministic",
+        detail="strip modifiers and keep primary subject/spec anchors",
+        dedupe_against=[
+            context.get("search_query", ""),
+            context.get("validation_query", ""),
+            (context.get("canonical_query") or {}).get("normalized_query", ""),
+        ],
+    )
+
+
+def _agent_retry_from_normalized_query(context: dict) -> dict | None:
+    canonical_query = context.get("canonical_query") or {}
+    return _build_agent_retry_payload(
+        strategy="normalized_query",
+        query=canonical_query.get("normalized_query", ""),
+        source="deterministic",
+        detail="fallback to normalized query without surface modifiers",
+        dedupe_against=[
+            context.get("search_query", ""),
+            context.get("validation_query", ""),
+        ],
+    )
+
+
+def _agent_retry_from_llm_suggested_search(context: dict) -> dict | None:
+    return _build_agent_retry_payload(
+        strategy="llm_suggested_search",
+        query=(context.get("result") or {}).get("suggested_search", ""),
+        source="llm",
+        detail="use agent suggested_search after structural validation",
+        dedupe_against=[
+            context.get("search_query", ""),
+            context.get("validation_query", ""),
+            (context.get("canonical_query") or {}).get("normalized_query", ""),
+        ],
+    )
+
+
+def _agent_retry_from_recommended_id(context: dict) -> dict | None:
+    return _build_agent_retry_payload(
+        strategy="ai_recommended_id",
+        query=(context.get("result") or {}).get("_ai_recommended_id", ""),
+        source="llm",
+        detail="fallback to agent recommended quota id after structural validation",
+        dedupe_against=[context.get("search_query", "")],
+        allow_quota_id=True,
+    )
+
+
+_AGENT_RETRY_STRATEGY_REGISTRY = {
+    "canonical_validation": _agent_retry_from_validation_query,
+    "primary_profile_core": _agent_retry_from_primary_profile,
+    "normalized_query": _agent_retry_from_normalized_query,
+    "llm_suggested_search": _agent_retry_from_llm_suggested_search,
+    "ai_recommended_id": _agent_retry_from_recommended_id,
+}
+
+
+def _select_agent_retry_strategy(*,
+                                 canonical_query: dict,
+                                 validation_query: str,
+                                 search_query: str,
+                                 result: dict,
+                                 ai_not_found: bool) -> dict | None:
+    context = {
+        "canonical_query": canonical_query or {},
+        "validation_query": validation_query,
+        "search_query": search_query,
+        "result": result or {},
+        "ai_not_found": ai_not_found,
+    }
+    strategy_names = (
+        ["llm_suggested_search", "ai_recommended_id", "canonical_validation", "primary_profile_core", "normalized_query"]
+        if ai_not_found else
+        ["canonical_validation", "primary_profile_core", "normalized_query", "llm_suggested_search", "ai_recommended_id"]
+    )
+    for name in strategy_names:
+        builder = _AGENT_RETRY_STRATEGY_REGISTRY.get(name)
+        if builder is None:
+            continue
+        payload = builder(context)
+        if payload:
+            return payload
+    return None
+
+
+def _attach_agent_retry_trace(result: dict | None, **fields) -> None:
+    if not isinstance(result, dict):
+        return
+    retry_trace = dict(result.get("retry_trace") or {})
+    retry_trace.update({k: v for k, v in fields.items() if v is not None})
+    result["retry_trace"] = retry_trace
+    _append_trace_step(result, "agent_retry", **retry_trace)
+
+
 def _split_knowledge_for_prompt(
     knowledge_evidence: dict | None,
     *,
@@ -608,6 +771,107 @@ def _resolve_agent_mode_result(agent, item: dict, candidates: list[dict],
 # 初始化函数
 # ============================================================
 
+def _init_search_components_legacy_broken(resolved_province: str, aux_provinces: list = None) -> tuple[HybridSearcher, ParamValidator]:
+    """初始化搜索引擎与参数校验器，并做状态检查。
+
+    如果指定了辅助定额库（aux_provinces），会为每个辅助库创建独立的搜索器，
+    并按定额库类型（土建/市政/园林）挂载到主搜索器上，供 cascade_search 路由使用。
+    """
+    logger.info("第2步：初始化搜索引擎...")
+    validator = ParamValidator()
+
+    # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
+    try:
+        from src.model_cache import ModelCache
+        ModelCache.preload_all()
+    except Exception as e:
+        try:
+            from db.sqlite import describe_db_path
+            import config as _quota_config
+            logger.warning(
+                "经验库路径诊断: "
+                f"{describe_db_path(_quota_config.get_experience_db_path())} "
+                f"chroma_dir={_quota_config.get_chroma_experience_dir()}"
+            )
+        except Exception as diag_error:
+            logger.debug(f"经验库路径诊断失败（不影响主流程）: {diag_error}")
+        logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
+
+    # 检查引擎状态
+    searcher = get_search_bundle(resolved_province, aux_provinces)
+    status = searcher.get_status()
+    logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
+    logger.info(f"  向量索引: {status['vector_count']} 条定额")
+
+    if not status["bm25_ready"]:
+        raise RuntimeError("BM25索引未就绪，请先运行: python -m src.bm25_engine")
+
+    # ---- 辅助定额库初始化 ----
+    # aux_provinces=None 时自动挂载同省同年份兄弟库；
+    # 显式传 [] 视为调用方有意禁用辅助库。
+    if aux_provinces is None:
+        try:
+            aux_provinces = config.get_sibling_provinces(resolved_province)
+            if aux_provinces:
+                logger.info(f"  自动挂载兄弟库: {aux_provinces}")
+        except Exception as e:
+            logger.warning(f"  自动发现兄弟库失败: {e}")
+            aux_provinces = []
+
+    searcher = get_search_bundle(resolved_province, aux_provinces)
+    if aux_provinces:
+        for aux_searcher, aux_p in zip(searcher.aux_searchers, aux_provinces):
+            try:
+                aux_status = aux_searcher.get_status()
+                logger.info(f"  辅助定额库: {aux_p} ({aux_status['bm25_count']}条)")
+            except Exception as e:
+                """
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="error",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                    error=f"{type(e).__name__}: {e}",
+                )
+                logger.exception(
+                    f"#{idx} Agent 查询改写重试失败，保留原结果 "
+                    f"[strategy={retry_plan['strategy']}, query='{retry_search_query}']"
+                )
+                logger.warning(f"  杈呭姪瀹氶搴?{aux_p} 鐘舵€佹鏌ュけ璐? {e}")
+                continue
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="error",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                    error=f"{type(e).__name__}: {e}",
+                )
+                logger.exception(
+                    f"#{idx} Agent 查询改写重试失败，保留原结果 "
+                    f"[strategy={retry_plan['strategy']}, query='{retry_search_query}']"
+                )
+                logger.warning(f"  辅助定额库 {aux_p} 状态检查失败: {e}")
+
+                """
+                logger.warning(f"  杈呭姪瀹氶搴?{aux_p} 鐘舵€佹鏌ュけ璐? {e}")
+
+    return searcher, validator
+
+
 def init_search_components(resolved_province: str, aux_provinces: list = None) -> tuple[HybridSearcher, ParamValidator]:
     """初始化搜索引擎与参数校验器，并做状态检查。
 
@@ -662,7 +926,8 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
                 aux_status = aux_searcher.get_status()
                 logger.info(f"  辅助定额库: {aux_p} ({aux_status['bm25_count']}条)")
             except Exception as e:
-                logger.warning(f"  辅助定额库 {aux_p} 状态检查失败: {e}")
+                logger.warning(f"  辅助定额库{aux_p} 状态检查失败: {e}")
+                continue
 
     return searcher, validator
 
@@ -1131,6 +1396,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             "rule_backup": rule_backup,
             "is_audit": is_audit,
             "performance_monitor": performance_monitor,
+            "retry_attempts": 0,
         }
 
     # 进度回调辅助（第1阶段: 30%~60%, 第2阶段: 60%~90%）
@@ -1310,8 +1576,13 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 return result, 0, 0
 
             retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+            max_retry_attempts = min(
+                1, max(0, int(getattr(config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)))
+            )
+            current_retry_attempts = int(task.get("retry_attempts", 0) or 0)
             confidence = result.get("confidence", 100)
             ai_not_found = result.get("_ai_recommended_not_found", False)
+            retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
 
             # LLM已熔断时跳过重试（避免放大失败开销）
             if hasattr(agent, "is_circuit_open"):
@@ -1320,16 +1591,54 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                 llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
 
             need_retry = (confidence < retry_threshold) or ai_not_found
-            if not need_retry or llm_circuit_open:
+            if not need_retry:
+                return result, 0, 0
+            if current_retry_attempts >= max_retry_attempts:
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=False,
+                    status="skipped_retry_budget_exhausted",
+                    attempt=current_retry_attempts,
+                    max_attempts=max_retry_attempts,
+                    original_search_query=search_query,
+                )
+                return result, 0, 0
+            if llm_circuit_open:
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=False,
+                    status="skipped_llm_circuit_open",
+                    attempt=current_retry_attempts,
+                    max_attempts=max_retry_attempts,
+                    original_search_query=search_query,
+                )
                 return result, 0, 0
 
             # 优先用AI建议的搜索词，其次用AI推荐的定额编号，最后用原始query
-            ai_suggested = result.get("suggested_search", "")
-            ai_rec_id = result.get("_ai_recommended_id", "")
-            retry_query = ai_suggested or ai_rec_id or search_query
+            retry_plan = _select_agent_retry_strategy(
+                canonical_query=canonical_query,
+                validation_query=full_query,
+                search_query=search_query,
+                result=result,
+                ai_not_found=ai_not_found,
+            )
+            if not retry_plan:
+                _attach_agent_retry_trace(
+                    result,
+                    trigger=retry_reason,
+                    attempted=False,
+                    status="skipped_no_strategy",
+                    attempt=current_retry_attempts,
+                    max_attempts=max_retry_attempts,
+                    original_search_query=search_query,
+                )
+                return result, 0, 0
+
+            retry_query = retry_plan["query"]
             retry_canonical_query = dict(canonical_query or {})
-            if retry_query:
-                retry_canonical_query["search_query"] = retry_query
+            retry_canonical_query["search_query"] = retry_query
             retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
                 retry_canonical_query,
                 full_query=full_query,
@@ -1340,6 +1649,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 
             ctx = overview_ctx or _build_overview_context(item)
             task_exp_hits, task_rule_hits = 0, 0
+            retry_attempt = current_retry_attempts + 1
 
             try:
                 # 全库搜索（不限册号），增加候选数
@@ -1372,6 +1682,19 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                             if new_score > old_score:
                                 seen_ids[qid] = c
                     if not seen_ids:
+                        _attach_agent_retry_trace(
+                            result,
+                            trigger=retry_reason,
+                            attempted=True,
+                            status="empty_merged_candidates",
+                            attempt=retry_attempt,
+                            max_attempts=max_retry_attempts,
+                            strategy=retry_plan["strategy"],
+                            strategy_source=retry_plan["source"],
+                            strategy_detail=retry_plan["detail"],
+                            original_search_query=search_query,
+                            retry_search_query=retry_search_query,
+                        )
                         logger.debug(f"#{idx} 候选融合后为空，跳过重试")
                     else:
                         # 按param_score降序排列，取前20条
@@ -1400,9 +1723,40 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
                             overview_context=ctx,
                         )
                         retry_conf = retry_result.get("confidence", 0)
+                        _attach_agent_retry_trace(
+                            retry_result,
+                            trigger=retry_reason,
+                            attempted=True,
+                            status="completed" if retry_conf > confidence else "not_improved",
+                            attempt=retry_attempt,
+                            max_attempts=max_retry_attempts,
+                            strategy=retry_plan["strategy"],
+                            strategy_source=retry_plan["source"],
+                            strategy_detail=retry_plan["detail"],
+                            original_search_query=search_query,
+                            retry_search_query=retry_search_query,
+                            confidence_before=confidence,
+                            confidence_after=retry_conf,
+                        )
                         if retry_conf > confidence:
+                            logger.info(f"#{idx} Agent 重试成功: {confidence}->{retry_conf}")
                             logger.info(f"#{idx} AI引导重试成功: {confidence}→{retry_conf}")
                             return retry_result, r_exp, r_rule
+                        _attach_agent_retry_trace(
+                            result,
+                            trigger=retry_reason,
+                            attempted=True,
+                            status="not_improved",
+                            attempt=retry_attempt,
+                            max_attempts=max_retry_attempts,
+                            strategy=retry_plan["strategy"],
+                            strategy_source=retry_plan["source"],
+                            strategy_detail=retry_plan["detail"],
+                            original_search_query=search_query,
+                            retry_search_query=retry_search_query,
+                            confidence_before=confidence,
+                            confidence_after=retry_conf,
+                        )
             except Exception as e:
                 logger.debug(f"#{idx} AI引导重试失败（保留原结果）: {e}")
 

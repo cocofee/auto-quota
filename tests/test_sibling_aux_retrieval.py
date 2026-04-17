@@ -81,6 +81,55 @@ def test_init_search_components_auto_mounts_sibling_provinces(monkeypatch):
     ]
 
 
+def test_init_search_components_ignores_aux_status_failure(monkeypatch):
+    calls = []
+
+    class BrokenAux:
+        def get_status(self):
+            raise RuntimeError("aux index missing")
+
+    class FakeSearcher:
+        def __init__(self, province, aux_searchers=None):
+            self.province = province
+            self.aux_searchers = list(aux_searchers or [])
+
+        def get_status(self):
+            return {"bm25_ready": True, "bm25_count": 10, "vector_count": 0}
+
+        def set_experience_db(self, experience_db):
+            return None
+
+    class FakeValidator:
+        pass
+
+    fake_model_cache = types.SimpleNamespace(
+        ModelCache=types.SimpleNamespace(preload_all=lambda: None)
+    )
+
+    def fake_get_search_bundle(province, aux_provinces=None):
+        calls.append((province, list(aux_provinces or [])))
+        aux_searchers = [BrokenAux()] if aux_provinces else []
+        return FakeSearcher(province, aux_searchers=aux_searchers)
+
+    monkeypatch.setattr(match_engine, "ParamValidator", FakeValidator)
+    monkeypatch.setattr(match_engine, "get_search_bundle", fake_get_search_bundle)
+    monkeypatch.setattr(
+        config,
+        "get_sibling_provinces",
+        lambda province: ["上海市安装工程预算定额(2016)"],
+    )
+    monkeypatch.setitem(sys.modules, "src.model_cache", fake_model_cache)
+
+    searcher, validator = match_engine.init_search_components("上海市园林工程预算定额(2016)")
+
+    assert isinstance(validator, FakeValidator)
+    assert calls == [
+        ("上海市园林工程预算定额(2016)", []),
+        ("上海市园林工程预算定额(2016)", ["上海市安装工程预算定额(2016)"]),
+    ]
+    assert len(searcher.aux_searchers) == 1
+
+
 def test_cascade_search_aux_merges_target_classified_books_for_nonstandard_library():
     aux_calls = []
 
