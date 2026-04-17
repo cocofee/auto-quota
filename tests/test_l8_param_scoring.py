@@ -141,6 +141,20 @@ class TestConnectionHardFail:
             "即使DN精确匹配，连接方式不匹配也应导致param_match=False"
 
 
+class TestUsageConflict:
+    def test_heating_vs_drainage_conflicts_via_partition_closure(self):
+        penalty, detail = ParamValidator._check_usage_conflict("采暖管 DN50", "排水管 DN50")
+        assert penalty == pytest.approx(0.25, abs=0.001)
+        assert "介质冲突" in detail
+        assert "采暖" in detail
+        assert "排水" in detail
+
+    def test_same_usage_does_not_conflict(self):
+        penalty, detail = ParamValidator._check_usage_conflict("给水管 DN50", "给水管 DN50")
+        assert penalty == 0.0
+        assert detail == ""
+
+
 class TestTierUpHardFail:
     """鏋侀檺鍚戜笂鍙栨。搴旇Е鍙戠‖澶辫触"""
 
