@@ -23,6 +23,25 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+_UNIT_ALIASES = {
+    "m": "m",
+    "米": "m",
+    "t": "t",
+    "吨": "t",
+    "kg": "kg",
+    "公斤": "kg",
+    "千克": "kg",
+    "100m": "100m",
+    "百米": "100m",
+    "km": "km",
+    "千米": "km",
+    "公里": "km",
+    "m2": "m2",
+    "平方米": "m2",
+    "m3": "m3",
+    "立方米": "m3",
+}
+
 
 # ======== 镀锌钢管理论重量表（GB/T 3091，每米公斤数）========
 # 来源：国标焊接钢管（镀锌），含镀锌系数1.06
@@ -47,6 +66,20 @@ def _extract_dn(text: str) -> Optional[str]:
     return None
 
 
+def _normalize_unit(unit: str) -> str:
+    """统一单位别名，避免不同写法导致换算分支失效。"""
+    raw = str(unit or "").strip().lower()
+    if not raw:
+        return ""
+    raw = (
+        raw.replace("／", "/")
+        .replace(" ", "")
+        .replace("（", "(")
+        .replace("）", ")")
+    )
+    return _UNIT_ALIASES.get(raw, raw)
+
+
 def _convert_ton_to_meter(ton_price: float, name: str, spec: str) -> Optional[float]:
     """把吨价换算成米价（钢管类），查不到DN规格就返回None"""
     dn = _extract_dn(spec) or _extract_dn(name)
@@ -69,8 +102,8 @@ def _try_convert_price(price: float, from_unit: str, to_unit: str,
     - 百米 → m：÷100
     - 千米/km → m：÷1000
     """
-    fu = (from_unit or "").strip().lower()
-    tu = (to_unit or "").strip().lower()
+    fu = _normalize_unit(from_unit)
+    tu = _normalize_unit(to_unit)
 
     if fu == tu:
         return price  # 单位相同，不需要换算
@@ -84,11 +117,11 @@ def _try_convert_price(price: float, from_unit: str, to_unit: str,
         return round(price / 1000, 2)
 
     # 百米 → 米
-    if fu == "百米" and tu == "m":
+    if fu == "100m" and tu == "m":
         return round(price / 100, 2)
 
     # 千米/km → 米
-    if fu in ("千米", "km", "条公里") and tu == "m":
+    if fu == "km" and tu == "m":
         return round(price / 1000, 2)
 
     return None  # 不支持的换算，返回None（空着不填）
