@@ -1,22 +1,13 @@
-# -*- coding: utf-8 -*-
-"""
-匹配核心组件 — 从 match_engine.py 拆分出的底层函数
-
-包含：
-1. 工具函数（trace、fallback标准化等）
-2. 经验库匹配（try_experience_match）
-3. 级联搜索（cascade_search）
-4. 候选准备（_prepare_candidates）
-5. Agent快速通道判定
-
-这些函数不依赖 match_pipeline 或 match_engine，只依赖外部模块。
-"""
+﻿# -*- coding: utf-8 -*-
+"""Docstring omitted."""
 
 import inspect
 import json
 import random
 import re
 from contextlib import nullcontext
+from dataclasses import dataclass
+from typing import Callable
 
 from loguru import logger
 
@@ -32,6 +23,7 @@ from src.policy_engine import PolicyEngine
 from src.province_book_mapper import map_db_book_to_route_book, normalize_route_book_code
 from src.specialty_classifier import detect_db_type
 from src.candidate_scoring import sort_candidates_with_stage_priority
+from src.confidence_calibrator import compute_confidence_score
 
 
 # ============================================================
@@ -54,12 +46,9 @@ STRONG_MEASURE_KEYWORDS = [
     "施工费", "增加费", "复测费", "措施费",
     "临时设施费", "工程保险费", "进出场费",
     "赶工费", "疫情防控",
-    # 费用类条目——管理费、利润、税金等不是实体工程量，不应套定额
     "管理费", "利润", "税金", "规费",
     "企业管理费", "附加费",
-    # 汇总行/分节行——"小计"、"合计"是Excel汇总行，不应套定额
     "小计", "合计",
-    # 措施费具体项——脚手架/机械进出场/系统调整等统一计取，不套具体定额
     "施工脚手架", "脚手架搭拆", "脚手架费", "综合脚手架",
     "系统调整费", "系统调试费",
     "大型机械进出场", "大型机械安拆",
@@ -76,185 +65,59 @@ STRONG_MEASURE_KEYWORDS = [
 # 统一打分函数
 # ============================================================
 
-# 绮剧‘鎺掗櫎鐨勮垂鐢ㄧ被/鏆傚垪绫绘潯鐩紙闃叉琚濂楀畾棰濓級
 _MEASURE_EXACT_NAMES = {
-    "\u6682\u5217\u91d1\u989d",  # 暂列金额
-    "\u6682\u4f30\u4ef7",  # 暂估价
-    "\u4e13\u4e1a\u5de5\u7a0b\u6682\u4f30\u4ef7",  # 专业工程暂估价
-    "\u4e8c\u6b21\u642c\u8fd0\u8d39",  # 二次搬运费
-    "\u5df2\u5b8c\u5de5\u7a0b\u53ca\u8bbe\u5907\u4fdd\u62a4\u8d39",  # 已完工程及设备保护费
-    "\u603b\u627f\u5305\u670d\u52a1\u8d39",
-    "\u9884\u7b97\u5305\u5e72\u8d39",
-    "\u5de5\u7a0b\u4f18\u8d28\u8d39",
-    "\u73b0\u573a\u7b7e\u8bc1\u8d39\u7528",
-    "\u7a0e\u524d\u5de5\u7a0b\u9020\u4ef7",
-    "\u603b\u9020\u4ef7",
-    "\u4eba\u5de5\u8d39",
-    "\u6982\u7b97\u5e45\u5ea6\u5dee",
-    "\u7d22\u8d54\u8d39\u7528",
-    "\u5176\u4ed6\u9879\u76ee",
-    "\u5176\u4ed6\u8d39\u7528",
-    "\u8ba1\u65e5\u5de5",
-    "\u5730\u4e0b\u7ba1\u7ebf\u4ea4\u53c9\u964d\u6548\u8d39",
-    "\u589e\u503c\u7a0e\u9500\u9879\u7a0e\u989d",
+    "暂列金额",
+    "暂估价",
+    "专业工程暂估价",
+    "二次搬运费",
+    "已完工程及设备保护费",
+    "总承包服务费",
+    "预算包干费",
+    "工程优质费",
+    "现场签证费用",
+    "税前工程造价",
+    "总造价",
+    "人工费",
+    "概算幅度差",
+    "索赔费用",
+    "其他项目",
+    "其他费用",
+    "计日工",
+    "地下管线交叉降效费",
+    "增值税销项税额",
 }
 
-# 妯＄硦鍖归厤鍏抽敭璇嶏紙涓婇潰 exact 鍏堟嫤锛岃繖閲屽仛鍙樹綋鍏滃簳锛?
 _MEASURE_CONTAINS_KEYWORDS = (
-    "\u4e8c\u6b21\u642c\u8fd0",
-    "\u6682\u5217\u91d1\u989d",
-    "\u6682\u4f30\u4ef7",
-    "\u5df2\u5b8c\u5de5\u7a0b\u53ca\u8bbe\u5907\u4fdd\u62a4",
+    "二次搬运",
+    "暂列金额",
+    "暂估价",
+    "已完工程及设备保护",
 )
 
 
 def calculate_confidence(param_score: float, param_match: bool = True,
                          name_bonus: float = 0.0,
-                         score_gap: float = 1.0,
+                         score_gap: float = 0.0,
                          rerank_score: float = 0.0,
                          family_aligned: bool = False,
                          family_hard_conflict: bool = False,
                          candidates_count: int = 20,
                          is_ambiguous_short: bool = False) -> int:
-    """
-    多信号置信度计算（v2，2026-03-06 校准版）
-
-    综合 param_score、品类核心词匹配度、top1/top2差距、搜索相关性
-    来计算置信度，解决旧版 param_score*95 严重虚高的问题。
-
-    旧版问题：自评95%的实际准确率只有35%。
-    新版目标：置信度分段应与实际准确率单调递增对齐。
-
-    参数:
-        param_score: 参数匹配分数（0.0~1.0）
-        param_match: 参数是否匹配通过
-        name_bonus: 品类核心词匹配度（0.0~1.0，来自param_validator）
-        score_gap: top1与top2的综合分差距（0.0~1.0，越大越确定）
-        rerank_score: 搜索语义相关性（0.0~1.0，来自reranker/hybrid_score）
-        candidates_count: 有效候选数量
-
-    返回:
-        置信度（0~95的整数）
-    """
-    try:
-        ps = float(param_score)
-    except (TypeError, ValueError):
-        ps = 0.5 if param_match else 0.0
-
-    try:
-        nb = float(name_bonus)
-    except (TypeError, ValueError):
-        nb = 0.0
-    nb = min(max(nb, 0.0), 1.0)
-
-    try:
-        rr = float(rerank_score)
-    except (TypeError, ValueError):
-        rr = 0.0
-    rr = min(max(rr, 0.0), 1.0)
-
-    if not param_match:
-        # 参数不匹配：封顶50，确保不会进绿灯区
-        mismatch_base = max(int(ps * 50), 15)
-        if family_hard_conflict:
-            # Keep hard conflicts capped, but do not ignore corroborating signals
-            # entirely in case the family classifier itself is wrong.
-            name_part = min(nb / 0.3, 1.0) * 10.0
-            rerank_part = rr * 8.0
-            confidence = min(55.0, mismatch_base + name_part + rerank_part)
-            return max(int(confidence), 15)
-        if not family_aligned:
-            return min(mismatch_base, 58)
-
-        name_part = min(nb / 0.3, 1.0) * 10.0
-        rerank_part = rr * 8.0
-        confidence = mismatch_base + name_part + rerank_part + 8.0
-        return max(min(int(confidence), 82), 15)
-
-    # === 基础分（param_score贡献，满分40分） ===
-    base = ps * 40.0
-
-    # === 品类核心词匹配（满分20分） ===
-    # name_bonus是关键区分信号：品类对了才可能选对
-    # 实际数据中name_bonus范围约0~0.5，用非线性映射放大
-    try:
-        nb = float(name_bonus)
-    except (TypeError, ValueError):
-        nb = 0.0
-    nb = min(nb, 1.0)
-    # nb>=0.3视为品类完全命中，给满分
-    nb_normalized = min(nb / 0.15, 1.0)
-    name_part = nb_normalized * 20.0
-
-    # === top1/top2差距（满分15分） ===
-    # score_gap实际范围很小(0~0.2)，用非线性映射放大区分度
-    # gap>=0.15视为"明显领先"给满分，gap=0给基础3分（不再给0）
-    # 修复#3：多候选同分时gap=0→虚低问题，基础3分反映"至少通过了品类审核"
-    try:
-        gap = float(score_gap)
-    except (TypeError, ValueError):
-        gap = 0.0
-    gap = min(max(gap, 0.0), 1.0)
-    # 基础3分 + 差距最多12分 = 仍是满分15
-    gap_normalized = min(gap / 0.05, 1.0)
-    gap_part = gap_normalized * 12.0 + 3.0
-
-    # === 搜索语义相关性（满分10分） ===
-    # rerank_score范围通常在0~1，但实际高质量结果一般0.3~0.8
-    try:
-        rr = float(rerank_score)
-    except (TypeError, ValueError):
-        rr = 0.0
-    rerank_part = min(rr, 1.0) * 10.0
-
-    # 基础得分（满分85）
-    raw = base + name_part + gap_part + rerank_part
-
-    # === 奖励项：多信号一致性加分 ===
-    # 当品类词命中+参数满分+有差距时，说明匹配很可靠，额外加分
-    bonus = 0.0
-    good_signals = 0
-    if nb_normalized >= 0.5:
-        good_signals += 1
-    if ps >= 0.9:
-        good_signals += 1
-    if gap_normalized >= 0.5:
-        good_signals += 1
-    if rr >= 0.3:
-        good_signals += 1
-    # 3个以上好信号一致：加10分（可到95）
-    if good_signals >= 3:
-        bonus += 10.0
-
-    # === 惩罚项 ===
-    penalty = 0.0
-
-    # 品类核心词完全没命中：强惩罚（最可疑的虚高信号）
-    if nb < 0.01:
-        penalty += 12.0
-
-    # 候选太少：召回可能有问题
-    if candidates_count < 3:
-        penalty += 8.0
-    elif candidates_count < 5:
-        penalty += 4.0
-
-    # 短名称歧义项：封顶黄灯（最高75），防止信息不足时误给绿灯
-    if is_ambiguous_short:
-        penalty += 5.0
-        result = int(max(raw + bonus - penalty, 10))
-        return min(result, 75)
-
-    result = int(max(raw + bonus - penalty, 10))
-    return min(result, 95)
-
-
-# ============================================================
-# 工具函数
-# ============================================================
+    """Docstring omitted."""
+    return compute_confidence_score(
+        param_score=param_score,
+        param_match=param_match,
+        name_bonus=name_bonus,
+        score_gap=score_gap,
+        rerank_score=rerank_score,
+        family_aligned=family_aligned,
+        family_hard_conflict=family_hard_conflict,
+        candidates_count=candidates_count,
+        is_ambiguous_short=is_ambiguous_short,
+    )
 
 def infer_confidence_family_alignment(candidate: dict) -> bool:
-    """Infer whether a param-mismatch fallback is still same-family enough for yellow confidence."""
+    """Docstring omitted."""
     candidate = candidate or {}
     if bool(candidate.get("family_gate_hard_conflict", False)):
         return False
@@ -284,7 +147,7 @@ def infer_confidence_family_alignment(candidate: dict) -> bool:
 
 
 def _safe_json_materials(raw_value) -> list[dict]:
-    """把主材字段收敛为 list[dict]，兼容 JSON 字符串和异常值。"""
+    """Normalize the materials field into list[dict]."""
     if isinstance(raw_value, list):
         return [m for m in raw_value if isinstance(m, dict)]
     if isinstance(raw_value, str):
@@ -298,7 +161,7 @@ def _safe_json_materials(raw_value) -> list[dict]:
 
 
 def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> list[dict]:
-    """抽取候选摘要，避免 trace 过大。"""
+    """Build a compact candidate summary for trace output."""
     summary = []
     for c in (candidates or [])[:top_n]:
         summary.append({
@@ -315,7 +178,7 @@ def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> l
 
 
 def summarize_candidate_reasoning(candidate: dict) -> dict:
-    """抽取候选解释，供 trace/结果输出复用。"""
+    """Extract reusable reasoning fields from a candidate."""
     candidate = candidate or {}
     reasoning = {
         "param_match": bool(candidate.get("param_match", True)),
@@ -325,6 +188,7 @@ def summarize_candidate_reasoning(candidate: dict) -> dict:
         "rerank_score": safe_float(
             candidate.get("rerank_score", candidate.get("hybrid_score", 0)), 0.0
         ),
+        "hybrid_score": safe_float(candidate.get("hybrid_score", 0), 0.0),
     }
 
     layers = {}
@@ -360,7 +224,7 @@ def summarize_candidate_reasoning(candidate: dict) -> dict:
 
 
 def _append_trace_step(result: dict, stage: str, **fields):
-    """向结果追加统一 trace 步骤。"""
+    """Append a normalized trace step to a result."""
     trace = result.get("trace")
     if not isinstance(trace, dict):
         trace = {}
@@ -380,7 +244,7 @@ def _append_trace_step(result: dict, stage: str, **fields):
 
 
 def _finalize_trace(result: dict):
-    """保证每条结果都带统一 trace 结构。"""
+    """Ensure every result carries a normalized trace object."""
     if not isinstance(result, dict):
         return
     trace = result.get("trace")
@@ -396,7 +260,7 @@ def _finalize_trace(result: dict):
 
 
 def _normalize_fallbacks(value) -> list[str]:
-    """把fallback输入统一为去重后的字符串列表。"""
+    """Normalize fallback inputs into a deduplicated string list."""
     if isinstance(value, (list, tuple, set)):
         raw_items = list(value)
     elif isinstance(value, str):
@@ -418,7 +282,7 @@ def _normalize_fallbacks(value) -> list[str]:
 
 
 def _normalize_classification_legacy(classification: dict) -> dict:
-    """标准化专业分类结果，避免fallback类型异常导致后续崩溃。"""
+    """Normalize legacy classification payloads defensively."""
     base = dict(classification) if isinstance(classification, dict) else {}
 
     primary = base.get("primary")
@@ -437,7 +301,6 @@ def _normalize_classification_legacy(classification: dict) -> dict:
 def _normalize_routing_classification(classification: dict) -> dict:
     """Normalize routing output into a stable search contract."""
     base = dict(classification) if isinstance(classification, dict) else {}
-
     primary = base.get("primary")
     primary = str(primary).strip() if primary is not None else ""
     primary = primary or None
@@ -588,8 +451,7 @@ def _validate_candidates_with_context(validator: ParamValidator,
 
 
 # ============================================================
-# 经验库匹配
-# ============================================================
+# 缁忛獙搴撳尮閰?# ============================================================
 
 def _validate_experience_params_legacy(exp_result: dict, item: dict,
                                        rule_validator=None, is_exact=False) -> dict:
@@ -614,48 +476,33 @@ def _validate_experience_params_legacy(exp_result: dict, item: dict,
     if not quotas:
         return exp_result  # 没有定额信息，无法验证，保持原样
 
-    # 组合清单完整文本（名称+特征描述）
     bill_text = f"{item.get('name', '')} {item.get('description', '')}".strip()
 
-    main_quota = quotas[0]  # 只验证主定额（第一条）
+    main_quota = quotas[0]
     main_quota_id = main_quota.get("quota_id", "")
     main_quota_name = main_quota.get("name", "")
 
-    # ===== 方法1：用规则校验器检查档位（处理回路/容量/截面等家族参数） =====
-    # 这能发现"7回路"不应该套"4回路以内"这类错误
-    rule_validated = False  # 标记规则校验器是否已验证通过
+    rule_validated = False
     if rule_validator and rule_validator.rules and main_quota_id:
         family = rule_validator.family_index.get(main_quota_id)
         if family:
             tiers = family.get("tiers")
             if tiers:
-                # 从清单文本中提取参数值（如"7回路" → 7）
                 bill_value = rule_validator._extract_param_value(bill_text, family)
                 if bill_value is not None:
-                    # 计算正确的档位（向上取档：≥7的最小档 → 8）
                     correct_tier = rule_validator._find_correct_tier(bill_value, tiers)
                     if correct_tier is not None:
                         correct_quota_id = rule_validator._find_quota_by_tier(
                             family, correct_tier)
                         if correct_quota_id and correct_quota_id != main_quota_id:
-                            # 档位不对！经验库给的定额参数范围不覆盖当前清单
                             logger.info(
                                 f"经验库参数校验失败: '{bill_text[:40]}' "
                                 f"参数值{bill_value}→应套档位{correct_tier}, "
                                 f"但经验库给的是{main_quota_id}, 拒绝经验库结果")
                             return None
                         else:
-                            # 规则校验器确认档位正确（包括向上取档的情况）
                             rule_validated = True
 
-    # ===== 方法2：用参数提取器对比基本参数（DN/截面/材质等） =====
-    # 这能发现"DN150"不应该套"DN100以内"这类错误
-    # 方法1只验证"家族参数"（如回路数），方法2验证DN/截面/材质等基础参数。
-    # 即使方法1已通过，方法2仍应执行（防止回路对但DN不对的情况）。
-    # 精确匹配(is_exact=True)且方法1已验证时，用宽松模式：
-    #   只拦截硬参数超档（DN/截面/kVA，score=0.0），不因材质名称差异误杀。
-    #   原因：用户确认的文本→定额映射中，材质名称可能不同（如"射频同轴电缆"≠"同轴电缆"），
-    #   这类差异不应导致拒绝，但DN/截面/kVA超档是真正的错误。
     if main_quota_name:
         bill_params = text_parser.parse(bill_text)
         quota_params = text_parser.parse(main_quota_name)
@@ -663,9 +510,6 @@ def _validate_experience_params_legacy(exp_result: dict, item: dict,
             is_match, score = text_parser.params_match(bill_params, quota_params)
             if not is_match:
                 if rule_validated and is_exact and score > 0.0:
-                    # 宽松模式：精确匹配+方法1确认+非硬参数超档 → 放行
-                    # score>0.0 说明不是DN/截面/kVA硬超档（硬超档直接返回0.0），
-                    # 而是材质等软参数差异，用户确认的映射不应被误杀
                     logger.debug(
                         f"经验库精确匹配参数软差异(放行): '{bill_text[:40]}' "
                         f"score={score:.2f}, 方法1已确认档位正确")
@@ -676,7 +520,7 @@ def _validate_experience_params_legacy(exp_result: dict, item: dict,
                         f"拒绝经验库结果")
                     return None
 
-    return exp_result  # 参数验证通过，接受经验库结果
+    return exp_result
 
 
 def _validate_experience_params(exp_result: dict, item: dict,
@@ -730,22 +574,21 @@ def _validate_experience_params(exp_result: dict, item: dict,
 def try_experience_match(query: str, item: dict, experience_db,
                          rule_validator=None, province: str = None) -> dict:
     """
-    尝试从经验库匹配
+    ????????
 
-    参数:
-        query: 清单搜索文本
-        item: 清单项目字典
-        experience_db: 经验库实例
-        rule_validator: 规则校验器实例（用于验证经验库结果的参数是否正确）
-        province: 省份（用于限定经验库查询范围）
+    ??:
+        query: ??????
+        item: ??????
+        experience_db: ?????
+        rule_validator: ?????????????????????????
+        province: ???????????????
 
-    返回:
-        匹配结果字典，如果经验库未命中则返回 None
+    ??:
+        ?????????????????? None
     """
     if experience_db is None:
         return None
 
-    # 在经验库中搜索相似历史记录
     similar = experience_db.search_similar(
         query, top_k=3,
         min_confidence=config.EXPERIENCE_DIRECT_THRESHOLD,
@@ -753,7 +596,6 @@ def try_experience_match(query: str, item: dict, experience_db,
     )
 
     if not similar:
-        # L5跨省预热：本省无经验时，查其他省份的经验作为搜索参考
         if getattr(config, "CROSS_PROVINCE_WARMUP_ENABLED", False) and experience_db:
             try:
                 cross_refs = experience_db.search_cross_province(
@@ -762,7 +604,6 @@ def try_experience_match(query: str, item: dict, experience_db,
                     hint_keywords = []
                     for ref in cross_refs:
                         names = ref.get("quota_names", [])
-                        # 防御：确保是字符串列表，避免字符串被拆成单字符
                         if isinstance(names, str):
                             names = [names]
                         elif isinstance(names, list):
@@ -772,47 +613,42 @@ def try_experience_match(query: str, item: dict, experience_db,
                         hint_keywords.extend(names)
                     sanitized_hints = _sanitize_cross_province_hints(hint_keywords)
                     if sanitized_hints:
-                        # 存到item上，供后续搜索使用（不直通）
                         item["_cross_province_hints"] = sanitized_hints
                         logger.debug(
-                            f"L5跨省预热: {query[:30]} → "
-                            f"提示={sanitized_hints[:3]}")
+                            f"L5????: {query[:30]} ? "
+                            f"??={sanitized_hints[:3]}")
             except (KeyError, TypeError, ValueError, AttributeError,
                     OSError, RuntimeError, ImportError) as e:
-                logger.debug(f"L5跨省搜索跳过: {e}")
+                logger.debug(f"L5??????: {e}")
         return None
 
-    # 取第一条可直通（非stale、非候选层）的经验，避免"top1过期就整体失效"
     best = None
     for candidate in similar:
         if candidate.get("match_type") not in ("stale", "candidate"):
             best = candidate
             break
 
-    # 全部是过期经验时，不直通
     if best is None:
-        logger.debug(f"经验库命中但版本均过期，不直通: {query[:50]}")
+        logger.debug(f"???????????????: {query[:50]}")
         return None
     similarity = safe_float(best.get("similarity"), 0.0)
     exp_materials = _safe_json_materials(best.get("materials"))
 
-    # 精确匹配（完全相同的清单文本）→ 构建结果
     if best.get("match_type") == "exact":
         quota_ids = best.get("quota_ids", [])
         quota_names = best.get("quota_names", [])
         if not quota_ids:
-            logger.debug(f"经验库精确命中但定额列表为空，跳过: {query[:50]}")
+            logger.debug(f"?????????????????: {query[:50]}")
             return None
-        confidence = min(best.get("confidence", 80), 98)  # 经验库最高98分
+        confidence = min(best.get("confidence", 80), 98)
 
-        # 构建定额列表（一条清单可能对应多条定额）
         quotas = []
         for i, qid in enumerate(quota_ids):
             quotas.append({
                 "quota_id": qid,
                 "name": quota_names[i] if i < len(quota_names) else "",
                 "unit": "",
-                "reason": f"经验库精确匹配 (置信度{confidence}%, 确认{best.get('confirm_count', 1)}次)",
+                "reason": f"??????? (???{confidence}%, ??{best.get('confirm_count', 1)}?)",
             })
 
         result = {
@@ -820,8 +656,8 @@ def try_experience_match(query: str, item: dict, experience_db,
             "quotas": quotas,
             "materials": exp_materials,
             "confidence": confidence,
-            "explanation": f"经验库精确匹配 (确认{best.get('confirm_count', 1)}次)",
-            "match_source": "experience_exact",  # 标记匹配来源
+            "explanation": f"??????? (??{best.get('confirm_count', 1)}?)",
+            "match_source": "experience_exact",
         }
         _append_trace_step(
             result,
@@ -833,25 +669,17 @@ def try_experience_match(query: str, item: dict, experience_db,
             materials_count=len(exp_materials),
         )
 
-        # 参数验证：即使经验库文本完全匹配，参数也必须对
-        # （同名清单不同参数的情况，如"配电箱"7回路 vs 4回路）
-        # 精确匹配时方法2用宽松模式（只拦截硬参数超档，不因材质差异误杀）
         validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
         if validated is None:
-            return None  # 参数不匹配，拒绝经验库结果
+            return None
         return validated
 
-    # 向量相似匹配 → 相似度≥0.80才采纳
-    # 原阈值0.75偏低：0.75-0.80区间可能混入用途不同但名称相似的定额
-    # （如"给水管道DN100"和"排水管道DN100"相似度可能>0.78）
-    # 提高到0.80后，这类不确定匹配会走搜索兜底，更安全
     if similarity >= 0.80:
         quota_ids = best.get("quota_ids", [])
         quota_names = best.get("quota_names", [])
         if not quota_ids:
-            logger.debug(f"经验库相似命中但定额列表为空，跳过: {query[:50]}")
+            logger.debug(f"?????????????????: {query[:50]}")
             return None
-        # 相似匹配置信度稍低
         confidence = min(int(similarity * best.get("confidence", 80)), 90)
 
         quotas = []
@@ -860,7 +688,7 @@ def try_experience_match(query: str, item: dict, experience_db,
                 "quota_id": qid,
                 "name": quota_names[i] if i < len(quota_names) else "",
                 "unit": "",
-                "reason": f"经验库相似匹配 (相似度{similarity:.2f}, 原文: {best.get('bill_text', '')[:50]})",
+                "reason": f"??????? (???{similarity:.2f}, ??: {best.get('bill_text', '')[:50]})",
             })
 
         result = {
@@ -868,7 +696,7 @@ def try_experience_match(query: str, item: dict, experience_db,
             "quotas": quotas,
             "materials": exp_materials,
             "confidence": confidence,
-            "explanation": f"经验库相似匹配 (相似度{similarity:.2f})",
+            "explanation": f"??????? (???{similarity:.2f})",
             "match_source": "experience_similar",
         }
         _append_trace_step(
@@ -881,13 +709,11 @@ def try_experience_match(query: str, item: dict, experience_db,
             materials_count=len(exp_materials),
         )
 
-        # 参数验证：相似匹配更需要校验（文本相似但参数可能不同）
         validated = _validate_experience_params(result, item, rule_validator)
         if validated is None:
             return None
         return validated
 
-    # 相似度不够高，不采纳
     return None
 
 
@@ -900,7 +726,7 @@ def try_experience_exact_match(
     *,
     authority_only: bool = True,
 ) -> dict:
-    """轻量经验库命中：只做 exact/normalized exact，不跑完整相似检索链。"""
+    """?????????? exact/normalized exact???????????"""
     if experience_db is None:
         return None
 
@@ -928,7 +754,7 @@ def try_experience_exact_match(
     quota_ids = best.get("quota_ids", [])
     quota_names = best.get("quota_names", [])
     if not quota_ids:
-        logger.debug(f"经验库轻量精确命中但定额列表为空，跳过: {query[:50]}")
+        logger.debug(f"???????????????????: {query[:50]}")
         return None
 
     confidence = min(best.get("confidence", 80), 98)
@@ -939,7 +765,7 @@ def try_experience_exact_match(
             "quota_id": qid,
             "name": quota_names[i] if i < len(quota_names) else "",
             "unit": "",
-            "reason": f"经验库精确匹配 (置信度{confidence}%, 确认{best.get('confirm_count', 1)}次)",
+            "reason": f"??????? (???{confidence}%, ??{best.get('confirm_count', 1)}?)",
         })
 
     result = {
@@ -947,7 +773,7 @@ def try_experience_exact_match(
         "quotas": quotas,
         "materials": exp_materials,
         "confidence": confidence,
-        "explanation": f"经验库精确匹配 (确认{best.get('confirm_count', 1)}次)",
+        "explanation": f"??????? (??{best.get('confirm_count', 1)}?)",
         "match_source": "experience_exact",
     }
     _append_trace_step(
@@ -969,18 +795,94 @@ def try_experience_exact_match(
 
 
 # ============================================================
-# 搜索与级联
+# ?????
 # ============================================================
+
+def try_experience_exact_match(
+    query: str,
+    item: dict,
+    experience_db,
+    rule_validator=None,
+    province: str = None,
+    *,
+    authority_only: bool = True,
+) -> dict:
+    """?????????? exact/normalized exact???????????"""
+    if experience_db is None:
+        return None
+
+    exact_lookup = getattr(experience_db, "_find_exact_match", None)
+    if not callable(exact_lookup):
+        return None
+
+    target_province = province or getattr(experience_db, "province", "")
+    if not target_province:
+        return None
+
+    try:
+        best = exact_lookup(query, target_province, authority_only=authority_only)
+    except TypeError:
+        best = exact_lookup(query, target_province)
+
+    if not best:
+        return None
+
+    best = dict(best)
+    normalizer = getattr(experience_db, "_normalize_record_quota_fields", None)
+    if callable(normalizer):
+        best = normalizer(best)
+
+    quota_ids = best.get("quota_ids", [])
+    quota_names = best.get("quota_names", [])
+    if not quota_ids:
+        logger.debug(f"???????????????????: {query[:50]}")
+        return None
+
+    confidence = min(best.get("confidence", 80), 98)
+    exp_materials = _safe_json_materials(best.get("materials"))
+    quotas = []
+    for i, qid in enumerate(quota_ids):
+        quotas.append({
+            "quota_id": qid,
+            "name": quota_names[i] if i < len(quota_names) else "",
+            "unit": "",
+            "reason": f"??????? (???{confidence}%, ??{best.get('confirm_count', 1)}?)",
+        })
+
+    result = {
+        "bill_item": item,
+        "quotas": quotas,
+        "materials": exp_materials,
+        "confidence": confidence,
+        "explanation": f"??????? (??{best.get('confirm_count', 1)}?)",
+        "match_source": "experience_exact",
+    }
+    _append_trace_step(
+        result,
+        "experience_exact_lightweight",
+        record_id=best.get("id"),
+        similarity=1.0,
+        confirm_count=best.get("confirm_count", 0),
+        quota_ids=[q.get("quota_id", "") for q in quotas],
+        materials_count=len(exp_materials),
+        match_method=str(best.get("_match_method", "exact") or "exact"),
+        authority_only=bool(authority_only),
+    )
+
+    validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
+    if validated is None:
+        return None
+    return validated
+
 
 def _translate_books_for_industry(c_books: list[str],
                                   quota_books: dict) -> list[str]:
-    """把C1-C12翻译成行业定额实际使用的book值
+    """?C1-C12????????????book??
 
-    行业定额（石油/电力等）不使用C1-C12前缀，book字段是纯数字"1"-"9"。
-    翻译规则：C4 → "4"，C10 → "10"，非C开头的保持原样。
-    最后只保留定额库中实际存在的book值（不乱搜）。
+    ???????/???????C1-C12???book??????"1"-"9"?
+    ?????C4 ? "4"?C10 ? "10"??C????????
+    ??????????????book???????
     """
-    # 收集定额库中实际存在的book值
     actual_books = set(quota_books.values()) if quota_books else set()
 
     translated = set()
@@ -988,41 +890,31 @@ def _translate_books_for_industry(c_books: list[str],
         if not book:
             continue
         if book.startswith("C") and book[1:].isdigit():
-            # C4 → "4", C10 → "10"
             translated.add(book[1:])
         else:
-            # 非C开头（如"A","D","E"等）保持原样
             translated.add(book)
 
-    # 只保留定额库中实际存在的book值（避免乱搜不存在的册号）
     valid = [b for b in translated if b in actual_books]
 
-    # 如果翻译后完全没有匹配的册号，说明映射失效，
-    # 退化到搜全库（books=None），由后续Reranker和参数验证过滤噪音
+    # ??????????????????????
+    # ???????books=None?????Reranker??????????
     if not valid:
         return None
 
     return valid
 
-
 def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
                     top_k: int) -> list[dict]:
-    """合并主库和辅助库搜索结果，按 hybrid_score 统一排序。
-
-    如果辅助库无结果，直接返回主库结果（零开销）。
-    去重逻辑：主库和辅助库是不同定额库，编号体系不同，不做跨库去重。
-    同一辅助库内的同 quota_id 保留分数最高的那条。
-    """
+    """Docstring omitted."""
     if not aux_candidates:
         return main_candidates
 
-    # 主库结果直接保留（不去重，主库内部已由 HybridSearcher 去重）
-    merged = list(main_candidates)
+    # 涓诲簱缁撴灉鐩存帴淇濈暀锛堜笉鍘婚噸锛屼富搴撳唴閮ㄥ凡鐢?HybridSearcher 鍘婚噸锛?    merged = list(main_candidates)
 
-    # 辅助库结果按"quota_id@来源库"去重（同一辅助库内可能有重复）
+    # 杈呭姪搴撶粨鏋滄寜"quota_id@鏉ユ簮搴?鍘婚噸锛堝悓涓€杈呭姪搴撳唴鍙兘鏈夐噸澶嶏級
     aux_seen = {}
     for r in aux_candidates:
-        qid = r.get("quota_id") or id(r)  # 无quota_id时用对象id，避免误合并
+        qid = r.get("quota_id") or id(r)  # 鏃爍uota_id鏃剁敤瀵硅薄id锛岄伩鍏嶈鍚堝苟
         source = r.get("_source_province", "aux")
         key = f"{qid}@{source}"
         score = r.get("hybrid_score", 0)
@@ -1447,12 +1339,24 @@ def _search_with_optional_context(searcher, search_query: str, *,
         return searcher.search(search_query, top_k=top_k, books=books)
 
 
+@dataclass(frozen=True)
+class SearchStage:
+    name: str
+    books: list[str] | None
+    should_run: Callable[[list[dict]], bool]
+    min_candidates: int
+    max_candidates: int
+    stop_when: Callable[["SearchStage", list[dict], list[str]], bool]
+    skip_stage_name: str | None = None
+    keep_previous_on_empty: bool = False
+
+
 def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                            classification: dict, top_k: int = None,
                            item: dict | None = None,
                            context_prior: dict | None = None,
                            adaptive_strategy: str | None = None) -> list[dict]:
-    """Staged search that honors book-routing constraints before escaping."""
+    """Docstring omitted."""
     top_k = top_k or config.HYBRID_TOP_K
     raw_classification = classification if isinstance(classification, dict) else None
     classification = _normalize_classification(classification)
@@ -1485,16 +1389,18 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
 
     primary_stage_books = [primary] if primary else expanded_books[:1]
     expanded_stage_books = expanded_books
+    defer_aux_search = bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True))
 
-    def _search_is_good_enough(found: list[dict]) -> bool:
-        if len(found) < CASCADE_MIN_CANDIDATES:
+    def _search_is_good_enough(found: list[dict], *, min_candidates: int = CASCADE_MIN_CANDIDATES) -> bool:
+        required_candidates = max(1, int(min_candidates or 0))
+        if len(found) < required_candidates:
             return False
         top_score = found[0].get("hybrid_score", 0)
-        # 绝对分数太低时，不管分差多大都继续搜（防止主册搜到弱结果就停止）
+        # 缁濆鍒嗘暟澶綆鏃讹紝涓嶇鍒嗗樊澶氬ぇ閮界户缁悳锛堥槻姝富鍐屾悳鍒板急缁撴灉灏卞仠姝級
         ABSOLUTE_QUALITY_FLOOR = 0.6
         if top_score < ABSOLUTE_QUALITY_FLOOR:
             return False
-        if len(found) >= CASCADE_MIN_CANDIDATES + 2:
+        if len(found) >= required_candidates + 2:
             return True
         third_idx = min(2, len(found) - 1)
         third_score = found[third_idx].get("hybrid_score", 0)
@@ -1562,160 +1468,157 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 logger.warning(f"aux search failed: {getattr(aux, 'province', '')}: {e}")
         return aux_candidates
 
-    if not primary_stage_books and not expanded_stage_books:
+    def _finalize_candidates(candidates: list[dict], limit: int) -> list[dict]:
+        if defer_aux_search:
+            return candidates[:limit]
+        return _merge_with_aux(candidates, _collect_aux_candidates(), limit)
+
+    def _default_stage_stop(stage: SearchStage, found: list[dict], _resolved_books: list[str]) -> bool:
+        return _search_is_good_enough(found, min_candidates=stage.min_candidates)
+
+    def _primary_stage_stop(stage: SearchStage, found: list[dict], resolved_books: list[str]) -> bool:
+        if strategy == "standard" and len(found) >= top_k:
+            return True
+        if (
+            resolved_books
+            and len(found) >= top_k
+            and not getattr(searcher, "uses_standard_books", True)
+        ):
+            return True
+        return _default_stage_stop(stage, found, resolved_books)
+
+    def _run_main_stage(stage: SearchStage) -> tuple[list[dict] | None, list[str], int | None]:
+        source_province = str(getattr(searcher, "province", "") or "")
+        uses_standard_books = getattr(searcher, "uses_standard_books", None)
+        if stage.books is None:
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage=stage.name,
+                requested_books=[],
+                resolved_books=[],
+                source_province=source_province,
+                uses_standard_books=uses_standard_books,
+            )
+            return (
+                _search_with_optional_context(
+                    searcher,
+                    search_query,
+                    top_k=stage.max_candidates,
+                    books=None,
+                    item=item,
+                    context_prior=context_prior,
+                ),
+                [],
+                stage.max_candidates,
+            )
+
+        if not _should_search_target_for_books(searcher, stage.books):
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="main",
+                stage=stage.skip_stage_name or f"{stage.name}_skipped",
+                requested_books=stage.books,
+                resolved_books=[],
+                source_province=source_province,
+                uses_standard_books=uses_standard_books,
+            )
+            return None, [], None
+
+        resolved_books = _resolve_search_books_for_target(
+            searcher,
+            search_query,
+            stage.books,
+            allow_classifier_fallback=False,
+        ) or []
+        open_search = (
+            not bool(resolved_books)
+            and _allows_unresolved_open_search(searcher, stage.books)
+        )
         _record_retrieval_resolution_call(
             retrieval_resolution,
             target="main",
-            stage="open",
-            requested_books=[],
-            resolved_books=[],
-            source_province=str(getattr(searcher, "province", "") or ""),
-            uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            stage=stage.name,
+            requested_books=stage.books,
+            resolved_books=resolved_books,
+            source_province=source_province,
+            uses_standard_books=uses_standard_books,
+            open_search=open_search,
         )
-        candidates = _search_with_optional_context(
-            searcher,
-            search_query,
-            top_k=top_k,
-            books=None,
-            item=item,
-            context_prior=context_prior,
+        if not resolved_books and not open_search:
+            return [], resolved_books, None
+        return (
+            _search_with_optional_context(
+                searcher,
+                search_query,
+                top_k=stage.max_candidates,
+                books=resolved_books or None,
+                item=item,
+                context_prior=context_prior,
+            ),
+            resolved_books,
+            stage.max_candidates,
         )
-        if _search_is_good_enough(candidates) and bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-            return candidates[:top_k]
-        return _merge_with_aux(candidates, _collect_aux_candidates(), top_k)
+
+    stages: list[SearchStage]
+    if not primary_stage_books and not expanded_stage_books:
+        stages = [
+            SearchStage(
+                name="open",
+                books=None,
+                should_run=lambda _current: True,
+                min_candidates=CASCADE_MIN_CANDIDATES,
+                max_candidates=top_k,
+                stop_when=_default_stage_stop,
+            )
+        ]
+    else:
+        stages = [
+            SearchStage(
+                name="primary",
+                books=primary_stage_books or None,
+                should_run=lambda _current: bool(primary_stage_books),
+                min_candidates=CASCADE_MIN_CANDIDATES,
+                max_candidates=top_k * 2,
+                stop_when=_primary_stage_stop,
+                skip_stage_name="primary_skipped",
+            ),
+            SearchStage(
+                name="expanded",
+                books=expanded_stage_books or None,
+                should_run=lambda _current: (
+                    bool(expanded_stage_books)
+                    and expanded_stage_books != primary_stage_books
+                ),
+                min_candidates=CASCADE_MIN_CANDIDATES,
+                max_candidates=top_k * 2,
+                stop_when=_default_stage_stop,
+                skip_stage_name="expanded_skipped",
+                keep_previous_on_empty=True,
+            ),
+            SearchStage(
+                name="escape",
+                books=None,
+                should_run=lambda _current: allow_cross_book_escape,
+                min_candidates=CASCADE_MIN_CANDIDATES,
+                max_candidates=top_k,
+                stop_when=_default_stage_stop,
+                keep_previous_on_empty=True,
+            ),
+        ]
 
     best_candidates: list[dict] = []
-    if primary_stage_books:
-        if not _should_search_target_for_books(searcher, primary_stage_books):
-            _record_retrieval_resolution_call(
-                retrieval_resolution,
-                target="main",
-                stage="primary_skipped",
-                requested_books=primary_stage_books,
-                resolved_books=[],
-                source_province=str(getattr(searcher, "province", "") or ""),
-                uses_standard_books=getattr(searcher, "uses_standard_books", None),
-            )
-        else:
-            resolved_primary_books = _resolve_search_books_for_target(
-                searcher,
-                search_query,
-                primary_stage_books,
-                allow_classifier_fallback=False,
-            ) or []
-            primary_open_search = (
-                not bool(resolved_primary_books)
-                and _allows_unresolved_open_search(searcher, primary_stage_books)
-            )
-            _record_retrieval_resolution_call(
-                retrieval_resolution,
-                target="main",
-                stage="primary",
-                requested_books=primary_stage_books,
-                resolved_books=resolved_primary_books,
-                source_province=str(getattr(searcher, "province", "") or ""),
-                uses_standard_books=getattr(searcher, "uses_standard_books", None),
-                open_search=primary_open_search,
-            )
-            if resolved_primary_books or primary_open_search:
-                best_candidates = _search_with_optional_context(
-                    searcher,
-                    search_query,
-                    top_k=top_k * 2,
-                    books=resolved_primary_books or None,
-                    item=item,
-                    context_prior=context_prior,
-                )
-            if strategy == "standard" and len(best_candidates) >= top_k:
-                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-                    return best_candidates[:top_k * 2]
-                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
-            if (
-                resolved_primary_books
-                and len(best_candidates) >= top_k
-                and not getattr(searcher, "uses_standard_books", True)
-            ):
-                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-                    return best_candidates[:top_k * 2]
-                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
-            if _search_is_good_enough(best_candidates):
-                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-                    return best_candidates[:top_k * 2]
-                return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k * 2)
+    for stage in stages:
+        if not stage.should_run(best_candidates):
+            continue
+        stage_candidates, resolved_books, stage_limit = _run_main_stage(stage)
+        if stage_candidates is None:
+            continue
+        if stage_candidates or not stage.keep_previous_on_empty:
+            best_candidates = stage_candidates
+        if stage.stop_when(stage, best_candidates, resolved_books):
+            return _finalize_candidates(best_candidates, stage_limit or top_k)
 
-    if expanded_stage_books and expanded_stage_books != primary_stage_books:
-        if not _should_search_target_for_books(searcher, expanded_stage_books):
-            _record_retrieval_resolution_call(
-                retrieval_resolution,
-                target="main",
-                stage="expanded_skipped",
-                requested_books=expanded_stage_books,
-                resolved_books=[],
-                source_province=str(getattr(searcher, "province", "") or ""),
-                uses_standard_books=getattr(searcher, "uses_standard_books", None),
-            )
-        else:
-            resolved_expanded_books = _resolve_search_books_for_target(
-                searcher,
-                search_query,
-                expanded_stage_books,
-                allow_classifier_fallback=False,
-            ) or []
-            expanded_open_search = (
-                not bool(resolved_expanded_books)
-                and _allows_unresolved_open_search(searcher, expanded_stage_books)
-            )
-            _record_retrieval_resolution_call(
-                retrieval_resolution,
-                target="main",
-                stage="expanded",
-                requested_books=expanded_stage_books,
-                resolved_books=resolved_expanded_books,
-                source_province=str(getattr(searcher, "province", "") or ""),
-                uses_standard_books=getattr(searcher, "uses_standard_books", None),
-                open_search=expanded_open_search,
-            )
-            expanded_candidates = []
-            if resolved_expanded_books or expanded_open_search:
-                expanded_candidates = _search_with_optional_context(
-                    searcher,
-                    search_query,
-                    top_k=top_k * 2,
-                    books=resolved_expanded_books or None,
-                    item=item,
-                    context_prior=context_prior,
-                )
-            if expanded_candidates:
-                best_candidates = expanded_candidates
-            if _search_is_good_enough(expanded_candidates):
-                if bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-                    return expanded_candidates[:top_k * 2]
-                return _merge_with_aux(expanded_candidates, _collect_aux_candidates(), top_k * 2)
-
-    if not allow_cross_book_escape:
-        return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k)
-
-    _record_retrieval_resolution_call(
-        retrieval_resolution,
-        target="main",
-        stage="escape",
-        requested_books=[],
-        resolved_books=[],
-        source_province=str(getattr(searcher, "province", "") or ""),
-        uses_standard_books=getattr(searcher, "uses_standard_books", None),
-    )
-    candidates = _search_with_optional_context(
-        searcher,
-        search_query,
-        top_k=top_k,
-        books=None,
-        item=item,
-        context_prior=context_prior,
-    )
-    if candidates:
-        best_candidates = candidates
-    if _search_is_good_enough(best_candidates) and bool(getattr(config, "HYBRID_DEFER_AUX_SEARCH", True)):
-        return best_candidates[:top_k]
     return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k)
 
 
@@ -1746,15 +1649,7 @@ def _resolve_adaptive_search_top_k(adaptive_strategy: str | None) -> int:
 
 
 def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
-    """判断是否为措施项/章节分隔行，这类行不应套安装定额。
-
-    两层判断：
-    1. 强关键词（施工费/增加费/措施费等）：只要名称命中就跳过，不管有没有单位/工程量
-       因为措施费清单里经常填"项"作单位、"1"作工程量
-    2. 弱关键词（操作高度/超高等）：需要同时满足无单位无工程量才跳过
-       防止误伤正常清单（比如"超高层钢结构"不应被跳过）
-    """
-    # 强关键词：直接跳过
+    """判断是否为措施项/章节分隔行，这类行不应套安装定额。"""
     clean_name = name.replace("\n", "").replace("\r", "").replace(" ", "").strip()
     if clean_name in _MEASURE_EXACT_NAMES:
         return True
@@ -1763,16 +1658,11 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
 
     if any(kw in name for kw in STRONG_MEASURE_KEYWORDS):
         return True
-    # 弱关键词：需要无单位无工程量
     if any(kw in name for kw in MEASURE_KEYWORDS) and not unit and not quantity:
         return True
-    # 章节分隔行（如"其他"空行）
     if name.strip() == "其他" and not unit and not quantity and not desc.strip():
         return True
-    # 专业标题行（如"电气工程"、"给排水工程"）——纯分组标题，不是实体清单
-    # 有些Excel给标题行也填了"项"和"1"作为单位/工程量，所以不能要求无单位无工程量
-    # 用明确的专业标题名单做强过滤，避免误伤真实清单（如"钢结构工程"子项）
-    # clean_name already normalized above
+
     _SECTION_TITLES = {
         "电气工程", "给排水工程", "通风空调工程", "消防工程", "智能化工程",
         "建筑工程", "装饰工程", "装饰装修工程", "建筑装饰工程",
@@ -1783,21 +1673,19 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
     }
     if clean_name in _SECTION_TITLES:
         return True
-    # 附属计量条目——广东/江西等省的清单常把防腐保温面积、管件数量、超高部分
-    # 作为独立行列出，这些不是独立工程量清单，不应单独套定额
+
     _SUBSIDIARY_PATTERNS = [
-        "外表面积",      # 防腐保温的管道外表面积
-        "保护层面积",    # 保温保护层面积
-        "超高外表面积",  # 超高部分的外表面积
-        "超高保护层面积",  # 超高部分的保护层面积
-        "超高长度",      # 超高部分管道长度
-        "超高数量",      # 超高部分管件数量
+        "外表面积",
+        "保护层面积",
+        "超高外表面积",
+        "超高保护层面积",
+        "超高长度",
+        "超高数量",
     ]
     if clean_name in _SUBSIDIARY_PATTERNS or any(
         clean_name.startswith(p) for p in _SUBSIDIARY_PATTERNS
     ):
         return True
-    # "数量(个)" / "数量（个）" — 纯管件/阀门计数行
     if clean_name.startswith("数量") and ("个" in clean_name or "只" in clean_name):
         return True
     return False
@@ -1818,9 +1706,9 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         include_prior_candidates: bool = True,
                         adaptive_strategy: str = "standard",
                         performance_monitor: PerformanceMonitor | None = None) -> list[dict]:
-    """统一执行：级联搜索 → 去重 → Reranker重排 → 参数验证。"""
+    """????????? ? ?? ? Reranker?? ? ?????"""
     with (
-        performance_monitor.measure("混合搜索")
+        performance_monitor.measure("????")
         if performance_monitor is not None else nullcontext()
     ):
         search_top_k = _resolve_adaptive_search_top_k(adaptive_strategy)
@@ -1869,31 +1757,31 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         if isinstance(classification, dict):
             classification["candidate_scope_guard"] = candidate_scope_guard
 
-    # 按 (quota_id + 来源库) 去重：RRF融合后同一定额可能因不同查询变体出现多次
-    # 保留hybrid_score最高的那条，避免浪费reranker和LLM的处理资源
-    # 注意：多辅助库场景下不同库可能有相同quota_id，需要用来源库区分
+    # ? (quota_id + ???) ???RRF????????????????????
+    # ??hybrid_score??????????reranker?LLM?????
+    # ??????????????????quota_id?????????
     if candidates:
         seen_ids = {}
         for c in candidates:
             qid = c.get("quota_id", "")
             if not qid:
-                # 无quota_id的候选（异常数据），用唯一递增key保留不去重
+                # ?quota_id???????????????key?????
                 seen_ids[f"_no_id_{len(seen_ids)}"] = c
                 continue
-            # 去重键 = quota_id + 来源库省份（没有来源标记的视为主库）
+            # ??? = quota_id + ??????????????????
             dedup_key = (qid, c.get("_source_province", ""))
             existing = seen_ids.get(dedup_key)
             if existing is None or c.get("hybrid_score", 0) > existing.get("hybrid_score", 0):
                 seen_ids[dedup_key] = c
         candidates = list(seen_ids.values())
-        # 去重后重新按 hybrid_score 排序（防御性：覆盖替换可能打乱插入顺序）
+        # ?????? hybrid_score ????????????????????
         candidates.sort(key=HybridSearcher._stable_result_identity)
         candidates.sort(key=HybridSearcher._hybrid_result_sort_key)
 
-    # 单候选时重排无意义，可直接跳过提升速度
+    # ???????????????????
     if candidates and len(candidates) > 1:
         with (
-            performance_monitor.measure("候选打分")
+            performance_monitor.measure("????")
             if performance_monitor is not None else nullcontext()
         ):
             prerank_candidates = list(candidates)
@@ -1910,11 +1798,11 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                 candidates = reranker.rerank(search_query, rerank_input)
             candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
     if candidates:
-        # 从classification中提取search_books（用于v3 LTR特征book_match）
+        # ?classification???search_books???v3 LTR??book_match?
         search_books = classification.get("search_books", []) if classification else []
         candidates = measure_call(
             performance_monitor,
-            "候选打分",
+            "????",
             _validate_candidates_with_context,
             validator,
             full_query,
@@ -2087,82 +1975,6 @@ def _retain_knowledge_prior_candidates(candidates: list[dict],
         retained.append(candidate)
         retained_keys.add(identity)
     return retained
-
-
-def _parse_chinese_count_token(token: str) -> int:
-    token = str(token or "").strip()
-    if not token:
-        return 0
-    if token.isdigit():
-        return int(token)
-    mapping = {
-        "一": 1,
-        "二": 2,
-        "两": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6,
-        "七": 7,
-        "八": 8,
-        "九": 9,
-        "十": 10,
-    }
-    if token == "十":
-        return 10
-    if token.startswith("十") and len(token) == 2:
-        return 10 + mapping.get(token[1], 0)
-    if token.endswith("十") and len(token) == 2:
-        return mapping.get(token[0], 0) * 10
-    if len(token) == 2 and "十" in token:
-        left, _, right = token.partition("十")
-        return mapping.get(left, 0) * 10 + mapping.get(right, 0)
-    return mapping.get(token, 0)
-
-
-def _extract_surface_process_count(text: str, token: str) -> int:
-    if not text or not token:
-        return 0
-    patterns = [
-        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*道",
-        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*遍",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if not match:
-            continue
-        count = _parse_chinese_count_token(match.group(1))
-        if count > 0:
-            return count
-    return 0
-
-
-def _search_surface_process_candidate(searcher: HybridSearcher, reranker, *,
-                                      query: str, books: list[str],
-                                      matcher) -> dict | None:
-    try:
-        candidates = searcher.search(
-            query,
-            top_k=max(int(config.HYBRID_TOP_K), 8),
-            books=books or None,
-        )
-    except Exception as e:
-        logger.debug(f"表面处理附加搜索失败: query={query!r} error={e}")
-        return None
-
-    if candidates and len(candidates) > 1 and reranker is not None:
-        try:
-            candidates = reranker.rerank(query, candidates)
-        except Exception as e:
-            logger.debug(f"表面处理附加重排失败: query={query!r} error={e}")
-
-    for candidate in candidates or []:
-        name = str(candidate.get("name") or "")
-        if name and matcher(name):
-            return candidate
-    return None
-
-
 def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, reranker,
                                           classification: dict) -> list[dict]:
     if not isinstance(item, dict):
@@ -2177,10 +1989,10 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
 
     params = item.get("params") or text_parser.parse(full_text)
     support_scope = str(params.get("support_scope") or "").strip()
-    if support_scope != "管道支架":
+    if support_scope != "????":
         return []
 
-    if not any(token in full_text for token in ("除锈", "刷油", "油漆", "防锈漆", "调和漆", "调合漆")):
+    if not any(token in full_text for token in ("??", "??", "??", "???", "???", "???")):
         return []
 
     search_books = [
@@ -2190,43 +2002,43 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
     ] or ["C12"]
 
     specs: list[tuple[str, str, object]] = []
-    if "除锈" in full_text:
+    if "??" in full_text:
         specs.append((
             "surface_rust_remove",
-            "手工除锈 一般钢结构 轻锈",
-            lambda name: "除锈" in name,
+            "???? ????? ??",
+            lambda name: "??" in name,
         ))
 
-    primer_token = "红丹防锈漆" if "红丹防锈漆" in full_text else ("防锈漆" if "防锈漆" in full_text else "")
+    primer_token = "?????" if "?????" in full_text else ("???" if "???" in full_text else "")
     primer_count = _extract_surface_process_count(full_text, primer_token) if primer_token else 0
     if primer_token:
         specs.append((
             "surface_primer_first",
-            f"一般钢结构 {primer_token} 第一遍",
-            lambda name, token=primer_token: token in name and any(flag in name for flag in ("第一遍", "一遍")),
+            f"????? {primer_token} ???",
+            lambda name, token=primer_token: token in name and any(flag in name for flag in ("???", "??")),
         ))
         if primer_count >= 2:
             specs.append((
                 "surface_primer_extra",
-                f"一般钢结构 {primer_token} 增一遍",
-                lambda name, token=primer_token: token in name and any(flag in name for flag in ("增一遍", "增加一遍")),
+                f"????? {primer_token} ???",
+                lambda name, token=primer_token: token in name and any(flag in name for flag in ("???", "????")),
             ))
 
     finish_count = max(
-        _extract_surface_process_count(full_text, "调和漆"),
-        _extract_surface_process_count(full_text, "调合漆"),
+        _extract_surface_process_count(full_text, "???"),
+        _extract_surface_process_count(full_text, "???"),
     )
-    if any(token in full_text for token in ("调和漆", "调合漆")):
+    if any(token in full_text for token in ("???", "???")):
         specs.append((
             "surface_finish_first",
-            "一般钢结构 调和漆 第一遍",
-            lambda name: ("调和漆" in name or "调合漆" in name) and any(flag in name for flag in ("第一遍", "一遍")),
+            "????? ??? ???",
+            lambda name: ("???" in name or "???" in name) and any(flag in name for flag in ("???", "??")),
         ))
         if finish_count >= 2:
             specs.append((
                 "surface_finish_extra",
-                "一般钢结构 调和漆 增一遍",
-                lambda name: ("调和漆" in name or "调合漆" in name) and any(flag in name for flag in ("增一遍", "增加一遍")),
+                "????? ??? ???",
+                lambda name: ("???" in name or "???" in name) and any(flag in name for flag in ("???", "????")),
             ))
 
     supplemental: list[dict] = []
@@ -2250,7 +2062,7 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
             "quota_id": quota_id,
             "name": quota_name,
             "unit": candidate.get("unit", "") or item.get("unit", ""),
-            "reason": f"附加定额:{query}",
+            "reason": f"????:{query}",
             "reasoning": summarize_candidate_reasoning(candidate),
             "db_id": candidate.get("id"),
             "quota_role": role,
@@ -2265,7 +2077,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
                                       *,
                                       include_prior_candidates: bool = True,
                                       performance_monitor: PerformanceMonitor | None = None):
-    """从统一 prepared 上下文中取字段并执行候选流水线。"""
+    """??? prepared ????????????????"""
     ctx = prepared["ctx"]
     canonical_query = ctx.get("canonical_query") or {}
     full_query = canonical_query.get("validation_query") or ctx["full_query"]
@@ -2278,7 +2090,7 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         or "standard"
     ).strip().lower()
 
-    # L5跨省预热：如果经验库miss时留下了跨省提示，增强搜索查询
+    # L5??????????miss???????????????
     item = ctx.get("item", {})
     cross_hints = []
     if isinstance(item, dict):
@@ -2288,24 +2100,24 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         else:
             item.pop("_cross_province_hints", None)
     if cross_hints:
-        # 取前3个提示关键词追加到搜索查询（不影响原始query）
+        # ??3???????????????????query?
         appended_hints = [hint for hint in cross_hints[:3] if hint and hint not in search_query]
         if appended_hints:
             hint_text = " ".join(appended_hints)
             search_query = f"{search_query} {hint_text}"
 
-    # L6局部上下文提示：短名称歧义项从邻居获取的提示词
+    # L6???????????????????????
     context_hints = item.get("_context_hints", []) if isinstance(item, dict) else []
     if context_hints:
         context_text = " ".join(str(h) for h in context_hints[:3] if h)
         search_query = f"{search_query} {context_text}"
 
-    # 频率先验兜底：没有邻居上下文时，用历史统计的定额族名作为搜索提示
+    # ????????????????????????????????
     prior_family = item.get("_prior_family", "") if isinstance(item, dict) else ""
     if prior_family and prior_family not in search_query:
         search_query = f"{search_query} {prior_family}"
 
-    # 从清单项获取已清洗的参数，传给参数验证（避免重新提取）
+    # ???????????????????????????
     item_params = item.get("params") if isinstance(item, dict) else None
     candidates = _prepare_candidates(
         searcher, reranker, validator, search_query, full_query, classification,
@@ -2338,10 +2150,9 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
 
 
 def _result_quota_signature(result: dict) -> tuple:
-    """返回结果中的定额编号签名，用于一致性比对。"""
+    """?????????????????????"""
     quotas = result.get("quotas") or []
     return tuple(str(q.get("quota_id", "")).strip() for q in quotas if q.get("quota_id"))
-
 
 # ============================================================
 # Agent快速通道
@@ -2401,13 +2212,10 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
         return False
 
     top = candidates[0]
-    # 参数不匹配 → 需要LLM判断
     if not top.get("param_match", True):
         return False
-    # Reranker失败 → 候选排序不可信，必须走LLM
     if any(c.get("reranker_failed") for c in candidates[:3]):
         return False
-    # 经验库/规则与搜索结果冲突 → 需要LLM仲裁
     if _has_fastpath_conflict(candidates, exp_backup=exp_backup, rule_backup=rule_backup):
         return False
 
@@ -2416,23 +2224,15 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
     if top_score < policy.agent_fastpath_score:
         return False
 
-    # ===== 无参数候选盲区检查 =====
-    # 清单有参数（DN/截面/回路等）但top1的param_score较低（定额无参数或参数不确定）
-    # → 强制走LLM，避免无参数候选因语义得分高而盲通
     if policy.require_param_match:
         top_detail = str(top.get("param_detail", ""))
         if ("定额无" in top_detail or "未指定" in top_detail) and top_score < 0.7:
             return False
 
-    # ===== 单候选拦截 =====
-    # 只搜到1条结果时，搜索质量不可靠（没有对比对象），强制走LLM仲裁
     if len(candidates) < policy.agent_fastpath_min_candidates:
         logger.debug("FastPath拦截: 单候选，强制走LLM")
         return False
 
-    # ===== 搜索排名分差检查 =====
-    # 当top1和top2的reranker分数太接近时，搜索结果不确定，需要LLM仲裁
-    # 这解决了"无参数可验证"时FastPath盲目信任搜索排序的问题
     score_gap_threshold = policy.agent_fastpath_score_gap
     if score_gap_threshold > 0:
         top1_rs = safe_float(
@@ -2443,7 +2243,7 @@ def _should_skip_agent_llm_legacy(candidates: list[dict],
         logger.debug(f"FastPath分差: top1={top1_rs:.3f} top2={top2_rs:.3f} gap={gap:.3f} "
                      f"阈值={score_gap_threshold} → {'放行' if gap >= score_gap_threshold else '拦截'}")
         if gap < score_gap_threshold:
-            return False  # 分差不够，让LLM来选
+            return False
 
     return True
 
@@ -2453,7 +2253,7 @@ def get_fastpath_decision(candidates: list[dict],
                           rule_backup: dict = None,
                           route_profile=None,
                           adaptive_strategy: str | None = None):
-    """返回快通道判定详情，供主流程决定是否跳过LLM以及是否优先抽检。"""
+    """Return fast-path decision details for the current candidates."""
     if str(adaptive_strategy or "").strip().lower() == "deep":
         return None
 
@@ -2481,7 +2281,7 @@ def _should_skip_agent_llm(candidates: list[dict],
                            rule_backup: dict = None,
                            route_profile=None,
                            adaptive_strategy: str | None = None) -> bool:
-    """显式歧义门控：高置信候选走快通道，歧义候选交给 Agent。"""
+    """Decide whether the current candidates can skip Agent LLM."""
     decision = get_fastpath_decision(
         candidates,
         exp_backup=exp_backup,
@@ -2493,7 +2293,7 @@ def _should_skip_agent_llm(candidates: list[dict],
 
 
 def _should_audit_fastpath(decision=None) -> bool:
-    """按风险优先、其余按配置比例抽检快速通道结果。"""
+    """Decide whether a fast-path decision should be audited."""
     if getattr(decision, "audit_recommended", False):
         return True
     rate = safe_float(config.AGENT_FASTPATH_AUDIT_RATE, 0.0)
@@ -2505,7 +2305,7 @@ def _should_audit_fastpath(decision=None) -> bool:
 
 
 def _mark_agent_fastpath(result: dict):
-    """为快速通道结果打标，便于统计与审计。"""
+    """Mark a result as having used the agent fast-path."""
     result["agent_skipped"] = True
     if result.get("match_source") == "search":
         result["match_source"] = "agent_fastpath"
@@ -2513,3 +2313,10 @@ def _mark_agent_fastpath(result: dict):
     explanation = (result.get("explanation") or "").strip()
     result["explanation"] = f"{explanation} | {note}" if explanation else note
     _append_trace_step(result, "agent_fastpath", skipped_llm=True)
+    _append_trace_step(result, "agent_fastpath", skipped_llm=True)
+
+
+
+
+
+

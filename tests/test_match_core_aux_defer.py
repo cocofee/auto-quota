@@ -63,3 +63,58 @@ def test_cascade_search_defers_aux_when_main_results_are_good(monkeypatch):
         "C10-1-5",
     ]
     assert calls == ["main-install"]
+
+
+def test_cascade_search_stops_after_expanded_stage_without_escape(monkeypatch):
+    monkeypatch.setattr("config.HYBRID_DEFER_AUX_SEARCH", True, raising=False)
+
+    class Searcher:
+        def __init__(self):
+            self.province = "main-install"
+            self.aux_searchers = []
+            self.uses_standard_books = True
+            self.calls = []
+
+        def search(self, query, top_k=None, books=None, item=None, context_prior=None):
+            del query, top_k, item, context_prior
+            normalized_books = list(books) if books is not None else None
+            self.calls.append(normalized_books)
+            if normalized_books == ["C10"]:
+                return [
+                    {"quota_id": "C10-1-1", "hybrid_score": 0.82},
+                    {"quota_id": "C10-1-2", "hybrid_score": 0.81},
+                ]
+            if normalized_books == ["C10", "C9"]:
+                return [
+                    {"quota_id": "C10-1-1", "hybrid_score": 0.95},
+                    {"quota_id": "C10-1-2", "hybrid_score": 0.90},
+                    {"quota_id": "C10-1-3", "hybrid_score": 0.80},
+                    {"quota_id": "C10-1-4", "hybrid_score": 0.79},
+                    {"quota_id": "C10-1-5", "hybrid_score": 0.78},
+                ]
+            raise AssertionError(f"unexpected escape search: {normalized_books}")
+
+    searcher = Searcher()
+    classification = {
+        "primary": "C10",
+        "search_books": ["C10", "C9"],
+        "candidate_books": ["C10", "C9"],
+        "fallbacks": ["C9"],
+        "allow_cross_book_escape": True,
+        "route_mode": "moderate",
+    }
+
+    results = cascade_search(searcher, "test query", classification, top_k=3)
+
+    assert [row["quota_id"] for row in results] == [
+        "C10-1-1",
+        "C10-1-2",
+        "C10-1-3",
+        "C10-1-4",
+        "C10-1-5",
+    ]
+    assert searcher.calls == [["C10"], ["C10", "C9"]]
+    assert [call["stage"] for call in classification["retrieval_resolution"]["calls"]] == [
+        "primary",
+        "expanded",
+    ]
