@@ -840,14 +840,14 @@ export default function MaterialPrice() {
       width: 320,
       onCell: (row: DisplayRow) => row._rowType === 'section' ? { colSpan: 0 } : {},
       render: (_: unknown, row: DisplayRow) => {
-        if (row._rowType !== 'bill') return null;
-        const desc = row._raw.desc;
+        if (row._rowType === 'section') return null;
+        const desc = row._raw?.desc;
         if (!desc) return <span style={{ color: '#ccc' }}>-</span>;
-        // 原样显示项目特征，和套定额预览页样式一致
+        // 原样显示项目特征，混合表里让清单/定额/主材行都能看到所属清单特征
         return (
-            <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-              {desc}
-            </div>
+          <div style={{ fontSize: 12, lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+            {desc}
+          </div>
         );
       },
     },

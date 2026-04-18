@@ -35,6 +35,7 @@ from pathlib import Path
 from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
+from src.fallback_logger import fallback_logger
 from src.specialty_classifier import get_book_from_quota_id
 from src.utils import safe_json_list
 import config
@@ -743,7 +744,12 @@ class ExperienceDB:
                 exc,
                 schedule_rebuild=self._should_rebuild_vector_index(exc),
             )
-            logger.debug(f"经验库向量召回失败，降级跳过: {exc}")
+            fallback_logger.maybe_alert(
+                exc,
+                severity="warning",
+                component="experience_db.vector_recall",
+                message="Experience vector recall failed and was downgraded",
+            )
             return []
 
     def _recall_vector_records(self, query_text: str, *, top_k: int,
@@ -2457,7 +2463,12 @@ class ExperienceDB:
                 e,
                 schedule_rebuild=self._should_rebuild_vector_index(e),
             )
-            logger.warning(f"向量索引添加失败: {e}")
+            fallback_logger.maybe_alert(
+                e,
+                severity="warning",
+                component="experience_db.vector_upsert",
+                message="Experience vector index upsert failed",
+            )
 
     # ================================================================
     # 查询经验
