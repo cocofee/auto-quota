@@ -32,6 +32,7 @@ from src.compat_primitives import (
     connections_compatible as _compat_connections_compatible,
 )
 from src.candidate_scoring import compute_candidate_rank_score, compute_candidate_sort_key
+from src.fallback_logger import fallback_logger
 from src.installation_validator import InstallationValidator
 from src.specialty_classifier import get_book_from_quota_id
 
@@ -377,7 +378,12 @@ class ParamValidator:
                 cls._ltr_model = lgb.Booster(model_file=str(model_path))
                 logger.info(f"LTR排序模型已加载: {model_path}")
             except Exception as e:
-                logger.warning(f"LTR模型加载失败，回退到手工公式: {e}")
+                fallback_logger.maybe_alert(
+                    e,
+                    severity="warning",
+                    component="param_validator.ltr_model_load",
+                    message="LTR model load failed, falling back to manual scoring",
+                )
                 cls._ltr_model = None
         else:
             logger.debug("LTR模型文件不存在，使用手工排序公式")
@@ -1285,7 +1291,12 @@ class ParamValidator:
                     candidates.sort(key=lambda x: x.get("ltr_score", 0), reverse=True)
                 return
             except Exception as e:
-                logger.warning(f"LTR模型预测失败，回退手工公式: {e}")
+                fallback_logger.maybe_alert(
+                    e,
+                    severity="warning",
+                    component="param_validator.ltr_predict",
+                    message="LTR prediction failed, falling back to manual scoring",
+                )
 
         # 回退：手工公式排序（有参数分支权重）
         for candidate in candidates:

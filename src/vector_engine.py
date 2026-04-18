@@ -12,6 +12,7 @@ from loguru import logger
 
 import config
 from db.sqlite import connect as _db_connect
+from src.fallback_logger import fallback_logger
 
 
 class VectorEngine:
@@ -260,12 +261,20 @@ class VectorEngine:
 
             from src.model_profile import encode_documents
 
-            embeddings = encode_documents(
-                self.model,
-                texts,
-                batch_size=batch_size,
-                show_progress=False,
-            )
+            try:
+                embeddings = encode_documents(
+                    self.model,
+                    texts,
+                    batch_size=batch_size,
+                    show_progress=False,
+                )
+            except Exception as exc:
+                fallback_logger.maybe_alert(
+                    exc,
+                    severity="critical",
+                    component="vector_engine.build_index_encoding",
+                    message="Quota vector index encoding failed",
+                )
 
             metadatas = []
             for row in batch_rows:
@@ -331,7 +340,17 @@ class VectorEngine:
         elif self.model is not None:
             from src.model_profile import encode_queries
 
-            query_embedding = encode_queries(self.model, [query])
+            try:
+                query_embedding = encode_queries(self.model, [query])
+            except Exception as exc:
+                fallback_logger.maybe_alert(
+                    exc,
+                    severity="warning",
+                    component="vector_engine.query_encoding",
+                    message="Quota vector query encoding failed, skipping vector search",
+                )
+                VectorEngine._model_skip_count += 1
+                return []
         else:
             VectorEngine._model_skip_count += 1
             return []

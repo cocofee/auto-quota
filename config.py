@@ -642,10 +642,13 @@ AGENT_FASTPATH_AUDIT_RATE = max(0.0, min(
 # 清单有参数但top1无参数时，强制走LLM（避免无参数候选因语义得分高而盲通）
 AGENT_FASTPATH_REQUIRE_PARAM_MATCH = True
 
-# 低置信度重试：Agent返回confidence低于此值时，自动用AI建议的搜索词重试
-# 或当AI推荐的定额不在候选列表中时也触发重试
+# 低置信度重试：Agent返回confidence低于此值时，允许触发一次查询改写重试。
+# 重试query来自显式注册的改写策略（确定性规则优先，LLM suggested_search 只是其中一种）。
 # 设为0关闭重试（减少LLM调用次数，提升速度）
 LOW_CONFIDENCE_RETRY_THRESHOLD = int(os.getenv("LOW_CONFIDENCE_RETRY_THRESHOLD", "0"))
+LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS = min(
+    1, max(0, int(os.getenv("LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", "1")))
+)
 
 # ============================================================
 # L3 一致性反思（同类清单定额一致性检查）
@@ -845,6 +848,10 @@ LTR_FEATURE_LOG_TOPK = int(os.getenv("LTR_FEATURE_LOG_TOPK", "3"))
 LTR_GUARD_ENABLED = os.getenv("LTR_GUARD_ENABLED", "1").strip().lower() not in (
     "0", "false", "no", "off", ""
 )
+CONFIDENCE_CALIBRATION_PATH = Path(os.getenv(
+    "CONFIDENCE_CALIBRATION_PATH",
+    str(DATA_DIR / "confidence_calibration.json"),
+))
 LTR_GUARD_THRESHOLD = max(0.0, float(os.getenv("LTR_GUARD_THRESHOLD", "6.0")))
 PARAM_VALIDATOR_LEGACY_LTR_ENABLED = os.getenv(
     "PARAM_VALIDATOR_LEGACY_LTR_ENABLED", "0"

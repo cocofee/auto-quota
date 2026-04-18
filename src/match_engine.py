@@ -27,6 +27,7 @@ from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
 from src.final_validator import FinalValidator
+from src.fallback_logger import fallback_logger
 from src.reasoning_agent import ReasoningAgent
 from src.runtime_cache import (
     get_experience_db,
@@ -794,7 +795,12 @@ def _init_search_components_legacy_broken(resolved_province: str, aux_provinces:
                 f"chroma_dir={_quota_config.get_chroma_experience_dir()}"
             )
         except Exception as diag_error:
-            logger.debug(f"经验库路径诊断失败（不影响主流程）: {diag_error}")
+            fallback_logger.maybe_alert(
+                diag_error,
+                severity="warning",
+                component="match_engine.experience_path_diagnostics",
+                message="Experience path diagnostics failed while handling preload failure",
+            )
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态
@@ -895,7 +901,12 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
                 f"chroma_dir={_quota_config.get_chroma_experience_dir()}"
             )
         except Exception as diag_error:
-            logger.debug(f"经验库路径诊断失败（不影响主流程）: {diag_error}")
+            fallback_logger.maybe_alert(
+                diag_error,
+                severity="warning",
+                component="match_engine.experience_path_diagnostics",
+                message="Experience path diagnostics failed while handling preload failure",
+            )
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态
