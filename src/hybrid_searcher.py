@@ -127,12 +127,18 @@ class HybridSearcher:
         self._universal_kb = None
         self._kb_keyword_cache = {}
         self._KB_KEYWORD_CACHE_MAX = 256
+        self._KB_KEYWORD_CACHE_TTL_SEC = float(
+            getattr(config, "HYBRID_KB_KEYWORD_CACHE_TTL_SEC", 300.0) or 0.0
+        )
         self._kb_keyword_blocked_until = 0.0
 
         # 会话级搜索缓存：相同 normalized_query + books 的搜索结果复用
         # 同一批次中"DN25镀锌钢管"和"DN32镀锌钢管"可能生成相同的 normalized query
         # 缓存避免重复执行向量搜索（最耗时的环节）
         self._session_cache = {}  # {cache_key: candidates_list}
+        self._SESSION_CACHE_TTL_SEC = float(
+            getattr(config, "HYBRID_SESSION_CACHE_TTL_SEC", 900.0) or 0.0
+        )
         self._SESSION_CACHE_MAX = 1000  # 缓存上限，防止长时间运行内存泄漏
 
         # 反馈偏置缓存（用用户修正/确认数据动态校准检索权重）
@@ -170,6 +176,78 @@ class HybridSearcher:
             resetter = getattr(aux_searcher, "reset_runtime_state", None)
             if callable(resetter):
                 resetter()
+
+    @staticmethod
+    def _cache_now() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    def _wrap_cache_entry(value, *, now: float | None = None) -> dict:
+        return {
+            "value": value,
+            "ts": float(HybridSearcher._cache_now() if now is None else now),
+        }
+
+    @staticmethod
+    def _unwrap_cache_entry(entry):
+        if isinstance(entry, dict) and "ts" in entry and "value" in entry:
+            return entry.get("value"), float(entry.get("ts") or 0.0)
+        return entry, None
+
+    def _purge_expired_cache_entries(self, cache: dict, *, ttl_sec: float, now: float | None = None) -> int:
+        if not isinstance(cache, dict) or not cache:
+            return 0
+        ttl_value = float(ttl_sec or 0.0)
+        if ttl_value <= 0:
+            return 0
+        current = self._cache_now() if now is None else float(now)
+        expired_keys = []
+        for key, entry in list(cache.items()):
+            _, entry_ts = self._unwrap_cache_entry(entry)
+            if entry_ts is not None and current - entry_ts >= ttl_value:
+                expired_keys.append(key)
+        for key in expired_keys:
+            cache.pop(key, None)
+        return len(expired_keys)
+
+    def _get_cache_value(self, cache: dict, key, *, ttl_sec: float, now: float | None = None):
+        if not isinstance(cache, dict):
+            return None
+        current = self._cache_now() if now is None else float(now)
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        value, entry_ts = self._unwrap_cache_entry(entry)
+        ttl_value = float(ttl_sec or 0.0)
+        if entry_ts is not None and ttl_value > 0 and current - entry_ts >= ttl_value:
+            cache.pop(key, None)
+            return None
+        return value
+
+    def _store_cache_value(
+        self,
+        cache: dict,
+        key,
+        value,
+        *,
+        ttl_sec: float,
+        max_size: int,
+        now: float | None = None,
+    ) -> None:
+        if not isinstance(cache, dict):
+            return
+        current = self._cache_now() if now is None else float(now)
+        self._purge_expired_cache_entries(cache, ttl_sec=ttl_sec, now=current)
+        if max_size > 0 and len(cache) >= max_size:
+            removal_count = max(len(cache) // 2, 1)
+            oldest_keys = sorted(
+                cache.keys(),
+                key=lambda item: self._unwrap_cache_entry(cache[item])[1] or 0.0,
+            )[:removal_count]
+            for old_key in oldest_keys:
+                cache.pop(old_key, None)
+            logger.debug(f"搜索缓存超限({max_size})，已清除{len(oldest_keys)}条旧缓存")
+        cache[key] = self._wrap_cache_entry(value, now=current)
 
     @staticmethod
     def _normalize_session_cache_key_part(value):
@@ -1201,7 +1279,11 @@ class HybridSearcher:
             bm25_top_k=bm25_top_k,
             vector_top_k=vector_top_k,
         )
-        cached = self._session_cache.get(cache_key)
+        cached = self._get_cache_value(
+            self._session_cache,
+            cache_key,
+            ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
+        )
         if cached is not None:
             import copy
             logger.debug(f"搜索缓存命中: '{query[:20]}...' ({len(cached)}条)")
@@ -1218,7 +1300,11 @@ class HybridSearcher:
         kb_hints = []
         if adaptive_strategy == "standard" and self.universal_kb:
             try:
-                cached_kb_hints = self._kb_keyword_cache.get(query)
+                cached_kb_hints = self._get_cache_value(
+                    self._kb_keyword_cache,
+                    query,
+                    ttl_sec=float(getattr(self, "_KB_KEYWORD_CACHE_TTL_SEC", 300.0) or 0.0),
+                )
                 if cached_kb_hints is not None:
                     kb_hints = list(cached_kb_hints)
                 else:
@@ -1249,10 +1335,13 @@ class HybridSearcher:
                                 kb_hints = []
                     else:
                         kb_hints = self.universal_kb.get_search_keywords(query)
-                    if len(self._kb_keyword_cache) >= self._KB_KEYWORD_CACHE_MAX:
-                        old_key = next(iter(self._kb_keyword_cache))
-                        del self._kb_keyword_cache[old_key]
-                    self._kb_keyword_cache[query] = list(kb_hints or [])
+                    self._store_cache_value(
+                        self._kb_keyword_cache,
+                        query,
+                        list(kb_hints or []),
+                        ttl_sec=float(getattr(self, "_KB_KEYWORD_CACHE_TTL_SEC", 300.0) or 0.0),
+                        max_size=int(getattr(self, "_KB_KEYWORD_CACHE_MAX", 256) or 0),
+                    )
                 kb_hints = self._filter_kb_hints_for_query_features(
                     kb_hints,
                     query_features=query_features,
@@ -1414,15 +1503,21 @@ class HybridSearcher:
         # 存入会话缓存（搜索结果不变的情况下复用）
         if top_results:
             import copy
-            # 缓存超限时清除最早的一半，避免内存持续增长
-            if len(self._session_cache) >= self._SESSION_CACHE_MAX:
-                keys_to_remove = list(self._session_cache.keys())[:len(self._session_cache) // 2]
-                for k in keys_to_remove:
-                    del self._session_cache[k]
-                logger.debug(f"搜索缓存超限({self._SESSION_CACHE_MAX})，已清除{len(keys_to_remove)}条旧缓存")
-            self._session_cache[cache_key] = copy.deepcopy(top_results)
+            self._store_cache_value(
+                self._session_cache,
+                cache_key,
+                copy.deepcopy(top_results),
+                ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
+                max_size=int(getattr(self, "_SESSION_CACHE_MAX", 1000) or 0),
+            )
             finalized = self._finalize_candidates(
-                copy.deepcopy(self._session_cache[cache_key]),
+                copy.deepcopy(
+                    self._get_cache_value(
+                        self._session_cache,
+                        cache_key,
+                        ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
+                    ) or []
+                ),
                 query_text=query,
                 expected_books=books,
             )

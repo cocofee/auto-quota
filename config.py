@@ -516,6 +516,12 @@ HYBRID_MULTI_QUERY_FUSION = True                # 使用多查询变体进行RRF
 HYBRID_QUERY_VARIANTS = 4                       # 最多使用几个query变体（含核心名词变体）
 HYBRID_VARIANT_WEIGHTS = [1.0, 0.75, 0.60, 0.50] # 各query变体在RRF中的权重
 HYBRID_ADAPTIVE_BOOST = 0.18                    # 动态权重偏移幅度（0~0.4更稳妥）
+HYBRID_KB_KEYWORD_CACHE_TTL_SEC = max(0.0, float(
+    os.getenv("HYBRID_KB_KEYWORD_CACHE_TTL_SEC", "300")
+))                                              # 通用知识关键词缓存TTL；0=不按时间过期
+HYBRID_SESSION_CACHE_TTL_SEC = max(0.0, float(
+    os.getenv("HYBRID_SESSION_CACHE_TTL_SEC", "900")
+))                                              # 混合搜索会话缓存TTL；0=不按时间过期
 
 # 级联搜索质量门槛：主搜候选较少时，检查top分差是否足够大
 # 值含义：top1与top3的hybrid_score分差比例，低于此值则继续全库搜索
