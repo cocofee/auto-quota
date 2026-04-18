@@ -7,6 +7,7 @@
 """
 
 import sys
+import re
 import argparse
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def main():
 
     # 创建session
     session = requests.Session()
-    for part in args.cookie.split("; "):
+    for part in re.split(r";\s*", args.cookie):
         if "=" in part:
             key, value = part.split("=", 1)
             session.cookies.set(key.strip(), value.strip())
