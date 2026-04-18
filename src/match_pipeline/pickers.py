@@ -32,6 +32,7 @@ from src.explicit_terminal_family_pickers import (
     _pick_explicit_lamp_family_candidate,
     _pick_explicit_sanitary_family_candidate,
 )
+from src.policy_engine import PolicyEngine
 from src.review_checkers import check_category_mismatch, extract_description_lines
 from src.text_parser import parser as text_parser
 
@@ -98,7 +99,10 @@ def _guard_explicit_candidate(item: dict,
 
     top_score = _safe_candidate_hybrid_score(top_candidate)
     explicit_score = _safe_candidate_hybrid_score(explicit_candidate)
-    if (top_score - explicit_score) > hybrid_margin:
+    resolved_margin = float(
+        PolicyEngine.get_picker_threshold("explicit_hybrid_margin", hybrid_margin)
+    )
+    if (top_score - explicit_score) > resolved_margin:
         return top_candidate
     return explicit_candidate
 

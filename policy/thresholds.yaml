@@ -1,0 +1,40 @@
+confidence:
+  experience_exact_degrade_cap: 88
+  same_quota_confirm_boost: 92
+
+fastpath:
+  reranker_failure_window: 3
+  missing_primary_param_min_score: 0.70
+  arbitrated_min_top1_margin: 0.08
+
+pickers:
+  explicit_hybrid_margin: 0.005
+
+route_policies:
+  balanced:
+    rule_direct_confidence: 80
+    agent_fastpath_score: 0.60
+    agent_fastpath_score_gap: 0.03
+    agent_fastpath_min_candidates: 2
+  installation_spec:
+    rule_direct_confidence: 82
+    agent_fastpath_score: 0.72
+    agent_fastpath_score_gap: 0.05
+    agent_fastpath_min_candidates: 2
+    require_param_match: true
+  material:
+    rule_direct_confidence: 82
+    agent_fastpath_score: 0.68
+    agent_fastpath_score_gap: 0.04
+    agent_fastpath_min_candidates: 2
+    require_param_match: true
+  ambiguous_short:
+    rule_direct_confidence: 88
+    agent_fastpath_score: 0.78
+    agent_fastpath_score_gap: 0.06
+    agent_fastpath_min_candidates: 3
+    require_param_match: true
+  semantic_description:
+    agent_fastpath_score: 0.58
+    agent_fastpath_score_gap: 0.02
+    agent_fastpath_min_candidates: 2
