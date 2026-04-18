@@ -53,9 +53,11 @@ def _make_searcher():
     searcher._universal_kb = False
     searcher._kb_keyword_cache = {}
     searcher._KB_KEYWORD_CACHE_MAX = 256
+    searcher._KB_KEYWORD_CACHE_TTL_SEC = 300.0
     searcher._kb_keyword_blocked_until = 0.0
     searcher._session_cache = {}
     searcher._SESSION_CACHE_MAX = 1000
+    searcher._SESSION_CACHE_TTL_SEC = 900.0
     searcher._uses_standard_books = True
     return searcher
 
@@ -196,5 +198,95 @@ def test_search_session_cache_stores_prefinalized_rrf_results(monkeypatch):
     assert len(searcher.bm25_engine.calls) == 1
     assert len(searcher.vector_engine.calls) == 1
     assert len(searcher._session_cache) == 1
-    cached = next(iter(searcher._session_cache.values()))
+    cached = next(iter(searcher._session_cache.values()))["value"]
     assert [candidate["quota_id"] for candidate in cached] == ["Q-1", "Q-2"]
+
+
+def test_search_session_cache_expires_by_ttl(monkeypatch):
+    searcher = _make_searcher()
+    searcher._SESSION_CACHE_TTL_SEC = 5.0
+
+    monkeypatch.setattr(config, "VECTOR_ENABLED", True)
+    monkeypatch.setattr(
+        hybrid_searcher_module.text_parser,
+        "parse_canonical",
+        lambda query: {"family": "test"},
+    )
+    monkeypatch.setattr(
+        hybrid_searcher_module,
+        "build_query_route_profile",
+        lambda query, canonical_features=None, context_prior=None: {"route": "test"},
+    )
+
+    current_time = {"value": 100.0}
+    monkeypatch.setattr(HybridSearcher, "_cache_now", staticmethod(lambda: current_time["value"]))
+
+    searcher._resolve_rank_window = lambda **kwargs: 2
+    searcher._resolve_engine_top_k = lambda **kwargs: kwargs["rank_window"]
+    searcher._get_adaptive_weights = lambda **kwargs: (0.5, 0.5, "balanced")
+    searcher._build_query_variants = lambda *args, **kwargs: [{"query": args[0], "tag": "raw", "weight": 1.0}]
+    searcher._rrf_fusion = lambda bm25_results, vector_results, bm25_weight, vector_weight, k: [{
+        "quota_id": "Q-1",
+        "name": "candidate",
+        "id": "Q-1",
+        "hybrid_score": float(len(searcher.bm25_engine.calls)),
+        "bm25_rank": 1,
+        "vector_rank": 1,
+    }]
+    searcher._finalize_candidates = lambda candidates, query_text, expected_books=None: list(candidates)
+
+    first = searcher.search("same query", top_k=2)
+    current_time["value"] += 3.0
+    second = searcher.search("same query", top_k=2)
+    current_time["value"] += 6.0
+    third = searcher.search("same query", top_k=2)
+
+    assert first[0]["hybrid_score"] == 1.0
+    assert second[0]["hybrid_score"] == 1.0
+    assert third[0]["hybrid_score"] == 2.0
+    assert len(searcher.bm25_engine.calls) == 2
+    assert len(searcher.vector_engine.calls) == 2
+
+
+def test_kb_keyword_cache_expires_by_ttl(monkeypatch):
+    searcher = _make_searcher()
+    searcher._KB_KEYWORD_CACHE_TTL_SEC = 5.0
+
+    monkeypatch.setattr(config, "VECTOR_ENABLED", False)
+    monkeypatch.setattr(
+        hybrid_searcher_module.text_parser,
+        "parse_canonical",
+        lambda query: {"family": "test"},
+    )
+    monkeypatch.setattr(
+        hybrid_searcher_module,
+        "build_query_route_profile",
+        lambda query, canonical_features=None, context_prior=None: {"route": "test"},
+    )
+
+    current_time = {"value": 200.0}
+    monkeypatch.setattr(HybridSearcher, "_cache_now", staticmethod(lambda: current_time["value"]))
+
+    class _FakeUniversalKB:
+        def __init__(self):
+            self.calls = []
+
+        def get_search_keywords(self, query):
+            self.calls.append(query)
+            return [f"hint-{len(self.calls)}"]
+
+    searcher._universal_kb = _FakeUniversalKB()
+    searcher._resolve_rank_window = lambda **kwargs: 1
+    searcher._resolve_engine_top_k = lambda **kwargs: 1
+    searcher._get_adaptive_weights = lambda **kwargs: (0.5, 0.5, "balanced")
+    searcher._build_query_variants = lambda query, kb_hints, **kwargs: [{"query": " ".join([query] + list(kb_hints)), "tag": "raw", "weight": 1.0}]
+    searcher._rrf_fusion = lambda bm25_results, vector_results, bm25_weight, vector_weight, k: []
+    searcher._finalize_candidates = lambda candidates, query_text, expected_books=None: list(candidates)
+
+    searcher.search("same query", top_k=1, item={"adaptive_strategy": "standard"})
+    current_time["value"] += 3.0
+    searcher.search("same query", top_k=1, item={"adaptive_strategy": "standard"})
+    current_time["value"] += 6.0
+    searcher.search("same query", top_k=1, item={"adaptive_strategy": "standard"})
+
+    assert searcher.universal_kb.calls == ["same query", "same query"]

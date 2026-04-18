@@ -126,8 +126,16 @@ def _build_supported_pdf_commands() -> list[CommandSpec]:
     return commands
 
 
-def _build_extra_commands(include_wuhan: bool) -> list[CommandSpec]:
+def _build_extra_commands(include_wuhan: bool, include_anhui_official: bool = False) -> list[CommandSpec]:
     commands: list[CommandSpec] = []
+
+    anhui_importer = PROJECT_ROOT / 'tools' / 'import_anhui_official.py'
+    if include_anhui_official and anhui_importer.exists():
+        commands.append(CommandSpec('anhui:official', ['tools/import_anhui_official.py']))
+
+    fujian_file = PROJECT_ROOT / "data" / "pdf_info_price" / "fujian" / "fujian_2024_materials.xlsx"
+    if fujian_file.exists():
+        commands.append(CommandSpec("fujian:file", ["tools/import_fujian_excel.py", "--file", str(fujian_file)]))
 
     qinghai_dir = PROJECT_ROOT / "data" / "pdf_info_price" / "qinghai"
     if qinghai_dir.exists():
@@ -144,6 +152,10 @@ def _build_extra_commands(include_wuhan: bool) -> list[CommandSpec]:
     guizhou_dir = PROJECT_ROOT / "data" / "pdf_info_price" / "guizhou"
     if guizhou_dir.exists():
         commands.append(CommandSpec("guizhou:dir", ["tools/import_guizhou_pdf.py", "--dir", str(guizhou_dir)]))
+
+    nanning_dir = PROJECT_ROOT / "data" / "pdf_info_price" / "nanning"
+    if nanning_dir.exists() and list(nanning_dir.glob("*_search_text.js")):
+        commands.append(CommandSpec("nanning:dir", ["tools/import_nanning_js.py", "--dir", str(nanning_dir)]))
 
     tianjin_root = PROJECT_ROOT / "data" / "pdf_info_price" / "tianjin"
     if tianjin_root.exists():
@@ -198,6 +210,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Rebuild db/common/material.db from repo assets")
     parser.add_argument("--keep-existing", action="store_true", help="Append into the current DB instead of resetting it")
     parser.add_argument("--dry-run", action="store_true", help="Validate the rebuild plan without writing DB data")
+    parser.add_argument(
+        "--include-anhui-official",
+        action="store_true",
+        help="Also run the online Anhui official importer; off by default to keep rebuild offline/reproducible",
+    )
     parser.add_argument("--include-wuhan", action="store_true", help="Also try the OCR-based Wuhan importer")
     args = parser.parse_args()
 
@@ -213,7 +230,12 @@ def main() -> int:
         _init_empty_db(reset=reset_db)
 
     commands = _build_supported_pdf_commands()
-    commands.extend(_build_extra_commands(include_wuhan=args.include_wuhan))
+    commands.extend(
+        _build_extra_commands(
+            include_wuhan=args.include_wuhan,
+            include_anhui_official=args.include_anhui_official,
+        )
+    )
     if not commands:
         _print("No rebuild sources were found")
         return 1
