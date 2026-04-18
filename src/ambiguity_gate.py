@@ -116,7 +116,10 @@ def analyze_ambiguity(candidates: list[dict],
             arbitration_applied=arbitration_applied,
         )
 
-    if any(c.get("reranker_failed") for c in candidates[:3]):
+    reranker_failure_window = int(
+        max(1, PolicyEngine.get_fastpath_threshold("reranker_failure_window", 3))
+    )
+    if any(c.get("reranker_failed") for c in candidates[:reranker_failure_window]):
         return AmbiguityDecision(
             can_fastpath=False,
             is_ambiguous=True,
@@ -231,7 +234,10 @@ def analyze_ambiguity(candidates: list[dict],
 
     if policy.require_param_match:
         top_detail = str(top.get("param_detail", "") or "")
-        if ("定额无" in top_detail or "未指定" in top_detail) and top_score < 0.7:
+        missing_primary_param_min_score = float(
+            PolicyEngine.get_fastpath_threshold("missing_primary_param_min_score", 0.70)
+        )
+        if ("定额无" in top_detail or "未指定" in top_detail) and top_score < missing_primary_param_min_score:
             return AmbiguityDecision(
                 can_fastpath=False,
                 is_ambiguous=True,
@@ -284,7 +290,10 @@ def analyze_ambiguity(candidates: list[dict],
             arbitration_applied=arbitration_applied,
         )
 
-    if arbitration_applied and gap < max(policy.agent_fastpath_score_gap, 0.08):
+    arbitrated_min_gap = float(
+        PolicyEngine.get_fastpath_threshold("arbitrated_min_top1_margin", 0.08)
+    )
+    if arbitration_applied and gap < max(policy.agent_fastpath_score_gap, arbitrated_min_gap):
         return AmbiguityDecision(
             can_fastpath=False,
             is_ambiguous=True,

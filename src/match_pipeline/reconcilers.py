@@ -6,8 +6,9 @@ import time
 from loguru import logger
 
 from src.confidence_utils import apply_confidence_penalty
-from src.match_core import _append_trace_step
+from src.match_core import _append_trace_step, _safe_json_materials
 from src.param_validator import ParamValidator
+from src.policy_engine import PolicyEngine
 from src.reason_taxonomy import merge_reason_tags
 from src.text_parser import parser as text_parser
 
@@ -321,7 +322,8 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
 
     same_quota = (exp_qids and search_qids and exp_qids[0] == search_qids[0])
     if same_quota:
-        result["confidence"] = max(result.get("confidence", 0), 92)
+        confirm_boost = int(PolicyEngine.get_confidence_threshold("same_quota_confirm_boost", 92))
+        result["confidence"] = max(result.get("confidence", 0), confirm_boost)
         result["match_source"] = f"{exp_source}_confirmed"
         result["explanation"] = f"经验库+搜索一致: {result.get('explanation', '')}"
         if exp_backup.get("materials"):
@@ -337,7 +339,8 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
         return result, exp_hits + 1
 
     if exp_source == "experience_exact":
-        exp_conf = min(exp_backup.get("confidence", 0), 88)
+        degrade_cap = int(PolicyEngine.get_confidence_threshold("experience_exact_degrade_cap", 88))
+        exp_conf = min(exp_backup.get("confidence", 0), degrade_cap)
         search_conf = result.get("confidence", 0)
         # 严格大于才替换（与相似匹配一致，等分时信任搜索+参数验证）
         if exp_conf > search_conf:
