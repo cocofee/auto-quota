@@ -1,5 +1,6 @@
 import src.match_pipeline as match_pipeline
 from src.match_pipeline import _build_classification, _build_item_context
+from src.match_pipeline.gates import _extract_usage_from_section
 from src.text_parser import TextParser
 
 
@@ -37,6 +38,27 @@ def test_build_item_context_propagates_canonical_features():
     assert context["canonical_query"]["validation_query"] == context["full_query"]
     assert context["canonical_query"]["normalized_query"] == context["normalized_query"]
     assert context["query_route"]["route"] == "installation_spec"
+
+
+def test_extract_usage_from_section_returns_multiple_usage_hints():
+    assert _extract_usage_from_section("消防给水") == ["消防", "给水"]
+
+
+def test_build_item_context_appends_multiple_usage_hints_from_section():
+    context = _build_item_context(
+        {
+            "name": "塑料管",
+            "description": "De25",
+            "section": "消防给水",
+            "specialty": "C10",
+        }
+    )
+
+    assert context["context_prior"]["section_usage_hints"] == ["消防", "给水"]
+    assert context["canonical_query"]["section_usage_hints"] == ["消防", "给水"]
+    assert "消防" in context["canonical_query"]["route_query"]
+    assert "给水" not in context["canonical_query"]["route_query"]
+    assert "给水" not in context["canonical_query"]["validation_query"]
 
 
 def test_build_item_context_backfills_params_for_openclaw_items():

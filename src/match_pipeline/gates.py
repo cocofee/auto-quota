@@ -126,23 +126,24 @@ _QUOTA_ONLY_KEYWORDS = [
 
 
 
-def _extract_usage_from_section(section: str) -> str:
+def _extract_usage_from_section(section: str) -> list[str]:
     """从分项标题/Sheet名中提取用途关键词（给水/采暖/消防/排水等）。
-    返回空字符串表示无法判断。"""
+    返回标准化后的多用途标签列表，交给下游结合清单名称/描述再做判断。"""
     if not section:
-        return ""
-    # 优先级：消防 > 采暖 > 给水 > 排水（从具体到宽泛）
-    if "消防" in section:
-        return "消防"
-    if "采暖" in section or "供暖" in section or "暖通" in section:
-        return "采暖"
-    if "给水" in section:
-        return "给水"
-    if "排水" in section or "雨水" in section or "污水" in section:
-        return "排水"
-    if "工业管道" in section:
-        return "工业管道"
-    return ""
+        return []
+
+    usage_hints: list[str] = []
+    usage_patterns = (
+        ("消防", ("消防",)),
+        ("采暖", ("采暖", "供暖", "暖通")),
+        ("给水", ("给水",)),
+        ("排水", ("排水", "雨水", "污水")),
+        ("工业管道", ("工业管道",)),
+    )
+    for normalized, aliases in usage_patterns:
+        if any(alias in section for alias in aliases):
+            usage_hints.append(normalized)
+    return usage_hints
 
 
 _PURE_CODE_NAME_RE = re.compile(r"^[A-Za-z]{0,3}\d{5,}$")

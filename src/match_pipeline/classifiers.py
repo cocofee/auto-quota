@@ -157,10 +157,13 @@ def _build_item_context(item: dict,
     # 这样param_validator的介质冲突检查能利用section的方向信息
     # 只在清单文本本身不含这些关键词时才注入，避免重复
     route_query = raw_query
+    usage_hints = _extract_usage_from_section(section) if section else []
+    if usage_hints:
+        context_prior["section_usage_hints"] = usage_hints
     if section:
-        _usage_hint = _extract_usage_from_section(section)
-        if _usage_hint and _usage_hint not in route_query:
-            route_query = f"{route_query} {_usage_hint}"
+        primary_usage_hint = usage_hints[0] if usage_hints else ""
+        if primary_usage_hint and primary_usage_hint not in route_query:
+            route_query = f"{route_query} {primary_usage_hint}".strip()
 
     canonical_name = canonical_features.get("canonical_name", "")
     canonical_system = canonical_features.get("system", "")
@@ -177,6 +180,7 @@ def _build_item_context(item: dict,
         "search_query": search_query.strip(),
         "normalized_query": normalize_bill_text(original_name, desc),
         "primary_query_profile": primary_query_profile,
+        "section_usage_hints": list(usage_hints),
     }
 
     query_route = build_query_route_profile(
