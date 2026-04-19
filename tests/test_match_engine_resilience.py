@@ -419,6 +419,105 @@ def test_match_agent_batches_retry_after_initial_llm_phase(monkeypatch):
     assert [result["match_source"] for result in results] == ["agent_retry", "agent_retry"]
 
 
+def test_match_agent_stage1_parallel_uses_thread_local_validator(monkeypatch):
+    from types import SimpleNamespace
+
+    from src import match_engine
+
+    state = {
+        "validate_calls": 0,
+        "validator_ids": set(),
+    }
+    state_lock = threading.Lock()
+    all_validators_started = threading.Event()
+
+    class DummyRuleValidator:
+        def validate_results(self, _results):
+            return None
+
+    class DummyReranker:
+        def rerank(self, _query, candidates):
+            return candidates
+
+    class DummySearcher:
+        def search(self, _query, top_k=None, books=None):
+            return []
+
+    class DummyValidator:
+        def validate_candidates(self, _full_query, candidates, supplement_query=None):
+            with state_lock:
+                state["validate_calls"] += 1
+                state["validator_ids"].add(id(self))
+                if state["validate_calls"] == 2:
+                    all_validators_started.set()
+            all_validators_started.wait(timeout=1.0)
+            return candidates
+
+    def fake_prepare_match_iteration(*, item, idx, total, results, exp_hits, rule_hits, validator, **kwargs):
+        candidates = [{
+            "quota_id": f"Q-{idx}",
+            "name": f"candidate-{idx}",
+            "param_match": True,
+            "param_score": 0.95,
+            "param_tier": 2,
+        }]
+        validated = validator.validate_candidates(
+            f"canonical validation {idx}",
+            candidates,
+            supplement_query=f"canonical search {idx}",
+        )
+        ctx = {
+            "name": item.get("name", ""),
+            "desc": item.get("description", ""),
+            "query_route": None,
+            "canonical_query": {
+                "raw_query": item.get("name", ""),
+                "validation_query": f"canonical validation {idx}",
+                "search_query": f"canonical search {idx}",
+            },
+        }
+        return False, exp_hits, rule_hits, (ctx, "legacy full query", "legacy search query", validated, {}, {})
+
+    def fake_resolve_search_mode_result(item, candidates, exp_backup, rule_backup, exp_hits, rule_hits):
+        top = candidates[0]
+        return {
+            "bill_item": item,
+            "quotas": [{"quota_id": top["quota_id"], "name": top["name"], "unit": "m"}],
+            "confidence": 90,
+            "explanation": top["name"],
+            "match_source": "search_fastpath",
+            "candidates_count": len(candidates),
+        }, exp_hits, rule_hits
+
+    monkeypatch.setattr(match_engine, "_create_rule_validator_and_reranker",
+                        lambda province=None: (DummyRuleValidator(), DummyReranker()))
+    monkeypatch.setattr(match_engine, "_load_rule_kb", lambda province=None: None)
+    monkeypatch.setattr(match_engine, "_prepare_match_iteration", fake_prepare_match_iteration)
+    monkeypatch.setattr(match_engine, "_resolve_search_mode_result", fake_resolve_search_mode_result)
+    monkeypatch.setattr(match_engine, "get_fastpath_decision",
+                        lambda *args, **kwargs: SimpleNamespace(can_fastpath=True))
+    monkeypatch.setattr(match_engine, "_should_audit_fastpath", lambda decision: False)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_PARALLEL_ENABLED", True)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_BATCH_SIZE", 2)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_CONCURRENT", 2)
+    monkeypatch.setattr(match_engine.config, "AGENT_PREPARE_BATCH_SIZE", 2, raising=False)
+    monkeypatch.setattr(match_engine.config, "AGENT_PREPARE_CONCURRENT", 2, raising=False)
+    monkeypatch.setattr(match_engine.config, "LLM_CONCURRENT", 1)
+
+    results = match_engine.match_agent(
+        [{"name": "item-1", "description": ""}, {"name": "item-2", "description": ""}],
+        searcher=DummySearcher(),
+        validator=DummyValidator(),
+        experience_db=None,
+        llm_type="deepseek",
+        province="test",
+    )
+
+    assert len(results) == 2
+    assert state["validate_calls"] == 2
+    assert len(state["validator_ids"]) == 2
+
+
 def test_match_agent_preserves_same_batch_consistency_hint_for_later_items(monkeypatch):
     from types import SimpleNamespace
 

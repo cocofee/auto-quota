@@ -12,6 +12,7 @@
 底层组件见 match_core.py，处理流水线见 match_pipeline.py。
 """
 
+import copy
 import re
 import threading
 import time
@@ -55,6 +56,71 @@ from src.match_pipeline import (
     _apply_mode_backups,
 )
 from src.performance_monitor import PerformanceMonitor
+
+
+class _ThreadLocalValidatorProxy:
+    _thread_local_validator_proxy = True
+
+    def __init__(self, base_validator):
+        self._base_validator = base_validator
+        self._thread_local = threading.local()
+        self._shared_fallback_lock = threading.RLock()
+
+    def _clone_base_validator(self):
+        base_validator = self._base_validator
+        if isinstance(base_validator, ParamValidator):
+            return ParamValidator(), False
+
+        validator_cls = base_validator.__class__
+        try:
+            clone = validator_cls()
+            base_state = getattr(base_validator, "__dict__", None)
+            clone_state = getattr(clone, "__dict__", None)
+            if isinstance(base_state, dict) and isinstance(clone_state, dict):
+                for key, value in base_state.items():
+                    try:
+                        clone_state[key] = copy.deepcopy(value)
+                    except Exception:
+                        try:
+                            clone_state[key] = copy.copy(value)
+                        except Exception:
+                            clone_state[key] = value
+            return clone, False
+        except Exception:
+            try:
+                return copy.copy(base_validator), False
+            except Exception:
+                return base_validator, True
+
+    def _get_current_binding(self):
+        binding = getattr(self._thread_local, "binding", None)
+        if binding is None:
+            validator, shared = self._clone_base_validator()
+            binding = {
+                "validator": validator,
+                "shared": shared,
+            }
+            self._thread_local.binding = binding
+        return binding
+
+    def validate_candidates(self, *args, **kwargs):
+        binding = self._get_current_binding()
+        current_validator = binding["validator"]
+        if binding["shared"]:
+            with self._shared_fallback_lock:
+                return current_validator.validate_candidates(*args, **kwargs)
+        return current_validator.validate_candidates(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._get_current_binding()["validator"], name)
+
+
+def _wrap_thread_local_validator(validator):
+    if validator is None:
+        return None
+    if getattr(validator, "_thread_local_validator_proxy", False):
+        return validator
+    return _ThreadLocalValidatorProxy(validator)
 
 
 def _annotate_adaptive_strategies(
@@ -1321,6 +1387,8 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
     和search模式的区别：第3步不是直接取参数验证第1名，而是让大模型分析选择
     和full模式的区别：Prompt更强（造价员角色）、自动记录学习笔记
     """
+    validator = _wrap_thread_local_validator(validator)
+
     from src.agent_matcher import AgentMatcher
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -4202,6 +4270,8 @@ def _match_agent_parallelized_impl(
     project_overview: str = "",
     progress_callback=None,
 ) -> list[dict]:
+    validator = _wrap_thread_local_validator(validator)
+
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from src.agent_matcher import AgentMatcher
 
