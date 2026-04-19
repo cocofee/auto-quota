@@ -15,6 +15,7 @@
   tracker.show_trend()                                    # 查看趋势
 """
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -134,6 +135,39 @@ def _get_conn() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_knowledge_hit_result_history_created
         ON knowledge_hit_result_history(created_at)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS regression_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_date TEXT NOT NULL,
+            run_time TEXT NOT NULL,
+            pipeline_version TEXT NOT NULL,
+            dataset_path TEXT,
+            eval_mode TEXT,
+            profile TEXT,
+            total INTEGER DEFAULT 0,
+            top1_accuracy REAL DEFAULT 0.0,
+            top3_accuracy REAL DEFAULT 0.0,
+            fastpath_precision REAL DEFAULT 0.0,
+            fastpath_count INTEGER DEFAULT 0,
+            confidence_calibration_ece REAL DEFAULT 0.0,
+            baseline_version TEXT DEFAULT '',
+            delta_top1_accuracy REAL DEFAULT 0.0,
+            delta_top3_accuracy REAL DEFAULT 0.0,
+            delta_fastpath_precision REAL DEFAULT 0.0,
+            delta_confidence_calibration_ece REAL DEFAULT 0.0,
+            metrics_json TEXT DEFAULT '{}',
+            per_specialty_json TEXT DEFAULT '{}',
+            created_at REAL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_regression_history_created
+        ON regression_history(created_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_regression_history_dataset_mode
+        ON regression_history(dataset_path, eval_mode, created_at)
+    """)
     conn.commit()
     return conn
 
@@ -141,6 +175,13 @@ def _get_conn() -> sqlite3.Connection:
 def _safe_int(value, default: int = 0) -> int:
     try:
         return int(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value or 0.0)
     except (TypeError, ValueError):
         return default
 
@@ -480,6 +521,235 @@ class AccuracyTracker:
         finally:
             if conn is not None:
                 conn.close()
+
+    def record_regression_run(
+        self,
+        *,
+        pipeline_version: str,
+        metrics: dict,
+        dataset_path: str = "",
+        eval_mode: str = "",
+        profile: str = "",
+        baseline_version: str = "",
+        deltas: dict | None = None,
+    ):
+        """Persist a golden-set regression snapshot for per-change comparison."""
+        now = time.localtime()
+        run_date = time.strftime("%Y-%m-%d", now)
+        run_time = time.strftime("%H:%M:%S", now)
+        metrics = dict(metrics or {})
+        deltas = dict(deltas or {})
+
+        conn = None
+        try:
+            conn = _get_conn()
+            conn.execute(
+                """
+                INSERT INTO regression_history
+                (run_date, run_time, pipeline_version, dataset_path, eval_mode, profile,
+                 total, top1_accuracy, top3_accuracy, fastpath_precision, fastpath_count,
+                 confidence_calibration_ece, baseline_version,
+                 delta_top1_accuracy, delta_top3_accuracy,
+                 delta_fastpath_precision, delta_confidence_calibration_ece,
+                 metrics_json, per_specialty_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_date,
+                    run_time,
+                    str(pipeline_version or ""),
+                    str(dataset_path or ""),
+                    str(eval_mode or metrics.get("eval_mode") or ""),
+                    str(profile or metrics.get("profile") or ""),
+                    _safe_int(metrics.get("total", 0)),
+                    _safe_float(metrics.get("top1_accuracy", 0.0)),
+                    _safe_float(metrics.get("top3_accuracy", 0.0)),
+                    _safe_float(metrics.get("fastpath_precision", 0.0)),
+                    _safe_int(metrics.get("fastpath_count", 0)),
+                    _safe_float(metrics.get("confidence_calibration_ece", 0.0)),
+                    str(baseline_version or ""),
+                    _safe_float(deltas.get("top1_accuracy", 0.0)),
+                    _safe_float(deltas.get("top3_accuracy", 0.0)),
+                    _safe_float(deltas.get("fastpath_precision", 0.0)),
+                    _safe_float(deltas.get("confidence_calibration_ece", 0.0)),
+                    json.dumps(metrics, ensure_ascii=False),
+                    json.dumps(metrics.get("per_specialty_accuracy", {}), ensure_ascii=False),
+                    time.time(),
+                ),
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"保存 regression 记录失败（不影响主流程）: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def get_latest_regression_run(
+        self,
+        *,
+        dataset_path: str = "",
+        eval_mode: str = "",
+        profile: str = "",
+        exclude_pipeline_version: str = "",
+    ) -> dict | None:
+        """Return the latest persisted regression snapshot for the given dataset/mode."""
+        conn = None
+        try:
+            conn = _get_conn()
+            clauses: list[str] = []
+            params: list[object] = []
+            if dataset_path:
+                clauses.append("dataset_path = ?")
+                params.append(str(dataset_path))
+            if eval_mode:
+                clauses.append("eval_mode = ?")
+                params.append(str(eval_mode))
+            if profile:
+                clauses.append("profile = ?")
+                params.append(str(profile))
+            if exclude_pipeline_version:
+                clauses.append("pipeline_version != ?")
+                params.append(str(exclude_pipeline_version))
+
+            where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            row = conn.execute(
+                f"""
+                SELECT
+                    pipeline_version,
+                    dataset_path,
+                    eval_mode,
+                    profile,
+                    total,
+                    top1_accuracy,
+                    top3_accuracy,
+                    fastpath_precision,
+                    fastpath_count,
+                    confidence_calibration_ece,
+                    baseline_version,
+                    delta_top1_accuracy,
+                    delta_top3_accuracy,
+                    delta_fastpath_precision,
+                    delta_confidence_calibration_ece,
+                    metrics_json,
+                    per_specialty_json,
+                    run_date,
+                    run_time,
+                    created_at
+                FROM regression_history
+                {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            if not row:
+                return None
+        except Exception as e:
+            logger.warning(f"读取 regression 记录失败: {e}")
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
+
+        try:
+            metrics = json.loads(row[15] or "{}")
+        except Exception:
+            metrics = {}
+        try:
+            per_specialty = json.loads(row[16] or "{}")
+        except Exception:
+            per_specialty = {}
+
+        return {
+            "pipeline_version": str(row[0] or ""),
+            "dataset_path": str(row[1] or ""),
+            "eval_mode": str(row[2] or ""),
+            "profile": str(row[3] or ""),
+            "total": _safe_int(row[4]),
+            "top1_accuracy": _safe_float(row[5]),
+            "top3_accuracy": _safe_float(row[6]),
+            "fastpath_precision": _safe_float(row[7]),
+            "fastpath_count": _safe_int(row[8]),
+            "confidence_calibration_ece": _safe_float(row[9]),
+            "baseline_version": str(row[10] or ""),
+            "delta": {
+                "top1_accuracy": _safe_float(row[11]),
+                "top3_accuracy": _safe_float(row[12]),
+                "fastpath_precision": _safe_float(row[13]),
+                "confidence_calibration_ece": _safe_float(row[14]),
+            },
+            "metrics": metrics,
+            "per_specialty_accuracy": per_specialty,
+            "run_date": str(row[17] or ""),
+            "run_time": str(row[18] or ""),
+            "created_at": _safe_float(row[19]),
+        }
+
+    def get_recent_regression_runs(
+        self,
+        *,
+        limit: int = 10,
+        dataset_path: str = "",
+        eval_mode: str = "",
+    ) -> list[dict]:
+        """Return recent regression snapshots for trend inspection."""
+        conn = None
+        try:
+            conn = _get_conn()
+            clauses: list[str] = []
+            params: list[object] = []
+            if dataset_path:
+                clauses.append("dataset_path = ?")
+                params.append(str(dataset_path))
+            if eval_mode:
+                clauses.append("eval_mode = ?")
+                params.append(str(eval_mode))
+            params.append(max(int(limit or 0), 1))
+            where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            rows = conn.execute(
+                f"""
+                SELECT
+                    pipeline_version,
+                    dataset_path,
+                    eval_mode,
+                    total,
+                    top1_accuracy,
+                    top3_accuracy,
+                    fastpath_precision,
+                    confidence_calibration_ece,
+                    run_date,
+                    run_time,
+                    created_at
+                FROM regression_history
+                {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        except Exception as e:
+            logger.warning(f"读取 regression 历史失败: {e}")
+            return []
+        finally:
+            if conn is not None:
+                conn.close()
+
+        return [
+            {
+                "pipeline_version": str(row[0] or ""),
+                "dataset_path": str(row[1] or ""),
+                "eval_mode": str(row[2] or ""),
+                "total": _safe_int(row[3]),
+                "top1_accuracy": _safe_float(row[4]),
+                "top3_accuracy": _safe_float(row[5]),
+                "fastpath_precision": _safe_float(row[6]),
+                "confidence_calibration_ece": _safe_float(row[7]),
+                "run_date": str(row[8] or ""),
+                "run_time": str(row[9] or ""),
+                "created_at": _safe_float(row[10]),
+            }
+            for row in rows
+        ]
 
     def get_recent_knowledge_hit_details(self, days: int = 7) -> list[dict]:
         """Return recent result-level knowledge hit rows for review linkage."""
