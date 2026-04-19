@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 
 def test_match_agent_isolates_single_future_exception(monkeypatch):
     from src import match_engine
@@ -299,3 +301,211 @@ def test_match_agent_retry_can_fallback_to_llm_strategy(monkeypatch):
     assert captured["validate_calls"] == [("canonical search 1", "retry canonical search")]
     assert captured["resolve_calls"][1]["canonical_query"]["search_query"] == "retry canonical search"
     assert results[0]["retry_trace"]["strategy"] == "llm_suggested_search"
+
+
+def test_match_agent_batches_retry_after_initial_llm_phase(monkeypatch):
+    from src import agent_matcher, match_engine
+
+    state = {
+        "initial_calls": 0,
+        "search_calls_before_initial_complete": 0,
+    }
+    state_lock = threading.Lock()
+    all_initial_started = threading.Event()
+
+    class DummyAgentMatcher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def is_circuit_open(self):
+            return False
+
+    class DummyRuleValidator:
+        def validate_results(self, _results):
+            return None
+
+    class DummyReranker:
+        def rerank(self, query, candidates):
+            return [{**candidate, "rerank_query": query} for candidate in candidates]
+
+    class DummySearcher:
+        def search(self, query, top_k=None, books=None):
+            with state_lock:
+                if state["initial_calls"] < 2:
+                    state["search_calls_before_initial_complete"] += 1
+            return [{
+                "quota_id": f"Q-RETRY-{query}",
+                "name": "retry candidate",
+                "param_match": True,
+                "param_score": 0.95,
+                "param_tier": 2,
+            }]
+
+    class DummyValidator:
+        def validate_candidates(self, full_query, candidates, supplement_query=None):
+            return candidates
+
+    def fake_prepare_match_iteration(*, item, idx, total, results, exp_hits, rule_hits, **kwargs):
+        ctx = {
+            "name": item.get("name", ""),
+            "desc": item.get("description", ""),
+            "canonical_query": {
+                "raw_query": item.get("name", ""),
+                "validation_query": f"canonical validation {idx}",
+                "search_query": f"canonical search {idx}",
+            },
+        }
+        candidates = [{
+            "quota_id": f"Q-{idx}",
+            "name": f"candidate-{idx}",
+            "param_match": True,
+            "param_score": 0.9,
+            "param_tier": 2,
+        }]
+        return False, exp_hits, rule_hits, (ctx, "legacy full query", "legacy search query", candidates, {}, {})
+
+    def fake_resolve_agent_mode_result(**kwargs):
+        search_query = kwargs.get("search_query", "")
+        with state_lock:
+            if search_query.startswith("canonical search"):
+                state["initial_calls"] += 1
+                if state["initial_calls"] == 2:
+                    all_initial_started.set()
+        if search_query.startswith("canonical search"):
+            all_initial_started.wait(timeout=1.0)
+            return {
+                "bill_item": kwargs["item"],
+                "quotas": [{"quota_id": "Q-LOW", "name": "low quota", "unit": "m"}],
+                "confidence": 40,
+                "explanation": "needs retry",
+                "match_source": "agent",
+                "candidates_count": len(kwargs["candidates"]),
+                "suggested_search": f"retry {search_query}",
+            }, 0, 0
+        return {
+            "bill_item": kwargs["item"],
+            "quotas": [{"quota_id": "Q-HIGH", "name": "high quota", "unit": "m"}],
+            "confidence": 88,
+            "explanation": "retried",
+            "match_source": "agent_retry",
+            "candidates_count": len(kwargs["candidates"]),
+        }, 0, 0
+
+    monkeypatch.setattr(agent_matcher, "AgentMatcher", DummyAgentMatcher)
+    monkeypatch.setattr(match_engine, "_create_rule_validator_and_reranker",
+                        lambda province=None: (DummyRuleValidator(), DummyReranker()))
+    monkeypatch.setattr(match_engine, "_load_rule_kb", lambda province=None: None)
+    monkeypatch.setattr(match_engine, "_prepare_match_iteration", fake_prepare_match_iteration)
+    monkeypatch.setattr(match_engine, "_should_skip_agent_llm",
+                        lambda candidates, exp_backup=None, rule_backup=None, route_profile=None: False)
+    monkeypatch.setattr(match_engine, "_resolve_agent_mode_result", fake_resolve_agent_mode_result)
+    monkeypatch.setattr(match_engine.config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+    monkeypatch.setattr(match_engine.config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(match_engine.config, "LLM_CONCURRENT", 2)
+    monkeypatch.setattr(match_engine.config, "HYBRID_TOP_K", 5)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_PARALLEL_ENABLED", False)
+    monkeypatch.setattr(match_engine.config, "AGENT_RETRY_CONCURRENT", 2)
+
+    results = match_engine.match_agent(
+        [{"name": "retry-1", "description": ""}, {"name": "retry-2", "description": ""}],
+        searcher=DummySearcher(),
+        validator=DummyValidator(),
+        experience_db=None,
+        llm_type="deepseek",
+        province="test",
+    )
+
+    assert state["search_calls_before_initial_complete"] == 0
+    assert [result["match_source"] for result in results] == ["agent_retry", "agent_retry"]
+
+
+def test_match_agent_preserves_same_batch_consistency_hint_for_later_items(monkeypatch):
+    from types import SimpleNamespace
+
+    from src import match_engine
+
+    prepare_calls = []
+
+    class DummyRuleValidator:
+        def validate_results(self, _results):
+            return None
+
+    class DummyReranker:
+        def rerank(self, _query, candidates):
+            return candidates
+
+    class DummySearcher:
+        def search(self, _query, top_k=None, books=None):
+            return []
+
+    class DummyValidator:
+        def validate_candidates(self, _full_query, candidates, supplement_query=None):
+            return candidates
+
+    def fake_prepare_match_iteration(*, item, idx, total, results, exp_hits, rule_hits, **kwargs):
+        hints = tuple(item.get("_context_hints", []) or [])
+        prepare_calls.append((idx, hints))
+        candidate = {
+            "quota_id": "Q-FIRST" if idx == 1 else ("Q-HINT" if hints else "Q-NOHINT"),
+            "name": "风管安装" if idx == 1 or hints else "普通安装",
+            "param_match": True,
+            "param_score": 0.95,
+            "param_tier": 2,
+        }
+        ctx = {
+            "name": item.get("name", ""),
+            "desc": item.get("description", ""),
+            "query_route": None,
+            "canonical_query": {
+                "raw_query": item.get("name", ""),
+                "validation_query": f"canonical validation {idx}",
+                "search_query": f"canonical search {idx}",
+            },
+        }
+        return False, exp_hits, rule_hits, (ctx, "legacy full query", "legacy search query", [candidate], {}, {})
+
+    def fake_resolve_search_mode_result(item, candidates, exp_backup, rule_backup, exp_hits, rule_hits):
+        top = candidates[0]
+        return {
+            "bill_item": item,
+            "quotas": [{"quota_id": top["quota_id"], "name": top["name"], "unit": "m"}],
+            "confidence": 90,
+            "explanation": top["name"],
+            "match_source": "search_fastpath",
+            "candidates_count": len(candidates),
+        }, exp_hits, rule_hits
+
+    monkeypatch.setattr(match_engine, "_create_rule_validator_and_reranker",
+                        lambda province=None: (DummyRuleValidator(), DummyReranker()))
+    monkeypatch.setattr(match_engine, "_load_rule_kb", lambda province=None: None)
+    monkeypatch.setattr(match_engine, "_prepare_match_iteration", fake_prepare_match_iteration)
+    monkeypatch.setattr(match_engine, "_resolve_search_mode_result", fake_resolve_search_mode_result)
+    monkeypatch.setattr(match_engine, "get_fastpath_decision",
+                        lambda *args, **kwargs: SimpleNamespace(can_fastpath=True))
+    monkeypatch.setattr(match_engine, "_should_audit_fastpath", lambda decision: False)
+    monkeypatch.setattr(match_engine, "lookup_consistency_hint",
+                        lambda province, item_name, specialty: None)
+    monkeypatch.setattr(match_engine, "remember_consistency_hint",
+                        lambda **kwargs: None)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_BATCH_SIZE", 10)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_CONCURRENT", 1)
+    monkeypatch.setattr(match_engine.config, "AGENT_STAGE1_PARALLEL_ENABLED", False)
+
+    results = match_engine.match_agent(
+        [
+            {"name": "阀门", "description": "", "specialty": "给排水"},
+            {"name": "阀门", "description": "", "specialty": "给排水", "_is_ambiguous_short": True},
+        ],
+        searcher=DummySearcher(),
+        validator=DummyValidator(),
+        experience_db=None,
+        llm_type="deepseek",
+        province="test",
+    )
+
+    assert results[1]["quotas"][0]["quota_id"] == "Q-HINT"
+    assert prepare_calls == [
+        (1, ()),
+        (2, ()),
+        (2, ("风管安装",)),
+    ]

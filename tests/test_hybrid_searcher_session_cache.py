@@ -290,3 +290,32 @@ def test_kb_keyword_cache_expires_by_ttl(monkeypatch):
     searcher.search("same query", top_k=1, item={"adaptive_strategy": "standard"})
 
     assert searcher.universal_kb.calls == ["same query", "same query"]
+
+
+def test_store_cache_value_uses_cache_lock():
+    searcher = _make_searcher()
+
+    class _TrackedLock:
+        def __init__(self):
+            self.entered = 0
+
+        def __enter__(self):
+            self.entered += 1
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    tracked_lock = _TrackedLock()
+    searcher._cache_lock = tracked_lock
+
+    searcher._store_cache_value(
+        searcher._session_cache,
+        "k1",
+        [{"quota_id": "Q-1"}],
+        ttl_sec=30.0,
+        max_size=10,
+    )
+
+    assert tracked_lock.entered >= 1
+    assert "k1" in searcher._session_cache

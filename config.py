@@ -649,6 +649,18 @@ LOW_CONFIDENCE_RETRY_THRESHOLD = int(os.getenv("LOW_CONFIDENCE_RETRY_THRESHOLD",
 LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS = min(
     1, max(0, int(os.getenv("LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", "1")))
 )
+AGENT_STAGE1_PARALLEL_ENABLED = os.getenv(
+    "AGENT_STAGE1_PARALLEL_ENABLED", "1"
+).strip().lower() not in ("0", "false", "no", "off", "")
+AGENT_STAGE1_BATCH_SIZE = max(
+    1, int(os.getenv("AGENT_STAGE1_BATCH_SIZE", "10") or 10)
+)
+AGENT_STAGE1_CONCURRENT = max(
+    1, int(os.getenv("AGENT_STAGE1_CONCURRENT", str(AGENT_STAGE1_BATCH_SIZE)) or AGENT_STAGE1_BATCH_SIZE)
+)
+AGENT_RETRY_CONCURRENT = max(
+    1, int(os.getenv("AGENT_RETRY_CONCURRENT", str(LLM_CONCURRENT)) or LLM_CONCURRENT)
+)
 
 # ============================================================
 # L3 一致性反思（同类清单定额一致性检查）

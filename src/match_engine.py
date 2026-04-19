@@ -313,6 +313,51 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
                              include_prior_candidates: bool = True,
                              performance_monitor: PerformanceMonitor | None = None) -> tuple[bool, int, int, dict | None]:
     """统一单条清单的前置命中消费和候选准备。"""
+    stage1 = _prepare_match_iteration_deferred(
+        item=item,
+        experience_db=experience_db,
+        rule_validator=rule_validator,
+        province=province,
+        exact_exp_direct=exact_exp_direct,
+        searcher=searcher,
+        reranker=reranker,
+        validator=validator,
+        lightweight_experience=lightweight_experience,
+        lightweight_rule_prematch=lightweight_rule_prematch,
+        include_prior_candidates=include_prior_candidates,
+        performance_monitor=performance_monitor,
+    )
+    consumed, exp_hits, rule_hits = _consume_early_result(
+        results=results,
+        early_result=stage1.get("early_result"),
+        early_type=stage1.get("early_type"),
+        idx=idx,
+        total=total,
+        interval=interval,
+        exp_hits=exp_hits,
+        rule_hits=rule_hits,
+        log_types=log_types,
+        is_agent=is_agent,
+        agent_hits=agent_hits,
+    )
+    if consumed:
+        return True, exp_hits, rule_hits, None
+    return False, exp_hits, rule_hits, stage1.get("prepared_bundle")
+
+
+def _prepare_match_iteration_deferred(*,
+                                      item: dict,
+                                      experience_db,
+                                      rule_validator: RuleValidator,
+                                      province: str,
+                                      exact_exp_direct: bool,
+                                      searcher: HybridSearcher,
+                                      reranker,
+                                      validator: ParamValidator,
+                                      lightweight_experience: bool = False,
+                                      lightweight_rule_prematch: bool = False,
+                                      include_prior_candidates: bool = True,
+                                      performance_monitor: PerformanceMonitor | None = None) -> dict:
     prepared = _prepare_item_for_matching(
         item, experience_db, rule_validator, province=province,
         exact_exp_direct=exact_exp_direct,
@@ -326,26 +371,17 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
         if prepared_item is not item:
             item["adaptive_strategy"] = prepared_item.get("adaptive_strategy")
             item["_adaptive_strategy_meta"] = prepared_item.get("_adaptive_strategy_meta")
-    consumed, exp_hits, rule_hits = _consume_early_result(
-        results=results,
-        early_result=prepared.get("early_result"),
-        early_type=prepared.get("early_type"),
-        idx=idx,
-        total=total,
-        interval=interval,
-        exp_hits=exp_hits,
-        rule_hits=rule_hits,
-        log_types=log_types,
-        is_agent=is_agent,
-        agent_hits=agent_hits,
-    )
-    if consumed:
-        return True, exp_hits, rule_hits, None
-    return (
-        False,
-        exp_hits,
-        rule_hits,
-        _prepare_candidates_from_prepared(
+    if prepared.get("early_result") is not None:
+        return {
+            "consumed": True,
+            "early_result": prepared.get("early_result"),
+            "early_type": prepared.get("early_type"),
+        }
+    return {
+        "consumed": False,
+        "early_result": None,
+        "early_type": None,
+        "prepared_bundle": _prepare_candidates_from_prepared(
             prepared,
             searcher,
             reranker,
@@ -353,7 +389,7 @@ def _prepare_match_iteration(item: dict, idx: int, total: int,
             include_prior_candidates=include_prior_candidates,
             performance_monitor=performance_monitor,
         ),
-    )
+    }
 
 
 def _append_search_result_and_log(results: list[dict], result: dict,
@@ -1457,8 +1493,2140 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         except Exception:
             pass
 
+    def _build_prepare_error_result(item: dict, idx: int, message: str, *, performance_monitor) -> dict:
+        result = {
+            "bill_item": item,
+            "quotas": [],
+            "confidence": 0,
+            "explanation": message,
+            "match_source": "agent_prepare_error",
+            "no_match_reason": message,
+            "candidates_count": 0,
+        }
+        _append_trace_step(result, "agent_prepare_exception", error=message)
+        _attach_performance_snapshot(
+            result,
+            performance_monitor,
+            idx=idx,
+            total=total,
+        )
+        return result
+
+    def _prepare_agent_task(idx: int, item: dict) -> dict:
+        performance_monitor = PerformanceMonitor()
+        consumed_results = []
+        try:
+            consumed, item_exp_hits, item_rule_hits, prepared_bundle = _prepare_match_iteration(
+                item=item,
+                idx=idx,
+                total=total,
+                results=consumed_results,
+                exp_hits=0,
+                rule_hits=0,
+                experience_db=experience_db,
+                rule_validator=rule_validator,
+                province=province,
+                exact_exp_direct=True,
+                searcher=searcher,
+                reranker=reranker,
+                validator=validator,
+                interval=50,
+                log_types={"experience_exact", "rule_direct"},
+                is_agent=True,
+                agent_hits=0,
+                performance_monitor=performance_monitor,
+            )
+        except Exception as e:
+            logger.error(f"phase1 prepare failed (#{idx}): {e}")
+            return {
+                "consumed": True,
+                "result": _build_prepare_error_result(
+                    item,
+                    idx,
+                    f"phase1 prepare failed: {e}",
+                    performance_monitor=performance_monitor,
+                ),
+                "exp_hits": 0,
+                "rule_hits": 0,
+                "performance_monitor": performance_monitor,
+            }
+
+        if consumed:
+            result = consumed_results[-1] if consumed_results else _build_prepare_error_result(
+                item,
+                idx,
+                "phase1 consumed without result",
+                performance_monitor=performance_monitor,
+            )
+            _attach_performance_snapshot(
+                result,
+                performance_monitor,
+                idx=idx,
+                total=total,
+            )
+            return {
+                "consumed": True,
+                "result": result,
+                "exp_hits": int(item_exp_hits or 0),
+                "rule_hits": int(item_rule_hits or 0),
+                "performance_monitor": performance_monitor,
+            }
+
+        return {
+            "consumed": False,
+            "prepared_bundle": prepared_bundle,
+            "exp_hits": int(item_exp_hits or 0),
+            "rule_hits": int(item_rule_hits or 0),
+            "performance_monitor": performance_monitor,
+        }
+
+    def _queue_retry_task(result: dict, task: dict, overview_ctx: str | None = None) -> dict | None:
+        idx = task["idx"]
+        item = task["item"]
+        candidates = task["candidates"]
+        if task["is_audit"] or not candidates:
+            return None
+
+        canonical_query, full_query, search_query = _canonical_query_views(
+            task.get("canonical_query"),
+            full_query=task.get("full_query", ""),
+            search_query=task.get("search_query", ""),
+        )
+        retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+        max_retry_attempts = min(
+            1, max(0, int(getattr(config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)))
+        )
+        current_retry_attempts = int(task.get("retry_attempts", 0) or 0)
+        confidence = result.get("confidence", 100)
+        ai_not_found = result.get("_ai_recommended_not_found", False)
+        retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+
+        if hasattr(agent, "is_circuit_open"):
+            llm_circuit_open = bool(agent.is_circuit_open())
+        else:
+            llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+
+        if not ((confidence < retry_threshold) or ai_not_found):
+            return None
+        if current_retry_attempts >= max_retry_attempts:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_retry_budget_exhausted",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+
+        retry_plan = _select_agent_retry_strategy(
+            canonical_query=canonical_query,
+            validation_query=full_query,
+            search_query=search_query,
+            result=result,
+            ai_not_found=ai_not_found,
+        )
+        if not retry_plan:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_no_strategy",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+        if llm_circuit_open and retry_plan.get("source") == "llm":
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_llm_circuit_open",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+                strategy=retry_plan.get("strategy"),
+                strategy_source=retry_plan.get("source"),
+            )
+            return None
+
+        retry_query = retry_plan["query"]
+        retry_canonical_query = dict(canonical_query or {})
+        retry_canonical_query["search_query"] = retry_query
+        retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
+            retry_canonical_query,
+            full_query=full_query,
+            search_query=retry_query,
+        )
+        retry_attempt = current_retry_attempts + 1
+        logger.info(f"#{idx} {retry_reason}，加入延迟重试批次: '{retry_search_query}'")
+        _attach_agent_retry_trace(
+            result,
+            trigger=retry_reason,
+            attempted=False,
+            status="queued",
+            attempt=retry_attempt,
+            max_attempts=max_retry_attempts,
+            strategy=retry_plan["strategy"],
+            strategy_source=retry_plan["source"],
+            strategy_detail=retry_plan["detail"],
+            original_search_query=search_query,
+            retry_search_query=retry_search_query,
+            confidence_before=confidence,
+        )
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "name": task["name"],
+            "desc": task["desc"],
+            "exp_backup": task["exp_backup"],
+            "rule_backup": task["rule_backup"],
+            "search_query": search_query,
+            "retry_canonical_query": retry_canonical_query,
+            "retry_validation_query": retry_validation_query,
+            "retry_search_query": retry_search_query,
+            "retry_plan": retry_plan,
+            "retry_reason": retry_reason,
+            "retry_attempt": retry_attempt,
+            "max_retry_attempts": max_retry_attempts,
+            "confidence_before": confidence,
+            "base_result": result,
+            "base_exp_hits": int(task.get("_resolved_exp_hits", 0) or 0),
+            "base_rule_hits": int(task.get("_resolved_rule_hits", 0) or 0),
+            "performance_monitor": task.get("performance_monitor"),
+            "overview_context": overview_ctx or _build_overview_context(item),
+        }
+
+    def _run_retry_task(retry_task: dict) -> tuple[int, dict, int, int, bool]:
+        idx = retry_task["idx"]
+        candidates = retry_task["candidates"]
+        retry_plan = retry_task["retry_plan"]
+        retry_reason = retry_task["retry_reason"]
+        retry_attempt = retry_task["retry_attempt"]
+        max_retry_attempts = retry_task["max_retry_attempts"]
+        search_query = retry_task["search_query"]
+        retry_search_query = retry_task["retry_search_query"]
+        retry_validation_query = retry_task["retry_validation_query"]
+        retry_canonical_query = retry_task["retry_canonical_query"]
+        confidence = retry_task["confidence_before"]
+        base_result = retry_task["base_result"]
+        base_exp_hits = int(retry_task.get("base_exp_hits", 0) or 0)
+        base_rule_hits = int(retry_task.get("base_rule_hits", 0) or 0)
+
+        try:
+            retry_candidates = searcher.search(retry_search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+            if retry_candidates and len(retry_candidates) > 1:
+                retry_candidates = reranker.rerank(retry_search_query, retry_candidates)
+            if retry_candidates:
+                retry_candidates = validator.validate_candidates(
+                    retry_validation_query,
+                    retry_candidates,
+                    supplement_query=retry_search_query,
+                )
+            if not retry_candidates:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_retry_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            seen_ids = {}
+            for candidate in candidates:
+                quota_id = candidate.get("quota_id", "")
+                if quota_id:
+                    seen_ids[quota_id] = candidate
+            new_added = 0
+            for candidate in retry_candidates:
+                quota_id = candidate.get("quota_id", "")
+                if not quota_id:
+                    continue
+                if quota_id not in seen_ids:
+                    seen_ids[quota_id] = candidate
+                    new_added += 1
+                elif candidate.get("param_score", 0) > seen_ids[quota_id].get("param_score", 0):
+                    seen_ids[quota_id] = candidate
+
+            if not seen_ids:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_merged_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            merged = sorted(
+                seen_ids.values(),
+                key=lambda x: (x.get("param_tier", 1), x.get("param_score", 0)),
+                reverse=True,
+            )[:20]
+            logger.info(f"#{idx} retry candidate merge: old={len(candidates)} + new={new_added} => merged={len(merged)}")
+
+            retry_result, retry_exp_hits, retry_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=retry_task["item"],
+                candidates=merged,
+                experience_db=experience_db,
+                canonical_query=retry_canonical_query,
+                rule_kb=rule_kb,
+                name=retry_task["name"],
+                desc=retry_task["desc"],
+                exp_backup=retry_task["exp_backup"],
+                rule_backup=retry_task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=retry_validation_query,
+                search_query=retry_search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=retry_task["overview_context"],
+            )
+            retry_confidence = retry_result.get("confidence", 0)
+            improved = retry_confidence > confidence
+            _attach_agent_retry_trace(
+                retry_result if improved else base_result,
+                trigger=retry_reason,
+                attempted=True,
+                status="completed" if improved else "not_improved",
+                attempt=retry_attempt,
+                max_attempts=max_retry_attempts,
+                strategy=retry_plan["strategy"],
+                strategy_source=retry_plan["source"],
+                strategy_detail=retry_plan["detail"],
+                original_search_query=search_query,
+                retry_search_query=retry_search_query,
+                confidence_before=confidence,
+                confidence_after=retry_confidence,
+            )
+            if improved:
+                final_exp_hits = int(retry_exp_hits or 0) or base_exp_hits
+                final_rule_hits = int(retry_rule_hits or 0) or base_rule_hits
+                logger.info(f"#{idx} Agent retry success: {confidence}->{retry_confidence}")
+                return idx, retry_result, final_exp_hits, final_rule_hits, True
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+        except Exception as e:
+            logger.debug(f"#{idx} Agent delayed retry failed (keep original result): {e}")
+            _append_trace_step(base_result, "agent_retry_exception", error=str(e))
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+
+    consistency_memory_agent = {}
+    stage1_parallel_enabled = bool(getattr(config, "AGENT_STAGE1_PARALLEL_ENABLED", True))
+    prepare_batch_size = max(
+        1,
+        int(
+            getattr(
+                config,
+                "AGENT_STAGE1_BATCH_SIZE",
+                getattr(config, "AGENT_PREPARE_BATCH_SIZE", 10),
+            )
+            or 10
+        ),
+    )
+    prepare_concurrent = max(
+        1,
+        int(
+            getattr(
+                config,
+                "AGENT_STAGE1_CONCURRENT",
+                getattr(config, "AGENT_PREPARE_CONCURRENT", prepare_batch_size),
+            )
+            or prepare_batch_size
+        ),
+    )
+    logger.info(
+        f"agent_prepare_parallel: enabled={stage1_parallel_enabled}, "
+        f"batch_size={prepare_batch_size}, concurrent={prepare_concurrent}"
+    )
+    phase1_completed = 0
+
+    for batch_start in range(0, total, prepare_batch_size):
+        batch_entries = [
+            {
+                "idx": idx,
+                "item": bill_items[idx - 1],
+            }
+            for idx in range(batch_start + 1, min(total, batch_start + prepare_batch_size) + 1)
+        ]
+        for entry in batch_entries:
+            item = entry["item"]
+            _inject_consistency_hint(item, consistency_memory_agent, province=province)
+            entry["hint_signature"] = tuple(item.get("_context_hints", []) or [])
+
+        batch_outputs = {}
+        max_workers = min(prepare_concurrent, len(batch_entries)) if stage1_parallel_enabled else 1
+        if max_workers <= 1:
+            for entry in batch_entries:
+                idx = entry["idx"]
+                item = entry["item"]
+                batch_outputs[idx] = _prepare_agent_task(idx, item)
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_prepare_agent_task, entry["idx"], entry["item"]): entry["idx"]
+                    for entry in batch_entries
+                }
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    batch_outputs[idx] = future.result()
+
+        for entry in batch_entries:
+            idx = entry["idx"]
+            item = entry["item"]
+            _inject_consistency_hint(item, consistency_memory_agent, province=province)
+            refreshed_hint_signature = tuple(item.get("_context_hints", []) or [])
+            if refreshed_hint_signature != tuple(entry.get("hint_signature") or ()):
+                batch_outputs[idx] = _prepare_agent_task(idx, item)
+                entry["hint_signature"] = refreshed_hint_signature
+            output = batch_outputs[idx]
+            performance_monitor = output.get("performance_monitor")
+            exp_hits += int(output.get("exp_hits", 0) or 0)
+            rule_hits += int(output.get("rule_hits", 0) or 0)
+            phase1_completed += 1
+
+            if output.get("consumed"):
+                result = output["result"]
+                results_by_idx[idx] = result
+                _update_match_stats(result)
+                _update_consistency_memory(consistency_memory_agent, item, result, province=province)
+                _notify_progress(phase1_completed, phase=1)
+                continue
+
+            ctx, full_query, search_query, candidates, exp_backup, rule_backup = output["prepared_bundle"]
+            canonical_query = _canonical_query_payload(
+                ctx,
+                full_query=full_query,
+                search_query=search_query,
+                item=item,
+            )
+            name = ctx["name"]
+            desc = ctx["desc"]
+            item["query_route"] = ctx.get("query_route")
+            item["canonical_query"] = canonical_query
+
+            fastpath_decision = None
+            try:
+                fastpath_decision = get_fastpath_decision(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    route_profile=ctx.get("query_route"),
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+                should_skip_agent = bool(fastpath_decision and fastpath_decision.can_fastpath)
+            except TypeError:
+                should_skip_agent = _should_skip_agent_llm(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+
+            if should_skip_agent:
+                fast_result, fast_exp_hits, fast_rule_hits = _resolve_search_mode_result(
+                    item, candidates, exp_backup, rule_backup, 0, 0)
+                exp_hits += int(fast_exp_hits or 0)
+                rule_hits += int(fast_rule_hits or 0)
+                _mark_agent_fastpath(fast_result)
+                _attach_performance_snapshot(fast_result, performance_monitor, idx=idx, total=total)
+                fastpath_hits += 1
+                results_by_idx[idx] = fast_result
+                _update_match_stats(fast_result)
+                _update_consistency_memory(consistency_memory_agent, item, fast_result, province=province)
+
+                if _should_audit_fastpath(fastpath_decision):
+                    fastpath_audit_total += 1
+                    llm_tasks.append(_make_llm_task(
+                        idx=idx,
+                        item=item,
+                        candidates=candidates,
+                        canonical_query=canonical_query,
+                        name=name,
+                        desc=desc,
+                        exp_backup=exp_backup,
+                        rule_backup=rule_backup,
+                        is_audit=True,
+                        performance_monitor=performance_monitor,
+                    ))
+            else:
+                llm_tasks.append(_make_llm_task(
+                    idx=idx,
+                    item=item,
+                    candidates=candidates,
+                    canonical_query=canonical_query,
+                    name=name,
+                    desc=desc,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    is_audit=False,
+                    performance_monitor=performance_monitor,
+                ))
+
+            _notify_progress(phase1_completed, phase=1)
+
+    logger.info(f"第1阶段完成: 快速通道{fastpath_hits}条, 需LLM{len(llm_tasks)}条")
+
+    if llm_tasks:
+        concurrent = max(1, config.LLM_CONCURRENT)
+        retry_tasks = []
+
+        def _process_llm_task(task):
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
+            ctx_summary = _build_overview_context(item)
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                canonical_query=canonical_query,
+                rule_kb=rule_kb,
+                name=task["name"],
+                desc=task["desc"],
+                exp_backup=task["exp_backup"],
+                rule_backup=task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
+            )
+            task["_resolved_exp_hits"] = int(task_exp_hits or 0)
+            task["_resolved_rule_hits"] = int(task_rule_hits or 0)
+            retry_task = _queue_retry_task(result, task, overview_ctx=ctx_summary)
+            return idx, result, int(task_exp_hits or 0), int(task_rule_hits or 0), task["is_audit"], retry_task
+
+        logger.info(f"第2阶段初次LLM: {len(llm_tasks)}条任务, 并发={concurrent}")
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                task = futures[future]
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                is_audit = task["is_audit"]
+                retry_task = None
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit, retry_task = future.result()
+                except Exception as e:
+                    logger.error(f"LLM并发任务失败(#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, task["exp_backup"], task["rule_backup"], 0, 0)
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"LLM任务降级也失败(#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM任务异常且降级失败: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM任务异常: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
+
+                if is_audit:
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        _append_trace_step(
+                            result,
+                            "agent_fastpath_overruled",
+                            fastpath_signature=list(_result_quota_signature(fast_result)),
+                            llm_signature=list(_result_quota_signature(result)),
+                        )
+                        results_by_idx[idx] = result
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get(
+                            "name",
+                            fast_result.get("original_name", fast_result.get("name", "?")),
+                        )
+                        logger.info(
+                            f"抽检不一致 #{idx} [{item_name}]: fastpath={fast_sig} -> llm={llm_sig}"
+                        )
+                else:
+                    results_by_idx[idx] = result
+                    agent_hits += 1
+                    if retry_task:
+                        retry_tasks.append(retry_task)
+                    else:
+                        _attach_performance_snapshot(
+                            result,
+                            task.get("performance_monitor"),
+                            idx=idx,
+                            total=total,
+                        )
+                        _update_match_stats(result)
+                        exp_hits += int(task_exp_hits or 0)
+                        rule_hits += int(task_rule_hits or 0)
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+
+        if retry_tasks:
+            retry_concurrent = max(
+                1,
+                int(getattr(config, "AGENT_RETRY_CONCURRENT", concurrent) or concurrent),
+            )
+            logger.info(f"第2阶段延迟重试: {len(retry_tasks)}条任务, 并发={concurrent}")
+            with ThreadPoolExecutor(max_workers=retry_concurrent) as pool:
+                futures = {pool.submit(_run_retry_task, task): task for task in retry_tasks}
+                completed_retry = 0
+                for future in as_completed(futures):
+                    completed_retry += 1
+                    task = futures[future]
+                    idx = task["idx"]
+                    try:
+                        idx, result, task_exp_hits, task_rule_hits, _improved = future.result()
+                    except Exception as e:
+                        logger.error(f"Agent retry task failed(#{idx}): {e}")
+                        result = task["base_result"]
+                        task_exp_hits = int(task.get("base_exp_hits", 0) or 0)
+                        task_rule_hits = int(task.get("base_rule_hits", 0) or 0)
+                        _append_trace_step(result, "agent_retry_exception", error=str(e))
+
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    results_by_idx[idx] = result
+                    _update_match_stats(result)
+                    exp_hits += int(task_exp_hits or 0)
+                    rule_hits += int(task_rule_hits or 0)
+
+                    if completed_retry % 10 == 0 or completed_retry == len(retry_tasks):
+                        logger.info(f"Agent retry进度: {completed_retry}/{len(retry_tasks)}")
+
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            _finalize_trace(results_by_idx[idx])
+            results.append(results_by_idx[idx])
+        else:
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] 缺失匹配结果，生成兜底空结果")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "匹配过程异常，未能产生结果",
+                "match_source": "missing_fallback",
+                "no_match_reason": "处理过程中结果丢失",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
+
+    logger.info(
+        f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
+        f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条"
+    )
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(
+            f"快速通道抽检: {fastpath_audit_total}条, 不一致{fastpath_audit_mismatch}条, "
+            f"一致率 {consistency:.1f}%"
+        )
+
+    try:
+        from src.consistency_checker import check_and_fix
+
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
+
+    for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
+        _append_trace_step(
+            result,
+            "final_validate",
+            final_source=result.get("match_source", ""),
+            final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
+        )
+        _finalize_trace(result)
+
+    return results
+
+    if llm_tasks:
+        concurrent = max(1, config.LLM_CONCURRENT)
+        retry_tasks = []
+
+        def _process_llm_task(task):
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
+            ctx_summary = _build_overview_context(item)
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                canonical_query=canonical_query,
+                rule_kb=rule_kb,
+                name=task["name"],
+                desc=task["desc"],
+                exp_backup=task["exp_backup"],
+                rule_backup=task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
+            )
+            task["_resolved_exp_hits"] = int(task_exp_hits or 0)
+            task["_resolved_rule_hits"] = int(task_rule_hits or 0)
+            retry_task = _queue_retry_task(result, task, overview_ctx=ctx_summary)
+            return idx, result, int(task_exp_hits or 0), int(task_rule_hits or 0), task["is_audit"], retry_task
+
+        logger.info(f"第2阶段初次LLM: {len(llm_tasks)}条任务, 并发={concurrent}")
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                task = futures[future]
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                is_audit = task["is_audit"]
+                retry_task = None
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit, retry_task = future.result()
+                except Exception as e:
+                    logger.error(f"LLM并发任务失败(#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, task["exp_backup"], task["rule_backup"], 0, 0)
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"LLM任务降级也失败(#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM任务异常且降级失败: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM任务异常: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
+
+                if is_audit:
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        _append_trace_step(
+                            result,
+                            "agent_fastpath_overruled",
+                            fastpath_signature=list(_result_quota_signature(fast_result)),
+                            llm_signature=list(_result_quota_signature(result)),
+                        )
+                        results_by_idx[idx] = result
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get(
+                            "name",
+                            fast_result.get("original_name", fast_result.get("name", "?")),
+                        )
+                        logger.info(
+                            f"抽检不一致 #{idx} [{item_name}]: fastpath={fast_sig} -> llm={llm_sig}"
+                        )
+                else:
+                    results_by_idx[idx] = result
+                    agent_hits += 1
+                    if retry_task:
+                        retry_tasks.append(retry_task)
+                    else:
+                        _attach_performance_snapshot(
+                            result,
+                            task.get("performance_monitor"),
+                            idx=idx,
+                            total=total,
+                        )
+                        _update_match_stats(result)
+                        exp_hits += int(task_exp_hits or 0)
+                        rule_hits += int(task_rule_hits or 0)
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+
+        if retry_tasks:
+            logger.info(f"第2阶段延迟重试: {len(retry_tasks)}条任务, 并发={concurrent}")
+            with ThreadPoolExecutor(max_workers=concurrent) as pool:
+                futures = {pool.submit(_run_retry_task, task): task for task in retry_tasks}
+                completed_retry = 0
+                for future in as_completed(futures):
+                    completed_retry += 1
+                    task = futures[future]
+                    idx = task["idx"]
+                    try:
+                        idx, result, task_exp_hits, task_rule_hits, _improved = future.result()
+                    except Exception as e:
+                        logger.error(f"Agent retry task failed(#{idx}): {e}")
+                        result = task["base_result"]
+                        task_exp_hits = int(task.get("base_exp_hits", 0) or 0)
+                        task_rule_hits = int(task.get("base_rule_hits", 0) or 0)
+                        _append_trace_step(result, "agent_retry_exception", error=str(e))
+
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    results_by_idx[idx] = result
+                    _update_match_stats(result)
+                    exp_hits += int(task_exp_hits or 0)
+                    rule_hits += int(task_rule_hits or 0)
+
+                    if completed_retry % 10 == 0 or completed_retry == len(retry_tasks):
+                        logger.info(f"Agent retry进度: {completed_retry}/{len(retry_tasks)}")
+
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            _finalize_trace(results_by_idx[idx])
+            results.append(results_by_idx[idx])
+        else:
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] 缺失匹配结果，生成兜底空结果")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "匹配过程异常，未能产生结果",
+                "match_source": "missing_fallback",
+                "no_match_reason": "处理过程中结果丢失",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
+
+    logger.info(
+        f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
+        f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条"
+    )
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(
+            f"快速通道抽检: {fastpath_audit_total}条, 不一致{fastpath_audit_mismatch}条, "
+            f"一致率 {consistency:.1f}%"
+        )
+
+    try:
+        from src.consistency_checker import check_and_fix
+
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
+
+    for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
+        _append_trace_step(
+            result,
+            "final_validate",
+            final_source=result.get("match_source", ""),
+            final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
+        )
+        _finalize_trace(result)
+
+    return results
+
+    if llm_tasks:
+        concurrent = max(1, config.LLM_CONCURRENT)
+        retry_tasks = []
+
+        def _process_llm_task(task):
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
+            ctx_summary = _build_overview_context(item)
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                canonical_query=canonical_query,
+                rule_kb=rule_kb,
+                name=task["name"],
+                desc=task["desc"],
+                exp_backup=task["exp_backup"],
+                rule_backup=task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
+            )
+            task["_resolved_exp_hits"] = int(task_exp_hits or 0)
+            task["_resolved_rule_hits"] = int(task_rule_hits or 0)
+            retry_task = _queue_retry_task(result, task, overview_ctx=ctx_summary)
+            return idx, result, int(task_exp_hits or 0), int(task_rule_hits or 0), task["is_audit"], retry_task
+
+        logger.info(f"第2阶段初次LLM: {len(llm_tasks)}条任务, 并发={concurrent}")
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                task = futures[future]
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                is_audit = task["is_audit"]
+                retry_task = None
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit, retry_task = future.result()
+                except Exception as e:
+                    logger.error(f"LLM并发任务失败(#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, task["exp_backup"], task["rule_backup"], 0, 0)
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"LLM任务降级也失败(#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM任务异常且降级失败: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM任务异常: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
+
+                if is_audit:
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        _append_trace_step(
+                            result,
+                            "agent_fastpath_overruled",
+                            fastpath_signature=list(_result_quota_signature(fast_result)),
+                            llm_signature=list(_result_quota_signature(result)),
+                        )
+                        results_by_idx[idx] = result
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get(
+                            "name",
+                            fast_result.get("original_name", fast_result.get("name", "?")),
+                        )
+                        logger.info(
+                            f"抽检不一致 #{idx} [{item_name}]: fastpath={fast_sig} -> llm={llm_sig}"
+                        )
+                else:
+                    results_by_idx[idx] = result
+                    agent_hits += 1
+                    if retry_task:
+                        retry_tasks.append(retry_task)
+                    else:
+                        _attach_performance_snapshot(
+                            result,
+                            task.get("performance_monitor"),
+                            idx=idx,
+                            total=total,
+                        )
+                        _update_match_stats(result)
+                        exp_hits += int(task_exp_hits or 0)
+                        rule_hits += int(task_rule_hits or 0)
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+
+        if retry_tasks:
+            logger.info(f"第2阶段延迟重试: {len(retry_tasks)}条任务, 并发={concurrent}")
+            with ThreadPoolExecutor(max_workers=concurrent) as pool:
+                futures = {pool.submit(_run_retry_task, task): task for task in retry_tasks}
+                completed_retry = 0
+                for future in as_completed(futures):
+                    completed_retry += 1
+                    task = futures[future]
+                    idx = task["idx"]
+                    try:
+                        idx, result, task_exp_hits, task_rule_hits, _improved = future.result()
+                    except Exception as e:
+                        logger.error(f"Agent retry task failed(#{idx}): {e}")
+                        result = task["base_result"]
+                        task_exp_hits = int(task.get("base_exp_hits", 0) or 0)
+                        task_rule_hits = int(task.get("base_rule_hits", 0) or 0)
+                        _append_trace_step(result, "agent_retry_exception", error=str(e))
+
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    results_by_idx[idx] = result
+                    _update_match_stats(result)
+                    exp_hits += int(task_exp_hits or 0)
+                    rule_hits += int(task_rule_hits or 0)
+
+                    if completed_retry % 10 == 0 or completed_retry == len(retry_tasks):
+                        logger.info(f"Agent retry进度: {completed_retry}/{len(retry_tasks)}")
+
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            _finalize_trace(results_by_idx[idx])
+            results.append(results_by_idx[idx])
+        else:
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] 缺失匹配结果，生成兜底空结果")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "匹配过程异常，未能产生结果",
+                "match_source": "missing_fallback",
+                "no_match_reason": "处理过程中结果丢失",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
+
+    logger.info(
+        f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
+        f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条"
+    )
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(
+            f"快速通道抽检: {fastpath_audit_total}条, 不一致{fastpath_audit_mismatch}条, "
+            f"一致率 {consistency:.1f}%"
+        )
+
+    try:
+        from src.consistency_checker import check_and_fix
+
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
+
+    for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
+        _append_trace_step(
+            result,
+            "final_validate",
+            final_source=result.get("match_source", ""),
+            final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
+        )
+        _finalize_trace(result)
+
+    return results
+
+    def _queue_retry_task(result: dict, task: dict, overview_ctx: str | None = None) -> dict | None:
+        idx = task["idx"]
+        item = task["item"]
+        candidates = task["candidates"]
+        if task["is_audit"] or not candidates:
+            return None
+
+        canonical_query, full_query, search_query = _canonical_query_views(
+            task.get("canonical_query"),
+            full_query=task.get("full_query", ""),
+            search_query=task.get("search_query", ""),
+        )
+        retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+        max_retry_attempts = min(
+            1, max(0, int(getattr(config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)))
+        )
+        current_retry_attempts = int(task.get("retry_attempts", 0) or 0)
+        confidence = result.get("confidence", 100)
+        ai_not_found = result.get("_ai_recommended_not_found", False)
+        retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+
+        if hasattr(agent, "is_circuit_open"):
+            llm_circuit_open = bool(agent.is_circuit_open())
+        else:
+            llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+
+        if not ((confidence < retry_threshold) or ai_not_found):
+            return None
+        if current_retry_attempts >= max_retry_attempts:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_retry_budget_exhausted",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+
+        retry_plan = _select_agent_retry_strategy(
+            canonical_query=canonical_query,
+            validation_query=full_query,
+            search_query=search_query,
+            result=result,
+            ai_not_found=ai_not_found,
+        )
+        if not retry_plan:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_no_strategy",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+        if llm_circuit_open and retry_plan.get("source") == "llm":
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_llm_circuit_open",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+                strategy=retry_plan.get("strategy"),
+                strategy_source=retry_plan.get("source"),
+            )
+            return None
+
+        retry_query = retry_plan["query"]
+        retry_canonical_query = dict(canonical_query or {})
+        retry_canonical_query["search_query"] = retry_query
+        retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
+            retry_canonical_query,
+            full_query=full_query,
+            search_query=retry_query,
+        )
+        retry_attempt = current_retry_attempts + 1
+        logger.info(f"#{idx} {retry_reason}，加入延迟重试批次: '{retry_search_query}'")
+        _attach_agent_retry_trace(
+            result,
+            trigger=retry_reason,
+            attempted=False,
+            status="queued",
+            attempt=retry_attempt,
+            max_attempts=max_retry_attempts,
+            strategy=retry_plan["strategy"],
+            strategy_source=retry_plan["source"],
+            strategy_detail=retry_plan["detail"],
+            original_search_query=search_query,
+            retry_search_query=retry_search_query,
+            confidence_before=confidence,
+        )
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "name": task["name"],
+            "desc": task["desc"],
+            "exp_backup": task["exp_backup"],
+            "rule_backup": task["rule_backup"],
+            "search_query": search_query,
+            "retry_canonical_query": retry_canonical_query,
+            "retry_validation_query": retry_validation_query,
+            "retry_search_query": retry_search_query,
+            "retry_plan": retry_plan,
+            "retry_reason": retry_reason,
+            "retry_attempt": retry_attempt,
+            "max_retry_attempts": max_retry_attempts,
+            "confidence_before": confidence,
+            "base_result": result,
+            "base_exp_hits": int(task.get("_resolved_exp_hits", 0) or 0),
+            "base_rule_hits": int(task.get("_resolved_rule_hits", 0) or 0),
+            "performance_monitor": task.get("performance_monitor"),
+            "overview_context": overview_ctx or _build_overview_context(item),
+        }
+
+    def _run_retry_task(retry_task: dict) -> tuple[int, dict, int, int, bool]:
+        idx = retry_task["idx"]
+        candidates = retry_task["candidates"]
+        retry_plan = retry_task["retry_plan"]
+        retry_reason = retry_task["retry_reason"]
+        retry_attempt = retry_task["retry_attempt"]
+        max_retry_attempts = retry_task["max_retry_attempts"]
+        search_query = retry_task["search_query"]
+        retry_search_query = retry_task["retry_search_query"]
+        retry_validation_query = retry_task["retry_validation_query"]
+        retry_canonical_query = retry_task["retry_canonical_query"]
+        confidence = retry_task["confidence_before"]
+        base_result = retry_task["base_result"]
+        base_exp_hits = int(retry_task.get("base_exp_hits", 0) or 0)
+        base_rule_hits = int(retry_task.get("base_rule_hits", 0) or 0)
+
+        try:
+            retry_candidates = searcher.search(retry_search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+            if retry_candidates and len(retry_candidates) > 1:
+                retry_candidates = reranker.rerank(retry_search_query, retry_candidates)
+            if retry_candidates:
+                retry_candidates = validator.validate_candidates(
+                    retry_validation_query,
+                    retry_candidates,
+                    supplement_query=retry_search_query,
+                )
+            if not retry_candidates:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_retry_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            seen_ids = {}
+            for candidate in candidates:
+                quota_id = candidate.get("quota_id", "")
+                if quota_id:
+                    seen_ids[quota_id] = candidate
+            new_added = 0
+            for candidate in retry_candidates:
+                quota_id = candidate.get("quota_id", "")
+                if not quota_id:
+                    continue
+                if quota_id not in seen_ids:
+                    seen_ids[quota_id] = candidate
+                    new_added += 1
+                elif candidate.get("param_score", 0) > seen_ids[quota_id].get("param_score", 0):
+                    seen_ids[quota_id] = candidate
+
+            if not seen_ids:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_merged_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            merged = sorted(
+                seen_ids.values(),
+                key=lambda x: (x.get("param_tier", 1), x.get("param_score", 0)),
+                reverse=True,
+            )[:20]
+            logger.info(f"#{idx} retry candidate merge: old={len(candidates)} + new={new_added} => merged={len(merged)}")
+
+            retry_result, retry_exp_hits, retry_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=retry_task["item"],
+                candidates=merged,
+                experience_db=experience_db,
+                canonical_query=retry_canonical_query,
+                rule_kb=rule_kb,
+                name=retry_task["name"],
+                desc=retry_task["desc"],
+                exp_backup=retry_task["exp_backup"],
+                rule_backup=retry_task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=retry_validation_query,
+                search_query=retry_search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=retry_task["overview_context"],
+            )
+            retry_confidence = retry_result.get("confidence", 0)
+            improved = retry_confidence > confidence
+            _attach_agent_retry_trace(
+                retry_result if improved else base_result,
+                trigger=retry_reason,
+                attempted=True,
+                status="completed" if improved else "not_improved",
+                attempt=retry_attempt,
+                max_attempts=max_retry_attempts,
+                strategy=retry_plan["strategy"],
+                strategy_source=retry_plan["source"],
+                strategy_detail=retry_plan["detail"],
+                original_search_query=search_query,
+                retry_search_query=retry_search_query,
+                confidence_before=confidence,
+                confidence_after=retry_confidence,
+            )
+            if improved:
+                final_exp_hits = int(retry_exp_hits or 0) or base_exp_hits
+                final_rule_hits = int(retry_rule_hits or 0) or base_rule_hits
+                logger.info(f"#{idx} Agent retry success: {confidence}->{retry_confidence}")
+                return idx, retry_result, final_exp_hits, final_rule_hits, True
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+        except Exception as e:
+            logger.debug(f"#{idx} Agent delayed retry failed (keep original result): {e}")
+            _append_trace_step(base_result, "agent_retry_exception", error=str(e))
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+
+    consistency_memory_agent = {}
+    stage1_parallel_enabled = bool(getattr(config, "AGENT_STAGE1_PARALLEL_ENABLED", True))
+    prepare_batch_size = max(
+        1,
+        int(
+            getattr(
+                config,
+                "AGENT_STAGE1_BATCH_SIZE",
+                getattr(config, "AGENT_PREPARE_BATCH_SIZE", 10),
+            )
+            or 10
+        ),
+    )
+    prepare_concurrent = max(
+        1,
+        int(
+            getattr(
+                config,
+                "AGENT_STAGE1_CONCURRENT",
+                getattr(config, "AGENT_PREPARE_CONCURRENT", prepare_batch_size),
+            )
+            or prepare_batch_size
+        ),
+    )
+    logger.info(
+        f"agent_prepare_parallel: enabled={stage1_parallel_enabled}, "
+        f"batch_size={prepare_batch_size}, concurrent={prepare_concurrent}"
+    )
+    phase1_completed = 0
+
+    for batch_start in range(0, total, prepare_batch_size):
+        batch_entries = [
+            (idx, bill_items[idx - 1])
+            for idx in range(batch_start + 1, min(total, batch_start + prepare_batch_size) + 1)
+        ]
+        for _, item in batch_entries:
+            _inject_consistency_hint(item, consistency_memory_agent, province=province)
+
+        batch_outputs = {}
+        max_workers = min(prepare_concurrent, len(batch_entries)) if stage1_parallel_enabled else 1
+        if max_workers <= 1:
+            for idx, item in batch_entries:
+                batch_outputs[idx] = _prepare_agent_task(idx, item)
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_prepare_agent_task, idx, item): idx
+                    for idx, item in batch_entries
+                }
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    batch_outputs[idx] = future.result()
+
+        for idx, item in batch_entries:
+            output = batch_outputs[idx]
+            performance_monitor = output.get("performance_monitor")
+            exp_hits += int(output.get("exp_hits", 0) or 0)
+            rule_hits += int(output.get("rule_hits", 0) or 0)
+            phase1_completed += 1
+
+            if output.get("consumed"):
+                result = output["result"]
+                results_by_idx[idx] = result
+                _update_match_stats(result)
+                _update_consistency_memory(consistency_memory_agent, item, result, province=province)
+                _notify_progress(phase1_completed, phase=1)
+                continue
+
+            ctx, full_query, search_query, candidates, exp_backup, rule_backup = output["prepared_bundle"]
+            canonical_query = _canonical_query_payload(
+                ctx,
+                full_query=full_query,
+                search_query=search_query,
+                item=item,
+            )
+            name = ctx["name"]
+            desc = ctx["desc"]
+            item["query_route"] = ctx.get("query_route")
+            item["canonical_query"] = canonical_query
+
+            fastpath_decision = None
+            try:
+                fastpath_decision = get_fastpath_decision(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    route_profile=ctx.get("query_route"),
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+                should_skip_agent = bool(fastpath_decision and fastpath_decision.can_fastpath)
+            except TypeError:
+                should_skip_agent = _should_skip_agent_llm(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+
+            if should_skip_agent:
+                fast_result, fast_exp_hits, fast_rule_hits = _resolve_search_mode_result(
+                    item, candidates, exp_backup, rule_backup, 0, 0)
+                exp_hits += int(fast_exp_hits or 0)
+                rule_hits += int(fast_rule_hits or 0)
+                _mark_agent_fastpath(fast_result)
+                _attach_performance_snapshot(fast_result, performance_monitor, idx=idx, total=total)
+                fastpath_hits += 1
+                results_by_idx[idx] = fast_result
+                _update_match_stats(fast_result)
+                _update_consistency_memory(consistency_memory_agent, item, fast_result, province=province)
+
+                if _should_audit_fastpath(fastpath_decision):
+                    fastpath_audit_total += 1
+                    llm_tasks.append(_make_llm_task(
+                        idx=idx,
+                        item=item,
+                        candidates=candidates,
+                        canonical_query=canonical_query,
+                        name=name,
+                        desc=desc,
+                        exp_backup=exp_backup,
+                        rule_backup=rule_backup,
+                        is_audit=True,
+                        performance_monitor=performance_monitor,
+                    ))
+            else:
+                llm_tasks.append(_make_llm_task(
+                    idx=idx,
+                    item=item,
+                    candidates=candidates,
+                    canonical_query=canonical_query,
+                    name=name,
+                    desc=desc,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    is_audit=False,
+                    performance_monitor=performance_monitor,
+                ))
+
+            _notify_progress(phase1_completed, phase=1)
+
+    logger.info(f"第1阶段完成: 快速通道{fastpath_hits}条, 需LLM{len(llm_tasks)}条")
+
+    if llm_tasks:
+        concurrent = max(1, config.LLM_CONCURRENT)
+        retry_tasks = []
+
+        def _process_llm_task(task):
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
+            ctx_summary = _build_overview_context(item)
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                canonical_query=canonical_query,
+                rule_kb=rule_kb,
+                name=task["name"],
+                desc=task["desc"],
+                exp_backup=task["exp_backup"],
+                rule_backup=task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
+            )
+            task["_resolved_exp_hits"] = int(task_exp_hits or 0)
+            task["_resolved_rule_hits"] = int(task_rule_hits or 0)
+            retry_task = _queue_retry_task(result, task, overview_ctx=ctx_summary)
+            return idx, result, int(task_exp_hits or 0), int(task_rule_hits or 0), task["is_audit"], retry_task
+
+        logger.info(f"第2阶段初次LLM: {len(llm_tasks)}条任务, 并发={concurrent}")
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                task = futures[future]
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                is_audit = task["is_audit"]
+                retry_task = None
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit, retry_task = future.result()
+                except Exception as e:
+                    logger.error(f"LLM并发任务失败(#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, task["exp_backup"], task["rule_backup"], 0, 0)
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"LLM任务降级也失败(#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM任务异常且降级失败: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM任务异常: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
+
+                if is_audit:
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        _append_trace_step(
+                            result,
+                            "agent_fastpath_overruled",
+                            fastpath_signature=list(_result_quota_signature(fast_result)),
+                            llm_signature=list(_result_quota_signature(result)),
+                        )
+                        results_by_idx[idx] = result
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get(
+                            "name",
+                            fast_result.get("original_name", fast_result.get("name", "?")),
+                        )
+                        logger.info(
+                            f"抽检不一致 #{idx} [{item_name}]: fastpath={fast_sig} -> llm={llm_sig}"
+                        )
+                else:
+                    results_by_idx[idx] = result
+                    agent_hits += 1
+                    if retry_task:
+                        retry_tasks.append(retry_task)
+                    else:
+                        _attach_performance_snapshot(
+                            result,
+                            task.get("performance_monitor"),
+                            idx=idx,
+                            total=total,
+                        )
+                        _update_match_stats(result)
+                        exp_hits += int(task_exp_hits or 0)
+                        rule_hits += int(task_rule_hits or 0)
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"LLM进度: {completed}/{len(llm_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+
+        if retry_tasks:
+            logger.info(f"第2阶段延迟重试: {len(retry_tasks)}条任务, 并发={concurrent}")
+            retry_concurrent = max(
+                1,
+                int(getattr(config, "AGENT_RETRY_CONCURRENT", concurrent) or concurrent),
+            )
+            with ThreadPoolExecutor(max_workers=retry_concurrent) as pool:
+                futures = {pool.submit(_run_retry_task, task): task for task in retry_tasks}
+                completed_retry = 0
+                for future in as_completed(futures):
+                    completed_retry += 1
+                    task = futures[future]
+                    idx = task["idx"]
+                    try:
+                        idx, result, task_exp_hits, task_rule_hits, _improved = future.result()
+                    except Exception as e:
+                        logger.error(f"Agent retry task failed(#{idx}): {e}")
+                        result = task["base_result"]
+                        task_exp_hits = int(task.get("base_exp_hits", 0) or 0)
+                        task_rule_hits = int(task.get("base_rule_hits", 0) or 0)
+                        _append_trace_step(result, "agent_retry_exception", error=str(e))
+
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    results_by_idx[idx] = result
+                    _update_match_stats(result)
+                    exp_hits += int(task_exp_hits or 0)
+                    rule_hits += int(task_rule_hits or 0)
+
+                    if completed_retry % 10 == 0 or completed_retry == len(retry_tasks):
+                        logger.info(f"Agent retry进度: {completed_retry}/{len(retry_tasks)}")
+
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            _finalize_trace(results_by_idx[idx])
+            results.append(results_by_idx[idx])
+        else:
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] 缺失匹配结果，生成兜底空结果")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "匹配过程异常，未能产生结果",
+                "match_source": "missing_fallback",
+                "no_match_reason": "处理过程中结果丢失",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
+
+    logger.info(
+        f"Agent匹配完成: 经验库{exp_hits}, 规则{rule_hits}, "
+        f"Agent分析{agent_hits}/{len(bill_items)}条, 快速通道{fastpath_hits}条"
+    )
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(
+            f"快速通道抽检: {fastpath_audit_total}条, 不一致{fastpath_audit_mismatch}条, "
+            f"一致率 {consistency:.1f}%"
+        )
+
+    try:
+        from src.consistency_checker import check_and_fix
+
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3一致性反思跳过（不影响输出）: {e}")
+
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
+
+    for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
+        _append_trace_step(
+            result,
+            "final_validate",
+            final_source=result.get("match_source", ""),
+            final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
+        )
+        _finalize_trace(result)
+
+    return results
+
+    def _queue_retry_task(result: dict, task: dict, overview_ctx: str | None = None) -> dict | None:
+        idx = task["idx"]
+        item = task["item"]
+        candidates = task["candidates"]
+        if task["is_audit"] or not candidates:
+            return None
+
+        canonical_query, full_query, search_query = _canonical_query_views(
+            task.get("canonical_query"),
+            full_query=task.get("full_query", ""),
+            search_query=task.get("search_query", ""),
+        )
+        retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+        max_retry_attempts = min(
+            1, max(0, int(getattr(config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)))
+        )
+        current_retry_attempts = int(task.get("retry_attempts", 0) or 0)
+        confidence = result.get("confidence", 100)
+        ai_not_found = result.get("_ai_recommended_not_found", False)
+        retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+
+        if hasattr(agent, "is_circuit_open"):
+            llm_circuit_open = bool(agent.is_circuit_open())
+        else:
+            llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+
+        if not ((confidence < retry_threshold) or ai_not_found):
+            return None
+        if current_retry_attempts >= max_retry_attempts:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_retry_budget_exhausted",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+
+        retry_plan = _select_agent_retry_strategy(
+            canonical_query=canonical_query,
+            validation_query=full_query,
+            search_query=search_query,
+            result=result,
+            ai_not_found=ai_not_found,
+        )
+        if not retry_plan:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_no_strategy",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+        if llm_circuit_open and retry_plan.get("source") == "llm":
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_llm_circuit_open",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+                strategy=retry_plan.get("strategy"),
+                strategy_source=retry_plan.get("source"),
+            )
+            return None
+
+        retry_query = retry_plan["query"]
+        retry_canonical_query = dict(canonical_query or {})
+        retry_canonical_query["search_query"] = retry_query
+        retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
+            retry_canonical_query,
+            full_query=full_query,
+            search_query=retry_query,
+        )
+        retry_attempt = current_retry_attempts + 1
+        logger.info(f"#{idx} {retry_reason}，加入延迟重试批次: '{retry_search_query}'")
+        _attach_agent_retry_trace(
+            result,
+            trigger=retry_reason,
+            attempted=False,
+            status="queued",
+            attempt=retry_attempt,
+            max_attempts=max_retry_attempts,
+            strategy=retry_plan["strategy"],
+            strategy_source=retry_plan["source"],
+            strategy_detail=retry_plan["detail"],
+            original_search_query=search_query,
+            retry_search_query=retry_search_query,
+            confidence_before=confidence,
+        )
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "name": task["name"],
+            "desc": task["desc"],
+            "exp_backup": task["exp_backup"],
+            "rule_backup": task["rule_backup"],
+            "search_query": search_query,
+            "retry_canonical_query": retry_canonical_query,
+            "retry_validation_query": retry_validation_query,
+            "retry_search_query": retry_search_query,
+            "retry_plan": retry_plan,
+            "retry_reason": retry_reason,
+            "retry_attempt": retry_attempt,
+            "max_retry_attempts": max_retry_attempts,
+            "confidence_before": confidence,
+            "base_result": result,
+            "base_exp_hits": int(task.get("_resolved_exp_hits", 0) or 0),
+            "base_rule_hits": int(task.get("_resolved_rule_hits", 0) or 0),
+            "performance_monitor": task.get("performance_monitor"),
+            "overview_context": overview_ctx or _build_overview_context(item),
+        }
+
+    def _run_retry_task(retry_task: dict) -> tuple[int, dict, int, int, bool]:
+        idx = retry_task["idx"]
+        candidates = retry_task["candidates"]
+        retry_plan = retry_task["retry_plan"]
+        retry_reason = retry_task["retry_reason"]
+        retry_attempt = retry_task["retry_attempt"]
+        max_retry_attempts = retry_task["max_retry_attempts"]
+        search_query = retry_task["search_query"]
+        retry_search_query = retry_task["retry_search_query"]
+        retry_validation_query = retry_task["retry_validation_query"]
+        retry_canonical_query = retry_task["retry_canonical_query"]
+        confidence = retry_task["confidence_before"]
+        base_result = retry_task["base_result"]
+        base_exp_hits = int(retry_task.get("base_exp_hits", 0) or 0)
+        base_rule_hits = int(retry_task.get("base_rule_hits", 0) or 0)
+
+        try:
+            retry_candidates = searcher.search(retry_search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+            if retry_candidates and len(retry_candidates) > 1:
+                retry_candidates = reranker.rerank(retry_search_query, retry_candidates)
+            if retry_candidates:
+                retry_candidates = validator.validate_candidates(
+                    retry_validation_query,
+                    retry_candidates,
+                    supplement_query=retry_search_query,
+                )
+            if not retry_candidates:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_retry_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            seen_ids = {}
+            for candidate in candidates:
+                quota_id = candidate.get("quota_id", "")
+                if quota_id:
+                    seen_ids[quota_id] = candidate
+            new_added = 0
+            for candidate in retry_candidates:
+                quota_id = candidate.get("quota_id", "")
+                if not quota_id:
+                    continue
+                if quota_id not in seen_ids:
+                    seen_ids[quota_id] = candidate
+                    new_added += 1
+                elif candidate.get("param_score", 0) > seen_ids[quota_id].get("param_score", 0):
+                    seen_ids[quota_id] = candidate
+
+            if not seen_ids:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_merged_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            merged = sorted(
+                seen_ids.values(),
+                key=lambda x: (x.get("param_tier", 1), x.get("param_score", 0)),
+                reverse=True,
+            )[:20]
+            logger.info(f"#{idx} retry candidate merge: old={len(candidates)} + new={new_added} => merged={len(merged)}")
+
+            retry_result, retry_exp_hits, retry_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=retry_task["item"],
+                candidates=merged,
+                experience_db=experience_db,
+                canonical_query=retry_canonical_query,
+                rule_kb=rule_kb,
+                name=retry_task["name"],
+                desc=retry_task["desc"],
+                exp_backup=retry_task["exp_backup"],
+                rule_backup=retry_task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=retry_validation_query,
+                search_query=retry_search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=retry_task["overview_context"],
+            )
+            retry_confidence = retry_result.get("confidence", 0)
+            improved = retry_confidence > confidence
+            _attach_agent_retry_trace(
+                retry_result if improved else base_result,
+                trigger=retry_reason,
+                attempted=True,
+                status="completed" if improved else "not_improved",
+                attempt=retry_attempt,
+                max_attempts=max_retry_attempts,
+                strategy=retry_plan["strategy"],
+                strategy_source=retry_plan["source"],
+                strategy_detail=retry_plan["detail"],
+                original_search_query=search_query,
+                retry_search_query=retry_search_query,
+                confidence_before=confidence,
+                confidence_after=retry_confidence,
+            )
+            if improved:
+                final_exp_hits = int(retry_exp_hits or 0) or base_exp_hits
+                final_rule_hits = int(retry_rule_hits or 0) or base_rule_hits
+                logger.info(f"#{idx} Agent retry success: {confidence}->{retry_confidence}")
+                return idx, retry_result, final_exp_hits, final_rule_hits, True
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+        except Exception as e:
+            logger.debug(f"#{idx} Agent delayed retry failed (keep original result): {e}")
+            _append_trace_step(base_result, "agent_retry_exception", error=str(e))
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+
     # 同文件一致性先验（agent模式同样适用）
     consistency_memory_agent = {}
+    prepare_batch_size = max(1, int(getattr(config, "AGENT_PREPARE_BATCH_SIZE", 10) or 10))
+    prepare_concurrent = max(
+        1,
+        int(getattr(config, "AGENT_PREPARE_CONCURRENT", prepare_batch_size) or prepare_batch_size),
+    )
+    logger.info(
+        f"agent_prepare_parallel: batch_size={prepare_batch_size}, "
+        f"concurrent={prepare_concurrent}"
+    )
+    phase1_completed = 0
 
     for idx, item in enumerate(bill_items, start=1):
         performance_monitor = PerformanceMonitor()
@@ -2023,6 +4191,887 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
 # ============================================================
 # 模式分派
 # ============================================================
+
+def _match_agent_parallelized_impl(
+    bill_items: list[dict],
+    searcher: HybridSearcher,
+    validator: ParamValidator,
+    experience_db=None,
+    llm_type: str = None,
+    province: str = None,
+    project_overview: str = "",
+    progress_callback=None,
+) -> list[dict]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from src.agent_matcher import AgentMatcher
+
+    bootstrap_timings_ms = {}
+
+    agent_llm = llm_type or config.AGENT_LLM
+    _bootstrap_started_at = time.perf_counter()
+    agent = AgentMatcher(llm_type=agent_llm, province=province)
+    bootstrap_timings_ms["agent_matcher"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+
+    method_cards_db = None
+    _bootstrap_started_at = time.perf_counter()
+    try:
+        mc = get_method_cards_db()
+        mc_stats = mc.get_stats()
+        if mc_stats["total_cards"] > 0:
+            method_cards_db = mc
+            logger.info(f"方法卡片知识源已加载: {mc_stats['total_cards']}张")
+    except Exception as e:
+        logger.debug(f"方法卡片加载跳过（不影响主流程）: {e}")
+    bootstrap_timings_ms["method_cards"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+    if not getattr(config, "AGENT_METHOD_CARDS_IN_PROMPT", True):
+        logger.info("L6: 方法卡片 prompt 注入已关闭（统一知识检索仍启用）")
+
+    results_by_idx: dict[int, dict] = {}
+    exp_hits = 0
+    rule_hits = 0
+    agent_hits = 0
+    fastpath_hits = 0
+    fastpath_audit_total = 0
+    fastpath_audit_mismatch = 0
+
+    rule_validator, reranker = _create_rule_validator_and_reranker(province=province)
+
+    _bootstrap_started_at = time.perf_counter()
+    rule_kb = _load_rule_kb(province=province)
+    bootstrap_timings_ms["rule_kb"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+    if not getattr(config, "AGENT_RULES_IN_PROMPT", True):
+        logger.info("L6: 规则知识 prompt 注入已关闭（统一知识检索仍启用）")
+
+    unified_knowledge_retriever = None
+    unified_data_layer = None
+    _bootstrap_started_at = time.perf_counter()
+    try:
+        unified_data_layer = get_unified_data_layer(
+            province=province,
+            experience_db=experience_db,
+        )
+    except Exception as e:
+        logger.debug(f"统一数据层加载跳过（不影响主流程）: {e}")
+        unified_data_layer = None
+    bootstrap_timings_ms["unified_data_layer"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+
+    _bootstrap_started_at = time.perf_counter()
+    if experience_db or rule_kb or method_cards_db or unified_data_layer:
+        try:
+            from src.unified_knowledge import UnifiedKnowledgeRetriever
+
+            unified_knowledge_retriever = UnifiedKnowledgeRetriever(
+                province=province,
+                experience_db=experience_db,
+                rule_kb=rule_kb,
+                method_cards_db=method_cards_db,
+                unified_data_layer=unified_data_layer,
+            )
+        except Exception as e:
+            logger.debug(f"统一知识入口加载失败（降级继续）: {e}")
+            unified_knowledge_retriever = None
+    bootstrap_timings_ms["unified_knowledge_retriever"] = (time.perf_counter() - _bootstrap_started_at) * 1000
+
+    unified_knowledge_cache = {}
+    unified_knowledge_cache_lock = threading.Lock()
+    reference_cases_cache = {}
+    reference_cases_cache_lock = threading.Lock()
+    rules_context_cache = {}
+    rules_context_cache_lock = threading.Lock()
+
+    bootstrap_total_ms = sum(bootstrap_timings_ms.values())
+    bootstrap_summary = ", ".join(
+        f"{name}={elapsed:.1f}ms" for name, elapsed in bootstrap_timings_ms.items()
+    )
+    logger.info(
+        f"Agent模式启动，大模型: {agent_llm}，LLM并发数: {config.LLM_CONCURRENT}"
+    )
+    logger.info(
+        f"agent_bootstrap_summary: total={bootstrap_total_ms:.1f}ms, {bootstrap_summary}"
+    )
+
+    match_stats: dict[str, int] = {}
+    match_stats_lock = threading.Lock()
+    project_context_summary = build_project_context(bill_items)
+    total = len(bill_items)
+    llm_tasks: list[dict] = []
+
+    def _build_overview_context(current_item: dict | None = None) -> str:
+        with match_stats_lock:
+            sorted_stats = sorted(match_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+            stat_lines = [f"{desc}: {count}条" for desc, count in sorted_stats]
+        return format_overview_context(
+            item=current_item,
+            project_context=project_context_summary,
+            project_overview=project_overview,
+            match_stats=stat_lines,
+        )
+
+    def _update_match_stats(result: dict) -> None:
+        bill_item_info = result.get("bill_item", {})
+        bill_name = bill_item_info.get("name", "")[:10]
+        quotas = result.get("quotas", [])
+        if quotas and bill_name:
+            main_id = quotas[0].get("quota_id", "")
+            main_name = quotas[0].get("name", "")[:15]
+            key = f"{bill_name} -> {main_id}({main_name})"
+            with match_stats_lock:
+                match_stats[key] = match_stats.get(key, 0) + 1
+
+    def _make_llm_task(
+        *,
+        idx: int,
+        item: dict,
+        candidates: list[dict],
+        canonical_query: dict,
+        name: str,
+        desc: str,
+        exp_backup: dict,
+        rule_backup: dict,
+        is_audit: bool,
+        performance_monitor: PerformanceMonitor | None = None,
+    ) -> dict:
+        canonical_query, validation_query, resolved_search_query = _canonical_query_views(canonical_query)
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "canonical_query": canonical_query,
+            "full_query": validation_query,
+            "search_query": resolved_search_query,
+            "name": name,
+            "desc": desc,
+            "exp_backup": exp_backup,
+            "rule_backup": rule_backup,
+            "is_audit": is_audit,
+            "performance_monitor": performance_monitor,
+            "retry_attempts": 0,
+        }
+
+    def _notify_progress(current_idx, phase=1, phase_total=None):
+        if not progress_callback:
+            return
+        try:
+            if phase == 1:
+                pct = 30 + int(30 * current_idx / max(total, 1))
+                progress_callback(pct, current_idx, f"搜索中 {current_idx}/{total}")
+            else:
+                pt = phase_total or 1
+                pct = 60 + int(30 * current_idx / max(pt, 1))
+                base_completed = max(total - pt, 0)
+                overall_completed = min(total, base_completed + current_idx)
+                if pt < total:
+                    message = f"AI分析中 {overall_completed}/{total} (AI阶段 {current_idx}/{pt})"
+                else:
+                    message = f"AI分析中 {overall_completed}/{total}"
+                progress_callback(pct, overall_completed, message)
+        except Exception:
+            pass
+
+    def _build_prepare_error_result(item: dict, idx: int, message: str, *, performance_monitor) -> dict:
+        result = {
+            "bill_item": item,
+            "quotas": [],
+            "confidence": 0,
+            "explanation": message,
+            "match_source": "agent_prepare_error",
+            "no_match_reason": message,
+            "candidates_count": 0,
+        }
+        _append_trace_step(result, "agent_prepare_exception", error=message)
+        _attach_performance_snapshot(result, performance_monitor, idx=idx, total=total)
+        return result
+
+    def _prepare_agent_task(idx: int, item: dict) -> dict:
+        performance_monitor = PerformanceMonitor()
+        consumed_results = []
+        try:
+            consumed, item_exp_hits, item_rule_hits, prepared_bundle = _prepare_match_iteration(
+                item=item,
+                idx=idx,
+                total=total,
+                results=consumed_results,
+                exp_hits=0,
+                rule_hits=0,
+                experience_db=experience_db,
+                rule_validator=rule_validator,
+                province=province,
+                exact_exp_direct=True,
+                searcher=searcher,
+                reranker=reranker,
+                validator=validator,
+                interval=50,
+                log_types={"experience_exact", "rule_direct"},
+                is_agent=True,
+                agent_hits=0,
+                performance_monitor=performance_monitor,
+            )
+        except Exception as e:
+            logger.error(f"phase1 prepare failed (#{idx}): {e}")
+            return {
+                "consumed": True,
+                "result": _build_prepare_error_result(
+                    item,
+                    idx,
+                    f"phase1 prepare failed: {e}",
+                    performance_monitor=performance_monitor,
+                ),
+                "exp_hits": 0,
+                "rule_hits": 0,
+                "performance_monitor": performance_monitor,
+            }
+
+        if consumed:
+            result = consumed_results[-1] if consumed_results else _build_prepare_error_result(
+                item,
+                idx,
+                "phase1 consumed without result",
+                performance_monitor=performance_monitor,
+            )
+            _attach_performance_snapshot(result, performance_monitor, idx=idx, total=total)
+            return {
+                "consumed": True,
+                "result": result,
+                "exp_hits": int(item_exp_hits or 0),
+                "rule_hits": int(item_rule_hits or 0),
+                "performance_monitor": performance_monitor,
+            }
+
+        return {
+            "consumed": False,
+            "prepared_bundle": prepared_bundle,
+            "exp_hits": int(item_exp_hits or 0),
+            "rule_hits": int(item_rule_hits or 0),
+            "performance_monitor": performance_monitor,
+        }
+
+    def _queue_retry_task(result: dict, task: dict, overview_ctx: str | None = None) -> dict | None:
+        idx = task["idx"]
+        item = task["item"]
+        candidates = task["candidates"]
+        if task["is_audit"] or not candidates:
+            return None
+
+        canonical_query, full_query, search_query = _canonical_query_views(
+            task.get("canonical_query"),
+            full_query=task.get("full_query", ""),
+            search_query=task.get("search_query", ""),
+        )
+        retry_threshold = getattr(config, "LOW_CONFIDENCE_RETRY_THRESHOLD", 70)
+        max_retry_attempts = min(
+            1, max(0, int(getattr(config, "LOW_CONFIDENCE_RETRY_MAX_ATTEMPTS", 1)))
+        )
+        current_retry_attempts = int(task.get("retry_attempts", 0) or 0)
+        confidence = result.get("confidence", 100)
+        ai_not_found = result.get("_ai_recommended_not_found", False)
+        retry_reason = "AI推荐定额不在候选中" if ai_not_found else f"置信度{confidence}<{retry_threshold}"
+
+        if hasattr(agent, "is_circuit_open"):
+            llm_circuit_open = bool(agent.is_circuit_open())
+        else:
+            llm_circuit_open = bool(getattr(agent, "_llm_circuit_open", False))
+
+        if not ((confidence < retry_threshold) or ai_not_found):
+            return None
+        if current_retry_attempts >= max_retry_attempts:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_retry_budget_exhausted",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+
+        retry_plan = _select_agent_retry_strategy(
+            canonical_query=canonical_query,
+            validation_query=full_query,
+            search_query=search_query,
+            result=result,
+            ai_not_found=ai_not_found,
+        )
+        if not retry_plan:
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_no_strategy",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+            )
+            return None
+        if llm_circuit_open and retry_plan.get("source") == "llm":
+            _attach_agent_retry_trace(
+                result,
+                trigger=retry_reason,
+                attempted=False,
+                status="skipped_llm_circuit_open",
+                attempt=current_retry_attempts,
+                max_attempts=max_retry_attempts,
+                original_search_query=search_query,
+                strategy=retry_plan.get("strategy"),
+                strategy_source=retry_plan.get("source"),
+            )
+            return None
+
+        retry_query = retry_plan["query"]
+        retry_canonical_query = dict(canonical_query or {})
+        retry_canonical_query["search_query"] = retry_query
+        retry_canonical_query, retry_validation_query, retry_search_query = _canonical_query_views(
+            retry_canonical_query,
+            full_query=full_query,
+            search_query=retry_query,
+        )
+        retry_attempt = current_retry_attempts + 1
+        logger.info(f"#{idx} {retry_reason}，加入延迟重试批次: '{retry_search_query}'")
+        _attach_agent_retry_trace(
+            result,
+            trigger=retry_reason,
+            attempted=False,
+            status="queued",
+            attempt=retry_attempt,
+            max_attempts=max_retry_attempts,
+            strategy=retry_plan["strategy"],
+            strategy_source=retry_plan["source"],
+            strategy_detail=retry_plan["detail"],
+            original_search_query=search_query,
+            retry_search_query=retry_search_query,
+            confidence_before=confidence,
+        )
+        return {
+            "idx": idx,
+            "item": item,
+            "candidates": candidates,
+            "name": task["name"],
+            "desc": task["desc"],
+            "exp_backup": task["exp_backup"],
+            "rule_backup": task["rule_backup"],
+            "search_query": search_query,
+            "retry_canonical_query": retry_canonical_query,
+            "retry_validation_query": retry_validation_query,
+            "retry_search_query": retry_search_query,
+            "retry_plan": retry_plan,
+            "retry_reason": retry_reason,
+            "retry_attempt": retry_attempt,
+            "max_retry_attempts": max_retry_attempts,
+            "confidence_before": confidence,
+            "base_result": result,
+            "base_exp_hits": int(task.get("_resolved_exp_hits", 0) or 0),
+            "base_rule_hits": int(task.get("_resolved_rule_hits", 0) or 0),
+            "performance_monitor": task.get("performance_monitor"),
+            "overview_context": overview_ctx or _build_overview_context(item),
+        }
+
+    def _run_retry_task(retry_task: dict) -> tuple[int, dict, int, int, bool]:
+        idx = retry_task["idx"]
+        candidates = retry_task["candidates"]
+        retry_plan = retry_task["retry_plan"]
+        retry_reason = retry_task["retry_reason"]
+        retry_attempt = retry_task["retry_attempt"]
+        max_retry_attempts = retry_task["max_retry_attempts"]
+        search_query = retry_task["search_query"]
+        retry_search_query = retry_task["retry_search_query"]
+        retry_validation_query = retry_task["retry_validation_query"]
+        retry_canonical_query = retry_task["retry_canonical_query"]
+        confidence = retry_task["confidence_before"]
+        base_result = retry_task["base_result"]
+        base_exp_hits = int(retry_task.get("base_exp_hits", 0) or 0)
+        base_rule_hits = int(retry_task.get("base_rule_hits", 0) or 0)
+
+        try:
+            retry_candidates = searcher.search(retry_search_query, top_k=config.HYBRID_TOP_K + 5, books=None)
+            if retry_candidates and len(retry_candidates) > 1:
+                retry_candidates = reranker.rerank(retry_search_query, retry_candidates)
+            if retry_candidates:
+                retry_candidates = validator.validate_candidates(
+                    retry_validation_query,
+                    retry_candidates,
+                    supplement_query=retry_search_query,
+                )
+            if not retry_candidates:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_retry_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            seen_ids = {}
+            for candidate in candidates:
+                quota_id = candidate.get("quota_id", "")
+                if quota_id:
+                    seen_ids[quota_id] = candidate
+            new_added = 0
+            for candidate in retry_candidates:
+                quota_id = candidate.get("quota_id", "")
+                if not quota_id:
+                    continue
+                if quota_id not in seen_ids:
+                    seen_ids[quota_id] = candidate
+                    new_added += 1
+                elif candidate.get("param_score", 0) > seen_ids[quota_id].get("param_score", 0):
+                    seen_ids[quota_id] = candidate
+
+            if not seen_ids:
+                _attach_agent_retry_trace(
+                    base_result,
+                    trigger=retry_reason,
+                    attempted=True,
+                    status="empty_merged_candidates",
+                    attempt=retry_attempt,
+                    max_attempts=max_retry_attempts,
+                    strategy=retry_plan["strategy"],
+                    strategy_source=retry_plan["source"],
+                    strategy_detail=retry_plan["detail"],
+                    original_search_query=search_query,
+                    retry_search_query=retry_search_query,
+                )
+                return idx, base_result, base_exp_hits, base_rule_hits, False
+
+            merged = sorted(
+                seen_ids.values(),
+                key=lambda x: (x.get("param_tier", 1), x.get("param_score", 0)),
+                reverse=True,
+            )[:20]
+            logger.info(f"#{idx} retry candidate merge: old={len(candidates)} + new={new_added} => merged={len(merged)}")
+
+            retry_result, retry_exp_hits, retry_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=retry_task["item"],
+                candidates=merged,
+                experience_db=experience_db,
+                canonical_query=retry_canonical_query,
+                rule_kb=rule_kb,
+                name=retry_task["name"],
+                desc=retry_task["desc"],
+                exp_backup=retry_task["exp_backup"],
+                rule_backup=retry_task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=retry_validation_query,
+                search_query=retry_search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=retry_task["overview_context"],
+            )
+            retry_confidence = retry_result.get("confidence", 0)
+            improved = retry_confidence > confidence
+            _attach_agent_retry_trace(
+                retry_result if improved else base_result,
+                trigger=retry_reason,
+                attempted=True,
+                status="completed" if improved else "not_improved",
+                attempt=retry_attempt,
+                max_attempts=max_retry_attempts,
+                strategy=retry_plan["strategy"],
+                strategy_source=retry_plan["source"],
+                strategy_detail=retry_plan["detail"],
+                original_search_query=search_query,
+                retry_search_query=retry_search_query,
+                confidence_before=confidence,
+                confidence_after=retry_confidence,
+            )
+            if improved:
+                final_exp_hits = int(retry_exp_hits or 0) or base_exp_hits
+                final_rule_hits = int(retry_rule_hits or 0) or base_rule_hits
+                logger.info(f"#{idx} Agent retry success: {confidence}->{retry_confidence}")
+                return idx, retry_result, final_exp_hits, final_rule_hits, True
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+        except Exception as e:
+            logger.debug(f"#{idx} Agent delayed retry failed (keep original result): {e}")
+            _append_trace_step(base_result, "agent_retry_exception", error=str(e))
+            return idx, base_result, base_exp_hits, base_rule_hits, False
+
+    consistency_memory_agent = {}
+    prepare_batch_size = max(1, int(getattr(config, "AGENT_PREPARE_BATCH_SIZE", 10) or 10))
+    prepare_concurrent = max(
+        1,
+        int(getattr(config, "AGENT_PREPARE_CONCURRENT", prepare_batch_size) or prepare_batch_size),
+    )
+    logger.info(
+        f"agent_prepare_parallel: batch_size={prepare_batch_size}, "
+        f"concurrent={prepare_concurrent}"
+    )
+    phase1_completed = 0
+
+    for batch_start in range(0, total, prepare_batch_size):
+        batch_entries = [
+            (idx, bill_items[idx - 1])
+            for idx in range(batch_start + 1, min(total, batch_start + prepare_batch_size) + 1)
+        ]
+        for _, item in batch_entries:
+            _inject_consistency_hint(item, consistency_memory_agent, province=province)
+
+        batch_outputs = {}
+        max_workers = min(prepare_concurrent, len(batch_entries))
+        if max_workers <= 1:
+            for idx, item in batch_entries:
+                batch_outputs[idx] = _prepare_agent_task(idx, item)
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_prepare_agent_task, idx, item): idx
+                    for idx, item in batch_entries
+                }
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    batch_outputs[idx] = future.result()
+
+        for idx, item in batch_entries:
+            output = batch_outputs[idx]
+            performance_monitor = output.get("performance_monitor")
+            exp_hits += int(output.get("exp_hits", 0) or 0)
+            rule_hits += int(output.get("rule_hits", 0) or 0)
+            phase1_completed += 1
+
+            if output.get("consumed"):
+                result = output["result"]
+                results_by_idx[idx] = result
+                _update_match_stats(result)
+                _update_consistency_memory(consistency_memory_agent, item, result, province=province)
+                _notify_progress(phase1_completed, phase=1)
+                continue
+
+            ctx, full_query, search_query, candidates, exp_backup, rule_backup = output["prepared_bundle"]
+            canonical_query = _canonical_query_payload(
+                ctx,
+                full_query=full_query,
+                search_query=search_query,
+                item=item,
+            )
+            name = ctx["name"]
+            desc = ctx["desc"]
+            item["query_route"] = ctx.get("query_route")
+            item["canonical_query"] = canonical_query
+
+            fastpath_decision = None
+            try:
+                fastpath_decision = get_fastpath_decision(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    route_profile=ctx.get("query_route"),
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+                should_skip_agent = bool(fastpath_decision and fastpath_decision.can_fastpath)
+            except TypeError:
+                should_skip_agent = _should_skip_agent_llm(
+                    candidates,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    adaptive_strategy=item.get("adaptive_strategy"),
+                )
+
+            if should_skip_agent:
+                fast_result, fast_exp_hits, fast_rule_hits = _resolve_search_mode_result(
+                    item, candidates, exp_backup, rule_backup, 0, 0)
+                exp_hits += int(fast_exp_hits or 0)
+                rule_hits += int(fast_rule_hits or 0)
+                _mark_agent_fastpath(fast_result)
+                _attach_performance_snapshot(fast_result, performance_monitor, idx=idx, total=total)
+                fastpath_hits += 1
+                results_by_idx[idx] = fast_result
+                _update_match_stats(fast_result)
+                _update_consistency_memory(consistency_memory_agent, item, fast_result, province=province)
+
+                if _should_audit_fastpath(fastpath_decision):
+                    fastpath_audit_total += 1
+                    llm_tasks.append(_make_llm_task(
+                        idx=idx,
+                        item=item,
+                        candidates=candidates,
+                        canonical_query=canonical_query,
+                        name=name,
+                        desc=desc,
+                        exp_backup=exp_backup,
+                        rule_backup=rule_backup,
+                        is_audit=True,
+                        performance_monitor=performance_monitor,
+                    ))
+            else:
+                llm_tasks.append(_make_llm_task(
+                    idx=idx,
+                    item=item,
+                    candidates=candidates,
+                    canonical_query=canonical_query,
+                    name=name,
+                    desc=desc,
+                    exp_backup=exp_backup,
+                    rule_backup=rule_backup,
+                    is_audit=False,
+                    performance_monitor=performance_monitor,
+                ))
+
+            _notify_progress(phase1_completed, phase=1)
+
+    logger.info(f"第1阶段完成: 快速通道{fastpath_hits}条, 需LLM{len(llm_tasks)}条")
+
+
+    if llm_tasks:
+        concurrent = max(1, config.LLM_CONCURRENT)
+        retry_tasks = []
+
+        def _process_llm_task(task):
+            idx = task["idx"]
+            item = task["item"]
+            candidates = task["candidates"]
+            canonical_query, full_query, search_query = _canonical_query_views(
+                task.get("canonical_query"),
+                full_query=task.get("full_query", ""),
+                search_query=task.get("search_query", ""),
+            )
+            ctx_summary = _build_overview_context(item)
+            result, task_exp_hits, task_rule_hits = _resolve_agent_mode_result(
+                agent=agent,
+                item=item,
+                candidates=candidates,
+                experience_db=experience_db,
+                canonical_query=canonical_query,
+                rule_kb=rule_kb,
+                name=task["name"],
+                desc=task["desc"],
+                exp_backup=task["exp_backup"],
+                rule_backup=task["rule_backup"],
+                exp_hits=0,
+                rule_hits=0,
+                full_query=full_query,
+                search_query=search_query,
+                province=province,
+                unified_knowledge_retriever=unified_knowledge_retriever,
+                unified_knowledge_cache=unified_knowledge_cache,
+                unified_knowledge_cache_lock=unified_knowledge_cache_lock,
+                reference_cases_cache=reference_cases_cache,
+                reference_cases_cache_lock=reference_cases_cache_lock,
+                rules_context_cache=rules_context_cache,
+                rules_context_cache_lock=rules_context_cache_lock,
+                method_cards_db=method_cards_db,
+                overview_context=ctx_summary,
+            )
+            task["_resolved_exp_hits"] = int(task_exp_hits or 0)
+            task["_resolved_rule_hits"] = int(task_rule_hits or 0)
+            retry_task = _queue_retry_task(result, task, overview_ctx=ctx_summary)
+            return idx, result, int(task_exp_hits or 0), int(task_rule_hits or 0), task["is_audit"], retry_task
+
+        logger.info(f"agent stage2 initial llm: tasks={len(llm_tasks)}, concurrent={concurrent}")
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            futures = {pool.submit(_process_llm_task, task): task for task in llm_tasks}
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                task = futures[future]
+                idx = task["idx"]
+                item = task["item"]
+                candidates = task["candidates"]
+                is_audit = task["is_audit"]
+                retry_task = None
+                try:
+                    idx, result, task_exp_hits, task_rule_hits, is_audit, retry_task = future.result()
+                except Exception as e:
+                    logger.error(f"agent llm task failed (#{idx}): {e}")
+                    if is_audit:
+                        fast_result = results_by_idx.get(idx)
+                        if fast_result:
+                            _append_trace_step(
+                                fast_result,
+                                "agent_task_exception",
+                                error=str(e),
+                                mode="audit_keep_fastpath",
+                            )
+                        if completed % 10 == 0 or completed == len(llm_tasks):
+                            logger.info(f"agent llm progress: {completed}/{len(llm_tasks)}")
+                        _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+                        continue
+                    try:
+                        result, task_exp_hits, task_rule_hits = _resolve_search_mode_result(
+                            item, candidates, task["exp_backup"], task["rule_backup"], 0, 0
+                        )
+                        _append_trace_step(
+                            result,
+                            "agent_task_exception",
+                            error=str(e),
+                            mode="fallback_search",
+                        )
+                    except Exception as fallback_e:
+                        logger.error(f"agent llm fallback failed (#{idx}): {fallback_e}")
+                        result = {
+                            "bill_item": item,
+                            "quotas": [],
+                            "confidence": 0,
+                            "explanation": f"LLM task failed and fallback failed: {fallback_e}",
+                            "match_source": "agent_error",
+                            "no_match_reason": f"LLM task failed: {e}",
+                            "candidates_count": len(candidates) if candidates else 0,
+                        }
+                        task_exp_hits = 0
+                        task_rule_hits = 0
+
+                if is_audit:
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    fast_result = results_by_idx.get(idx)
+                    if fast_result and _result_quota_signature(result) != _result_quota_signature(fast_result):
+                        fastpath_audit_mismatch += 1
+                        result["agent_fastpath_overruled"] = True
+                        _append_trace_step(
+                            result,
+                            "agent_fastpath_overruled",
+                            fastpath_signature=list(_result_quota_signature(fast_result)),
+                            llm_signature=list(_result_quota_signature(result)),
+                        )
+                        results_by_idx[idx] = result
+                        fast_sig = _result_quota_signature(fast_result)
+                        llm_sig = _result_quota_signature(result)
+                        item_name = (fast_result.get("bill_item") or {}).get(
+                            "name",
+                            fast_result.get("original_name", fast_result.get("name", "?")),
+                        )
+                        logger.info(
+                            f"agent audit mismatch #{idx} [{item_name}]: fastpath={fast_sig} -> llm={llm_sig}"
+                        )
+                else:
+                    results_by_idx[idx] = result
+                    agent_hits += 1
+                    if retry_task:
+                        retry_tasks.append(retry_task)
+                    else:
+                        _attach_performance_snapshot(
+                            result,
+                            task.get("performance_monitor"),
+                            idx=idx,
+                            total=total,
+                        )
+                        _update_match_stats(result)
+                        exp_hits += int(task_exp_hits or 0)
+                        rule_hits += int(task_rule_hits or 0)
+
+                if completed % 10 == 0 or completed == len(llm_tasks):
+                    logger.info(f"agent llm progress: {completed}/{len(llm_tasks)}")
+                _notify_progress(completed, phase=2, phase_total=len(llm_tasks))
+
+        if retry_tasks:
+            retry_concurrent = max(
+                1,
+                int(getattr(config, "AGENT_RETRY_CONCURRENT", concurrent) or concurrent),
+            )
+            logger.info(
+                f"agent stage2 delayed retry: tasks={len(retry_tasks)}, concurrent={retry_concurrent}"
+            )
+            with ThreadPoolExecutor(max_workers=retry_concurrent) as pool:
+                futures = {pool.submit(_run_retry_task, task): task for task in retry_tasks}
+                completed_retry = 0
+                for future in as_completed(futures):
+                    completed_retry += 1
+                    task = futures[future]
+                    idx = task["idx"]
+                    try:
+                        idx, result, task_exp_hits, task_rule_hits, _improved = future.result()
+                    except Exception as e:
+                        logger.error(f"agent retry task failed (#{idx}): {e}")
+                        result = task["base_result"]
+                        task_exp_hits = int(task.get("base_exp_hits", 0) or 0)
+                        task_rule_hits = int(task.get("base_rule_hits", 0) or 0)
+                        _append_trace_step(result, "agent_retry_exception", error=str(e))
+
+                    _attach_performance_snapshot(
+                        result,
+                        task.get("performance_monitor"),
+                        idx=idx,
+                        total=total,
+                    )
+                    results_by_idx[idx] = result
+                    _update_match_stats(result)
+                    exp_hits += int(task_exp_hits or 0)
+                    rule_hits += int(task_rule_hits or 0)
+
+                    if completed_retry % 10 == 0 or completed_retry == len(retry_tasks):
+                        logger.info(f"agent retry progress: {completed_retry}/{len(retry_tasks)}")
+
+    results = []
+    for idx in range(1, len(bill_items) + 1):
+        if idx in results_by_idx:
+            _finalize_trace(results_by_idx[idx])
+            results.append(results_by_idx[idx])
+        else:
+            item = bill_items[idx - 1] if idx <= len(bill_items) else {}
+            item_name = item.get("name", f"#{idx}")
+            logger.warning(f"#{idx} [{item_name}] missing match result, generating fallback")
+            fallback = {
+                "bill_item": item,
+                "quotas": [],
+                "confidence": 0,
+                "explanation": "matching failed before a result was produced",
+                "match_source": "missing_fallback",
+                "no_match_reason": "result was lost during processing",
+                "candidates_count": 0,
+            }
+            _finalize_trace(fallback)
+            results.append(fallback)
+
+    logger.info(
+        f"agent matching complete: exp={exp_hits}, rule={rule_hits}, "
+        f"agent={agent_hits}/{len(bill_items)}, fastpath={fastpath_hits}"
+    )
+    if fastpath_audit_total > 0:
+        audit_ok = fastpath_audit_total - fastpath_audit_mismatch
+        consistency = (audit_ok * 100.0) / fastpath_audit_total
+        logger.info(
+            f"agent fastpath audit: total={fastpath_audit_total}, "
+            f"mismatch={fastpath_audit_mismatch}, consistency={consistency:.1f}%"
+        )
+
+    try:
+        from src.consistency_checker import check_and_fix
+
+        results = check_and_fix(results)
+    except Exception as e:
+        logger.warning(f"L3 consistency review skipped: {e}")
+
+    _append_consistency_review_trace(results)
+    _snapshot_stage_top1(results, "pre_final_validator_top1_id")
+    FinalValidator(
+        province=province,
+        auto_correct=bool(getattr(config, "FINAL_VALIDATOR_AUTO_CORRECT", False)),
+    ).validate_results(results)
+    _mark_stage_top1_change(results, "final_validator", base_top1_field="pre_final_validator_top1_id")
+
+    for result in results:
+        result["post_final_top1_id"] = _top_quota_id(result)
+        _append_trace_step(
+            result,
+            "final_validate",
+            final_source=result.get("match_source", ""),
+            final_confidence=result.get("confidence", 0),
+            post_final_top1_id=result.get("post_final_top1_id", ""),
+            final_changed_by=result.get("final_changed_by", ""),
+            final_validation=result.get("final_validation", {}),
+            final_review_correction=result.get("final_review_correction", {}),
+            batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
+        )
+        _finalize_trace(result)
+
+    return results
 
 def match_by_mode(mode: str, bill_items: list[dict], searcher: HybridSearcher,
                   validator: ParamValidator, experience_db,
