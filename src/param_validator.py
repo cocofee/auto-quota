@@ -1,4 +1,4 @@
-"""
+﻿"""
 参数验证器
 功能：
 1. 对比清单描述中提取的参数和候选定额的参数
@@ -24,6 +24,7 @@ import numpy as np
 from loguru import logger
 
 import config
+from src.bill_item_context import BillItemContext
 from src.text_parser import parser as text_parser
 from src.compat_primitives import (
     MATERIAL_FAMILIES,
@@ -394,6 +395,7 @@ class ParamValidator:
                             search_books: list[str] = None,
                             canonical_features: dict = None,
                             context_prior: dict = None,
+                            bill_item_context: BillItemContext | None = None,
                             reorder_candidates: bool = True) -> list[dict]:
         """
         对候选定额进行参数验证，并按需要补充排序分数。
@@ -414,15 +416,25 @@ class ParamValidator:
         if not candidates:
             return []
 
-        # 优先使用清单清洗阶段已清洗的参数（如卫生器具已剔除DN）
+        context_params = None
+        context_features = None
+        context_prior_from_item = None
+        context_canonical_query = {}
+        if bill_item_context is not None:
+            context_params = bill_item_context.mutable_params()
+            context_features = bill_item_context.mutable_canonical_features()
+            context_prior_from_item = bill_item_context.mutable_context_prior()
+            context_canonical_query = dict(bill_item_context.canonical_query or {})
+
+        # 优先使用清单清洗阶段已清洗的参数；主链传入 BillItemContext 时不再重复解析 bill 文本。
         if bill_params is not None:
-            bill_params = dict(bill_params)  # 复制一份，避免修改原dict
+            bill_params = dict(bill_params)
+        elif context_params is not None:
+            bill_params = context_params
         else:
-            # 从清单文本中提取参数（兼容未经bill_cleaner的调用）
             bill_params = text_parser.parse(query_text)
 
-        # 如果有补充query，从中提取参数填补空缺
-        # （search_query 经过 build_quota_query 规范化，参数提取更可靠）
+        # supplement_query 可能显式携带 query_text 中缺失的档位信息，始终用于补齐缺口。
         if supplement_query:
             supplement_params = text_parser.parse(supplement_query)
             for key, value in supplement_params.items():
@@ -435,10 +447,16 @@ class ParamValidator:
             bill_params["dn"] = bill_params.pop("conduit_dn")
 
         canonical_source_text = " ".join(
-            part for part in (query_text, supplement_query) if part
+            part for part in (
+                context_canonical_query.get("validation_query"),
+                supplement_query,
+                query_text,
+            ) if part
         ).strip()
         if canonical_features is not None:
             bill_canonical_features = dict(canonical_features)
+        elif context_features is not None:
+            bill_canonical_features = context_features
         else:
             bill_canonical_features = text_parser.parse_canonical(
                 canonical_source_text or query_text,
@@ -446,6 +464,8 @@ class ParamValidator:
                 context_prior=context_prior,
             )
         effective_context_prior = dict(context_prior or {})
+        if not effective_context_prior and context_prior_from_item is not None:
+            effective_context_prior = context_prior_from_item
         if not effective_context_prior and bill_canonical_features.get("context_prior"):
             effective_context_prior = dict(bill_canonical_features.get("context_prior") or {})
         bill_logic_targets = self._build_bill_logic_targets(

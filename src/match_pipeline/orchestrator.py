@@ -8,6 +8,7 @@ from loguru import logger
 import config
 
 from src.ambiguity_gate import analyze_ambiguity
+from src.bill_item_context import BillItemContext
 from src.candidate_scoring import (
     compute_candidate_rank_score,
     explain_candidate_rank_score,
@@ -1013,7 +1014,11 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     """
     if province and not item.get("_resolved_province"):
         item["_resolved_province"] = province
-    ctx = _build_item_context(item, performance_monitor=performance_monitor)
+    raw_ctx = _build_item_context(item, performance_monitor=performance_monitor)
+    if isinstance(raw_ctx, BillItemContext):
+        ctx = raw_ctx
+    else:
+        ctx = BillItemContext.from_legacy_dict(raw_ctx, item=item)
     item["query_route"] = ctx.get("query_route")
     item["plugin_hints"] = ctx.get("plugin_hints") or {}
     item["unified_plan"] = ctx.get("unified_plan") or {}
@@ -1062,6 +1067,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         classification = _build_classification(
             item, name, desc, ctx["section"], ctx.get("sheet_name", ""), province=province
         )
+    ctx = ctx.with_updates(classification=classification)
     item["classification"] = classification
     item["_trace_classification"] = dict(classification or {})
 

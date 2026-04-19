@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from src.bill_item_context import BillItemContext
 from src.match_pipeline import _build_item_context
 
 
@@ -19,4 +20,5 @@ def test_build_item_context_lazily_restores_feature_context():
     assert item["context_prior"]["specialty"] == "C10"
     assert item["canonical_features"]["system"] == "给排水"
     assert item["canonical_features"]["material"] == "铸铁管"
+    assert isinstance(ctx, BillItemContext)
     assert ctx["canonical_features"]["system"] == "给排水"

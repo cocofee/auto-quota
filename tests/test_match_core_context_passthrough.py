@@ -496,3 +496,136 @@ def test_cascade_search_strict_route_does_not_escape_to_full_library():
     )
 
     assert calls == [["C10"], ["C10", "C9"]]
+
+
+def test_prepare_candidates_passes_bill_item_context_into_validator(monkeypatch):
+    captured = {}
+
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return []
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, bill_item_context=None, **kwargs):
+            captured["query_text"] = query_text
+            captured["bill_item_context"] = bill_item_context
+            captured["kwargs"] = kwargs
+            return candidates
+
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda searcher, query, classification, **kwargs: [
+            {"quota_id": "C10-1-1", "name": "给水管安装 DN25", "hybrid_score": 0.8}
+        ],
+    )
+
+    prepared = {
+        "ctx": {
+            "name": "给水管",
+            "desc": "DN25",
+            "canonical_query": {
+                "validation_query": "给水管 DN25",
+                "search_query": "给水管 DN25",
+                "normalized_query": "给水管 DN25",
+                "primary_query_profile": {"primary_subject": "给水管"},
+            },
+            "canonical_features": {"entity": "管道"},
+            "context_prior": {"specialty": "C10"},
+            "params": {"dn": 25},
+            "item": {"params": {"dn": 25}},
+        },
+        "classification": {"primary": "C10", "fallbacks": [], "search_books": ["C10"]},
+        "exp_backup": None,
+        "rule_backup": None,
+    }
+
+    match_core._prepare_candidates_from_prepared(
+        prepared,
+        searcher=FakeSearcher(),
+        reranker=FakeReranker(),
+        validator=FakeValidator(),
+    )
+
+    assert captured["query_text"] == "给水管 DN25"
+    assert captured["bill_item_context"] is not None
+    assert captured["bill_item_context"]["params"]["dn"] == 25
+    assert captured["kwargs"]["bill_params"]["dn"] == 25
+
+
+def test_prepare_item_main_path_parses_bill_text_once(monkeypatch):
+    from src import match_pipeline
+    import src.match_pipeline.classifiers as match_pipeline_classifiers
+
+    parse_calls = []
+    captured = {}
+
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return []
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, bill_item_context=None, **kwargs):
+            captured["query_text"] = query_text
+            captured["bill_item_context"] = bill_item_context
+            captured["kwargs"] = kwargs
+            return candidates
+
+    def fake_parse(text):
+        parse_calls.append(text)
+        return {"dn": 25}
+
+    monkeypatch.setattr(match_pipeline_classifiers.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
+    monkeypatch.setattr(
+        match_pipeline_classifiers.text_parser,
+        "parse_canonical",
+        lambda *args, **kwargs: {"entity": "管道", "system": "给排水"},
+    )
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda searcher, query, classification, **kwargs: [
+            {"quota_id": "C10-1-1", "name": "给水管安装 DN25", "hybrid_score": 0.8}
+        ],
+    )
+    monkeypatch.setattr(
+        match_core,
+        "_build_support_surface_process_quotas",
+        lambda item, searcher, reranker, classification: [],
+    )
+
+    prepared = match_pipeline._prepare_item_for_matching(
+        {
+            "name": "给水管",
+            "description": "DN25",
+            "unit": "m",
+            "quantity": 10,
+            "specialty": "C10",
+            "section": "给排水工程",
+        },
+        experience_db=None,
+        rule_validator=None,
+    )
+
+    match_core._prepare_candidates_from_prepared(
+        prepared,
+        searcher=FakeSearcher(),
+        reranker=FakeReranker(),
+        validator=FakeValidator(),
+    )
+
+    assert len(parse_calls) == 1
+    assert parse_calls[0] == "给水管 DN25"
+    assert captured["query_text"] == prepared["ctx"]["full_query"]
+    assert captured["bill_item_context"] is prepared["ctx"]

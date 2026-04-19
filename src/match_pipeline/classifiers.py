@@ -1,9 +1,10 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Context building, classification, and rule pre-match helpers."""
 
 import re
 from contextlib import nullcontext
 
+from src.bill_item_context import BillItemContext
 from src.context_builder import build_context_prior
 from src.match_core import _append_trace_step, _normalize_classification
 from src.query_builder import build_primary_query_profile
@@ -43,14 +44,14 @@ def _ensure_item_feature_context(item: dict,
             item["context_prior"] = context_prior
 
         full_text = f"{item.get('name', '')} {item.get('description', '') or ''}".strip()
-        parsed_params = text_parser.parse(full_text)
         params = item.get("params")
-        if not isinstance(params, dict):
+        parsed_params = text_parser.parse(full_text)
+        if not isinstance(params, dict) or not params:
             params = dict(parsed_params)
         else:
-            merged_params = dict(params)
-            for key, value in (parsed_params or {}).items():
-                if key not in merged_params or merged_params.get(key) in (None, "", [], {}):
+            merged_params = dict(parsed_params)
+            for key, value in params.items():
+                if value not in (None, "", [], {}):
                     merged_params[key] = value
             params = merged_params
         item["params"] = params
@@ -74,7 +75,7 @@ def _ensure_item_feature_context(item: dict,
 
 
 def _build_item_context(item: dict,
-                        performance_monitor: PerformanceMonitor | None = None) -> dict:
+                        performance_monitor: PerformanceMonitor | None = None) -> BillItemContext:
     """构建匹配所需的清单上下文（名称/查询文本/单位/工程量等）。"""
     _ensure_item_feature_context(item, performance_monitor=performance_monitor)
     name = item.get("name", "")
@@ -191,25 +192,27 @@ def _build_item_context(item: dict,
         context_prior=context_prior,
     )
 
-    return {
-        "name": name,
-        "desc": desc,
-        "section": section,
-        "sheet_name": sheet_name,
-        "unit": item.get("unit"),
-        "quantity": item.get("quantity"),
-        "canonical_query": canonical_query,
-        "full_query": canonical_query["validation_query"],
-        "normalized_query": canonical_query["normalized_query"],
-        "search_query": canonical_query["search_query"],
-        "canonical_features": canonical_features,
-        "context_prior": context_prior,
-        "plugin_hints": plugin_hints,
-        "unified_plan": unified_plan,
-        "query_route": query_route,
-        "item": item,  # L5：供跨省预热读取 _cross_province_hints
-        "input_gate": input_gate,
-    }
+    return BillItemContext(
+        raw_name=name,
+        raw_desc=desc,
+        section=section,
+        sheet_name=sheet_name,
+        unit=item.get("unit"),
+        quantity=item.get("quantity"),
+        original_name=original_name,
+        specialty=str(item.get("specialty") or ""),
+        province=str(item.get("_resolved_province") or item.get("province") or ""),
+        params=item.get("params") or {},
+        canonical_features=canonical_features,
+        context_prior=context_prior,
+        primary_query_profile=primary_query_profile,
+        canonical_query=canonical_query,
+        plugin_hints=plugin_hints or {},
+        unified_plan=unified_plan or {},
+        query_route=query_route or {},
+        input_gate=input_gate or {},
+        item=item,
+    )
 
 
 def _has_strong_routing_evidence(classification: dict) -> bool:

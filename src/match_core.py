@@ -15,6 +15,8 @@ from src.utils import safe_float
 
 import config
 from src.ambiguity_gate import analyze_ambiguity
+from src.bill_item_context import BillItemContext
+from src.feedback_bus import lookup_cross_province_hints, remember_cross_province_hints
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
@@ -430,7 +432,8 @@ def _validate_candidates_with_context(validator: ParamValidator,
                                       bill_params: dict = None,
                                       search_books: list[str] = None,
                                       canonical_features: dict = None,
-                                      context_prior: dict = None) -> list[dict]:
+                                      context_prior: dict = None,
+                                      bill_item_context: BillItemContext | None = None) -> list[dict]:
     kwargs = {
         "supplement_query": supplement_query,
         "bill_params": bill_params,
@@ -445,6 +448,8 @@ def _validate_candidates_with_context(validator: ParamValidator,
         kwargs["canonical_features"] = canonical_features
     if "context_prior" in param_names:
         kwargs["context_prior"] = context_prior
+    if "bill_item_context" in param_names:
+        kwargs["bill_item_context"] = bill_item_context
     if "reorder_candidates" in param_names:
         kwargs["reorder_candidates"] = False
     return validator.validate_candidates(full_query, candidates, **kwargs)
@@ -504,7 +509,7 @@ def _validate_experience_params_legacy(exp_result: dict, item: dict,
                             rule_validated = True
 
     if main_quota_name:
-        bill_params = text_parser.parse(bill_text)
+        bill_params = item.get("params") or text_parser.parse(bill_text)
         quota_params = text_parser.parse(main_quota_name)
         if bill_params and quota_params:
             is_match, score = text_parser.params_match(bill_params, quota_params)
@@ -532,7 +537,7 @@ def _validate_experience_params(exp_result: dict, item: dict,
         return exp_result
 
     bill_text = f"{item.get('name', '')} {item.get('description', '')}".strip()
-    bill_params = text_parser.parse(bill_text)
+    bill_params = item.get("params") or text_parser.parse(bill_text)
 
     for index, quota in enumerate(quotas):
         quota_id = quota.get("quota_id", "")
@@ -614,6 +619,13 @@ def try_experience_match(query: str, item: dict, experience_db,
                     sanitized_hints = _sanitize_cross_province_hints(hint_keywords)
                     if sanitized_hints:
                         item["_cross_province_hints"] = sanitized_hints
+                        remember_cross_province_hints(
+                            item_name=str(item.get("name", "") or query),
+                            specialty=str(item.get("specialty", "") or ""),
+                            province=str(province or ""),
+                            bill_text=str(query or ""),
+                            hints=sanitized_hints,
+                        )
                         logger.debug(
                             f"L5????: {query[:30]} ? "
                             f"??={sanitized_hints[:3]}")
@@ -909,9 +921,10 @@ def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
     if not aux_candidates:
         return main_candidates
 
-    # 涓诲簱缁撴灉鐩存帴淇濈暀锛堜笉鍘婚噸锛屼富搴撳唴閮ㄥ凡鐢?HybridSearcher 鍘婚噸锛?    merged = list(main_candidates)
+    # Keep main-library results as-is. Main-library dedupe already happened upstream.
+    merged = list(main_candidates)
 
-    # 杈呭姪搴撶粨鏋滄寜"quota_id@鏉ユ簮搴?鍘婚噸锛堝悓涓€杈呭姪搴撳唴鍙兘鏈夐噸澶嶏級
+    # Dedupe auxiliary results by quota and source province, keeping the best score.
     aux_seen = {}
     for r in aux_candidates:
         qid = r.get("quota_id") or id(r)  # 鏃爍uota_id鏃剁敤瀵硅薄id锛岄伩鍏嶈鍚堝苟
@@ -1701,6 +1714,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         bill_params: dict = None,
                         canonical_features: dict = None,
                         context_prior: dict = None,
+                        bill_item_context: BillItemContext | None = None,
                         route_profile=None,
                         item: dict | None = None,
                         include_prior_candidates: bool = True,
@@ -1812,6 +1826,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             search_books=search_books,
             canonical_features=canonical_features,
             context_prior=context_prior,
+            bill_item_context=bill_item_context,
         )
         if len(candidates) > 1:
             candidates = sort_candidates_with_stage_priority(candidates)
@@ -2078,7 +2093,11 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
                                       include_prior_candidates: bool = True,
                                       performance_monitor: PerformanceMonitor | None = None):
     """??? prepared ????????????????"""
-    ctx = prepared["ctx"]
+    raw_ctx = prepared["ctx"]
+    if isinstance(raw_ctx, BillItemContext):
+        ctx = raw_ctx
+    else:
+        ctx = BillItemContext.from_legacy_dict(raw_ctx)
     canonical_query = ctx.get("canonical_query") or {}
     full_query = canonical_query.get("validation_query") or ctx["full_query"]
     search_query = canonical_query.get("search_query") or ctx["search_query"]
@@ -2095,6 +2114,12 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
     cross_hints = []
     if isinstance(item, dict):
         cross_hints = _sanitize_cross_province_hints(item.get("_cross_province_hints", []))
+        if not cross_hints:
+            cross_hints = lookup_cross_province_hints(
+                str(item.get("name", "") or ""),
+                str(item.get("specialty", "") or ""),
+                limit=3,
+            )
         if cross_hints:
             item["_cross_province_hints"] = cross_hints
         else:
@@ -2118,12 +2143,13 @@ def _prepare_candidates_from_prepared(prepared: dict, searcher: HybridSearcher,
         search_query = f"{search_query} {prior_family}"
 
     # ???????????????????????????
-    item_params = item.get("params") if isinstance(item, dict) else None
+    item_params = ctx.get("params") or (item.get("params") if isinstance(item, dict) else None)
     candidates = _prepare_candidates(
         searcher, reranker, validator, search_query, full_query, classification,
         bill_params=item_params,
         canonical_features=ctx.get("canonical_features"),
         context_prior=ctx.get("context_prior"),
+        bill_item_context=ctx,
         route_profile=item.get("query_route") if isinstance(item, dict) else None,
         item=item if isinstance(item, dict) else None,
         include_prior_candidates=(

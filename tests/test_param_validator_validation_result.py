@@ -1,3 +1,4 @@
+from src.bill_item_context import BillItemContext
 from src.param_validator import ParamValidator
 
 
@@ -107,3 +108,56 @@ def test_category_conflict_hard_signal_still_rejects_candidate():
     assert candidate["param_tier"] == 0
     assert candidate["param_validation"]["tier"] == "hard_fail"
     assert candidate["param_validation"]["hard_signals"]["category_conflict"] == "fail"
+
+
+def test_validate_candidates_still_backfills_missing_params_from_supplement_query(monkeypatch):
+    validator = ParamValidator()
+
+    def fake_parse(text: str):
+        if text == "BV4":
+            return {}
+        if text == "管内穿铜芯线 导线截面 4":
+            return {"cable_section": 4}
+        if " 4" in text or "≤4" in text:
+            return {"cable_section": 4}
+        if "2.5" in text:
+            return {"cable_section": 2.5}
+        return {}
+
+    monkeypatch.setattr("src.param_validator.text_parser.parse", fake_parse)
+
+    bill_item_context = BillItemContext(
+        raw_name="BV4",
+        raw_desc="",
+        params={},
+        canonical_query={
+            "validation_query": "BV4",
+            "search_query": "管内穿铜芯线 导线截面 4",
+        },
+    )
+
+    results = validator.validate_candidates(
+        query_text="BV4",
+        supplement_query="管内穿铜芯线 导线截面 4",
+        bill_item_context=bill_item_context,
+        candidates=[
+            {
+                "quota_id": "A",
+                "name": "管内穿线 穿照明线 铜芯 导线截面(mm2以内) 2.5",
+                "rerank_score": 0.9,
+                "hybrid_score": 0.9,
+            },
+            {
+                "quota_id": "B",
+                "name": "管内穿线 穿照明线 铜芯 导线截面(mm2以内) 4",
+                "rerank_score": 0.8,
+                "hybrid_score": 0.8,
+            },
+        ],
+    )
+
+    by_id = {candidate["quota_id"]: candidate for candidate in results}
+    assert by_id["A"]["param_match"] is False
+    assert by_id["A"]["param_tier"] == 0
+    assert by_id["B"]["param_match"] is True
+    assert by_id["B"]["param_score"] > by_id["A"]["param_score"]

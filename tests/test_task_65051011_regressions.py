@@ -25,6 +25,28 @@ def test_build_item_context_backfills_partial_support_params_for_pipe_support_it
     assert "一般管架" in context["search_query"]
 
 
+def test_build_item_context_merges_partial_canonical_features_from_bill_text():
+    item = {
+        "name": "管道支架制作安装",
+        "description": (
+            "1.名称:管道支架制作安装\n"
+            "2.单件支架质量:20KG\n"
+            "3.材质:Q235B\n"
+            "4.管架形式:一般管架"
+        ),
+        "specialty": "C8",
+        "section": "工业管道",
+        "params": {"weight_t": 0.02},
+        "canonical_features": {"family": "pipe_support"},
+    }
+
+    context = _build_item_context(item)
+
+    assert context["canonical_features"]["family"] == "pipe_support"
+    assert context["canonical_features"].get("entity")
+    assert item["params"]["support_scope"] == "管道支架"
+
+
 def test_build_item_context_backfills_pipe_fitting_shape_for_generic_pipe_fitting_items():
     item = {
         "name": "低压碳钢管件",
