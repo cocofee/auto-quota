@@ -19,6 +19,7 @@ RRF算法原理：
 
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -28,6 +29,7 @@ from loguru import logger
 import config
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
+from src.feedback_bus import get_feedback_bias_rows
 from src.province_book_mapper import normalize_requested_books_for_search
 from src.quota_search import search_by_id
 from src.query_router import build_query_route_profile, count_spec_signals
@@ -136,6 +138,7 @@ class HybridSearcher:
         # 同一批次中"DN25镀锌钢管"和"DN32镀锌钢管"可能生成相同的 normalized query
         # 缓存避免重复执行向量搜索（最耗时的环节）
         self._session_cache = {}  # {cache_key: candidates_list}
+        self._cache_lock = threading.RLock()
         self._SESSION_CACHE_TTL_SEC = float(
             getattr(config, "HYBRID_SESSION_CACHE_TTL_SEC", 900.0) or 0.0
         )
@@ -164,11 +167,12 @@ class HybridSearcher:
 
     def reset_runtime_state(self, *, include_aux: bool = True) -> None:
         """清理跨请求不应复用的易失状态，保留省份级索引本体。"""
-        session_cache = getattr(self, "_session_cache", None)
-        if isinstance(session_cache, dict):
-            session_cache.clear()
-        else:
-            self._session_cache = {}
+        with self._get_cache_lock():
+            session_cache = getattr(self, "_session_cache", None)
+            if isinstance(session_cache, dict):
+                session_cache.clear()
+            else:
+                self._session_cache = {}
 
         if not include_aux:
             return
@@ -180,6 +184,13 @@ class HybridSearcher:
     @staticmethod
     def _cache_now() -> float:
         return time.monotonic()
+
+    def _get_cache_lock(self):
+        lock = getattr(self, "_cache_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._cache_lock = lock
+        return lock
 
     @staticmethod
     def _wrap_cache_entry(value, *, now: float | None = None) -> dict:
@@ -195,34 +206,36 @@ class HybridSearcher:
         return entry, None
 
     def _purge_expired_cache_entries(self, cache: dict, *, ttl_sec: float, now: float | None = None) -> int:
-        if not isinstance(cache, dict) or not cache:
-            return 0
-        ttl_value = float(ttl_sec or 0.0)
-        if ttl_value <= 0:
-            return 0
-        current = self._cache_now() if now is None else float(now)
-        expired_keys = []
-        for key, entry in list(cache.items()):
-            _, entry_ts = self._unwrap_cache_entry(entry)
-            if entry_ts is not None and current - entry_ts >= ttl_value:
-                expired_keys.append(key)
-        for key in expired_keys:
-            cache.pop(key, None)
-        return len(expired_keys)
+        with self._get_cache_lock():
+            if not isinstance(cache, dict) or not cache:
+                return 0
+            ttl_value = float(ttl_sec or 0.0)
+            if ttl_value <= 0:
+                return 0
+            current = self._cache_now() if now is None else float(now)
+            expired_keys = []
+            for key, entry in list(cache.items()):
+                _, entry_ts = self._unwrap_cache_entry(entry)
+                if entry_ts is not None and current - entry_ts >= ttl_value:
+                    expired_keys.append(key)
+            for key in expired_keys:
+                cache.pop(key, None)
+            return len(expired_keys)
 
     def _get_cache_value(self, cache: dict, key, *, ttl_sec: float, now: float | None = None):
-        if not isinstance(cache, dict):
-            return None
-        current = self._cache_now() if now is None else float(now)
-        entry = cache.get(key)
-        if entry is None:
-            return None
-        value, entry_ts = self._unwrap_cache_entry(entry)
-        ttl_value = float(ttl_sec or 0.0)
-        if entry_ts is not None and ttl_value > 0 and current - entry_ts >= ttl_value:
-            cache.pop(key, None)
-            return None
-        return value
+        with self._get_cache_lock():
+            if not isinstance(cache, dict):
+                return None
+            current = self._cache_now() if now is None else float(now)
+            entry = cache.get(key)
+            if entry is None:
+                return None
+            value, entry_ts = self._unwrap_cache_entry(entry)
+            ttl_value = float(ttl_sec or 0.0)
+            if entry_ts is not None and ttl_value > 0 and current - entry_ts >= ttl_value:
+                cache.pop(key, None)
+                return None
+            return value
 
     def _store_cache_value(
         self,
@@ -1606,12 +1619,12 @@ class HybridSearcher:
 
         bias = 0.0
         try:
-            if not self._experience_db:
-                self._feedback_bias_value = 0.0
-                self._feedback_bias_ts = now
-                return 0.0
-
-            rows = self._experience_db.get_feedback_bias_data(self.province)
+            feedback_rows = get_feedback_bias_rows(self.province, limit=max(min_samples * 8, 200))
+            rows = list(feedback_rows)
+            if len(rows) < min_samples and self._experience_db:
+                experience_rows = self._experience_db.get_feedback_bias_data(self.province)
+                if experience_rows:
+                    rows.extend(experience_rows)
             if not rows:
                 self._feedback_bias_value = 0.0
                 self._feedback_bias_ts = now
@@ -1632,7 +1645,13 @@ class HybridSearcher:
                 if not text:
                     continue
                 is_spec = self._is_spec_heavy_text(text)
-                is_corr = (source == "user_correction")
+                signal = str(source or "").strip().lower()
+                if signal in {"correct", "user_correction"}:
+                    is_corr = True
+                elif signal in {"confirm", "user_confirmed"}:
+                    is_corr = False
+                else:
+                    continue
                 if is_spec:
                     spec_total += 1
                     if is_corr:

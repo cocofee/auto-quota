@@ -13,6 +13,7 @@ from loguru import logger
 
 import config
 from src.consistency_checker import _build_fingerprint, _normalize_core_name
+from src.feedback_bus import emit_feedback_event
 
 
 def _select_representative(members: list[tuple[int, dict]]) -> int:
@@ -140,6 +141,18 @@ def mark_learning_groups(results: list[dict]) -> list[dict]:
             f"归为{groups_marked}组, "
             f"标注{representatives_count}条代表(请教), "
             f"{followers_count}条从属(同类待定)"
+        )
+
+    if groups_marked > 0:
+        emit_feedback_event(
+            "active_learning_groups",
+            signal="marked",
+            payload={
+                "uncertain_count": len(uncertain),
+                "groups_marked": groups_marked,
+                "representatives_count": representatives_count,
+                "followers_count": followers_count,
+            },
         )
 
     return results

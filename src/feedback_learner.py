@@ -24,6 +24,7 @@ from loguru import logger
 import config
 from src.experience_db import ExperienceDB
 from src.bill_reader import _is_material_code
+from src.feedback_bus import emit_feedback_event
 from db.sqlite import connect as _db_connect
 
 
@@ -137,6 +138,19 @@ class FeedbackLearner:
                 )
                 if record_id > 0:
                     stats["corrections"] += 1
+                    emit_feedback_event(
+                        "user_feedback",
+                        signal="correct",
+                        province=str(self.experience_db.province or config.get_current_province()),
+                        specialty=str(orig.get("specialty", "") or bill_item.get("specialty", "")),
+                        bill_text=bill_text,
+                        item_name=str(bill_item.get("name", "") or ""),
+                        payload={
+                            "record_id": record_id,
+                            "source": "feedback_learner_compare",
+                            "quota_ids": quota_ids,
+                        },
+                    )
                     # L5：同步到通用知识库（跨省迁移）
                     self._sync_to_universal_kb(bill_text, quota_names)
                 else:
@@ -217,6 +231,18 @@ class FeedbackLearner:
                         if current_bill and current_quotas:
                             if self._save_bill_quota_pair(current_bill, current_quotas, current_materials):
                                 stats["learned"] += 1
+                                emit_feedback_event(
+                                    "user_feedback",
+                                    signal="correct",
+                                    province=str(self.experience_db.province or config.get_current_province()),
+                                    specialty=str(current_bill.get("specialty", "") or ""),
+                                    bill_text=str((self._build_learning_record(current_bill, current_quotas, current_materials, confidence=95) or {}).get("bill_text", "") or ""),
+                                    item_name=str(current_bill.get("name", "") or ""),
+                                    payload={
+                                        "source": "feedback_excel_import",
+                                        "quota_ids": [q.get("quota_id", "") for q in current_quotas if q.get("quota_id")],
+                                    },
+                                )
 
                         # 开始新的清单项
                         if is_labeled_bill:
@@ -262,6 +288,18 @@ class FeedbackLearner:
                 if current_bill and current_quotas:
                     if self._save_bill_quota_pair(current_bill, current_quotas, current_materials):
                         stats["learned"] += 1
+                        emit_feedback_event(
+                            "user_feedback",
+                            signal="correct",
+                            province=str(self.experience_db.province or config.get_current_province()),
+                            specialty=str(current_bill.get("specialty", "") or ""),
+                            bill_text=str((self._build_learning_record(current_bill, current_quotas, current_materials, confidence=95) or {}).get("bill_text", "") or ""),
+                            item_name=str(current_bill.get("name", "") or ""),
+                            payload={
+                                "source": "feedback_excel_import",
+                                "quota_ids": [q.get("quota_id", "") for q in current_quotas if q.get("quota_id")],
+                            },
+                        )
         finally:
             wb.close()
 
@@ -275,7 +313,6 @@ class FeedbackLearner:
         record = self._build_learning_record(bill, quotas, materials, confidence=95)
         if not record:
             return False
-
         record_id = self.experience_db.add_experience(
             bill_text=record["bill_text"],
             quota_ids=record["quota_ids"],

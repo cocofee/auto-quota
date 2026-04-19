@@ -23,6 +23,7 @@ import config
 from src.adaptive_strategy import AdaptiveStrategy
 from src.context_builder import build_project_context, format_overview_context
 from src.context_builder import summarize_batch_context_for_trace
+from src.feedback_bus import lookup_consistency_hint, remember_consistency_hint
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
 from src.rule_validator import RuleValidator
@@ -244,7 +245,7 @@ def _consume_early_result(results: list[dict], early_result: dict, early_type: s
     return True, exp_hits, rule_hits
 
 
-def _update_consistency_memory(memory: dict, item: dict, result: dict) -> None:
+def _update_consistency_memory(memory: dict, item: dict, result: dict, *, province: str = "") -> None:
     """
     更新同文件一致性记忆
 
@@ -262,12 +263,41 @@ def _update_consistency_memory(memory: dict, item: dict, result: dict) -> None:
     # 用 (名称, 专业) 做联合key，避免跨专业污染
     # 例如同一文件中消防分部的"阀门"和给排水分部的"阀门"是不同场景
     specialty = item.get("specialty", "")
+    specialty = item.get("specialty", "")
     memory_key = (item_name, specialty)
     # 提取定额名称中的前2-4字中文关键词作为"定额族"标识
     quota_name = quotas[0].get("name", "")
     cn_words = re.findall(r'[\u4e00-\u9fff]{2,4}', quota_name)
     if cn_words:
-        memory[memory_key] = cn_words[0]
+        family_hint = cn_words[0]
+        memory[memory_key] = family_hint
+        remember_consistency_hint(
+            province=province,
+            item_name=item_name,
+            specialty=specialty,
+            family_hint=family_hint,
+            payload={
+                "confidence": int(result.get("confidence", 0) or 0),
+                "quota_name": quota_name,
+                "match_source": str(result.get("match_source", "") or ""),
+            },
+        )
+
+
+def _inject_consistency_hint(item: dict, memory: dict, *, province: str = "") -> None:
+    if not isinstance(item, dict) or not item.get("_is_ambiguous_short"):
+        return
+    item_name = str(item.get("name", "") or "").strip()
+    specialty = str(item.get("specialty", "") or "").strip()
+    if not item_name:
+        return
+    memory_key = (item_name, specialty)
+    family_kw = memory.get(memory_key) or lookup_consistency_hint(province, item_name, specialty)
+    if not family_kw:
+        return
+    hints = item.get("_context_hints", [])
+    if family_kw not in hints:
+        item.setdefault("_context_hints", []).append(family_kw)
 
 
 def _prepare_match_iteration(item: dict, idx: int, total: int,
@@ -1139,13 +1169,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
     for idx, item in enumerate(bill_items, start=1):
         performance_monitor = PerformanceMonitor()
         # 同文件一致性注入：如果之前同名同专业清单已高置信匹配，给短名称补提示
-        item_name = item.get("name", "")
-        memory_key = (item_name, item.get("specialty", ""))
-        if memory_key in consistency_memory and item.get("_is_ambiguous_short"):
-            family_kw = consistency_memory[memory_key]
-            hints = item.get("_context_hints", [])
-            if family_kw not in hints:
-                item.setdefault("_context_hints", []).append(family_kw)
+        _inject_consistency_hint(item, consistency_memory, province=province)
 
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
@@ -1178,7 +1202,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             _notify_progress(idx, result=results[-1] if results else None)
             # 经验库/规则直通的结果也更新一致性记忆
             if results:
-                _update_consistency_memory(consistency_memory, item, results[-1])
+                _update_consistency_memory(consistency_memory, item, results[-1], province=province)
             continue
 
         _, _, _, candidates, exp_backup, rule_backup = prepared_bundle
@@ -1195,7 +1219,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
         _append_search_result_and_log(
             results, result, idx, total, exp_hits, rule_hits,
             interval=progress_log_interval)
-        _update_consistency_memory(consistency_memory, item, result)
+        _update_consistency_memory(consistency_memory, item, result, province=province)
         _notify_progress(idx, result=result)
 
     _log_exp_rule_summary(exp_hits, rule_hits, total)
@@ -1440,12 +1464,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
         performance_monitor = PerformanceMonitor()
         # 同文件一致性注入
         item_name = item.get("name", "")
-        memory_key = (item_name, item.get("specialty", ""))
-        if memory_key in consistency_memory_agent and item.get("_is_ambiguous_short"):
-            family_kw = consistency_memory_agent[memory_key]
-            hints = item.get("_context_hints", [])
-            if family_kw not in hints:
-                item.setdefault("_context_hints", []).append(family_kw)
+        _inject_consistency_hint(item, consistency_memory_agent, province=province)
 
         consumed, exp_hits, rule_hits, prepared_bundle = _prepare_match_iteration(
             item=item,
@@ -1477,7 +1496,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             )
             results_by_idx[idx] = _consumed_buf[-1]
             _update_match_stats(_consumed_buf[-1])
-            _update_consistency_memory(consistency_memory_agent, item, _consumed_buf[-1])
+            _update_consistency_memory(consistency_memory_agent, item, _consumed_buf[-1], province=province)
             _notify_progress(idx, phase=1)
             continue
 
@@ -1524,7 +1543,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             fastpath_hits += 1
             results_by_idx[idx] = fast_result
             _update_match_stats(fast_result)
-            _update_consistency_memory(consistency_memory_agent, item, fast_result)
+            _update_consistency_memory(consistency_memory_agent, item, fast_result, province=province)
 
             # 质量护栏：优先抽检高风险快通道，其余按比例抽检（收集到LLM任务里一起并发）
             if _should_audit_fastpath(fastpath_decision):

@@ -68,6 +68,7 @@ from app.services.qmd_service import get_default_qmd_service
 from app.services.source_learning_service import SourceLearningService
 from app.text_utils import repair_mojibake_data, repair_quota_name_loss
 from pydantic import BaseModel, Field
+from src.feedback_bus import emit_feedback_event
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -3243,6 +3244,20 @@ async def review_confirm(
                 f"人工驳回: {req.review_note.strip()}",
             )
         await db.flush()
+        emit_feedback_event(
+            "audit_rejected",
+            signal="reject",
+            province=str(task.province or "").strip(),
+            specialty=str(match_result.specialty or "").strip(),
+            bill_text=results_api._compose_query_text(match_result),
+            item_name=str(match_result.bill_name or "").strip(),
+            payload={
+                "task_id": str(task.id),
+                "result_id": str(match_result.id),
+                "reason_codes": list(normalized_feedback.get("manual_reason_codes") or []),
+                "manual_note": str(normalized_feedback.get("manual_note") or ""),
+            },
+        )
         return results_api._to_result_response(match_result)
 
     final_corrected_quotas = repaired_suggested_quotas

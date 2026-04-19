@@ -36,6 +36,7 @@ from app.schemas.result import (
 from app.api.shared import get_user_task, store_experience, store_experience_batch, flag_disputed_experience
 from app.services.match_service import get_task_output_dir
 from app.text_utils import normalize_client_filename, repair_mojibake_data, repair_quota_name_loss
+from src.feedback_bus import emit_feedback_event
 from src.ranking_feedback_db import (
     RankingFeedbackDB,
     infer_misrank_primary_factor,
@@ -737,6 +738,21 @@ def _record_ranking_feedback(
         feedback_source=feedback_source,
         action=action,
         actor=_actor_identity(user),
+    )
+    emit_feedback_event(
+        "ranking_feedback",
+        signal=action,
+        province=str(task.province or "").strip(),
+        specialty=str(match_result.specialty or "").strip(),
+        bill_text=_compose_query_text(match_result),
+        item_name=str(match_result.bill_name or "").strip(),
+        payload={
+            "feedback_id": feedback_id,
+            "feedback_source": feedback_source,
+            "gate_bucket": _resolve_light_status(match_result),
+            "selected_rank": _selected_rank_from_snapshot(selected_key, topk_snapshot),
+            "misrank_primary_factor": infer_misrank_primary_factor(original_scores, selected_scores),
+        },
     )
     logger.debug(f"ranking feedback recorded: id={feedback_id}, result={match_result.id}, action={action}")
 
