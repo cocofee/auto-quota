@@ -2,6 +2,7 @@
 """Thin orchestration layer for the match pipeline package."""
 
 from contextlib import nullcontext
+from itertools import count
 
 from loguru import logger
 
@@ -63,6 +64,67 @@ def _api():
     import src.match_pipeline as api
 
     return api
+
+
+_EXPERIENCE_SHADOW_AUDIT_COUNTER = count(1)
+
+
+def _should_shadow_audit_experience_direct(item: dict, exp_result: dict) -> bool:
+    sample_every = int(getattr(config, "EXPERIENCE_SHADOW_AUDIT_EVERY_N", 0) or 0)
+    if sample_every <= 0:
+        return False
+    if not isinstance(item, dict) or not isinstance(exp_result, dict):
+        return False
+    if str(exp_result.get("match_source") or "").strip() != "experience_exact":
+        return False
+    sequence = next(_EXPERIENCE_SHADOW_AUDIT_COUNTER)
+    sampled = sequence % sample_every == 0
+    if sampled:
+        item["_experience_shadow_audit"] = {
+            "sampled": True,
+            "sequence": sequence,
+            "sample_every": sample_every,
+        }
+    return sampled
+
+
+def _append_experience_shadow_audit_trace(result: dict, exp_backup: dict, item: dict) -> None:
+    if not isinstance(result, dict) or not isinstance(exp_backup, dict) or not isinstance(item, dict):
+        return
+    audit_meta = item.get("_experience_shadow_audit")
+    if not isinstance(audit_meta, dict) or not audit_meta.get("sampled"):
+        return
+
+    exp_qid = str(((exp_backup.get("quotas") or [{}])[0] or {}).get("quota_id", "") or "").strip()
+    final_qid = str(((result.get("quotas") or [{}])[0] or {}).get("quota_id", "") or "").strip()
+    exp_conf = int(exp_backup.get("confidence", 0) or 0)
+    final_conf = int(result.get("confidence", 0) or 0)
+    diverged = bool(exp_qid != final_qid)
+    confidence_gap = abs(final_conf - exp_conf)
+    alert_gap = int(getattr(config, "EXPERIENCE_SHADOW_ALERT_CONFIDENCE_GAP", 12) or 12)
+    should_alert = diverged or confidence_gap >= alert_gap
+
+    _append_trace_step(
+        result,
+        "experience_shadow_audit",
+        sampled=True,
+        sequence=int(audit_meta.get("sequence", 0) or 0),
+        sample_every=int(audit_meta.get("sample_every", 0) or 0),
+        experience_quota_id=exp_qid,
+        final_quota_id=final_qid,
+        experience_confidence=exp_conf,
+        final_confidence=final_conf,
+        diverged=diverged,
+        confidence_gap=confidence_gap,
+        alert=should_alert,
+    )
+
+    if should_alert:
+        logger.warning(
+            "experience shadow audit diverged: "
+            f"exp={exp_qid or '<empty>'}/{exp_conf} "
+            f"final={final_qid or '<empty>'}/{final_conf}"
+        )
 
 
 def _merge_explicit_annotations(base_candidates: list[dict], explicit_candidates: list[dict]) -> list[dict]:
@@ -982,6 +1044,7 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
             backup_confidence=rule_backup.get("confidence", 0),
             current_confidence=result.get("confidence", 0),
         )
+    _append_experience_shadow_audit_trace(result, exp_backup, item)
     result["search_stage_performance"] = {
         "stages": performance_monitor.snapshot(),
         "total": sum(performance_monitor.snapshot().values()),
@@ -1161,11 +1224,20 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
         adaptive_strategy = "standard"
 
     if exact_exp_direct and exp_result and exp_result.get("match_source") == "experience_exact":
-        _append_trace_step(exp_result, "experience_exact_direct_return")
-        return {
-            "early_result": exp_result,
-            "early_type": "experience_exact",
-        }
+        if _should_shadow_audit_experience_direct(item, exp_result):
+            audit_meta = item.get("_experience_shadow_audit") or {}
+            _append_trace_step(
+                exp_result,
+                "experience_shadow_audit_sampled",
+                sequence=int(audit_meta.get("sequence", 0) or 0),
+                sample_every=int(audit_meta.get("sample_every", 0) or 0),
+            )
+        else:
+            _append_trace_step(exp_result, "experience_exact_direct_return")
+            return {
+                "early_result": exp_result,
+                "early_type": "experience_exact",
+            }
 
     if lightweight_rule_prematch:
         rule_direct, rule_backup = None, None
@@ -1189,6 +1261,7 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
             rule_backup = None
             rule_direct = None
         else:
+            _append_experience_shadow_audit_trace(rule_direct, exp_backup, item)
             _append_trace_step(rule_direct, "rule_direct_return")
             return {
                 "early_result": rule_direct,

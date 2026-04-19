@@ -17,6 +17,7 @@ import config
 from src.ambiguity_gate import analyze_ambiguity
 from src.bill_item_context import BillItemContext
 from src.feedback_bus import lookup_cross_province_hints, remember_cross_province_hints
+from src.experience_confidence import allows_direct_pass, describe_effective_confidence
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
 from src.param_validator import ParamValidator
@@ -160,6 +161,47 @@ def _safe_json_materials(raw_value) -> list[dict]:
         if isinstance(parsed, list):
             return [m for m in parsed if isinstance(m, dict)]
     return []
+
+
+def _annotate_experience_confidence(candidate: dict, experience_db=None) -> dict:
+    if not isinstance(candidate, dict):
+        return candidate
+    factors = None
+    calculator = getattr(experience_db, "_annotate_effective_confidence", None)
+    if callable(calculator):
+        try:
+            annotated = calculator(candidate)
+            if isinstance(annotated, dict):
+                return annotated
+        except Exception:
+            factors = None
+    try:
+        factors = describe_effective_confidence(candidate)
+    except Exception:
+        factors = None
+    if not isinstance(factors, dict):
+        return candidate
+    candidate["effective_confidence"] = int(factors["effective_confidence"])
+    candidate["confidence_factors"] = {
+        "base_confidence": int(factors["base_confidence"]),
+        "time_decay": float(factors["time_decay"]),
+        "reviewer_weight": float(factors["reviewer_weight"]),
+        "confirm_count_weight": float(factors["confirm_count_weight"]),
+    }
+    return candidate
+
+
+def _experience_effective_confidence(candidate: dict, experience_db=None) -> int:
+    annotated = _annotate_experience_confidence(candidate, experience_db)
+    return int(annotated.get("effective_confidence", annotated.get("confidence", 0)) or 0)
+
+
+def _experience_allows_direct(candidate: dict, experience_db=None) -> bool:
+    annotated = _annotate_experience_confidence(candidate, experience_db)
+    try:
+        return allows_direct_pass(annotated)
+    except Exception:
+        return False
 
 
 def _summarize_candidates_for_trace(candidates: list[dict], top_n: int = 3) -> list[dict]:
@@ -643,6 +685,7 @@ def try_experience_match(query: str, item: dict, experience_db,
     if best is None:
         logger.debug(f"???????????????: {query[:50]}")
         return None
+    best = _annotate_experience_confidence(dict(best), experience_db)
     similarity = safe_float(best.get("similarity"), 0.0)
     exp_materials = _safe_json_materials(best.get("materials"))
 
@@ -652,7 +695,10 @@ def try_experience_match(query: str, item: dict, experience_db,
         if not quota_ids:
             logger.debug(f"?????????????????: {query[:50]}")
             return None
-        confidence = min(best.get("confidence", 80), 98)
+        if not _experience_allows_direct(best, experience_db):
+            logger.debug(f"experience exact direct rejected by dynamic confidence: {query[:50]}")
+            return None
+        confidence = min(_experience_effective_confidence(best, experience_db), 98)
 
         quotas = []
         for i, qid in enumerate(quota_ids):
@@ -676,6 +722,7 @@ def try_experience_match(query: str, item: dict, experience_db,
             "experience_exact",
             record_id=best.get("id"),
             similarity=1.0,
+            effective_confidence=confidence,
             confirm_count=best.get("confirm_count", 0),
             quota_ids=[q.get("quota_id", "") for q in quotas],
             materials_count=len(exp_materials),
@@ -692,7 +739,7 @@ def try_experience_match(query: str, item: dict, experience_db,
         if not quota_ids:
             logger.debug(f"?????????????????: {query[:50]}")
             return None
-        confidence = min(int(similarity * best.get("confidence", 80)), 90)
+        confidence = min(int(similarity * _experience_effective_confidence(best, experience_db)), 90)
 
         quotas = []
         for i, qid in enumerate(quota_ids):
@@ -716,6 +763,7 @@ def try_experience_match(query: str, item: dict, experience_db,
             "experience_similar",
             record_id=best.get("id"),
             similarity=similarity,
+            effective_confidence=_experience_effective_confidence(best, experience_db),
             confirm_count=best.get("confirm_count", 0),
             quota_ids=[q.get("quota_id", "") for q in quotas],
             materials_count=len(exp_materials),
@@ -758,7 +806,7 @@ def try_experience_exact_match(
     if not best:
         return None
 
-    best = dict(best)
+    best = _annotate_experience_confidence(dict(best), experience_db)
     normalizer = getattr(experience_db, "_normalize_record_quota_fields", None)
     if callable(normalizer):
         best = normalizer(best)
@@ -769,7 +817,10 @@ def try_experience_exact_match(
         logger.debug(f"???????????????????: {query[:50]}")
         return None
 
-    confidence = min(best.get("confidence", 80), 98)
+    if not _experience_allows_direct(best, experience_db):
+        logger.debug(f"experience exact lightweight direct rejected by dynamic confidence: {query[:50]}")
+        return None
+    confidence = min(_experience_effective_confidence(best, experience_db), 98)
     exp_materials = _safe_json_materials(best.get("materials"))
     quotas = []
     for i, qid in enumerate(quota_ids):
@@ -793,6 +844,7 @@ def try_experience_exact_match(
         "experience_exact_lightweight",
         record_id=best.get("id"),
         similarity=1.0,
+        effective_confidence=confidence,
         confirm_count=best.get("confirm_count", 0),
         quota_ids=[q.get("quota_id", "") for q in quotas],
         materials_count=len(exp_materials),
@@ -839,7 +891,7 @@ def try_experience_exact_match(
     if not best:
         return None
 
-    best = dict(best)
+    best = _annotate_experience_confidence(dict(best), experience_db)
     normalizer = getattr(experience_db, "_normalize_record_quota_fields", None)
     if callable(normalizer):
         best = normalizer(best)
@@ -850,7 +902,10 @@ def try_experience_exact_match(
         logger.debug(f"???????????????????: {query[:50]}")
         return None
 
-    confidence = min(best.get("confidence", 80), 98)
+    if not _experience_allows_direct(best, experience_db):
+        logger.debug(f"experience exact lightweight direct rejected by dynamic confidence: {query[:50]}")
+        return None
+    confidence = min(_experience_effective_confidence(best, experience_db), 98)
     exp_materials = _safe_json_materials(best.get("materials"))
     quotas = []
     for i, qid in enumerate(quota_ids):
@@ -874,6 +929,7 @@ def try_experience_exact_match(
         "experience_exact_lightweight",
         record_id=best.get("id"),
         similarity=1.0,
+        effective_confidence=confidence,
         confirm_count=best.get("confirm_count", 0),
         quota_ids=[q.get("quota_id", "") for q in quotas],
         materials_count=len(exp_materials),

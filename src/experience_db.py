@@ -36,6 +36,7 @@ from loguru import logger
 
 from db.sqlite import connect as _db_connect, connect_init as _db_connect_init
 from src.fallback_logger import fallback_logger
+from src.experience_confidence import describe_effective_confidence
 from src.specialty_classifier import get_book_from_quota_id
 from src.utils import safe_json_list
 import config
@@ -1143,6 +1144,36 @@ class ExperienceDB:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _annotate_effective_confidence(self, record: dict) -> dict:
+        if not isinstance(record, dict):
+            return record
+        factors = describe_effective_confidence(record)
+        record["effective_confidence"] = int(factors["effective_confidence"])
+        record["confidence_factors"] = {
+            "base_confidence": int(factors["base_confidence"]),
+            "time_decay": float(factors["time_decay"]),
+            "reviewer_weight": float(factors["reviewer_weight"]),
+            "confirm_count_weight": float(factors["confirm_count_weight"]),
+        }
+        return record
+
+    def _select_best_effective_record(self, rows) -> dict | None:
+        candidates: list[dict] = []
+        for row in rows or []:
+            candidates.append(self._annotate_effective_confidence(dict(row)))
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda item: (
+                -int(item.get("effective_confidence", item.get("confidence", 0)) or 0),
+                -int(item.get("confirm_count", 0) or 0),
+                -float(item.get("updated_at", 0.0) or 0.0),
+                -int(item.get("confidence", 0) or 0),
+                -int(item.get("id", 0) or 0),
+            )
+        )
+        return candidates[0]
 
     def _meets_verified_criteria(self, *,
                                  bill_text: str,
@@ -2404,11 +2435,10 @@ class ExperienceDB:
                 SELECT * FROM experiences
                 WHERE {' AND '.join(exact_clauses)}
                 ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
-                LIMIT 1
             """, exact_params)
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
+            exact_best = self._select_best_effective_record(cursor.fetchall())
+            if exact_best:
+                return exact_best
 
             # 第2级：L7 归一化匹配（容忍格式差异）
             if getattr(config, 'EXPERIENCE_FUZZY_MATCH_ENABLED', False) and _normalize_for_match:
@@ -2428,11 +2458,9 @@ class ExperienceDB:
                             SELECT * FROM experiences
                             WHERE {' AND '.join(norm_clauses)}
                             ORDER BY confidence DESC, confirm_count DESC, updated_at DESC, id DESC
-                            LIMIT 1
                         """, norm_params)
-                        row = cursor.fetchone()
-                        if row:
-                            result = dict(row)
+                        result = self._select_best_effective_record(cursor.fetchall())
+                        if result:
                             result["_match_method"] = "normalized"  # 标记匹配方式（调试用）
                             return result
                 except Exception as e:
@@ -2789,7 +2817,9 @@ class ExperienceDB:
             authority_only=True,
             exclude_sources=online_excluded_sources,
         )
-        if exact and exact.get("confidence", 0) >= min_confidence:
+        if exact:
+            exact = self._annotate_effective_confidence(exact)
+        if exact and int(exact.get("effective_confidence", exact.get("confidence", 0)) or 0) >= min_confidence:
             self._normalize_record_quota_fields(exact)
             exact["similarity"] = 1.0
             exact["_exact_match"] = True
@@ -2882,13 +2912,14 @@ class ExperienceDB:
         ranked = []
         current_version = query_item.get("quota_version") or ""
         for record in merged.values():
-            if int(record.get("confidence") or 0) < min_confidence:
-                continue
             if self._is_online_excluded_source(record.get("source")):
                 continue
             self._normalize_record_quota_fields(record)
             filtered = self._hard_filter(record, query_item)
             if not filtered:
+                continue
+            filtered = self._annotate_effective_confidence(filtered)
+            if int(filtered.get("effective_confidence", filtered.get("confidence", 0)) or 0) < min_confidence:
                 continue
             total_score, dimension_scores = self._compute_experience_total_score(filtered, query_item)
             filtered["total_score"] = total_score
@@ -2915,6 +2946,7 @@ class ExperienceDB:
                 gate_priority.get(item.get("gate", "red"), 2),
                 -float(item.get("total_score", 0.0) or 0.0),
                 layer_priority.get(item.get("layer", "candidate"), 2),
+                -int(item.get("effective_confidence", item.get("confidence", 0)) or 0),
                 -int(item.get("confidence", 0) or 0),
                 -int(item.get("confirm_count", 0) or 0),
             )

@@ -595,6 +595,9 @@ LLM_CONCURRENT = 5            # 并发调用数（批量匹配时）
 
 # 第1层：经验库直通的置信度阈值
 EXPERIENCE_DIRECT_THRESHOLD = 90   # 经验库命中且置信度>90%时直接返回
+EXPERIENCE_DIRECT_MIN_CONFIRMATIONS = 2  # confirm_count<2 的经验永不直通
+EXPERIENCE_SHADOW_AUDIT_EVERY_N = 0      # >0 时，每 N 次经验直通抽样 1 次改走完整流水线
+EXPERIENCE_SHADOW_ALERT_CONFIDENCE_GAP = 12  # shadow compare 超过该差值时告警
 
 # 第2层：单Agent匹配后，跳过多Agent的置信度阈值
 SINGLE_AGENT_THRESHOLD = 85        # 单Agent置信度>85%时仅做参数快速验证

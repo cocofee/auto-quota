@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """L7 搜索召回率优化 测试用例"""
 
+import json
+import time
+
 import pytest
 
 
@@ -209,6 +212,86 @@ class TestExperienceFuzzyMatch:
         # 开关关闭，不带空格的写法应找不到
         result = exp_db._find_exact_match("给水管道DN25", "测试省")
         assert result is None, "开关关闭时不应走归一化匹配"
+
+
+    def test_find_exact_match_considers_all_duplicate_rows_for_effective_confidence(self, monkeypatch):
+        import config
+        monkeypatch.setattr(config, "EXPERIENCE_FUZZY_MATCH_ENABLED", True)
+        self._setup_temp_db(monkeypatch)
+
+        from src.experience_db import ExperienceDB
+        exp_db = ExperienceDB(province="娴嬭瘯鐪?")
+
+        bill_text = "缁欐按绠￠亾 DN25 闀€閿岄挗绠?"
+        province = "娴嬭瘯鐪?"
+        stale_time = time.time() - 6 * 365 * 86400
+        fresh_time = time.time()
+
+        conn = exp_db._connect()
+        try:
+            cursor = conn.cursor()
+            for index in range(11):
+                cursor.execute(
+                    """
+                    INSERT INTO experiences
+                    (bill_text, bill_name, bill_unit, quota_ids, quota_names, source,
+                     confidence, confirm_count, province, created_at, updated_at,
+                     quota_db_version, layer, specialty, materials)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        bill_text,
+                        bill_text,
+                        "m",
+                        json.dumps([f"Q-OLD-{index}"], ensure_ascii=False),
+                        json.dumps([f"old quota {index}"], ensure_ascii=False),
+                        "user_correction",
+                        100,
+                        5,
+                        province,
+                        stale_time,
+                        stale_time,
+                        "test_v1",
+                        "authority",
+                        "C10",
+                        "[]",
+                    ),
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO experiences
+                (bill_text, bill_name, bill_unit, quota_ids, quota_names, source,
+                 confidence, confirm_count, province, created_at, updated_at,
+                 quota_db_version, layer, specialty, materials)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bill_text,
+                    bill_text,
+                    "m",
+                    json.dumps(["Q-BEST"], ensure_ascii=False),
+                    json.dumps(["best quota"], ensure_ascii=False),
+                    "user_correction",
+                    90,
+                    2,
+                    province,
+                    fresh_time,
+                    fresh_time,
+                    "test_v1",
+                    "authority",
+                    "C10",
+                    "[]",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = exp_db._find_exact_match(bill_text, province, authority_only=True)
+
+        assert result is not None
+        assert "Q-BEST" in result["quota_ids"]
 
 
 class TestConfigFlags:

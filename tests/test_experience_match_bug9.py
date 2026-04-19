@@ -1,3 +1,4 @@
+import time
 from unittest.mock import MagicMock, patch
 
 import config
@@ -22,7 +23,10 @@ def test_validate_experience_params_rejects_when_any_quota_mismatches(monkeypatc
         return {}
 
     def fake_params_match(bill_params: dict, quota_params: dict):
-        return (bill_params["dn"] == quota_params["dn"], 1.0 if bill_params["dn"] == quota_params["dn"] else 0.0)
+        return (
+            bill_params["dn"] == quota_params["dn"],
+            1.0 if bill_params["dn"] == quota_params["dn"] else 0.0,
+        )
 
     monkeypatch.setattr(match_core.text_parser, "parse", fake_parse)
     monkeypatch.setattr(match_core.text_parser, "params_match", fake_params_match)
@@ -41,8 +45,8 @@ def test_try_experience_match_sanitizes_cross_province_hints():
     mock_exp_db = MagicMock()
     mock_exp_db.search_similar.return_value = []
     mock_exp_db.search_cross_province.return_value = [
-        {"quota_names": ["  管道安装   镀锌钢管  ", "", "管卡安装", "管卡安装"]},
-        {"quota_names": " 管道安装 镀锌钢管 "},
+        {"quota_names": ["  管道安装   镀锌钢管 ", "", "管卡安装", "管卡安装"]},
+        {"quota_names": " 管道安装 镀锌钢管"},
         {"quota_names": ["保温", None, "   "]},
     ]
 
@@ -50,7 +54,8 @@ def test_try_experience_match_sanitizes_cross_province_hints():
 
     with patch.object(config, "CROSS_PROVINCE_WARMUP_ENABLED", True):
         result = match_core.try_experience_match(
-            "给水管道 DN25", item, mock_exp_db, province="广东2024")
+            "给水管道 DN25", item, mock_exp_db, province="广东2024"
+        )
 
     assert result is None
     assert item["_cross_province_hints"] == [
@@ -60,11 +65,61 @@ def test_try_experience_match_sanitizes_cross_province_hints():
     ]
 
 
+def test_try_experience_match_rejects_exact_with_single_confirmation():
+    mock_exp_db = MagicMock()
+    mock_exp_db.search_similar.return_value = [{
+        "id": 101,
+        "match_type": "exact",
+        "quota_ids": ["C10-1-10"],
+        "quota_names": ["管道安装"],
+        "confidence": 95,
+        "confirm_count": 1,
+        "source": "user_confirmed",
+        "updated_at": time.time(),
+        "similarity": 1.0,
+        "materials": "[]",
+    }]
+
+    result = match_core.try_experience_match(
+        "给水管道 DN25",
+        {"name": "给水管道", "description": "DN25"},
+        mock_exp_db,
+        province="北京2024",
+    )
+
+    assert result is None
+
+
+def test_try_experience_match_rejects_stale_exact_direct_hit():
+    mock_exp_db = MagicMock()
+    mock_exp_db.search_similar.return_value = [{
+        "id": 102,
+        "match_type": "exact",
+        "quota_ids": ["C10-1-10"],
+        "quota_names": ["管道安装"],
+        "confidence": 98,
+        "confirm_count": 3,
+        "source": "user_confirmed",
+        "updated_at": time.time() - 6 * 365 * 86400,
+        "similarity": 1.0,
+        "materials": "[]",
+    }]
+
+    result = match_core.try_experience_match(
+        "给水管道 DN25",
+        {"name": "给水管道", "description": "DN25"},
+        mock_exp_db,
+        province="北京2024",
+    )
+
+    assert result is None
+
+
 def test_prepare_candidates_from_prepared_sanitizes_and_dedupes_hints():
     item = {
         "name": "给水管道",
         "_cross_province_hints": [
-            "  管道安装   镀锌钢管  ",
+            "  管道安装   镀锌钢管 ",
             "管卡安装",
             "管卡安装",
             "",
@@ -90,7 +145,8 @@ def test_prepare_candidates_from_prepared_sanitizes_and_dedupes_hints():
     with patch("src.match_core.cascade_search", return_value=[]) as mock_cascade:
         with patch("src.match_core._build_support_surface_process_quotas", return_value=[]):
             match_core._prepare_candidates_from_prepared(
-                prepared, mock_searcher, None, mock_validator)
+                prepared, mock_searcher, None, mock_validator
+            )
 
     actual_query = mock_cascade.call_args[0][1]
     assert actual_query.count("管卡安装") == 1
