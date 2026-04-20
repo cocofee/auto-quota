@@ -267,6 +267,32 @@ def summarize_candidate_reasoning(candidate: dict) -> dict:
     return reasoning
 
 
+def is_param_hard_fail_candidate(candidate: dict | None) -> bool:
+    """Return True when candidate should be vetoed before ranking."""
+    if not isinstance(candidate, dict):
+        return False
+    if bool(candidate.get("param_hard_fail")):
+        return True
+    if str(candidate.get("param_validation_tier", "") or "").strip() == "hard_fail":
+        return True
+    try:
+        return int(candidate.get("param_tier", 1) or 1) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def filter_param_hard_fail_candidates(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split validated candidates into rankable and hard-fail buckets."""
+    rankable: list[dict] = []
+    rejected: list[dict] = []
+    for candidate in list(candidates or []):
+        if is_param_hard_fail_candidate(candidate):
+            rejected.append(candidate)
+        else:
+            rankable.append(candidate)
+    return rankable, rejected
+
+
 def _append_trace_step(result: dict, stage: str, **fields):
     """Append a normalized trace step to a result."""
     trace = result.get("trace")
@@ -1884,8 +1910,10 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             context_prior=context_prior,
             bill_item_context=bill_item_context,
         )
-        if len(candidates) > 1:
-            candidates = sort_candidates_with_stage_priority(candidates)
+        rankable_candidates, rejected_hard_fail_candidates = filter_param_hard_fail_candidates(candidates)
+        if len(rankable_candidates) > 1:
+            rankable_candidates = sort_candidates_with_stage_priority(rankable_candidates)
+        candidates = rankable_candidates + rejected_hard_fail_candidates
     return candidates
 
 

@@ -23,6 +23,7 @@ from src.match_core import (
     _is_measure_item,
     _summarize_candidates_for_trace,
     calculate_confidence,
+    filter_param_hard_fail_candidates,
     infer_confidence_family_alignment,
     summarize_candidate_reasoning,
 )
@@ -168,6 +169,7 @@ def _init_ranking_meta() -> dict:
         "post_final_top1_id": "",
         "final_changed_by": "",
         "candidate_count": 0,
+        "hard_param_fail_rejected_count": 0,
         "ltr": {},
         "explicit_override": {},
         "unified_ranking_enabled": False,
@@ -796,6 +798,7 @@ def _assemble_search_result_payload(item: dict,
         "explanation": explanation,
         "candidates_count": len(valid_candidates),
         "candidate_count": len(valid_candidates),
+        "hard_param_fail_rejected_count": ranking_meta["hard_param_fail_rejected_count"],
         "all_candidate_ids": all_candidate_ids,
         "candidate_snapshots": _build_ranked_candidate_snapshots(valid_candidates, top_n=20),
         "match_source": "search",
@@ -882,10 +885,18 @@ def _finalize_search_result_payload(result: dict,
                                     explanation: str,
                                     reasoning_decision: dict) -> dict:
     input_gate = item.get("_input_gate") or {}
+    hard_param_fail_rejected_count = int(result.get("hard_param_fail_rejected_count", 0) or 0)
     if best and valid_candidates and any(candidate.get("param_match", True) for candidate in valid_candidates):
         _set_result_reason(result, "structured_selection", ["retrieved", "validated"], explanation or "selected from structured candidates")
     elif best and valid_candidates:
         _set_result_reason(result, "param_conflict", ["retrieved", "param_conflict", "manual_review"], explanation or "fallback to best candidate")
+    elif hard_param_fail_rejected_count > 0 and not valid_candidates:
+        _set_result_reason(
+            result,
+            "param_hard_fail",
+            ["retrieved", "param_hard_fail", "manual_review"],
+            "all candidates rejected by hard parameter validation",
+        )
     elif candidates and not valid_candidates:
         _set_result_reason(result, "candidate_invalid", ["retrieved", "candidate_invalid", "manual_review"], "candidates missing quota_id/name")
     else:
@@ -909,7 +920,11 @@ def _finalize_search_result_payload(result: dict,
     if best and valid_candidates:
         result["alternatives"] = _build_alternatives(valid_candidates, skip_obj=best, top_n=DEFAULT_ALTERNATIVE_COUNT)
     if not best:
-        result["no_match_reason"] = explanation or "搜索无匹配结果"
+        result["no_match_reason"] = explanation or (
+            "all candidates rejected by hard parameter validation"
+            if hard_param_fail_rejected_count > 0
+            else "搜索无匹配结果"
+        )
     return result
 
 
@@ -985,9 +1000,14 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         valid_candidates = _apply_plugin_candidate_biases(item, valid_candidates)
     with performance_monitor.measure("search_scope_annotate"):
         valid_candidates = _annotate_candidate_scope_signals(item, valid_candidates)
+    valid_candidates, hard_param_fail_candidates = filter_param_hard_fail_candidates(valid_candidates)
+    ranking_meta["hard_param_fail_rejected_count"] = len(hard_param_fail_candidates)
     ranking_meta["candidate_count"] = len(valid_candidates)
     if candidates and not valid_candidates:
-        logger.warning("candidate list exists but all items miss quota_id/name; treat as no-match")
+        if hard_param_fail_candidates:
+            logger.warning("candidate list exists but all items were rejected by hard parameter validation")
+        else:
+            logger.warning("candidate list exists but all items miss quota_id/name; treat as no-match")
 
     if valid_candidates:
         with performance_monitor.measure("search_param_match_filter"):

@@ -226,6 +226,63 @@ def test_prepare_candidates_retains_knowledge_prior_candidates_after_rerank_trun
     assert retained["knowledge_prior_sources"] == ["experience"]
 
 
+def test_prepare_candidates_preserves_param_hard_fail_candidates_after_rankable_ones(monkeypatch):
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return []
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, **kwargs):
+            del query_text, kwargs
+            return [
+                {
+                    "quota_id": "Q-BAD",
+                    "name": "管道安装 DN80",
+                    "hybrid_score": 0.92,
+                    "rerank_score": 0.92,
+                    "param_match": False,
+                    "param_tier": 0,
+                    "param_score": 0.64,
+                    "param_validation_tier": "hard_fail",
+                },
+                {
+                    "quota_id": "Q-GOOD",
+                    "name": "管道安装 DN100",
+                    "hybrid_score": 0.85,
+                    "rerank_score": 0.85,
+                    "param_match": True,
+                    "param_tier": 2,
+                    "param_score": 0.95,
+                },
+            ]
+
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda searcher, query, classification: [
+            {"quota_id": "Q-BAD", "name": "管道安装 DN80", "hybrid_score": 0.92},
+            {"quota_id": "Q-GOOD", "name": "管道安装 DN100", "hybrid_score": 0.85},
+        ],
+    )
+
+    candidates = match_core._prepare_candidates(
+        FakeSearcher(),
+        FakeReranker(),
+        FakeValidator(),
+        "管道安装 DN100",
+        "管道安装 DN100",
+        {"primary": "C10", "fallbacks": [], "search_books": ["C10"]},
+    )
+
+    assert [candidate["quota_id"] for candidate in candidates] == ["Q-GOOD", "Q-BAD"]
+    assert candidates[-1]["param_validation_tier"] == "hard_fail"
+
+
 def test_prepare_candidates_collects_prior_candidates_from_aux_searchers(monkeypatch):
     captured_books = []
 
