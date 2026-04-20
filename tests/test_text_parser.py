@@ -384,6 +384,11 @@ class TestExtractConnection:
         result = parser.parse("镀锌钢管 DN25 螺纹连接")
         assert result["connection"] == "螺纹连接"
 
+    def test_glue_alias_normalizes_to_canonical_connection(self):
+        """粘结/粘结连接 应统一归一到 粘接"""
+        result = parser.parse("给水管道 PVC DN100 粘结连接")
+        assert result["connection"] == "粘接"
+
 
 class TestEdgeCases:
     """边界情况和排除逻辑测试"""
