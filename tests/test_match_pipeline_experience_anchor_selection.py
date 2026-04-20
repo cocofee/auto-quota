@@ -2,6 +2,13 @@ from types import SimpleNamespace
 
 import config
 import src.match_pipeline as match_pipeline
+from src.match_pipeline import orchestrator as match_orchestrator
+
+
+def _patch_public_and_orchestrator(monkeypatch, name: str, value):
+    monkeypatch.setattr(match_pipeline, name, value)
+    if hasattr(match_orchestrator, name):
+        monkeypatch.setattr(match_orchestrator, name, value)
 
 
 def _candidate(
@@ -36,36 +43,36 @@ def _candidate(
 
 
 def _patch_pipeline(monkeypatch):
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_apply_plugin_route_gate",
         lambda item, candidates: (list(candidates), {"applied": False}),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_apply_plugin_candidate_biases",
         lambda item, candidates: list(candidates),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "rerank_candidates_with_ltr",
         lambda item, candidates, ctx: (list(candidates), {}),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "arbitrate_candidates",
         lambda item, candidates, route_profile=None: (
             list(candidates),
             {"applied": False, "advisory_applied": False},
         ),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_promote_explicit_distribution_box_candidate",
         lambda item, candidates: (list(candidates), {}),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "analyze_ambiguity",
         lambda *args, **kwargs: SimpleNamespace(as_dict=lambda: {}),
     )
@@ -147,24 +154,24 @@ def test_search_result_uses_exact_experience_anchor_when_no_param_match_exists(m
 def test_run_rank_pipeline_tracks_full_stage_ids_for_param_matched_branch(monkeypatch):
     _patch_pipeline(monkeypatch)
 
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "rerank_candidates_with_ltr",
         lambda item, candidates, ctx: (
             [dict(candidates[1]), dict(candidates[0])],
             {"post_ltr_top1_id": "Q-LTR", "post_cgr_top1_id": "Q-CGR"},
         ),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "arbitrate_candidates",
         lambda item, candidates, route_profile=None: (
             [dict(candidates[1]), dict(candidates[0])],
             {"applied": True, "advisory_applied": False, "reason": "arbiter_flip"},
         ),
     )
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_promote_explicit_distribution_box_candidate",
         lambda item, candidates: (
             [dict(candidates[1]), dict(candidates[0])],
@@ -204,8 +211,8 @@ def test_run_rank_pipeline_tracks_full_stage_ids_for_param_matched_branch(monkey
 def test_run_rank_pipeline_uses_default_no_param_arbitration(monkeypatch):
     _patch_pipeline(monkeypatch)
 
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "rerank_candidates_with_ltr",
         lambda item, candidates, ctx: (
             list(candidates),
@@ -264,8 +271,8 @@ def test_run_rank_pipeline_exposes_unified_ranking_flags_without_changing_behavi
 
 def test_run_rank_pipeline_uses_category_safe_candidate_for_selected_best(monkeypatch):
     _patch_pipeline(monkeypatch)
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_pick_category_safe_candidate",
         lambda item, candidates: dict(candidates[1]),
     )
@@ -295,8 +302,8 @@ def test_build_search_result_records_unified_ranking_shadow_without_overriding_s
     _patch_pipeline(monkeypatch)
     monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", False)
     monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", True)
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_run_unified_ranking_shadow",
         lambda item, candidates, top_k=5: {
             "candidates": [
@@ -348,12 +355,12 @@ def test_build_search_result_records_unified_ranking_shadow_without_overriding_s
     assert result["unified_ranking_diagnostics"]["selection"]["top_driver"] == "param_match"
 
 
-def test_build_search_result_uses_unified_ranking_top1_when_enabled(monkeypatch):
+def test_build_search_result_keeps_param_matched_top1_when_unified_prefers_param_mismatch(monkeypatch):
     _patch_pipeline(monkeypatch)
     monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", True)
     monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", False)
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_run_unified_ranking_shadow",
         lambda item, candidates, top_k=5: {
             "candidates": [
@@ -393,16 +400,16 @@ def test_build_search_result_uses_unified_ranking_top1_when_enabled(monkeypatch)
         ],
     )
 
-    assert result["quotas"][0]["quota_id"] == "Q-UNIFIED"
+    assert result["quotas"][0]["quota_id"] == "Q-KEEP"
     assert result["legacy_top1_id"] == "Q-KEEP"
-    assert result["selected_top1_id"] == "Q-UNIFIED"
-    assert result["post_final_top1_id"] == "Q-UNIFIED"
-    assert result["confidence"] == 0.81
-    assert result["explanation"] == "unified_ranking: top_driver=knowledge_prior; filtered_score=0.910"
+    assert result["selected_top1_id"] == "Q-KEEP"
+    assert result["post_final_top1_id"] == "Q-KEEP"
+    assert result["confidence"] == 0.63
+    assert result["explanation"] == "unified_ranking: top_driver=param_match; filtered_score=0.830"
     assert result["unified_ranking_executed"] is True
     assert result["unified_result_used"] is True
     assert result["unified_top1_id"] == "Q-UNIFIED"
-    assert result["unified_top1_matches_selected"] is True
+    assert result["unified_top1_matches_selected"] is False
     assert result["unified_top1_matches_legacy"] is False
     assert result["legacy_top1_unified_score"] == 0.83
     assert result["legacy_top1_unified_confidence"] == 0.63
@@ -411,7 +418,7 @@ def test_build_search_result_uses_unified_ranking_top1_when_enabled(monkeypatch)
     assert result["unified_shadow_comparison"]["matches"] is False
     assert round(result["unified_shadow_comparison"]["score_gap"], 2) == 0.08
     assert result["final_changed_by"] == "unified_ranking"
-    assert result["rank_decision_owner"] == "unified_ranking"
+    assert result["rank_decision_owner"] == "selected"
 
 
 def test_build_search_result_falls_back_when_unified_ranking_enabled_errors(monkeypatch):
@@ -422,7 +429,7 @@ def test_build_search_result_falls_back_when_unified_ranking_enabled_errors(monk
     def _raise_unified_error(item, candidates, top_k=5):
         raise RuntimeError("unified failed")
 
-    monkeypatch.setattr(match_pipeline, "_run_unified_ranking_shadow", _raise_unified_error)
+    _patch_public_and_orchestrator(monkeypatch, "_run_unified_ranking_shadow", _raise_unified_error)
 
     result = match_pipeline._build_search_result_from_candidates(
         {"name": "测试项", "query_route": {"route": "installation_spec"}},
@@ -490,8 +497,8 @@ def test_run_rank_pipeline_uses_category_safe_candidate_in_unified_primary_mode(
     _patch_pipeline(monkeypatch)
     monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", True)
     monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", False)
-    monkeypatch.setattr(
-        match_pipeline,
+    _patch_public_and_orchestrator(
+        monkeypatch,
         "_pick_category_safe_candidate",
         lambda item, candidates: dict(candidates[1]),
     )

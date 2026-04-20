@@ -97,7 +97,9 @@ def analyze_ambiguity(candidates: list[dict],
     top_id = str(top.get("quota_id", "")).strip()
     top_score = safe_float(top.get("param_score"), 0.0)
     top_has_hard_conflict = bool(
-        top.get("feature_alignment_hard_conflict") or top.get("logic_hard_conflict")
+        top.get("family_gate_hard_conflict")
+        or top.get("feature_alignment_hard_conflict")
+        or top.get("logic_hard_conflict")
     )
 
     if not top.get("param_match", True):

@@ -218,3 +218,113 @@ def test_evaluate_returns_structured_regression_report(monkeypatch, tmp_path):
     assert report.per_difficulty_accuracy == {
         "easy": {"total": 1, "top1_accuracy": 1.0, "top3_accuracy": 1.0}
     }
+
+
+def test_evaluate_on_golden_set_counts_high_confidence_and_agent_fastpath_as_fastpath(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "golden_set.jsonl"
+    dataset_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "eval.run_regression.run_real_eval",
+        lambda *args, **kwargs: {
+            "dataset_path": str(dataset_path),
+            "profile": "dev",
+            "eval_mode": "closed_book",
+            "province_results": [
+                {
+                    "province": "P1",
+                    "details": [
+                        {
+                            "specialty": "C10",
+                            "difficulty": "easy",
+                            "oracle_quota_ids": ["Q1"],
+                            "all_candidate_ids": ["Q1", "Q2"],
+                            "is_match": True,
+                            "confidence": 92,
+                            "accept_reason": "high_confidence",
+                            "reasoning_decision": {"reason": "high_confidence"},
+                            "match_source": "search",
+                        },
+                        {
+                            "specialty": "C10",
+                            "difficulty": "hard",
+                            "oracle_quota_ids": ["Q3"],
+                            "all_candidate_ids": ["Q4", "Q3"],
+                            "is_match": False,
+                            "confidence": 88,
+                            "accept_reason": "",
+                            "reasoning_decision": {},
+                            "match_source": "agent_fastpath",
+                        },
+                    ],
+                }
+            ],
+            "skipped_provinces": [],
+        },
+    )
+
+    result = evaluate_on_golden_set("v-fastpath", dataset_path=dataset_path, tracker=_FakeTracker())
+
+    assert result["fastpath_count"] == 2
+    assert result["fastpath_precision"] == 0.5
+
+
+def test_evaluate_on_golden_set_keeps_ece_stable_for_fastpath_flavored_mix(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "golden_set.jsonl"
+    dataset_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "eval.run_regression.run_real_eval",
+        lambda *args, **kwargs: {
+            "dataset_path": str(dataset_path),
+            "profile": "dev",
+            "eval_mode": "closed_book",
+            "province_results": [
+                {
+                    "province": "P1",
+                    "details": [
+                        {
+                            "specialty": "C10",
+                            "difficulty": "easy",
+                            "oracle_quota_ids": ["Q1"],
+                            "all_candidate_ids": ["Q1", "Q2"],
+                            "is_match": True,
+                            "confidence": 92,
+                            "accept_reason": "high_confidence",
+                            "reasoning_decision": {"reason": "high_confidence"},
+                            "match_source": "search",
+                        },
+                        {
+                            "specialty": "C10",
+                            "difficulty": "hard",
+                            "oracle_quota_ids": ["Q3"],
+                            "all_candidate_ids": ["Q4", "Q3"],
+                            "is_match": False,
+                            "confidence": 88,
+                            "accept_reason": "",
+                            "reasoning_decision": {},
+                            "match_source": "agent_fastpath",
+                        },
+                        {
+                            "specialty": "C20",
+                            "difficulty": "edge",
+                            "oracle_quota_ids": ["Q5"],
+                            "all_candidate_ids": ["Q5", "Q6"],
+                            "is_match": True,
+                            "confidence": 40,
+                            "accept_reason": "",
+                            "reasoning_decision": {},
+                            "match_source": "search",
+                        },
+                    ],
+                }
+            ],
+            "skipped_provinces": [],
+        },
+    )
+
+    result = evaluate_on_golden_set("v-fastpath-ece", dataset_path=dataset_path, tracker=_FakeTracker())
+
+    assert result["fastpath_count"] == 2
+    assert result["fastpath_precision"] == 0.5
+    assert result["confidence_calibration_ece"] == pytest.approx(0.52, abs=1e-6)

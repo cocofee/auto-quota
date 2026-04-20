@@ -288,3 +288,30 @@ class TestReviewSheetSelection:
         assert ws.cell(row=2, column=1).value == 1
         assert ws.cell(row=2, column=4).value == "C10-1-1"
         assert ws.cell(row=2, column=6).value.startswith("★★★")
+
+    def test_review_sheet_includes_high_confidence_search_item_forced_manual_review(self):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        writer = OutputWriter()
+
+        results = [
+            {
+                "bill_item": {"name": "DN40钢管", "description": "统一排序命中但需终审"},
+                "confidence": 91,
+                "quotas": [{"quota_id": "C10-2-1", "name": "钢管安装"}],
+                "match_source": "search",
+                "require_final_review": True,
+                "reasoning_decision": {
+                    "reason": "arbitrated_small_gap",
+                    "require_final_review": True,
+                },
+                "explanation": "统一排序改写后需人工复核",
+                "alternatives": [],
+            }
+        ]
+
+        writer._write_review_sheet(ws, results)
+
+        assert ws.cell(row=2, column=1).value == 1
+        assert ws.cell(row=2, column=4).value == "C10-2-1"
+        assert ws.cell(row=2, column=6).value.startswith("★★★")

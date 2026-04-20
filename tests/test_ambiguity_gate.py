@@ -87,6 +87,30 @@ def test_hard_conflict_forces_ambiguity_and_final_review():
     assert decision.route == "installation_spec"
 
 
+def test_family_gate_hard_conflict_forces_ambiguity_and_final_review():
+    decision = analyze_ambiguity([
+        {
+            "quota_id": "C10-1-1",
+            "param_match": True,
+            "param_score": 0.95,
+            "rerank_score": 0.98,
+            "family_gate_hard_conflict": True,
+        },
+        {
+            "quota_id": "C10-1-2",
+            "param_match": True,
+            "param_score": 0.62,
+            "rerank_score": 0.80,
+        },
+    ], route_profile={"route": "installation_spec"})
+
+    assert decision.can_fastpath is False
+    assert decision.is_ambiguous is True
+    assert decision.reason == "hard_conflict"
+    assert decision.require_final_review is True
+    assert decision.route == "installation_spec"
+
+
 def test_arbitrated_candidate_without_gap_still_requires_reasoning():
     decision = analyze_ambiguity(
         [

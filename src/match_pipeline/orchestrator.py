@@ -318,7 +318,9 @@ def _apply_unified_candidate_order(base_candidates: list[dict], unified_candidat
 
 def _format_unified_selection_explanation(unified_result: dict, candidate: dict | None) -> str:
     top_driver = str(((candidate or {}).get("explanation") or {}).get("top_driver") or "")
-    score = float(unified_result.get("top1_score", 0.0) or 0.0)
+    score = float(
+        (candidate or {}).get("filtered_score", (candidate or {}).get("unified_score", unified_result.get("top1_score", 0.0))) or 0.0
+    )
     if top_driver:
         return f"unified_ranking: top_driver={top_driver}; filtered_score={score:.3f}"
     return f"unified_ranking: filtered_score={score:.3f}"
@@ -341,14 +343,40 @@ def _apply_unified_enabled_selection(item: dict,
     if not unified_candidates:
         return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
 
-    reordered_valid_candidates = _apply_unified_candidate_order(valid_candidates, unified_candidates)
-    unified_best = reordered_valid_candidates[0] if reordered_valid_candidates else None
-    if not unified_best:
-        return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
-
+    unified_valid_candidates = _apply_unified_candidate_order(valid_candidates, unified_candidates)
     reordered_matched_candidates = list(matched_candidates or [])
     if matched_candidates:
-        reordered_matched_candidates = _apply_unified_candidate_order(matched_candidates, unified_candidates)
+        # Unified primary can reprioritize matched candidates, but it must not
+        # reintroduce param-mismatched candidates as the final selected top1
+        # when the legacy pipeline already found safe structured matches.
+        matched_ids = {
+            str(candidate.get("quota_id", "") or "").strip()
+            for candidate in matched_candidates
+            if str(candidate.get("quota_id", "") or "").strip()
+        }
+        matched_unified_candidates = [
+            candidate
+            for candidate in unified_candidates
+            if str(candidate.get("quota_id", "") or "").strip() in matched_ids
+        ]
+        reordered_matched_candidates = _apply_unified_candidate_order(
+            matched_candidates,
+            matched_unified_candidates,
+        )
+        reordered_valid_candidates = list(reordered_matched_candidates)
+        reordered_valid_candidates.extend(
+            candidate
+            for candidate in unified_valid_candidates
+            if str(candidate.get("quota_id", "") or "").strip() not in matched_ids
+        )
+        decision_candidates = reordered_matched_candidates
+    else:
+        reordered_valid_candidates = unified_valid_candidates
+        decision_candidates = reordered_valid_candidates
+
+    unified_best = decision_candidates[0] if decision_candidates else None
+    if not unified_best:
+        return valid_candidates, matched_candidates, best, confidence, explanation, reasoning_decision
 
     ranking_meta["unified_result_used"] = True
     ranking_meta["final_changed_by"] = "unified_ranking"
@@ -363,7 +391,7 @@ def _apply_unified_enabled_selection(item: dict,
     )
     selected_explanation = _format_unified_selection_explanation(unified_result, unified_best)
     selected_reasoning = analyze_ambiguity(
-        reordered_valid_candidates,
+        decision_candidates,
         route_profile=item.get("query_route"),
         arbitration=arbitration,
     ).as_dict()

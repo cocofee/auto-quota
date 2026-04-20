@@ -582,7 +582,8 @@ class OutputWriter:
 
     @staticmethod
     def _check_review_needed(confidence: int, quotas: list,
-                             match_source: str) -> bool:
+                             match_source: str,
+                             result: dict | None = None) -> bool:
         """判断该条清单是否需要人工复核
 
         标记条件（任一命中即标记）：
@@ -596,6 +597,22 @@ class OutputWriter:
         if confidence < config.CONFIDENCE_GREEN:
             return True
         if match_source in ("agent_fallback", "agent_error", "agent_circuit_break"):
+            return True
+        result = result or {}
+        reasoning_decision = result.get("reasoning_decision") or {}
+        final_validation = result.get("final_validation") or {}
+        reason_tags = {
+            str(tag).strip().lower()
+            for tag in list(result.get("reason_tags") or [])
+            if str(tag).strip()
+        }
+        if bool(result.get("require_final_review")):
+            return True
+        if bool(reasoning_decision.get("require_final_review")):
+            return True
+        if str(final_validation.get("status", "") or "").strip().lower() == "manual_review":
+            return True
+        if "manual_review" in reason_tags:
             return True
         return False
 
@@ -1344,7 +1361,7 @@ class OutputWriter:
         match_source = result.get("match_source", "")
 
         # 判断是否需要复核（任一条件命中即标记）
-        review_needed = self._check_review_needed(confidence, quotas, match_source)
+        review_needed = self._check_review_needed(confidence, quotas, match_source, result)
 
         # 置信度颜色
         conf_fill = self._confidence_fill(confidence)
@@ -1727,7 +1744,7 @@ class OutputWriter:
             confidence = _safe_confidence(result.get("confidence", 0), default=0)
             quotas = _ensure_list(result.get("quotas", []))
             match_source = result.get("match_source", "")
-            review_needed = self._check_review_needed(confidence, quotas, match_source)
+            review_needed = self._check_review_needed(confidence, quotas, match_source, result)
 
             # 统一与主表逻辑：无匹配 / 低置信度 / 降级来源 都进入待审核
             if not review_needed:
