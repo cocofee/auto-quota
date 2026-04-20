@@ -117,6 +117,13 @@ class InstallationValidator:
     def __init__(self, tier_up_score_fn: Callable[[float, float], float]):
         self._tier_up_score = tier_up_score_fn
 
+    def _score_tier_up(self, current_value: float, quota_value: float, *,
+                       param_key: str = "default") -> float:
+        try:
+            return self._tier_up_score(float(current_value), float(quota_value), param_key=param_key)
+        except TypeError:
+            return self._tier_up_score(float(current_value), float(quota_value))
+
     @staticmethod
     def _quota_book(qid: str) -> str:
         qid = str(qid or "").strip()
@@ -462,7 +469,11 @@ class InstallationValidator:
                 continue
 
             if bill_value < quota_value:
-                tier_score = self._tier_up_score(float(bill_value), float(quota_value))
+                tier_score = self._score_tier_up(
+                    float(bill_value),
+                    float(quota_value),
+                    param_key=key,
+                )
                 score_sum += tier_score
                 if hard_match and tier_score == 0.0:
                     hard_fail = True

@@ -93,16 +93,65 @@ def _guard_explicit_candidate(item: dict,
                               explicit_candidate: dict | None,
                               hybrid_margin: float = 0.005) -> dict | None:
     if explicit_candidate is None:
-        return None
+        return top_candidate
     if not isinstance(top_candidate, dict) or not top_candidate:
         return explicit_candidate
+
+    if not explicit_candidate.get("param_match", True):
+        logger.debug(
+            f"explicit picker guard rejected hard param fail quota_id={explicit_candidate.get('quota_id')}"
+        )
+        return top_candidate
+    if explicit_candidate.get("family_gate_hard_conflict"):
+        logger.debug(
+            f"explicit picker guard rejected family hard conflict quota_id={explicit_candidate.get('quota_id')}"
+        )
+        return top_candidate
+
+    param_score_floor = float(
+        PolicyEngine.get_picker_threshold("explicit_param_score_floor", 0.55)
+    )
+    explicit_param_score_raw = explicit_candidate.get("param_score")
+    explicit_param_score = float(explicit_param_score_raw or 0.0)
+    if explicit_param_score_raw is not None and explicit_param_score < param_score_floor:
+        logger.debug(
+            f"explicit picker guard rejected low param_score={explicit_param_score:.3f} "
+            f"quota_id={explicit_candidate.get('quota_id')}"
+        )
+        return top_candidate
 
     top_score = _safe_candidate_hybrid_score(top_candidate)
     explicit_score = _safe_candidate_hybrid_score(explicit_candidate)
     resolved_margin = float(
         PolicyEngine.get_picker_threshold("explicit_hybrid_margin", hybrid_margin)
     )
-    if (top_score - explicit_score) > resolved_margin:
+    explicit_name_bonus = float(explicit_candidate.get("name_bonus", 0.0) or 0.0)
+    top_name_bonus = float(top_candidate.get("name_bonus", 0.0) or 0.0)
+    name_bonus_floor = float(
+        PolicyEngine.get_picker_threshold("explicit_name_bonus_floor", 0.05)
+    )
+    if (top_score - explicit_score) > resolved_margin and (
+        explicit_name_bonus - top_name_bonus
+    ) < name_bonus_floor:
+        return top_candidate
+
+    item_specialty = str(item.get("specialty") or "").strip()
+    candidate_specialty = str(explicit_candidate.get("specialty") or "").strip()
+    specialty_param_floor = float(
+        PolicyEngine.get_picker_threshold("explicit_specialty_param_floor", 0.75)
+    )
+    if (
+        item_specialty
+        and candidate_specialty
+        and item_specialty != candidate_specialty
+        and explicit_param_score_raw is not None
+        and explicit_param_score < specialty_param_floor
+    ):
+        logger.debug(
+            f"explicit picker guard rejected specialty drift "
+            f"item={item_specialty} candidate={candidate_specialty} "
+            f"param_score={explicit_param_score:.3f}"
+        )
         return top_candidate
     return explicit_candidate
 

@@ -8,7 +8,7 @@ from loguru import logger
 from src.confidence_utils import apply_confidence_penalty
 from src.match_core import _append_trace_step, _safe_json_materials
 from src.param_validator import ParamValidator
-from src.policy_engine import PolicyEngine
+from src.policies.reconcile_policy import get_reconcile_policy
 from src.reason_taxonomy import merge_reason_tags
 from src.text_parser import parser as text_parser
 
@@ -316,13 +316,14 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
     if not exp_backup:
         return result, exp_hits
 
+    policy = get_reconcile_policy()
     exp_source = exp_backup.get("match_source", "")
     exp_qids = [q.get("quota_id", "") for q in exp_backup.get("quotas", [])]
     search_qids = [q.get("quota_id", "") for q in result.get("quotas", [])]
 
     same_quota = (exp_qids and search_qids and exp_qids[0] == search_qids[0])
     if same_quota:
-        confirm_boost = int(PolicyEngine.get_confidence_threshold("same_quota_confirm_boost", 92))
+        confirm_boost = policy.same_quota_min_confidence
         result["confidence"] = max(result.get("confidence", 0), confirm_boost)
         result["match_source"] = f"{exp_source}_confirmed"
         result["explanation"] = f"经验库+搜索一致: {result.get('explanation', '')}"
@@ -339,9 +340,24 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
         return result, exp_hits + 1
 
     if exp_source == "experience_exact":
-        degrade_cap = int(PolicyEngine.get_confidence_threshold("experience_exact_degrade_cap", 88))
+        degrade_cap = policy.experience_exact_degrade_cap
         exp_conf = min(exp_backup.get("confidence", 0), degrade_cap)
         search_conf = result.get("confidence", 0)
+        confirm_count = exp_backup.get("confirm_count")
+        if confirm_count is not None and int(confirm_count or 0) < policy.exact_min_confirm_count:
+            _append_backup_advisory(
+                result,
+                advisory_type="experience_exact_low_confirm",
+                backup=exp_backup,
+                stage="experience_exact_low_confirm_advisory",
+            )
+            _append_trace_step(
+                result,
+                "experience_exact_low_confirm_rejected",
+                confirm_count=int(confirm_count or 0),
+                required_confirm_count=policy.exact_min_confirm_count,
+            )
+            return result, exp_hits
         # 严格大于才替换（与相似匹配一致，等分时信任搜索+参数验证）
         if exp_conf > search_conf:
             exp_backup["confidence"] = exp_conf
@@ -370,12 +386,14 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
     # search 模式下的 experience_similar 只做 advisory，不覆盖已产出的搜索主结果。
     # 搜索结果已经经过当前 query 的召回和参数排序，经验相似命中只保留为辅助证据。
     if not search_qids:
-        if exp_backup.get("confidence", 0) > result.get("confidence", 0):
+        override_margin = policy.experience_similar_override_margin
+        if exp_backup.get("confidence", 0) > (result.get("confidence", 0) + override_margin):
             _append_trace_step(
                 exp_backup,
                 "experience_similar_override",
                 search_confidence=result.get("confidence", 0),
                 backup_confidence=exp_backup.get("confidence", 0),
+                override_margin=override_margin,
             )
             return exp_backup, exp_hits + 1
 
@@ -384,6 +402,7 @@ def _reconcile_search_and_experience(result: dict, exp_backup: dict,
             "experience_similar_rejected",
             search_confidence=result.get("confidence", 0),
             backup_confidence=exp_backup.get("confidence", 0),
+            override_margin=override_margin,
         )
         logger.debug(
             f"搜索结果优于经验库相似匹配: "

@@ -140,3 +140,84 @@ def test_ambiguity_and_picker_use_configured_thresholds(tmp_path, monkeypatch):
     assert guarded["quota_id"] == "Q2"
 
     PolicyEngine.clear_caches()
+
+
+def test_guard_explicit_candidate_rejects_low_quality_explicit_candidate():
+    guarded = _guard_explicit_candidate(
+        {"specialty": "电气"},
+        {
+            "quota_id": "TOP",
+            "hybrid_score": 0.91,
+            "name_bonus": 0.01,
+            "specialty": "电气",
+        },
+        {
+            "quota_id": "EXP",
+            "hybrid_score": 0.909,
+            "param_match": False,
+            "param_score": 0.95,
+            "name_bonus": 0.20,
+            "specialty": "电气",
+        },
+    )
+    assert guarded["quota_id"] == "TOP"
+
+
+def test_guard_explicit_candidate_requires_extra_param_score_for_cross_specialty():
+    guarded = _guard_explicit_candidate(
+        {"specialty": "电气"},
+        {
+            "quota_id": "TOP",
+            "hybrid_score": 0.90,
+            "name_bonus": 0.01,
+            "specialty": "电气",
+        },
+        {
+            "quota_id": "EXP",
+            "hybrid_score": 0.899,
+            "param_match": True,
+            "param_score": 0.70,
+            "name_bonus": 0.20,
+            "specialty": "给排水",
+        },
+    )
+    assert guarded["quota_id"] == "TOP"
+
+
+def test_reconcile_search_and_experience_uses_similar_override_margin_and_min_confirm(tmp_path, monkeypatch):
+    thresholds_path = tmp_path / "thresholds.yaml"
+    thresholds_path.write_text(
+        "\n".join(
+            [
+                "confidence:",
+                "  experience_similar_override_margin: 3",
+                "  experience_exact_min_confirm: 2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "POLICY_THRESHOLDS_PATH", str(thresholds_path), raising=False)
+    PolicyEngine.clear_caches()
+
+    kept, hits = _reconcile_search_and_experience(
+        {"confidence": 80, "quotas": [], "explanation": "search"},
+        {"match_source": "experience_similar", "confidence": 82, "quotas": [{"quota_id": "Q1"}]},
+        0,
+    )
+    assert kept["confidence"] == 80
+    assert hits == 0
+
+    low_confirm, hits = _reconcile_search_and_experience(
+        {"confidence": 80, "quotas": [{"quota_id": "Q2"}], "explanation": "search"},
+        {
+            "match_source": "experience_exact",
+            "confidence": 99,
+            "confirm_count": 1,
+            "quotas": [{"quota_id": "Q1"}],
+        },
+        0,
+    )
+    assert low_confirm["confidence"] == 80
+    assert hits == 0
+
+    PolicyEngine.clear_caches()

@@ -179,6 +179,17 @@ class TestTierUpHardFail:
     def setup_method(self):
         self.validator = ParamValidator()
 
+    def test_tier_up_score_uses_param_specific_hard_fail_ratio(self):
+        assert self.validator._tier_up_score(25, 100, param_key="dn") == 0.0
+        assert self.validator._tier_up_score(25, 110, param_key="kva") > 0.0
+
+    def test_kva_tier_up_allows_wider_bucket_than_dn(self):
+        bill_params = {"kva": 25}
+        quota_params = {"kva": 110}
+        is_match, score, _detail = self.validator._check_params(bill_params, quota_params)
+        assert is_match is True
+        assert score > 0.55
+
     def test_tier_up_score_returns_zero_for_extreme_ratio(self):
         """ratio >= 4 鐨勮秴妗ｄ笉搴旇 0.55 鍦版澘鎵樹綇"""
         score = self.validator._tier_up_score(25, 25000)

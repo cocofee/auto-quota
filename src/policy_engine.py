@@ -12,6 +12,9 @@ DEFAULT_THRESHOLD_PAYLOAD: dict[str, Any] = {
     "confidence": {
         "experience_exact_degrade_cap": 88,
         "same_quota_confirm_boost": 92,
+        "experience_similar_override_margin": 0,
+        "experience_similar_threshold": 0.80,
+        "experience_exact_min_confirm": 2,
     },
     "fastpath": {
         "reranker_failure_window": 3,
@@ -20,6 +23,9 @@ DEFAULT_THRESHOLD_PAYLOAD: dict[str, Any] = {
     },
     "pickers": {
         "explicit_hybrid_margin": 0.005,
+        "explicit_param_score_floor": 0.55,
+        "explicit_name_bonus_floor": 0.05,
+        "explicit_specialty_param_floor": 0.75,
     },
     "route_policies": {
         "balanced": {
