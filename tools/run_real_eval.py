@@ -49,7 +49,6 @@ PROFILE_DEFAULTS = {
     },
 }
 
-
 def _read_jsonl(path: str | Path) -> list[dict]:
     path = Path(path)
     records: list[dict] = []
@@ -283,7 +282,8 @@ def _detail_from_result(record: dict, result: dict) -> dict:
     cause = "" if is_match else _diagnose_cause(record, algo_id, algo_name, quotas)
     reasoning = dict(result.get("reasoning_decision") or {})
     accept_reason = str(reasoning.get("reason") or "")
-    accepted = accept_reason == "accept_head_confident"
+    match_source = str(result.get("match_source", "") or "").strip().lower()
+    accepted = match_source == "agent_fastpath" or bool(result.get("agent_skipped"))
     search_step = _trace_step(result, "search_select")
     experience_review_rejected_step = _trace_step(result, "experience_review_rejected")
     parser_trace = dict(search_step.get("parser") or {})

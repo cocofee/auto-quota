@@ -476,6 +476,91 @@ def test_detail_from_result_keeps_experience_review_rejection_trace():
     assert detail["experience_review_rejected_source"] == "experience_exact"
 
 
+def test_detail_from_result_keeps_high_confidence_reason_without_marking_acceptance():
+    record = {
+        "sample_id": "s-fastpath",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目D",
+        "bill_name": "配管",
+        "bill_text": "SC20 配管",
+        "section": "电气",
+        "sheet_name": "安装",
+        "specialty": "C4",
+        "oracle_quota_ids": ["C4-1-1"],
+        "oracle_quota_names": ["配管"],
+    }
+    result = {
+        "quotas": [{"quota_id": "C4-1-1", "name": "配管"}],
+        "all_candidate_ids": ["C4-1-1", "C4-1-2"],
+        "reasoning_decision": {"reason": "high_confidence"},
+        "match_source": "search",
+        "confidence": 91,
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["accepted"] is False
+    assert detail["accept_reason"] == "high_confidence"
+
+
+def test_detail_and_summary_keep_fastpath_accept_counts_aligned():
+    high_conf_record = {
+        "sample_id": "s-fastpath-1",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目D",
+        "bill_name": "配管",
+        "bill_text": "SC20 配管",
+        "section": "电气",
+        "sheet_name": "安装",
+        "specialty": "C4",
+        "oracle_quota_ids": ["C4-1-1"],
+        "oracle_quota_names": ["配管"],
+    }
+    high_conf_result = {
+        "quotas": [{"quota_id": "C4-1-1", "name": "配管"}],
+        "all_candidate_ids": ["C4-1-1", "C4-1-2"],
+        "reasoning_decision": {"reason": "high_confidence"},
+        "match_source": "search",
+        "confidence": 91,
+    }
+    agent_fastpath_record = {
+        "sample_id": "s-fastpath-2",
+        "province": "广东",
+        "source": "project_import",
+        "project_name": "项目E",
+        "bill_name": "配线",
+        "bill_text": "BV 2.5mm2 配线",
+        "section": "电气",
+        "sheet_name": "安装",
+        "specialty": "C4",
+        "oracle_quota_ids": ["C4-2-1"],
+        "oracle_quota_names": ["配线"],
+    }
+    agent_fastpath_result = {
+        "quotas": [{"quota_id": "C4-2-9", "name": "错误定额"}],
+        "all_candidate_ids": ["C4-2-9", "C4-2-1"],
+        "reasoning_decision": {},
+        "match_source": "agent_fastpath",
+        "confidence": 86,
+    }
+
+    details = [
+        _detail_from_result(high_conf_record, high_conf_result),
+        _detail_from_result(agent_fastpath_record, agent_fastpath_result),
+    ]
+
+    summary = summarize_real_eval_details("广东", details, elapsed=1.2)
+
+    assert details[0]["accepted"] is False
+    assert details[1]["accepted"] is True
+    assert summary["accept_count"] == 1
+    assert summary["accept_correct"] == 0
+    assert summary["accept_coverage"] == 0.5
+    assert summary["accept_precision"] == 0.0
+
+
 def test_build_mode_comparison_summarizes_closed_book_vs_with_memory():
     closed_payload = {
         "profile": "smoke",
