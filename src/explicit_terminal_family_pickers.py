@@ -125,6 +125,80 @@ def _pick_explicit_sanitary_family_candidate(bill_text: str,
     return pick_best_candidate(scored)
 
 
+def _pick_explicit_outlet_family_candidate(bill_text: str,
+                                           candidates: list[dict]) -> dict | None:
+    text = bill_text or ""
+    if "插座" not in text:
+        return None
+    if any(keyword in text for keyword in ("信息插座", "电视插座", "电话插座", "网络插座", "光纤插座")):
+        return None
+
+    bill_params = text_parser.parse(text)
+    install_method = str(bill_params.get("install_method") or "")
+    outlet_grounding = str(bill_params.get("outlet_grounding") or "")
+    is_floor_outlet = any(keyword in text for keyword in ("地插", "地面插座"))
+    phase_text = text.upper()
+    prefer_three_phase = any(keyword in phase_text for keyword in ("380V", "3N", "3P")) or "三相" in text
+    prefer_single_phase = not prefer_three_phase
+    prefer_waterproof = any(keyword in text for keyword in ("防水", "防潮", "防溅"))
+
+    scored: list[tuple[tuple[int, float, float], dict]] = []
+    for candidate in candidates:
+        quota_name = candidate.get("name", "") or ""
+        candidate_params = text_parser.parse(quota_name)
+        candidate_install_method = str(candidate_params.get("install_method") or "")
+        candidate_grounding = str(candidate_params.get("outlet_grounding") or "")
+        score = 0
+
+        if "插座" in quota_name:
+            score += 12
+        if any(keyword in quota_name for keyword in ("开关", "按钮")) and "插座" not in quota_name:
+            score -= 12
+
+        candidate_is_floor = any(keyword in quota_name for keyword in ("地插", "地面插座"))
+        if is_floor_outlet:
+            if candidate_is_floor:
+                score += 14
+            else:
+                score -= 10
+        elif candidate_is_floor:
+            score -= 18
+
+        if prefer_three_phase:
+            if "三相" in quota_name:
+                score += 12
+            else:
+                score -= 12
+        elif prefer_single_phase and "三相" in quota_name:
+            score -= 12
+
+        if install_method and candidate_install_method:
+            if install_method == candidate_install_method:
+                score += 8
+            elif install_method == "暗装" and candidate_install_method == "明装":
+                score -= 8
+            elif install_method == "明装" and candidate_install_method == "暗装":
+                score -= 8
+
+        if outlet_grounding and candidate_grounding:
+            if outlet_grounding == candidate_grounding:
+                score += 6
+            else:
+                score -= 6
+
+        if prefer_waterproof:
+            if any(keyword in quota_name for keyword in ("防水", "防潮", "防溅")):
+                score += 4
+            elif candidate_is_floor:
+                score -= 4
+
+        if score <= 0:
+            continue
+        scored.append(score_candidate(candidate, score))
+
+    return pick_best_candidate(scored)
+
+
 def _pick_explicit_lamp_family_candidate(bill_text: str,
                                          candidates: list[dict]) -> dict | None:
     text = bill_text or ""
@@ -136,6 +210,11 @@ def _pick_explicit_lamp_family_candidate(bill_text: str,
     install_method = str(bill_params.get("install_method") or "")
     if not lamp_type and not install_method:
         return None
+    prefer_words: list[str] = []
+    forbidden_words: list[str] = []
+    if any(keyword in text for keyword in ("普通灯具", "LED灯", "防水防潮", "防水防尘")):
+        prefer_words.extend(["灯具", "吸顶"])
+        forbidden_words.extend(["标志", "诱导", "装饰"])
 
     incompatible_map = {
         "吸顶灯": {"筒灯", "灯带", "壁灯", "标志灯", "应急灯", "车库灯", "投光灯"},
@@ -155,6 +234,8 @@ def _pick_explicit_lamp_family_candidate(bill_text: str,
         candidate_lamp_type = str(candidate_params.get("lamp_type") or "")
         candidate_install_method = str(candidate_params.get("install_method") or "")
         score = 0
+        score += sum(4 for word in prefer_words if word and word in quota_name)
+        score -= sum(10 for word in forbidden_words if word and word in quota_name)
         if lamp_type and candidate_lamp_type:
             if lamp_type == candidate_lamp_type:
                 score += 12

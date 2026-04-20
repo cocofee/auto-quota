@@ -221,3 +221,61 @@ def test_reconcile_search_and_experience_uses_similar_override_margin_and_min_co
     assert hits == 0
 
     PolicyEngine.clear_caches()
+
+
+def test_guard_explicit_candidate_does_not_override_low_param_without_category_rescue(monkeypatch):
+    monkeypatch.setattr(
+        "src.match_pipeline.pickers.check_category_mismatch",
+        lambda *args, **kwargs: None,
+    )
+
+    guarded = _guard_explicit_candidate(
+        {},
+        {
+            "quota_id": "TOP",
+            "hybrid_score": 0.90,
+            "name_bonus": 0.05,
+        },
+        {
+            "quota_id": "EXP",
+            "hybrid_score": 0.895,
+            "param_match": True,
+            "param_score": 0.40,
+            "name_bonus": 0.20,
+        },
+    )
+
+    assert guarded["quota_id"] == "TOP"
+
+
+def test_guard_explicit_candidate_allows_low_param_category_rescue(monkeypatch):
+    def _fake_category_mismatch(item, quota_name, desc_lines):
+        del item, desc_lines
+        if quota_name == "TOP-QUOTA":
+            return {"type": "category_mismatch"}
+        return None
+
+    monkeypatch.setattr(
+        "src.match_pipeline.pickers.check_category_mismatch",
+        _fake_category_mismatch,
+    )
+
+    guarded = _guard_explicit_candidate(
+        {},
+        {
+            "quota_id": "TOP",
+            "name": "TOP-QUOTA",
+            "hybrid_score": 0.90,
+            "name_bonus": 0.05,
+        },
+        {
+            "quota_id": "EXP",
+            "name": "EXP-QUOTA",
+            "hybrid_score": 0.895,
+            "param_match": True,
+            "param_score": 0.40,
+            "name_bonus": 0.20,
+        },
+    )
+
+    assert guarded["quota_id"] == "EXP"

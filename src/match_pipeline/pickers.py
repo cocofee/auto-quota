@@ -30,6 +30,7 @@ from src.explicit_pipe_family_pickers import (
 from src.explicit_terminal_family_pickers import (
     _pick_explicit_button_broadcast_candidate,
     _pick_explicit_lamp_family_candidate,
+    _pick_explicit_outlet_family_candidate,
     _pick_explicit_sanitary_family_candidate,
 )
 from src.policy_engine import PolicyEngine
@@ -111,20 +112,31 @@ def _guard_explicit_candidate(item: dict,
     param_score_floor = float(
         PolicyEngine.get_picker_threshold("explicit_param_score_floor", 0.55)
     )
-    explicit_param_score_raw = explicit_candidate.get("param_score")
-    explicit_param_score = float(explicit_param_score_raw or 0.0)
-    if explicit_param_score_raw is not None and explicit_param_score < param_score_floor:
-        logger.debug(
-            f"explicit picker guard rejected low param_score={explicit_param_score:.3f} "
-            f"quota_id={explicit_candidate.get('quota_id')}"
-        )
-        return top_candidate
-
     top_score = _safe_candidate_hybrid_score(top_candidate)
     explicit_score = _safe_candidate_hybrid_score(explicit_candidate)
     resolved_margin = float(
         PolicyEngine.get_picker_threshold("explicit_hybrid_margin", hybrid_margin)
     )
+    explicit_param_score_raw = explicit_candidate.get("param_score")
+    explicit_param_score = float(explicit_param_score_raw or 0.0)
+    desc = item.get("description", "") or ""
+    desc_lines = extract_description_lines(desc)
+    explicit_category_error = check_category_mismatch(item, str(explicit_candidate.get("name", "") or ""), desc_lines)
+    top_category_error = check_category_mismatch(item, str(top_candidate.get("name", "") or ""), desc_lines)
+    category_rescue = not explicit_category_error and bool(top_category_error)
+    if explicit_param_score_raw is not None and explicit_param_score < param_score_floor:
+        if category_rescue:
+            logger.debug(
+                f"explicit picker guard kept low-param explicit candidate due category rescue "
+                f"quota_id={explicit_candidate.get('quota_id')}"
+            )
+        else:
+            logger.debug(
+                f"explicit picker guard rejected low param_score={explicit_param_score:.3f} "
+                f"quota_id={explicit_candidate.get('quota_id')}"
+            )
+            return top_candidate
+
     explicit_name_bonus = float(explicit_candidate.get("name_bonus", 0.0) or 0.0)
     top_name_bonus = float(top_candidate.get("name_bonus", 0.0) or 0.0)
     name_bonus_floor = float(
@@ -133,7 +145,13 @@ def _guard_explicit_candidate(item: dict,
     if (top_score - explicit_score) > resolved_margin and (
         explicit_name_bonus - top_name_bonus
     ) < name_bonus_floor:
-        return top_candidate
+        if not explicit_category_error and top_category_error:
+            logger.debug(
+                f"explicit picker guard kept lower-score explicit candidate due category rescue "
+                f"quota_id={explicit_candidate.get('quota_id')}"
+            )
+        else:
+            return top_candidate
 
     item_specialty = str(item.get("specialty") or "").strip()
     candidate_specialty = str(explicit_candidate.get("specialty") or "").strip()
@@ -242,6 +260,10 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
     lamp_candidate = _pick_explicit_lamp_family_candidate(bill_text, candidates)
     if lamp_candidate is not None:
         return _guard_explicit_candidate(item, top_candidate, lamp_candidate)
+
+    outlet_candidate = _pick_explicit_outlet_family_candidate(bill_text, candidates)
+    if outlet_candidate is not None:
+        return _guard_explicit_candidate(item, top_candidate, outlet_candidate)
 
     button_broadcast_candidate = _pick_explicit_button_broadcast_candidate(bill_text, candidates)
     if button_broadcast_candidate is not None:

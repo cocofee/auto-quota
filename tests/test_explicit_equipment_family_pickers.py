@@ -36,3 +36,15 @@ def test_pick_explicit_equipment_family_candidate_rejects_sanitary_tank_context(
     )
 
     assert picked is None
+
+
+def test_pick_explicit_equipment_family_candidate_does_not_treat_generic_small_appliance_as_heater():
+    picked = _pick_explicit_equipment_family_candidate(
+        "小电器 名称:风扇",
+        [
+            {"name": "小电器安装 电暖气", "param_score": 0.8, "rerank_score": 0.9},
+            {"name": "风扇安装 排气扇", "param_score": 0.7, "rerank_score": 0.8},
+        ],
+    )
+
+    assert picked is None

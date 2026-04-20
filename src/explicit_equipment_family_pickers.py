@@ -354,6 +354,11 @@ def _pick_explicit_equipment_family_candidate(bill_text: str,
         category = "pressure_tank"
         expected_words = ["气压罐"]
         forbidden_words.extend(["水箱", "便器", "风机"])
+    elif any(keyword in text for keyword in ("自动冲洗水箱", "冲洗水箱")):
+        category = "flush_tank"
+        expected_words = ["冲洗水箱", "水箱"]
+        prefer_words = ["自动冲洗", "甲型"]
+        forbidden_words.extend(["整体水箱", "生活水箱", "消防水箱", "水池", "水泵"])
     elif "水箱" in text:
         category = "water_tank"
         expected_words = ["水箱"]
@@ -369,6 +374,11 @@ def _pick_explicit_equipment_family_candidate(bill_text: str,
         expected_words = ["泵"]
         prefer_words = ["潜污泵", "潜水泵", "排污泵", "污水泵", "水泵", "离心泵"]
         forbidden_words.extend(["气压罐", "水箱", "风机"])
+    elif any(keyword in text for keyword in ("电暖气", "电暖器", "取暖器")):
+        category = "small_appliance"
+        expected_words = ["小电器", "电暖"]
+        prefer_words = ["电暖气", "电暖器", "取暖器"]
+        forbidden_words.extend(["接线", "母线", "风机", "阀门"])
     else:
         return None
 
@@ -385,6 +395,11 @@ def _pick_explicit_equipment_family_candidate(bill_text: str,
                 score += 10
             if any(keyword in quota_name for keyword in ("制作", "安装", "整体")):
                 score += 2
+        elif category == "flush_tank":
+            if any(keyword in quota_name for keyword in ("冲洗水箱", "自动冲洗水箱")):
+                score += 14
+            if "整体水箱" in quota_name:
+                score -= 20
         elif category == "pressure_tank":
             if "气压罐" in quota_name:
                 score += 12
@@ -398,6 +413,11 @@ def _pick_explicit_equipment_family_candidate(bill_text: str,
                 score += 10
             if "机组" in quota_name:
                 score -= 6
+        elif category == "small_appliance":
+            if any(keyword in quota_name for keyword in ("小电器", "电暖")):
+                score += 14
+            if any(keyword in quota_name for keyword in ("接线", "母线")):
+                score -= 20
 
         if score <= 0:
             continue
