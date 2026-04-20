@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import time
 
 import config
+
+_MIN_CONFIRM_COUNT_WEIGHT = 0.72
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -60,15 +63,7 @@ def _reviewer_weight(record: dict) -> float:
 
 def _confirm_count_weight(record: dict) -> float:
     confirm_count = max(_safe_int(record.get("confirm_count"), 0), 0)
-    if confirm_count <= 0:
-        return 0.72
-    if confirm_count == 1:
-        return 0.82
-    if confirm_count == 2:
-        return 0.97
-    if confirm_count == 3:
-        return 0.99
-    return 1.00
+    return max(_MIN_CONFIRM_COUNT_WEIGHT, 1.0 - math.exp(-0.3 * confirm_count))
 
 
 def _time_decay_weight(record: dict, *, now: float | None = None) -> float:

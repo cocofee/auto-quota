@@ -373,6 +373,51 @@ def _normalize_by_rules(value: str, text: str,
 
 def detect_entity(text: str) -> str:
     text = text or ""
+    plumbing_pipe_context = any(
+        keyword in text
+        for keyword in (
+            "给水管", "排水管", "雨水管", "冷凝水管", "污、废水管", "污废水管",
+            "PVC-U塑料管", "PPR管", "PP-R", "复合静音管", "静音管",
+            "内螺旋管", "压力管",
+        )
+    )
+    electrical_conduit_context = any(
+        keyword in text
+        for keyword in (
+            "配管",
+            "电气配管",
+            "导管",
+            "电线管",
+            "线管",
+            "钢导管",
+            "穿线管",
+        )
+    )
+    electrical_conduit_code = bool(
+        re.search(r"(?<![A-Z0-9])(JDG|KBG|FPC|PC|SC|RC|MT|DG|G)\s*\d+\b", text.upper())
+    )
+    pvc_conduit_code = bool(re.search(r"(?<![A-Z0-9])PVC\s*\d+\b", text.upper()))
+    electrical_laying_context = any(
+        keyword in text
+        for keyword in (
+            "暗配",
+            "明配",
+            "敷设",
+            "穿管",
+            "配置形式",
+            "安装方式",
+        )
+    )
+    if not plumbing_pipe_context and (electrical_conduit_context or electrical_conduit_code) and (
+        electrical_conduit_context or electrical_laying_context
+    ):
+        return "配管"
+    if (
+        not plumbing_pipe_context
+        and pvc_conduit_code
+        and electrical_laying_context
+    ):
+        return "配管"
     if any(
         keyword in text
         for keyword in (

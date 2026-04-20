@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import config
 
 from src import match_core
+from src.experience_confidence import describe_effective_confidence
 
 
 def test_validate_experience_params_rejects_when_any_quota_mismatches(monkeypatch):
@@ -113,6 +114,38 @@ def test_try_experience_match_rejects_stale_exact_direct_hit():
     )
 
     assert result is None
+
+
+def test_try_experience_match_uses_same_effective_confidence_for_similar(monkeypatch):
+    candidate = {
+        "id": 103,
+        "match_type": "similar",
+        "quota_ids": ["C10-1-10"],
+        "quota_names": ["绠￠亾瀹夎"],
+        "confidence": 98,
+        "confirm_count": 2,
+        "source": "openclaw_approved",
+        "updated_at": time.time(),
+        "similarity": 0.85,
+        "materials": "[]",
+        "bill_text": "缁欐按绠￠亾 DN25",
+    }
+    mock_exp_db = MagicMock()
+    mock_exp_db.search_similar.return_value = [candidate]
+    monkeypatch.setattr(match_core, "_validate_experience_params", lambda result, *args, **kwargs: result)
+
+    result = match_core.try_experience_match(
+        "缁欐按绠￠亾 DN25",
+        {"name": "缁欐按绠￠亾", "description": "DN25"},
+        mock_exp_db,
+        province="鍖椾含2024",
+    )
+
+    expected_effective_confidence = describe_effective_confidence(candidate)["effective_confidence"]
+
+    assert result is not None
+    assert result["match_source"] == "experience_similar"
+    assert result["confidence"] == min(int(candidate["similarity"] * expected_effective_confidence), 90)
 
 
 def test_prepare_candidates_from_prepared_sanitizes_and_dedupes_hints():

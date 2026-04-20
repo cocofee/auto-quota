@@ -310,6 +310,11 @@ class TestExtractMaterial:
         )
         assert result["conduit_type"] == ""
 
+    def test_extract_pvc_conduit_code_with_laying_context(self):
+        result = parser.parse_canonical("PVC20 暗配", specialty="C4")
+        assert result["entity"] == "配管"
+        assert result["family"] == "conduit_raceway"
+
     def test_extract_distribution_box_mount_mode(self):
         """配电箱应区分落地式和悬挂/嵌入式"""
         wall_box = parser.parse("成套配电箱安装 悬挂、嵌入式(半周长) 1.5m")
