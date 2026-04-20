@@ -78,6 +78,22 @@ def _patch_pipeline(monkeypatch):
     )
 
 
+def _patch_ambiguity_from_top_candidate(monkeypatch):
+    def _fake_analyze(candidates, *args, **kwargs):
+        top = (candidates or [{}])[0] if candidates else {}
+        mismatch = not bool(top.get("param_match", True))
+        return SimpleNamespace(
+            as_dict=lambda: {
+                "reason": "param_mismatch" if mismatch else "high_confidence",
+                "require_final_review": mismatch,
+                "is_ambiguous": mismatch,
+                "top_quota_id": str(top.get("quota_id", "") or ""),
+            }
+        )
+
+    _patch_public_and_orchestrator(monkeypatch, "analyze_ambiguity", _fake_analyze)
+
+
 def test_search_result_keeps_exact_experience_anchor_in_decision_pool(monkeypatch):
     _patch_pipeline(monkeypatch)
 
@@ -357,6 +373,7 @@ def test_build_search_result_records_unified_ranking_shadow_without_overriding_s
 
 def test_build_search_result_keeps_param_matched_top1_when_unified_prefers_param_mismatch(monkeypatch):
     _patch_pipeline(monkeypatch)
+    _patch_ambiguity_from_top_candidate(monkeypatch)
     monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", True)
     monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", False)
     _patch_public_and_orchestrator(
@@ -419,6 +436,57 @@ def test_build_search_result_keeps_param_matched_top1_when_unified_prefers_param
     assert round(result["unified_shadow_comparison"]["score_gap"], 2) == 0.08
     assert result["final_changed_by"] == "unified_ranking"
     assert result["rank_decision_owner"] == "selected"
+    assert result["reasoning_decision"]["reason"] == "param_mismatch"
+    assert result["require_final_review"] is True
+    assert result["needs_reasoning"] is True
+
+
+def test_build_search_result_does_not_resurrect_filtered_matched_candidates(monkeypatch):
+    _patch_pipeline(monkeypatch)
+    _patch_ambiguity_from_top_candidate(monkeypatch)
+    monkeypatch.setattr(config, "UNIFIED_RANKING_ENABLED", True)
+    monkeypatch.setattr(config, "UNIFIED_RANKING_SHADOW_MODE", False)
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "_run_unified_ranking_shadow",
+        lambda item, candidates, top_k=5: {
+            "candidates": [
+                {
+                    **dict(candidates[1]),
+                    "filtered_score": 0.91,
+                    "confidence": 0.81,
+                    "explanation": {"top_driver": "knowledge_prior"},
+                },
+            ],
+            "top1_score": 0.91,
+            "top1_confidence": 0.81,
+            "diagnostics": {
+                "selection": {"top_quota_id": "Q-UNIFIED", "top_driver": "knowledge_prior"},
+            },
+        },
+    )
+
+    result = match_pipeline._build_search_result_from_candidates(
+        {"name": "测试项", "query_route": {"route": "installation_spec"}},
+        [
+            _candidate("Q-KEEP", param_match=True, param_score=0.92, rerank_score=0.90),
+            _candidate(
+                "Q-UNIFIED",
+                param_match=False,
+                param_score=0.58,
+                rerank_score=0.62,
+                knowledge_prior_sources=["experience"],
+                knowledge_prior_score=1.15,
+            ),
+        ],
+    )
+
+    assert result["quotas"][0]["quota_id"] == "Q-UNIFIED"
+    assert result["legacy_top1_id"] == "Q-KEEP"
+    assert result["selected_top1_id"] == "Q-UNIFIED"
+    assert result["unified_top1_id"] == "Q-UNIFIED"
+    assert result["reasoning_decision"]["reason"] == "param_mismatch"
+    assert result["require_final_review"] is True
 
 
 def test_build_search_result_falls_back_when_unified_ranking_enabled_errors(monkeypatch):

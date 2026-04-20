@@ -316,6 +316,33 @@ def _apply_unified_candidate_order(base_candidates: list[dict], unified_candidat
     return ordered
 
 
+def _collect_unified_candidates_by_id(
+    base_candidates: list[dict],
+    unified_candidates: list[dict],
+    allowed_quota_ids: set[str],
+) -> list[dict]:
+    base_by_quota_id = {
+        str(candidate.get("quota_id", "") or "").strip(): candidate
+        for candidate in (base_candidates or [])
+        if str(candidate.get("quota_id", "") or "").strip()
+    }
+    ordered: list[dict] = []
+    seen: set[str] = set()
+    for unified_candidate in unified_candidates or []:
+        quota_id = str(unified_candidate.get("quota_id", "") or "").strip()
+        if (
+            not quota_id
+            or quota_id in seen
+            or quota_id not in allowed_quota_ids
+        ):
+            continue
+        ordered_candidate = _merge_unified_candidate(base_by_quota_id.get(quota_id), unified_candidate)
+        if ordered_candidate:
+            ordered.append(ordered_candidate)
+            seen.add(quota_id)
+    return ordered
+
+
 def _format_unified_selection_explanation(unified_result: dict, candidate: dict | None) -> str:
     top_driver = str(((candidate or {}).get("explanation") or {}).get("top_driver") or "")
     score = float(
@@ -354,22 +381,22 @@ def _apply_unified_enabled_selection(item: dict,
             for candidate in matched_candidates
             if str(candidate.get("quota_id", "") or "").strip()
         }
-        matched_unified_candidates = [
-            candidate
-            for candidate in unified_candidates
-            if str(candidate.get("quota_id", "") or "").strip() in matched_ids
-        ]
-        reordered_matched_candidates = _apply_unified_candidate_order(
+        reordered_matched_candidates = _collect_unified_candidates_by_id(
             matched_candidates,
-            matched_unified_candidates,
+            unified_candidates,
+            matched_ids,
         )
-        reordered_valid_candidates = list(reordered_matched_candidates)
-        reordered_valid_candidates.extend(
-            candidate
-            for candidate in unified_valid_candidates
-            if str(candidate.get("quota_id", "") or "").strip() not in matched_ids
-        )
-        decision_candidates = reordered_matched_candidates
+        if reordered_matched_candidates:
+            reordered_valid_candidates = list(reordered_matched_candidates)
+            reordered_valid_candidates.extend(
+                candidate
+                for candidate in unified_valid_candidates
+                if str(candidate.get("quota_id", "") or "").strip() not in matched_ids
+            )
+            decision_candidates = reordered_matched_candidates
+        else:
+            reordered_valid_candidates = unified_valid_candidates
+            decision_candidates = reordered_valid_candidates
     else:
         reordered_valid_candidates = unified_valid_candidates
         decision_candidates = reordered_valid_candidates
@@ -391,7 +418,7 @@ def _apply_unified_enabled_selection(item: dict,
     )
     selected_explanation = _format_unified_selection_explanation(unified_result, unified_best)
     selected_reasoning = analyze_ambiguity(
-        decision_candidates,
+        unified_valid_candidates,
         route_profile=item.get("query_route"),
         arbitration=arbitration,
     ).as_dict()
