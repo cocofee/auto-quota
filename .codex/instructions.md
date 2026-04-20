@@ -1,63 +1,142 @@
-# 自动套定额系统 - Codex 项目指令
+# auto-quota Codex Project Instructions
 
-## 项目背景
+## Project Context
 
-这是一个"自动套定额"系统（Python），功能是：读取工程量清单Excel → 自动匹配最合适的安装工程定额 → 输出结果。
-核心技术：BM25搜索 + 向量搜索 + 参数验证 + 经验库匹配。
+This repository is a long-lived maintenance project for the `auto-quota` system.
+The system reads engineering quantity sheets, matches quota items, writes result files,
+and maintains quality through tests, health checks, and regression evaluation.
 
-## 代码审查标准
+Codex should treat this repository as a persistent engineering workspace, not as a
+one-shot prompt playground.
 
-在进行 `codex review` 时，请按以下标准审查：
+## Default Working Mode
 
-### 逻辑检查
-- 代码逻辑是否正确，有没有明显的bug
-- 条件判断是否完整，有没有遗漏的分支
-- 循环/递归有没有边界问题
-- 变量命名是否和实际用途一致
+When the user gives a task in this repository, use these defaults unless the user
+explicitly overrides them:
 
-### 兼容性检查
-- 修改是否会破坏现有功能（回归问题）
-- 是否兼容旧数据/旧数据库结构
-- 新增参数是否有默认值（不破坏已有调用）
+1. Read the local repository state before acting.
+2. Prefer small, bounded patches over broad refactors.
+3. Do not rely on previous chat history for long tasks.
+4. For multi-step work, persist progress to files.
+5. Verify the changed area before claiming completion.
 
-### 安全检查
-- 有没有硬编码的密码/密钥
-- 用户输入有没有做基本校验
-- 文件操作有没有异常处理
+## Long-Task Workflow
 
-### 性能检查
-- 有没有不必要的重复计算
-- 数据库查询是否合理（有没有N+1问题）
-- 大循环里有没有可以提前退出的地方
+For tasks that may take multiple rounds, use file-backed state instead of chat memory.
 
-## 严重等级
+Default state directory:
 
-| 等级 | 定义 | 处理 |
-|------|------|------|
-| P0 致命 | 系统无法启动/核心崩溃/数据损毁 | 必须立即修 |
-| P1 严重 | 功能错误/准确率下降/关键路径异常 | 当次必须修 |
-| P2 一般 | 边缘case/体验问题/小bug | 记录，不阻塞 |
+- `reports/agent_state/progress.json`
+- `reports/agent_state/tasks/*.json`
+- `reports/agent_state/reports/*.md`
 
-## 输出格式
+Workflow:
 
-请按以下格式输出审查结果：
+1. Scan or define the work and split it into small batches.
+2. Store batch definitions in `reports/agent_state/tasks/`.
+3. Track status in `reports/agent_state/progress.json`.
+4. Process one batch at a time unless the user explicitly asks for parallel work.
+5. After each batch, update the state files and write a short report.
 
+Batch status values:
+
+- `pending`
+- `in_progress`
+- `completed`
+- `failed`
+- `blocked`
+
+If a batch exceeds its scope, needs a cross-module refactor, or has no measurable
+progress after repeated attempts, mark it `blocked` and report the blocker.
+
+## What A Good Task Looks Like
+
+Prefer tasks with all of the following:
+
+- clear goal
+- limited file scope
+- explicit validation command
+- stop condition
+- required state-file updates
+
+Avoid vague instructions such as:
+
+- "continue the previous work"
+- "fix everything"
+- "based on the previous analysis"
+
+Prefer instructions such as:
+
+- "Read `reports/agent_state/progress.json` and process the next pending batch."
+- "Only fix failures listed in `reports/agent_state/tasks/batch_query_router_01.json`."
+- "Run the listed validation commands and update the report file."
+
+## Default Validation Ladder For auto-quota
+
+Use the smallest useful verification first, then expand only when needed.
+
+1. Targeted tests
+   Example: `pytest tests/test_query_router.py -q`
+2. Related module tests
+   Example: `pytest tests/test_query_router.py tests/test_query_builder*.py -q`
+3. Regression runner for matching quality changes
+   Example: `自动回归测试.bat smoke`
+4. Standard regression for ranking, routing, or retrieval changes
+   Example: `自动回归测试.bat dev <pipeline_version>`
+
+Guidance:
+
+- Small bug fix: run targeted pytest first.
+- Query builder / routing / matcher changes: run targeted tests plus smoke regression.
+- Changes likely to affect ranking quality: run the standard regression path.
+- Do not default to full-repo or full-regression runs unless the change justifies it.
+
+## Stop And Ask The User When
+
+Stop and ask before proceeding if any of the following is true:
+
+- the fix requires a large cross-module redesign
+- the task needs schema, deployment, or irreversible data changes
+- the requested behavior conflicts with current project policy
+- the work would touch clearly unrelated files
+
+## Review Standard
+
+When asked to review code, focus on:
+
+1. correctness
+2. regression risk
+3. missing or weak validation
+4. safety and compatibility
+
+Severity:
+
+- `P0`: system cannot run, data corruption, or core workflow failure
+- `P1`: clear functional bug or major quality regression
+- `P2`: edge case, maintainability issue, or lower-risk defect
+
+Review output format:
+
+```text
+## Review Result: pass / needs changes
+
+### Findings
+1. [P0/P1/P2] path:line - issue - suggested fix
+
+### Risks
+- residual risk if any
+
+### Summary
+- one-sentence conclusion
 ```
-## 审查结果：通过 / 打回
 
-### 发现的问题
-1. [P0/P1/P2] 文件名:行号 - 问题描述 - 建议修复方式
-2. [P0/P1/P2] 文件名:行号 - 问题描述 - 建议修复方式
+## Expected End-Of-Task Output
 
-### 逻辑风险
-- （如果有潜在的逻辑隐患，在这里说明）
+After making code changes, report:
 
-### 总评
-（一句话总结）
-```
+1. what changed
+2. what was verified
+3. any remaining risk or blocker
 
-## 放行标准
-
-- 无 P0/P1 → 通过
-- 有 P1 但修复方案明确 → 附带修复建议后通过
-- 有 P0 → 直接打回
+Do not say the work is complete before the requested validation has run, unless you
+explicitly state that validation could not be executed.

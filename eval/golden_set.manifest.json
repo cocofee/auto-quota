@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-04-19 17:09:53",
+  "db_path": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\db\\common\\experience.db",
+  "out_path": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\eval\\golden_set.jsonl",
+  "filters": {
+    "layer": "authority",
+    "min_confidence": 95,
+    "min_confirm_count": 1,
+    "sources": [
+      "project_import",
+      "user_confirmed",
+      "user_correction"
+    ],
+    "provinces": [],
+    "projects": [],
+    "limit": null,
+    "max_per_province": 100
+  },
+  "count": 100,
+  "by_source": {
+    "user_correction": 100
+  },
+  "by_province_top20": {
+    "安徽省安装工程计价定额(2018)": 100
+  },
+  "notes": {
+    "default_mode": "trusted_real_samples",
+    "recommended_eval": "Run closed-book first to avoid experience self-hit leakage."
+  }
+}

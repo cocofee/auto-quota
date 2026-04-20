@@ -1,4 +1,19 @@
-from src.match_core import cascade_search
+from src.match_core import _merge_with_aux, cascade_search
+
+
+def test_merge_with_aux_keeps_main_and_aux_results_without_name_error():
+    result = _merge_with_aux(
+        [{"quota_id": "M-1", "hybrid_score": 0.4}],
+        [
+            {"quota_id": "A-1", "hybrid_score": 0.8, "_source_province": "aux-a"},
+            {"quota_id": "A-1", "hybrid_score": 0.7, "_source_province": "aux-a"},
+            {"quota_id": "A-1", "hybrid_score": 0.9, "_source_province": "aux-b"},
+        ],
+        top_k=10,
+    )
+
+    assert [row["quota_id"] for row in result] == ["A-1", "A-1", "M-1"]
+    assert [row["hybrid_score"] for row in result] == [0.9, 0.8, 0.4]
 
 
 def test_cascade_search_defers_aux_when_main_results_are_good(monkeypatch):

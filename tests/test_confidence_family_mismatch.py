@@ -1,4 +1,9 @@
-﻿from src.confidence_calibrator import (
+import json
+
+import config
+
+from src.confidence_calibrator import (
+    DEFAULT_CONFIDENCE_SPEC,
     calibrate_confidence_probability,
     get_confidence_calibration_spec,
 )
@@ -129,3 +134,52 @@ def test_infer_confidence_family_alignment_rejects_low_anchor_surface_match():
     }
 
     assert infer_confidence_family_alignment(candidate) is False
+
+
+def test_get_confidence_calibration_spec_loads_external_artifact(tmp_path, monkeypatch):
+    calibration_path = tmp_path / "confidence_calibration.json"
+    calibration_path.write_text(
+        json.dumps(
+            {
+                "model": {
+                    "intercept": -2.0,
+                    "weights": {
+                        "param_match": 1.5,
+                        "param_score": 1.2,
+                    },
+                },
+                "isotonic": [
+                    {"raw": 0.0, "calibrated": 0.1},
+                    {"raw": 0.5, "calibrated": 0.6},
+                    {"raw": 1.0, "calibrated": 0.9},
+                ],
+                "ambiguous_short_ceiling": 68,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATION_PATH", calibration_path)
+    get_confidence_calibration_spec.cache_clear()
+
+    spec = get_confidence_calibration_spec()
+
+    assert spec.intercept == -2.0
+    assert spec.weights["param_match"] == 1.5
+    assert spec.weights["param_score"] == 1.2
+    assert spec.isotonic_points == ((0.0, 0.1), (0.5, 0.6), (1.0, 0.9))
+    assert spec.ambiguous_short_ceiling == 68
+    assert spec.max_score == 90
+
+    get_confidence_calibration_spec.cache_clear()
+
+
+def test_get_confidence_calibration_spec_falls_back_to_default_when_artifact_missing(monkeypatch):
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATION_PATH", config.DATA_DIR / "missing-confidence.json")
+    get_confidence_calibration_spec.cache_clear()
+
+    spec = get_confidence_calibration_spec()
+
+    assert spec == DEFAULT_CONFIDENCE_SPEC
+
+    get_confidence_calibration_spec.cache_clear()
