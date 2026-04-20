@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from eval.run_regression import RegressionReport
+from eval.run_regression import evaluate
 from eval.run_regression import evaluate_on_golden_set
 
 
@@ -48,6 +50,7 @@ def test_evaluate_on_golden_set_computes_metrics_and_persists_delta(monkeypatch,
                 "details": [
                     {
                         "specialty": "C10",
+                        "difficulty": "easy",
                         "oracle_quota_ids": ["Q1"],
                         "all_candidate_ids": ["Q1", "Q9", "Q8"],
                         "is_match": True,
@@ -58,6 +61,7 @@ def test_evaluate_on_golden_set_computes_metrics_and_persists_delta(monkeypatch,
                     },
                     {
                         "specialty": "C10",
+                        "difficulty": "hard",
                         "oracle_quota_ids": ["Q2"],
                         "all_candidate_ids": ["Q3", "Q2", "Q7"],
                         "is_match": False,
@@ -73,6 +77,7 @@ def test_evaluate_on_golden_set_computes_metrics_and_persists_delta(monkeypatch,
                 "details": [
                     {
                         "specialty": "C20",
+                        "difficulty": "edge",
                         "oracle_quota_ids": ["Q4"],
                         "all_candidate_ids": ["Q4", "Q5", "Q6"],
                         "is_match": True,
@@ -83,6 +88,7 @@ def test_evaluate_on_golden_set_computes_metrics_and_persists_delta(monkeypatch,
                     },
                     {
                         "specialty": "C20",
+                        "difficulty": "hard",
                         "oracle_quota_ids": ["Q8"],
                         "all_candidate_ids": ["Q9", "Q10", "Q11"],
                         "is_match": False,
@@ -131,6 +137,11 @@ def test_evaluate_on_golden_set_computes_metrics_and_persists_delta(monkeypatch,
         "C10": {"total": 2, "top1_accuracy": 0.5, "top3_accuracy": 1.0},
         "C20": {"total": 2, "top1_accuracy": 0.5, "top3_accuracy": 0.5},
     }
+    assert result["per_difficulty_accuracy"] == {
+        "easy": {"total": 1, "top1_accuracy": 1.0, "top3_accuracy": 1.0},
+        "edge": {"total": 1, "top1_accuracy": 1.0, "top3_accuracy": 1.0},
+        "hard": {"total": 2, "top1_accuracy": 0.0, "top3_accuracy": 0.5},
+    }
 
     assert tracker.recorded is not None
     assert tracker.latest_lookup == {
@@ -167,3 +178,43 @@ def test_evaluate_on_golden_set_handles_empty_payload(monkeypatch, tmp_path):
     assert result["top3_accuracy"] == 0.0
     assert result["fastpath_precision"] == 0.0
     assert result["confidence_calibration_ece"] == 0.0
+
+
+def test_evaluate_returns_structured_regression_report(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "golden_set.jsonl"
+    dataset_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "eval.run_regression.run_real_eval",
+        lambda *args, **kwargs: {
+            "dataset_path": str(dataset_path),
+            "profile": "dev",
+            "eval_mode": "closed_book",
+            "province_results": [
+                {
+                    "province": "P1",
+                    "details": [
+                        {
+                            "specialty": "C10",
+                            "difficulty": "easy",
+                            "oracle_quota_ids": ["Q1"],
+                            "all_candidate_ids": ["Q1"],
+                            "is_match": True,
+                            "confidence": 98,
+                            "reasoning_decision": {},
+                            "match_source": "search",
+                        }
+                    ],
+                }
+            ],
+            "skipped_provinces": [],
+        },
+    )
+
+    report = evaluate("v-struct", dataset_path=dataset_path, tracker=_FakeTracker(), persist=False)
+
+    assert isinstance(report, RegressionReport)
+    assert report.total == 1
+    assert report.per_difficulty_accuracy == {
+        "easy": {"total": 1, "top1_accuracy": 1.0, "top3_accuracy": 1.0}
+    }

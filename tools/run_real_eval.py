@@ -328,6 +328,8 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "section": _clean_text(record.get("section")),
         "sheet_name": _clean_text(record.get("sheet_name")),
         "specialty": _clean_text(record.get("specialty")),
+        "difficulty": _clean_text(record.get("difficulty")) or "unknown",
+        "difficulty_reason": _clean_text(record.get("difficulty_reason")),
         "oracle_quota_ids": oracle_ids,
         "oracle_quota_names": list(record.get("oracle_quota_names") or []),
         "oracle_status": str(oracle_alignment.get("status") or "ok"),

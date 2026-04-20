@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "db" / "common" / "experience.db"
 DEFAULT_OUT_PATH = PROJECT_ROOT / "output" / "real_eval" / "real_eval.jsonl"
 DEFAULT_SOURCES = ("project_import", "user_confirmed", "user_correction")
+DIFFICULTY_LEVELS = ("easy", "hard", "edge")
 PROFILE_DEFAULTS = {
     "smoke": 20,
     "dev": 100,
@@ -34,6 +35,38 @@ def _safe_json_list(raw) -> list:
 
 def _clean_text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _normalize_difficulty(value: object) -> str:
+    normalized = _clean_text(value).lower()
+    return normalized if normalized in DIFFICULTY_LEVELS else ""
+
+
+def _infer_difficulty(record: dict) -> tuple[str, str]:
+    explicit = _normalize_difficulty(record.get("difficulty"))
+    if explicit:
+        return explicit, "db"
+
+    quota_ids = [str(value).strip() for value in (record.get("oracle_quota_ids") or []) if str(value).strip()]
+    bill_text = _clean_text(record.get("bill_text"))
+    bill_code = _clean_text(record.get("bill_code"))
+    specialty = _clean_text(record.get("specialty"))
+    ambiguous_markers = ("或", "/", "~", "±")
+    structural_markers = ("型号", "规格", "材质", "做法", "安装方式", "连接方式")
+
+    if len(quota_ids) > 1:
+        return "edge", "multi_oracle"
+    if not specialty and not bill_code:
+        return "edge", "missing_specialty_and_code"
+    if any(marker in bill_text for marker in ambiguous_markers) and any(marker in bill_text for marker in structural_markers):
+        return "edge", "ambiguous_spec_text"
+    if not specialty:
+        return "hard", "missing_specialty"
+    if len(bill_text) >= 60:
+        return "hard", "long_bill_text"
+    if any(marker in bill_text for marker in structural_markers):
+        return "hard", "rich_param_text"
+    return "easy", "default"
 
 
 def _build_where_clause(
@@ -136,7 +169,8 @@ def fetch_real_eval_records(
             for row in conn.execute("PRAGMA table_info(experiences)").fetchall()
         }
         optional_columns = [
-            column for column in ("section", "sheet_name", "context_prior", "source_file_name", "source_file_stem")
+            column
+            for column in ("section", "sheet_name", "context_prior", "source_file_name", "source_file_stem", "difficulty")
             if column in available_columns
         ]
         select_columns = [
@@ -210,6 +244,8 @@ def fetch_real_eval_records(
             record["source_file_name"] = _clean_text(row["source_file_name"])
         if "source_file_stem" in row.keys():
             record["source_file_stem"] = _clean_text(row["source_file_stem"])
+        if "difficulty" in row.keys():
+            record["difficulty"] = _clean_text(row["difficulty"])
         context_prior = dict(record.get("context_prior") or {})
         if not record.get("source_file_name") and context_prior.get("source_file_name"):
             record["source_file_name"] = _clean_text(context_prior.get("source_file_name"))
@@ -217,6 +253,9 @@ def fetch_real_eval_records(
             context_source_stem = context_prior.get("source_file_stem") or context_prior.get("source_file_title")
             if context_source_stem:
                 record["source_file_stem"] = _clean_text(context_source_stem)
+        difficulty, difficulty_reason = _infer_difficulty(record)
+        record["difficulty"] = difficulty
+        record["difficulty_reason"] = difficulty_reason
         records.append(record)
     records = _cap_records_per_province(records, max_per_province)
     if limit is not None and int(limit) > 0:
@@ -257,6 +296,7 @@ def export_real_eval_set(
 
     by_source = Counter(record["source"] for record in records)
     by_province = Counter(record["province"] for record in records)
+    by_difficulty = Counter(record["difficulty"] for record in records if _normalize_difficulty(record.get("difficulty")))
     manifest = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "db_path": str(Path(db_path)),
@@ -273,6 +313,7 @@ def export_real_eval_set(
         },
         "count": len(records),
         "by_source": dict(sorted(by_source.items())),
+        "by_difficulty": dict(sorted(by_difficulty.items())),
         "by_province_top20": dict(by_province.most_common(20)),
         "notes": {
             "default_mode": "trusted_real_samples",

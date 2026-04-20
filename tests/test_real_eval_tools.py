@@ -33,7 +33,8 @@ def _create_experience_db(db_path: Path) -> None:
                 province TEXT,
                 project_name TEXT,
                 layer TEXT,
-                specialty TEXT
+                specialty TEXT,
+                difficulty TEXT
             )
             """
         )
@@ -51,6 +52,7 @@ def _create_experience_db(db_path: Path) -> None:
                 "项目A",
                 "authority",
                 "C10",
+                "easy",
             ),
             (
                 "钢管 DN50 明装",
@@ -65,6 +67,7 @@ def _create_experience_db(db_path: Path) -> None:
                 "项目A",
                 "authority",
                 "C10",
+                "edge",
             ),
             (
                 "风口",
@@ -79,6 +82,7 @@ def _create_experience_db(db_path: Path) -> None:
                 "项目B",
                 "authority",
                 "C7",
+                "hard",
             ),
             (
                 "水表",
@@ -93,6 +97,7 @@ def _create_experience_db(db_path: Path) -> None:
                 "项目C",
                 "candidate",
                 "C10",
+                "easy",
             ),
         ]
         conn.executemany(
@@ -100,8 +105,8 @@ def _create_experience_db(db_path: Path) -> None:
             INSERT INTO experiences (
                 bill_text, bill_name, bill_code, quota_ids, quota_names,
                 source, confidence, confirm_count, province, project_name,
-                layer, specialty
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                layer, specialty, difficulty
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -128,6 +133,8 @@ def test_fetch_real_eval_records_filters_trusted_authority_rows():
         assert records[0]["sample_id"] == "exp:1"
         assert records[0]["oracle_quota_ids"] == ["C10-1-1"]
         assert records[0]["province"] == "广东省通用安装工程综合定额(2018)"
+        assert records[0]["difficulty"] == "easy"
+        assert records[0]["difficulty_reason"] == "db"
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
 
@@ -151,6 +158,7 @@ def test_export_real_eval_set_writes_manifest():
         assert written_path == out_path
         assert manifest["count"] == 2
         assert manifest["by_source"] == {"project_import": 1, "user_confirmed": 1}
+        assert manifest["by_difficulty"] == {"easy": 1, "hard": 1}
         assert out_path.exists()
         assert out_path.with_suffix(".manifest.json").exists()
     finally:
@@ -302,6 +310,7 @@ def test_detail_from_result_diagnoses_final_validator_stage():
         "section": "给排水",
         "sheet_name": "安装",
         "specialty": "C10",
+        "difficulty": "hard",
         "oracle_quota_ids": ["C10-1-2"],
         "oracle_quota_names": ["截止阀安装 DN50"],
     }
@@ -326,6 +335,7 @@ def test_detail_from_result_diagnoses_final_validator_stage():
     assert detail["miss_stage"] == "post_rank_miss"
     assert detail["error_stage"] == "final_validator"
     assert detail["error_type"] == "post_anchor_correct_but_final_changed"
+    assert detail["difficulty"] == "hard"
 
 
 def test_detail_from_result_no_longer_reports_experience_anchor_stage():

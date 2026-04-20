@@ -4,6 +4,9 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,30 @@ from tools.run_real_eval import _strip_details, run_real_eval
 DEFAULT_GOLDEN_SET_PATH = PROJECT_ROOT / "eval" / "golden_set.jsonl"
 DEFAULT_SUMMARY_PATH = PROJECT_ROOT / "output" / "regression" / "latest_regression_summary.json"
 FASTPATH_REASONS = {"accept_head_confident", "high_confidence"}
+DIFFICULTY_LEVELS = ("easy", "hard", "edge")
+
+
+@dataclass
+class RegressionReport:
+    pipeline_version: str
+    dataset_path: str
+    profile: str
+    eval_mode: str
+    total: int
+    top1_accuracy: float
+    top3_accuracy: float
+    fastpath_precision: float
+    fastpath_count: int
+    confidence_calibration_ece: float
+    per_specialty_accuracy: dict[str, dict[str, float | int]]
+    per_difficulty_accuracy: dict[str, dict[str, float | int]]
+    skipped_provinces: list[dict]
+    real_eval_summary: dict
+    baseline_version: str = ""
+    delta: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -39,6 +66,16 @@ def _normalize_probability(confidence: Any) -> float:
 
 def _round_metric(value: float) -> float:
     return round(float(value or 0.0), 4)
+
+
+def _normalize_bucket(value: Any, *, allowed: tuple[str, ...] | None = None, fallback: str = "UNKNOWN") -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return fallback
+    if not allowed:
+        return normalized
+    lowered = normalized.lower()
+    return lowered if lowered in allowed else fallback
 
 
 def _flatten_details(payload: dict) -> list[dict]:
@@ -99,19 +136,25 @@ def _compute_confidence_calibration_ece(details: list[dict], bins: int = 10) -> 
     return _round_metric(ece)
 
 
-def _build_per_specialty_accuracy(details: list[dict]) -> dict[str, dict[str, float | int]]:
+def _build_bucket_accuracy(
+    details: list[dict],
+    *,
+    field_name: str,
+    allowed: tuple[str, ...] | None = None,
+    fallback: str = "UNKNOWN",
+) -> dict[str, dict[str, float | int]]:
     grouped: dict[str, list[dict]] = defaultdict(list)
     for detail in details:
-        specialty = str(detail.get("specialty") or "").strip() or "UNKNOWN"
-        grouped[specialty].append(detail)
+        bucket = _normalize_bucket(detail.get(field_name), allowed=allowed, fallback=fallback)
+        grouped[bucket].append(detail)
 
     summary: dict[str, dict[str, float | int]] = {}
-    for specialty in sorted(grouped):
-        rows = grouped[specialty]
+    for bucket in sorted(grouped):
+        rows = grouped[bucket]
         total = len(rows)
         top1_hits = sum(1 for row in rows if row.get("is_match"))
         top3_accuracy = _compute_topk_accuracy(rows, 3)
-        summary[specialty] = {
+        summary[bucket] = {
             "total": total,
             "top1_accuracy": _round_metric(top1_hits / total) if total else 0.0,
             "top3_accuracy": top3_accuracy,
@@ -153,7 +196,7 @@ def export_golden_set(
     )
 
 
-def evaluate_on_golden_set(
+def evaluate(
     pipeline_version: str,
     *,
     dataset_path: str | Path = DEFAULT_GOLDEN_SET_PATH,
@@ -162,7 +205,7 @@ def evaluate_on_golden_set(
     skip_unavailable_provinces: bool = False,
     tracker: AccuracyTracker | None = None,
     persist: bool = True,
-) -> dict:
+) -> RegressionReport:
     payload = run_real_eval(
         dataset_path,
         profile=profile,
@@ -174,7 +217,13 @@ def evaluate_on_golden_set(
     top1_hits = sum(1 for detail in details if detail.get("is_match"))
     top3_accuracy = _compute_topk_accuracy(details, 3)
     fastpath_precision, fastpath_count = _compute_fastpath_precision(details)
-    per_specialty_accuracy = _build_per_specialty_accuracy(details)
+    per_specialty_accuracy = _build_bucket_accuracy(details, field_name="specialty")
+    per_difficulty_accuracy = _build_bucket_accuracy(
+        details,
+        field_name="difficulty",
+        allowed=DIFFICULTY_LEVELS,
+        fallback="unknown",
+    )
     confidence_calibration_ece = _compute_confidence_calibration_ece(details)
 
     metrics = {
@@ -189,6 +238,7 @@ def evaluate_on_golden_set(
         "fastpath_count": fastpath_count,
         "confidence_calibration_ece": confidence_calibration_ece,
         "per_specialty_accuracy": per_specialty_accuracy,
+        "per_difficulty_accuracy": per_difficulty_accuracy,
         "skipped_provinces": list(payload.get("skipped_provinces", []) or []),
         "real_eval_summary": _strip_details(payload),
     }
@@ -202,14 +252,29 @@ def evaluate_on_golden_set(
     )
     baseline_version, deltas = _build_delta(metrics, baseline)
 
-    result = dict(metrics)
-    result["baseline_version"] = baseline_version
-    result["delta"] = deltas
+    result = RegressionReport(
+        pipeline_version=metrics["pipeline_version"],
+        dataset_path=metrics["dataset_path"],
+        profile=metrics["profile"],
+        eval_mode=metrics["eval_mode"],
+        total=metrics["total"],
+        top1_accuracy=metrics["top1_accuracy"],
+        top3_accuracy=metrics["top3_accuracy"],
+        fastpath_precision=metrics["fastpath_precision"],
+        fastpath_count=metrics["fastpath_count"],
+        confidence_calibration_ece=metrics["confidence_calibration_ece"],
+        per_specialty_accuracy=per_specialty_accuracy,
+        per_difficulty_accuracy=per_difficulty_accuracy,
+        skipped_provinces=metrics["skipped_provinces"],
+        real_eval_summary=metrics["real_eval_summary"],
+        baseline_version=baseline_version,
+        delta=deltas,
+    )
 
     if persist:
         resolved_tracker.record_regression_run(
             pipeline_version=str(pipeline_version or ""),
-            metrics=result,
+            metrics=result.to_dict(),
             dataset_path=str(Path(dataset_path)),
             eval_mode=str(payload.get("eval_mode") or ""),
             profile=str(profile or payload.get("profile") or ""),
@@ -218,6 +283,27 @@ def evaluate_on_golden_set(
         )
 
     return result
+
+
+def evaluate_on_golden_set(
+    pipeline_version: str,
+    *,
+    dataset_path: str | Path = DEFAULT_GOLDEN_SET_PATH,
+    profile: str = "dev",
+    with_experience: bool = False,
+    skip_unavailable_provinces: bool = False,
+    tracker: AccuracyTracker | None = None,
+    persist: bool = True,
+) -> dict:
+    return evaluate(
+        pipeline_version,
+        dataset_path=dataset_path,
+        profile=profile,
+        with_experience=with_experience,
+        skip_unavailable_provinces=skip_unavailable_provinces,
+        tracker=tracker,
+        persist=persist,
+    ).to_dict()
 
 
 def main() -> int:
@@ -249,7 +335,8 @@ def main() -> int:
         )
         print(
             f"[GOLDEN-SET] wrote {written_path} count={manifest.get('count', 0)} "
-            f"provinces={len(manifest.get('by_province', {}))}"
+            f"provinces={len(manifest.get('by_province_top20', {}))} "
+            f"difficulty={manifest.get('by_difficulty', {})}"
         )
         if args.build_golden_set_only:
             return 0
@@ -259,28 +346,29 @@ def main() -> int:
     if not args.pipeline_version:
         raise SystemExit("--pipeline-version is required when running regression")
 
-    result = evaluate_on_golden_set(
+    result = evaluate(
         args.pipeline_version,
         dataset_path=dataset_path,
         profile=args.profile,
         with_experience=bool(args.with_experience),
         skip_unavailable_provinces=bool(args.skip_unavailable_provinces),
     )
+    result_dict = result.to_dict()
 
     summary_path = Path(args.summary_out)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_path.write_text(json.dumps(result_dict, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(
-        f"[REGRESSION] version={result['pipeline_version']} total={result['total']} "
-        f"top1={result['top1_accuracy']:.4f} top3={result['top3_accuracy']:.4f} "
-        f"fastpath_precision={result['fastpath_precision']:.4f} "
-        f"ece={result['confidence_calibration_ece']:.4f}"
+        f"[REGRESSION] version={result.pipeline_version} total={result.total} "
+        f"top1={result.top1_accuracy:.4f} top3={result.top3_accuracy:.4f} "
+        f"fastpath_precision={result.fastpath_precision:.4f} "
+        f"ece={result.confidence_calibration_ece:.4f}"
     )
-    if result.get("baseline_version"):
-        delta = result.get("delta") or {}
+    if result.baseline_version:
+        delta = result.delta or {}
         print(
-            f"[DELTA] vs={result['baseline_version']} "
+            f"[DELTA] vs={result.baseline_version} "
             f"top1={delta.get('top1_accuracy', 0.0):+.4f} "
             f"top3={delta.get('top3_accuracy', 0.0):+.4f} "
             f"fastpath_precision={delta.get('fastpath_precision', 0.0):+.4f} "
