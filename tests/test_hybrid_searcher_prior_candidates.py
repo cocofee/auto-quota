@@ -255,3 +255,53 @@ def test_collect_prior_candidates_uses_unified_data_layer_when_available(monkeyp
     quota_prior = next(row for row in priors if row["quota_id"] == "Q-U-QUOTA")
     assert quota_prior["match_source"] == "quota_unified"
     assert quota_prior["knowledge_prior_sources"] == ["quota"]
+
+
+def test_collect_prior_candidates_skips_non_authority_bill_name_exact_fallback(monkeypatch):
+    class _VerifiedOnlyExperienceDB:
+        def _find_exact_match(self, variant, province, authority_only=True, exclude_sources=None):
+            del variant, province, authority_only, exclude_sources
+            return None
+
+        def find_experience(self, bill_text, province=None, limit=20, online_only=False):
+            del province, limit, online_only
+            if bill_text == "Exact Bill Name":
+                return [
+                    {
+                        "id": 31,
+                        "bill_name": "Exact Bill Name",
+                        "quota_ids": '["Q-EXP-V"]',
+                        "quota_names": '["Verified Experience Quota"]',
+                        "confidence": 95,
+                        "layer": "verified",
+                    }
+                ]
+            return []
+
+        def search_experience(self, *args, **kwargs):
+            del args, kwargs
+            return []
+
+    monkeypatch.setattr(
+        "src.hybrid_searcher.search_by_id",
+        lambda quota_id, province=None: (quota_id, "Resolved " + quota_id, "m"),
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = _VerifiedOnlyExperienceDB()
+    searcher._universal_kb = False
+    searcher._bm25_engine = _FakeBM25()
+
+    priors = searcher.collect_prior_candidates(
+        "search query",
+        full_query="full query",
+        item={
+            "name": "Exact Bill Name",
+            "description": "desc",
+            "canonical_query": {},
+        },
+        top_k=4,
+    )
+
+    assert all(row["match_source"] != "experience_injected_exact" for row in priors)

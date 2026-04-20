@@ -1038,7 +1038,7 @@ class HybridSearcher:
             for record in records or []:
                 if str(record.get("bill_name", "") or "").strip() != variant:
                     continue
-                if str(record.get("layer", "") or "").strip() == "candidate":
+                if str(record.get("layer", "") or "").strip() != "authority":
                     continue
                 if int(record.get("confidence") or 0) < min_confidence:
                     continue

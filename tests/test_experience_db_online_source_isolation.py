@@ -179,3 +179,137 @@ def test_find_experience_only_excludes_offline_sources_when_online_only_enabled(
     assert {row["source"] for row in all_records} == {"completed_project", "project_import"}
     assert len(online_records) == 1
     assert online_records[0]["source"] == "project_import"
+
+
+def test_first_user_confirmed_insert_stays_verified_not_authority(tmp_path):
+    db = ExperienceDB(province="测试省", db_path=tmp_path / "experience.db")
+
+    record_id = db.add_experience(
+        bill_text="给水管道 DN25",
+        bill_name="给水管道 DN25",
+        bill_unit="m",
+        quota_ids=["Q-UC-1"],
+        quota_names=["管道安装 DN25"],
+        source="user_confirmed",
+        confidence=95,
+        province="测试省",
+        specialty="C10",
+    )
+
+    conn = db._connect(row_factory=True)
+    try:
+        row = conn.execute(
+            "SELECT source, layer, confidence, confirm_count FROM experiences WHERE id = ?",
+            (record_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["source"] == "user_confirmed"
+    assert row["layer"] == "verified"
+    assert row["confirm_count"] == 1
+
+
+def test_first_user_confirmed_update_stays_verified_and_not_authority_exact(tmp_path, monkeypatch):
+    db = ExperienceDB(province="测试省", db_path=tmp_path / "experience.db")
+    monkeypatch.setattr(config, "VECTOR_ENABLED", False)
+    monkeypatch.setattr(config, "get_current_quota_version", lambda province=None: "test-v1")
+
+    _insert_experience_row(
+        db,
+        bill_text="给水管道 DN25",
+        bill_name="给水管道 DN25",
+        normalized_text="给水管道dn25",
+        source="project_import",
+        layer="candidate",
+        confidence=88,
+        confirm_count=1,
+        quota_ids=json.dumps(["Q-BASE"], ensure_ascii=False),
+        quota_names=json.dumps(["管道安装 DN25"], ensure_ascii=False),
+        quota_fingerprint="fp-base",
+        quota_codes_sorted=json.dumps(["Q-BASE"], ensure_ascii=False),
+    )
+
+    updated_id = db.add_experience(
+        bill_text="给水管道 DN25",
+        bill_name="给水管道 DN25",
+        bill_unit="m",
+        quota_ids=["Q-BASE"],
+        quota_names=["管道安装 DN25"],
+        source="user_confirmed",
+        confidence=95,
+        province="测试省",
+        specialty="C10",
+    )
+
+    conn = db._connect(row_factory=True)
+    try:
+        row = conn.execute(
+            "SELECT source, layer, confidence, confirm_count FROM experiences WHERE id = ?",
+            (updated_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["source"] == "user_confirmed"
+    assert row["layer"] == "verified"
+    assert row["confirm_count"] == 1
+
+    exact = db._find_exact_match("给水管道 DN25", "测试省", authority_only=True)
+    assert exact is None
+
+    records = db.search_experience("给水管道 DN25", top_k=3, min_confidence=70, province="测试省")
+    assert len(records) == 1
+    assert records[0]["layer"] == "verified"
+    assert records[0]["match_type"] == "similar"
+
+
+def test_user_confirmed_update_preserves_promoted_source_and_confirm_count(tmp_path, monkeypatch):
+    db = ExperienceDB(province="测试省", db_path=tmp_path / "experience.db")
+    monkeypatch.setattr(config, "VECTOR_ENABLED", False)
+    monkeypatch.setattr(config, "get_current_quota_version", lambda province=None: "test-v1")
+
+    record_id = _insert_experience_row(
+        db,
+        bill_text="排水管 DN100",
+        bill_name="排水管 DN100",
+        normalized_text="排水管dn100",
+        source="multi_project_promoted",
+        layer="authority",
+        confidence=92,
+        confirm_count=2,
+        quota_ids=json.dumps(["Q-PROMO"], ensure_ascii=False),
+        quota_names=json.dumps(["排水管安装 DN100"], ensure_ascii=False),
+        quota_fingerprint="fp-promo",
+        quota_codes_sorted=json.dumps(["Q-PROMO"], ensure_ascii=False),
+    )
+
+    updated_id = db.add_experience(
+        bill_text="排水管 DN100",
+        bill_name="排水管 DN100",
+        bill_unit="m",
+        quota_ids=["Q-PROMO"],
+        quota_names=["排水管安装 DN100"],
+        source="user_confirmed",
+        confidence=95,
+        province="测试省",
+        specialty="C10",
+    )
+
+    assert updated_id == record_id
+
+    conn = db._connect(row_factory=True)
+    try:
+        row = conn.execute(
+            "SELECT source, layer, confidence, confirm_count FROM experiences WHERE id = ?",
+            (record_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["source"] == "multi_project_promoted"
+    assert row["layer"] == "authority"
+    assert int(row["confirm_count"]) == 3
+
+    records = db.search_experience("排水管 DN100", top_k=3, min_confidence=70, province="测试省")
+    assert any(record["id"] == record_id for record in records)

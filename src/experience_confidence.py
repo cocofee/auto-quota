@@ -31,10 +31,15 @@ def normalize_confidence_value(value) -> int:
 def _reviewer_weight(record: dict) -> float:
     source = str(record.get("source") or "").strip().lower()
     layer = str(record.get("layer") or "").strip().lower()
+    confirm_count = max(_safe_int(record.get("confirm_count"), 0), 0)
 
     if source in {"user_correction", "openclaw_approved"}:
         return 1.00
     if source == "user_confirmed":
+        if confirm_count <= 1:
+            return 0.76
+        if confirm_count == 2:
+            return 0.93
         return 0.99
     if source in {"multi_project_promoted", "promote_from_candidate"}:
         return 0.98

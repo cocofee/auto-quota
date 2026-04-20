@@ -1107,13 +1107,14 @@ class ExperienceDB:
     def _source_to_layer(source: str) -> str:
         authority_sources = {
             "user_correction",
-            "user_confirmed",
             "openclaw_approved",
             "multi_project_promoted",
             "promote_from_candidate",
         }
         if source in authority_sources:
             return "authority"
+        if source == "user_confirmed":
+            return "verified"
         return "candidate"
 
     @staticmethod
@@ -2228,12 +2229,37 @@ class ExperienceDB:
             cursor.execute("""
                 UPDATE experiences SET
                     source = CASE
-                        WHEN source = 'user_correction' THEN source
+                        WHEN source IN (
+                            'user_correction',
+                            'openclaw_approved',
+                            'multi_project_promoted',
+                            'promote_from_candidate'
+                        ) THEN source
                         ELSE 'user_confirmed'
                     END,
                     confidence = MIN(MAX(confidence + 5, ?), 100),
-                    confirm_count = confirm_count + 1,
-                    layer = 'authority',
+                    confirm_count = CASE
+                        WHEN source IN (
+                            'user_correction',
+                            'openclaw_approved',
+                            'multi_project_promoted',
+                            'promote_from_candidate',
+                            'user_confirmed'
+                        )
+                        THEN confirm_count + 1
+                        ELSE 1
+                    END,
+                    layer = CASE
+                        WHEN source IN (
+                            'user_correction',
+                            'openclaw_approved',
+                            'multi_project_promoted',
+                            'promote_from_candidate',
+                            'user_confirmed'
+                        ) OR layer = 'authority'
+                        THEN 'authority'
+                        ELSE 'verified'
+                    END,
                     quota_db_version = COALESCE(?, quota_db_version),
                     specialty = CASE WHEN specialty IS NULL OR specialty = '' THEN ? ELSE specialty END,
                     updated_at = ?
