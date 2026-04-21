@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import tempfile
 import uuid
@@ -1546,6 +1547,80 @@ def _normalized_unit(value: Any) -> str:
     return str(value or "").strip().lower().replace("米", "m").replace("平方米", "m2").replace("立方米", "m3")
 
 
+def _extract_review_size_tokens(text: Any) -> set[str]:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return set()
+    tokens: set[str] = set()
+    for pattern in (
+        r"\bdn\s*(\d+(?:\.\d+)?)",
+        r"\bde\s*(\d+(?:\.\d+)?)",
+        r"公称直径\s*(\d+(?:\.\d+)?)",
+        r"公称外径\s*(\d+(?:\.\d+)?)",
+        r"直径\s*(\d+(?:\.\d+)?)\s*mm",
+        r"(\d+(?:\.\d+)?)\s*mm",
+    ):
+        for match in re.findall(pattern, raw):
+            normalized = _normalize_review_size_value(match)
+            if normalized:
+                tokens.add(normalized)
+    return tokens
+
+
+def _normalize_review_size_value(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        number = float(raw)
+    except Exception:
+        return raw
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _extract_review_dimension_signatures(text: Any) -> set[tuple[str, ...]]:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return set()
+    signatures: set[tuple[str, ...]] = set()
+    pattern = re.compile(
+        r"(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)(?:\s*[*×xX]\s*(\d+(?:\.\d+)?))?"
+    )
+    for match in pattern.finditer(raw):
+        parts = tuple(
+            normalized
+            for normalized in (
+                _normalize_review_size_value(group)
+                for group in match.groups()
+                if group is not None
+            )
+            if normalized
+        )
+        if len(parts) >= 2:
+            signatures.add(parts)
+    return signatures
+
+
+def _quota_matches_bill_size_hint(*, match_result: MatchResult, quota: dict[str, Any] | None) -> bool:
+    if not quota:
+        return False
+    bill_dimension_signatures = _extract_review_dimension_signatures(getattr(match_result, "bill_description", ""))
+    if not bill_dimension_signatures:
+        bill_dimension_signatures = _extract_review_dimension_signatures(getattr(match_result, "bill_name", ""))
+    if bill_dimension_signatures:
+        quota_dimension_signatures = _extract_review_dimension_signatures(quota.get("name", ""))
+        return bool(quota_dimension_signatures and bill_dimension_signatures & quota_dimension_signatures)
+    bill_tokens = _extract_review_size_tokens(getattr(match_result, "bill_description", ""))
+    if not bill_tokens:
+        bill_tokens = _extract_review_size_tokens(getattr(match_result, "bill_name", ""))
+    if not bill_tokens:
+        return False
+    quota_tokens = _extract_review_size_tokens(quota.get("name", ""))
+    return bool(quota_tokens and bill_tokens == quota_tokens)
+
+
 def _unit_matches_match_result(*, match_result: MatchResult, quota: dict[str, Any] | None) -> bool:
     if not quota:
         return False
@@ -1677,8 +1752,11 @@ async def _search_better_quota_candidates(
         search_name_override,
         _build_review_search_name(match_result),
     ])[:4]
+    should_force_smart_search = bool(str(search_name_override or "").strip())
     merged_items: list[dict[str, Any]] = []
     seen: set[str] = set()
+    smart_search_items: list[dict[str, Any]] = []
+    smart_search_seen: set[str] = set()
 
     async def _append_keyword_results(query: str) -> None:
         if not query or len(merged_items) >= limit:
@@ -1732,11 +1810,11 @@ async def _search_better_quota_candidates(
 
     for query in search_queries[:3]:
         await _append_keyword_results(query)
-        if merged_items:
+        if merged_items and not should_force_smart_search:
             return merged_items[:limit]
 
     for query in search_queries[:2]:
-        if len(merged_items) >= limit:
+        if len(merged_items) >= limit and not should_force_smart_search:
             break
         try:
             response = await quota_search_api.smart_search(
@@ -1775,13 +1853,28 @@ async def _search_better_quota_candidates(
                 "book": str(item.get("book") or "").strip(),
                 "chapter": str(item.get("chapter") or "").strip(),
             })
+        if should_force_smart_search:
+            _append_unique_review_candidates(
+                target=smart_search_items,
+                seen=smart_search_seen,
+                candidates=normalized_items,
+                limit=limit,
+            )
+        else:
+            _append_unique_review_candidates(
+                target=merged_items,
+                seen=seen,
+                candidates=normalized_items,
+                limit=limit,
+            )
+
+    if smart_search_items:
         _append_unique_review_candidates(
             target=merged_items,
             seen=seen,
-            candidates=normalized_items,
+            candidates=smart_search_items,
             limit=limit,
         )
-
     return merged_items[:limit]
 
 
@@ -1847,7 +1940,7 @@ async def _choose_best_safe_candidate(
         current_ids=current_ids,
         candidates=candidate_pool,
     )
-    if pool_candidate:
+    if pool_candidate and not allow_slow_search:
         return pool_candidate, rejection_reasons, pool_source
 
     if not allow_slow_search:
@@ -1867,6 +1960,16 @@ async def _choose_best_safe_candidate(
         candidates=searched_candidates,
     )
     rejection_reasons.extend(search_rejections)
+    if pool_candidate and search_candidate:
+        best_candidate, _, best_source = _pick_best_review_candidate(
+            task=task,
+            match_result=match_result,
+            current_ids=current_ids,
+            candidates=[pool_candidate, search_candidate],
+        )
+        return best_candidate, rejection_reasons, best_source
+    if pool_candidate:
+        return pool_candidate, rejection_reasons, pool_source
     return search_candidate, rejection_reasons, search_source
 
 
@@ -2113,6 +2216,7 @@ async def _build_auto_review_draft_request(task: Task, match_result: MatchResult
         for item in _issue_list_from_final_validation(final_validation)
         if str(item.get("type") or "").strip()
     ]
+    issue_rows = _issue_list_from_final_validation(final_validation)
     bucket = _openclaw_policy_bucket(match_result)
     suggested_quotas: list[dict[str, Any]] = []
     decision_type = "agree"
@@ -2168,7 +2272,18 @@ async def _build_auto_review_draft_request(task: Task, match_result: MatchResult
         current_top1_conflicts=current_top1_conflicts,
         llm_object_guard=llm_object_guard,
     )
-    if not pool_candidate and should_search_for_candidate:
+    preserve_current_top1_for_soft_same_object = bool(
+        current_quotas
+        and llm_object_guard.get("same_object") is not False
+        and issue_set.issubset({"ambiguity_review", "price_mismatch"})
+        and _quota_matches_bill_size_hint(match_result=match_result, quota=current_quotas[0])
+    )
+    if should_search_for_candidate and preserve_current_top1_for_soft_same_object:
+        should_search_for_candidate = False
+    if should_search_for_candidate and (
+        not pool_candidate
+        or (llm_object_guard.get("same_object") is False and bool(review_search_hint))
+    ):
         search_candidate, search_rejected_candidate_reasons, search_candidate_source = await _choose_best_safe_candidate(
             task=task,
             match_result=match_result,
@@ -2180,13 +2295,31 @@ async def _build_auto_review_draft_request(task: Task, match_result: MatchResult
         )
         rejected_candidate_reasons.extend(search_rejected_candidate_reasons)
         if search_candidate:
+            pool_candidate = search_candidate
             candidate_source = search_candidate_source
+
+    if preserve_current_top1_for_soft_same_object:
+        pool_candidate = None
+        search_candidate = None
+        candidate_source = ""
 
     safe_candidate = pool_candidate or search_candidate
     search_driven_candidate = candidate_source.startswith("audit_keyword:") or candidate_source.startswith("smart_search:")
     safe_candidate_is_current_top1 = _is_same_quota_candidate(
         current_quotas[0] if current_quotas else None,
         safe_candidate,
+    )
+    soft_warning_only_issues = bool(issue_rows) and all(
+        str(item.get("type") or "").strip() in {"ambiguity_review", "price_mismatch"}
+        and str(item.get("severity") or "").strip().lower() != "error"
+        for item in issue_rows
+        if isinstance(item, dict)
+    )
+    manual_gate_for_soft_warning_alternative = bool(
+        llm_object_guard.get("same_object") is not False
+        and soft_warning_only_issues
+        and safe_candidate
+        and not safe_candidate_is_current_top1
     )
     blocked_reason_codes.extend(rejected_candidate_reasons)
     blocked_reason_codes.extend(current_top1_conflicts)
@@ -2220,10 +2353,10 @@ async def _build_auto_review_draft_request(task: Task, match_result: MatchResult
         not can_agree_with_current_top1
         or bool(issue_set)
         or search_driven_candidate
-    ):
+    ) and not manual_gate_for_soft_warning_alternative:
         decision_type = "override_within_candidates"
         suggested_quotas = [safe_candidate]
-    elif can_agree_with_current_top1:
+    elif can_agree_with_current_top1 and not manual_gate_for_soft_warning_alternative:
         decision_type = "agree"
         suggested_quotas = list(current_quotas)
     elif _should_retry_search_then_select(
@@ -3255,8 +3388,8 @@ async def review_confirm(
             payload={
                 "task_id": str(task.id),
                 "result_id": str(match_result.id),
-                "reason_codes": list(normalized_feedback.get("manual_reason_codes") or []),
-                "manual_note": str(normalized_feedback.get("manual_note") or ""),
+                "reason_codes": list((normalized_feedback or {}).get("manual_reason_codes") or []),
+                "manual_note": str((normalized_feedback or {}).get("manual_note") or ""),
             },
         )
         return results_api._to_result_response(match_result)

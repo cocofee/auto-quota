@@ -79,6 +79,89 @@ def _make_match_result(**overrides):
     return SimpleNamespace(**payload)
 
 
+def test_quota_matches_bill_size_hint_requires_exact_dimension_signature():
+    match_result = _make_match_result(
+        bill_name="distribution box",
+        bill_description="box size 600*900*220",
+    )
+
+    assert openclaw_api._quota_matches_bill_size_hint(
+        match_result=match_result,
+        quota={"name": "distribution box install 600*900"},
+    ) is False
+    assert openclaw_api._quota_matches_bill_size_hint(
+        match_result=match_result,
+        quota={"name": "distribution box install 600*900*220"},
+    ) is True
+
+
+def test_choose_best_safe_candidate_keeps_keyword_hits_when_search_hint_present(monkeypatch):
+    async def _fake_search_quotas(*, keyword, province, book, chapter, limit, user):
+        _ = (keyword, province, book, chapter, limit, user)
+        return {
+            "items": [
+                {
+                    "quota_id": "03-10-3-10",
+                    "name": "valve install DN50",
+                    "unit": "ea",
+                    "score": 0.99,
+                    "book": "C10",
+                    "chapter": "valve",
+                }
+            ],
+            "total": 1,
+        }
+
+    async def _fake_smart_search(*, name, province, description, specialty, limit, user):
+        _ = (name, province, description, specialty, limit, user)
+        return {
+            "items": [
+                {
+                    "quota_id": "03-10-3-80",
+                    "name": "valve install DN80",
+                    "unit": "m",
+                    "score": 0.98,
+                    "book": "C10",
+                    "chapter": "valve",
+                }
+            ],
+            "search_query": "valve install DN50",
+            "specialty": "C10",
+            "province": province,
+        }
+
+    monkeypatch.setattr(openclaw_api.quota_search_api, "search_quotas", _fake_search_quotas)
+    monkeypatch.setattr(openclaw_api.quota_search_api, "smart_search", _fake_smart_search)
+
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        province="demo-province",
+    )
+    match_result = _make_match_result(
+        bill_name="valve",
+        bill_description="DN50",
+        bill_unit="ea",
+        specialty="C10",
+    )
+
+    candidate, rejection_reasons, candidate_source = asyncio.run(
+        openclaw_api._choose_best_safe_candidate(
+            task=task,
+            match_result=match_result,
+            current_quotas=[{"quota_id": "03-10-3-99", "name": "current", "unit": "ea"}],
+            candidate_pool=[],
+            audit_queries=["valve install"],
+            search_name_override="valve install",
+            allow_slow_search=True,
+        )
+    )
+
+    assert candidate is not None
+    assert candidate["quota_id"] == "03-10-3-10"
+    assert candidate_source.startswith("audit_keyword:")
+    assert rejection_reasons == []
+
+
 def test_build_auto_review_draft_request_overrides_pipe_support_with_search_candidate(monkeypatch):
     async def _fake_object_guard(**kwargs):
         _ = kwargs

@@ -246,6 +246,29 @@ def _append_consistency_review_trace(results: list[dict]) -> None:
         )
 
 
+def _move_trace_stage_to_tail(result: dict, stage_name: str) -> None:
+    if not isinstance(result, dict):
+        return
+    trace = result.get("trace")
+    if not isinstance(trace, dict):
+        return
+    steps = trace.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return
+    kept_steps = []
+    moved_steps = []
+    for step in steps:
+        if isinstance(step, dict) and str(step.get("stage") or "") == stage_name:
+            moved_steps.append(step)
+        else:
+            kept_steps.append(step)
+    if not moved_steps:
+        return
+    trace["steps"] = kept_steps + moved_steps
+    trace["path"] = [step.get("stage", "") for step in trace["steps"] if isinstance(step, dict) and step.get("stage")]
+    result["trace"] = trace
+
+
 def _attach_performance_snapshot(result: dict,
                                  monitor: PerformanceMonitor | None,
                                  *,
@@ -464,6 +487,7 @@ def _append_search_result_and_log(results: list[dict], result: dict,
                                   exp_hits: int, rule_hits: int,
                                   interval: int = 50) -> None:
     """search模式统一结果入列与进度日志。"""
+    _move_trace_stage_to_tail(result, "rank_stage")
     _finalize_trace(result)
     results.append(result)
     _log_standard_progress(
@@ -475,6 +499,7 @@ def _append_agent_result_and_log(results: list[dict], result: dict,
                                  exp_hits: int, rule_hits: int,
                                  agent_hits: int) -> int:
     """agent模式统一结果入列、命中计数与进度日志。"""
+    _move_trace_stage_to_tail(result, "rank_stage")
     _finalize_trace(result)
     results.append(result)
     if result.get("match_source", "").startswith("agent"):
@@ -1400,6 +1425,7 @@ def match_search_only(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -2339,6 +2365,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -2580,6 +2607,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -2821,6 +2849,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -3463,6 +3492,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -4290,6 +4320,7 @@ def match_agent(bill_items: list[dict], searcher: HybridSearcher,
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
@@ -5178,6 +5209,7 @@ def _match_agent_parallelized_impl(
             final_review_correction=result.get("final_review_correction", {}),
             batch_context=summarize_batch_context_for_trace(result.get("bill_item") or {}),
         )
+        _move_trace_stage_to_tail(result, "rank_stage")
         _finalize_trace(result)
 
     return results
