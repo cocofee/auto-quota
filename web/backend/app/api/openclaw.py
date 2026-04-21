@@ -1907,7 +1907,8 @@ def _should_search_for_better_candidate(
     llm_object_guard: dict[str, Any],
 ) -> bool:
     if not current_quotas:
-        return True
+        search_hint = str(llm_object_guard.get("search_hint") or "").strip()
+        return bool(issue_set) or llm_object_guard.get("same_object") is False or bool(search_hint)
     if current_top1_conflicts:
         return True
     if issue_set:

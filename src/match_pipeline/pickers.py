@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Explicit candidate pickers and fallback selectors."""
 
+import re
+
 from loguru import logger
 
 from src.explicit_equipment_family_pickers import _pick_explicit_equipment_family_candidate
@@ -224,6 +226,26 @@ def _boost_arbitrated_candidate(candidate: dict) -> dict:
     return boosted
 
 
+def _has_explicit_candidate_specialty_drift(item: dict,
+                                            explicit_candidate: dict | None) -> bool:
+    if not isinstance(explicit_candidate, dict) or not explicit_candidate:
+        return False
+    item_specialty = str(item.get("specialty") or "").strip()
+    candidate_specialty = str(explicit_candidate.get("specialty") or "").strip()
+    explicit_param_score_raw = explicit_candidate.get("param_score")
+    explicit_param_score = float(explicit_param_score_raw or 0.0)
+    specialty_param_floor = float(
+        PolicyEngine.get_picker_threshold("explicit_specialty_param_floor", 0.75)
+    )
+    return bool(
+        item_specialty
+        and candidate_specialty
+        and item_specialty != candidate_specialty
+        and explicit_param_score_raw is not None
+        and explicit_param_score < specialty_param_floor
+    )
+
+
 def _guard_explicit_candidate(item: dict,
                               top_candidate: dict,
                               explicit_candidate: dict | None,
@@ -288,18 +310,9 @@ def _guard_explicit_candidate(item: dict,
         else:
             return top_candidate
 
-    item_specialty = str(item.get("specialty") or "").strip()
-    candidate_specialty = str(explicit_candidate.get("specialty") or "").strip()
-    specialty_param_floor = float(
-        PolicyEngine.get_picker_threshold("explicit_specialty_param_floor", 0.75)
-    )
-    if (
-        item_specialty
-        and candidate_specialty
-        and item_specialty != candidate_specialty
-        and explicit_param_score_raw is not None
-        and explicit_param_score < specialty_param_floor
-    ):
+    if _has_explicit_candidate_specialty_drift(item, explicit_candidate):
+        item_specialty = str(item.get("specialty") or "").strip()
+        candidate_specialty = str(explicit_candidate.get("specialty") or "").strip()
         logger.debug(
             f"explicit picker guard rejected specialty drift "
             f"item={item_specialty} candidate={candidate_specialty} "
@@ -448,6 +461,66 @@ def _has_explicit_conduit_support_conflict(bill_text: str) -> bool:
         or bool(bill_params.get("conduit_type"))
         or bill_params.get("conduit_dn") is not None
     )
+
+
+def _should_allow_low_param_conduit_rescue(top_candidate: dict,
+                                           conduit_candidate: dict | None,
+                                           bill_text: str) -> bool:
+    if not isinstance(conduit_candidate, dict) or not conduit_candidate:
+        return False
+    if not isinstance(top_candidate, dict) or not top_candidate:
+        return False
+
+    text = str(bill_text or "")
+    upper_text = text.upper()
+    bill_params = text_parser.parse(text)
+    code_match = re.search(r"(?<![A-Z0-9])(JDG|KBG|FPC|PVC|PC|SC|RC|MT|DG|G)\s*\d+\b", upper_text)
+    bill_conduit_type = str(bill_params.get("conduit_type") or (code_match.group(1) if code_match else ""))
+    explicit_electrical = any(keyword in text for keyword in (
+        "电气配管", "穿线管", "导管", "金属软管", "可挠金属套管",
+    ))
+    if not explicit_electrical and not (bill_conduit_type and "配管" in text):
+        return False
+
+    bill_dn = bill_params.get("conduit_dn")
+    if bill_dn is None:
+        bill_dn = bill_params.get("dn")
+    if bill_dn is None:
+        return False
+
+    expected_words: list[str] = []
+    forbidden_words: list[str] = []
+    if bill_conduit_type in {"JDG", "KBG"}:
+        expected_words = ["JDG", "紧定式", "钢导管"]
+        forbidden_words = ["防爆钢管", "电缆保护"]
+    elif bill_conduit_type in {"PC", "PVC"}:
+        expected_words = ["刚性阻燃管", "PVC阻燃塑料管"]
+        forbidden_words = ["电缆保护", "防爆钢管"]
+    elif bill_conduit_type == "FPC":
+        expected_words = ["半硬质阻燃管", "半硬质塑料管"]
+        forbidden_words = ["电缆保护", "防爆钢管"]
+    elif bill_conduit_type in {"SC", "G", "DG", "RC", "MT"}:
+        expected_words = ["镀锌钢管", "镀锌电线管", "钢管敷设"]
+        forbidden_words = ["防爆钢管", "电缆保护"]
+
+    explicit_name = str(conduit_candidate.get("name", "") or "")
+    top_name = str(top_candidate.get("name", "") or "")
+    if expected_words and not any(word in explicit_name for word in expected_words):
+        return False
+
+    explicit_params = text_parser.parse(explicit_name)
+    top_params = text_parser.parse(top_name)
+    explicit_dn = explicit_params.get("conduit_dn")
+    if explicit_dn is None:
+        explicit_dn = explicit_params.get("dn")
+    top_dn = top_params.get("conduit_dn")
+    if top_dn is None:
+        top_dn = top_params.get("dn")
+
+    explicit_exact = explicit_dn == bill_dn
+    top_exact = top_dn == bill_dn
+    top_forbidden = any(word in top_name for word in forbidden_words)
+    return bool(explicit_exact and (top_forbidden or not top_exact))
 
 
 def _pick_explicit_conduit_support_candidate(item: dict,
@@ -921,7 +994,28 @@ def _pick_category_safe_candidate(item: dict, candidates: list[dict]) -> dict:
 
     conduit_candidate = _pick_explicit_conduit_family_candidate(bill_text, candidates)
     if conduit_candidate is not None:
-        return _guard_explicit_candidate(item, top_candidate, conduit_candidate)
+        conduit_guard_hard_reject = (
+            not conduit_candidate.get("param_match", True)
+            or bool(conduit_candidate.get("family_gate_hard_conflict"))
+            or _has_explicit_candidate_specialty_drift(item, conduit_candidate)
+        )
+        guarded = _guard_explicit_candidate(item, top_candidate, conduit_candidate)
+        if (
+            not conduit_guard_hard_reject
+            and guarded is top_candidate
+            and _should_allow_low_param_conduit_rescue(
+                top_candidate,
+                conduit_candidate,
+                bill_text,
+            )
+        ):
+            logger.debug(
+                "category_safe allowed low-param conduit rescue top={} rescue={}",
+                top_candidate.get("quota_id") or top_candidate.get("name", ""),
+                conduit_candidate.get("quota_id") or conduit_candidate.get("name", ""),
+            )
+            return conduit_candidate
+        return guarded
 
     bridge_support_candidate = _pick_explicit_bridge_support_candidate(item, top_candidate, bill_text, candidates)
     if bridge_support_candidate is not None:

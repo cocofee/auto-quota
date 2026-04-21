@@ -21,6 +21,7 @@ from contextlib import nullcontext
 from loguru import logger
 
 import config
+import src.runtime_cache as runtime_cache_module
 from src.adaptive_strategy import AdaptiveStrategy
 from src.context_builder import build_project_context, format_overview_context
 from src.context_builder import summarize_batch_context_for_trace
@@ -936,7 +937,25 @@ def _init_search_components_legacy_broken(resolved_province: str, aux_provinces:
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态
-    searcher = get_search_bundle(resolved_province, aux_provinces)
+    using_runtime_cache_search_bundle = (
+        getattr(get_search_bundle, "__module__", "") == "src.runtime_cache"
+        and getattr(get_search_bundle, "__name__", "") == "get_search_bundle"
+    )
+    if aux_provinces and using_runtime_cache_search_bundle:
+        cache_key = (
+            runtime_cache_module._province_key(resolved_province),
+            runtime_cache_module._aux_key(aux_provinces),
+        )
+        cached_searcher = runtime_cache_module._search_bundle_cache.get(cache_key)
+        if cached_searcher is not None:
+            searcher = cached_searcher
+        else:
+            base_searcher = get_search_bundle(resolved_province, [])
+            searcher = copy.copy(base_searcher)
+            searcher.aux_searchers = [HybridSearcher(aux_p) for aux_p in aux_provinces]
+            runtime_cache_module._search_bundle_cache[cache_key] = searcher
+    else:
+        searcher = get_search_bundle(resolved_province, aux_provinces)
     status = searcher.get_status()
     logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
     logger.info(f"  向量索引: {status['vector_count']} 条定额")
@@ -1018,6 +1037,8 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
     """
     logger.info("第2步：初始化搜索引擎...")
     validator = ParamValidator()
+    if getattr(runtime_cache_module, "HybridSearcher", None) is not HybridSearcher:
+        runtime_cache_module.HybridSearcher = HybridSearcher
 
     # 预加载所有AI模型（向量模型+Reranker，避免第一条清单处理时等待）
     try:
@@ -1042,7 +1063,25 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
         logger.warning(f"模型预加载失败（不影响运行，会延迟加载）: {e}")
 
     # 检查引擎状态
-    searcher = get_search_bundle(resolved_province, aux_provinces)
+    using_runtime_cache_search_bundle = (
+        getattr(get_search_bundle, "__module__", "") == "src.runtime_cache"
+        and getattr(get_search_bundle, "__name__", "") == "get_search_bundle"
+    )
+    if aux_provinces and using_runtime_cache_search_bundle:
+        cache_key = (
+            runtime_cache_module._province_key(resolved_province),
+            runtime_cache_module._aux_key(aux_provinces),
+        )
+        cached_searcher = runtime_cache_module._search_bundle_cache.get(cache_key)
+        if cached_searcher is not None:
+            searcher = cached_searcher
+        else:
+            base_searcher = get_search_bundle(resolved_province, [])
+            searcher = copy.copy(base_searcher)
+            searcher.aux_searchers = [HybridSearcher(aux_p) for aux_p in aux_provinces]
+            runtime_cache_module._search_bundle_cache[cache_key] = searcher
+    else:
+        searcher = get_search_bundle(resolved_province, aux_provinces)
     status = searcher.get_status()
     logger.info(f"  BM25索引: {status['bm25_count']} 条定额")
     logger.info(f"  向量索引: {status['vector_count']} 条定额")

@@ -937,3 +937,30 @@ def test_pick_category_safe_candidate_keeps_wiring_picker_for_wiring_only_items(
     picked = _pick_category_safe_candidate(item, candidates)
 
     assert picked["name"] == "\u7ba1\u5185\u7a7f\u7ebf \u7a7f\u591a\u82af\u8f6f\u5bfc\u7ebf \u4e8c\u82af \u5355\u82af\u5bfc\u7ebf\u622a\u9762(mm2\u4ee5\u5185) 4"
+
+
+def test_pick_category_safe_candidate_does_not_rescue_conduit_after_hard_guard_reject():
+    item = {
+        "name": "\u914d\u7ba1",
+        "description": "\u540d\u79f0:\u7535\u6c14\u914d\u7ba1 \u6750\u8d28:JDG \u89c4\u683c:DN20 \u914d\u7f6e\u5f62\u5f0f:\u6697\u914d",
+        "specialty": "C4",
+    }
+    candidates = [
+        {
+            "name": "\u94a2\u5236\u69fd\u5f0f\u6865\u67b6\u5b89\u88c5 (\u5bbd\u00d7\u9ad8mm\u4ee5\u4e0b) 400",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+            "specialty": "C4",
+        },
+        {
+            "name": "JDG\u7d27\u5b9a\u5f0f\u5bfc\u7ba1\u6577\u8bbe DN20",
+            "param_score": 0.52,
+            "rerank_score": 0.68,
+            "param_match": False,
+            "specialty": "C4",
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u94a2\u5236\u69fd\u5f0f\u6865\u67b6\u5b89\u88c5 (\u5bbd\u00d7\u9ad8mm\u4ee5\u4e0b) 400"

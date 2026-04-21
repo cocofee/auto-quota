@@ -4,7 +4,7 @@ import sys
 import types
 
 import config
-from src import match_core, match_engine
+from src import match_core, match_engine, runtime_cache
 from src.param_validator import ParamValidator
 
 
@@ -128,6 +128,51 @@ def test_init_search_components_ignores_aux_status_failure(monkeypatch):
         ("上海市园林工程预算定额(2016)", ["上海市安装工程预算定额(2016)"]),
     ]
     assert len(searcher.aux_searchers) == 1
+
+
+def test_init_search_components_auto_mount_does_not_pollute_no_aux_cache(monkeypatch):
+    runtime_cache.clear_runtime_cache()
+
+    class FakeSearcher:
+        def __init__(self, province):
+            self.province = province
+            self.aux_searchers = []
+
+        def get_status(self):
+            return {"bm25_ready": True, "bm25_count": 10, "vector_count": 0}
+
+        def set_experience_db(self, experience_db):
+            _ = experience_db
+            return None
+
+    class FakeValidator:
+        pass
+
+    fake_model_cache = types.SimpleNamespace(
+        ModelCache=types.SimpleNamespace(preload_all=lambda: None)
+    )
+
+    monkeypatch.setattr(runtime_cache, "HybridSearcher", FakeSearcher)
+    monkeypatch.setattr(match_engine, "HybridSearcher", FakeSearcher)
+    monkeypatch.setattr(match_engine, "ParamValidator", FakeValidator)
+    monkeypatch.setattr(config, "get_sibling_provinces", lambda province: ["AUX_1"])
+    monkeypatch.setitem(sys.modules, "src.model_cache", fake_model_cache)
+
+    try:
+        auto_searcher, validator = match_engine.init_search_components("PROV_MAIN")
+        no_aux_searcher, no_aux_validator = match_engine.init_search_components(
+            "PROV_MAIN",
+            aux_provinces=[],
+        )
+
+        assert isinstance(validator, FakeValidator)
+        assert isinstance(no_aux_validator, FakeValidator)
+        assert auto_searcher is not no_aux_searcher
+        assert [aux.province for aux in auto_searcher.aux_searchers] == ["AUX_1"]
+        assert no_aux_searcher.aux_searchers == []
+        assert runtime_cache.get_search_bundle("PROV_MAIN", []).aux_searchers == []
+    finally:
+        runtime_cache.clear_runtime_cache()
 
 
 def test_cascade_search_aux_merges_target_classified_books_for_nonstandard_library():

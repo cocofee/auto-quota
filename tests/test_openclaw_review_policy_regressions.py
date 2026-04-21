@@ -11,10 +11,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.append(str(BACKEND_ROOT))
 
+_FAKE_DB_ROOT = Path(__file__).resolve().parents[1] / "output" / f"_tmp_openclaw_policy_{uuid.uuid4().hex}"
 fake_config = types.ModuleType("config")
 fake_config.resolve_province = lambda province, interactive=False: province
 fake_config.get_quota_db_path = lambda province=None: ""
 fake_config.get_current_province = lambda: ""
+fake_config.DB_DIR = _FAKE_DB_ROOT
+fake_config.COMMON_DB_DIR = _FAKE_DB_ROOT / "common"
+fake_config.PROVINCES_DB_DIR = _FAKE_DB_ROOT / "provinces"
 fake_config.__getattr__ = lambda name: ""
 sys.modules.setdefault("config", fake_config)
 
@@ -147,6 +151,7 @@ def test_build_auto_review_draft_request_can_agentically_search_beyond_bad_candi
         assert name == "成品管卡安装"
         assert province == "上海市安装工程预算定额(2016)"
         assert specialty == "C10"
+        _ = (description, limit, user)
         return {
             "items": [
                 {
@@ -207,6 +212,82 @@ def test_build_auto_review_draft_request_can_agentically_search_beyond_bad_candi
     assert "entity_conflict:pipe_support" in (req.openclaw_reason_codes or [])
     assert "candidate_source:smart_search:成品管卡安装 DN25" in (req.openclaw_reason_codes or [])
     assert "llm_search_hint:成品管卡安装" in (req.openclaw_reason_codes or [])
+
+
+def test_build_auto_review_draft_request_allows_slow_search_without_current_top1_when_object_guard_requests_it(monkeypatch):
+    async def _fake_object_guard(**kwargs):
+        _ = kwargs
+        return {
+            "same_object": False,
+            "bill_object": "\u6210\u54c1\u7ba1\u5361",
+            "quota_object": "",
+            "reason": "Jarvis \u8fd8\u6ca1\u6709\u7a33\u5b9a top1\uff0c\u4f46\u5bf9\u8c61\u662f\u7ba1\u5361\u9644\u4ef6",
+            "search_hint": "\u6210\u54c1\u7ba1\u5361\u5b89\u88c5",
+            "confidence": 97,
+        }
+
+    async def _fake_search_quotas(*, keyword, province, book, chapter, limit, user):
+        _ = (keyword, province, book, chapter, limit, user)
+        return {"items": [], "total": 0}
+
+    async def _fake_smart_search(*, name, province, description, specialty, limit, user):
+        assert name == "\u6210\u54c1\u7ba1\u5361\u5b89\u88c5"
+        assert province == "\u4e0a\u6d77\u5e02\u5b89\u88c5\u5de5\u7a0b\u9884\u7b97\u5b9a\u989d(2016)"
+        assert specialty == "C10"
+        _ = (description, limit, user)
+        return {
+            "items": [
+                {
+                    "quota_id": "03-10-2-12",
+                    "name": "\u6210\u54c1\u7ba1\u5361\u5b89\u88c5 \u516c\u79f0\u76f4\u5f84 32mm\u4ee5\u5185",
+                    "unit": "\u5957",
+                    "score": 0.93,
+                    "book": "C10",
+                    "chapter": "\u7ba1\u9053\u652f\u67b6",
+                }
+            ],
+            "search_query": "\u6210\u54c1\u7ba1\u5361\u5b89\u88c5 DN25",
+            "specialty": "C10",
+            "province": province,
+        }
+
+    monkeypatch.setattr(openclaw_api, "_review_object_guard", _fake_object_guard)
+    monkeypatch.setattr(openclaw_api.quota_search_api, "search_quotas", _fake_search_quotas)
+    monkeypatch.setattr(openclaw_api.quota_search_api, "smart_search", _fake_smart_search)
+
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="\u5b89\u88c5\u4efb\u52a1",
+        province="\u4e0a\u6d77\u5e02\u5b89\u88c5\u5de5\u7a0b\u9884\u7b97\u5b9a\u989d(2016)",
+        mode="search",
+        original_filename="demo.xlsx",
+    )
+    match_result = _make_match_result(
+        bill_name="\u6210\u54c1\u7ba1\u5361",
+        bill_description="1.\u540d\u79f0:\u6210\u54c1\u7ba1\u5361 2.\u89c4\u683c:DN25",
+        bill_unit="\u5957",
+        specialty="C10",
+        light_status="red",
+        confidence=40,
+        confidence_score=40,
+        quotas=None,
+        alternatives=None,
+        trace={
+            "steps": [
+                {
+                    "final_validation": {"issues": []},
+                    "query_route": {"route": "installation_spec"},
+                }
+            ]
+        },
+    )
+
+    req = asyncio.run(openclaw_api._build_auto_review_draft_request(task, match_result))
+
+    assert req.openclaw_decision_type == "override_within_candidates"
+    assert req.openclaw_suggested_quotas[0].quota_id == "03-10-2-12"
+    assert "candidate_source:smart_search:\u6210\u54c1\u7ba1\u5361\u5b89\u88c5 DN25" in (req.openclaw_reason_codes or [])
+    assert "llm_search_hint:\u6210\u54c1\u7ba1\u5361\u5b89\u88c5" in (req.openclaw_reason_codes or [])
 
 
 def test_build_auto_review_draft_request_prefers_candidate_pool_before_independent_audit(monkeypatch):
@@ -365,6 +446,8 @@ def test_build_auto_review_draft_request_overrides_with_audit_candidate_on_soft_
     assert req.openclaw_decision_type == "override_within_candidates"
     assert req.openclaw_suggested_quotas[0].quota_id == "03-10-3-10"
     assert "candidate_source:audit_keyword:闸阀安装" in (req.openclaw_reason_codes or [])
+
+
 def test_build_auto_review_draft_request_uses_llm_object_guard_when_rules_are_not_decisive(monkeypatch):
     monkeypatch.setattr(
         openclaw_api,
