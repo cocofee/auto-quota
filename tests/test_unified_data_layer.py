@@ -56,9 +56,12 @@ def test_unified_data_layer_prefers_green_experience_case():
                     "bill_text": "镀锌钢管安装 DN50",
                     "quota_ids": ["C10-1-1"],
                     "quota_names": ["管道安装 镀锌钢管 DN50"],
+                    "source": "openclaw_approved",
                     "gate": "green",
                     "layer": "authority",
                     "confidence": 95,
+                    "effective_confidence": 95,
+                    "confirm_count": 3,
                     "total_score": 0.93,
                     "match_type": "exact",
                 }
@@ -187,3 +190,146 @@ def test_unified_data_layer_deduplicates_quota_keyword_and_vector_hits():
     assert [item["id"] for item in quota_items] == ["C1-1", "C1-2"]
     assert quota_items[0]["match_channel"] == ["keyword", "vector"]
     assert quota_items[0]["score"] == 0.91
+
+
+def test_unified_data_layer_does_not_auto_recommend_single_confirm_verified_experience():
+    layer = UnifiedDataLayer(
+        experience_db=_FakeExperienceDB(
+            [
+                {
+                    "id": 1,
+                    "bill_text": "PPR pipe install DN25",
+                    "quota_ids": ["EXP-1"],
+                    "quota_names": ["PPR pipe install DN25"],
+                    "source": "user_confirmed",
+                    "gate": "green",
+                    "layer": "verified",
+                    "confidence": 95,
+                    "confirm_count": 1,
+                    "effective_confidence": 68,
+                    "total_score": 0.88,
+                    "match_type": "similar",
+                }
+            ]
+        ),
+        universal_kb=_FakeUniversalKB(
+            [
+                {
+                    "id": 11,
+                    "bill_pattern": "PPR pipe install DN25",
+                    "quota_patterns": ["PPR pipe install DN25"],
+                    "associated_patterns": ["fittings"],
+                    "similarity": 0.92,
+                    "confidence": 90,
+                    "layer": "authority",
+                }
+            ]
+        ),
+        price_db=_FakePriceDB(),
+        quota_db=_FakeQuotaDB([]),
+        vector_engine=_FakeVectorEngine([]),
+    )
+
+    result = layer.search("PPR pipe install DN25", sources=["experience", "universal_kb"], top_k=3)
+
+    experience_item = result["grouped"]["experience"][0]
+
+    assert "recommended" not in experience_item
+    assert experience_item["effective_confidence"] == 68
+    assert round(experience_item["merge_score"], 4) == 0.7888
+    assert result["items"][0]["source"] == "universal_kb"
+
+
+def test_unified_data_layer_auto_recommend_uses_weighted_top_experience():
+    layer = UnifiedDataLayer(
+        experience_db=_FakeExperienceDB(
+            [
+                {
+                    "id": 1,
+                    "bill_text": "PPR pipe install DN25",
+                    "quota_ids": ["EXP-LOW"],
+                    "quota_names": ["lower confidence hit"],
+                    "source": "user_confirmed",
+                    "gate": "green",
+                    "layer": "verified",
+                    "confidence": 68,
+                    "confirm_count": 1,
+                    "effective_confidence": 68,
+                    "total_score": 0.90,
+                    "match_type": "similar",
+                },
+                {
+                    "id": 2,
+                    "bill_text": "PPR pipe install DN25",
+                    "quota_ids": ["EXP-HIGH"],
+                    "quota_names": ["higher confidence hit"],
+                    "source": "user_confirmed",
+                    "gate": "green",
+                    "layer": "verified",
+                    "confidence": 95,
+                    "confirm_count": 3,
+                    "effective_confidence": 95,
+                    "total_score": 0.88,
+                    "match_type": "similar",
+                },
+            ]
+        ),
+        universal_kb=_FakeUniversalKB([]),
+        price_db=_FakePriceDB(),
+        quota_db=_FakeQuotaDB([]),
+        vector_engine=_FakeVectorEngine([]),
+    )
+
+    result = layer.search("PPR pipe install DN25", sources=["experience"], strategy="auto", top_k=3)
+
+    assert result["items"][0]["source"] == "experience"
+    assert result["items"][0]["id"] == 2
+    assert result["items"][0]["recommended"] is True
+    assert result["items"][0]["content"] == "EXP-HIGH higher confidence hit"
+
+
+def test_unified_data_layer_preserves_legacy_experience_confidence_without_confirm_count():
+    layer = UnifiedDataLayer(
+        experience_db=_FakeExperienceDB(
+            [
+                {
+                    "id": 1,
+                    "bill_text": "legacy authority hit",
+                    "quota_ids": ["EXP-LEGACY"],
+                    "quota_names": ["legacy authority quota"],
+                    "source": "openclaw_approved",
+                    "gate": "green",
+                    "layer": "authority",
+                    "confidence": 95,
+                    "total_score": 0.90,
+                    "match_type": "exact",
+                    "updated_at": "1710000000",
+                }
+            ]
+        ),
+        universal_kb=_FakeUniversalKB(
+            [
+                {
+                    "id": 11,
+                    "bill_pattern": "legacy authority hit",
+                    "quota_patterns": ["legacy authority quota"],
+                    "associated_patterns": [],
+                    "similarity": 0.92,
+                    "confidence": 90,
+                    "layer": "authority",
+                }
+            ]
+        ),
+        price_db=_FakePriceDB(),
+        quota_db=_FakeQuotaDB([]),
+        vector_engine=_FakeVectorEngine([]),
+    )
+
+    result = layer.search("legacy authority hit", sources=["experience", "universal_kb"], strategy="auto", top_k=3)
+
+    experience_item = result["grouped"]["experience"][0]
+
+    assert experience_item["effective_confidence"] == 95
+    assert result["items"][0]["source"] == "experience"
+    assert result["items"][0]["id"] == 1
+    assert result["items"][0]["recommended"] is True

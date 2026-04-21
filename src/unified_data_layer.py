@@ -9,6 +9,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.experience_confidence import compute_effective_confidence, normalize_confidence_value
 from src.experience_db import ExperienceDB
 from src.price_reference_db import PriceReferenceDB
 from src.quota_db import QuotaDB
@@ -20,6 +21,7 @@ class UnifiedDataLayer:
     """统一数据融合层。"""
 
     _ALL_SOURCES = ("experience", "universal_kb", "price", "quota")
+    _EXPERIENCE_RECOMMEND_MIN_CONFIDENCE = 85
 
     def __init__(
         self,
@@ -206,10 +208,12 @@ class UnifiedDataLayer:
                 quota_pairs.append(f"{quota_id} {quota_name}".strip())
 
             score = float(record.get("total_score") or record.get("similarity") or 0.0)
+            effective_confidence = self._experience_effective_confidence(record)
+            confidence_weight = max(min(effective_confidence / 100.0, 1.0), 0.0)
             gate = str(record.get("gate") or "")
             layer = str(record.get("layer") or "")
-            gate_bonus = {"green": 0.20, "yellow": 0.05, "red": -0.20}.get(gate, 0.0)
-            layer_bonus = {"authority": 0.15, "verified": 0.08, "candidate": 0.0}.get(layer, 0.0)
+            gate_bonus = {"green": 0.20, "yellow": 0.05, "red": -0.20}.get(gate, 0.0) * confidence_weight
+            layer_bonus = {"authority": 0.15, "verified": 0.08, "candidate": 0.0}.get(layer, 0.0) * confidence_weight
 
             items.append(
                 {
@@ -219,11 +223,13 @@ class UnifiedDataLayer:
                     "title": str(record.get("bill_text") or "").strip(),
                     "content": " | ".join(quota_pairs),
                     "score": score,
-                    "merge_score": score + gate_bonus + layer_bonus,
+                    "merge_score": (score * confidence_weight) + gate_bonus + layer_bonus,
                     "rank": index,
                     "gate": gate,
                     "layer": layer,
-                    "confidence": int(record.get("confidence") or 0),
+                    "confidence": normalize_confidence_value(record.get("confidence") or 0),
+                    "effective_confidence": effective_confidence,
+                    "confidence_weight": confidence_weight,
                     "match_type": str(record.get("match_type") or ""),
                     "raw": record,
                 }
@@ -365,13 +371,25 @@ class UnifiedDataLayer:
         merged: list[dict[str, Any]] = []
         used_keys: set[tuple[str, str]] = set()
 
-        top_experience = experience_items[0] if experience_items else None
+        top_experience = (
+            max(
+                experience_items,
+                key=lambda item: (
+                    float(item.get("merge_score", 0.0) or 0.0),
+                    -int(item.get("rank", 0) or 0),
+                ),
+            )
+            if experience_items
+            else None
+        )
         if (
             strategy == "auto"
             and top_experience
             and top_experience.get("gate") == "green"
             and top_experience.get("layer") in {"authority", "verified"}
             and float(top_experience.get("score", 0.0) or 0.0) >= 0.85
+            and int(top_experience.get("effective_confidence", top_experience.get("confidence", 0)) or 0)
+            >= self._EXPERIENCE_RECOMMEND_MIN_CONFIDENCE
         ):
             recommended = dict(top_experience)
             recommended["recommended"] = True
@@ -447,6 +465,14 @@ class UnifiedDataLayer:
     @staticmethod
     def _keyword_match_score(index: int) -> float:
         return max(0.35, 0.78 - index * 0.06)
+
+    @staticmethod
+    def _experience_effective_confidence(record: dict[str, Any]) -> int:
+        if record.get("effective_confidence") not in (None, ""):
+            return normalize_confidence_value(record.get("effective_confidence"))
+        if record.get("confirm_count") not in (None, ""):
+            return compute_effective_confidence(record)
+        return normalize_confidence_value(record.get("confidence", 0))
 
     @staticmethod
     def _source_priority(source: str) -> int:

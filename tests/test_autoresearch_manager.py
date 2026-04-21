@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import tempfile
+import shutil
+import uuid
 from pathlib import Path
 
 from tools import autoresearch_manager as arm
@@ -10,6 +11,13 @@ from tools.run_benchmark import (
     _build_by_province_summary,
     _get_baseline_json_hit_rate,
 )
+
+
+def _prepare_temp_root(name: str) -> Path:
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name).strip("_") or "test"
+    temp_root = Path(__file__).resolve().parents[1] / "output" / f"_tmp_autoresearch_manager_{safe_name}_{uuid.uuid4().hex}"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    return temp_root
 
 
 def test_build_by_province_summary_preserves_status():
@@ -188,8 +196,9 @@ def test_build_json_overall_merges_adaptive_strategy_summary():
 
 
 def test_autoresearch_manager_queue_and_marginal(monkeypatch):
-    with tempfile.TemporaryDirectory() as temp_dir:
-        state_path = Path(temp_dir) / "autoresearch_state.json"
+    temp_root = _prepare_temp_root("queue_and_marginal")
+    try:
+        state_path = temp_root / "autoresearch_state.json"
         monkeypatch.setattr(arm, "STATE_PATH", state_path)
 
         arm.update_queue(
@@ -209,3 +218,34 @@ def test_autoresearch_manager_queue_and_marginal(monkeypatch):
         analysis = arm.marginal_analysis(state)
         assert analysis["recommendation"] == "switch_direction"
         assert analysis["avg5"] == 0.046
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_save_state_raises_and_does_not_cache_when_persistence_fails(monkeypatch):
+    temp_root = _prepare_temp_root("save_state_failure")
+    try:
+        state_path = temp_root / "autoresearch_state.json"
+        monkeypatch.setattr(arm, "STATE_PATH", state_path)
+        arm._IN_MEMORY_STATE.clear()
+
+        original_write_text = Path.write_text
+
+        def _failing_write_text(self, *args, **kwargs):
+            if self == state_path:
+                raise OSError("disk locked")
+            return original_write_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", _failing_write_text)
+
+        try:
+            arm.save_state({"recent_rounds": [{"round": 1}], "current_priority_queue": {"active": ["P1"], "carry_over": []}})
+            raise AssertionError("save_state should propagate OSError")
+        except OSError as exc:
+            assert "disk locked" in str(exc)
+
+        assert not state_path.exists()
+        assert arm._state_cache_key() not in arm._IN_MEMORY_STATE
+        assert arm.load_state() == arm._default_state()
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)

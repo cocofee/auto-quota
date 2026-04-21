@@ -22,6 +22,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = PROJECT_ROOT / "output" / "temp" / "autoresearch_state.json"
+_IN_MEMORY_STATE: dict[str, dict] = {}
 
 
 def _default_state() -> dict:
@@ -35,8 +36,19 @@ def _default_state() -> dict:
     }
 
 
+def _state_cache_key() -> str:
+    return str(STATE_PATH)
+
+
+def _clone_state(state: dict) -> dict:
+    return json.loads(json.dumps(state, ensure_ascii=False))
+
+
 def load_state() -> dict:
     if not STATE_PATH.exists():
+        cached = _IN_MEMORY_STATE.get(_state_cache_key())
+        if isinstance(cached, dict):
+            return _clone_state(cached)
         return _default_state()
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -50,8 +62,12 @@ def load_state() -> dict:
             "carry_over": list(cpq.get("carry_over", [])),
         }
         state["recent_rounds"] = list(state.get("recent_rounds", []))
+        _IN_MEMORY_STATE[_state_cache_key()] = _clone_state(state)
         return state
     except (json.JSONDecodeError, OSError):
+        cached = _IN_MEMORY_STATE.get(_state_cache_key())
+        if isinstance(cached, dict):
+            return _clone_state(cached)
         return _default_state()
 
 
@@ -59,7 +75,9 @@ def save_state(state: dict):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     state = dict(state)
     state["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    serialized = json.dumps(state, ensure_ascii=False, indent=2)
+    STATE_PATH.write_text(serialized, encoding="utf-8")
+    _IN_MEMORY_STATE[_state_cache_key()] = _clone_state(state)
 
 
 def _dedupe_keep_order(items: list[str]) -> list[str]:
