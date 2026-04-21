@@ -1,5 +1,6 @@
 ﻿import asyncio
 import importlib.util
+import shutil
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -16,10 +17,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.append(str(BACKEND_ROOT))
 
+_FAKE_DB_ROOT = Path(__file__).resolve().parents[1] / "output" / f"_tmp_web_openclaw_config_{uuid.uuid4().hex}"
 fake_config = types.ModuleType("config")
 fake_config.resolve_province = lambda province, interactive=False: province
 fake_config.get_quota_db_path = lambda province=None: ""
 fake_config.get_current_province = lambda: ""
+fake_config.DB_DIR = _FAKE_DB_ROOT
+fake_config.COMMON_DB_DIR = _FAKE_DB_ROOT / "common"
+fake_config.PROVINCES_DB_DIR = _FAKE_DB_ROOT / "provinces"
 fake_config.__getattr__ = lambda name: ""
 sys.modules.setdefault("config", fake_config)
 
@@ -40,6 +45,41 @@ def _garble(text: str) -> str:
 
 def _garble_gb18030(text: str) -> str:
     return text.encode("utf-8").decode("gb18030")
+
+
+def _prepare_temp_root(name: str) -> Path:
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name).strip("_") or "test"
+    temp_root = Path(__file__).resolve().parents[1] / "output" / f"_tmp_web_openclaw_{safe_name}_{uuid.uuid4().hex}"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    return temp_root
+
+
+def _set_fake_config_root(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    fake_config.DB_DIR = root
+    fake_config.COMMON_DB_DIR = root / "common"
+    fake_config.PROVINCES_DB_DIR = root / "provinces"
+    fake_config.COMMON_DB_DIR.mkdir(parents=True, exist_ok=True)
+    fake_config.PROVINCES_DB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@pytest.fixture
+def tmp_path(request) -> Path:
+    temp_root = _prepare_temp_root(request.node.name)
+    try:
+        yield temp_root
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_fake_db_root(request) -> Path:
+    temp_root = _prepare_temp_root(f"config_{request.node.name}")
+    _set_fake_config_root(temp_root)
+    try:
+        yield temp_root
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 class _Result:
@@ -859,9 +899,10 @@ def test_review_confirm_reject_only_marks_rejected(monkeypatch):
     )
     db = _FakeDb()
     reviewer = SimpleNamespace(id=uuid.uuid4(), email="reviewer@example.com", nickname="人工复核")
+    task = SimpleNamespace(id=uuid.uuid4(), province="北京")
 
     async def _fake_get_match_result(**_kwargs):
-        return SimpleNamespace(province="北京"), match_result
+        return task, match_result
 
     monkeypatch.setattr(openclaw_api, "_get_match_result", _fake_get_match_result)
 
