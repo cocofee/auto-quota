@@ -55,3 +55,12 @@ def test_nonstandard_book_mapping_prefers_zero_padded_match_over_full_scan():
     )
 
     assert mapped == ["010"]
+
+
+def test_nonstandard_book_mapping_preserves_nonnumeric_books_when_projecting_numeric_install_books():
+    mapped = HybridSearcher._normalize_requested_books_for_nonstandard_db(
+        ["A", "C10"],
+        {"A1", "A2", "10"},
+    )
+
+    assert mapped == ["A1", "A2", "10"]

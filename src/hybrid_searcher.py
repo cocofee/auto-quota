@@ -358,11 +358,44 @@ class HybridSearcher:
         available_books: set[str] | None,
         province: str | None = None,
     ) -> list[str] | None:
-        return normalize_requested_books_for_search(
+        normalized = normalize_requested_books_for_search(
             books,
             province=province,
             available_books=available_books,
         )
+        if normalized:
+            requested = [
+                str(book or "").strip().upper()
+                for book in (books or [])
+                if str(book or "").strip()
+            ]
+            available = {
+                str(book or "").strip().upper()
+                for book in (available_books or set())
+                if str(book or "").strip()
+            }
+            numeric_projection: list[str] = []
+            for book in requested:
+                match = re.match(r"^C0*(\d+)$", book)
+                if not match:
+                    continue
+                ordinal = int(match.group(1))
+                candidates = [
+                    str(ordinal),
+                    f"{ordinal:02d}",
+                    f"{ordinal:03d}",
+                ]
+                for candidate in candidates:
+                    if candidate in available and candidate not in numeric_projection:
+                        numeric_projection.append(candidate)
+            if numeric_projection:
+                preserved = [
+                    book
+                    for book in normalized
+                    if not re.match(r"^C0*(\d+)$", str(book or "").strip(), flags=re.IGNORECASE)
+                ]
+                return list(dict.fromkeys([*preserved, *numeric_projection]))
+        return normalized
 
     def collect_prior_candidates(
         self,
@@ -1738,10 +1771,13 @@ class HybridSearcher:
                 and "单件重量" not in str(hint)
                 and "每组重量" not in str(hint)
             ]
+        quota_aliases_present = bool(primary_query_profile.get("quota_aliases"))
         if query_features.get("family") and strategy != "standard":
             max_variants = max(max_variants, 5)
         numeric_params = dict(query_features.get("numeric_params") or {})
-        if strategy != "standard" and primary_query_profile.get("quota_aliases") and any(
+        if quota_aliases_present:
+            max_variants = max(max_variants, 5)
+        if quota_aliases_present and any(
             numeric_params.get(key) is not None for key in ("dn", "kva", "kw")
         ):
             max_variants = max(max_variants, 7)

@@ -197,6 +197,51 @@ def test_pick_explicit_bridge_family_candidate_uses_bridge_wh_sum_not_half_perim
     assert picked["name"] == "钢制槽式桥架安装 宽+高(mm以下) 300"
 
 
+def test_pick_category_safe_candidate_prefers_bridge_support_over_bridge_install():
+    item = {
+        "name": "桥架支撑架",
+        "description": "名称:电缆桥架支撑架",
+    }
+    candidates = [
+        {"name": "钢制槽式桥架安装 (宽+高mm以下) 400", "param_score": 0.95, "rerank_score": 0.95},
+        {"name": "支架制作与安装 电缆桥架支撑架制作", "param_score": 0.72, "rerank_score": 0.68},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "支架制作与安装 电缆桥架支撑架制作"
+
+
+def test_pick_category_safe_candidate_prefers_conduit_over_bridge_on_bridge_laying_context():
+    item = {
+        "name": "配管",
+        "description": "材质:JDG 规格:DN20 敷设方式:桥架内",
+    }
+    candidates = [
+        {"name": "钢制槽式桥架安装 (宽+高mm以下) 400", "param_score": 0.95, "rerank_score": 0.95},
+        {"name": "JDG紧定式导管敷设 DN20", "param_score": 0.72, "rerank_score": 0.68},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "JDG紧定式导管敷设 DN20"
+
+
+def test_pick_category_safe_candidate_prefers_plumbing_accessory_over_conduit_on_soft_joint_semantics():
+    item = {
+        "name": "软接头安装",
+        "description": "名称:金属软管软接头 规格:DN20",
+    }
+    candidates = [
+        {"name": "金属软管敷设 公称管径20mm以内 每根管长1000mm以内", "param_score": 0.95, "rerank_score": 0.95},
+        {"name": "软接头安装 公称直径(mm以内) 20", "param_score": 0.72, "rerank_score": 0.68},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "软接头安装 公称直径(mm以内) 20"
+
+
 def test_pick_explicit_support_family_candidate_prefers_bridge_support():
     picked = _pick_explicit_support_family_candidate(
         "管道支架 管架形式:桥架侧纵向抗震支吊架",
@@ -342,6 +387,21 @@ def test_pick_explicit_wiring_family_candidate_prefers_pipe_wiring_family():
     assert picked["name"] == "管内穿线 穿多芯软导线 二芯 单芯导线截面(mm2以内) 4"
 
 
+def test_pick_category_safe_candidate_arbitrates_between_cable_and_wiring_on_mixed_semantics():
+    item = {
+        "name": "电缆",
+        "description": "型号:WDZN-BYJ-3x4+2x2.5 敷设方式、部位:穿管 配线",
+    }
+    candidates = [
+        {"name": "电缆穿导管敷设 电缆截面(mm2以内) 4", "param_score": 0.92, "rerank_score": 0.92},
+        {"name": "管内穿线 多芯软导线 二芯 单芯导线截面(mm2以内) 4", "param_score": 0.74, "rerank_score": 0.69},
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "管内穿线 多芯软导线 二芯 单芯导线截面(mm2以内) 4"
+
+
 def test_pick_explicit_cable_family_candidate_prefers_matching_laying_and_model():
     picked = _pick_explicit_cable_family_candidate(
         "阻燃变频电力电缆 型号、规格:ZRC-BPYJV-0.6/1kV,3x240+3x40 敷设方式、部位:室内穿管或桥架",
@@ -445,6 +505,335 @@ def test_pick_category_safe_candidate_prefers_pipe_check_valve_over_duct_check_v
     assert picked["name"] == "焊接法兰阀门安装 公称直径(mm以内) 100"
 
 
+def test_pick_category_safe_candidate_prefers_ventilation_over_valve_on_duct_valve_semantics_v2():
+    item = {
+        "name": "\u78b3\u94a2\u9600\u95e8",
+        "description": "\u540d\u79f0:\u98ce\u7ba1\u6b62\u56de\u9600 \u89c4\u683c:800\u00d7320",
+    }
+    candidates = [
+        {
+            "name": "\u67d4\u6027\u8f6f\u98ce\u7ba1\u9600\u95e8\u5b89\u88c5 \u76f4\u5f84(mm\u4ee5\u5185) 500",
+            "param_score": 0.9,
+            "rerank_score": 0.9,
+        },
+        {
+            "name": "\u78b3\u94a2 \u8c03\u8282\u9600\u5b89\u88c5 \u5706\u3001\u65b9\u5f62\u98ce\u7ba1\u6b62\u56de\u9600 \u5468\u957f(mm\u4ee5\u5185) 3200",
+            "param_score": 0.7,
+            "rerank_score": 0.6,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == (
+        "\u78b3\u94a2 \u8c03\u8282\u9600\u5b89\u88c5 \u5706\u3001\u65b9\u5f62\u98ce\u7ba1\u6b62\u56de\u9600 "
+        "\u5468\u957f(mm\u4ee5\u5185) 3200"
+    )
+
+
+def test_pick_category_safe_candidate_prefers_fire_device_over_button_on_hydrant_with_button_note():
+    item = {
+        "name": "\u5ba4\u5185\u6d88\u706b\u6813",
+        "description": (
+            "\u540d\u79f0:\u51cf\u538b\u7a33\u538b\u578b\u6d88\u706b\u6813 "
+            "\u6309\u94ae\u9664\u5916 \u89c4\u683c:DN65"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u6309\u94ae\u5b89\u88c5 \u6d88\u706b\u6813\u62a5\u8b66\u6309\u94ae",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u5ba4\u5185\u6d88\u706b\u6813 \u6697\u88c5(\u5e26\u81ea\u6551\u5377\u76d8) "
+                    "\u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)\u5355\u681365",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == (
+        "\u5ba4\u5185\u6d88\u706b\u6813 \u6697\u88c5(\u5e26\u81ea\u6551\u5377\u76d8) "
+        "\u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)\u5355\u681365"
+    )
+
+
+def test_pick_category_safe_candidate_prefers_button_over_outlet_on_button_socket_semantics():
+    item = {
+        "name": "\u7d27\u6025\u547c\u53eb\u6309\u94ae",
+        "description": (
+            "\u540d\u79f0:\u7d27\u6025\u547c\u53eb\u6309\u94ae\u63d2\u5ea7 "
+            "\u5b89\u88c5\u65b9\u5f0f:\u6697\u88c5"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u63d2\u5ea7\u6697\u88c5 \u5355\u76f8 \u5355\u8054",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u666e\u901a\u5f00\u5173\u3001\u6309\u94ae\u5b89\u88c5 \u6309\u94ae",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u666e\u901a\u5f00\u5173\u3001\u6309\u94ae\u5b89\u88c5 \u6309\u94ae"
+
+
+def test_pick_category_safe_candidate_prefers_support_over_conduit_on_conduit_support_semantics():
+    item = {
+        "name": "\u7535\u6c14\u914d\u7ba1\u6297\u9707\u652f\u67b6",
+        "description": "\u89c4\u683c:JDG DN20",
+    }
+    candidates = [
+        {
+            "name": "JDG\u7d27\u5b9a\u5f0f\u5bfc\u7ba1\u6577\u8bbe DN20",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u652f\u67b6\u5236\u4f5c\u4e0e\u5b89\u88c5 \u7ba1\u9053\u6297\u9707\u652f\u67b6",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u652f\u67b6\u5236\u4f5c\u4e0e\u5b89\u88c5 \u7ba1\u9053\u6297\u9707\u652f\u67b6"
+
+
+def test_pick_category_safe_candidate_prefers_equipment_over_distribution_box_on_equipment_subject():
+    item = {
+        "name": "\u53d8\u9891\u7ed9\u6c34\u8bbe\u5907",
+        "description": (
+            "\u540d\u79f0:\u53d8\u9891\u7ed9\u6c34\u8bbe\u5907\u63a7\u5236\u7bb1 "
+            "\u5b89\u88c5\u65b9\u5f0f:\u843d\u5730"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u843d\u5730\u5f0f\u63a7\u5236\u7bb1\u5b89\u88c5 \u534a\u5468\u957f(m\u4ee5\u5185) 1.6",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u53d8\u9891\u7ed9\u6c34\u8bbe\u5907\u5b89\u88c5",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u53d8\u9891\u7ed9\u6c34\u8bbe\u5907\u5b89\u88c5"
+
+
+def test_pick_category_safe_candidate_prefers_motor_over_distribution_box_on_motor_subject():
+    item = {
+        "name": "\u7535\u52a8\u673a",
+        "description": (
+            "\u540d\u79f0:\u7535\u52a8\u673a\u63a7\u5236\u7bb1 "
+            "\u68c0\u67e5\u63a5\u7ebf \u5b89\u88c5\u65b9\u5f0f:\u843d\u5730"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u843d\u5730\u5f0f\u63a7\u5236\u7bb1\u5b89\u88c5 \u534a\u5468\u957f(m\u4ee5\u5185) 1.2",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u7535\u52a8\u673a\u68c0\u67e5\u63a5\u7ebf",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u7535\u52a8\u673a\u68c0\u67e5\u63a5\u7ebf"
+
+
+def test_pick_category_safe_candidate_prefers_lamp_over_outlet_on_lamp_subject():
+    item = {
+        "name": "\u706f\u5e26\u63d2\u5ea7",
+        "description": "\u5b89\u88c5\u65b9\u5f0f:\u6697\u88c5",
+    }
+    candidates = [
+        {
+            "name": "\u63d2\u5ea7\u6697\u88c5 \u5355\u76f8 \u5355\u8054",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u706f\u5e26\u5b89\u88c5",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u706f\u5e26\u5b89\u88c5"
+
+
+def test_pick_category_safe_candidate_prefers_button_over_lamp_on_button_subject():
+    item = {
+        "name": "\u6d88\u9632\u62a5\u8b66\u6309\u94ae",
+        "description": (
+            "\u540d\u79f0:\u6d88\u9632\u62a5\u8b66\u6309\u94ae\u6307\u793a\u706f "
+            "\u5b89\u88c5\u65b9\u5f0f:\u58c1\u88c5"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u58c1\u88c5\u6307\u793a\u706f\u5b89\u88c5",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u6309\u94ae\u5b89\u88c5 \u6d88\u9632\u62a5\u8b66\u6309\u94ae",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u6309\u94ae\u5b89\u88c5 \u6d88\u9632\u62a5\u8b66\u6309\u94ae"
+
+
+def test_pick_category_safe_candidate_prefers_fire_over_valve_on_hydrant_valve_semantics():
+    item = {
+        "name": "\u5ba4\u5185\u6d88\u706b\u6813",
+        "description": (
+            "\u540d\u79f0:\u87ba\u7eb9\u9600\u95e8\u5f0f\u6d88\u706b\u6813 "
+            "\u89c4\u683c:DN65"
+        ),
+    }
+    candidates = [
+        {
+            "name": "\u87ba\u7eb9\u9600\u95e8\u5b89\u88c5 \u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185) 65",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u5ba4\u5185\u6d88\u706b\u6813 \u6697\u88c5(\u5e26\u81ea\u6551\u5377\u76d8) "
+                    "\u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)\u5355\u681365",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == (
+        "\u5ba4\u5185\u6d88\u706b\u6813 \u6697\u88c5(\u5e26\u81ea\u6551\u5377\u76d8) "
+        "\u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)\u5355\u681365"
+    )
+
+
+def test_pick_category_safe_candidate_prefers_lamp_over_sanitary_on_mirror_light_subject():
+    item = {
+        "name": "\u58c1\u88c5\u955c\u524d\u706f",
+        "description": "\u540d\u79f0:\u6d17\u8138\u76c6\u955c\u524d\u706f",
+    }
+    candidates = [
+        {
+            "name": "\u6d17\u8138\u76c6\u5b89\u88c5",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u58c1\u88c5\u955c\u524d\u706f\u5b89\u88c5",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u58c1\u88c5\u955c\u524d\u706f\u5b89\u88c5"
+
+
+def test_pick_category_safe_candidate_prefers_equipment_over_sanitary_on_flush_tank_subject():
+    item = {
+        "name": "\u81ea\u52a8\u51b2\u6d17\u6c34\u7bb1",
+        "description": "\u540d\u79f0:\u6d17\u8138\u76c6\u81ea\u52a8\u51b2\u6d17\u6c34\u7bb1 \u89c4\u683c:100L",
+    }
+    candidates = [
+        {
+            "name": "\u6d17\u8138\u76c6\u5b89\u88c5",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u81ea\u52a8\u51b2\u6d17\u6c34\u7bb1\u5b89\u88c5 \u4e59\u578b 100L",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u81ea\u52a8\u51b2\u6d17\u6c34\u7bb1\u5b89\u88c5 \u4e59\u578b 100L"
+
+
+def test_pick_category_safe_candidate_prefers_network_over_fire_on_fire_system_switch_subject():
+    item = {
+        "name": "\u4ea4\u6362\u673a",
+        "description": "\u540d\u79f0:\u5ba4\u5185\u6d88\u706b\u6813\u7cfb\u7edf\u4ea4\u6362\u673a \u89c4\u683c:24\u53e3",
+    }
+    candidates = [
+        {
+            "name": "\u5ba4\u5185\u6d88\u706b\u6813 \u6697\u88c5(\u5e26\u81ea\u6551\u5377\u76d8) "
+                    "\u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)\u5355\u681365",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u4ea4\u6362\u673a\u5b89\u88c5 24\u53e3\u53ca\u4ee5\u4e0b",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u4ea4\u6362\u673a\u5b89\u88c5 24\u53e3\u53ca\u4ee5\u4e0b"
+
+
+def test_pick_category_safe_candidate_prefers_equipment_over_sanitary_on_water_tank_subject():
+    item = {
+        "name": "\u6c34\u7bb1",
+        "description": "\u540d\u79f0:\u6d17\u8138\u76c6\u6c34\u7bb1 \u5b89\u88c5\u65b9\u5f0f:\u6302\u5899",
+    }
+    candidates = [
+        {
+            "name": "\u6d17\u8138\u76c6\u5b89\u88c5",
+            "param_score": 0.95,
+            "rerank_score": 0.95,
+        },
+        {
+            "name": "\u6574\u4f53\u6c34\u7bb1\u5b89\u88c5 \u6c34\u7bb1\u603b\u5bb9\u79ef(m3\u4ee5\u5185) 0.1",
+            "param_score": 0.72,
+            "rerank_score": 0.68,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u6574\u4f53\u6c34\u7bb1\u5b89\u88c5 \u6c34\u7bb1\u603b\u5bb9\u79ef(m3\u4ee5\u5185) 0.1"
+
+
 def test_pick_category_safe_candidate_prefers_pipe_like_support_fallback_over_instrument_support():
     item = {
         "name": "给排水双向抗震支架",
@@ -525,3 +914,26 @@ def test_pick_explicit_distribution_box_candidate_rejects_junction_box_and_box_w
     )
 
     assert picked["name"] == "\u6210\u5957\u914d\u7535\u7bb1\u5b89\u88c5 \u60ac\u6302\u3001\u5d4c\u5165\u5f0f \u534a\u5468\u957f1.5m \u89c4\u683c(\u56de\u8def\u4ee5\u5185) 8"
+
+
+def test_pick_category_safe_candidate_keeps_wiring_picker_for_wiring_only_items():
+    item = {
+        "name": "\u914d\u7ebf",
+        "description": "\u914d\u7ebf\u5f62\u5f0f:\u7ba1\u5185\u7a7f\u7ebf \u578b\u53f7:WDZN-BYJ-3x4+2x2.5",
+    }
+    candidates = [
+        {
+            "name": "\u7ebf\u69fd\u914d\u7ebf \u5bfc\u7ebf\u622a\u9762(mm2\u4ee5\u5185) 4",
+            "param_score": 0.9,
+            "rerank_score": 0.9,
+        },
+        {
+            "name": "\u7ba1\u5185\u7a7f\u7ebf \u7a7f\u591a\u82af\u8f6f\u5bfc\u7ebf \u4e8c\u82af \u5355\u82af\u5bfc\u7ebf\u622a\u9762(mm2\u4ee5\u5185) 4",
+            "param_score": 0.7,
+            "rerank_score": 0.6,
+        },
+    ]
+
+    picked = _pick_category_safe_candidate(item, candidates)
+
+    assert picked["name"] == "\u7ba1\u5185\u7a7f\u7ebf \u7a7f\u591a\u82af\u8f6f\u5bfc\u7ebf \u4e8c\u82af \u5355\u82af\u5bfc\u7ebf\u622a\u9762(mm2\u4ee5\u5185) 4"

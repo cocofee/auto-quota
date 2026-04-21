@@ -8,6 +8,7 @@ from loguru import logger
 from src.match_core import _append_trace_step
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags
 from src.review_checkers import extract_description_lines
+from src.text_parser import parser as text_parser
 
 def _api():
     import src.match_pipeline as api
@@ -51,6 +52,12 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
     ).strip()
     if primary_subject:
         review_item["name"] = primary_subject
+        try:
+            primary_subject_features = text_parser.parse_canonical(primary_subject)
+        except Exception:
+            primary_subject_features = {}
+        if isinstance(primary_subject_features, dict) and primary_subject_features:
+            review_item["canonical_features"] = primary_subject_features
 
     desc = review_item.get("description", "") or ""
     desc_lines = extract_description_lines(desc)
@@ -67,6 +74,8 @@ def _review_check_match_result(result: dict, item: dict) -> dict | None:
         api.check_electric_pair(review_item, quota_name, desc_lines),
         api.check_elevator_type(review_item, quota_name, desc_lines),
         api.check_elevator_floor(review_item, quota_name, desc_lines, quota_id=quota_id),
+        api.check_unit_conflict(review_item, main_quota, quota_name=quota_name, quota_id=quota_id),
+        api.check_anchor_conflict(review_item, main_quota, quota_name=quota_name, quota_id=quota_id),
     ]
     errors = [e for e in checkers if e is not None]
 
