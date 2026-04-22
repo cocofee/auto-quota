@@ -367,3 +367,34 @@ def test_non_exact_material_soft_mismatch_still_rejects(monkeypatch):
         exp_result, item, rule_validator=validator, is_exact=False  # 非精确
     )
     assert result is None, "非精确匹配+材质软差异仍应拒绝（保持原行为）"
+
+
+def test_experience_params_rejects_sanitary_water_mode_hard_fail():
+    exp_result = {
+        "quotas": [{
+            "quota_id": "Q-SANITARY",
+            "name": "洗脸盆 单嘴 冷水",
+        }]
+    }
+    item = {
+        "name": "洗脸盆",
+        "description": "洗脸盆 冷热水 单嘴",
+        "params": {
+            "sanitary_water_mode": "冷热水",
+            "sanitary_nozzle_mode": "单嘴",
+        },
+        "canonical_features": {
+            "entity": "洗脸盆",
+            "family": "sanitary_fixture",
+            "system": "给排水",
+        },
+    }
+
+    result = match_core._validate_experience_params(
+        exp_result,
+        item,
+        rule_validator=None,
+        is_exact=True,
+    )
+
+    assert result is None

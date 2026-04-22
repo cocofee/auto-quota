@@ -7,6 +7,7 @@ import config
 from src.confidence_utils import apply_confidence_penalty
 from src.reason_taxonomy import apply_reason_metadata, merge_reason_tags, tags_for_issue
 from src.review_checkers import (
+    check_anchor_conflict,
     check_category_mismatch,
     check_connection_mismatch,
     check_electric_pair,
@@ -16,6 +17,7 @@ from src.review_checkers import (
     check_parameter_deviation,
     check_pipe_usage,
     check_sleeve_mismatch,
+    check_unit_conflict,
     extract_description_lines,
 )
 
@@ -362,20 +364,14 @@ class FinalValidator:
         return self._check_unit_conflict_for_quota(item, quotas[0])
 
     def _check_unit_conflict_for_quota(self, item: dict, quota: dict) -> ValidationIssue | None:
-        bill_unit = str(item.get("unit") or "").strip()
-        quota_unit = str((quota or {}).get("unit") or "").strip()
-        if not bill_unit or not quota_unit:
-            return None
-
-        bill_family = _unit_family(bill_unit)
-        quota_family = _unit_family(quota_unit)
-        if not bill_family or not quota_family or bill_family == quota_family:
+        issue = check_unit_conflict(item, quota)
+        if not issue:
             return None
 
         return ValidationIssue(
             issue_type="unit_conflict",
             severity="error",
-            message=f"清单单位 {bill_unit} 与定额单位 {quota_unit} 不一致",
+            message=str(issue.get("reason") or ""),
         )
 
     def _check_anchor_conflict(self, item: dict, result: dict) -> ValidationIssue | None:
@@ -385,31 +381,14 @@ class FinalValidator:
         return self._check_anchor_conflict_for_quota(item, quotas[0])
 
     def _check_anchor_conflict_for_quota(self, item: dict, quota: dict) -> ValidationIssue | None:
-        item_features = item.get("canonical_features") or {}
-        quota_features = _candidate_features(quota)
-        if not isinstance(item_features, dict) or not isinstance(quota_features, dict):
-            return None
-
-        conflicts = []
-        for field, label in (
-            ("entity", "构件"),
-            ("system", "系统"),
-            ("material", "材质"),
-            ("connection", "连接"),
-        ):
-            item_value = str(item_features.get(field) or "").strip()
-            quota_value = str(quota_features.get(field) or "").strip()
-            if item_value and quota_value and item_value != quota_value:
-                conflicts.append(f"{label}:{item_value}/{quota_value}")
-
-        if not conflicts:
-            return None
-
-        return ValidationIssue(
-            issue_type="anchor_conflict",
-            severity="error",
-            message="属性锚点冲突: " + "; ".join(conflicts[:3]),
-        )
+        issue = check_anchor_conflict(item, quota)
+        if issue:
+            return ValidationIssue(
+                issue_type="anchor_conflict",
+                severity="error",
+                message=str(issue.get("reason") or ""),
+            )
+        return None
 
     def _check_review_error(self, item: dict, result: dict) -> dict | None:
         errors = self._collect_review_errors(item, result)

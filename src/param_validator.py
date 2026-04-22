@@ -499,6 +499,7 @@ class ParamValidator:
                 # 从数据库字段补充
                 db_params = self._get_db_params(c)
                 merged = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+                merged = self._enrich_candidate_anchor_params(c, merged)
                 candidate_features = self._build_candidate_canonical_features(c, merged)
                 candidate_logic_profile = self._build_candidate_logic_profile(c, merged)
                 c["candidate_canonical_features"] = candidate_features
@@ -614,6 +615,7 @@ class ParamValidator:
             db_params = self._get_db_params(candidate)
             # 合并：数据库字段优先，文本提取作为补充
             merged_quota_params = {**quota_params, **{k: v for k, v in db_params.items() if v is not None}}
+            merged_quota_params = self._enrich_candidate_anchor_params(candidate, merged_quota_params)
             candidate_features = self._build_candidate_canonical_features(
                 candidate, merged_quota_params)
             candidate_logic_profile = self._build_candidate_logic_profile(
@@ -816,7 +818,11 @@ class ParamValidator:
                 "role": "displaced_top1",
             })
 
-        if self._RECTIFY_REORDER_ENABLED:
+        if self._RECTIFY_REORDER_ENABLED or advice.get("force_reorder"):
+            signal["reorder_applied"] = True
+            winner["param_rectify_signals"][-1]["reorder_applied"] = True
+            if winner is not top1 and top1.get("param_rectify_signals"):
+                top1["param_rectify_signals"][-1]["reorder_applied"] = True
             candidates.insert(0, candidates.pop(winner_idx))
 
     # ── M1 档位纠偏器 ──────────────────────────────────────────
@@ -1099,6 +1105,27 @@ class ParamValidator:
         best_score = float(best.get("feature_alignment_score", self._FEATURE_ALIGNMENT_DEFAULT))
         best_exact = int(best.get("feature_alignment_exact_anchor_count", 0) or 0)
         best_param = float(best.get("param_score", 0.0))
+        top1_features = dict(top1.get("candidate_canonical_features") or {})
+        best_features = dict(best.get("candidate_canonical_features") or {})
+        top1_entity = str(top1_features.get("entity") or "").strip()
+        best_entity = str(best_features.get("entity") or "").strip()
+        top1_canonical_name = str(top1_features.get("canonical_name") or "").strip()
+        best_canonical_name = str(best_features.get("canonical_name") or "").strip()
+        same_feature_subject = bool(
+            (top1_entity and best_entity and top1_entity == best_entity)
+            or (
+                top1_canonical_name
+                and best_canonical_name
+                and top1_canonical_name == best_canonical_name
+            )
+        )
+        top1_param_detail = str(top1.get("param_detail") or "")
+        best_param_detail = str(best.get("param_detail") or "")
+        force_install_variant_reorder = bool(
+            same_feature_subject
+            and "安装方式偏差:" in top1_param_detail
+            and "安装方式:" in best_param_detail
+        )
         if best_score < top1_score + 0.18 and best_exact <= top1_exact:
             return
         if best_exact < top1_exact and best_score < top1_score + 0.25:
@@ -1127,6 +1154,7 @@ class ParamValidator:
                 "top1_param_score": top1_param,
                 "winner_param_score": best_param,
             },
+            "force_reorder": force_install_variant_reorder,
         }
 
     def _family_gate_rectify(self, candidates: list[dict]):
@@ -1355,6 +1383,49 @@ class ParamValidator:
             )
         return candidates
 
+    def validate_candidate_against_item(self, item: dict, candidate: dict) -> dict:
+        """Validate a single candidate using the same hard guards as search candidates."""
+        review_item = dict(item or {})
+        query_text = " ".join(
+            part for part in (
+                str(review_item.get("name") or "").strip(),
+                str(review_item.get("description") or "").strip(),
+            )
+            if part
+        ).strip()
+        canonical_query = dict(review_item.get("canonical_query") or {})
+        supplement_query = str(
+            canonical_query.get("validation_query")
+            or canonical_query.get("search_query")
+            or ""
+        ).strip() or None
+        bill_params = review_item.get("params")
+        if not isinstance(bill_params, dict):
+            bill_params = None
+        else:
+            bill_params = dict(bill_params)
+        canonical_features = review_item.get("canonical_features")
+        if not isinstance(canonical_features, dict):
+            canonical_features = None
+        else:
+            canonical_features = dict(canonical_features)
+        context_prior = review_item.get("context_prior")
+        if not isinstance(context_prior, dict):
+            context_prior = None
+        else:
+            context_prior = dict(context_prior)
+
+        validated = self.validate_candidates(
+            query_text,
+            [dict(candidate or {})],
+            supplement_query=supplement_query,
+            bill_params=bill_params,
+            canonical_features=canonical_features,
+            context_prior=context_prior,
+            reorder_candidates=False,
+        )
+        return dict(validated[0] or {}) if validated else dict(candidate or {})
+
     def _extract_ltr_features(self, candidates: list[dict],
                               query_text: str,
                               search_books: list[str] = None) -> np.ndarray:
@@ -1531,11 +1602,86 @@ class ParamValidator:
             part for part in (candidate.get("name", ""), candidate.get("description", ""))
             if part
         ).strip()
+        parsed_params = text_parser.parse(raw_text) if raw_text else {}
+        canonical_params = dict(parsed_params)
+        for key, value in (merged_quota_params or {}).items():
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            canonical_params[key] = value
+        if raw_text and not canonical_params.get("laying_method"):
+            inferred_laying_method = self._infer_candidate_laying_method(raw_text)
+            if inferred_laying_method:
+                canonical_params["laying_method"] = inferred_laying_method
+        if raw_text and not canonical_params.get("voltage_level"):
+            inferred_voltage_level = self._infer_candidate_voltage_level(raw_text)
+            if inferred_voltage_level:
+                canonical_params["voltage_level"] = inferred_voltage_level
         return text_parser.parse_canonical(
             raw_text or candidate.get("name", ""),
-            params=merged_quota_params,
+            params=canonical_params or None,
             specialty=candidate_specialty,
         )
+
+    @staticmethod
+    def _infer_candidate_laying_method(raw_text: str) -> str:
+        text = str(raw_text or "")
+        if not text:
+            return ""
+        has_bridge = "桥架" in text or "沿桥架" in text
+        has_trunking = "线槽" in text
+        has_conduit = any(token in text for token in ("穿导管", "导管敷设", "穿管", "配管"))
+        if has_bridge and has_conduit:
+            return "桥架/穿管"
+        if has_bridge and has_trunking:
+            return "桥架/线槽"
+        if has_bridge:
+            return "桥架"
+        if has_trunking:
+            return "线槽"
+        if has_conduit:
+            return "穿管"
+        if "直埋" in text:
+            return "直埋"
+        if "排管" in text:
+            return "排管"
+        if "支架" in text:
+            return "支架"
+        return ""
+
+    @staticmethod
+    def _infer_candidate_voltage_level(raw_text: str) -> str:
+        text = str(raw_text or "")
+        if not text:
+            return ""
+        if "高压" in text:
+            return "高压"
+        if "中压" in text:
+            return "中压"
+        if "低压" in text:
+            return "低压"
+        if re.search(r"(?:220|380|400|660)\s*[vV]\b", text):
+            return "低压"
+        return ""
+
+    @staticmethod
+    def _enrich_candidate_anchor_params(candidate: dict, quota_params: dict) -> dict:
+        enriched = dict(quota_params or {})
+        raw_text = " ".join(
+            part for part in (candidate.get("name", ""), candidate.get("description", ""))
+            if part
+        ).strip()
+        if (
+            raw_text
+            and "laying_method" not in enriched
+            and "电缆" in raw_text
+            and any(keyword in raw_text for keyword in ("穿导管", "导管敷设"))
+        ):
+            enriched["laying_method"] = "穿管"
+        return enriched
 
     @classmethod
     def _is_entity_hard_conflict(cls, bill_entity: str, candidate_entity: str) -> bool:
@@ -1718,8 +1864,23 @@ class ParamValidator:
 
         bill_entity = str(bill_canonical_features.get("entity") or "")
         candidate_entity = str(candidate_features.get("entity") or "")
+        bill_family = str(bill_canonical_features.get("family") or "")
+        candidate_family = str(candidate_features.get("family") or "")
+        bill_laying_method = str(bill_canonical_features.get("laying_method") or "")
+        candidate_laying_method = str(candidate_features.get("laying_method") or "")
         if bill_entity and candidate_entity:
             entity_soft_score = self._entity_soft_match_score(bill_entity, candidate_entity)
+            if (
+                entity_soft_score is None
+                and bill_entity == "电缆"
+                and candidate_entity == "配管"
+                and bill_family == "cable_family"
+                and candidate_family == "conduit_raceway"
+                and bill_laying_method
+                and candidate_laying_method
+                and self._laying_methods_compatible(bill_laying_method, candidate_laying_method)
+            ):
+                entity_soft_score = 0.88
             if entity_soft_score == 1.0:
                 components.append(("entity", self._FEATURE_ALIGNMENT_WEIGHTS["entity"], 1.0))
                 details.append(f"实体:{bill_entity}")
@@ -1847,8 +2008,6 @@ class ParamValidator:
             ))
             details.append(f"清单无安装型式(定额:{candidate_install_method})")
 
-        bill_laying_method = str(bill_canonical_features.get("laying_method") or "")
-        candidate_laying_method = str(candidate_features.get("laying_method") or "")
         if bill_laying_method and candidate_laying_method:
             if self._laying_methods_compatible(bill_laying_method, candidate_laying_method):
                 laying_score = 1.0
@@ -2740,9 +2899,11 @@ class ParamValidator:
             bill_text,
             maxsplit=1,
         )[0].strip()
-        if any(keyword in primary_text for keyword in ("水龙头", "龙头", "冲洗阀", "冲洗装置")):
-            return ""
-        for fixture in cls.CATEGORY_HARD_REJECTS:
+        sanitary_fixtures = {
+            "洗脸盆", "洗涤盆", "拖布池", "坐便器", "蹲便器", "小便器",
+            "洗发盆", "净身盆", "淋浴器",
+        }
+        for fixture in sanitary_fixtures:
             if fixture in primary_text:
                 return fixture
 
@@ -2753,8 +2914,10 @@ class ParamValidator:
 
         entity = str(features.get("entity") or "")
         family = str(features.get("family") or "")
-        if family == "sanitary_fixture" and entity in cls.CATEGORY_HARD_REJECTS:
+        if family == "sanitary_fixture" and entity in sanitary_fixtures:
             return entity
+        if any(keyword in primary_text for keyword in ("水龙头", "龙头", "冲洗阀", "冲洗装置")):
+            return ""
         return ""
 
     @classmethod
@@ -3348,6 +3511,40 @@ class ParamValidator:
                 check_count += 1
                 score_sum += 1.0
                 details.append(f"安装方式'{bill_im}'匹配")
+
+        # === 8.6 卫生器具用水方式（硬性参数：冷水≠冷热水） ===
+        if "sanitary_water_mode" in bill_params:
+            check_count += 1
+            if "sanitary_water_mode" in quota_params:
+                bill_mode = bill_params["sanitary_water_mode"]
+                quota_mode = quota_params["sanitary_water_mode"]
+                if bill_mode == quota_mode:
+                    score_sum += 1.0
+                    details.append(f"用水方式'{bill_mode}'匹配")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"用水方式'{bill_mode}'≠'{quota_mode}' 不匹配")
+            else:
+                score_sum += 0.64
+                details.append("定额无用水方式参数(通用定额降权)")
+
+        # === 8.7 卫生器具龙头嘴数（硬性参数：单嘴≠双嘴） ===
+        if "sanitary_nozzle_mode" in bill_params:
+            check_count += 1
+            if "sanitary_nozzle_mode" in quota_params:
+                bill_mode = bill_params["sanitary_nozzle_mode"]
+                quota_mode = quota_params["sanitary_nozzle_mode"]
+                if bill_mode == quota_mode:
+                    score_sum += 1.0
+                    details.append(f"龙头嘴数'{bill_mode}'匹配")
+                else:
+                    has_hard_fail = True
+                    score_sum += 0.0
+                    details.append(f"龙头嘴数'{bill_mode}'≠'{quota_mode}' 不匹配")
+            else:
+                score_sum += 0.64
+                details.append("定额无龙头嘴数参数(通用定额降权)")
 
         # === 9. 风管形状（硬性参数：矩形≠圆形，形状错了定额完全不同） ===
         if "shape" in bill_params:

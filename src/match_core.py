@@ -317,6 +317,15 @@ def _finalize_trace(result: dict):
     """Ensure every result carries a normalized trace object."""
     if not isinstance(result, dict):
         return
+    recall_topk_ids = result.get("recall_topk_ids")
+    if isinstance(recall_topk_ids, list):
+        result["recall_topk_ids"] = [
+            str(quota_id).strip()
+            for quota_id in recall_topk_ids
+            if str(quota_id).strip()
+        ]
+    else:
+        result["recall_topk_ids"] = []
     trace = result.get("trace")
     if not isinstance(trace, dict):
         trace = {"steps": [], "path": []}
@@ -640,6 +649,15 @@ def _validate_experience_params(exp_result: dict, item: dict,
                         f"清单参数{bill_params} vs 定额'{quota_name[:30]}'参数{quota_params}, "
                         f"score={score:.2f}, 拒绝经验库结果")
                     return None
+
+        validated_quota = ParamValidator().validate_candidate_against_item(item, quota)
+        if validated_quota.get("param_hard_fail"):
+            logger.info(
+                f"经验库参数校验失败(ParamValidator): '{bill_text[:40]}' "
+                f"第{index + 1}条定额{quota_id or '<missing>'} "
+                f"detail={validated_quota.get('param_detail', '')}, 拒绝经验库结果")
+            return None
+        quotas[index] = validated_quota
 
     return exp_result
 

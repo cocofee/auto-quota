@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 
 from loguru import logger
+from src.installation_validator import InstallationValidator
+from src.text_parser import parser as text_parser
 
 
 # ============================================================
@@ -50,6 +52,32 @@ MEASURE_KEYWORDS = _RULES.get("measure_keywords", {}).get("keywords", [])
 SLEEVE_MAP = _RULES.get("sleeve_map", {})
 ELEVATOR_TYPE_MAP = _RULES.get("elevator_type_map", {})
 ELECTRIC_PAIR_RULES = _RULES.get("electric_pair_rules", {})
+
+_UNIT_ALIASES = {
+    "m": "m",
+    "M": "m",
+    "m2": "m2",
+    "平方米": "m2",
+    "m3": "m3",
+    "立方米": "m3",
+    "kg": "kg",
+    "千克": "kg",
+    "t": "t",
+}
+
+_UNIT_FAMILY = {
+    "m": "length",
+    "m2": "area",
+    "m3": "volume",
+    "kg": "weight",
+    "t": "weight",
+    "个": "count",
+    "台": "count",
+    "只": "count",
+    "套": "count",
+    "樘": "count",
+    "项": "item",
+}
 
 _floor_rules_raw = _RULES.get("elevator_floor_rules", {})
 ELEVATOR_FLOOR_RULES = [
@@ -99,6 +127,15 @@ def extract_description_lines(desc):
         if line:
             result.append(line)
     return result
+
+
+def _normalize_unit(unit: str) -> str:
+    text = str(unit or "").strip()
+    return _UNIT_ALIASES.get(text, text)
+
+
+def _unit_family(unit: str) -> str:
+    return _UNIT_FAMILY.get(_normalize_unit(unit), "")
 
 
 _SUPPORT_ITEM_KEYWORDS = ("支架", "吊架", "支吊架", "支撑架", "管架")
@@ -618,6 +655,183 @@ def check_sleeve_mismatch(item, quota_name, desc_lines):
             "sleeve_type": sleeve_type,
         }
     return None
+
+
+def check_unit_conflict(item, quota, quota_name="", quota_id=""):
+    """规则11: 清单单位与定额单位家族冲突。"""
+    bill_unit = str((item or {}).get("unit") or "").strip()
+    quota_unit = str((quota or {}).get("unit") or "").strip()
+    if not bill_unit or not quota_unit:
+        return None
+
+    bill_family = _unit_family(bill_unit)
+    quota_family = _unit_family(quota_unit)
+    if not bill_family or not quota_family or bill_family == quota_family:
+        return None
+
+    quota_name = str(quota_name or (quota or {}).get("name") or "").strip()
+    quota_id = str(quota_id or (quota or {}).get("quota_id") or "").strip()
+    return {
+        "type": "unit_conflict",
+        "reason": f"清单单位 {bill_unit} 与定额单位 {quota_unit} 不一致",
+        "bill_unit": bill_unit,
+        "quota_unit": quota_unit,
+        "quota_name": quota_name,
+        "quota_id": quota_id,
+    }
+
+
+def _candidate_anchor_features(quota):
+    if not isinstance(quota, dict):
+        return {}
+
+    features = quota.get("candidate_canonical_features") or quota.get("canonical_features") or {}
+    if isinstance(features, dict) and features:
+        return features
+
+    quota_name = str(quota.get("name") or "").strip()
+    if not quota_name:
+        return {}
+
+    try:
+        parsed = text_parser.parse_canonical(quota_name)
+    except Exception:
+        return {}
+
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _merge_anchor_features(primary, fallback):
+    merged = dict(fallback or {})
+    for key, value in dict(primary or {}).items():
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+
+def _item_anchor_params(item):
+    if not isinstance(item, dict):
+        return {}
+    features = item.get("canonical_features")
+    if not isinstance(features, dict):
+        features = {}
+    params = item.get("params")
+    if isinstance(params, dict) and params:
+        merged = dict(params)
+    else:
+        text = " ".join(
+            part for part in (
+                str(item.get("name") or "").strip(),
+                str(item.get("description") or "").strip(),
+            )
+            if part
+        ).strip()
+        if not text:
+            merged = {}
+        else:
+            try:
+                parsed = text_parser.parse(text)
+            except Exception:
+                parsed = {}
+            merged = parsed if isinstance(parsed, dict) else {}
+    for key in ("laying_method", "install_method"):
+        value = str(features.get(key) or "").strip()
+        if value:
+            merged[key] = value
+    return merged
+
+
+def _quota_anchor_params(quota):
+    if not isinstance(quota, dict):
+        return {}
+    features = quota.get("candidate_canonical_features") or quota.get("canonical_features") or {}
+    if not isinstance(features, dict):
+        features = {}
+    params = quota.get("candidate_params")
+    if isinstance(params, dict) and params:
+        merged = dict(params)
+    else:
+        quota_name = str(quota.get("name") or "").strip()
+        if not quota_name:
+            merged = {}
+        else:
+            try:
+                parsed = text_parser.parse(quota_name)
+            except Exception:
+                parsed = {}
+            merged = parsed if isinstance(parsed, dict) else {}
+    for key in ("laying_method", "install_method"):
+        value = str(features.get(key) or "").strip()
+        if value:
+            merged[key] = value
+    return merged
+
+
+def _is_cable_conduit_anchor_compatible(item, quota, item_features, quota_features):
+    item_text = " ".join(
+        part for part in (
+            str((item or {}).get("name") or "").strip(),
+            str((item or {}).get("description") or "").strip(),
+        )
+        if part
+    ).strip()
+    parsed_item_features = {}
+    if item_text:
+        try:
+            parsed_item_features = text_parser.parse_canonical(item_text)
+        except Exception:
+            parsed_item_features = {}
+    merged_item_features = _merge_anchor_features(item_features, parsed_item_features)
+    merged_quota_features = _merge_anchor_features(
+        quota_features,
+        _candidate_anchor_features(quota),
+    )
+    return InstallationValidator._is_cable_conduit_anchor_compatible(
+        bill_entity=str(merged_item_features.get("entity") or "").strip(),
+        quota_entity=str(merged_quota_features.get("entity") or "").strip(),
+        bill_family=str(merged_item_features.get("family") or "").strip(),
+        quota_family=str(merged_quota_features.get("family") or "").strip(),
+        bill_params=_item_anchor_params(item),
+        quota_params=_quota_anchor_params(quota),
+    )
+
+
+def check_anchor_conflict(item, quota, quota_name="", quota_id=""):
+    """Rule 12: reject obvious anchor conflicts from canonical features."""
+    item_features = (item or {}).get("canonical_features") or {}
+    quota_features = _candidate_anchor_features(quota)
+    if not isinstance(item_features, dict) or not item_features:
+        return None
+    if not isinstance(quota_features, dict) or not quota_features:
+        return None
+
+    conflicts = []
+    allow_cable_conduit = _is_cable_conduit_anchor_compatible(
+        item,
+        quota,
+        item_features,
+        quota_features,
+    )
+    for field in ("entity", "system", "material", "connection"):
+        if field == "entity" and allow_cable_conduit:
+            continue
+        item_value = str(item_features.get(field) or "").strip()
+        quota_value = str(quota_features.get(field) or "").strip()
+        if item_value and quota_value and item_value != quota_value:
+            conflicts.append(f"{field}:{item_value}/{quota_value}")
+
+    if not conflicts:
+        return None
+
+    quota_name = str(quota_name or (quota or {}).get("name") or "").strip()
+    quota_id = str(quota_id or (quota or {}).get("quota_id") or "").strip()
+    return {
+        "type": "anchor_conflict",
+        "reason": "anchor conflict: " + "; ".join(conflicts[:3]),
+        "quota_name": quota_name,
+        "quota_id": quota_id,
+    }
 
 
 def check_electric_pair(item, quota_name, desc_lines):
