@@ -211,3 +211,55 @@ python tools/run_benchmark.py --profile full --json-only
 - 召回命中率 `> 72.3%`。
 - 总命中率 `>= 35.7%`。
 - `R2/R3/R4` 不明显上升。
+
+## R1-1 验收记录
+
+已新增工具：
+
+- `tools/export_r1_recall_diagnostics.py`
+- `tests/test_export_r1_recall_diagnostics.py`
+
+验收命令：
+
+```powershell
+python -m pytest tests/test_export_r1_recall_diagnostics.py -q
+
+python tools/export_r1_recall_diagnostics.py `
+  --input output/benchmark_compare/ltr_v2_mixed_safety_candidate_latest_result.json `
+  --output-csv reports/attribution/r1_recall_miss_diagnostics.csv `
+  --summary-output reports/attribution/r1_recall_miss_summary.json
+```
+
+验收结果：
+
+- 单测：`3 passed`
+- CSV 行数：`1269`
+- 浙江市政可筛选样本：
+  - `semantic_candidate_pool_miss = 220`
+  - `thin_candidate_pool = 14`
+
+导出后的 bucket 结果：
+
+| bucket | 数量 |
+|------|------:|
+| `semantic_candidate_pool_miss` | `557` |
+| `missing_specialty_context` | `368` |
+| `search_no_result` | `158` |
+| `thin_candidate_pool` | `72` |
+| `hard_param_reject` | `63` |
+| `weak_context_manual_review` | `39` |
+| `real_specialty_route_mismatch` | `12` |
+
+与前置自动诊断的差异说明：
+
+- 前置诊断把 `search_no_result` 和 `weak_context_manual_review` 粗略并入上下文类问题。
+- R1-1 导出工具将它们拆成独立 bucket，方便后续按模块验收。
+- R1 总数仍为 `1269`，关键第一目标 `semantic_candidate_pool_miss = 557` 不变。
+
+是否进入下一步：是。
+
+下一步：
+
+```text
+R1-2：只修 candidate pool merge，优先浙江市政 semantic_candidate_pool_miss / thin_candidate_pool。
+```
