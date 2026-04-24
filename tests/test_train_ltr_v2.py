@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from tools.train_ltr_v2 import (
+    DEFAULT_PROTECT_GROUP_WEIGHTS,
     build_sample_weights,
     evaluate_do_not_break,
     infer_feature_names,
@@ -53,6 +54,7 @@ def test_build_sample_weights_uses_sample_source_defaults():
         [
             {"query_id": 1, "sample_source": "benchmark_r2_silver", "protect_group": ""},
             {"query_id": 1, "sample_source": "benchmark_safety_correct", "protect_group": "socket_guard"},
+            {"query_id": 2, "sample_source": "manual_targeted_safety_seed", "protect_group": "socket_guard"},
             {"query_id": 2, "sample_source": "other"},
         ]
     )
@@ -65,7 +67,12 @@ def test_build_sample_weights_uses_sample_source_defaults():
         protect_group_weights={"socket_guard": 1.5},
     )
 
-    assert [round(value, 4) for value in weights] == [1.0, 2.1, 0.9]
+    assert [round(value, 4) for value in weights] == [1.0, 2.1, 2.1, 0.9]
+
+
+def test_default_protect_weights_prioritize_equipotential_guard():
+    assert DEFAULT_PROTECT_GROUP_WEIGHTS["equipotential_guard"] == 4.0
+    assert DEFAULT_PROTECT_GROUP_WEIGHTS["lighting_guard"] == 1.25
 
 
 def test_summarize_sample_sources_counts_rows():

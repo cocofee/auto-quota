@@ -14,6 +14,16 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output" / "ltr" / "model_v2"
 DEFAULT_MODEL_PATH = DEFAULT_OUTPUT_DIR / "ltr_v2_model.txt"
 DEFAULT_FEATURES_PATH = DEFAULT_OUTPUT_DIR / "ltr_v2_features.json"
 DEFAULT_SUMMARY_PATH = DEFAULT_OUTPUT_DIR / "train_summary.json"
+DEFAULT_PROTECT_GROUP_WEIGHTS = {
+    "electrical_box_guard": 1.2,
+    "socket_guard": 1.5,
+    "lighting_guard": 1.25,
+    "sleeve_guard": 1.25,
+    "switch_guard": 1.25,
+    "air_outlet_guard": 1.0,
+    "equipotential_guard": 4.0,
+    "beijing_water_guard": 1.0,
+}
 
 META_COLUMNS = {
     "query_id",
@@ -89,6 +99,7 @@ def build_sample_weights(
     source_weights = {
         "benchmark_r2_silver": float(r2_weight),
         "benchmark_safety_correct": float(safety_weight),
+        "manual_targeted_safety_seed": float(safety_weight),
     }
     weights = []
     protect_groups = df["protect_group"].fillna("").astype(str) if "protect_group" in df.columns else None
@@ -96,7 +107,7 @@ def build_sample_weights(
         weight = float(source_weights.get(value, default_weight))
         if (
             protect_group_weights
-            and value == "benchmark_safety_correct"
+            and value in {"benchmark_safety_correct", "manual_targeted_safety_seed"}
             and protect_groups is not None
         ):
             protect_group = protect_groups.iloc[index]
@@ -425,14 +436,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-l2", type=float, default=1.0, help="LightGBM lambda_l2")
     parser.add_argument("--sample-weight-r2", type=float, default=1.0, help="Weight for benchmark_r2_silver rows")
     parser.add_argument("--sample-weight-safety", type=float, default=1.2, help="Weight for benchmark_safety_correct rows")
-    parser.add_argument("--protect-weight-electrical-box", type=float, default=1.2, help="Additional multiplier for electrical_box_guard")
-    parser.add_argument("--protect-weight-socket", type=float, default=1.5, help="Additional multiplier for socket_guard")
-    parser.add_argument("--protect-weight-lighting", type=float, default=1.25, help="Additional multiplier for lighting_guard")
-    parser.add_argument("--protect-weight-sleeve", type=float, default=1.25, help="Additional multiplier for sleeve_guard")
-    parser.add_argument("--protect-weight-switch", type=float, default=1.25, help="Additional multiplier for switch_guard")
-    parser.add_argument("--protect-weight-air-outlet", type=float, default=1.0, help="Additional multiplier for air_outlet_guard")
-    parser.add_argument("--protect-weight-equipotential", type=float, default=1.0, help="Additional multiplier for equipotential_guard")
-    parser.add_argument("--protect-weight-beijing-water", type=float, default=1.0, help="Additional multiplier for beijing_water_guard")
+    parser.add_argument("--protect-weight-electrical-box", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["electrical_box_guard"], help="Additional multiplier for electrical_box_guard")
+    parser.add_argument("--protect-weight-socket", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["socket_guard"], help="Additional multiplier for socket_guard")
+    parser.add_argument("--protect-weight-lighting", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["lighting_guard"], help="Additional multiplier for lighting_guard")
+    parser.add_argument("--protect-weight-sleeve", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["sleeve_guard"], help="Additional multiplier for sleeve_guard")
+    parser.add_argument("--protect-weight-switch", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["switch_guard"], help="Additional multiplier for switch_guard")
+    parser.add_argument("--protect-weight-air-outlet", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["air_outlet_guard"], help="Additional multiplier for air_outlet_guard")
+    parser.add_argument("--protect-weight-equipotential", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["equipotential_guard"], help="Additional multiplier for equipotential_guard")
+    parser.add_argument("--protect-weight-beijing-water", type=float, default=DEFAULT_PROTECT_GROUP_WEIGHTS["beijing_water_guard"], help="Additional multiplier for beijing_water_guard")
     parser.add_argument("--do-not-break-eval", type=str, default="", help="Optional do-not-break evaluation JSON path")
     return parser.parse_args()
 
@@ -530,6 +541,7 @@ def main() -> int:
     sample_weight_map = {
         "benchmark_r2_silver": float(args.sample_weight_r2),
         "benchmark_safety_correct": float(args.sample_weight_safety),
+        "manual_targeted_safety_seed": float(args.sample_weight_safety),
     }
     sample_weight_map["protect_group_multipliers"] = protect_group_weight_map
     summary = build_summary(
