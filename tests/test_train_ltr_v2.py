@@ -7,6 +7,7 @@ from tools.train_ltr_v2 import (
     build_sample_weights,
     evaluate_do_not_break,
     infer_feature_names,
+    protected_train_query_ids,
     split_queries,
     summarize_sample_sources,
 )
@@ -47,6 +48,34 @@ def test_split_queries_keeps_query_rows_together():
 
     assert set(train_df["query_id"]).isdisjoint(set(holdout_df["query_id"]))
     assert train_df["query_id"].nunique() + holdout_df["query_id"].nunique() == 3
+
+
+def test_split_queries_keeps_forced_query_ids_in_train():
+    df = pd.DataFrame(
+        [
+            {"query_id": 1, "label": 2, "feature_a": 1.0},
+            {"query_id": 2, "label": 2, "feature_a": 1.0},
+            {"query_id": 3, "label": 2, "feature_a": 1.0},
+        ]
+    )
+
+    train_df, holdout_df = split_queries(df, holdout_ratio=0.9, seed=42, force_train_query_ids={2})
+
+    assert 2 in set(train_df["query_id"])
+    assert 2 not in set(holdout_df["query_id"])
+    assert set(train_df["query_id"]).isdisjoint(set(holdout_df["query_id"]))
+
+
+def test_protected_train_query_ids_only_returns_train_and_eval_safety():
+    df = pd.DataFrame(
+        [
+            {"query_id": 1, "sample_class": "safety_correct", "training_role": "train_and_eval"},
+            {"query_id": 2, "sample_class": "safety_correct", "training_role": "eval_only"},
+            {"query_id": 3, "sample_class": "r2_repair", "training_role": "train_and_eval"},
+        ]
+    )
+
+    assert protected_train_query_ids(df) == {1}
 
 
 def test_build_sample_weights_uses_sample_source_defaults():

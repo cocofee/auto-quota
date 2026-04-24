@@ -57,15 +57,34 @@ def infer_feature_names(df: pd.DataFrame) -> list[str]:
     return feature_names
 
 
-def split_queries(df: pd.DataFrame, *, holdout_ratio: float, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_queries(
+    df: pd.DataFrame,
+    *,
+    holdout_ratio: float,
+    seed: int,
+    force_train_query_ids: set[int] | set[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     query_ids = list(df["query_id"].drop_duplicates())
+    force_train_ids = set(force_train_query_ids or set())
+    holdout_candidates = [query_id for query_id in query_ids if query_id not in force_train_ids]
     rng = np.random.default_rng(seed)
-    rng.shuffle(query_ids)
-    holdout_size = max(1, int(round(len(query_ids) * holdout_ratio))) if query_ids else 0
-    holdout_ids = set(query_ids[:holdout_size])
+    rng.shuffle(holdout_candidates)
+    holdout_size = max(1, int(round(len(query_ids) * holdout_ratio))) if holdout_candidates else 0
+    holdout_size = min(holdout_size, len(holdout_candidates))
+    holdout_ids = set(holdout_candidates[:holdout_size])
     train_df = df[~df["query_id"].isin(holdout_ids)].copy()
     holdout_df = df[df["query_id"].isin(holdout_ids)].copy()
     return train_df, holdout_df
+
+
+def protected_train_query_ids(df: pd.DataFrame) -> set:
+    if df.empty or "sample_class" not in df.columns or "training_role" not in df.columns:
+        return set()
+    mask = (
+        (df["sample_class"].fillna("").astype(str) == "safety_correct")
+        & (df["training_role"].fillna("train_and_eval").astype(str) == "train_and_eval")
+    )
+    return set(df.loc[mask, "query_id"].dropna().tolist())
 
 
 def eval_hit_at_1(df: pd.DataFrame, score_col: str) -> float:
@@ -401,6 +420,7 @@ def build_summary(
     do_not_break: dict,
     output_model_path: Path,
     output_features_path: Path,
+    forced_train_queries: int = 0,
 ) -> dict:
     return {
         "input_path": str(input_path),
@@ -413,6 +433,7 @@ def build_summary(
         "train_rows": int(len(train_df)),
         "holdout_queries": int(holdout_df["query_id"].nunique()),
         "holdout_rows": int(len(holdout_df)),
+        "forced_train_queries": int(forced_train_queries),
         "holdout_baseline_hit_at_1": round(float(baseline_hit_at_1), 4),
         "holdout_hit_at_1": round(float(holdout_hit_at_1), 4),
         "holdout_hit_at_1_delta": round(float(holdout_hit_at_1 - baseline_hit_at_1), 4),
@@ -464,10 +485,12 @@ def main() -> int:
     trainable_df = df.copy()
     if "training_role" in trainable_df.columns:
         trainable_df = trainable_df[trainable_df["training_role"].fillna("train_and_eval").astype(str) != "eval_only"].copy()
+    force_train_ids = protected_train_query_ids(trainable_df)
     train_df, holdout_df = split_queries(
         trainable_df,
         holdout_ratio=max(0.0, min(0.9, float(args.holdout_ratio))),
         seed=int(args.seed),
+        force_train_query_ids=force_train_ids,
     )
 
     if train_df.empty:
@@ -558,6 +581,7 @@ def main() -> int:
         do_not_break=do_not_break_summary,
         output_model_path=model_path,
         output_features_path=features_path,
+        forced_train_queries=len(force_train_ids),
     )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
