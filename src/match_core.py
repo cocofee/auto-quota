@@ -1852,6 +1852,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             include_prior_candidates
             and str(adaptive_strategy or "").strip().lower() == "deep"
             and len(candidates) >= max(3, search_top_k)
+            and not bool(getattr(config, "SEARCH_PRIOR_CANDIDATES_DEEP_FULL_POOL_ENABLED", True))
         ):
             include_prior_candidates = False
         if include_prior_candidates:
@@ -1861,6 +1862,13 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                 full_query=full_query,
                 classification=classification,
                 item=item,
+            )
+            prior_candidates.extend(
+                _collect_existing_candidate_neighbor_priors(
+                    searcher,
+                    candidates,
+                    classification=classification,
+                )
             )
             if prior_candidates:
                 candidates = _merge_prior_candidates(candidates, prior_candidates)
@@ -2006,6 +2014,86 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
         )
 
     return prior_candidates
+
+
+def _book_code_aliases(books: list[str] | None) -> set[str]:
+    aliases: set[str] = set()
+    for book in books or []:
+        value = str(book or "").strip().upper()
+        if not value:
+            continue
+        aliases.add(value)
+        match = re.match(r"^C0*(\d+)$", value)
+        if match:
+            aliases.add(match.group(1))
+        elif re.match(r"^\d+$", value):
+            aliases.add(f"C{int(value)}")
+    return aliases
+
+
+def _collect_existing_candidate_neighbor_priors(
+    searcher: HybridSearcher,
+    candidates: list[dict],
+    *,
+    classification: dict | None,
+    top_k: int = 8,
+) -> list[dict]:
+    if not candidates:
+        return []
+    classification = dict(classification or {})
+    allowed_books = _book_code_aliases(
+        list(classification.get("search_books", []) or [])
+        or list(classification.get("candidate_books", []) or [])
+        or ([classification.get("primary")] if classification.get("primary") else [])
+    )
+    if not allowed_books:
+        return []
+
+    materialize = getattr(searcher, "_materialize_quota_candidate", None)
+    if not callable(materialize):
+        return []
+
+    existing_ids = {
+        str(candidate.get("quota_id", "") or "").strip()
+        for candidate in candidates
+        if str(candidate.get("quota_id", "") or "").strip()
+    }
+    collected: list[dict] = []
+    for candidate in candidates[:20]:
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        match = re.match(r"^(.+-)(\d+)$", quota_id)
+        if not match:
+            continue
+        prefix = match.group(1)
+        number = int(match.group(2))
+        prefix_book = prefix.rstrip("-").split("-")[0].upper()
+        if prefix_book and prefix_book not in allowed_books:
+            continue
+        for offset in (-2, -1, 1, 2):
+            neighbor_id = f"{prefix}{number + offset}"
+            if neighbor_id in existing_ids:
+                continue
+            materialized = materialize(neighbor_id)
+            neighbor = {
+                "quota_id": neighbor_id,
+                "name": str(candidate.get("name", "") or "").strip(),
+                "unit": str(candidate.get("unit", "") or "").strip(),
+                "candidate_canonical_features": candidate.get("candidate_canonical_features"),
+                "canonical_features": candidate.get("canonical_features"),
+            }
+            if materialized:
+                neighbor["neighbor_materialized_name"] = materialized.get("name", "")
+                if not neighbor["unit"]:
+                    neighbor["unit"] = str(materialized.get("unit", "") or "").strip()
+            neighbor["match_source"] = "existing_candidate_neighbor"
+            neighbor["candidate_neighbor_seed"] = quota_id
+            neighbor["knowledge_prior_sources"] = ["candidate_neighbor"]
+            neighbor["knowledge_prior_score"] = 0.50 - min(abs(offset), 2) * 0.03
+            collected.append(neighbor)
+            existing_ids.add(neighbor_id)
+            if len(collected) >= top_k:
+                return collected
+    return collected
 
 
 def _merge_prior_candidates(candidates: list[dict], prior_candidates: list[dict]) -> list[dict]:

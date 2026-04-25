@@ -187,6 +187,174 @@ def test_collect_prior_candidates_uses_quota_alias_exact_matches():
     assert matched["knowledge_prior_sources"] == ["quota_alias"]
 
 
+def test_collect_prior_candidates_uses_same_book_quota_name_fallback(monkeypatch):
+    def fake_query_rows(self, *, terms, books, limit):
+        del self, limit
+        assert terms[:2] == ["混凝土", "井"]
+        assert books == ["C6"]
+        return [
+            {
+                "quota_id": "6-311",
+                "name": "混凝土检查井 井深2m以内",
+                "unit": "座",
+                "book": "C6",
+                "search_text": "混凝土 检查井 井",
+            },
+            {
+                "quota_id": "6-276",
+                "name": "砖砌检查井",
+                "unit": "座",
+                "book": "C6",
+                "search_text": "砖砌 检查井",
+            },
+        ]
+
+    monkeypatch.setattr(
+        HybridSearcher,
+        "_query_quota_name_fallback_rows",
+        fake_query_rows,
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = None
+    searcher._universal_kb = False
+    searcher._bm25_engine = _FakeBM25()
+    searcher._unified_data_layer = False
+    searcher._uses_standard_books = True
+
+    priors = searcher.collect_prior_candidates(
+        "混凝土井",
+        full_query="混凝土井",
+        books=["C6"],
+        item={"name": "混凝土井", "canonical_query": {"search_query": "混凝土井"}},
+        top_k=4,
+    )
+
+    matched = next(row for row in priors if row["quota_id"] == "6-311")
+    assert matched["match_source"] == "quota_name_fallback"
+    assert matched["knowledge_prior_sources"] == ["quota_name_fallback"]
+
+
+def test_collect_prior_candidates_normalizes_nonstandard_prior_books(monkeypatch):
+    class _NonstandardBM25(_FakeBM25):
+        quota_books = {1: "6"}
+
+        def ensure_index(self):
+            return None
+
+    def fake_query_rows(self, *, terms, books, limit):
+        del self, terms, limit
+        assert books == ["6"]
+        return [
+            {
+                "quota_id": "6-311",
+                "name": "混凝土检查井",
+                "unit": "座",
+                "book": "6",
+                "search_text": "混凝土 检查井 井",
+            }
+        ]
+
+    monkeypatch.setattr(
+        HybridSearcher,
+        "_query_quota_name_fallback_rows",
+        fake_query_rows,
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = None
+    searcher._universal_kb = False
+    searcher._bm25_engine = _NonstandardBM25()
+    searcher._unified_data_layer = False
+    searcher._uses_standard_books = False
+
+    priors = searcher.collect_prior_candidates(
+        "混凝土井",
+        full_query="混凝土井",
+        books=["C6"],
+        item={"name": "混凝土井", "canonical_query": {"search_query": "混凝土井"}},
+        top_k=4,
+    )
+
+    assert [row["quota_id"] for row in priors] == ["6-311"]
+
+
+def test_collect_prior_candidates_adds_same_book_quota_id_neighbors(monkeypatch):
+    class _NeighborBM25(_FakeBM25):
+        quota_books = {1: "9"}
+
+        def search(self, pattern, top_k=2, books=None):
+            del pattern, top_k
+            assert books == ["9"]
+            return [{"quota_id": "9-91", "name": "seed", "unit": "", "book": "9"}]
+
+    monkeypatch.setattr(
+        HybridSearcher,
+        "_query_quota_name_fallback_rows",
+        lambda self, *, terms, books, limit: [],
+    )
+    monkeypatch.setattr(
+        "src.hybrid_searcher.search_by_id",
+        lambda quota_id, province=None: (
+            (quota_id, "neighbor " + quota_id, "m")
+            if quota_id == "9-92"
+            else None
+        ),
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = None
+    searcher._universal_kb = False
+    searcher._bm25_engine = _NeighborBM25()
+    searcher._unified_data_layer = False
+    searcher._uses_standard_books = False
+
+    priors = searcher.collect_prior_candidates(
+        "防水",
+        full_query="防水",
+        books=["C9"],
+        item={"name": "防水", "canonical_query": {"search_query": "防水"}},
+        top_k=4,
+    )
+
+    matched = next(row for row in priors if row["quota_id"] == "9-92")
+    assert matched["match_source"] == "quota_id_neighbor"
+    assert matched["quota_id_neighbor_seed"] == "9-91"
+
+
+def test_quota_name_fallback_requires_requested_books(monkeypatch):
+    called = False
+
+    def fake_query_rows(self, *, terms, books, limit):
+        del self, terms, books, limit
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(
+        HybridSearcher,
+        "_query_quota_name_fallback_rows",
+        fake_query_rows,
+    )
+
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+
+    rows = searcher._collect_quota_name_fallback_prior_candidates(
+        query_text="混凝土井",
+        full_query="混凝土井",
+        item={"name": "混凝土井"},
+        books=None,
+        top_k=4,
+    )
+
+    assert rows == []
+    assert called is False
+
+
 def test_build_prior_query_variants_include_primary_query_profile():
     variants = HybridSearcher._build_prior_query_variants(
         "search query",

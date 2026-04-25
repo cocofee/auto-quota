@@ -27,6 +27,7 @@ from pathlib import Path
 from loguru import logger
 
 import config
+from db.sqlite import connect as _db_connect
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
 from src.feedback_bus import get_feedback_bias_rows
@@ -411,6 +412,13 @@ class HybridSearcher:
             return []
 
         priors: list[dict] = []
+        if books and not self.uses_standard_books:
+            available_books = set(self.bm25_engine.quota_books.values())
+            books = self._normalize_requested_books_for_nonstandard_db(
+                books,
+                available_books,
+                province=self.province,
+            )
         priors.extend(
             self._collect_quota_alias_exact_prior_candidates(
                 query_text=query_text,
@@ -420,6 +428,23 @@ class HybridSearcher:
                 top_k=max(1, min(top_k, 4)),
             )
         )
+        if not exact_only:
+            priors.extend(
+                self._collect_quota_name_fallback_prior_candidates(
+                    query_text=query_text,
+                    full_query=full_query,
+                    item=item,
+                    books=books,
+                    top_k=max(1, min(top_k, 4)),
+                )
+            )
+            priors.extend(
+                self._collect_quota_id_neighbor_prior_candidates(
+                    query_text=query_text,
+                    books=books,
+                    top_k=max(1, min(top_k, 6)),
+                )
+            )
         if bool(getattr(config, "SEARCH_EXPERIENCE_INJECTION_ENABLED", True)):
             priors.extend(
                 self._collect_experience_exact_prior_candidates(
@@ -566,6 +591,10 @@ class HybridSearcher:
         return candidates
 
     @staticmethod
+    def _compact_text(text: str) -> str:
+        return re.sub(r"\s+", "", str(text or "").strip()).lower()
+
+    @staticmethod
     def _build_prior_query_variants(
         query_text: str,
         *,
@@ -620,6 +649,269 @@ class HybridSearcher:
             if value not in variants:
                 variants.append(value)
         return variants
+
+    @staticmethod
+    def _extract_quota_name_fallback_terms(text: str) -> list[str]:
+        text = str(text or "").strip()
+        if not text:
+            return []
+
+        generic_terms = {
+            "项目", "工程", "定额", "清单", "安装", "制作", "施工", "人工",
+            "材料", "综合", "措施", "其他", "四周",
+        }
+        try:
+            import jieba
+
+            raw_terms = [str(term).strip() for term in jieba.cut(text)]
+        except Exception:
+            raw_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9][A-Za-z0-9._/-]*", text)
+
+        terms: list[str] = []
+
+        def _push(term: str) -> None:
+            term = str(term or "").strip()
+            if not term or term in generic_terms or term in terms:
+                return
+            if re.fullmatch(r"\d+(?:\.\d+)?", term):
+                return
+            terms.append(term)
+
+        for term in raw_terms:
+            if len(term) >= 2:
+                _push(term)
+
+        compact = HybridSearcher._compact_text(text)
+        for domain_term in ("检查井", "混凝土", "沥青", "钢筋", "连接", "回填"):
+            if domain_term in compact:
+                _push(domain_term)
+
+        one_char_terms = {"井", "阀", "泵", "桩", "梁", "板"}
+        if terms:
+            for char in one_char_terms:
+                if char in text and char not in terms:
+                    terms.append(char)
+                    break
+
+        return terms[:4]
+
+    def _collect_quota_name_fallback_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        books: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[dict]:
+        normalized_books = [
+            str(book or "").strip()
+            for book in (books or [])
+            if str(book or "").strip()
+        ]
+        if not normalized_books:
+            return []
+
+        variants = self._build_prior_query_variants(
+            query_text,
+            full_query=full_query,
+            item=item,
+        )
+        if not variants:
+            return []
+
+        plans: list[tuple[str, tuple[str, ...]]] = []
+        seen_plans: set[tuple[str, tuple[str, ...]]] = set()
+        for variant in variants:
+            compact = self._compact_text(variant)
+            if len(compact) < 2 or len(compact) > 32:
+                continue
+            terms = tuple(self._extract_quota_name_fallback_terms(variant))
+            if len(terms) < 2:
+                continue
+            key = (compact, terms)
+            if key in seen_plans:
+                continue
+            seen_plans.add(key)
+            plans.append(key)
+            if len(plans) >= 4:
+                break
+
+        if not plans:
+            return []
+
+        scored: dict[str, tuple[float, dict]] = {}
+        for compact_query, terms in plans:
+            rows = self._query_quota_name_fallback_rows(
+                terms=list(terms),
+                books=normalized_books,
+                limit=max(top_k * 8, 24),
+            )
+            for row in rows:
+                quota_id = str(row.get("quota_id", "") or "").strip()
+                quota_name = str(row.get("name", "") or "").strip()
+                if not quota_id or not quota_name:
+                    continue
+                compact_name = self._compact_text(quota_name)
+                compact_search = self._compact_text(row.get("search_text", ""))
+                score = 0.0
+                if compact_query == compact_name:
+                    score += 3.0
+                elif compact_query and compact_query in compact_name:
+                    score += 1.8
+                elif compact_query and compact_query in compact_search:
+                    score += 1.2
+                name_hits = sum(1 for term in terms if term in quota_name)
+                search_hits = sum(1 for term in terms if term in str(row.get("search_text", "") or ""))
+                score += name_hits * 0.55 + search_hits * 0.25
+                if name_hits == len(terms):
+                    score += 0.8
+                elif name_hits + search_hits >= len(terms):
+                    score += 0.35
+                existing = scored.get(quota_id)
+                if existing is not None and existing[0] >= score:
+                    continue
+                candidate = dict(row)
+                candidate["match_source"] = "quota_name_fallback"
+                candidate["quota_name_fallback_terms"] = list(terms)
+                candidate["knowledge_prior_sources"] = ["quota_name_fallback"]
+                candidate["knowledge_prior_score"] = min(0.88, 0.62 + score * 0.04)
+                scored[quota_id] = (score, candidate)
+
+        ranked = sorted(
+            scored.values(),
+            key=lambda item: (
+                item[0],
+                float(item[1].get("knowledge_prior_score", 0.0) or 0.0),
+                str(item[1].get("quota_id", "")),
+            ),
+            reverse=True,
+        )
+        return [candidate for _, candidate in ranked[:top_k]]
+
+    @staticmethod
+    def _parse_simple_quota_sequence(quota_id: str) -> tuple[str, int] | None:
+        quota_id = str(quota_id or "").strip()
+        match = re.match(r"^(.+-)(\d+)$", quota_id)
+        if not match:
+            return None
+        try:
+            return match.group(1), int(match.group(2))
+        except ValueError:
+            return None
+
+    def _collect_quota_id_neighbor_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        books: list[str] | None = None,
+        top_k: int = 6,
+    ) -> list[dict]:
+        normalized_books = [
+            str(book or "").strip().upper()
+            for book in (books or [])
+            if str(book or "").strip()
+        ]
+        if not normalized_books:
+            return []
+        allowed_books = set(normalized_books)
+        for book in list(normalized_books):
+            match = re.match(r"^C0*(\d+)$", book)
+            if match:
+                allowed_books.add(match.group(1))
+            elif re.match(r"^\d+$", book):
+                allowed_books.add(f"C{int(book)}")
+
+        try:
+            seed_rows = self.bm25_engine.search(
+                query_text,
+                top_k=max(top_k, 8),
+                books=books,
+            )
+        except Exception as e:
+            logger.debug(f"quota id neighbor prior seed search failed: {e}")
+            return []
+
+        candidates: list[dict] = []
+        seen_quota_ids: set[str] = {
+            str(row.get("quota_id", "") or "").strip()
+            for row in (seed_rows or [])
+            if str(row.get("quota_id", "") or "").strip()
+        }
+        for seed in seed_rows or []:
+            seed_id = str(seed.get("quota_id", "") or "").strip()
+            parsed = self._parse_simple_quota_sequence(seed_id)
+            if not parsed:
+                continue
+            prefix, number = parsed
+            for offset in (-2, -1, 1, 2):
+                neighbor_id = f"{prefix}{number + offset}"
+                if neighbor_id in seen_quota_ids:
+                    continue
+                neighbor_book = str(get_book_from_quota_id(neighbor_id) or "").strip().upper()
+                if neighbor_book and neighbor_book not in allowed_books:
+                    continue
+                candidate = self._materialize_quota_candidate(neighbor_id)
+                if not candidate:
+                    continue
+                candidate["match_source"] = "quota_id_neighbor"
+                candidate["quota_id_neighbor_seed"] = seed_id
+                candidate["knowledge_prior_sources"] = ["quota_id_neighbor"]
+                candidate["knowledge_prior_score"] = 0.52 - min(abs(offset), 2) * 0.03
+                candidates.append(candidate)
+                seen_quota_ids.add(neighbor_id)
+                if len(candidates) >= top_k:
+                    return candidates
+        return candidates
+
+    def _query_quota_name_fallback_rows(
+        self,
+        *,
+        terms: list[str],
+        books: list[str],
+        limit: int,
+    ) -> list[dict]:
+        terms = [str(term or "").strip() for term in terms if str(term or "").strip()]
+        books = [str(book or "").strip() for book in books if str(book or "").strip()]
+        if len(terms) < 2 or not books:
+            return []
+
+        db_path = config.get_quota_db_path(self.province)
+        if not Path(db_path).exists():
+            return []
+
+        conn = _db_connect(db_path, row_factory=True)
+        try:
+            cursor = conn.cursor()
+            col_info = {row[1] for row in cursor.execute("PRAGMA table_info(quotas)").fetchall()}
+            has_book_col = "book" in col_info
+            has_search_text_col = "search_text" in col_info
+
+            name_clauses = " AND ".join(["name LIKE ?"] * len(terms))
+            params: list[str | int] = [f"%{term}%" for term in terms]
+            where_parts = [f"({name_clauses})"]
+            if has_search_text_col:
+                search_clauses = " AND ".join(["search_text LIKE ?"] * len(terms))
+                where_parts.append(f"({search_clauses})")
+                params.extend(f"%{term}%" for term in terms)
+
+            where = "(" + " OR ".join(where_parts) + ")"
+            if has_book_col:
+                placeholders = ",".join(["?"] * len(books))
+                where += f" AND book IN ({placeholders})"
+                params.extend(books)
+
+            params.append(max(int(limit or 0), 1))
+            cursor.execute(
+                f"SELECT * FROM quotas WHERE {where} ORDER BY quota_id LIMIT ?",
+                params,
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.debug(f"quota name fallback prior search failed: {e}")
+            return []
+        finally:
+            conn.close()
 
     @staticmethod
     def _looks_like_numeric_alias(text: str) -> bool:

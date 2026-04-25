@@ -481,6 +481,99 @@ def test_prepare_candidates_from_prepared_forces_deep_strategy_passthrough(monke
     assert captured["kwargs"]["include_prior_candidates"] is True
 
 
+def test_prepare_candidates_keeps_prior_merge_for_deep_full_pool(monkeypatch):
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return [
+                {
+                    "quota_id": "C9-1-12",
+                    "name": "prior neighbor",
+                    "unit": "m",
+                    "knowledge_prior_sources": ["quota_id_neighbor"],
+                    "knowledge_prior_score": 0.5,
+                }
+            ]
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, **kwargs):
+            del query_text, kwargs
+            return candidates
+
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda *args, **kwargs: [
+            {
+                "quota_id": f"C9-1-{idx}",
+                "name": f"candidate {idx}",
+                "hybrid_score": 0.8 - idx * 0.01,
+            }
+            for idx in range(1, 11)
+        ],
+    )
+
+    candidates = match_core._prepare_candidates(
+        FakeSearcher(),
+        FakeReranker(),
+        FakeValidator(),
+        "deep query",
+        "deep query",
+        {"primary": "C9", "fallbacks": [], "search_books": ["C9"]},
+        adaptive_strategy="deep",
+    )
+
+    assert any(candidate["quota_id"] == "C9-1-12" for candidate in candidates)
+
+
+def test_prepare_candidates_adds_neighbors_from_existing_candidate_pool(monkeypatch):
+    class FakeSearcher:
+        def collect_prior_candidates(self, *args, **kwargs):
+            return []
+
+        def _materialize_quota_candidate(self, quota_id):
+            if quota_id == "9-92":
+                return {"quota_id": "9-92", "name": "neighbor quota", "unit": "m"}
+            return None
+
+    class FakeReranker:
+        def rerank(self, query, candidates, route_profile=None):
+            del query, route_profile
+            return candidates
+
+    class FakeValidator:
+        def validate_candidates(self, query_text, candidates, **kwargs):
+            del query_text, kwargs
+            return candidates
+
+    monkeypatch.setattr(
+        match_core,
+        "cascade_search",
+        lambda *args, **kwargs: [
+            {"quota_id": "9-91", "name": "seed", "hybrid_score": 0.8},
+            {"quota_id": "9-90", "name": "peer", "hybrid_score": 0.7},
+        ],
+    )
+
+    candidates = match_core._prepare_candidates(
+        FakeSearcher(),
+        FakeReranker(),
+        FakeValidator(),
+        "neighbor query",
+        "neighbor query",
+        {"primary": "C9", "fallbacks": [], "search_books": ["C9"]},
+        adaptive_strategy="deep",
+    )
+
+    matched = next(candidate for candidate in candidates if candidate["quota_id"] == "9-92")
+    assert matched["match_source"] == "existing_candidate_neighbor"
+    assert matched["candidate_neighbor_seed"] == "9-91"
+
+
 def test_prepare_candidates_from_prepared_attaches_supplemental_quotas(monkeypatch):
     monkeypatch.setattr(
         match_core,

@@ -3,6 +3,7 @@
 
 from contextlib import nullcontext
 from itertools import count
+import re
 
 from loguru import logger
 
@@ -637,6 +638,75 @@ def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, r
     }
 
 
+
+def _book_code_aliases_for_search_item(item: dict) -> set[str]:
+    aliases: set[str] = set()
+    classification = item.get("classification") if isinstance(item, dict) else {}
+    for value in (
+        item.get("specialty") if isinstance(item, dict) else "",
+        item.get("book") if isinstance(item, dict) else "",
+        *((classification or {}).get("search_books") or []),
+    ):
+        text = str(value or "").strip().upper()
+        if not text:
+            continue
+        aliases.add(text)
+        match = re.match(r"^C0*(\d+)$", text)
+        if match:
+            aliases.add(match.group(1))
+        elif re.match(r"^\d+$", text):
+            aliases.add(f"C{int(text)}")
+    return aliases
+
+
+def _merge_existing_candidate_neighbors_for_search_mode(
+    item: dict,
+    candidates: list[dict],
+    *,
+    top_k: int = 8,
+) -> list[dict]:
+    if not candidates:
+        return []
+    allowed_books = _book_code_aliases_for_search_item(item or {})
+    if not allowed_books:
+        return list(candidates or [])
+
+    existing_ids = {
+        str(candidate.get("quota_id", "") or "").strip()
+        for candidate in candidates
+        if str(candidate.get("quota_id", "") or "").strip()
+    }
+    neighbors: list[dict] = []
+    for candidate in candidates[:20]:
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        match = re.match(r"^(.+-)(\d+)$", quota_id)
+        if not match:
+            continue
+        prefix = match.group(1)
+        number = int(match.group(2))
+        prefix_book = prefix.rstrip("-").split("-")[0].upper()
+        if prefix_book and prefix_book not in allowed_books:
+            continue
+        for offset in (-2, -1, 1, 2):
+            neighbor_id = f"{prefix}{number + offset}"
+            if neighbor_id in existing_ids:
+                continue
+            neighbor = {
+                "quota_id": neighbor_id,
+                "name": str(candidate.get("name", "") or "").strip(),
+                "unit": str(candidate.get("unit", "") or "").strip(),
+                "match_source": "existing_candidate_neighbor",
+                "candidate_neighbor_seed": quota_id,
+                "knowledge_prior_sources": ["candidate_neighbor"],
+                "knowledge_prior_score": 0.50 - min(abs(offset), 2) * 0.03,
+                "hybrid_score": float(candidate.get("hybrid_score", 0.0) or 0.0) * 0.85,
+                "rerank_score": float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0)) or 0.0) * 0.85,
+            }
+            neighbors.append(neighbor)
+            existing_ids.add(neighbor_id)
+            if len(neighbors) >= top_k:
+                return list(candidates or []) + neighbors
+    return list(candidates or []) + neighbors
 def _run_rank_pipeline(item: dict,
                        decision_candidates: list[dict],
                        *,
@@ -1088,7 +1158,10 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
                                 exp_hits: int, rule_hits: int):
     """search模式统一结果决策：搜索结果 + 经验/规则兜底。"""
     performance_monitor = PerformanceMonitor()
-    active_candidates = list(candidates or [])
+    active_candidates = _merge_existing_candidate_neighbors_for_search_mode(
+        item,
+        list(candidates or []),
+    )
     injected_rule_qid = ""
     with performance_monitor.measure("search_rule_backup_injection"):
         if rule_backup:

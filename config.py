@@ -806,7 +806,12 @@ SEARCH_RULE_PREMATCH_ENABLED = os.getenv(
     "0", "false", "no", "off", ""
 )
 SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT = os.getenv(
-    "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", "0"
+    "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
+SEARCH_PRIOR_CANDIDATES_DEEP_FULL_POOL_ENABLED = os.getenv(
+    "SEARCH_PRIOR_CANDIDATES_DEEP_FULL_POOL_ENABLED", "1"
 ).strip().lower() not in (
     "0", "false", "no", "off", ""
 )
