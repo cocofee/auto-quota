@@ -1537,3 +1537,184 @@ def test_ltr_guard_allows_roof_item_when_challenger_matches_vertical_description
     assert meta["post_ltr_top1_id"] == "B"
     assert meta["ltr_guard"]["action"] == "allowed"
     assert meta["ltr_guard"]["surface_orientation_guard"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_surface_orientation_candidate_when_ltr_top1_is_wrong(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-77",
+            "name": "改性沥青防水涂料 厚度2.0mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.85,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-76",
+            "name": "改性沥青防水涂料 厚度2.0mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.70,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面涂膜防水",
+            "description": "屋面改性沥青防水涂料",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["9-76", "9-77"]
+    assert meta["raw_ltr_top1_id"] == "9-77"
+    assert meta["post_ltr_top1_id"] == "9-76"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "surface_orientation_rescued"
+    assert meta["ltr_guard"]["surface_orientation_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["surface_orientation_rescue"]["details"]["rescued_rank"] == 2
+
+
+def test_ltr_guard_does_not_rescue_surface_orientation_across_books(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-77",
+            "name": "改性沥青防水涂料 厚度2.0mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.85,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "10-76",
+            "name": "改性沥青防水涂料 厚度2.0mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.70,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面涂膜防水",
+            "description": "屋面改性沥青防水涂料",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["9-77", "10-76"]
+    assert meta["post_ltr_top1_id"] == "9-77"
+    assert meta["ltr_guard"]["action"] == "no_change"
+    assert meta["ltr_guard"]["surface_orientation_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_does_not_rescue_surface_orientation_across_material_pairs(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-52",
+            "name": "改性沥青自粘卷材自粘法 一层 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.95,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-70",
+            "name": "高分子卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.83,
+            "hybrid_score": 0.70,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面卷材防水",
+            "description": "屋面4.0厚自粘聚合物改性沥青卷材",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["9-52", "9-70"]
+    assert meta["post_ltr_top1_id"] == "9-52"
+    assert meta["ltr_guard"]["action"] == "no_change"
+    assert meta["ltr_guard"]["surface_orientation_rescue"]["blocked"] is False

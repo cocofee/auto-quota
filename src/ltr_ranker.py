@@ -99,6 +99,26 @@ class LTRRanker:
         return None
 
     @staticmethod
+    def _quota_major_prefix(quota_id: object) -> str:
+        text = str(quota_id or "").strip().upper()
+        if not text:
+            return ""
+        if "-" in text:
+            prefix = text.split("-", 1)[0]
+        else:
+            prefix = "".join(ch for ch in text if ch.isdigit()) or text
+        if prefix.startswith("C") and prefix[1:].isdigit():
+            return prefix[1:]
+        return prefix
+
+    @staticmethod
+    def _surface_pair_base(text: str) -> str:
+        base = str(text or "")
+        for term in ("\u5e73\u9762", "\u7acb\u9762"):
+            base = base.replace(term, "")
+        return "".join(base.split())
+
+    @staticmethod
     def _item_query_text(item: dict, context: dict | None = None) -> str:
         context = context or {}
         canonical_query = dict(context.get("canonical_query") or item.get("canonical_query") or {})
@@ -556,6 +576,103 @@ class LTRRanker:
         return False, "", details
 
     @classmethod
+    def _apply_surface_orientation_rescue(
+        cls,
+        item: dict,
+        ltr_ranked: list[dict],
+        context: dict | None = None,
+    ) -> tuple[bool, str, dict, list[dict]]:
+        if len(ltr_ranked) < 2:
+            return False, "", {}, ltr_ranked
+
+        item_text = cls._item_query_text(item, context)
+        vertical_terms = ("\u5899\u9762", "\u7acb\u9762")
+        horizontal_terms = (
+            "\u5c4b\u9762",
+            "\u697c\uff08\u5730\uff09\u9762",
+            "\u697c\u5730\u9762",
+            "\u5730\u9762",
+            "\u9876\u68da",
+        )
+        vertical_surface = "\u7acb\u9762"
+        horizontal_surface = "\u5e73\u9762"
+
+        wants_vertical = any(term in item_text for term in vertical_terms)
+        wants_horizontal = not wants_vertical and any(term in item_text for term in horizontal_terms)
+        if not wants_vertical and not wants_horizontal:
+            return False, "", {"item_text": item_text}, ltr_ranked
+
+        desired_surface = vertical_surface if wants_vertical else horizontal_surface
+        rejected_surface = horizontal_surface if wants_vertical else vertical_surface
+        top = ltr_ranked[0]
+        top_text = cls._candidate_query_text(top)
+        if desired_surface in top_text or rejected_surface not in top_text:
+            return False, "", {"item_text": item_text, "top_text": top_text}, ltr_ranked
+
+        top_prefix = cls._quota_major_prefix(top.get("quota_id"))
+        top_surface_base = cls._surface_pair_base(top_text)
+        top_param = safe_float(top.get("param_score"), 0.0)
+        top_rerank = safe_float(top.get("rerank_score"), 0.0)
+        inspected: list[dict] = []
+        for rank, candidate in enumerate(ltr_ranked[1:5], start=2):
+            candidate_text = cls._candidate_query_text(candidate)
+            candidate_prefix = cls._quota_major_prefix(candidate.get("quota_id"))
+            candidate_surface_base = cls._surface_pair_base(candidate_text)
+            candidate_param = safe_float(candidate.get("param_score"), 0.0)
+            candidate_rerank = safe_float(candidate.get("rerank_score"), 0.0)
+            inspected.append({
+                "rank": rank,
+                "quota_id": str(candidate.get("quota_id") or ""),
+                "text": candidate_text,
+                "prefix": candidate_prefix,
+                "surface_pair_base": candidate_surface_base,
+                "param_score": candidate_param,
+                "rerank_score": candidate_rerank,
+            })
+            if candidate_prefix != top_prefix:
+                continue
+            if desired_surface not in candidate_text:
+                continue
+            if candidate_surface_base != top_surface_base:
+                continue
+            if candidate_param < top_param - 0.05:
+                continue
+            if candidate_rerank < top_rerank - 0.20:
+                continue
+
+            rescued = [candidate] + [item for item in ltr_ranked if item is not candidate]
+            details = {
+                "item_text": item_text,
+                "desired_surface": desired_surface,
+                "rejected_surface": rejected_surface,
+                "top_quota_id": str(top.get("quota_id") or ""),
+                "top_text": top_text,
+                "top_prefix": top_prefix,
+                "top_surface_pair_base": top_surface_base,
+                "top_param_score": top_param,
+                "top_rerank_score": top_rerank,
+                "rescued_quota_id": str(candidate.get("quota_id") or ""),
+                "rescued_text": candidate_text,
+                "rescued_surface_pair_base": candidate_surface_base,
+                "rescued_rank": rank,
+                "rescued_param_score": candidate_param,
+                "rescued_rerank_score": candidate_rerank,
+                "inspected": inspected,
+            }
+            return True, "surface_orientation_rescued", details, rescued
+
+        return False, "", {
+            "item_text": item_text,
+            "desired_surface": desired_surface,
+            "rejected_surface": rejected_surface,
+            "top_quota_id": str(top.get("quota_id") or ""),
+            "top_text": top_text,
+            "top_prefix": top_prefix,
+            "top_surface_pair_base": top_surface_base,
+            "inspected": inspected,
+        }, ltr_ranked
+
+    @classmethod
     def _apply_ltr_guard(
         cls,
         item: dict,
@@ -586,6 +703,25 @@ class LTRRanker:
         challenger = ltr_ranked[0]
         incumbent_id = str(incumbent.get("quota_id", "") or "").strip()
         challenger_id = str(challenger.get("quota_id", "") or "").strip()
+        rescue_blocked, rescue_reason, rescue_details, rescue_ranked = cls._apply_surface_orientation_rescue(
+            item,
+            ltr_ranked,
+            context,
+        )
+        meta["surface_orientation_rescue"] = {
+            "blocked": rescue_blocked,
+            "reason": rescue_reason,
+            "details": rescue_details,
+        }
+        if rescue_blocked:
+            rescued_id = str(rescue_ranked[0].get("quota_id", "") or "") if rescue_ranked else ""
+            rescue_ranked[0]["_rank_score_source"] = "manual"
+            rescue_ranked[0]["ltr_guard_blocked"] = True
+            meta["action"] = "blocked"
+            meta["reason"] = rescue_reason
+            meta["final_top1_id"] = rescued_id
+            return rescue_ranked, meta
+
         if not incumbent_id or not challenger_id or incumbent_id == challenger_id:
             meta["action"] = "no_change"
             meta["reason"] = "same_top1"
