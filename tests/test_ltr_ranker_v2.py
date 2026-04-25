@@ -1243,3 +1243,297 @@ def test_ltr_guard_blocks_ltr_override_on_family_system_anchor(monkeypatch):
     assert meta["ltr_guard"]["reason"] == "family_system_anchor_dominates"
     assert meta["ltr_guard"]["snapshot_guard"]["blocked"] is True
     assert meta["ltr_guard"]["snapshot_guard"]["details"]["incumbent_family_match"] is True
+
+
+def test_ltr_guard_blocks_structurally_stable_pre_ltr_top1(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.20, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [
+            {
+                "f1": 0.0,
+                "entity_match": 1,
+                "canonical_name_match": 0,
+                "system_match": 1,
+                "family_match": 0,
+                "semantic_rerank_zscore": 1.40,
+            },
+            {
+                "f1": 1.0,
+                "entity_match": 0,
+                "canonical_name_match": 0,
+                "system_match": 0,
+                "family_match": 0,
+                "semantic_rerank_zscore": 0.45,
+            },
+        ],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "接地母线敷设",
+            "param_match": True,
+            "param_score": 0.76,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.82,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.94,
+            "hybrid_score": 0.94,
+            "candidate_canonical_features": {
+                "entity": "接地母线",
+                "system": "电气",
+            },
+        },
+        {
+            "quota_id": "B",
+            "name": "平整场地",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.50,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.64,
+            "hybrid_score": 0.90,
+            "candidate_canonical_features": {},
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "接地母线",
+            "description": "接地母线敷设",
+            "canonical_features": {
+                "entity": "接地母线",
+                "system": "电气",
+            },
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["A", "B"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "A"
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "pre_ltr_structural_stability"
+    assert meta["ltr_guard"]["pre_ltr_stability_guard"]["blocked"] is True
+    assert meta["ltr_guard"]["pre_ltr_stability_guard"]["details"]["incumbent_struct_matches"] == 2
+
+
+def test_ltr_guard_allows_structural_pre_ltr_top1_when_challenger_is_not_weaker(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.20, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [
+            {
+                "f1": 0.0,
+                "entity_match": 1,
+                "canonical_name_match": 0,
+                "system_match": 0,
+                "family_match": 1,
+                "semantic_rerank_zscore": 0.84,
+            },
+            {
+                "f1": 1.0,
+                "entity_match": 0,
+                "canonical_name_match": 0,
+                "system_match": 0,
+                "family_match": 0,
+                "semantic_rerank_zscore": 0.86,
+            },
+        ],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "钢管煨弯 管外径89",
+            "param_match": True,
+            "param_score": 0.82,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.82,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.94,
+            "candidate_canonical_features": {
+                "entity": "钢管",
+                "family": "pipe",
+            },
+        },
+        {
+            "quota_id": "B",
+            "name": "标志杆 单柱式 φ89",
+            "param_match": True,
+            "param_score": 0.93,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.50,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.89,
+            "hybrid_score": 0.70,
+            "candidate_canonical_features": {},
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "标杆",
+            "description": "单柱式 φ89",
+            "canonical_features": {
+                "entity": "标志杆",
+            },
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["B", "A"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "B"
+    assert meta["ltr_guard"]["action"] == "allowed"
+    assert meta["ltr_guard"]["pre_ltr_stability_guard"]["blocked"] is False
+
+
+def test_ltr_guard_blocks_surface_orientation_flip(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.20, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "聚合物水泥防水涂料 厚度1.2mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.95,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "B",
+            "name": "聚合物水泥防水涂料 厚度1.2mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.70,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "墙面涂膜防水",
+            "description": "墙面 JS 聚合物水泥基防水涂料",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["A", "B"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "A"
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "surface_orientation_protected"
+    assert meta["ltr_guard"]["surface_orientation_guard"]["blocked"] is True
+
+
+def test_ltr_guard_allows_roof_item_when_challenger_matches_vertical_description(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.20, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "改性沥青自粘卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 0.98,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.96,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "B",
+            "name": "改性沥青自粘卷材自粘法 一层 立面",
+            "param_match": True,
+            "param_score": 0.98,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.70,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面卷材防水",
+            "description": "屋面卷材防水 立面",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["B", "A"]
+    assert meta["raw_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "B"
+    assert meta["ltr_guard"]["action"] == "allowed"
+    assert meta["ltr_guard"]["surface_orientation_guard"]["blocked"] is False

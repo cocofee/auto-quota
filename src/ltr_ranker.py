@@ -460,6 +460,102 @@ class LTRRanker:
         return False, "", details
 
     @classmethod
+    def _apply_pre_ltr_stability_guard(
+        cls,
+        incumbent: dict,
+        challenger: dict,
+    ) -> tuple[bool, str, dict]:
+        incumbent_row = incumbent.get("ltr_feature_snapshot") or {}
+        challenger_row = challenger.get("ltr_feature_snapshot") or {}
+
+        incumbent_struct_matches = sum(
+            1
+            for key in ("entity_match", "canonical_name_match", "system_match", "family_match")
+            if cls._snapshot_match_flag(incumbent_row, key)
+        )
+        challenger_struct_matches = sum(
+            1
+            for key in ("entity_match", "canonical_name_match", "system_match", "family_match")
+            if cls._snapshot_match_flag(challenger_row, key)
+        )
+        incumbent_feature = safe_float(incumbent.get("feature_alignment_score"), 0.0)
+        challenger_feature = safe_float(challenger.get("feature_alignment_score"), 0.0)
+        incumbent_rerank = safe_float(incumbent.get("rerank_score"), 0.0)
+        challenger_rerank = safe_float(challenger.get("rerank_score"), 0.0)
+        incumbent_semantic_z = safe_float(incumbent_row.get("semantic_rerank_zscore"), 0.0)
+        challenger_semantic_z = safe_float(challenger_row.get("semantic_rerank_zscore"), 0.0)
+
+        details = {
+            "incumbent_struct_matches": incumbent_struct_matches,
+            "challenger_struct_matches": challenger_struct_matches,
+            "incumbent_feature_alignment_score": incumbent_feature,
+            "challenger_feature_alignment_score": challenger_feature,
+            "incumbent_rerank_score": incumbent_rerank,
+            "challenger_rerank_score": challenger_rerank,
+            "incumbent_semantic_zscore": incumbent_semantic_z,
+            "challenger_semantic_zscore": challenger_semantic_z,
+        }
+
+        if (
+            incumbent_struct_matches >= 2
+            and challenger_struct_matches == 0
+            and incumbent_feature >= challenger_feature + 0.25
+            and incumbent_rerank >= challenger_rerank + 0.05
+            and incumbent_semantic_z >= challenger_semantic_z + 0.50
+        ):
+            return True, "pre_ltr_structural_stability", details
+
+        return False, "", details
+
+    @classmethod
+    def _apply_surface_orientation_guard(
+        cls,
+        item: dict,
+        incumbent: dict,
+        challenger: dict,
+        context: dict | None = None,
+    ) -> tuple[bool, str, dict]:
+        item_text = cls._item_query_text(item, context)
+        incumbent_text = cls._candidate_query_text(incumbent)
+        challenger_text = cls._candidate_query_text(challenger)
+
+        vertical_terms = ("\u5899\u9762", "\u7acb\u9762")
+        horizontal_terms = (
+            "\u5c4b\u9762",
+            "\u697c\uff08\u5730\uff09\u9762",
+            "\u697c\u5730\u9762",
+            "\u5730\u9762",
+            "\u9876\u68da",
+        )
+        vertical_surface = "\u7acb\u9762"
+        horizontal_surface = "\u5e73\u9762"
+
+        wants_vertical = any(term in item_text for term in vertical_terms)
+        wants_horizontal = not wants_vertical and any(term in item_text for term in horizontal_terms)
+        incumbent_vertical = vertical_surface in incumbent_text
+        incumbent_horizontal = horizontal_surface in incumbent_text
+        challenger_vertical = vertical_surface in challenger_text
+        challenger_horizontal = horizontal_surface in challenger_text
+
+        details = {
+            "item_text": item_text,
+            "incumbent_text": incumbent_text,
+            "challenger_text": challenger_text,
+            "wants_vertical": wants_vertical,
+            "wants_horizontal": wants_horizontal,
+            "incumbent_vertical": incumbent_vertical,
+            "incumbent_horizontal": incumbent_horizontal,
+            "challenger_vertical": challenger_vertical,
+            "challenger_horizontal": challenger_horizontal,
+        }
+
+        if wants_vertical and incumbent_vertical and challenger_horizontal:
+            return True, "surface_orientation_protected", details
+        if wants_horizontal and incumbent_horizontal and challenger_vertical:
+            return True, "surface_orientation_protected", details
+        return False, "", details
+
+    @classmethod
     def _apply_ltr_guard(
         cls,
         item: dict,
@@ -518,6 +614,16 @@ class LTRRanker:
             incumbent,
             challenger,
         )
+        orientation_guard_blocked, orientation_reason, orientation_details = cls._apply_surface_orientation_guard(
+            item,
+            incumbent,
+            challenger,
+            context,
+        )
+        stability_guard_blocked, stability_reason, stability_details = cls._apply_pre_ltr_stability_guard(
+            incumbent,
+            challenger,
+        )
         route_profile = (
             (context or {}).get("route_profile")
             or (context or {}).get("query_route")
@@ -536,6 +642,16 @@ class LTRRanker:
             "blocked": snapshot_guard_blocked,
             "reason": snapshot_reason,
             "details": snapshot_details,
+        }
+        meta["surface_orientation_guard"] = {
+            "blocked": orientation_guard_blocked,
+            "reason": orientation_reason,
+            "details": orientation_details,
+        }
+        meta["pre_ltr_stability_guard"] = {
+            "blocked": stability_guard_blocked,
+            "reason": stability_reason,
+            "details": stability_details,
         }
         meta["route"] = route
         meta["manual_margin"] = manual_margin
@@ -557,6 +673,36 @@ class LTRRanker:
             ]
             meta["action"] = "blocked"
             meta["reason"] = snapshot_reason
+            meta["final_top1_id"] = incumbent_id
+            return guarded, meta
+
+        if orientation_guard_blocked:
+            guarded_incumbent = cls._find_candidate_by_quota_id(ltr_ranked, incumbent_id) or incumbent
+            guarded_incumbent["_rank_score_source"] = "manual"
+            guarded_incumbent["ltr_guard_blocked"] = True
+            guarded_incumbent["ltr_guard_anchor_score"] = anchor_score
+            guarded = [guarded_incumbent] + [
+                candidate
+                for candidate in ltr_ranked
+                if str(candidate.get("quota_id", "") or "").strip() != incumbent_id
+            ]
+            meta["action"] = "blocked"
+            meta["reason"] = orientation_reason
+            meta["final_top1_id"] = incumbent_id
+            return guarded, meta
+
+        if stability_guard_blocked:
+            guarded_incumbent = cls._find_candidate_by_quota_id(ltr_ranked, incumbent_id) or incumbent
+            guarded_incumbent["_rank_score_source"] = "manual"
+            guarded_incumbent["ltr_guard_blocked"] = True
+            guarded_incumbent["ltr_guard_anchor_score"] = anchor_score
+            guarded = [guarded_incumbent] + [
+                candidate
+                for candidate in ltr_ranked
+                if str(candidate.get("quota_id", "") or "").strip() != incumbent_id
+            ]
+            meta["action"] = "blocked"
+            meta["reason"] = stability_reason
             meta["final_top1_id"] = incumbent_id
             return guarded, meta
 
