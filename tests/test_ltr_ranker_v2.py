@@ -919,6 +919,70 @@ def test_ltr_guard_allows_plastic_rainwater_candidate_over_cast_iron_manual_anch
     assert "plastic_query_vs_metal_incumbent" in signals
 
 
+def test_ltr_guard_allows_arrow_candidate_with_explicit_direction_and_length(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.61, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.compute_candidate_structured_score",
+        lambda candidate: {"A": 0.92, "B": 0.86}[candidate["quota_id"]],
+    )
+
+    candidates = [
+        {
+            "quota_id": "A",
+            "name": "标记 箭头 直行(9m)热熔型",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.77,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "B",
+            "name": "标记 箭头 转弯(6m)热熔型",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "标记",
+            "description": "6m转弯箭头，热熔标线",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["B", "A"]
+    assert meta["ltr_guard"]["action"] == "allowed"
+    assert meta["ltr_guard"]["reason"] == "challenger_explicit_semantic_advantage"
+    signals = meta["ltr_guard"]["semantic_guard"]["details"]["signals"]
+    assert "traffic_arrow_spec_alignment" in signals
+
+
 def test_ltr_guard_blocks_override_on_weak_route_when_manual_margin_is_clear(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)

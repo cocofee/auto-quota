@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from loguru import logger
@@ -117,6 +118,20 @@ class LTRRanker:
         for term in ("\u5e73\u9762", "\u7acb\u9762"):
             base = base.replace(term, "")
         return "".join(base.split())
+
+    @staticmethod
+    def _traffic_arrow_spec(text: str) -> tuple[str, str]:
+        normalized = str(text or "").replace(" ", "").lower()
+        direction = ""
+        for term in ("\u76f4\u884c\u8f6c\u5f2f", "\u76f4\u884c\u6389\u5934", "\u8f6c\u5f2f", "\u76f4\u884c", "\u6389\u5934"):
+            if term in normalized:
+                direction = term
+                break
+        length = ""
+        match = re.search(r"(\d+(?:\.\d+)?)m", normalized)
+        if match:
+            length = match.group(1)
+        return direction, length
 
     @staticmethod
     def _item_query_text(item: dict, context: dict | None = None) -> str:
@@ -343,6 +358,27 @@ class LTRRanker:
         incumbent_plastic = cls._text_has_any(incumbent_text, ("upvc", "pvc", "ppr", "pe", "hdpe", "塑料"))
         if cast_iron_signal and challenger_cast_iron and incumbent_plastic:
             _record("cast_iron_query_vs_plastic_incumbent")
+
+        item_arrow_direction, item_arrow_length = cls._traffic_arrow_spec(item_text)
+        challenger_arrow_direction, challenger_arrow_length = cls._traffic_arrow_spec(challenger_text)
+        incumbent_arrow_direction, incumbent_arrow_length = cls._traffic_arrow_spec(incumbent_text)
+        arrow_direction_match = bool(
+            item_arrow_direction
+            and item_arrow_direction == challenger_arrow_direction
+            and item_arrow_direction != incumbent_arrow_direction
+        )
+        arrow_length_match = bool(
+            item_arrow_length
+            and item_arrow_length == challenger_arrow_length
+            and item_arrow_length != incumbent_arrow_length
+        )
+        if "\u7bad\u5934" in item_text and "\u7bad\u5934" in challenger_text and arrow_direction_match and arrow_length_match:
+            details["traffic_arrow_spec"] = {
+                "item": [item_arrow_direction, item_arrow_length],
+                "incumbent": [incumbent_arrow_direction, incumbent_arrow_length],
+                "challenger": [challenger_arrow_direction, challenger_arrow_length],
+            }
+            _record("traffic_arrow_spec_alignment")
 
         if details["signals"]:
             return True, "challenger_explicit_semantic_advantage", details
