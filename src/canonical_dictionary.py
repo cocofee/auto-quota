@@ -202,7 +202,7 @@ CONNECTION_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("热熔连接", ("热熔连接", "双热熔", "热熔")),
     ("卡压连接", ("卡压连接", "卡压", "环压连接", "环压")),
     ("承插连接", ("承插连接", "承插")),
-    ("粘接", ("粘接", "承插粘接")),
+    ("粘接", ("粘接", "粘结", "粘结连接", "承插粘接")),
 ]
 
 
@@ -373,6 +373,24 @@ def _normalize_by_rules(value: str, text: str,
 
 def detect_entity(text: str) -> str:
     text = text or ""
+    primary_text = re.split(
+        r"(?:名称|类型(?:、规格)?|规格(?:、类型)?|型号(?:、规格)?|规格(?:、型号)?|材质(?:、规格)?|敷设方式(?:、部位)?|安装部位|配置形式|部位|电压等级|类别)\s*[:：]",
+        text,
+        maxsplit=1,
+    )[0].strip()
+    primary_entity = _pick_by_rules(primary_text, ENTITY_RULES)
+    explicit_cable_subject = any(
+        keyword in primary_text
+        for keyword in ("电缆", "电力电缆", "控制电缆", "光缆")
+    )
+    conduit_like_primary_subject = any(
+        keyword in primary_text
+        for keyword in ("电缆保护管", "电线管", "线管", "钢导管", "导管", "穿线管", "配管")
+    )
+    if primary_entity == "电缆头":
+        return primary_entity
+    if primary_entity == "电缆" and explicit_cable_subject and not conduit_like_primary_subject:
+        return primary_entity
     plumbing_pipe_context = any(
         keyword in text
         for keyword in (
@@ -386,6 +404,7 @@ def detect_entity(text: str) -> str:
         for keyword in (
             "配管",
             "电气配管",
+            "电缆保护管",
             "导管",
             "电线管",
             "线管",
@@ -443,16 +462,10 @@ def detect_entity(text: str) -> str:
         keyword in text for keyword in ("钢管", "管道", "立管", "支管")
     ):
         return "消火栓"
-    primary_text = re.split(
-        r"(?:名称|类型(?:、规格)?|规格(?:、类型)?|型号(?:、规格)?|规格(?:、型号)?|材质(?:、规格)?|敷设方式(?:、部位)?|安装部位|配置形式|部位|电压等级|类别)\s*[:：]",
-        text,
-        maxsplit=1,
-    )[0].strip()
     if _looks_like_surge_protector_subject(primary_text):
         return "浪涌保护器"
-    picked = _pick_by_rules(primary_text, ENTITY_RULES)
-    if picked:
-        return picked
+    if primary_entity:
+        return primary_entity
     return _pick_by_rules(text, ENTITY_RULES)
 
 

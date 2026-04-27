@@ -238,4 +238,11 @@ def test_detect_entity_handles_real_pipe_and_sleeve_bill_terms():
     assert detect_entity("防紫外线PVC-U塑料管 De110【雨水管埋地】") == "管道"
     assert detect_entity("覆塑不锈钢(PP-R)压力管 DN50【冷水管】") == "管道"
     assert detect_entity("超静音HTPP三层内螺旋管 De110【污、废水管】") == "管道"
+    assert detect_entity("排水管 PVC110 敷设") == "管道"
     assert detect_entity("刚性防水套管 DN100") == "套管"
+
+
+def test_detect_entity_keeps_cable_protection_pipe_in_conduit_family():
+    assert detect_entity("电缆保护管 JDG20 敷设") == "配管"
+    assert detect_entity("电缆保护管 SC50 敷设") == "配管"
+    assert detect_entity("电力电缆 YJV-4×35 敷设") == "电缆"
