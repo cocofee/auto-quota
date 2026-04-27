@@ -983,6 +983,203 @@ def test_ltr_guard_allows_arrow_candidate_with_explicit_direction_and_length(mon
     assert "traffic_arrow_spec_alignment" in signals
 
 
+def test_ltr_guard_rescues_prime_coat_to_semirigid_emulsified_candidate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.80, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.5}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-541",
+            "name": "镶贴面层 粘贴石材",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-161",
+            "name": "透层粒料基层乳化沥青1.2L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.19,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-163",
+            "name": "透层半刚性基层乳化沥青1.1L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.12,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "透层、粘层",
+            "description": "水泥稳定碎石层上设置乳化沥青透层 喷油量1.0L/m2",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked][:3] == ["2-163", "3-541", "2-161"]
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "bitumen_layer_rescued"
+    assert meta["ltr_guard"]["bitumen_layer_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_rescues_tack_coat_to_emulsified_tack_candidate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.80, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.5}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-449",
+            "name": "模板衬墙",
+            "param_match": True,
+            "param_score": 0.97,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.06,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-161",
+            "name": "透层粒料基层乳化沥青1.2L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.11,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-165",
+            "name": "黏层沥青层乳化沥青0.5L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.14,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "透层、粘层",
+            "description": "PC-3乳化沥青粘层，用量0.3L/m2-0.6L/m2",
+        },
+        candidates,
+        {},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked][:3] == ["2-165", "4-449", "2-161"]
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "bitumen_layer_rescued"
+    assert meta["ltr_guard"]["bitumen_layer_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_generic_bitumen_title_without_emulsified_signal(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.80]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-449",
+            "name": "模板衬墙",
+            "param_match": True,
+            "param_score": 0.97,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.06,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-160",
+            "name": "透层粒料基层石油沥青1.2L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "rerank_score": 0.11,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "透层、粘层",
+            "description": "石油沥青透层 用量1.2L/m2",
+        },
+        candidates,
+        {},
+    )
+
+    assert ranked[0]["quota_id"] == "4-449"
+    assert meta["ltr_guard"]["bitumen_layer_rescue"]["blocked"] is False
+
+
 def test_ltr_guard_blocks_override_on_weak_route_when_manual_margin_is_clear(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)

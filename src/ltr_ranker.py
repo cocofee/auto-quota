@@ -134,6 +134,39 @@ class LTRRanker:
         return direction, length
 
     @staticmethod
+    def _bitumen_layer_intent(text: str) -> dict:
+        normalized = str(text or "").replace(" ", "")
+        lower = normalized.lower()
+        explicit_tack = any(
+            term in lower
+            for term in (
+                "pc-3",
+                "\u4e73\u5316\u6ca5\u9752\u7c98\u5c42",
+                "\u4e73\u5316\u6ca5\u9752\u9ecf\u5c42",
+                "\u7c98\u5c42\u7528\u91cf",
+                "\u9ecf\u5c42\u7528\u91cf",
+            )
+        )
+        explicit_prime = any(
+            term in normalized
+            for term in (
+                "\u900f\u6cb9\u5c42",
+                "\u4e73\u5316\u6ca5\u9752\u900f\u5c42",
+                "\u900f\u5c42\uff1a",
+                "\u900f\u5c42:",
+                "\u8bbe\u7f6e\u4e73\u5316\u6ca5\u9752\u900f\u5c42",
+            )
+        )
+        wants_tack = explicit_tack
+        wants_prime = not wants_tack and (explicit_prime or "\u900f\u5c42" in normalized)
+        return {
+            "wants_prime": wants_prime,
+            "wants_tack": wants_tack,
+            "emulsified": "\u4e73\u5316\u6ca5\u9752" in normalized,
+            "semi_rigid": any(term in normalized for term in ("\u534a\u521a\u6027", "\u6c34\u6ce5\u7a33\u5b9a")),
+        }
+
+    @staticmethod
     def _item_query_text(item: dict, context: dict | None = None) -> str:
         context = context or {}
         canonical_query = dict(context.get("canonical_query") or item.get("canonical_query") or {})
@@ -709,6 +742,84 @@ class LTRRanker:
         }, ltr_ranked
 
     @classmethod
+    def _apply_bitumen_layer_rescue(
+        cls,
+        item: dict,
+        ltr_ranked: list[dict],
+        context: dict | None = None,
+    ) -> tuple[bool, str, dict, list[dict]]:
+        if len(ltr_ranked) < 2:
+            return False, "", {}, ltr_ranked
+
+        item_text = cls._item_query_text(item, context)
+        intent = cls._bitumen_layer_intent(item_text)
+        if not intent["emulsified"] or not (intent["wants_prime"] or intent["wants_tack"]):
+            return False, "", {"item_text": item_text, "intent": intent}, ltr_ranked
+
+        inspected: list[dict] = []
+        best: tuple[int, int, dict] | None = None
+        for rank, candidate in enumerate(ltr_ranked[:8], start=1):
+            candidate_text = cls._candidate_query_text(candidate)
+            normalized = candidate_text.replace(" ", "")
+            candidate_prefix = cls._quota_major_prefix(candidate.get("quota_id"))
+            score = 0
+            if candidate_prefix != "2":
+                score -= 20
+            if "\u4e73\u5316\u6ca5\u9752" in normalized:
+                score += 4
+            if "\u77f3\u6cb9\u6ca5\u9752" in normalized:
+                score -= 4
+            if intent["wants_tack"]:
+                if "\u9ecf\u5c42" in normalized or "\u7c98\u5c42" in normalized:
+                    score += 8
+                if "\u900f\u5c42" in normalized:
+                    score -= 8
+            elif intent["wants_prime"]:
+                if "\u900f\u5c42" in normalized:
+                    score += 8
+                if "\u9ecf\u5c42" in normalized or "\u7c98\u5c42" in normalized:
+                    score -= 8
+                if intent["semi_rigid"] and "\u534a\u521a\u6027\u57fa\u5c42" in normalized:
+                    score += 6
+                elif intent["semi_rigid"] and "\u7c92\u6599\u57fa\u5c42" in normalized:
+                    score -= 3
+
+            inspected.append({
+                "rank": rank,
+                "quota_id": str(candidate.get("quota_id") or ""),
+                "text": candidate_text,
+                "prefix": candidate_prefix,
+                "score": score,
+            })
+            if score < 12:
+                continue
+            if best is None or score > best[0] or (score == best[0] and rank < best[1]):
+                best = (score, rank, candidate)
+
+        if best is None:
+            return False, "", {"item_text": item_text, "intent": intent, "inspected": inspected}, ltr_ranked
+
+        _score, rank, candidate = best
+        if candidate is ltr_ranked[0]:
+            return False, "", {
+                "item_text": item_text,
+                "intent": intent,
+                "selected_rank": rank,
+                "selected_quota_id": str(candidate.get("quota_id") or ""),
+                "inspected": inspected,
+            }, ltr_ranked
+
+        rescued = [candidate] + [entry for entry in ltr_ranked if entry is not candidate]
+        return True, "bitumen_layer_rescued", {
+            "item_text": item_text,
+            "intent": intent,
+            "rescued_rank": rank,
+            "rescued_quota_id": str(candidate.get("quota_id") or ""),
+            "rescued_text": cls._candidate_query_text(candidate),
+            "inspected": inspected,
+        }, rescued
+
+    @classmethod
     def _apply_ltr_guard(
         cls,
         item: dict,
@@ -739,6 +850,25 @@ class LTRRanker:
         challenger = ltr_ranked[0]
         incumbent_id = str(incumbent.get("quota_id", "") or "").strip()
         challenger_id = str(challenger.get("quota_id", "") or "").strip()
+        bitumen_blocked, bitumen_reason, bitumen_details, bitumen_ranked = cls._apply_bitumen_layer_rescue(
+            item,
+            ltr_ranked,
+            context,
+        )
+        meta["bitumen_layer_rescue"] = {
+            "blocked": bitumen_blocked,
+            "reason": bitumen_reason,
+            "details": bitumen_details,
+        }
+        if bitumen_blocked:
+            rescued_id = str(bitumen_ranked[0].get("quota_id", "") or "") if bitumen_ranked else ""
+            bitumen_ranked[0]["_rank_score_source"] = "manual"
+            bitumen_ranked[0]["ltr_guard_blocked"] = True
+            meta["action"] = "blocked"
+            meta["reason"] = bitumen_reason
+            meta["final_top1_id"] = rescued_id
+            return bitumen_ranked, meta
+
         rescue_blocked, rescue_reason, rescue_details, rescue_ranked = cls._apply_surface_orientation_rescue(
             item,
             ltr_ranked,
