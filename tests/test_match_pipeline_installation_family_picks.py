@@ -964,3 +964,29 @@ def test_pick_category_safe_candidate_does_not_rescue_conduit_after_hard_guard_r
     picked = _pick_category_safe_candidate(item, candidates)
 
     assert picked["name"] == "\u94a2\u5236\u69fd\u5f0f\u6865\u67b6\u5b89\u88c5 (\u5bbd\u00d7\u9ad8mm\u4ee5\u4e0b) 400"
+
+
+def test_pick_explicit_ventilation_rescue_returns_candidate_reference():
+    candidates = [
+        {
+            "quota_id": "C9-1",
+            "name": "\u5fae\u578b\u7535\u673a\u5b89\u88c5",
+            "param_score": 0.9,
+            "rerank_score": 0.9,
+        },
+        {
+            "quota_id": "C9-2",
+            "name": "\u98ce\u6247\u5b89\u88c5 \u6392\u6c14\u6247",
+            "param_score": 0.7,
+            "rerank_score": 0.6,
+        },
+    ]
+
+    picked = _pick_explicit_ventilation_family_candidate(
+        "\u6392\u6c14\u6247 \u540d\u79f0:\u6392\u6c14\u6247",
+        candidates,
+    )
+
+    assert picked is candidates[1]
+    assert picked["name_bonus"] == 0.5
+    assert [candidate["quota_id"] for candidate in candidates if candidate is not picked] == ["C9-1"]

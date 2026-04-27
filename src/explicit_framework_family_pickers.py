@@ -10,6 +10,7 @@ from src.explicit_electrical_family_pickers import (
     _extract_cable_head_craft_anchor,
     _infer_cable_conductor_anchor,
 )
+from src.explicit_family_picker_utils import pick_best_candidate, score_candidate
 from src.explicit_picker_framework import ExplicitPickerFramework
 from src.text_parser import parser as text_parser
 
@@ -1075,8 +1076,39 @@ def _pick_explicit_valve_family_candidate(bill_text: str,
 
 def _pick_explicit_ventilation_family_candidate(bill_text: str,
                                                 candidates: list[dict]) -> dict | None:
+    normalized_text = (bill_text or "").replace("排风扇", "排气扇")
+    rescue_wrong_family = any(
+        any(keyword in str(candidate.get("name", "") or "") for keyword in ("微型电机", "电机"))
+        for candidate in candidates
+    )
+    if rescue_wrong_family and any(keyword in normalized_text for keyword in ("排气扇", "换气扇", "通风器")):
+        prefer_ceiling = any(keyword in normalized_text for keyword in ("天花", "天花式", "吊顶"))
+        prefer_duct = any(keyword in normalized_text for keyword in ("管道", "风管"))
+        scored: list[tuple[tuple[int, float, float], dict]] = []
+        for candidate in candidates:
+            quota_name = str(candidate.get("name", "") or "")
+            score = 0
+            if any(keyword in quota_name for keyword in ("排气扇", "换气扇", "通风器")):
+                score += 16
+            if any(keyword in quota_name for keyword in ("微型电机", "电机")):
+                score -= 18
+            if prefer_ceiling:
+                if any(keyword in quota_name for keyword in ("天花", "天花式", "吊顶")):
+                    score += 8
+                else:
+                    score -= 4
+            if prefer_duct:
+                if any(keyword in quota_name for keyword in ("管道", "管道式", "风管")):
+                    score += 6
+            if score <= 0:
+                continue
+            scored.append(score_candidate(candidate, score))
+        best = pick_best_candidate(scored)
+        if best is not None:
+            best["name_bonus"] = max(float(best.get("name_bonus", 0.0) or 0.0), 0.5)
+            return best
     return _PICKER_FRAMEWORK.pick(
-        bill_text,
+        normalized_text,
         candidates,
         "ventilation",
         build_context=_build_ventilation_picker_context,
