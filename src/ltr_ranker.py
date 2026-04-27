@@ -167,6 +167,15 @@ class LTRRanker:
         }
 
     @staticmethod
+    def _water_stabilized_paver_intent(text: str) -> dict:
+        normalized = str(text or "").replace(" ", "")
+        return {
+            "water_stabilized": "\u6c34\u6ce5\u7a33\u5b9a" in normalized,
+            "paver": "\u644a\u94fa\u673a" in normalized,
+            "thick_layer": "\u539a" in normalized and "\u6bcf\u51cf" not in normalized and "\u6bcf\u589e\u51cf" not in normalized,
+        }
+
+    @staticmethod
     def _item_query_text(item: dict, context: dict | None = None) -> str:
         context = context or {}
         canonical_query = dict(context.get("canonical_query") or item.get("canonical_query") or {})
@@ -801,11 +810,12 @@ class LTRRanker:
 
         _score, rank, candidate = best
         if candidate is ltr_ranked[0]:
-            return False, "", {
+            return True, "bitumen_layer_confirmed", {
                 "item_text": item_text,
                 "intent": intent,
-                "selected_rank": rank,
-                "selected_quota_id": str(candidate.get("quota_id") or ""),
+                "rescued_rank": rank,
+                "rescued_quota_id": str(candidate.get("quota_id") or ""),
+                "rescued_text": cls._candidate_query_text(candidate),
                 "inspected": inspected,
             }, ltr_ranked
 
@@ -818,6 +828,68 @@ class LTRRanker:
             "rescued_text": cls._candidate_query_text(candidate),
             "inspected": inspected,
         }, rescued
+
+    @classmethod
+    def _apply_water_stabilized_paver_rescue(
+        cls,
+        item: dict,
+        ltr_ranked: list[dict],
+        context: dict | None = None,
+    ) -> tuple[bool, str, dict, list[dict]]:
+        if len(ltr_ranked) < 2:
+            return False, "", {}, ltr_ranked
+
+        item_text = cls._item_query_text(item, context)
+        intent = cls._water_stabilized_paver_intent(item_text)
+        if not intent["water_stabilized"] or not intent["paver"]:
+            return False, "", {"item_text": item_text, "intent": intent}, ltr_ranked
+
+        inspected: list[dict] = []
+        best: tuple[int, int, dict] | None = None
+        for rank, candidate in enumerate(ltr_ranked[:8], start=1):
+            candidate_text = cls._candidate_query_text(candidate)
+            normalized = candidate_text.replace(" ", "")
+            candidate_prefix = cls._quota_major_prefix(candidate.get("quota_id"))
+            score = 0
+            if candidate_prefix != "2":
+                score -= 20
+            if "\u6c34\u6ce5\u7a33\u5b9a\u788e\u77f3" in normalized:
+                score += 4
+            if "\u644a\u94fa\u673a\u644a\u94fa" in normalized:
+                score += 10
+            if "\u4eba\u94fa" in normalized:
+                score -= 8
+            if "\u6bcf\u51cf" in normalized or "\u6bcf\u589e\u51cf" in normalized:
+                score -= 6
+            elif intent["thick_layer"] and "\u539a20cm" in normalized:
+                score += 4
+
+            inspected.append({
+                "rank": rank,
+                "quota_id": str(candidate.get("quota_id") or ""),
+                "text": candidate_text,
+                "prefix": candidate_prefix,
+                "score": score,
+            })
+            if score < 12:
+                continue
+            if best is None or score > best[0] or (score == best[0] and rank < best[1]):
+                best = (score, rank, candidate)
+
+        if best is None:
+            return False, "", {"item_text": item_text, "intent": intent, "inspected": inspected}, ltr_ranked
+
+        _score, rank, candidate = best
+        ranked = [candidate] + [entry for entry in ltr_ranked if entry is not candidate]
+        reason = "water_stabilized_paver_confirmed" if candidate is ltr_ranked[0] else "water_stabilized_paver_rescued"
+        return True, reason, {
+            "item_text": item_text,
+            "intent": intent,
+            "rescued_rank": rank,
+            "rescued_quota_id": str(candidate.get("quota_id") or ""),
+            "rescued_text": cls._candidate_query_text(candidate),
+            "inspected": inspected,
+        }, ranked
 
     @classmethod
     def _apply_ltr_guard(
@@ -850,6 +922,25 @@ class LTRRanker:
         challenger = ltr_ranked[0]
         incumbent_id = str(incumbent.get("quota_id", "") or "").strip()
         challenger_id = str(challenger.get("quota_id", "") or "").strip()
+        paver_blocked, paver_reason, paver_details, paver_ranked = cls._apply_water_stabilized_paver_rescue(
+            item,
+            ltr_ranked,
+            context,
+        )
+        meta["water_stabilized_paver_rescue"] = {
+            "blocked": paver_blocked,
+            "reason": paver_reason,
+            "details": paver_details,
+        }
+        if paver_blocked:
+            rescued_id = str(paver_ranked[0].get("quota_id", "") or "") if paver_ranked else ""
+            paver_ranked[0]["_rank_score_source"] = "manual"
+            paver_ranked[0]["ltr_guard_blocked"] = True
+            meta["action"] = "blocked"
+            meta["reason"] = paver_reason
+            meta["final_top1_id"] = rescued_id
+            return paver_ranked, meta
+
         bitumen_blocked, bitumen_reason, bitumen_details, bitumen_ranked = cls._apply_bitumen_layer_rescue(
             item,
             ltr_ranked,

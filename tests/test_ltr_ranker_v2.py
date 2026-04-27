@@ -1180,6 +1180,153 @@ def test_ltr_guard_does_not_rescue_generic_bitumen_title_without_emulsified_sign
     assert meta["ltr_guard"]["bitumen_layer_rescue"]["blocked"] is False
 
 
+def test_ltr_guard_confirms_prime_coat_ltr_top1_against_weak_route_guard(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.80, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-541",
+            "name": "镶贴面层 粘贴石材",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.47,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-161",
+            "name": "透层粒料基层乳化沥青1.2L/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.40,
+            "rerank_score": 0.19,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "透层、粘层",
+            "description": "材料品种:透油层乳化沥青 喷油量:0.9-1.0L/m2",
+        },
+        candidates,
+        {"query_route": {"route": "material"}},
+    )
+
+    assert ranked[0]["quota_id"] == "2-161"
+    assert meta["raw_ltr_top1_id"] == "2-161"
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "bitumen_layer_confirmed"
+    assert meta["ltr_guard"]["bitumen_layer_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_rescues_water_stabilized_paver_candidate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90, 0.85, 0.80]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}, {"f1": 0.4}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-129",
+            "name": "水泥稳定碎石基层 现拌人铺5%水泥稳定碎石基层厚20cm",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.87,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-186",
+            "name": "垫层碎石",
+            "param_match": True,
+            "param_score": 0.89,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-133",
+            "name": "水泥稳定碎石基层 现拌沥青摊铺机摊铺5%水泥稳定碎石基层厚20cm",
+            "param_match": True,
+            "param_score": 0.89,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.45,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-134",
+            "name": "水泥稳定碎石基层 现拌沥青摊铺机摊铺5%水泥稳定碎石基层每减1cm",
+            "param_match": True,
+            "param_score": 0.89,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.44,
+            "rerank_score": 0.81,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "水泥稳定碎（砾）石 调节层",
+            "description": "水泥稳定碎石层 调节层 摊铺方式：采用集中厂拌且摊铺时必须采用专用摊铺机摊铺",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}},
+    )
+
+    assert ranked[0]["quota_id"] == "2-133"
+    assert meta["ltr_guard"]["action"] == "blocked"
+    assert meta["ltr_guard"]["reason"] == "water_stabilized_paver_rescued"
+    assert meta["ltr_guard"]["water_stabilized_paver_rescue"]["blocked"] is True
+
+
 def test_ltr_guard_blocks_override_on_weak_route_when_manual_margin_is_clear(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
