@@ -570,6 +570,8 @@ def test_prepare_candidates_adds_neighbors_from_existing_candidate_pool(monkeypa
     )
 
     matched = next(candidate for candidate in candidates if candidate["quota_id"] == "9-92")
+    assert matched["name"] == "neighbor quota"
+    assert matched["unit"] == "m"
     assert matched["match_source"] == "existing_candidate_neighbor"
     assert matched["candidate_neighbor_seed"] == "9-91"
 

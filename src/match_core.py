@@ -2074,17 +2074,23 @@ def _collect_existing_candidate_neighbor_priors(
             if neighbor_id in existing_ids:
                 continue
             materialized = materialize(neighbor_id)
-            neighbor = {
+            if not isinstance(materialized, dict):
+                continue
+            if str(materialized.get("quota_id", "") or "").strip() != neighbor_id:
+                continue
+            if not str(materialized.get("name", "") or "").strip():
+                continue
+            neighbor = dict(materialized)
+            neighbor.update({
                 "quota_id": neighbor_id,
-                "name": str(candidate.get("name", "") or "").strip(),
-                "unit": str(candidate.get("unit", "") or "").strip(),
-                "candidate_canonical_features": candidate.get("candidate_canonical_features"),
-                "canonical_features": candidate.get("canonical_features"),
-            }
-            if materialized:
-                neighbor["neighbor_materialized_name"] = materialized.get("name", "")
-                if not neighbor["unit"]:
-                    neighbor["unit"] = str(materialized.get("unit", "") or "").strip()
+                "name": str(materialized.get("name", "") or "").strip(),
+                "unit": str(materialized.get("unit", "") or "").strip(),
+                "candidate_canonical_features": materialized.get("candidate_canonical_features")
+                or candidate.get("candidate_canonical_features"),
+                "canonical_features": materialized.get("canonical_features")
+                or candidate.get("canonical_features"),
+                "neighbor_materialized_name": materialized.get("name", ""),
+            })
             neighbor["match_source"] = "existing_candidate_neighbor"
             neighbor["candidate_neighbor_seed"] = quota_id
             neighbor["knowledge_prior_sources"] = ["candidate_neighbor"]

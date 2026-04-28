@@ -30,6 +30,7 @@ from src.match_core import (
 )
 from src.performance_monitor import PerformanceMonitor
 from src.policy_engine import PolicyEngine
+from src.quota_search import search_by_id
 from src.rule_validator import RuleValidator
 from src.reason_taxonomy import merge_reason_tags
 
@@ -169,6 +170,7 @@ def _init_ranking_meta() -> dict:
         "legacy_top1_id": "",
         "post_final_top1_id": "",
         "final_changed_by": "",
+        "rank_stage_trace_steps": [],
         "candidate_count": 0,
         "hard_param_fail_rejected_count": 0,
         "ltr": {},
@@ -189,6 +191,97 @@ def _init_ranking_meta() -> dict:
         "unified_ranking_diagnostics": {},
         "unified_ranking_error": "",
     }
+
+
+def _build_rank_stage_reason(name: str,
+                             *,
+                             prev_top1_id: str,
+                             top1_id: str,
+                             overridden: bool,
+                             reason: str) -> str:
+    base_reason = str(reason or "").strip() or ("top1_changed" if overridden else "top1_unchanged")
+    if overridden:
+        return f"{name} override {prev_top1_id}->{top1_id}; reason={base_reason}"
+    stable_top1_id = top1_id or prev_top1_id or ""
+    return f"{name} keep {stable_top1_id}; reason={base_reason}"
+
+
+def _queue_rank_stage_trace_step(ranking_meta: dict,
+                                 *,
+                                 name: str,
+                                 top1_id: str,
+                                 prev_top1_id: str,
+                                 reason: str) -> None:
+    if not isinstance(ranking_meta, dict):
+        return
+    steps = ranking_meta.get("rank_stage_trace_steps")
+    if not isinstance(steps, list):
+        steps = []
+    top1_id = str(top1_id or "")
+    prev_top1_id = str(prev_top1_id or "")
+    overridden = bool(top1_id and prev_top1_id and top1_id != prev_top1_id)
+    steps.append({
+        "name": str(name or "").strip(),
+        "top1_id": top1_id,
+        "prev_top1_id": prev_top1_id,
+        "overridden": overridden,
+        "override_reason": _build_rank_stage_reason(
+            str(name or "").strip(),
+            prev_top1_id=prev_top1_id,
+            top1_id=top1_id,
+            overridden=overridden,
+            reason=reason,
+        ),
+    })
+    ranking_meta["rank_stage_trace_steps"] = steps
+
+
+def _flush_rank_stage_trace_steps(result: dict) -> None:
+    if not isinstance(result, dict):
+        return
+    pending_steps = result.pop("_pending_rank_stage_trace_steps", None)
+    if not isinstance(pending_steps, list):
+        return
+    for step in pending_steps:
+        if not isinstance(step, dict):
+            continue
+        _append_trace_step(
+            result,
+            "rank_stage",
+            name=str(step.get("name", "") or ""),
+            top1_id=str(step.get("top1_id", "") or ""),
+            prev_top1_id=str(step.get("prev_top1_id", "") or ""),
+            overridden=bool(step.get("overridden", False)),
+            override_reason=str(step.get("override_reason", "") or ""),
+        )
+
+
+def _resolve_ltr_rank_stage_reason(ltr_meta: dict) -> str:
+    fallback_reason = str((ltr_meta or {}).get("fallback_reason") or "").strip()
+    if fallback_reason:
+        return f"ltr_fallback:{fallback_reason}"
+    ltr_guard = dict((ltr_meta or {}).get("ltr_guard") or {})
+    if str(ltr_guard.get("action") or "").strip() == "blocked":
+        snapshot_guard = dict(ltr_guard.get("snapshot_guard") or {})
+        guard_reason = str(snapshot_guard.get("reason") or ltr_guard.get("reason") or "blocked").strip()
+        return f"ltr_guard_blocked:{guard_reason}"
+    primary_stage = str((ltr_meta or {}).get("primary_stage") or "").strip()
+    if primary_stage == "ltr":
+        return "ltr_model_rerank"
+    if primary_stage == "manual":
+        return "manual_rank_retained"
+    return primary_stage or "ltr_stage_completed"
+
+
+def _resolve_cgr_rank_stage_reason(ltr_meta: dict) -> str:
+    cgr_meta = dict((ltr_meta or {}).get("cgr") or {})
+    override_reason = str(cgr_meta.get("override_reason") or cgr_meta.get("reason") or "").strip()
+    if override_reason:
+        return f"cgr:{override_reason}"
+    if cgr_meta:
+        return "cgr_ranked_without_override"
+    fallback_reason = str((ltr_meta or {}).get("fallback_reason") or "").strip()
+    return f"cgr_not_run:{fallback_reason}" if fallback_reason else "cgr_not_run"
 
 
 def _resolve_unified_ranking_flags() -> dict:
@@ -612,6 +705,7 @@ def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, r
         "score_gap": max(selected_score - second_score, 0.0),
         "selected_rank_breakdown": explain_candidate_rank_score(selected or {}),
         "second_rank_breakdown": explain_candidate_rank_score(second or {}) if second else {"rank_score": 0.0, "stage_priority": {}},
+        "top_candidates": _build_ranked_candidate_snapshots(ordered, top_n=3),
         "decision_owner": decision_owner,
         "top1_flip_count": len(rank_timeline_changes),
         "rank_timeline": timeline,
@@ -638,6 +732,16 @@ def _build_ranker_trace_diagnostics(candidates: list[dict], best: dict | None, r
     }
 
 
+def _extract_recall_topk_ids(candidates: list[dict] | None) -> list[str]:
+    recall_topk_ids: list[str] = []
+    for candidate in list(candidates or []):
+        if not isinstance(candidate, dict):
+            continue
+        quota_id = str(candidate.get("quota_id", "") or "").strip()
+        if quota_id:
+            recall_topk_ids.append(quota_id)
+    return recall_topk_ids
+
 
 def _book_code_aliases_for_search_item(item: dict) -> set[str]:
     aliases: set[str] = set()
@@ -663,6 +767,7 @@ def _merge_existing_candidate_neighbors_for_search_mode(
     item: dict,
     candidates: list[dict],
     *,
+    materialize_quota_candidate=None,
     top_k: int = 8,
 ) -> list[dict]:
     if not candidates:
@@ -677,6 +782,7 @@ def _merge_existing_candidate_neighbors_for_search_mode(
         if str(candidate.get("quota_id", "") or "").strip()
     }
     neighbors: list[dict] = []
+    materializer = materialize_quota_candidate
     for candidate in candidates[:20]:
         quota_id = str(candidate.get("quota_id", "") or "").strip()
         match = re.match(r"^(.+-)(\d+)$", quota_id)
@@ -691,22 +797,47 @@ def _merge_existing_candidate_neighbors_for_search_mode(
             neighbor_id = f"{prefix}{number + offset}"
             if neighbor_id in existing_ids:
                 continue
-            neighbor = {
+
+            materialized = None
+            if callable(materializer):
+                materialized = materializer(neighbor_id)
+            else:
+                province = str((item or {}).get("province", "") or "").strip() or None
+                row = search_by_id(neighbor_id, province=province)
+                if row:
+                    materialized = {"quota_id": row[0], "name": row[1], "unit": row[2]}
+            if isinstance(materialized, (tuple, list)) and len(materialized) >= 3:
+                materialized = {
+                    "quota_id": materialized[0],
+                    "name": materialized[1],
+                    "unit": materialized[2],
+                }
+            if not isinstance(materialized, dict):
+                continue
+            if str(materialized.get("quota_id", "") or "").strip() != neighbor_id:
+                continue
+            if not str(materialized.get("name", "") or "").strip():
+                continue
+
+            neighbor = dict(materialized)
+            neighbor.update({
                 "quota_id": neighbor_id,
-                "name": str(candidate.get("name", "") or "").strip(),
-                "unit": str(candidate.get("unit", "") or "").strip(),
+                "name": str(materialized.get("name", "") or "").strip(),
+                "unit": str(materialized.get("unit", "") or "").strip(),
                 "match_source": "existing_candidate_neighbor",
                 "candidate_neighbor_seed": quota_id,
                 "knowledge_prior_sources": ["candidate_neighbor"],
                 "knowledge_prior_score": 0.50 - min(abs(offset), 2) * 0.03,
                 "hybrid_score": float(candidate.get("hybrid_score", 0.0) or 0.0) * 0.85,
                 "rerank_score": float(candidate.get("rerank_score", candidate.get("hybrid_score", 0.0)) or 0.0) * 0.85,
-            }
+            })
             neighbors.append(neighbor)
             existing_ids.add(neighbor_id)
             if len(neighbors) >= top_k:
                 return list(candidates or []) + neighbors
     return list(candidates or []) + neighbors
+
+
 def _run_rank_pipeline(item: dict,
                        decision_candidates: list[dict],
                        *,
@@ -750,9 +881,45 @@ def _run_rank_pipeline(item: dict,
             "reason": "skipped_by_unified_primary",
             "legacy_stage_disabled": True,
         }
+        _queue_rank_stage_trace_step(
+            ranking_meta,
+            name="ltr",
+            top1_id=ranking_meta["post_ltr_top1_id"],
+            prev_top1_id=ranking_meta["pre_ltr_top1_id"],
+            reason="ltr_skipped_by_unified_primary",
+        )
+        _queue_rank_stage_trace_step(
+            ranking_meta,
+            name="cgr_ranker",
+            top1_id=ranking_meta["post_cgr_top1_id"],
+            prev_top1_id=ranking_meta["post_ltr_top1_id"],
+            reason="cgr_skipped_by_unified_primary",
+        )
+        _queue_rank_stage_trace_step(
+            ranking_meta,
+            name="candidate_arbiter",
+            top1_id=ranking_meta["post_arbiter_top1_id"],
+            prev_top1_id=ranking_meta["post_cgr_top1_id"],
+            reason="arbiter_skipped_by_unified_primary",
+        )
+        _queue_rank_stage_trace_step(
+            ranking_meta,
+            name="explicit_picker",
+            top1_id=ranking_meta["post_explicit_top1_id"],
+            prev_top1_id=ranking_meta["post_arbiter_top1_id"],
+            reason="explicit_picker_skipped_by_unified_primary",
+        )
         best = _pick_category_safe_candidate(item, ordered) if ordered else None
         if best:
             ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
+        ranking_meta["post_final_top1_id"] = str(ranking_meta.get("selected_top1_id", "") or "")
+        _queue_rank_stage_trace_step(
+            ranking_meta,
+            name="category_safe",
+            top1_id=ranking_meta["post_final_top1_id"],
+            prev_top1_id=ranking_meta["post_explicit_top1_id"],
+            reason="category_safe_candidate_selected" if best else "category_safe_no_match",
+        )
         return ordered, ranking_meta, arbitration, explicit_override, best
 
     api = _api()
@@ -760,6 +927,20 @@ def _run_rank_pipeline(item: dict,
     ranking_meta["ltr"] = ltr_meta
     ranking_meta["post_ltr_top1_id"] = str((ltr_meta.get("post_ltr_top1_id") or _top_candidate_id(ordered)) or "")
     ranking_meta["post_cgr_top1_id"] = str((ltr_meta.get("post_cgr_top1_id") or ranking_meta["post_ltr_top1_id"]) or "")
+    _queue_rank_stage_trace_step(
+        ranking_meta,
+        name="ltr",
+        top1_id=ranking_meta["post_ltr_top1_id"],
+        prev_top1_id=ranking_meta["pre_ltr_top1_id"],
+        reason=_resolve_ltr_rank_stage_reason(ltr_meta),
+    )
+    _queue_rank_stage_trace_step(
+        ranking_meta,
+        name="cgr_ranker",
+        top1_id=ranking_meta["post_cgr_top1_id"],
+        prev_top1_id=ranking_meta["post_ltr_top1_id"],
+        reason=_resolve_cgr_rank_stage_reason(ltr_meta),
+    )
 
     if allow_arbiter:
         arbiter_candidates, arbitration = api.arbitrate_candidates(item, ordered, route_profile=item.get("query_route"))
@@ -780,6 +961,13 @@ def _run_rank_pipeline(item: dict,
             "reason": "no_param_matched_candidates",
         }
         ranking_meta["post_arbiter_top1_id"] = ranking_meta["post_ltr_top1_id"]
+    _queue_rank_stage_trace_step(
+        ranking_meta,
+        name="candidate_arbiter",
+        top1_id=ranking_meta["post_arbiter_top1_id"],
+        prev_top1_id=ranking_meta["post_cgr_top1_id"],
+        reason=str(arbitration.get("reason") or "arbiter_not_run"),
+    )
 
     if allow_explicit:
         explicit_result = _promote_explicit_distribution_box_candidate(item, ordered)
@@ -800,20 +988,44 @@ def _run_rank_pipeline(item: dict,
         ranking_meta["post_explicit_top1_id"] = _top_candidate_id(ordered)
     else:
         ranking_meta["post_explicit_top1_id"] = ranking_meta["post_arbiter_top1_id"]
+    _queue_rank_stage_trace_step(
+        ranking_meta,
+        name="explicit_picker",
+        top1_id=ranking_meta["post_explicit_top1_id"],
+        prev_top1_id=ranking_meta["post_arbiter_top1_id"],
+        reason=str(
+            (explicit_override or {}).get("reason")
+            or ("explicit_stage_skipped" if not allow_explicit else "no_explicit_override")
+        ),
+    )
 
     ranking_meta["post_anchor_top1_id"] = _top_candidate_id(ordered)
 
-    best = _pick_category_safe_candidate(item, ordered) if ordered else None
+    category_safe_best = _pick_category_safe_candidate(item, ordered) if ordered else None
+    best = category_safe_best
     if best is None and ordered:
         best = ordered[0]
     if best:
         ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")
+    ranking_meta["post_final_top1_id"] = str(ranking_meta.get("selected_top1_id", "") or "")
+    _queue_rank_stage_trace_step(
+        ranking_meta,
+        name="category_safe",
+        top1_id=ranking_meta["post_final_top1_id"],
+        prev_top1_id=ranking_meta["post_explicit_top1_id"],
+        reason=(
+            "category_safe_candidate_selected"
+            if category_safe_best
+            else ("fallback_to_rank_head_after_category_safe_reject" if ordered else "category_safe_no_match")
+        ),
+    )
     return ordered, ranking_meta, arbitration, explicit_override, best
 
 
 def _assemble_search_result_payload(item: dict,
                                     *,
                                     candidates: list[dict],
+                                    recall_topk_ids: list[str],
                                     valid_candidates: list[dict],
                                     matched_candidates: list[dict],
                                     best: dict | None,
@@ -870,6 +1082,7 @@ def _assemble_search_result_payload(item: dict,
         "candidate_count": len(valid_candidates),
         "hard_param_fail_rejected_count": ranking_meta["hard_param_fail_rejected_count"],
         "all_candidate_ids": all_candidate_ids,
+        "recall_topk_ids": list(recall_topk_ids or []),
         "candidate_snapshots": _build_ranked_candidate_snapshots(valid_candidates, top_n=20),
         "match_source": "search",
         "arbitration": arbitration,
@@ -943,6 +1156,7 @@ def _assemble_search_result_payload(item: dict,
         candidates_count=len(valid_candidates),
         candidates=_summarize_candidates_for_trace(candidates),
     )
+    result["_pending_rank_stage_trace_steps"] = list(ranking_meta.get("rank_stage_trace_steps") or [])
     return result
 
 
@@ -1047,7 +1261,10 @@ def _build_search_result_from_candidates_legacy(item: dict, candidates: list[dic
     return _build_search_result_from_candidates(item, candidates)
 
 
-def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> dict:
+def _build_search_result_from_candidates(item: dict,
+                                         candidates: list[dict],
+                                         *,
+                                         recall_topk_ids: list[str] | None = None) -> dict:
     performance_monitor = PerformanceMonitor()
     best = None
     confidence = 0.0
@@ -1057,6 +1274,11 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
     reasoning_decision: dict = {}
     matched_candidates: list[dict] = []
     ranking_meta = _init_ranking_meta()
+    resolved_recall_topk_ids = (
+        list(recall_topk_ids)
+        if recall_topk_ids is not None
+        else _extract_recall_topk_ids(candidates)
+    )
 
     with performance_monitor.measure("search_candidates_validate"):
         valid_candidates = [
@@ -1129,6 +1351,7 @@ def _build_search_result_from_candidates(item: dict, candidates: list[dict]) -> 
         result = _assemble_search_result_payload(
             item,
             candidates=candidates,
+            recall_topk_ids=resolved_recall_topk_ids,
             valid_candidates=valid_candidates,
             matched_candidates=matched_candidates,
             best=best,
@@ -1162,6 +1385,7 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
         item,
         list(candidates or []),
     )
+    raw_recall_topk_ids = _extract_recall_topk_ids(active_candidates)
     injected_rule_qid = ""
     with performance_monitor.measure("search_rule_backup_injection"):
         if rule_backup:
@@ -1169,10 +1393,21 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
                 item, active_candidates, rule_backup
             )
     with performance_monitor.measure("search_result_build"):
-        result = _build_search_result_from_candidates(item, active_candidates)
+        result = _build_search_result_from_candidates(
+            item,
+            active_candidates,
+            recall_topk_ids=raw_recall_topk_ids,
+        )
+    built_search_result = result
     _append_item_review_rejection_trace(result, item)
     with performance_monitor.measure("search_experience_reconcile"):
         result, exp_hits = _reconcile_search_and_experience(result, exp_backup, exp_hits)
+    if (
+        isinstance(built_search_result, dict)
+        and isinstance(built_search_result.get("_pending_rank_stage_trace_steps"), list)
+        and not isinstance(result.get("_pending_rank_stage_trace_steps"), list)
+    ):
+        result["_pending_rank_stage_trace_steps"] = list(built_search_result.get("_pending_rank_stage_trace_steps") or [])
     if injected_rule_qid:
         selected_qid = str((result.get("quotas") or [{}])[0].get("quota_id", "") or "").strip()
         if selected_qid == injected_rule_qid:
@@ -1204,6 +1439,7 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
         final_confidence=result.get("confidence", 0),
         search_stage_performance=result.get("search_stage_performance") or {},
     )
+    _flush_rank_stage_trace_steps(result)
     return result, exp_hits, rule_hits
 
 
