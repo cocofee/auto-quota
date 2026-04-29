@@ -1,9 +1,28 @@
 # -*- coding: utf-8 -*-
 
+import shutil
 from pathlib import Path
+from uuid import uuid4
+
+import pytest
 
 import src.material_db as material_db_module
 from src.material_db import MaterialDB
+
+
+def _prepare_temp_root(name: str) -> Path:
+    temp_root = (Path("output") / f"_tmp_material_db_lookup_{name}_{uuid4().hex}").resolve()
+    temp_root.mkdir(parents=True, exist_ok=True)
+    return temp_root
+
+
+@pytest.fixture
+def tmp_path(request) -> Path:
+    temp_root = _prepare_temp_root(request.node.name)
+    try:
+        yield temp_root
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def test_search_price_by_name_rejects_spec_boundary_mismatch(tmp_path: Path):
@@ -476,3 +495,114 @@ def test_search_price_by_name_includes_user_contributed_market_price(tmp_path: P
     assert result is not None
     assert result["price"] == 420.0
     assert "市场价" in result["source"]
+
+
+def test_add_price_demotes_existing_user_contributed_duplicate(tmp_path: Path):
+    db = MaterialDB(str(tmp_path / "material.db"))
+
+    material_id = db.add_material("球墨铸铁井盖", "700*800", "套")
+    existing_id = db.add_price(
+        material_id,
+        420.0,
+        "user_contribute",
+        province="广东",
+        city="广州",
+        unit="套",
+        period_end="2026-04-01",
+        source_doc="用户手填",
+        authority_level="reference",
+        usable_for_quote=1,
+    )
+
+    dedup_id = db.add_price(
+        material_id,
+        420.0,
+        "user_contribute",
+        province="广东",
+        city="广州",
+        unit="套",
+        period_end="2026-04-01",
+        source_doc="用户手填",
+        authority_level="reference",
+        usable_for_quote=0,
+        dedup=True,
+    )
+
+    assert dedup_id == existing_id
+    assert db.search_price_by_name(
+        "球墨铸铁井盖",
+        province="广东",
+        city="广州",
+        spec="700*800",
+        target_unit="套",
+    ) is None
+    reference = db.get_latest_price(material_id, province="广东", include_reference=True)
+    assert reference is not None
+    assert reference["usable_for_quote"] == 0
+
+
+def test_material_asset_reuses_project_confirmed_price_only_for_same_project(tmp_path: Path):
+    db = MaterialDB(str(tmp_path / "material.db"))
+
+    asset_id = db.add_material_asset(
+        name="HDPE给水管",
+        spec="De63",
+        unit="m",
+        price=42.6,
+        province="广东",
+        city="广州",
+        project_key="project-a",
+        raw_feature_desc="1.材质:HDPE给水管\n2.规格:De63",
+    )
+
+    assert asset_id > 0
+
+    same_project = db.search_material_asset(
+        name="HDPE给水管",
+        spec="De63",
+        unit="m",
+        province="广东",
+        city="广州",
+        project_key="project-a",
+    )
+    other_project = db.search_material_asset(
+        name="HDPE给水管",
+        spec="De63",
+        unit="m",
+        province="广东",
+        city="广州",
+        project_key="project-b",
+    )
+
+    assert same_project is not None
+    assert same_project["price"] == 42.6
+    assert same_project["source_type"] == "material_asset_project_project_confirmed"
+    assert other_project is None
+
+
+def test_material_asset_reuses_approved_enterprise_asset_across_projects(tmp_path: Path):
+    db = MaterialDB(str(tmp_path / "material.db"))
+
+    db.add_material_asset(
+        name="镀锌钢管",
+        spec="DN32",
+        unit="m",
+        price=18.5,
+        province="广东",
+        city="",
+        scope="enterprise",
+        status="approved",
+    )
+
+    result = db.search_material_asset(
+        name="镀锌钢管",
+        spec="DN32",
+        unit="m",
+        province="广东",
+        city="",
+        project_key="any-project",
+    )
+
+    assert result is not None
+    assert result["price"] == 18.5
+    assert result["source"] == "企业确认资产"

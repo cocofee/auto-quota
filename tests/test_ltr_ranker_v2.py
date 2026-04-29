@@ -1327,6 +1327,143 @@ def test_ltr_guard_rescues_water_stabilized_paver_candidate(monkeypatch):
     assert meta["ltr_guard"]["water_stabilized_paver_rescue"]["blocked"] is True
 
 
+def test_ltr_guard_rescues_municipal_crushed_stone_base_from_building_bedding(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.92, 0.88]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-87",
+            "name": "碎石垫层 干铺",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.98,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-371",
+            "name": "碎石垫层",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-105",
+            "name": "碎石底层 人机配合厚20cm",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.66,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "碎石",
+            "description": "碎石垫层 厚度:30cm",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-105"
+    assert meta["raw_ltr_top1_id"] == "4-87"
+    assert meta["post_ltr_top1_id"] == "2-105"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "crushed_stone_base_rescued"
+    assert meta["ltr_guard"]["crushed_stone_base_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_multi_thickness_crushed_stone_base_to_machine(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.92]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-87",
+            "name": "碎石垫层 干铺",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.98,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-105",
+            "name": "碎石底层 人机配合厚20cm",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.66,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "碎石",
+            "description": "10cm厚碎石(粒径5-8mm),10cm厚碎石(粒径15-30mm),20cm厚碎石(粒径30-50mm)",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["4-87", "2-105"]
+    assert meta["post_ltr_top1_id"] == "4-87"
+    assert meta["ltr_guard"]["crushed_stone_base_rescue"]["blocked"] is False
+
+
 def test_ltr_guard_rescues_pc_laminated_slab_from_wall_panel(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
@@ -1599,6 +1736,195 @@ def test_ltr_guard_does_not_rescue_stone_foundation_item(monkeypatch):
 
     assert ranked[0]["quota_id"] == "4-71"
     assert meta["ltr_guard"]["concrete_foundation_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_explicit_rotary_bored_pile_method(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.94, 0.89, 0.84, 0.79, 0.74, 0.69]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-157",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u51b2\u5b54\u6210\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-154",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u4eba\u5de5\u6316\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.76,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-156",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u65cb\u6316\u94bb\u6210\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.72,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-115",
+            "name": "\u5236\u4f5c\u5b89\u8bbe\u6df7\u51dd\u571f\u62a4\u58c1",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.52,
+            "rerank_score": 0.68,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-116",
+            "name": "\u704c\u6ce8\u6869\u82af\u6df7\u51dd\u571f",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.64,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-244",
+            "name": "\u54ac\u5408\u704c\u6ce8\u6869 \u94bb\u5b54",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.7,
+            "manual_structured_score": 0.42,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-155",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u56de\u65cb\u94bb\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.44,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6ce5\u6d46\u62a4\u58c1\u6210\u5b54\u704c\u6ce8\u6869",
+            "description": "\u6210\u5b54\u65b9\u6cd5\uff1a\u56de\u65cb\u94bb\u5b54\u6210\u5b54\uff1b\u6df7\u51dd\u571f\u79cd\u7c7b\u3001\u5f3a\u5ea6\u7b49\u7ea7\uff1aC30\u975e\u6cf5\u9001\u6c34\u4e0b\u5546\u54c1\u6df7\u51dd\u571f",
+            "specialty": "C3",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C3"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-155"
+    assert meta["raw_ltr_top1_id"] == "3-157"
+    assert meta["post_ltr_top1_id"] == "3-155"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "bored_pile_drilling_method_rescued"
+    assert meta["ltr_guard"]["bored_pile_drilling_method_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["bored_pile_drilling_method_rescue"]["details"]["rescued_rank"] == 7
+
+
+def test_ltr_guard_does_not_rescue_generic_bored_pile_method(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-157",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u51b2\u5b54\u6210\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-155",
+            "name": "\u704c\u6ce8\u6869\u6df7\u51dd\u571f \u56de\u65cb\u94bb\u5b54",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.44,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6ce5\u6d46\u62a4\u58c1\u6210\u5b54\u704c\u6ce8\u6869",
+            "description": "\u6210\u5b54\u65b9\u6cd5\uff1a\u7efc\u5408\u8003\u8651\uff1b\u6df7\u51dd\u571f\u79cd\u7c7b\u3001\u5f3a\u5ea6\u7b49\u7ea7\uff1aC30\u975e\u6cf5\u9001\u6c34\u4e0b\u5546\u54c1\u6df7\u51dd\u571f",
+            "specialty": "C3",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C3"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-157"
+    rescue = meta["ltr_guard"].get("bored_pile_drilling_method_rescue", {})
+    assert rescue.get("blocked", False) is False
+    assert rescue["details"]["intent"]["generic_method"] is True
 
 
 def test_ltr_guard_rescues_foam_expansion_joint_from_oil_hemp(monkeypatch):
@@ -2786,6 +3112,2287 @@ def test_ltr_guard_does_not_rescue_cantilever_t_pole_to_portal_frame(monkeypatch
 
     assert ranked[0]["quota_id"] == "2-294"
     assert meta["ltr_guard"]["portal_frame_sign_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_triangle_traffic_sign_shape_and_size(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.94, 0.92, 0.90, 0.88]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.9}, {"f1": 0.8}, {"f1": 0.7}, {"f1": 0.6}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-283",
+            "name": "\u6807\u5fd7\u724c\u9762\u79ef12m2\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.72,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-274",
+            "name": "\u6807\u5fd7\u724c \u957f\u65b9\u5f62(cm)60\u00d730",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.69,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-263",
+            "name": "\u6807\u5fd7\u724c \u4e09\u89d2\u5f62(cm)\u25b390",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.59,
+            "rerank_score": 0.68,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-265",
+            "name": "\u6807\u5fd7\u724c \u4e09\u89d2\u5f62(cm)\u25b3130",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.67,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-286",
+            "name": "\u6807\u5fd7\u6746 \u5355\u67f1\u5f0f(mm)\u03c660\u00d73000\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.57,
+            "rerank_score": 0.66,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6807\u5fd7\u677f",
+            "description": "\u7c7b\u578b:\u6807\u5fd7\u724c \u6750\u8d28\u3001\u89c4\u683c\u5c3a\u5bf8:\u25b390*0.2cm",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-263"
+    assert meta["raw_ltr_top1_id"] == "2-283"
+    assert meta["post_ltr_top1_id"] == "2-263"
+    assert meta["ltr_guard"]["reason"] == "traffic_sign_shape_rescued"
+    assert meta["ltr_guard"]["traffic_sign_shape_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_rectangle_traffic_sign_to_triangle(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-274",
+            "name": "\u6807\u5fd7\u724c \u957f\u65b9\u5f62(cm)60\u00d730",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.69,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-263",
+            "name": "\u6807\u5fd7\u724c \u4e09\u89d2\u5f62(cm)\u25b390",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.59,
+            "rerank_score": 0.68,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6807\u5fd7\u677f",
+            "description": "\u7c7b\u578b:\u6807\u5fd7\u724c \u6750\u8d28\u3001\u89c4\u683c\u5c3a\u5bf8:60\u00d730cm",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-274"
+    assert meta["ltr_guard"].get("traffic_sign_shape_rescue", {}).get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_geotextile_stress_absorbing_tape_to_joint_paste(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.94, 0.92, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.9}, {"f1": 0.8}, {"f1": 0.7}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-58",
+            "name": "\u571f\u5de5\u5408\u6210\u6750\u6599 \u571f\u5de5\u5e03\u5e73\u94fa",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-59",
+            "name": "\u571f\u5de5\u5408\u6210\u6750\u6599 \u571f\u5de5\u5e03\u659c\u94fa",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.69,
+            "rerank_score": 0.97,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-229",
+            "name": "\u571f\u5de5\u5e03\u8d34\u7f1d",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.47,
+            "rerank_score": 0.42,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-19",
+            "name": "\u571f\u5de5\u5e03 \u7f1d\u5408\u5e73\u94fa200g/m2",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.49,
+            "rerank_score": 0.64,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u571f\u5de5\u5408\u6210\u6750\u6599",
+            "description": "\u9ad8\u6027\u80fd\u5e94\u529b\u5438\u6536\u8d34\uff0c\u9632\u88c2\u6027\u80fd\u6ee1\u8db3\u89c4\u8303\u8981\u6c42",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-229"
+    assert meta["raw_ltr_top1_id"] == "2-58"
+    assert meta["post_ltr_top1_id"] == "2-229"
+    assert meta["ltr_guard"]["reason"] == "geotextile_tape_rescued"
+    assert meta["ltr_guard"]["geotextile_tape_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_plain_geotextile_laying_to_tape(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-58",
+            "name": "\u571f\u5de5\u5408\u6210\u6750\u6599 \u571f\u5de5\u5e03\u5e73\u94fa",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-229",
+            "name": "\u571f\u5de5\u5e03\u8d34\u7f1d",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.47,
+            "rerank_score": 0.42,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u571f\u5de5\u5408\u6210\u6750\u6599",
+            "description": "\u571f\u5de5\u5e03\u5e73\u94fa",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-58"
+    assert meta["ltr_guard"].get("geotextile_tape_rescue", {}).get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_road_saw_cut_joint_from_geotextile_tape(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.96, 0.92, 0.88, 0.84, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-229",
+            "name": "\u571f\u5de5\u5e03\u8d34\u7f1d",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.67,
+            "rerank_score": 0.92,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-217",
+            "name": "\u4f38\u7f1d \u6ca5\u9752\u739b\u8e44\u8102",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.65,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-221",
+            "name": "\u952f\u7f1d\u673a\u5207\u7f1d \u6bcf\u589e\u51cf1cm",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.62,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-215",
+            "name": "\u8def\u9762\u9632\u6ed1\u6761",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "4-87",
+            "name": "\u697c\u5730\u9762\u51ff\u6bdb",
+            "param_match": True,
+            "param_score": 0.88,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.7,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.76,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-219",
+            "name": "\u952f\u7f1d\u673a\u5207\u7f1d \u7f1d\u6df1(cm)5",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.53,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u8def\u9762\u5272\u636e\u7f1d",
+            "description": "\u8def\u9762\u5272\u636e\u7f1d\uff0c\u7f1d\u6df1\u6839\u636e\u73b0\u573a\u5b9e\u9645\u60c5\u51b5\u7efc\u5408\u8003\u8651",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-219"
+    assert meta["raw_ltr_top1_id"] == "2-229"
+    assert meta["post_ltr_top1_id"] == "2-219"
+    assert meta["ltr_guard"]["reason"] == "road_saw_cut_joint_rescued"
+    assert meta["ltr_guard"]["road_saw_cut_joint_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["road_saw_cut_joint_rescue"]["details"]["rescued_rank"] == 6
+
+
+def test_ltr_guard_does_not_rescue_deformation_joint_to_road_saw_cut(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.90, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-482",
+            "name": "\u53d8\u5f62\u7f1d \u4f38\u7f1d",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-217",
+            "name": "\u4f38\u7f1d \u6ca5\u9752\u739b\u8e44\u8102",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.66,
+            "rerank_score": 0.92,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-219",
+            "name": "\u952f\u7f1d\u673a\u5207\u7f1d \u7f1d\u6df1(cm)5",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.53,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u8def\u9762\u53d8\u5f62\u7f1d",
+            "description": "\u53d8\u5f62\u7f1d \u4f38\u7f1d\uff0c\u6da8\u7f1d\uff0c\u7f1d\u5185\u586b\u6ca5\u9752\u739b\u8e44\u8102\uff1b\u542b\u952f\u7f1d",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-482"
+    saw_cut_rescue = meta["ltr_guard"].get("road_saw_cut_joint_rescue", {})
+    assert saw_cut_rescue.get("blocked", False) is False
+    assert saw_cut_rescue["details"]["intent"]["deformation_joint"] is True
+
+
+def test_ltr_guard_rescues_shotcrete_slope_base_from_increment(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.95, 0.90, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-88",
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f\u62a4\u5761 \u5761\u5ea6<60\u00b0\u539a\u5ea6\u6bcf\u589e\u51cf10mm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.52,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "4-221",
+            "name": "\u6d1e\u5185 \u55b7\u5c04\u6df7\u51dd\u571f(\u62f1\u90e8)\u6df7\u51dd\u571f\u6bcf\u589e1cm",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.7,
+            "manual_structured_score": 0.72,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-90",
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f\u62a4\u5761 \u5761\u5ea6>60\u00b0\u539a\u5ea6\u6bcf\u589e\u51cf10mm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.76,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-87",
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f\u62a4\u5761 \u5761\u5ea6<60\u00b0\u539a\u5ea650mm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f\u3001\u6c34\u6ce5\u7802\u6d46",
+            "description": "80mm\u539aC20\u55b7\u5c04\u6df7\u51dd\u571f\u62a4\u5761\uff1b\u5761\u5ea660\u00b0\u4ee5\u5185",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-87"
+    assert meta["raw_ltr_top1_id"] == "2-88"
+    assert meta["post_ltr_top1_id"] == "2-87"
+    assert meta["ltr_guard"]["reason"] == "shotcrete_slope_base_rescued"
+    assert meta["ltr_guard"]["shotcrete_slope_base_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["shotcrete_slope_base_rescue"]["details"]["rescued_rank"] == 4
+
+
+def test_ltr_guard_does_not_rescue_tunnel_shotcrete_increment_to_slope_base(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-221",
+            "name": "\u6d1e\u5185 \u55b7\u5c04\u6df7\u51dd\u571f(\u62f1\u90e8)\u6df7\u51dd\u571f\u6bcf\u589e1cm",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.7,
+            "manual_structured_score": 0.72,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-87",
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f\u62a4\u5761 \u5761\u5ea6<60\u00b0\u539a\u5ea650mm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u55b7\u5c04\u6df7\u51dd\u571f",
+            "description": "\u6d1e\u5185\u55b7\u5c04\u6df7\u51dd\u571f\u62f1\u90e8\u6bcf\u589e1cm",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "4-221"
+    rescue = meta["ltr_guard"].get("shotcrete_slope_base_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_road_milling_base_from_asphalt_demolition(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.95, 0.90, 0.86, 0.82, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-341",
+            "name": "\u62c6\u9664\u6ca5\u9752\u67cf\u6cb9\u7c7b\u8def\u9762\u5c42 \u98ce\u9550\u62c6\u9664\u539a10cm\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.72,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-342",
+            "name": "\u62c6\u9664\u6ca5\u9752\u67cf\u6cb9\u7c7b\u8def\u9762\u5c42 \u98ce\u9550\u62c6\u9664\u6bcf\u589e1cm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.76,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-413",
+            "name": "\u8def\u9762\u51ff\u6bdb \u6ca5\u9752\u6df7\u51dd\u571f\u4eba\u5de5",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.66,
+            "rerank_score": 0.72,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-343",
+            "name": "\u98ce\u9550\u62c6\u9664\u6df7\u51dd\u571f\u7c7b\u8def\u9762\u5c42 \u65e0\u7b4b\u539a15cm\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.62,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-352",
+            "name": "\u94e3\u5228\u673a\u94e3\u5228\u8def\u9762\u6bcf\u589e\u51cf1cm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.66,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-351",
+            "name": "\u94e3\u5228\u673a\u94e3\u5228\u8def\u9762\u539a\u5ea63cm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.54,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u94e3\u5228\u8def\u9762",
+            "description": "\u6750\u8d28:\u62c6\u9664\u73b0\u72b6\u6ca5\u9752\u9762\u5c42 \u539a\u5ea6:20cm",
+            "specialty": "C1",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C1"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-351"
+    assert meta["raw_ltr_top1_id"] == "1-341"
+    assert meta["post_ltr_top1_id"] == "1-351"
+    assert meta["ltr_guard"]["reason"] == "road_milling_base_rescued"
+    assert meta["ltr_guard"]["road_milling_base_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["road_milling_base_rescue"]["details"]["rescued_rank"] == 6
+
+
+def test_ltr_guard_does_not_rescue_plain_asphalt_demolition_to_milling(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-341",
+            "name": "\u62c6\u9664\u6ca5\u9752\u67cf\u6cb9\u7c7b\u8def\u9762\u5c42 \u98ce\u9550\u62c6\u9664\u539a10cm\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.72,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-351",
+            "name": "\u94e3\u5228\u673a\u94e3\u5228\u8def\u9762\u539a\u5ea63cm",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.54,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u62c6\u9664\u6ca5\u9752\u8def\u9762",
+            "description": "\u62c6\u9664\u73b0\u72b6\u6ca5\u9752\u9762\u5c42",
+            "specialty": "C1",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C1"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-341"
+    rescue = meta["ltr_guard"].get("road_milling_base_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_blind_plate_install_by_dn_from_anchor_candidate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.95, 0.90, 0.70, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-257",
+            "name": "\u951a\u6746\u5236\u4f5c\u3001\u5b89\u88c5\u94a2\u7b4b",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-81",
+            "name": "\u951a\u6746\u5236\u4f5c\u3001\u5b89\u88c5\u94a2\u7b4b",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.55,
+            "rerank_score": 0.76,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "12-450",
+            "name": "\u94fa\u6728\u5de5\u677f\u5236\u4f5c\u3001\u5b89\u88c5",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.54,
+            "rerank_score": 0.72,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "7-492",
+            "name": "\u76f2(\u5835)\u677f\u5b89\u88c5 \u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)1000",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.65,
+            "rerank_score": 0.68,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "7-491",
+            "name": "\u76f2(\u5835)\u677f\u5b89\u88c5 \u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)800",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u76f2\u5835\u677f\u5236\u4f5c\u3001\u5b89\u88c5",
+            "description": "\u76f2\u5835\u677f\uff1aDN800",
+            "specialty": "C7",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C7"},
+    )
+
+    assert ranked[0]["quota_id"] == "7-491"
+    assert meta["raw_ltr_top1_id"] == "1-257"
+    assert meta["post_ltr_top1_id"] == "7-491"
+    assert meta["ltr_guard"]["reason"] == "blind_plate_install_rescued"
+    assert meta["ltr_guard"]["blind_plate_install_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["blind_plate_install_rescue"]["details"]["rescued_rank"] == 5
+
+
+def test_ltr_guard_does_not_rescue_blind_plate_demolition_to_install(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "7-490",
+            "name": "盲(堵)板拆除 公称直径(mm以内)100",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.68,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "7-491",
+            "name": "盲(堵)板安装 公称直径(mm以内)100",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.65,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "盲板拆除",
+            "description": "拆卸盲堵板 DN100",
+            "specialty": "C7",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C7"},
+    )
+
+    assert ranked[0]["quota_id"] == "7-490"
+    rescue = meta["ltr_guard"].get("blind_plate_install_rescue", {})
+    assert rescue.get("blocked", False) is False
+    assert rescue["details"]["intent"]["removal_task"] is True
+
+
+def test_ltr_guard_does_not_rescue_anchor_item_to_blind_plate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-257",
+            "name": "\u951a\u6746\u5236\u4f5c\u3001\u5b89\u88c5\u94a2\u7b4b",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "7-491",
+            "name": "\u76f2(\u5835)\u677f\u5b89\u88c5 \u516c\u79f0\u76f4\u5f84(mm\u4ee5\u5185)800",
+            "param_match": True,
+            "param_score": 0.66,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u951a\u6746\u5236\u4f5c\u3001\u5b89\u88c5",
+            "description": "\u94a2\u7b4b",
+            "specialty": "C7",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C7"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-257"
+    rescue = meta["ltr_guard"].get("blind_plate_install_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_sidewalk_mortar_bedding_from_pc_pile(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.92, 0.84, 0.76, 0.68]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-30",
+            "name": "\u6253\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u6869(PC\u6869)\u03c6400,L\u226424m\u9646\u4e0a",
+            "param_match": True,
+            "param_score": 0.81,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "13-1-15",
+            "name": "\u9884\u5236\u5757\u4eba\u884c\u9053\u4fee\u590d\u539a\u5ea6(mm)\u226460",
+            "param_match": True,
+            "param_score": 0.44,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.42,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-231",
+            "name": "\u4eba\u884c\u9053\u57fa\u7840 \u6df7\u51dd\u571f\u6bcf\u589e\u51cf1cm",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.39,
+            "rerank_score": 0.66,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-233",
+            "name": "\u4eba\u884c\u9053\u677f\u7802\u57ab\u5c42\u539a\u5ea65cm",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.35,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-232",
+            "name": "\u4eba\u884c\u9053\u677f\u7802\u6d46\u57ab\u5c42\u539a\u5ea62cm",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.34,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u4eba\u884c\u9053\u5757\u6599\u94fa\u8bbe",
+            "description": "\u5757\u6599\u54c1\u79cd\u3001\u89c4\u683c:400*200*60mm\u539a\u4eff\u767d\u9ebbPC\u900f\u6c34\u7816 \u57fa\u7840\u3001\u57ab\u5c42\uff1a30mm\u539a1:2\u5e72\u786c\u6027\u6c34\u6ce5\u7802\u6d46",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-232"
+    assert meta["raw_ltr_top1_id"] == "3-30"
+    assert meta["post_ltr_top1_id"] == "2-232"
+    assert meta["ltr_guard"]["reason"] == "sidewalk_mortar_bedding_rescued"
+    assert meta["ltr_guard"]["sidewalk_mortar_bedding_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["sidewalk_mortar_bedding_rescue"]["details"]["rescued_rank"] == 5
+
+
+def test_ltr_guard_does_not_rescue_pc_pile_item_to_sidewalk_bedding(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-30",
+            "name": "\u6253\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u6869(PC\u6869)\u03c6400,L\u226424m\u9646\u4e0a",
+            "param_match": True,
+            "param_score": 0.81,
+            "logic_score": 0.5,
+            "feature_alignment_score": 1.0,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-232",
+            "name": "\u4eba\u884c\u9053\u677f\u7802\u6d46\u57ab\u5c42\u539a\u5ea62cm",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.34,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6253\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u6869",
+            "description": "PC\u6869\u03c6400,L\u226424m\u9646\u4e0a",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-30"
+    rescue = meta["ltr_guard"].get("sidewalk_mortar_bedding_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_does_not_rescue_granite_sidewalk_surface_to_bedding(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-236",
+            "name": "\u4eba\u884c\u9053\u3001\u5e7f\u573a",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.52,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-232",
+            "name": "\u4eba\u884c\u9053\u677f\u7802\u6d46\u57ab\u5c42\u539a\u5ea62cm",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.34,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u4eba\u884c\u9053\u5757\u6599\u94fa\u8bbe",
+            "description": "\u5757\u6599\u54c1\u79cd\u3001\u89c4\u683c:50mm\u539a\u829d\u9ebb\u767d\u82b1\u5c97\u5ca9 \u57fa\u7840\u3001\u57ab\u5c42\uff1a3cm\u539aM10\u6c34\u6ce5\u7802\u6d46\u57ab\u5c42",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-236"
+    rescue = meta["ltr_guard"].get("sidewalk_mortar_bedding_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_hrb400_rebar_from_segment_candidate(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.92, 0.86, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-316",
+            "name": "\u9884\u5236\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u7247\u94a2\u7b4b\u5236\u4f5c",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.84,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "10-149",
+            "name": "\u94a2\u7b4b\u690d\u7b4b",
+            "param_match": True,
+            "param_score": 0.64,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.47,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "10-148",
+            "name": "\u9884\u5236\u6784\u4ef6\u666e\u901a\u94a2\u7b4b\u5236\u4f5c\u3001\u5b89\u88c5 \u5e26\u808b\u94a2\u7b4bHRB400\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.53,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-269",
+            "name": "\u666e\u901a\u94a2\u7b4b\u5236\u4f5c\u3001\u5b89\u88c5 \u5e26\u808b\u94a2\u7b4b",
+            "param_match": True,
+            "param_score": 0.62,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.40,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u9884\u5236\u6784\u4ef6\u94a2\u7b4b",
+            "description": "HRB400\u87ba\u7eb9\u94a2\uff0c\u573a\u5185\u8fd0\u8f93\u7efc\u5408\u8003\u8651",
+            "specialty": "C1",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C1"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-269"
+    assert meta["raw_ltr_top1_id"] == "4-316"
+    assert meta["post_ltr_top1_id"] == "1-269"
+    assert meta["ltr_guard"]["reason"] == "hrb400_rebar_install_rescued"
+    assert meta["ltr_guard"]["hrb400_rebar_install_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["hrb400_rebar_install_rescue"]["details"]["rescued_rank"] == 4
+
+
+def test_ltr_guard_does_not_rescue_segment_rebar_item_to_road_rebar(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-316",
+            "name": "\u9884\u5236\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u7247\u94a2\u7b4b\u5236\u4f5c",
+            "param_match": True,
+            "param_score": 0.51,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.84,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-269",
+            "name": "\u666e\u901a\u94a2\u7b4b\u5236\u4f5c\u3001\u5b89\u88c5 \u5e26\u808b\u94a2\u7b4b",
+            "param_match": True,
+            "param_score": 0.62,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.40,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u9884\u5236\u94a2\u7b4b\u6df7\u51dd\u571f\u7ba1\u7247\u94a2\u7b4b",
+            "description": "HRB400\u87ba\u7eb9\u94a2",
+            "specialty": "C1",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C1"},
+    )
+
+    assert ranked[0]["quota_id"] == "4-316"
+    rescue = meta["ltr_guard"].get("hrb400_rebar_install_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_brick_manhole_shaft_plaster_from_chimney(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.92, 0.84, 0.76]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "17-2",
+            "name": "\u7816\u70df\u56f1\u7b52\u8eab\u5168\u9ad8(m\u4ee5\u5185)20\u70e7\u7ed3\u666e\u901a\u7816",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.35,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.86,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "17-142",
+            "name": "\u7816\u780c\u7a96\u4e95(\u5185\u5f84\u5468\u957f:m\u4ee5\u5185)1.5\u6bcf\u589e\u51cf20cm\u6df1",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.35,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-261",
+            "name": "\u7816\u5899 \u62b9\u7070\u4e95\u5e95",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.53,
+            "rerank_score": 0.55,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-260",
+            "name": "\u7816\u5899 \u62b9\u7070\u4e95\u58c1",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.44,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u7816\u780c\u4e95\u7b52",
+            "description": "\u780c\u7b51\u6750\u6599:M10\u6c34\u6ce5\u7802\u6d46\u780c\u7b51MU20\u6df7\u51dd\u571f\u5b9e\u5fc3\u7816. \u5176\u5b83:\u5185\u591620mm\u539a1:2\u6c34\u6ce5\u7802\u6d46\u62b9\u7070.",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-260"
+    assert meta["raw_ltr_top1_id"] == "17-2"
+    assert meta["post_ltr_top1_id"] == "6-260"
+    assert meta["ltr_guard"]["reason"] == "brick_manhole_shaft_plaster_rescued"
+    assert meta["ltr_guard"]["brick_manhole_shaft_plaster_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["brick_manhole_shaft_plaster_rescue"]["details"]["rescued_rank"] == 4
+
+
+def test_ltr_guard_does_not_rescue_electrical_handhole_to_drainage_manhole(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "11-1-42",
+            "name": "\u7816\u780c\u914d\u7ebf\u624b\u5b54\u4e00\u53f7\u624b\u5b54(SK1)",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.35,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-260",
+            "name": "\u7816\u5899 \u62b9\u7070\u4e95\u58c1",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.44,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u7816\u780c\u914d\u7ebf\u624b\u5b54",
+            "description": "\u4e95\u58c1\u5185\u591620mm\u539a1:2\u6c34\u6ce5\u7802\u6d46\u62b9\u7070",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "11-1-42"
+    rescue = meta["ltr_guard"].get("brick_manhole_shaft_plaster_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_collision_barrel_from_stone_drum(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.92, 0.84, 0.76]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "8-122",
+            "name": "\u6bdb\u6599\u77f3\u5706\u5f62\u9f13\u78f4\u5236\u4f5c(\u4e8c\u904d\u5241\u65a7)\u3001\u5b89\u88c5\u89c4\u683c(cm)\u03c620\u539a13\u4ee5\u5185",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.55,
+            "rerank_score": 0.25,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "12-81",
+            "name": "\u5706\u6728\u6401\u6805\u76f4\u5f84(cm)\u03c620\u4ee5\u4e0a",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.53,
+            "rerank_score": 0.22,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-364",
+            "name": "\u9632\u649e\u9694\u79bb\u8bbe\u65bd \u9632\u649e\u7b52\u5851\u6599\u9632\u649e\u7b52",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.47,
+            "rerank_score": 0.60,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-365",
+            "name": "\u9632\u649e\u9694\u79bb\u8bbe\u65bd \u9632\u649e\u7b52\u6a61\u80f6\u9632\u649e\u7b52",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u9632\u649e\u7b52\uff08\u58a9\uff09",
+            "description": "\u6750\u6599\u54c1\u79cd:\u82b1\u5c97\u5ca9\u5706\u67f1\u8def\u969c\u77f3,H=60cm\uff0c\u03c620cm\uff0cC25\u975e\u6cf5\u9001\u6df7\u51dd\u571f\u57fa\u7840",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-365"
+    assert meta["raw_ltr_top1_id"] == "8-122"
+    assert meta["post_ltr_top1_id"] == "2-365"
+    assert meta["ltr_guard"]["reason"] == "collision_barrel_rescued"
+    assert meta["ltr_guard"]["collision_barrel_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["collision_barrel_rescue"]["details"]["rescued_rank"] == 4
+
+
+def test_ltr_guard_does_not_rescue_water_horse_to_collision_barrel(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "2-366",
+            "name": "\u9632\u649e\u9694\u79bb\u8bbe\u65bd \u6c34\u9a6c\u5851\u6599\u6c34\u9a6c",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-365",
+            "name": "\u9632\u649e\u9694\u79bb\u8bbe\u65bd \u9632\u649e\u7b52\u6a61\u80f6\u9632\u649e\u7b52",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.62,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6c34\u9a6c",
+            "description": "\u5851\u6599\u6c34\u9a6c\u5b89\u88c5",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-366"
+    rescue = meta["ltr_guard"].get("collision_barrel_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_c6_yellow_sand_backfill_from_generic_soil(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.92, 0.84]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-65",
+            "name": "\u56de\u586b\u571f\u673a\u68b0\u592f\u5b9e",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.99,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-311",
+            "name": "\u6c9f\u69fd\u56de\u586b \u5858\u78b4",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.55,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-306",
+            "name": "\u6c9f\u69fd\u56de\u586b \u9ec4\u7802",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "100\u539a\u7c97\u7802\u56de\u586b",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-306"
+    assert meta["raw_ltr_top1_id"] == "4-65"
+    assert meta["post_ltr_top1_id"] == "6-306"
+    assert meta["ltr_guard"]["reason"] == "drainage_backfill_material_rescued"
+    assert meta["ltr_guard"]["drainage_backfill_material_rescue"]["blocked"] is True
+    assert meta["ltr_guard"]["drainage_backfill_material_rescue"]["details"]["rescued_rank"] == 3
+
+
+def test_ltr_guard_does_not_rescue_plain_soil_backfill_to_c6_material(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-53",
+            "name": "\u586b\u571f\u592f\u5b9e\u69fd\u3001\u5751",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.64,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-306",
+            "name": "\u6c9f\u69fd\u56de\u586b \u9ec4\u7802",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "\u6c9f\u69fd\u571f\u65b9\u56de\u586b\uff0c\u5229\u7528\u5f00\u6316\u65b9",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-53"
+    rescue = meta["ltr_guard"].get("drainage_backfill_material_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_c6_standalone_concrete_bedding(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.82, 0.76, 0.70]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-435",
+            "name": "\u57fa\u5751\u57ab\u5c42 \u6df7\u51dd\u571f\u57ab\u5c42",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.98,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-187",
+            "name": "\u57ab\u5c42\u6df7\u51dd\u571f",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.74,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-292",
+            "name": "\u6e20(\u7ba1)\u9053\u57ab\u5c42 \u6df7\u51dd\u571f",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.62,
+            "rerank_score": 0.55,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-287",
+            "name": "\u6e20(\u7ba1)\u9053\u57ab\u5c42 \u788e\u77f3\u5e72\u94fa",
+            "param_match": True,
+            "param_score": 0.9,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.50,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u57ab\u5c42",
+            "description": "10cm\u539aC20\u975e\u6cf5\u9001\u5546\u54c1\u6df7\u51dd\u571f\u57ab\u5c42",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-292"
+    assert meta["raw_ltr_top1_id"] == "4-435"
+    assert meta["post_ltr_top1_id"] == "6-292"
+    assert meta["ltr_guard"]["reason"] == "drainage_channel_concrete_bedding_rescued"
+    assert meta["ltr_guard"]["drainage_channel_concrete_bedding_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_manhole_bedding_to_channel_bedding(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "6-249",
+            "name": "\u4e95 \u57ab\u5c42\u6df7\u51dd\u571f",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.64,
+            "rerank_score": 0.68,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-292",
+            "name": "\u6e20(\u7ba1)\u9053\u57ab\u5c42 \u6df7\u51dd\u571f",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u6df7\u51dd\u571f\u4e95",
+            "description": "\u96e8\u6c34\u68c0\u67e5\u4e95 100mm\u539aC20\u6df7\u51dd\u571f\u57ab\u5c42",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-249"
+    rescue = meta["ltr_guard"].get("drainage_channel_concrete_bedding_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_c2_tangkeng_backfill_to_roadbed_fill(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.86, 0.75]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-65",
+            "name": "\u56de\u586b\u571f\u673a\u68b0\u592f\u5b9e",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.99,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "1-84",
+            "name": "\u77f3\u78b4\u56de\u586b",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.62,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-68",
+            "name": "\u8def\u57fa\u586b\u7b51 \u5858\u6e23",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.60,
+            "rerank_score": 0.55,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "\u516c\u4ea4\u7ad9\u53f0\u53ca\u8fc7\u8857\u94fa\u88c5\u7ed3\u6784\u5e95\u56de\u586b\u5858\u6e23\uff0c\u539a\u5ea640cm\u3002",
+            "specialty": "C2",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C2"},
+    )
+
+    assert ranked[0]["quota_id"] == "2-68"
+    assert meta["raw_ltr_top1_id"] == "4-65"
+    assert meta["post_ltr_top1_id"] == "2-68"
+    assert meta["ltr_guard"]["reason"] == "road_tangkeng_backfill_rescued"
+    assert meta["ltr_guard"]["road_tangkeng_backfill_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_c1_excavated_backfill_to_road_tangkeng(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "1-53",
+            "name": "\u586b\u571f\u592f\u5b9e\u69fd\u3001\u5751",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2-68",
+            "name": "\u8def\u57fa\u586b\u7b51 \u5858\u6e23",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "\u6c9f\u69fd\u571f\u65b9\u56de\u586b\uff0c\u5bc6\u5b9e\u5ea6\u7b26\u5408\u8bbe\u8ba1\u8981\u6c42\uff0c\u5229\u7528\u5f00\u6316\u65b9",
+            "specialty": "C1",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C1"},
+    )
+
+    assert ranked[0]["quota_id"] == "1-53"
+    rescue = meta["ltr_guard"].get("road_tangkeng_backfill_rescue", {})
+    assert rescue.get("blocked", False) is False
+
+
+def test_ltr_guard_rescues_c6_tangkeng_backfill_with_utilized_material(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.72]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-65",
+            "name": "\u56de\u586b\u571f\u673a\u68b0\u592f\u5b9e",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.99,
+            "rerank_score": 0.98,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-311",
+            "name": "\u6c9f\u69fd\u56de\u586b \u5858\u78b4",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.55,
+            "rerank_score": 0.56,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "\u8def\u57fa\u77f3\u78b4\u56de\u586b\uff0c\u5229\u7528\u65b9\u538b\u5b9e\u7cfb\u6570\u8be6\u89c1\u65bd\u5de5\u56fe\u7eb8",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-311"
+    assert meta["raw_ltr_top1_id"] == "4-65"
+    assert meta["post_ltr_top1_id"] == "6-311"
+    assert meta["ltr_guard"]["reason"] == "drainage_backfill_material_rescued"
+    assert meta["ltr_guard"]["drainage_backfill_material_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_c6_bedding_as_backfill(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.99, 0.60]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0} for _ in candidates],
+    )
+
+    candidates = [
+        {
+            "quota_id": "6-290",
+            "name": "\u6e20(\u7ba1)\u9053\u57ab\u5c42 \u7802",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.64,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "6-306",
+            "name": "\u6c9f\u69fd\u56de\u586b \u9ec4\u7802",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 1.0,
+            "manual_structured_score": 0.56,
+            "rerank_score": 0.58,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u56de\u586b\u65b9",
+            "description": "\u7ba1\u9053\u6c9f\u69fd\u4e2d\u7c97\u7802\u57ab\u5c42",
+            "specialty": "C6",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C6"},
+    )
+
+    assert ranked[0]["quota_id"] == "6-290"
+    rescue = meta["ltr_guard"].get("drainage_backfill_material_rescue", {})
+    assert rescue.get("blocked", False) is False
 
 
 def test_ltr_guard_rescues_municipal_curb_stone_from_demolition_candidate(monkeypatch):
@@ -4464,3 +7071,865 @@ def test_ltr_guard_does_not_rescue_polymer_cement_wall_item_with_ground_word_to_
 
     assert ranked[0]["quota_id"] == "9-81"
     assert meta["ltr_guard"]["polymer_cement_waterproof_coating_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_roof_polyurethane_coating_from_bitumen(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90, 0.85]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.7}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-78",
+            "name": "改性沥青防水涂料 厚度每增减0.1mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.86,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-88",
+            "name": "聚氨酯防水涂料 厚度1.5mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.70,
+        },
+        {
+            "quota_id": "9-89",
+            "name": "聚氨酯防水涂料 厚度1.5mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.68,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面涂膜防水",
+            "description": "屋面涂膜防水 1.5mm厚聚氨酯防水涂料(I型)",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-88"
+    assert meta["raw_ltr_top1_id"] == "9-78"
+    assert meta["post_ltr_top1_id"] == "9-88"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "polyurethane_waterproof_coating_rescued"
+    assert meta["ltr_guard"]["polyurethane_waterproof_coating_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_rescues_wall_polyurethane_typo_coating_from_polymer(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.91, 0.86]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.7}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-81",
+            "name": "聚合物水泥防水涂料 厚度1.2mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-88",
+            "name": "聚氨酯防水涂料 厚度1.5mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.48,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.70,
+        },
+        {
+            "quota_id": "9-89",
+            "name": "聚氨酯防水涂料 厚度1.5mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.68,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "墙面涂膜防水",
+            "description": "墙面涂膜防水 1.5厚聚胺脂涂膜防水涂料",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-89"
+    assert meta["raw_ltr_top1_id"] == "9-81"
+    assert meta["post_ltr_top1_id"] == "9-89"
+    assert meta["ltr_guard"]["reason"] == "polyurethane_waterproof_coating_rescued"
+    assert meta["ltr_guard"]["polyurethane_waterproof_coating_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_js_polymer_cement_to_polyurethane(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-81",
+            "name": "聚合物水泥防水涂料 厚度1.2mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-89",
+            "name": "聚氨酯防水涂料 厚度1.5mm 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.68,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "墙面涂膜防水",
+            "description": "1.5厚JS聚合物水泥防水涂料II型",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["9-81", "9-89"]
+    assert meta["post_ltr_top1_id"] == "9-81"
+    assert meta["ltr_guard"]["polyurethane_waterproof_coating_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_does_not_rescue_cementitious_crystalline_to_polyurethane(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-84",
+            "name": "水泥基渗透结晶型防水涂料 厚度1.0mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.84,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "9-88",
+            "name": "聚氨酯防水涂料 厚度1.5mm 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.46,
+            "rerank_score": 0.80,
+            "hybrid_score": 0.68,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "桩头防水",
+            "description": "桩头防水 1mm厚水泥基渗透结晶型防水涂料",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert [candidate["quota_id"] for candidate in ranked] == ["9-84", "9-88"]
+    assert meta["post_ltr_top1_id"] == "9-84"
+    assert meta["ltr_guard"]["polyurethane_waterproof_coating_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_large_equipment_demob_from_site_grading(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.92, 0.88, 0.84]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}, {"f1": 0.4}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "4-66",
+            "name": "场地机械平整",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.86,
+            "rerank_score": 0.67,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2019",
+            "name": "安拆费用 TRD搅拌桩机III型",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.61,
+            "rerank_score": 0.87,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3027",
+            "name": "场外运输费用 三轴搅拌机",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.63,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2002",
+            "name": "安拆费用 柴油打桩机",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.79,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "大型机械设备进出场及安拆",
+            "description": "机械设备名称：双头搅拌桩机；机械设备规格型号：投标人自行考虑",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}},
+    )
+
+    assert ranked[0]["quota_id"] == "2002"
+    assert meta["raw_ltr_top1_id"] == "4-66"
+    assert meta["post_ltr_top1_id"] == "2002"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "large_equipment_demob_rescued"
+    assert meta["ltr_guard"]["large_equipment_demob_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_large_equipment_transport_only_to_demob(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3027",
+            "name": "场外运输费用 三轴搅拌机",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.63,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "2002",
+            "name": "安拆费用 柴油打桩机",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.58,
+            "rerank_score": 0.79,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "大型机械设备进出场",
+            "description": "机械设备名称：三轴搅拌机，场外运输费用",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}},
+    )
+
+    assert ranked[0]["quota_id"] == "3027"
+    assert meta["ltr_guard"]["large_equipment_demob_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_bridge_expansion_joint_fiber_concrete_from_steel_shape(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.90, 0.86]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-477",
+            "name": "安装伸缩缝 型钢伸缩缝",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.59,
+            "rerank_score": 0.79,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-274",
+            "name": "伸缩缝钢纤维混凝土",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.53,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-478",
+            "name": "安装伸缩缝 橡胶板",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.43,
+            "rerank_score": 0.37,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "桥梁伸缩装置",
+            "description": "材料品种:PUTF聚氨酯填充式伸缩缝 混凝土强度等级:100mm钢纤维混凝土铺装",
+            "specialty": "C3",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C3"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-274"
+    assert meta["raw_ltr_top1_id"] == "3-477"
+    assert meta["post_ltr_top1_id"] == "3-274"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "bridge_expansion_joint_rescued"
+    assert meta["ltr_guard"]["bridge_expansion_joint_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_explicit_steel_shape_expansion_joint(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "3-477",
+            "name": "安装伸缩缝 型钢伸缩缝",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.59,
+            "rerank_score": 0.79,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "3-274",
+            "name": "伸缩缝钢纤维混凝土",
+            "param_match": True,
+            "param_score": 0.95,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.50,
+            "rerank_score": 0.53,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "桥梁伸缩装置",
+            "description": "材料品种:型钢伸缩缝",
+            "specialty": "C3",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C3"},
+    )
+
+    assert ranked[0]["quota_id"] == "3-477"
+    assert meta["ltr_guard"]["bridge_expansion_joint_rescue"]["blocked"] is False
+
+
+def test_ltr_guard_rescues_modified_bitumen_self_adhesive_roof_membrane_from_polymer(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.91, 0.86, 0.82]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}, {"f1": 0.4}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-70",
+            "name": "高分子卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.64,
+            "rerank_score": 0.83,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-51",
+            "name": "改性沥青自粘卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.69,
+            "rerank_score": 0.96,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-52",
+            "name": "改性沥青自粘卷材自粘法 一层 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.68,
+            "rerank_score": 0.95,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-53",
+            "name": "改性沥青自粘卷材自粘法 每增一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.66,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面卷材防水",
+            "description": "顶板1、2：3.0厚SBS弹性体改性沥青防水卷材（PY类），采用湿铺法施工，上翻高度详见图纸",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-51"
+    assert meta["raw_ltr_top1_id"] == "9-70"
+    assert meta["post_ltr_top1_id"] == "9-51"
+    assert meta["primary_stage"] == "ltr_guard"
+    assert meta["ltr_guard"]["reason"] == "modified_bitumen_membrane_rescued"
+    assert meta["ltr_guard"]["modified_bitumen_membrane_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_rescues_modified_bitumen_self_adhesive_vertical_membrane(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.91, 0.86]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}, {"f1": 0.6}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-71",
+            "name": "高分子卷材自粘法 一层 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.64,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-51",
+            "name": "改性沥青自粘卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.69,
+            "rerank_score": 0.96,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-52",
+            "name": "改性沥青自粘卷材自粘法 一层 立面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.95,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面卷材防水",
+            "description": "3厚自粘聚合物改性沥青防水卷材(聚酯胎)立面",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-52"
+    assert meta["ltr_guard"]["reason"] == "modified_bitumen_membrane_rescued"
+    assert meta["ltr_guard"]["modified_bitumen_membrane_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_rescues_wall_modified_bitumen_self_adhesive_membrane(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.96, 0.95, 0.82]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.9}, {"f1": 0.6}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-51",
+            "name": "\u6539\u6027\u6ca5\u9752\u81ea\u7c98\u5377\u6750\u81ea\u7c98\u6cd5 \u4e00\u5c42 \u5e73\u9762",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.69,
+            "rerank_score": 0.96,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-52",
+            "name": "\u6539\u6027\u6ca5\u9752\u81ea\u7c98\u5377\u6750\u81ea\u7c98\u6cd5 \u4e00\u5c42 \u7acb\u9762",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.70,
+            "rerank_score": 0.95,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-70",
+            "name": "\u9ad8\u5206\u5b50\u5377\u6750\u81ea\u7c98\u6cd5 \u4e00\u5c42 \u5e73\u9762",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.64,
+            "rerank_score": 0.82,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "\u5899\u9762\u5377\u6750\u9632\u6c34",
+            "description": "\u4fa7\u677f1\uff08\u6c34\u6c60\uff09\uff1a3\u539a\u81ea\u7c98SBS\u6539\u6027\u6ca5\u9752\u9632\u6c34\u5377\u6750",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-52"
+    assert meta["raw_ltr_top1_id"] == "9-51"
+    assert meta["ltr_guard"]["reason"] == "modified_bitumen_membrane_rescued"
+    assert meta["ltr_guard"]["modified_bitumen_membrane_rescue"]["blocked"] is True
+
+
+def test_ltr_guard_does_not_rescue_true_polymer_membrane_to_modified_bitumen(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_THRESHOLD", 6.0)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.95, 0.90]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 1.0}, {"f1": 0.8}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "9-70",
+            "name": "高分子卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.64,
+            "rerank_score": 0.83,
+            "hybrid_score": 0.03,
+        },
+        {
+            "quota_id": "9-51",
+            "name": "改性沥青自粘卷材自粘法 一层 平面",
+            "param_match": True,
+            "param_score": 1.0,
+            "logic_score": 0.5,
+            "feature_alignment_score": 0.5,
+            "context_alignment_score": 0.8,
+            "manual_structured_score": 0.69,
+            "rerank_score": 0.96,
+            "hybrid_score": 0.03,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "屋面卷材防水",
+            "description": "1.5厚高分子自粘防水卷材 平面",
+            "specialty": "C9",
+        },
+        candidates,
+        {"query_route": {"route": "semantic_description"}, "specialty": "C9"},
+    )
+
+    assert ranked[0]["quota_id"] == "9-70"
+    assert meta["ltr_guard"].get("modified_bitumen_membrane_rescue", {}).get("blocked", False) is False

@@ -545,6 +545,36 @@ class MaterialDB:
             )
         """)
 
+        # ======== 轻量主材资产 ========
+        # 人工确认后的主材价格资产。第一版只做项目内复用和已批准企业资产复用，
+        # 未审核跨项目资产不得静默进入正式价。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS material_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL,
+                material_name TEXT NOT NULL,
+                material_spec TEXT DEFAULT '',
+                unit TEXT DEFAULT '',
+                province TEXT DEFAULT '',
+                city TEXT DEFAULT '',
+                tax_mode TEXT DEFAULT '含税',
+                price_scope TEXT DEFAULT 'material_unit_price',
+                price REAL NOT NULL,
+                source TEXT DEFAULT '',
+                source_type TEXT DEFAULT 'manual_confirmed',
+                project_key TEXT DEFAULT '',
+                raw_feature_desc TEXT DEFAULT '',
+                extraction_evidence TEXT DEFAULT '',
+                risk_reasons TEXT DEFAULT '',
+                scope TEXT DEFAULT 'project',
+                status TEXT DEFAULT 'project_confirmed',
+                allow_reuse INTEGER DEFAULT 1,
+                operator TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+
         # 索引
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mm_name ON material_master(name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mm_category ON material_master(category)")
@@ -556,6 +586,9 @@ class MaterialDB:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alias_name ON material_alias(alias_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qmo_quota ON quota_material_observation(quota_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qmo_material ON quota_material_observation(material_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_fp ON material_assets(fingerprint)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_project ON material_assets(project_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_status ON material_assets(status, scope)")
 
         conn.commit()
 
@@ -580,6 +613,37 @@ class MaterialDB:
             conn.execute("ALTER TABLE import_batch ADD COLUMN parser_template TEXT DEFAULT ''")
             conn.execute("ALTER TABLE import_batch ADD COLUMN notes TEXT DEFAULT ''")
             conn.commit()
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS material_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint TEXT NOT NULL,
+                material_name TEXT NOT NULL,
+                material_spec TEXT DEFAULT '',
+                unit TEXT DEFAULT '',
+                province TEXT DEFAULT '',
+                city TEXT DEFAULT '',
+                tax_mode TEXT DEFAULT '含税',
+                price_scope TEXT DEFAULT 'material_unit_price',
+                price REAL NOT NULL,
+                source TEXT DEFAULT '',
+                source_type TEXT DEFAULT 'manual_confirmed',
+                project_key TEXT DEFAULT '',
+                raw_feature_desc TEXT DEFAULT '',
+                extraction_evidence TEXT DEFAULT '',
+                risk_reasons TEXT DEFAULT '',
+                scope TEXT DEFAULT 'project',
+                status TEXT DEFAULT 'project_confirmed',
+                allow_reuse INTEGER DEFAULT 1,
+                operator TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_fp ON material_assets(fingerprint)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_project ON material_assets(project_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_status ON material_assets(status, scope)")
+        conn.commit()
 
     def _conn(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -655,6 +719,185 @@ class MaterialDB:
                 (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", limit)
             ).fetchall()
             return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    @staticmethod
+    def build_material_fingerprint(
+        name: str,
+        spec: str = "",
+        unit: str = "",
+        province: str = "",
+        city: str = "",
+        tax_mode: str = "含税",
+        price_scope: str = "material_unit_price",
+    ) -> str:
+        """生成主材资产复用指纹。"""
+        import re
+
+        def _norm(value: str) -> str:
+            text = re.sub(r"\s+", "", str(value or "").strip().upper())
+            return text.replace("×", "X").replace("*", "X")
+
+        parts = [
+            _norm(name),
+            _norm(spec),
+            _norm(unit),
+            _norm(province),
+            _norm(city),
+            _norm(tax_mode),
+            _norm(price_scope),
+        ]
+        return "|".join(parts)
+
+    def add_material_asset(
+        self,
+        *,
+        name: str,
+        spec: str = "",
+        unit: str = "",
+        price: float,
+        province: str = "",
+        city: str = "",
+        tax_mode: str = "含税",
+        price_scope: str = "material_unit_price",
+        source: str = "人工确认",
+        source_type: str = "manual_confirmed",
+        project_key: str = "",
+        raw_feature_desc: str = "",
+        extraction_evidence: str = "",
+        risk_reasons: str = "",
+        scope: str = "project",
+        status: str = "project_confirmed",
+        allow_reuse: int = 1,
+        operator: str = "",
+    ) -> int:
+        material_name = str(name or "").strip()
+        if not material_name:
+            return 0
+        try:
+            price_val = float(price)
+        except (TypeError, ValueError):
+            return 0
+        if price_val <= 0:
+            return 0
+
+        fingerprint = self.build_material_fingerprint(
+            material_name, spec, unit, province, city, tax_mode, price_scope
+        )
+        conn = self._conn()
+        try:
+            existing = conn.execute(
+                """SELECT id FROM material_assets
+                   WHERE fingerprint=? AND IFNULL(project_key,'')=? AND status=? AND scope=?
+                   ORDER BY id DESC LIMIT 1""",
+                (fingerprint, str(project_key or "").strip(), status, scope),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE material_assets
+                       SET price=?, source=?, source_type=?, raw_feature_desc=?,
+                           extraction_evidence=?, risk_reasons=?, allow_reuse=?,
+                           operator=?, updated_at=datetime('now', 'localtime')
+                       WHERE id=?""",
+                    (
+                        price_val,
+                        str(source or "").strip(),
+                        str(source_type or "").strip(),
+                        str(raw_feature_desc or "").strip(),
+                        str(extraction_evidence or "").strip(),
+                        str(risk_reasons or "").strip(),
+                        int(bool(allow_reuse)),
+                        str(operator or "").strip(),
+                        existing["id"],
+                    ),
+                )
+                conn.commit()
+                return int(existing["id"])
+
+            cursor = conn.execute(
+                """INSERT INTO material_assets
+                   (fingerprint, material_name, material_spec, unit, province, city,
+                    tax_mode, price_scope, price, source, source_type, project_key,
+                    raw_feature_desc, extraction_evidence, risk_reasons, scope, status,
+                    allow_reuse, operator)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    fingerprint,
+                    material_name,
+                    str(spec or "").strip(),
+                    str(unit or "").strip(),
+                    str(province or "").strip(),
+                    str(city or "").strip(),
+                    str(tax_mode or "含税").strip(),
+                    str(price_scope or "material_unit_price").strip(),
+                    price_val,
+                    str(source or "").strip(),
+                    str(source_type or "").strip(),
+                    str(project_key or "").strip(),
+                    str(raw_feature_desc or "").strip(),
+                    str(extraction_evidence or "").strip(),
+                    str(risk_reasons or "").strip(),
+                    str(scope or "project").strip(),
+                    str(status or "project_confirmed").strip(),
+                    int(bool(allow_reuse)),
+                    str(operator or "").strip(),
+                ),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
+        finally:
+            conn.close()
+
+    def search_material_asset(
+        self,
+        *,
+        name: str,
+        spec: str = "",
+        unit: str = "",
+        province: str = "",
+        city: str = "",
+        project_key: str = "",
+        tax_mode: str = "含税",
+        price_scope: str = "material_unit_price",
+    ) -> Optional[dict]:
+        fingerprint = self.build_material_fingerprint(
+            name, spec, unit, province, city, tax_mode, price_scope
+        )
+        conn = self._conn()
+        try:
+            rows = []
+            project = str(project_key or "").strip()
+            if project:
+                rows.extend(conn.execute(
+                    """SELECT * FROM material_assets
+                       WHERE fingerprint=? AND project_key=? AND scope='project'
+                         AND status='project_confirmed' AND allow_reuse=1
+                       ORDER BY updated_at DESC, id DESC LIMIT 1""",
+                    (fingerprint, project),
+                ).fetchall())
+            rows.extend(conn.execute(
+                """SELECT * FROM material_assets
+                   WHERE fingerprint=? AND scope IN ('enterprise','global')
+                     AND status='approved' AND allow_reuse=1
+                   ORDER BY updated_at DESC, id DESC LIMIT 1""",
+                (fingerprint,),
+            ).fetchall())
+            if not rows:
+                return None
+            row = dict(rows[0])
+            return {
+                "price": row["price"],
+                "unit": row["unit"],
+                "matched_unit": row["unit"],
+                "source": "项目确认资产" if row["scope"] == "project" else "企业确认资产",
+                "source_type": f"material_asset_{row['scope']}_{row['status']}",
+                "matched_name": row["material_name"],
+                "matched_spec": row["material_spec"],
+                "asset_id": row["id"],
+                "asset_scope": row["scope"],
+                "asset_status": row["status"],
+            }
         finally:
             conn.close()
 
@@ -1057,6 +1300,7 @@ class MaterialDB:
             raw_price = row["price_incl_tax"]
             price_unit = (row["unit"] or "").strip()
             source = source_fn(row)
+            source_type_value = str(row["source_type"] or "").strip()
             normalized_price_unit = _normalize_unit(price_unit)
             normalized_target_unit = _normalize_unit(target_unit)
 
@@ -1064,7 +1308,9 @@ class MaterialDB:
                 return {
                     "price": raw_price,
                     "unit": target_unit or price_unit,
+                    "matched_unit": price_unit,
                     "source": source,
+                    "source_type": source_type_value,
                 }
 
             converted = _try_convert_price(raw_price, price_unit, target_unit, name, spec)
@@ -1072,7 +1318,9 @@ class MaterialDB:
                 return {
                     "price": converted,
                     "unit": target_unit,
+                    "matched_unit": price_unit,
                     "source": f"{source}({price_unit}->{target_unit})",
+                    "source_type": source_type_value,
                 }
 
         return None
@@ -1282,6 +1530,14 @@ class MaterialDB:
                     (material_id, price_incl_tax, source_doc)
                 ).fetchone()
                 if existing:
+                    if source_type == "user_contribute":
+                        conn.execute(
+                            """UPDATE price_fact
+                               SET authority_level=?, usable_for_quote=?
+                               WHERE id=? AND source_type='user_contribute'""",
+                            (authority_level, int(usable_for_quote), existing["id"])
+                        )
+                        conn.commit()
                     return existing["id"]
 
             cursor = conn.execute(

@@ -698,6 +698,143 @@ def test_low_confidence_gldjc_price_writes_suggested_column_only(tmp_path: Path)
     wb2.close()
 
 
+def test_object_type_mismatch_price_writes_suggested_column_only(tmp_path: Path):
+    file_path = tmp_path / "reviewed-object-mismatch.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "HDPE给水管", "De63", "m", 12, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "HDPE给水管",
+                "spec_col": 3,
+                "final_spec": "De63",
+                "price_col": 6,
+                "unit": "m",
+                "object_type": "pipe",
+                "lookup_price": 128.82,
+                "lookup_source": "广东信息价",
+                "lookup_confidence": "高",
+                "matched_name": "HDPE热熔管件",
+                "matched_spec": "De63",
+                "matched_unit": "个",
+                "matched_object_type": "pipe_fitting",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=6).value is None
+    assert ws2.cell(row=2, column=7).value == 128.82
+    risk_text = ws2.cell(row=2, column=8).value
+    assert "对象类型不一致" in risk_text
+    assert "单位不能安全换算" in risk_text
+    wb2.close()
+
+
+def test_spec_mismatch_price_writes_suggested_column_only(tmp_path: Path):
+    file_path = tmp_path / "reviewed-spec-mismatch.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "HDPE给水管", "De63", "m", 12, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "HDPE给水管",
+                "spec_col": 3,
+                "final_spec": "De63",
+                "price_col": 6,
+                "unit": "m",
+                "object_type": "pipe",
+                "lookup_price": 2483.0,
+                "lookup_source": "广东信息价",
+                "lookup_confidence": "高",
+                "matched_name": "HDPE给水管",
+                "matched_spec": "De630",
+                "matched_unit": "m",
+                "matched_object_type": "pipe",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=6).value is None
+    assert ws2.cell(row=2, column=7).value == 2483.0
+    assert "关键规格不一致" in ws2.cell(row=2, column=8).value
+    wb2.close()
+
+
+def test_user_contributed_lookup_price_writes_suggested_column_only(tmp_path: Path):
+    file_path = tmp_path / "reviewed-user-contribute.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "球墨铸铁井盖", "700*800", "套", 1, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "球墨铸铁井盖",
+                "spec_col": 3,
+                "final_spec": "700*800",
+                "price_col": 6,
+                "unit": "套",
+                "lookup_price": 420.0,
+                "lookup_source": "广东广州市场价",
+                "lookup_source_type": "user_contribute",
+                "lookup_confidence": "高",
+                "matched_name": "球墨铸铁井盖",
+                "matched_spec": "700*800",
+                "matched_unit": "套",
+                "matched_object_type": "material",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=6).value is None
+    assert ws2.cell(row=2, column=7).value == 420
+    assert "用户贡献价未审核" in ws2.cell(row=2, column=8).value
+    wb2.close()
+
+
 def test_write_material_updates_never_writes_formal_price_to_comprehensive_unit_price(tmp_path: Path):
     file_path = tmp_path / "reviewed-comprehensive-price.xlsx"
     wb = openpyxl.Workbook()
@@ -970,6 +1107,11 @@ def test_do_lookup_builds_summary_label_for_db_results(monkeypatch):
                 "price": 18.5,
                 "unit": "m",
                 "source": "广东信息价",
+                "source_type": "official_info",
+                "matched_name": "镀锌钢管",
+                "matched_spec": "DN32",
+                "matched_unit": "m",
+                "matched_object_type": "pipe",
             }
 
     monkeypatch.setattr(material_price_api, "_material_db_ready", lambda: True)
@@ -988,6 +1130,84 @@ def test_do_lookup_builds_summary_label_for_db_results(monkeypatch):
     assert results[0]["lookup_source"] == "广东信息价"
     assert results[0]["lookup_label"] == "广东信息价 | 镀锌钢管 DN32 | m | 18.50"
     assert results[0]["lookup_url"] is None
+    assert results[0]["lookup_source_type"] == "official_info"
+    assert results[0]["matched_name"] == "镀锌钢管"
+    assert results[0]["matched_spec"] == "DN32"
+    assert results[0]["matched_unit"] == "m"
+    assert results[0]["matched_object_type"] == "pipe"
+    assert results[0]["recommended_write_target"] == "formal_column"
+
+
+def test_do_lookup_prefers_project_material_asset(monkeypatch):
+    class _FakeDB:
+        def search_material_asset(self, **kwargs):
+            assert kwargs["name"] == "HDPE给水管"
+            assert kwargs["project_key"] == "project-a"
+            return {
+                "price": 42.6,
+                "unit": "m",
+                "matched_unit": "m",
+                "source": "项目确认资产",
+                "source_type": "material_asset_project_project_confirmed",
+                "matched_name": "HDPE给水管",
+                "matched_spec": "De63",
+            }
+
+        def search_price_by_name(self, *_args, **_kwargs):
+            raise AssertionError("asset hit should skip price DB lookup")
+
+    monkeypatch.setattr(material_price_api, "_material_db_ready", lambda: True)
+    monkeypatch.setattr(material_price_api, "_get_db", lambda: _FakeDB())
+
+    results = material_price_api._do_lookup(
+        [{"name": "HDPE给水管", "spec": "De63", "unit": "m", "project_key": "project-a"}],
+        province="广东",
+        city="广州",
+        period_end="",
+        price_type="info",
+        project_key="project-a",
+    )
+
+    assert results[0]["lookup_price"] == 42.6
+    assert results[0]["lookup_source"] == "项目确认资产"
+    assert results[0]["lookup_source_type"] == "material_asset_project_project_confirmed"
+    assert results[0]["recommended_write_target"] == "formal_column"
+
+
+def test_do_contribute_keeps_client_supplied_shared_asset_unapproved(monkeypatch):
+    asset_calls = []
+
+    class _FakeDB:
+        def add_material(self, *_args, **_kwargs):
+            return 101
+
+        def add_price(self, **_kwargs):
+            return 202
+
+        def add_material_asset(self, **kwargs):
+            asset_calls.append(kwargs)
+            return 303
+
+    monkeypatch.setattr(material_price_api, "_get_db", lambda: _FakeDB())
+
+    saved = material_price_api._do_contribute(
+        [
+            {
+                "name": "HDPE pipe",
+                "spec": "De63",
+                "unit": "m",
+                "price": 42.6,
+                "province": "Guangdong",
+                "project_key": "project-a",
+                "asset_scope": "enterprise",
+                "approved": True,
+            }
+        ]
+    )
+
+    assert saved == 1
+    assert asset_calls[0]["scope"] == "project"
+    assert asset_calls[0]["status"] == "project_confirmed"
 
 
 def test_do_lookup_passes_city_and_period_to_db(monkeypatch):

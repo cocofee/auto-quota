@@ -2022,6 +2022,7 @@ async def lookup_prices(body: dict):
     city = body.get("city", "")
     period_end = body.get("period_end", "")
     price_type = body.get("price_type", "info")
+    project_key = str(body.get("project_key") or "").strip()
 
     if not materials:
         raise HTTPException(400, "materials 不能为空")
@@ -2036,12 +2037,13 @@ async def lookup_prices(body: dict):
             "city": city,
             "period_end": period_end,
             "price_type": price_type,
+            "project_key": project_key,
         })
         return result or {"results": [], "stats": {"total": 0, "found": 0, "not_found": 0}}
 
     # 本地模式：直接查价
     results = await asyncio.to_thread(
-        _do_lookup, materials, province, city, period_end, price_type
+        _do_lookup, materials, province, city, period_end, price_type, project_key
     )
     # 统计
     found = sum(1 for r in results if r.get("lookup_price") is not None)
@@ -2056,7 +2058,7 @@ async def lookup_prices(body: dict):
 
 
 def _do_lookup(materials: list[dict], province: str, city: str,
-               period_end: str, price_type: str = "info") -> list[dict]:
+               period_end: str, price_type: str = "info", project_key: str = "") -> list[dict]:
     """批量查价核心逻辑
 
     price_type: info=只查信息价, market=只查市场价
@@ -2070,6 +2072,41 @@ def _do_lookup(materials: list[dict], province: str, city: str,
         source_filter = "government"  # 信息价
     elif price_type == "market":
         source_filter = "market"      # 市场价
+
+    def _db_lookup_result(mat: dict, price_info: dict, lookup_name: str, lookup_spec: str) -> dict:
+        matched_name = str(price_info.get("matched_name") or lookup_name or "").strip()
+        matched_spec = str(price_info.get("matched_spec") or lookup_spec or "").strip()
+        matched_unit = str(price_info.get("matched_unit") or price_info.get("unit") or mat.get("unit") or "").strip()
+        matched_object_type = str(
+            price_info.get("matched_object_type") or _infer_material_object_type(matched_name)
+        ).strip()
+        result = {
+            **mat,
+            "lookup_price": price_info["price"],
+            "lookup_source": price_info.get("source", "价格库"),
+            "lookup_source_type": price_info.get("source_type", ""),
+            "lookup_confidence": "高",
+            "lookup_url": None,
+            "lookup_label": _build_lookup_label(
+                name=lookup_name,
+                spec=lookup_spec,
+                unit=price_info.get("unit") or mat.get("unit") or "",
+                price=price_info.get("price"),
+                source=price_info.get("source", "价格库"),
+            ),
+            "matched_name": matched_name,
+            "matched_spec": matched_spec,
+            "matched_unit": matched_unit,
+            "matched_object_type": matched_object_type,
+            "tax_mode": "含税",
+        }
+        decision = decide_material_price(result)
+        result.update({
+            "risk_level": decision["risk_level"],
+            "risk_reasons": decision["risk_reasons"],
+            "recommended_write_target": decision["write_target"],
+        })
+        return result
 
     results = []
     for mat in materials:
@@ -2110,23 +2147,20 @@ def _do_lookup(materials: list[dict], province: str, city: str,
             continue
 
         price_info = None
+        if db is not None and hasattr(db, "search_material_asset"):
+            price_info = db.search_material_asset(
+                name=name,
+                spec=spec,
+                unit=unit,
+                province=province,
+                city=city,
+                project_key=str(mat.get("project_key") or project_key or "").strip(),
+            )
         if db is not None:
-            price_info = db.search_price_by_name(name, **kwargs)
+            price_info = price_info or db.search_price_by_name(name, **kwargs)
 
         if price_info:
-            results.append({
-                **mat,
-                "lookup_price": price_info["price"],
-                "lookup_source": price_info.get("source", "价格库"),
-                "lookup_url": None,
-                "lookup_label": _build_lookup_label(
-                    name=name,
-                    spec=spec,
-                    unit=price_info.get("unit") or unit,
-                    price=price_info.get("price"),
-                    source=price_info.get("source", "价格库"),
-                ),
-            })
+            results.append(_db_lookup_result(mat, price_info, name, spec))
         else:
             # 尝试从名称中提取规格再查一次
             m = re.search(r'[Dd][Nn]\s*\d+|De\s*\d+|Φ\s*\d+|\d+mm', name)
@@ -2146,19 +2180,7 @@ def _do_lookup(materials: list[dict], province: str, city: str,
                         kwargs2["source_type"] = source_filter
                     price_info2 = db.search_price_by_name(short_name, **kwargs2) if db is not None else None
                     if price_info2:
-                        results.append({
-                            **mat,
-                            "lookup_price": price_info2["price"],
-                            "lookup_source": price_info2.get("source", "价格库"),
-                            "lookup_url": None,
-                            "lookup_label": _build_lookup_label(
-                                name=short_name,
-                                spec=extracted_spec,
-                                unit=price_info2.get("unit") or unit,
-                                price=price_info2.get("price"),
-                                source=price_info2.get("source", "价格库"),
-                            ),
-                        })
+                        results.append(_db_lookup_result(mat, price_info2, short_name, extracted_spec))
                         continue
 
             results.append({**mat, "lookup_price": None, "lookup_source": "未查到", "lookup_url": None, "lookup_label": None})
@@ -2215,6 +2237,12 @@ def _do_contribute(items: list[dict]) -> int:
         price = item.get("price")
         province = item.get("province", "").strip()
         city = item.get("city", "").strip()
+        project_key = str(item.get("project_key") or "").strip()
+        raw_feature_desc = str(item.get("raw_feature_desc") or item.get("desc") or "").strip()
+        extraction_evidence = str(item.get("extraction_evidence") or "").strip()
+        risk_reasons = _risk_text(item.get("risk_reasons"))
+        asset_scope = "project"
+        asset_status = "project_confirmed"
 
         if not name or price is None:
             continue
@@ -2232,7 +2260,7 @@ def _do_contribute(items: list[dict]) -> int:
         # 先确保材料主数据存在
         material_id = db.add_material(name, spec=spec, unit=unit)
 
-        # 存入价格库（候选层：authority_level='reference'）
+        # 未审核手填价只作为参考候选，避免跨项目静默进入正式价。
         db.add_price(
             material_id=material_id,
             price_incl_tax=price_val,
@@ -2241,8 +2269,26 @@ def _do_contribute(items: list[dict]) -> int:
             city=city,
             unit=unit,
             authority_level="reference",
+            usable_for_quote=0,
             source_doc="用户手填",
             dedup=True,
+        )
+        db.add_material_asset(
+            name=name,
+            spec=spec,
+            unit=unit,
+            price=price_val,
+            province=province,
+            city=city,
+            source="用户手填确认",
+            source_type="manual_confirmed",
+            project_key=project_key,
+            raw_feature_desc=raw_feature_desc,
+            extraction_evidence=extraction_evidence,
+            risk_reasons=risk_reasons,
+            scope=asset_scope,
+            status=asset_status,
+            allow_reuse=1,
         )
         saved += 1
 
