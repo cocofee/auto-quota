@@ -1,6 +1,6 @@
 # 全专业算法修复小步验收计划 v36
 
-本文档是后续全专业算法修复的固定执行契约。以后需要修复时，不再重新讨论方案是否完善，直接从 Step 0 开始小步执行。
+本文档是后续全专业算法修复的唯一固定执行契约。以后需要修复时，不再重新讨论方案是否完善，不再另开同类修复计划，直接从 Step 0 开始小步执行。
 
 ## 后续启动语
 
@@ -37,6 +37,25 @@
 - 禁止按单个定额、单个样本打补丁。Step 2/Step 3 必须先找 `common_issue_clusters`，Step 4 只能修一个共性根因；如果只剩单例簇，只能补诊断、跑冒烟验证或等待新的 full/global 聚类输入，不得把单例当成算法修复验收依据。
 - 禁止把“继续添加同义词/别名”作为默认修复策略。只有当共性簇证明根因是稳定的词汇归一化缺口时，才允许新增受控词汇规则；新增规则必须有适用范围、反例边界和同簇多样本回归验证。优先修复分词、归一化、特征、候选生成或排序机制中的共性缺陷。
 - 代码形态优先级固定为：复用现有机制 > 小型通用函数 > 表驱动规则 > 受控配置 > 局部分支。能用少量通用代码表达一类问题时，不写长 if 链、不堆注释说明、不复制相似规则。
+
+## 唯一主文档和历史内容归并
+
+从 V36.1 起，算法修复执行入口只保留本文档。以下旧文档不再作为独立执行计划使用，只作为历史来源：
+
+- `docs/2026-04-24-算法修复计划.md`
+- `docs/2026-04-25-R2-LTR-auto-diagnosis.md`
+- `docs/套定额系统诊断与修复计划.md`
+- 各 `docs/2026-04-*-R*-*-验收记录.md`
+
+旧文档中的有效内容已经收敛为本文档的固定约束：
+
+1. 4.24 计划中的“每轮只处理一个问题域、必须有验收命令、未过验收不进入下一步、不同时改 LTR/召回/Picker/CGR、每轮结束输出改动/验收/下一步”，归并到本文档的总原则、Step 4 和固定汇报格式。
+2. 4.24 的旧基线 `ltr_v2_full_20260422` 只保留为历史基线参考，不再作为 V36 默认验收门槛。V36 默认只接受 Step 0 冻结的当前 full/global 输入和 `tools/v36_gate.py` 产物。
+3. 4.25 R2/LTR 自动诊断中的 `in_pool_not_ltr_top1`、`ltr_bad_flip_pre_correct`、`pre_ltr_correct_overturned`、`oracle_missing_from_snapshot`、`oracle_beyond_snapshot_window` 等口径，归并到 V36.1 的候选生命周期追踪和 R1/R2 细分桶。
+4. `套定额系统诊断与修复计划` 中的业务链路定义，归并为 V36 的阶段追踪：输入门控、经验库、raw recall、候选合并、参数验证、LTR、family gate、picker、final validator、置信度和输出。
+5. 历史验收记录只用于追溯“某一轮改了什么、验收过什么、遗留什么”，不得绕过本文档直接作为下一轮修复入口。
+
+后续如果需要新增规则、诊断口径、执行记录或补充协议，必须直接更新本文档对应章节；不得再创建新的同类“算法修复计划”“下一步计划”“最终执行方案”。主材查价、OpenClaw 接入、知识库治理等非套定额算法主题，可以保留自己的专题文档，但不能替代本文档的套定额算法修复入口。
 
 ## V36 完整闭环定义
 
@@ -593,6 +612,191 @@ python tools/run_benchmark.py `
 - 未通过时，停止继续修复，回到 Step 2/Step 3 重新生成 next_action。
 - 如 full/global 失败且无法明确归因，默认不继续叠加修复，先回滚或关闭本批最小可疑修复。
 
+## V36.1 补充协议：链路追踪、部分验收和失败续航
+
+本节是两轮执行后的修订。V36 治理门禁继续保留，但 Step 4 不再只用“最终 benchmark 是否命中”判断本轮是否有价值。真实算法链路是串联的：query 构造、raw recall、候选合并、family gate、validator、LTR、picker、final validation 任一阶段都可能暴露下一层瓶颈。因此 V36.1 增加“部分推进可记录、不可盲目叠修”的协议。
+
+### 1. 修复单元定义
+
+一轮 Step 4 的修复单元固定为：
+
+```text
+repair_unit = target_common_issue.cluster_id + failing_stage + mechanism
+```
+
+其中：
+- `target_common_issue.cluster_id`：来自 Step 2/Step 3 的共性簇。
+- `failing_stage`：本轮实际处理的链路阶段，例如 `query_build`、`raw_recall`、`candidate_merge`、`family_gate`、`validator`、`ltr_rank`、`picker`、`final_validate`。
+- `mechanism`：本轮处理的共性机制，例如 `surface_process_route_hijack`、`book_scope_loss`、`hard_validator_drop`、`wrong_family_gate`。
+
+禁止把同一簇下多个独立机制揉成一个大 patch。允许在同一簇下继续做“下一阶段诊断”，但若要做下一阶段算法补丁，必须重新生成或更新 `failed_slice_next_action`，并说明它不是第二个独立修复点。
+
+### 2. 候选生命周期追踪
+
+纯搜索和候选相关回合必须尽量输出 `candidate_lifecycle_trace`。如果现有产物缺字段，也必须显式写 `missing`，不能伪造指标。
+
+推荐结构：
+
+```json
+{
+  "candidate_lifecycle_trace": {
+    "query_text": "",
+    "raw_recall_ids": [],
+    "after_prior_merge_ids": [],
+    "after_neighbor_merge_ids": [],
+    "after_family_gate_ids": [],
+    "after_validator_ids": [],
+    "pre_ltr_ids": [],
+    "post_ltr_ids": [],
+    "post_picker_ids": [],
+    "final_ids": [],
+    "drop_reasons": [
+      {
+        "quota_id": "",
+        "from_stage": "",
+        "reason_code": "",
+        "detail": ""
+      }
+    ]
+  }
+}
+```
+
+R 桶细分补充：
+- `R1a_raw_recall_miss`：正确候选从未进入 raw recall。
+- `R1b_merge_loss`：raw recall 命中，但合并、去重、neighbor 或 prior 阶段丢失。
+- `R1c_materialization_loss`：有候选 id，但物化定额行失败或字段缺失。
+- `R1d_hard_validator_drop`：正确候选进入候选池后被硬参数、family gate、book/scope 或 validator 删除。
+- `R2_rank_wrong_after_valid_pool`：正确候选仍在有效候选池内，但排序或 final pick 未选中。
+
+当 summary、latest、日志之间出现矛盾时，必须输出 `diagnostic_conflicts`，例如“`recall_topk_ids` 命中但 `all_candidate_ids` 为空”。这类样本不得简单归为纯 R1。
+
+### 3. 部分验收状态
+
+Step 4 新增 `partial_validation_status`，允许记录本轮推进到哪一层：
+
+- `diagnostic_pass`：诊断字段补齐，能解释最大共性簇和下一瓶颈。
+- `local_behavior_pass`：本轮目标函数或局部链路行为已按预期改变，但 benchmark 未必命中。
+- `candidate_lifecycle_pass`：正确候选已从缺失推进到后续阶段，且生命周期证据清楚。
+- `blocked_by_next_stage`：本轮机制已推进，但被下一阶段瓶颈阻断。
+- `benchmark_pass`：目标切片或局部 benchmark 命中。
+- `failed`：目标行为无改善，或引入明显回归。
+
+只有 `benchmark_pass` 才能直接登记为 `pending_full_validation`。`local_behavior_pass`、`candidate_lifecycle_pass`、`blocked_by_next_stage` 可以保留 patch，但必须登记在本轮报告和 `failed_slice_next_action` 中，不得冒充验收通过。
+
+### 4. 失败切片后的下一动作
+
+切片 benchmark 未通过时，不再只写“停止”。必须生成或汇报 `failed_slice_next_action`：
+
+```json
+{
+  "failed_slice_next_action": {
+    "action": "continue_same_issue_next_stage",
+    "same_repair_unit": false,
+    "next_failing_stage": "validator",
+    "reason": "raw recall now exposes expected quota but hard validation removes it",
+    "allowed_next_work": "diagnose_only | targeted_patch_after_new_next_action",
+    "rollback_required": false
+  }
+}
+```
+
+合法 action：
+- `continue_same_issue_next_stage`：同一共性簇已推进到下一阶段，允许下一轮继续诊断。
+- `rollback_current_patch`：当前 patch 没有推进或引入回归。
+- `convert_to_data_review`：暴露的是 expected、题库、主辅项或省份定额语义问题。
+- `need_more_diagnostics`：生命周期字段不足，先补 trace。
+- `start_step5_full_validation`：局部通过但全局风险较高，需要 full/global。
+
+### 5. expected 语义和主辅项
+
+多 expected 样本必须标记 `expected_semantics`：
+
+- `any_of`：任一 expected 命中即可。
+- `all_of`：必须全部输出。
+- `primary_plus_auxiliary`：存在主项和关联辅助项，需区分主项命中与辅助项补充。
+- `unknown`：当前题库语义不清，不能用算法补丁强行迎合。
+
+若样本同时包含主项和辅助项，例如电缆敷设主项 + 电缆头辅助项，报告必须写：
+
+```json
+{
+  "expected_semantics": "primary_plus_auxiliary",
+  "primary_expected_ids": [],
+  "auxiliary_expected_ids": [],
+  "matching_contract": "single_primary | primary_with_related | unknown"
+}
+```
+
+当 `matching_contract=single_primary` 时，辅助项未命中不得直接判定主项算法失败；当业务要求 `primary_with_related` 时，必须走关联定额输出链路，不得只修主项 picker。
+
+### 6. 指标可信度
+
+`pure_search_metrics` 新增 `metric_confidence`：
+
+```json
+{
+  "metric_confidence": {
+    "recall_at_k": "high",
+    "rank_at_k": "medium",
+    "validator_veto_rate": "medium",
+    "route_filter_loss": "medium",
+    "prior_candidates_delta": "requires_ab_run",
+    "latency_breakdown_ms": "missing"
+  }
+}
+```
+
+允许值：
+- `high`：来自运行时真实链路字段。
+- `medium`：来自 latest/static artifact 推导。
+- `low`：字段不完整，只能辅助判断。
+- `missing`：没有数据。
+- `requires_ab_run`：需要成对 benchmark 或开关对照。
+
+字段存在但可信度为 `missing` 或 `requires_ab_run` 时，不得声称速度或 prior 效果已改善。
+
+### 7. patch 保留和回退标准
+
+切片 benchmark 未命中时，当前 patch 可以保留的条件：
+- 单测覆盖本轮机制。
+- before/after trace 显示目标链路向正确方向推进。
+- 没有相关回归或 P0 新 block。
+- 失败原因已迁移到下一阶段，且 `failed_slice_next_action` 清楚。
+
+必须回退或关闭的条件：
+- 目标 query、候选生命周期或排序没有改善。
+- 正确候选更远或新引入跨类误召回。
+- patch 只服务单样本，没有共性机制。
+- patch 破坏 P0、引入 secret/mojibake、刷新 generated knowledge 或新增全局慢路径。
+
+### 8. 每轮产物 manifest
+
+每轮必须输出 `round_artifact_manifest`，至少包含本轮新增或修改的：
+- 代码文件。
+- 测试文件。
+- 诊断 JSON/CSV。
+- benchmark latest/summary/attribution。
+- output/benchmark_assets 目录。
+- 是否修改 generated knowledge。
+
+推荐路径：
+
+```text
+reports/attribution/v36_round_manifest_<topic>.json
+```
+
+### 9. 时间和重试预算
+
+默认预算：
+- `targeted unit tests`：5 分钟内。
+- `diagnostic command`：5 分钟内。
+- `slice benchmark`：最多 20-50 条样本，15 分钟内。
+- `benchmark retries`：同一轮最多 1 次。
+- `full/global`：只在 Step 5、发布前、无合格输入或用户明确要求时运行。
+
+超过预算时，停止并汇报 `need_more_diagnostics` 或给出 Step 5 独立运行命令，不在当前回合继续消耗。
+
 ## 当前执行记录
 
 ### 2026-04-29 弱电箱 Step 4 局部修复
@@ -608,6 +812,20 @@ python tools/run_benchmark.py `
 - 状态：`pending_full_validation`。
 - 备注：这是 V36 共性聚类规则固化前的单点局部修复记录；后续同类修复必须以 `target_common_issue` shared 簇和多样本验收为准。
 - 下一步唯一动作：回到 Step 0，使用同一份或更新后的 full/global 输入生成下一轮小修复；或启动 Step 5 full/global 长验收。
+
+### 2026-04-29 电力电缆 R1-01 诊断推进记录
+
+- 输入：沿用 `output/benchmark_assets/ltr_v2_full_20260422/all_errors.jsonl` 和 `reports/attribution/ltr_v2_full_20260422.json`；输入为 stale full/global，状态 `pending`。
+- target_common_issue：`R1-01`，`R1::recall_miss::c4::search::4-11->4-9`，共 79 条，`commonality=shared`。
+- 诊断补齐：`tools/v36_gate.py diagnose-pure-search` 已从静态 full/global latest 产物生成 `pure_search_metrics`，确认该簇 raw candidate top20 命中 0/79，错误集中为 `4-11->4-9`。
+- 局部修复：清单主体为 `电力电缆` 且名称本身不是 `刷油/防腐/标识/色环` 时，禁止 `_build_surface_process_query` 被工作内容里的 `标识/色环` 劫持为 `管道标识 色环`。
+- before_after_delta：代表样本 query 从 `管道标识 色环` 变为 `室内敷设电力电缆 ... 桥架 穿管 电缆截面 ...`。
+- 局部测试：`tests/test_query_builder_stage3_recall_cleanup.py` 新增电缆工作内容标识劫持回归；相关 query builder 和 V36 gate 单测通过。
+- 切片 benchmark：`江西省通用安装` + `电力电缆` 20 条，`--no-materialize-learning`，结果 0/20，未通过。
+- 失败迁移：切片报告和日志显示正确 `4-9` 系列已进入 `recall_topk_ids`，但最终 `all_candidate_ids=[]` 且候选被硬参数校验拒绝；问题已从 query/召回前置劫持推进到 `R1d_hard_validator_drop` 或候选生命周期缺字段。
+- partial_validation_status：`blocked_by_next_stage`；不得登记为 `pending_full_validation`。
+- failed_slice_next_action：`continue_same_issue_next_stage`，下一阶段只允许先诊断正确 `4-9` 候选在 materialization/family gate/validator 中被删除的具体 reason_code。
+- 备注：该轮促成 V36.1 补充协议，后续同类失败不得只用最终 benchmark pass/fail 判断，应输出 candidate lifecycle、partial status、failed slice next action 和 expected semantics。
 
 ## 每轮固定汇报格式
 
@@ -631,3 +849,10 @@ python tools/run_benchmark.py `
 - release_gate_status
 - pending_full_validation_summary
 - pure_search_metrics（仅纯搜索相关回合必填）
+- candidate_lifecycle_trace（候选相关回合必填；缺字段需写 missing）
+- before_after_delta（算法或 query 行为变更回合必填）
+- partial_validation_status
+- failed_slice_next_action（切片未通过时必填）
+- expected_semantics（多 expected 或主辅项样本必填）
+- metric_confidence（诊断指标来自静态产物或字段不完整时必填）
+- round_artifact_manifest

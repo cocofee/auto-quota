@@ -1,8 +1,10 @@
 # 2026-04-25 R2/LTR 自动诊断与下一步计划
 
-## 接续口令
+> 已归并：本文档不再作为独立执行入口。R2/LTR 诊断口径已经并入 `docs/global_repair_small_step_plan_v36.md` 的 V36.1 候选生命周期追踪和失败分桶；本文只保留为历史诊断记录。
 
-清理对话后，直接说：
+## 历史接续口令（已停用）
+
+以下口令仅作历史记录，不再使用。后续统一使用 `docs/global_repair_small_step_plan_v36.md` 的启动语。
 
 ```text
 读取 2026-04-25 R2/LTR 自动诊断文档，继续 R2-1。
@@ -130,4 +132,3 @@ python tools/export_r2_ltr_diagnostics.py --input reports/attribution/r1_2_zheji
 - `tests/test_export_r2_ltr_diagnostics.py`: `3 passed`
 - 诊断导出成功
 - 本轮未修改排序算法逻辑
-
