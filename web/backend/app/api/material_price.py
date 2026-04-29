@@ -677,6 +677,7 @@ def _parse_sheet(ws) -> dict:
 
     # 遍历数据行
     current_bill: dict | None = None
+    bill_records: list[dict] = []
     for row_idx in range(header_row + 1, ws.max_row + 1):
         code_val = ""
         if "code" in col_map:
@@ -758,6 +759,8 @@ def _parse_sheet(ws) -> dict:
         row_type = _classify_row(code_val, name_val, seq_val)
 
         if row_type == "material":
+            if current_bill:
+                current_bill["has_material_candidate"] = True
             normalized = _build_normalized_material_fields(
                 name_val,
                 spec_val,
@@ -809,9 +812,16 @@ def _parse_sheet(ws) -> dict:
             if desc_col is not None:
                 desc_val = str(ws.cell(row=row_idx, column=desc_col).value or "").strip()
             current_bill = {
+                "row": row_idx,
+                "sheet": ws.title,
+                "code": code_val,
                 "name": name_val,
                 "desc": desc_val,
+                "unit": unit_val,
+                "qty": qty_val,
+                "has_material_candidate": False,
             }
+            bill_records.append(current_bill)
             all_rows.append({
                 "type": "bill",
                 "row": row_idx,
@@ -842,57 +852,63 @@ def _parse_sheet(ws) -> dict:
                 "name": name_val,
             })
 
-    if not materials and all_rows:
-        for row in list(all_rows):
-            if row.get("type") != "bill":
+    if bill_records:
+        for row in bill_records:
+            if row.get("has_material_candidate"):
                 continue
             desc_val = str(row.get("desc") or "").strip()
             if not desc_val:
                 continue
-            normalized = _build_normalized_material_fields(
-                str(row.get("name") or ""),
-                "",
+            candidate_fields = _extract_multiple_material_candidates_from_desc(
                 str(row.get("name") or ""),
                 desc_val,
             )
-            normalized_name = str(normalized.get("normalized_name") or "").strip()
-            if not normalized_name or not _is_viable_material_candidate(normalized_name):
-                continue
-            synthetic = {
-                "type": "material",
-                "row": row["row"],
-                "sheet": ws.title,
-                "header_row": header_row,
-                "code": "__EXTRACTED__",
-                "name": normalized_name,
-                "desc": desc_val,
-                "name_col": None,
-                "suggested_name": normalized.get("suggested_name", ""),
-                "spec": normalized.get("normalized_spec", ""),
-                "spec_col": None,
-                "suggested_spec": normalized.get("suggested_spec", ""),
-                "unit": row.get("unit", ""),
-                "qty": row.get("qty"),
-                "existing_price": None,
-                "price_col": None,
-                "lookup_price": None,
-                "lookup_source": None,
-                "lookup_url": None,
-                "lookup_label": None,
-                "normalized_name": normalized_name,
-                "normalized_spec": normalized.get("normalized_spec", ""),
-                "critical_spec_text": normalized.get("critical_spec_text", ""),
-                "normalized_query_text": normalized.get("normalized_query_text", ""),
-                "object_type": normalized.get("object_type", ""),
-                "family": normalized.get("family", ""),
-                "normalization_confidence": normalized.get("normalization_confidence", ""),
-                "connection_hint": normalized.get("connection_hint", ""),
-                "material_hint": normalized.get("material_hint", ""),
-                "desc_type_hint": normalized.get("desc_type_hint", ""),
-                "extraction_evidence": desc_val,
-            }
-            materials.append(synthetic)
-            all_rows.append(synthetic)
+            if not candidate_fields:
+                candidate_fields = [_build_normalized_material_fields(
+                    str(row.get("name") or ""),
+                    "",
+                    str(row.get("name") or ""),
+                    desc_val,
+                )]
+            for index, normalized in enumerate(candidate_fields, start=1):
+                normalized_name = str(normalized.get("normalized_name") or "").strip()
+                if not normalized_name or not _is_viable_material_candidate(normalized_name):
+                    continue
+                synthetic = {
+                    "type": "material",
+                    "row": row["row"],
+                    "sheet": ws.title,
+                    "header_row": header_row,
+                    "code": "__EXTRACTED__" if len(candidate_fields) == 1 else f"__EXTRACTED__{index}",
+                    "name": normalized_name,
+                    "desc": desc_val,
+                    "name_col": None,
+                    "suggested_name": normalized.get("suggested_name", ""),
+                    "spec": normalized.get("normalized_spec", ""),
+                    "spec_col": None,
+                    "suggested_spec": normalized.get("suggested_spec", ""),
+                    "unit": row.get("unit", ""),
+                    "qty": row.get("qty"),
+                    "existing_price": None,
+                    "price_col": None,
+                    "lookup_price": None,
+                    "lookup_source": None,
+                    "lookup_url": None,
+                    "lookup_label": None,
+                    "normalized_name": normalized_name,
+                    "normalized_spec": normalized.get("normalized_spec", ""),
+                    "critical_spec_text": normalized.get("critical_spec_text", ""),
+                    "normalized_query_text": normalized.get("normalized_query_text", ""),
+                    "object_type": normalized.get("object_type", ""),
+                    "family": normalized.get("family", ""),
+                    "normalization_confidence": normalized.get("normalization_confidence", ""),
+                    "connection_hint": normalized.get("connection_hint", ""),
+                    "material_hint": normalized.get("material_hint", ""),
+                    "desc_type_hint": normalized.get("desc_type_hint", ""),
+                    "extraction_evidence": normalized.get("extraction_evidence") or desc_val,
+                }
+                materials.append(synthetic)
+                all_rows.append(synthetic)
 
     return {
         "materials": materials,
@@ -1009,6 +1025,8 @@ def _suggest_material_from_bill_context(material_name: str, bill_name: str, desc
                 suggested_name = f"{conn_prefix}{suggested_name}"
         if _should_prefix_material(candidate_type) and candidate_material and candidate_material not in suggested_name:
             suggested_name = f"{candidate_material}{suggested_name}"
+    elif _should_use_desc_name_for_generic_material(reference_name, candidate_type):
+        suggested_name = candidate_type.strip()
     elif _should_use_pipe_fitting_type(reference_name, candidate_type, candidate_name):
         suggested_name = _compose_pipe_fitting_name(
             reference_name,
@@ -1141,7 +1159,7 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
             break
 
     candidate_type = ""
-    for key in ("类型", "类别", "名称"):
+    for key in ("类型", "类别", "名称", "材料名称", "主材名称", "设备名称", "材料品种", "品种"):
         if pairs.get(key):
             candidate_type = pairs[key].strip()
             break
@@ -1203,6 +1221,93 @@ def _extract_material_from_desc(desc: str) -> dict[str, str]:
         "connection": candidate_connection,
         "model": model.strip(),
     }
+
+
+def _iter_desc_key_values(desc: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    normalized_desc = re.sub(r"(?<!\S)(\d+)\.\s*", r"\n\1.", str(desc or ""))
+    for raw_line in normalized_desc.splitlines():
+        line = re.sub(r"^\s*\d+[\.、\s]*", "", raw_line.strip())
+        if not line:
+            continue
+        parts = re.split(r"[:：]", line, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        key = _normalize_desc_key(parts[0].strip())
+        value = parts[1].strip()
+        if key and value:
+            rows.append((key, value))
+    return rows
+
+
+def _extract_multiple_material_candidates_from_desc(bill_name: str, desc: str) -> list[dict[str, str]]:
+    name_keys = {"名称", "材料名称", "主材名称", "设备名称", "材料品种", "品种", "材质", "材质要求", "类型", "类别"}
+    spec_keys = {"型号规格", "规格型号", "规格", "型号", "公称直径", "规格压力等级"}
+    combined_keys = {"材质规格", "材质及规格", "材质型号"}
+
+    groups: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+
+    def flush_current() -> None:
+        nonlocal current
+        name = str(current.get("name") or "").strip()
+        spec = str(current.get("spec") or "").strip()
+        if name and spec:
+            groups.append(dict(current))
+        current = {}
+
+    for key, value in _iter_desc_key_values(desc):
+        if key in combined_keys:
+            flush_current()
+            name, spec = _split_material_and_spec(value)
+            if name and spec:
+                groups.append({"name": name, "spec": spec, "evidence": value})
+            continue
+        if key in name_keys:
+            if current.get("name") and current.get("spec"):
+                flush_current()
+            elif current.get("name"):
+                flush_current()
+            current["name"] = value
+            current["evidence"] = value
+            continue
+        if key in spec_keys:
+            maybe_name, maybe_spec = _split_material_and_spec(value)
+            if maybe_spec and (not current.get("name") or _looks_like_bare_material_token(str(current.get("name") or ""))):
+                current["name"] = maybe_name
+                current["spec"] = maybe_spec
+            else:
+                current["spec"] = value
+            evidence = str(current.get("evidence") or "").strip()
+            current["evidence"] = f"{evidence} {value}".strip()
+            continue
+
+    flush_current()
+    if len(groups) <= 1:
+        return []
+
+    candidates: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for group in groups:
+        normalized = _build_normalized_material_fields(
+            str(group.get("name") or ""),
+            str(group.get("spec") or ""),
+            bill_name,
+            "",
+        )
+        normalized_name = str(normalized.get("normalized_name") or "").strip()
+        normalized_spec = str(normalized.get("normalized_spec") or "").strip()
+        if not normalized_name or not normalized_spec:
+            continue
+        if not _is_viable_material_candidate(normalized_name):
+            continue
+        key = (_normalize_material_hint(normalized_name), normalized_spec.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized["extraction_evidence"] = str(group.get("evidence") or "").strip()
+        candidates.append(normalized)
+    return candidates if len(candidates) > 1 else []
 
 
 def _split_material_and_spec(text: str) -> tuple[str, str]:
@@ -1348,6 +1453,24 @@ def _should_prefix_connection(candidate_type: str) -> bool:
 def _should_prefix_material(candidate_type: str) -> bool:
     value = str(candidate_type or "").strip()
     return "阀" in value or "减压器" in value
+
+
+def _should_use_desc_name_for_generic_material(material_name: str, desc_name: str) -> bool:
+    candidate = str(desc_name or "").strip()
+    if not candidate or _looks_like_bare_material_token(candidate):
+        return False
+    if not _is_viable_material_candidate(candidate):
+        return False
+
+    reference = _strip_inline_spec_from_name(str(material_name or "").strip()) or str(material_name or "").strip()
+    normalized = _normalize_material_hint(reference)
+    generic_names = {
+        "配线", "管内穿线", "电线", "导线", "电缆", "电力电缆", "控制电缆",
+        "桥架", "线槽", "母线槽", "灯具", "防水卷材", "防水涂料", "保温材料",
+    }
+    if normalized in {_normalize_material_hint(item) for item in generic_names}:
+        return True
+    return _is_effective_generic_material_name(reference) and _is_compatible_material_hint(reference, candidate)
 
 
 # ============================================================
@@ -1569,6 +1692,14 @@ def _infer_material_object_type(name: str, bill_name: str = "", candidate_type: 
         return "pipe_fitting"
     if "管" in text:
         return "pipe"
+    if any(token in text for token in ("电缆", "电力电缆", "控制电缆")):
+        return "cable"
+    if any(token in text for token in ("电线", "导线", "配线", "穿线")):
+        return "wire"
+    if any(token in text for token in ("桥架", "线槽", "母线槽")):
+        return "cable_tray"
+    if any(token in text for token in ("防水卷材", "防水涂料", "防水材料")):
+        return "waterproof"
     if any(token in text for token in ("泵", "机组", "设备", "水箱", "风机")):
         return "equipment"
     if any(token in text for token in ("地漏", "洁具", "器", "箱", "表")):

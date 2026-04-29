@@ -196,6 +196,55 @@ def test_parse_sheet_builds_material_candidate_when_no_explicit_material_row():
     assert material_rows[0]["row"] == 2
 
 
+def test_parse_sheet_builds_candidate_for_bill_without_material_even_when_other_bills_have_material():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["序号", "项目编码", "项目名称", "项目特征描述", "单位", "工程量"])
+    ws.append(["1", "031001006001", "塑料管", "1.材质:PPR给水管\n2.规格:De25 S5\n3.连接形式:热熔连接", "m", 10])
+    ws.append(["", "Z001", "PPR给水管", "", "m", 10])
+    ws.append(["2", "031001007001", "钢管", "1.材质、规格:衬塑钢管 DN80\n2.连接形式:螺纹连接", "m", 8])
+    ws.append(["", "A10-1-1", "给排水管道 室内钢塑复合管 螺纹连接", "", "10m", 0.8])
+
+    result = material_price_api._parse_sheet(ws)
+
+    material_rows = [row for row in result["materials"] if row["type"] == "material"]
+    extracted_rows = [row for row in material_rows if row["code"] == "__EXTRACTED__"]
+
+    assert len(material_rows) == 2
+    assert len(extracted_rows) == 1
+    assert extracted_rows[0]["row"] == 4
+    assert extracted_rows[0]["normalized_name"] == "衬塑钢管"
+    assert extracted_rows[0]["normalized_spec"] == "DN80"
+
+
+def test_parse_sheet_builds_multiple_candidates_from_one_bill_desc():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["序号", "项目编码", "项目名称", "项目特征描述", "单位", "工程量"])
+    ws.append([
+        "1",
+        "031001006001",
+        "给排水管道",
+        "1.材质:PPR给水管\n2.规格:De25 S5\n3.材质:U-PVC排水管\n4.规格:De110\n5.连接形式:热熔/承插",
+        "m",
+        10,
+    ])
+
+    result = material_price_api._parse_sheet(ws)
+
+    extracted_rows = [row for row in result["materials"] if row["code"].startswith("__EXTRACTED__")]
+
+    assert len(extracted_rows) == 2
+    assert extracted_rows[0]["code"] == "__EXTRACTED__1"
+    assert extracted_rows[0]["normalized_name"] == "PPR给水管"
+    assert extracted_rows[0]["normalized_spec"] == "De25 S5"
+    assert extracted_rows[1]["code"] == "__EXTRACTED__2"
+    assert extracted_rows[1]["normalized_name"] == "U-PVC排水管"
+    assert extracted_rows[1]["normalized_spec"] == "De110"
+
+
 def test_parse_sheet_does_not_guess_price_col_for_mixed_table():
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -276,6 +325,48 @@ def test_build_normalized_material_fields_prefers_specific_equipment_name_from_d
     assert normalized["suggested_name"] == "\u79fb\u52a8\u5f0f\u6f5c\u6c34\u6392\u6c61\u6cf5"
     assert normalized["normalized_name"] == "\u79fb\u52a8\u5f0f\u6f5c\u6c34\u6392\u6c61\u6cf5"
     assert normalized["object_type"] == "equipment"
+
+
+def test_generic_wire_bill_uses_specific_name_and_model_from_desc():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u914d\u7ebf",
+        "",
+        "\u914d\u7ebf",
+        "1.\u540d\u79f0:\u94dc\u82af\u7535\u7ebf\n2.\u578b\u53f7\u89c4\u683c:BV-2.5mm2\n3.\u6577\u8bbe\u65b9\u5f0f:\u7ba1\u5185\u7a7f\u7ebf",
+    )
+
+    assert normalized["suggested_name"] == "\u94dc\u82af\u7535\u7ebf"
+    assert normalized["normalized_name"] == "\u94dc\u82af\u7535\u7ebf"
+    assert normalized["normalized_spec"] == "BV-2.5mm2"
+    assert normalized["object_type"] == "wire"
+
+
+def test_generic_cable_bill_uses_specific_name_and_model_from_desc():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u7535\u529b\u7535\u7f06",
+        "",
+        "\u7535\u529b\u7535\u7f06",
+        "1.\u540d\u79f0:\u94dc\u82af\u7535\u529b\u7535\u7f06\n2.\u578b\u53f7\u89c4\u683c:YJV-4*35+1*16mm2\n3.\u6577\u8bbe\u65b9\u5f0f:\u6865\u67b6\u5185\u6577\u8bbe",
+    )
+
+    assert normalized["suggested_name"] == "\u94dc\u82af\u7535\u529b\u7535\u7f06"
+    assert normalized["normalized_name"] == "\u94dc\u82af\u7535\u529b\u7535\u7f06"
+    assert normalized["normalized_spec"] == "YJV-4*35+1*16mm2"
+    assert normalized["object_type"] == "cable"
+
+
+def test_waterproof_bill_uses_material_variety_from_desc():
+    normalized = material_price_api._build_normalized_material_fields(
+        "\u9632\u6c34\u5377\u6750",
+        "",
+        "\u9632\u6c34\u5377\u6750",
+        "1.\u6750\u6599\u54c1\u79cd:SBS\u6539\u6027\u6ca5\u9752\u9632\u6c34\u5377\u6750\n2.\u89c4\u683c:4mm\n3.\u65bd\u5de5\u90e8\u4f4d:\u5c4b\u9762",
+    )
+
+    assert normalized["suggested_name"] == "SBS\u6539\u6027\u6ca5\u9752\u9632\u6c34\u5377\u6750"
+    assert normalized["normalized_name"] == "SBS\u6539\u6027\u6ca5\u9752\u9632\u6c34\u5377\u6750"
+    assert normalized["normalized_spec"] == "4mm"
+    assert normalized["object_type"] == "waterproof"
 
 
 def test_extract_material_from_desc_supports_separate_material_and_spec_fields():

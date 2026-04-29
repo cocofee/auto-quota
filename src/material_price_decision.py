@@ -21,7 +21,17 @@ RISKY_SOURCE_TOKENS = (
     "user_contribute",
 )
 RISKY_SOURCE_TYPES = {"user_contribute"}
-STRONG_OBJECT_TYPES = {"pipe", "pipe_fitting", "valve", "equipment", "device"}
+STRONG_OBJECT_TYPES = {
+    "pipe",
+    "pipe_fitting",
+    "valve",
+    "equipment",
+    "device",
+    "wire",
+    "cable",
+    "cable_tray",
+    "waterproof",
+}
 
 _UNIT_COMPAT_GROUPS = [
     {"kg", "千克", "公斤"},
