@@ -150,7 +150,7 @@ V36 从本版开始先止血，再修算法。任何 Step 4 修复前必须通�
 
 目标：防止乱码和密钥风险继续扩散。
 
-- 新增代码、日志、用户可见文本不得出现明显 mojibake，例如 `锛`、`鈥`、`鍖`、`绠`。
+- 新增代码、日志、用户可见文本不得出现明显 mojibake；示例用 Unicode code point 记录为 `U+951B`、`U+9225`、`U+9346`、`U+7EE0`，不要在正文中直接写入乱码字面量。
 - 禁止硬编码密码、API key、token、生产 URL 登录凭据。
 - 禁止在生产路径关闭 SSL 校验。
 - `shell=True`、`pickle.load`、外部文件执行类逻辑只能留在明确的 non-production tools 中，不能进入核心服务路径。
@@ -264,25 +264,71 @@ python tools/v36_gate.py release-check
 
 当仓库很脏或架构风险已经影响修复效率时，执行顺序固定为：
 
-1. 先补或运行 `tools/v36_gate.py preflight`，保证本轮不会继续污染工作区。
-2. 冻结可比较基线，明确 benchmark 命令、配置快照、准确率和速度。
-3. 加测试分层口径，明确 smoke、targeted、slice benchmark、full/global 的边界。
-4. 加大文件/新增 rescue/新增乱码/新增 secret/generated knowledge 污染的轻量检查。
-5. 加最小 import-boundary 或 architecture check，先守住最危险的依赖方向。
-6. 对纯搜索问题先生成 `pure_search_diagnosis.json`，再选择唯一瓶颈。
-7. 加准确率/速度/复杂度阈值判断，避免为了命中局部样本拖慢全局主链路。
-8. 再回到 Step 0，用合格 full/global 输入或合格纯搜索诊断生成下一轮动作。
+1. 先运行 `tools/v36_gate.py preflight`，只判断能不能继续，不在这一步清理或修算法。
+2. 如果 P0 为 `block`，先进入 P0 治理回合；治理回合只处理一个阻断原因，不叠加算法修复。
+3. 冻结或确认可比较基线，明确 benchmark 命令、配置快照、准确率和速度。
+4. 加测试分层口径，明确 smoke、targeted、slice benchmark、full/global 的边界。
+5. 加大文件/新增 rescue/新增乱码/新增 secret/generated knowledge 污染的轻量检查。
+6. 加最小 import-boundary 或 architecture check，先守住最危险的依赖方向。
+7. 对纯搜索问题先生成 `pure_search_diagnosis.json`，再选择唯一瓶颈。
+8. 加准确率/速度/复杂度阈值判断，避免为了命中局部样本拖慢全局主链路。
+9. 再回到 Step 0，用合格 full/global 输入或合格纯搜索诊断生成下一轮动作。
 
 P0 只负责“停止变脏、变大、变慢、变不准”。不要在 P0 阶段顺手重构主算法。
 
+## P0 治理回合
+
+当 Step 0 发现仓库已经很脏、核心文件继续膨胀、或存在未完成 full/global 验收时，不直接进入 Step 1-4。先执行一个 P0 治理回合。P0 治理回合不是算法修复，它的产出是“让下一轮算法修复可判断、可回滚、可验收”。
+
+P0 治理回合固定只选一个治理目标：
+
+- `artifact_hygiene`：清点、归类、隔离本地产物，避免 reports/output/models/训练 CSV/log/pid/diff_code 误提交。
+- `owner_boundary`：为巨型文件建立 owner 边界和迁移入口，避免继续向 `query_builder.py`、`param_validator.py`、`match_engine.py`、`ltr_ranker.py` 等文件塞新业务分支。
+- `pending_validation_closure`：处理 `pending_full_validation` 台账，决定启动 Step 5、标记 rejected/rollback_required，或明确继续快速修复线的风险条件。
+- `baseline_freeze`：补齐可比较基线，包括 commit、命令、输入、配置、准确率、召回率、耗时和失败分布。
+- `diagnostic_completeness`：补齐 pure search、candidate lifecycle、threshold check 等诊断字段，避免靠最终 pass/fail 猜原因。
+
+P0 治理回合的通过标准：
+
+- 本轮只修改治理工具、治理文档、轻量测试或治理产物，不修改匹配算法策略。
+- 输出 `p0_remediation_target`、`before_risk`、`after_risk`、`remaining_risk` 和 `next_allowed_action`。
+- 如果治理目标是 `artifact_hygiene`，必须只做清点和隔离方案；删除、移动、忽略规则变更必须单独汇报，不得顺手清空用户工作区。
+- 如果治理目标是 `owner_boundary`，必须先定义 owner 目录、桥接边界和禁止新增分支的规则；只有下一轮才能迁移具体算法逻辑。
+- 如果治理目标是 `pending_validation_closure`，不得把 pending 项直接当作已通过；必须进入 Step 5，或明确登记为 `rejected`、`rollback_required`、`deferred_with_reason`。
+
+P0 状态解释固定为：
+
+- `pass`：可以进入 Step 1-4。
+- `warn`：可以继续诊断，但不得发布、不得刷新 generated knowledge；若 warn 来自大量脏产物、巨型文件触碰或 pending 验收，默认下一步优先 P0 治理。
+- `block`：不得进入算法修复；下一步只能是一个 P0 治理回合、Step 5 full/global 验收、或准备合格 full/global 输入。
+
+P0 阻断建议不是简单“越严越好”。以下情况必须 `block`：
+
+- 没有任何合格 full/global 输入。
+- changed text 中存在 secret、生产 SSL bypass、生产路径 `shell=True` 或新增 mojibake。
+- 缺少可比较 baseline，却准备声明准确率、召回率或速度提升。
+- `pending_full_validation` 台账损坏，或发布/刷新知识前仍有 pending 项。
+- 本轮准备把短切片 benchmark 产物写入 generated knowledge。
+
+以下情况默认 `warn`，但如果本轮要进入 Step 4 算法修复，应先做 P0 治理：
+
+- 大量 reports/output/models/训练 CSV/log/pid/diff_code 处于未跟踪或待提交状态。
+- 本轮会触碰巨型 owner 文件，且没有 owner 迁移说明。
+- 当前 full/global 输入是 stale，但仍有旧的合格输入可用。
+- 已存在 pending_full_validation，但本轮不是发布，也不是刷新正式知识。
+
+P0 治理回合完成后，不直接进入算法补丁；必须回到 Step 0 重新运行 preflight，用新的状态决定下一步。
+
 ## 双线执行模型
 
-V36 固定拆成两条线：
+V36 固定拆成三条线：
 
+- P0 治理线：只修治理工具、边界、台账、诊断完整性和产物卫生，不修匹配算法。
 - 快速修复线：Step 0 到 Step 4。使用最近一次合格 full/global 输入做诊断，做一个最小修复，跑单测和目标切片 benchmark。单轮目标是几分钟到几十分钟内闭环。
 - 全量验收线：Step 5。full/global benchmark 作为独立长任务，定期或用户明确要求时运行。它刷新下一轮 Step 0 输入，并把多个 `pending_full_validation` 修复统一判定为通过或回退诊断。
 
 执行规则：
+- P0 治理线优先级高于快速修复线；当 P0 风险已经影响判断时，先治理再修算法。
 - 如果没有新的 full/global 结果，但存在旧的合格 full/global 输入，可以继续快速修复线；汇报中必须写明 `full_validation_status=pending`。
 - 如果没有任何合格 full/global 输入，Step 0 停止，不能用短切片、浙江-only、单专题、smoke 推导全局 next_action。
 - 如果 full/global 验收出现回归，停止继续小修复，先回到 Step 2/Step 3 重新定位最大错误桶或回滚本批中导致回归的最小点。
@@ -839,6 +885,10 @@ reports/attribution/v36_round_manifest_<topic>.json
 - 下一步唯一动作
 - full_validation_status
 - p0_gate_status
+- p0_remediation_target（仅 P0 治理回合必填）
+- before_risk（仅 P0 治理回合必填）
+- after_risk（仅 P0 治理回合必填）
+- remaining_risk（仅 P0 治理回合必填）
 - baseline_snapshot
 - test_tier
 - accuracy_impact
