@@ -40,6 +40,8 @@ GIANT_OWNER_FILES = {
     "web/backend/app/api/openclaw.py",
     "web/backend/app/api/material_price.py",
 }
+DEFAULT_GIANT_BRIDGE_LINE_BUDGET = 25
+OWNER_BOUNDARY_PATTERN = "v36_p0_owner_boundary_*.json"
 MOJIBAKE_MARKERS = (
     "\u951b", "\u9225", "\u9346", "\u7ee0", "\u7f01", "\u934a", "\u7459", "\u9422",
     "\u5a34", "\u95ab", "\u95c0", "\u95bf", "\u9363", "\u7035", "\u95bd", "\u942a",
@@ -85,6 +87,81 @@ def _run_git(root: Path, args: list[str]) -> tuple[int, str, str]:
     except FileNotFoundError:
         return 127, "", "git executable not found"
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def _parse_numstat(stdout: str) -> dict[str, dict[str, Any]]:
+    changes: dict[str, dict[str, Any]] = {}
+    for line in stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        added_raw, deleted_raw, path = parts[0], parts[1], parts[-1]
+        if " => " in path:
+            path = path.split(" => ", 1)[1].strip("{}")
+        normalized = path.replace("\\", "/").strip('"')
+        if normalized not in GIANT_OWNER_FILES:
+            continue
+        added = 0 if added_raw == "-" else int(added_raw or 0)
+        deleted = 0 if deleted_raw == "-" else int(deleted_raw or 0)
+        current = changes.setdefault(normalized, {"path": normalized, "added_lines": 0, "deleted_lines": 0})
+        current["added_lines"] += added
+        current["deleted_lines"] += deleted
+    return changes
+
+
+def _giant_file_change_summary(root: Path, giant_paths: list[str]) -> dict[str, Any]:
+    changes: dict[str, dict[str, Any]] = {}
+    for args in (
+        ["diff", "--numstat", "--", *sorted(GIANT_OWNER_FILES)],
+        ["diff", "--cached", "--numstat", "--", *sorted(GIANT_OWNER_FILES)],
+    ):
+        code, stdout, _ = _run_git(root, args)
+        if code != 0:
+            continue
+        for path, change in _parse_numstat(stdout).items():
+            current = changes.setdefault(path, {"path": path, "added_lines": 0, "deleted_lines": 0})
+            current["added_lines"] += int(change.get("added_lines", 0))
+            current["deleted_lines"] += int(change.get("deleted_lines", 0))
+
+    for path in giant_paths:
+        changes.setdefault(path, {"path": path, "added_lines": 0, "deleted_lines": 0})
+    changed = sorted(changes.values(), key=lambda item: item["path"])
+    return {
+        "changed_files": changed,
+        "max_added_lines": max((int(item.get("added_lines", 0)) for item in changed), default=0),
+    }
+
+
+def _find_owner_boundary_manifest(root: Path) -> dict[str, Any]:
+    candidates = sorted(
+        (root / "reports" / "attribution").glob(OWNER_BOUNDARY_PATTERN),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("p0_remediation_target") != "owner_boundary":
+            continue
+        allowed = payload.get("allowed_bridge_changes") if isinstance(payload, dict) else {}
+        budget = DEFAULT_GIANT_BRIDGE_LINE_BUDGET
+        if isinstance(allowed, dict):
+            try:
+                budget = int(allowed.get("max_new_lines_in_any_giant_owner_file", budget))
+            except (TypeError, ValueError):
+                budget = DEFAULT_GIANT_BRIDGE_LINE_BUDGET
+        return {
+            "status": "present",
+            "path": _rel(root, path),
+            "max_new_lines_in_any_giant_owner_file": budget,
+        }
+    return {
+        "status": "missing",
+        "path": "",
+        "max_new_lines_in_any_giant_owner_file": DEFAULT_GIANT_BRIDGE_LINE_BUDGET,
+    }
 
 
 def _git_status_entries(root: Path) -> list[dict[str, str]]:
@@ -252,6 +329,8 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
     paths = [entry.get("path", "") for entry in entries if entry.get("path")]
     artifact_paths = [path for path in paths if _is_artifact_path(path)]
     giant_paths = [path for path in paths if path in GIANT_OWNER_FILES]
+    giant_change_summary = _giant_file_change_summary(root, giant_paths)
+    owner_boundary = _find_owner_boundary_manifest(root)
     text_risks = _scan_changed_text_risks(root, entries)
     selected_input = _find_global_input(root)
     baseline = _find_baseline_snapshot(root)
@@ -262,14 +341,35 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         hard_blocks.append("no qualified full/global input")
     if text_risks["paths"]:
         hard_blocks.append("secret or mojibake risk in changed text files")
+    if giant_paths and owner_boundary["status"] != "present":
+        hard_blocks.append("giant owner files touched without owner_boundary governance manifest")
+    giant_bridge_budget = int(owner_boundary.get("max_new_lines_in_any_giant_owner_file") or DEFAULT_GIANT_BRIDGE_LINE_BUDGET)
+    giant_over_budget = [
+        item for item in giant_change_summary["changed_files"]
+        if int(item.get("added_lines", 0)) > giant_bridge_budget
+    ]
+    if giant_over_budget:
+        hard_blocks.append("giant owner file changes exceed bridge-only line budget")
 
-    p0_status = "block" if hard_blocks else "warn" if artifact_paths or giant_paths else "pass"
+    p0_status = "block" if hard_blocks else "warn" if artifact_paths or giant_paths or pending.get("pending", 0) else "pass"
+    recommended_target = ""
+    if giant_paths:
+        recommended_target = "owner_boundary"
+    elif artifact_paths:
+        recommended_target = "artifact_hygiene"
+    elif pending.get("pending", 0):
+        recommended_target = "pending_validation_closure"
+    elif selected_input["status"] == "missing":
+        recommended_target = "baseline_freeze"
+
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
         "command": "preflight",
         "p0_gate_status": p0_status,
         "block_reasons": hard_blocks,
+        "recommended_p0_remediation_target": recommended_target,
+        "next_allowed_action": "p0_remediation" if p0_status == "block" else "diagnose_or_p0_remediation",
         "git_status_summary": {
             "changed_total": len(entries),
             "untracked_total": sum(1 for entry in entries if entry.get("status") == "??"),
@@ -281,8 +381,12 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
             "paths": artifact_paths[:50],
         },
         "giant_file_touch_risk": {
-            "status": "warn" if giant_paths else "pass",
+            "status": "block" if giant_over_budget or (giant_paths and owner_boundary["status"] != "present") else "warn" if giant_paths else "pass",
             "paths": giant_paths,
+            "owner_boundary_manifest": owner_boundary,
+            "bridge_line_budget": giant_bridge_budget,
+            "change_summary": giant_change_summary,
+            "over_budget": giant_over_budget,
         },
         "secret_or_mojibake_risk": text_risks,
         "test_tier_plan": "targeted plus optional slice benchmark; full/global remains Step 5",

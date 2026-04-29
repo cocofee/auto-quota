@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,56 @@ def _cleanup(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+def _init_git_workspace(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    src = root / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    query_builder = src / "query_builder.py"
+    query_builder.write_text("# base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/query_builder.py"], cwd=root, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=v36@example.invalid",
+            "-c",
+            "user.name=V36 Test",
+            "commit",
+            "-m",
+            "init",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _write_legacy_full_input(root: Path) -> None:
+    latest = root / "output" / "benchmark_assets" / "ltr_v2_full_20260422" / "all_errors.jsonl"
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text("{}\n", encoding="utf-8")
+    attr = root / "reports" / "attribution" / "ltr_v2_full_20260422.json"
+    attr.parent.mkdir(parents=True, exist_ok=True)
+    attr.write_text("{}", encoding="utf-8")
+
+
+def _write_owner_boundary(root: Path, budget: int = 25) -> None:
+    path = root / "reports" / "attribution" / "v36_p0_owner_boundary_test.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_owner_boundary.v1",
+                "p0_remediation_target": "owner_boundary",
+                "allowed_bridge_changes": {
+                    "max_new_lines_in_any_giant_owner_file": budget,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_v36_preflight_selects_legacy_full_input():
     tmp_path = _workspace()
     latest = tmp_path / "output" / "benchmark_assets" / "ltr_v2_full_20260422" / "all_errors.jsonl"
@@ -38,6 +89,60 @@ def test_v36_preflight_selects_legacy_full_input():
     assert result["selected_input"]["status"] == "present"
     assert result["selected_input"]["input_freshness"] == "stale"
     assert result["p0_gate_status"] in {"pass", "warn"}
+
+
+def test_v36_preflight_blocks_giant_file_without_owner_boundary():
+    tmp_path = _workspace()
+    try:
+        _init_git_workspace(tmp_path)
+        _write_legacy_full_input(tmp_path)
+        (tmp_path / "src" / "query_builder.py").write_text("# base\n# new bridge\n", encoding="utf-8")
+
+        result = build_preflight(tmp_path)
+
+        assert result["p0_gate_status"] == "block"
+        assert result["recommended_p0_remediation_target"] == "owner_boundary"
+        assert result["giant_file_touch_risk"]["status"] == "block"
+        assert "giant owner files touched without owner_boundary governance manifest" in result["block_reasons"]
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_preflight_blocks_giant_file_over_bridge_budget():
+    tmp_path = _workspace()
+    try:
+        _init_git_workspace(tmp_path)
+        _write_legacy_full_input(tmp_path)
+        _write_owner_boundary(tmp_path, budget=25)
+        added_lines = "\n".join(f"# added {index}" for index in range(30))
+        (tmp_path / "src" / "query_builder.py").write_text(f"# base\n{added_lines}\n", encoding="utf-8")
+
+        result = build_preflight(tmp_path)
+
+        assert result["p0_gate_status"] == "block"
+        assert result["recommended_p0_remediation_target"] == "owner_boundary"
+        assert result["giant_file_touch_risk"]["over_budget"][0]["path"] == "src/query_builder.py"
+        assert "giant owner file changes exceed bridge-only line budget" in result["block_reasons"]
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_preflight_allows_owner_boundary_bridge_budget():
+    tmp_path = _workspace()
+    try:
+        _init_git_workspace(tmp_path)
+        _write_legacy_full_input(tmp_path)
+        _write_owner_boundary(tmp_path, budget=25)
+        (tmp_path / "src" / "query_builder.py").write_text("# base\n# bridge call\n", encoding="utf-8")
+
+        result = build_preflight(tmp_path)
+
+        assert result["p0_gate_status"] == "warn"
+        assert result["recommended_p0_remediation_target"] == "owner_boundary"
+        assert result["giant_file_touch_risk"]["status"] == "warn"
+        assert result["giant_file_touch_risk"]["over_budget"] == []
+    finally:
+        _cleanup(tmp_path)
 
 
 def test_v36_choose_next_action_writes_contract_outputs():
