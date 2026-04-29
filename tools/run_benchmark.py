@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from contextlib import contextmanager
 import json
 import os
@@ -37,6 +38,26 @@ HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"
 PAPER_OVERRIDES_PATH = PAPERS_DIR / "_paper_overrides.json"
 BENCHMARK_ASSET_ROOT = PROJECT_ROOT / "output" / "benchmark_assets"
 BENCHMARK_ASSET_ALT_LIMIT = 9
+ATTRIBUTION_REPORT_ROOT = PROJECT_ROOT / "reports" / "attribution"
+ATTRIBUTION_CATEGORY_ORDER = (
+    "R1_召回未命中",
+    "R5_经验库直通错",
+    "R4_Picker推翻正确",
+    "R3_CGR推翻正确",
+    "R2_LTR选错",
+    "R6_其它",
+)
+RANK_STAGE_TO_TOP1_FIELD = {
+    "ltr": "post_ltr_top1_id",
+    "cgr": "post_cgr_top1_id",
+    "cgr_ranker": "post_cgr_top1_id",
+    "arbiter": "post_arbiter_top1_id",
+    "candidate_arbiter": "post_arbiter_top1_id",
+    "explicit": "post_explicit_top1_id",
+    "explicit_picker": "post_explicit_top1_id",
+    "explicit_override": "post_explicit_top1_id",
+    "category_safe": "post_final_top1_id",
+}
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -393,6 +414,15 @@ def run_json_paper(province: str, items: list[dict],
 
         # 检查正确答案是否在候选列表中（oracle诊断）
         all_cand_ids = result.get('all_candidate_ids', [])
+        recall_topk_ids = _normalize_quota_id_list(result.get('recall_topk_ids') or [])
+        if not recall_topk_ids:
+            recall_topk_ids = _normalize_quota_id_list(all_cand_ids)
+        recall_rank = next(
+            (index for index, quota_id in enumerate(recall_topk_ids, start=1) if quota_id in stored_ids),
+            -1,
+        )
+        if str(source or "").strip().lower() == "experience_exact" and not recall_topk_ids:
+            recall_rank = None
         oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
         pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
         post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
@@ -473,6 +503,7 @@ def run_json_paper(province: str, items: list[dict],
         )
 
         details.append({
+            'bill_id': str(card.get('sample_id') or card.get('bill_id') or seq),
             'bill_name': card['bill_name'][:30],
             'is_match': is_match,
             'algo_id': algo_id,
@@ -483,6 +514,8 @@ def run_json_paper(province: str, items: list[dict],
             'cause': cause,
             'oracle_in_candidates': oracle_found,
             'all_candidate_ids': all_cand_ids[:10],
+            'recall_topk_ids': recall_topk_ids[:20],
+            'recall_rank': recall_rank,
             'bill_text': card['bill_text'],
             'specialty': card.get('specialty', ''),
             'match_source': result.get('match_source', ''),
@@ -490,7 +523,9 @@ def run_json_paper(province: str, items: list[dict],
             'reasoning_decision': result.get('reasoning_decision', {}),
             'alternatives': result.get('alternatives', [])[:BENCHMARK_ASSET_ALT_LIMIT],
             'candidate_snapshots': result.get('candidate_snapshots', [])[:20],
+            'trace': dict(result.get('trace') or {}),
             'trace_path': list((result.get('trace') or {}).get('path') or []),
+            'rank_stage_steps': _rank_stage_steps(result),
             'candidate_count': result.get('candidate_count', result.get('candidates_count', len(all_cand_ids))),
             'pre_ltr_top1_id': pre_ltr_top1_id,
             'post_ltr_top1_id': post_ltr_top1_id,
@@ -626,6 +661,15 @@ def _trace_step(result: dict, stage: str) -> dict:
         if isinstance(step, dict) and step.get("stage") == stage:
             return step
     return {}
+
+
+def _rank_stage_steps(result: dict) -> list[dict]:
+    trace = result.get("trace") or {}
+    steps = []
+    for step in list(trace.get("steps") or []):
+        if isinstance(step, dict) and step.get("stage") == "rank_stage":
+            steps.append(dict(step))
+    return steps
 
 
 def _diagnose_error_stage(result: dict, stored_ids: list[str], *, algo_id: str, is_match: bool, oracle_found: bool) -> tuple[str, str, str]:
@@ -963,6 +1007,291 @@ def format_rate(rate: float) -> str:
     return f"{rate * 100:.1f}%"
 
 
+def _normalize_quota_id_list(values: Iterable | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _detail_expected_quota_ids(detail: dict) -> list[str]:
+    return _normalize_quota_id_list(
+        detail.get("stored_ids")
+        or detail.get("expected_quota_ids")
+        or []
+    )
+
+
+def _detail_recall_topk_ids(detail: dict) -> list[str]:
+    if isinstance(detail.get("recall_topk_ids"), list):
+        return _normalize_quota_id_list(detail.get("recall_topk_ids") or [])
+    return _normalize_quota_id_list(detail.get("all_candidate_ids") or [])
+
+
+def _detail_recall_rank(detail: dict) -> int | None:
+    match_source = str(detail.get("match_source", "") or "").strip().lower()
+    if match_source == "experience_exact":
+        return None
+
+    if isinstance(detail.get("recall_rank"), int):
+        return int(detail["recall_rank"])
+
+    recall_topk_ids = _detail_recall_topk_ids(detail)
+    expected_ids = _detail_expected_quota_ids(detail)
+    for index, quota_id in enumerate(recall_topk_ids, start=1):
+        if quota_id in expected_ids:
+            return index
+    return -1
+
+
+def _extract_rank_stage_top1_ids(detail: dict) -> dict[str, str]:
+    stage_top1_ids = {
+        "post_ltr_top1_id": str(detail.get("post_ltr_top1_id", "") or ""),
+        "post_cgr_top1_id": str(detail.get("post_cgr_top1_id", "") or ""),
+        "post_arbiter_top1_id": str(detail.get("post_arbiter_top1_id", "") or ""),
+        "post_explicit_top1_id": str(detail.get("post_explicit_top1_id", "") or ""),
+        "post_final_top1_id": str(
+            detail.get("post_final_top1_id", detail.get("algo_id", ""))
+            or detail.get("algo_id", "")
+            or ""
+        ),
+    }
+    for step in list(detail.get("rank_stage_steps") or []):
+        if not isinstance(step, dict) or step.get("stage") != "rank_stage":
+            continue
+        target_field = RANK_STAGE_TO_TOP1_FIELD.get(str(step.get("name", "") or "").strip().lower())
+        if not target_field:
+            continue
+        stage_top1_ids[target_field] = str(step.get("top1_id", "") or "")
+    return stage_top1_ids
+
+
+def _classify_attribution_category(detail: dict) -> str:
+    expected_ids = set(_detail_expected_quota_ids(detail))
+    if not expected_ids or detail.get("is_match"):
+        return ""
+
+    recall_rank = _detail_recall_rank(detail)
+    match_source = str(detail.get("match_source", "") or "").strip().lower()
+    stage_top1_ids = _extract_rank_stage_top1_ids(detail)
+
+    post_ltr_top1_id = stage_top1_ids.get("post_ltr_top1_id", "")
+    post_cgr_top1_id = stage_top1_ids.get("post_cgr_top1_id", "")
+    post_explicit_top1_id = stage_top1_ids.get("post_explicit_top1_id", "")
+
+    if recall_rank == -1:
+        return "R1_召回未命中"
+    if match_source == "experience_exact":
+        return "R5_经验库直通错"
+    if post_cgr_top1_id in expected_ids and post_explicit_top1_id not in expected_ids:
+        return "R4_Picker推翻正确"
+    if post_ltr_top1_id in expected_ids and post_cgr_top1_id not in expected_ids:
+        return "R3_CGR推翻正确"
+    if recall_rank is not None and recall_rank != -1 and post_ltr_top1_id not in expected_ids:
+        return "R2_LTR选错"
+    return "R6_其它"
+
+
+def _empty_attribution_category_summary() -> dict:
+    return {
+        "count": 0,
+        "ratio": 0.0,
+        "top_provinces": [],
+        "samples": [],
+    }
+
+
+def _build_attribution_summary(json_results: list[dict]) -> dict:
+    total = 0
+    wrong_total = 0
+    correct_total = 0
+    recall_eligible_total = 0
+    recall_hit_count = 0
+    counts = Counter()
+    province_counters = {name: Counter() for name in ATTRIBUTION_CATEGORY_ORDER}
+    sample_buckets = {name: [] for name in ATTRIBUTION_CATEGORY_ORDER}
+
+    for province_result in json_results or []:
+        province = str(province_result.get("province", "") or "")
+        for detail in province_result.get("details", []) or []:
+            expected_ids = _detail_expected_quota_ids(detail)
+            if not expected_ids:
+                continue
+            total += 1
+
+            recall_rank = _detail_recall_rank(detail)
+            if recall_rank is not None:
+                recall_eligible_total += 1
+                if recall_rank != -1:
+                    recall_hit_count += 1
+
+            if detail.get("is_match"):
+                correct_total += 1
+                continue
+
+            wrong_total += 1
+            category = _classify_attribution_category(detail) or "R6_其它"
+            counts[category] += 1
+            province_counters[category][province] += 1
+
+            if len(sample_buckets[category]) < 2:
+                sample_buckets[category].append({
+                    "bill_id": str(
+                        detail.get("bill_id")
+                        or detail.get("sample_id")
+                        or detail.get("seq")
+                        or ""
+                    ),
+                    "bill_name": str(detail.get("bill_name", "") or ""),
+                    "province": province,
+                    "correct_quota_id": expected_ids[0],
+                    "predicted_quota_id": str(detail.get("algo_id", "") or ""),
+                    "recall_rank": recall_rank,
+                })
+
+    categories = {}
+    for category in ATTRIBUTION_CATEGORY_ORDER:
+        count = counts.get(category, 0)
+        ratio = round(count / max(wrong_total, 1), 4) if wrong_total else 0.0
+        province_rows = []
+        for province, province_count in province_counters[category].most_common(3):
+            province_rows.append({
+                "province": province,
+                "count": province_count,
+                "ratio": round(province_count / max(count, 1), 4) if count else 0.0,
+            })
+        categories[category] = {
+            "count": count,
+            "ratio": ratio,
+            "top_provinces": province_rows,
+            "samples": list(sample_buckets[category]),
+        }
+
+    classified_total = sum(counts.values())
+    r6_count = counts.get("R6_其它", 0)
+    return {
+        "total": total,
+        "correct_total": correct_total,
+        "wrong_total": wrong_total,
+        "overall_hit_rate": round(correct_total / max(total, 1) * 100, 1) if total else 0.0,
+        "recall_eligible_total": recall_eligible_total,
+        "recall_hit_count": recall_hit_count,
+        "recall_hit_rate": round(recall_hit_count / max(recall_eligible_total, 1) * 100, 1)
+        if recall_eligible_total else 0.0,
+        "counts": {category: counts.get(category, 0) for category in ATTRIBUTION_CATEGORY_ORDER},
+        "categories": categories,
+        "r6_ratio": round(r6_count / max(wrong_total, 1), 4) if wrong_total else 0.0,
+        "self_check": {
+            "classified_total": classified_total,
+            "wrong_total": wrong_total,
+            "counts_match_wrong_total": classified_total == wrong_total,
+            "r6_le_5_percent": (r6_count / wrong_total) <= 0.05 if wrong_total else True,
+        },
+    }
+
+
+def _write_attribution_report(attribution: dict,
+                              *,
+                              profile: str = "",
+                              scoring_mode: str = "",
+                              note: str = "",
+                              output_path: str = "") -> Path | None:
+    if not attribution or not attribution.get("total"):
+        return None
+
+    report = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "profile": str(profile or ""),
+        "scoring_mode": str(scoring_mode or ""),
+        "note": str(note or ""),
+        **attribution,
+    }
+    report_path = Path(output_path) if output_path else (ATTRIBUTION_REPORT_ROOT / f"baseline_{datetime.now().strftime('%Y%m%d')}.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _build_r2_ltr_feature_rows(json_results: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for province_result in json_results or []:
+        province = str(province_result.get("province", "") or "")
+        for detail in province_result.get("details", []) or []:
+            if detail.get("is_match"):
+                continue
+            if _classify_attribution_category(detail) != "R2_LTR选错":
+                continue
+            expected_ids = _detail_expected_quota_ids(detail)
+            predicted_id = str(detail.get("algo_id", "") or "")
+            recall_rank = _detail_recall_rank(detail)
+
+            ranker_top_candidates = []
+            trace = detail.get("trace") or {}
+            for step in list(trace.get("steps") or []):
+                if isinstance(step, dict) and step.get("stage") == "search_select":
+                    ranker_top_candidates = list(((step.get("ranker") or {}).get("top_candidates") or []))
+            if not ranker_top_candidates:
+                ranker_top_candidates = list(detail.get("candidate_snapshots") or [])[:3]
+
+            for candidate_rank, candidate in enumerate(ranker_top_candidates[:3], start=1):
+                candidate_id = str(candidate.get("quota_id", "") or "")
+                rows.append({
+                    "province": province,
+                    "bill_id": str(detail.get("bill_id") or detail.get("sample_id") or ""),
+                    "bill_name": str(detail.get("bill_name", "") or ""),
+                    "correct_quota_id": expected_ids[0] if expected_ids else "",
+                    "predicted_quota_id": predicted_id,
+                    "recall_rank": "" if recall_rank is None else recall_rank,
+                    "candidate_rank": candidate_rank,
+                    "candidate_quota_id": candidate_id,
+                    "candidate_name": str(candidate.get("name", "") or ""),
+                    "is_correct_candidate": candidate_id in expected_ids,
+                    "is_predicted_candidate": candidate_id == predicted_id,
+                    "bm25_score": candidate.get("bm25_score"),
+                    "vector_score": candidate.get("vector_score"),
+                    "param_score": candidate.get("param_score"),
+                    "name_bonus": candidate.get("name_bonus"),
+                    "rerank_score": candidate.get("rerank_score"),
+                    "rank_stage": str(candidate.get("rank_stage", "") or ""),
+                })
+    return rows
+
+
+def _write_r2_ltr_feature_csv(json_results: list[dict]) -> Path | None:
+    rows = _build_r2_ltr_feature_rows(json_results)
+    output_path = ATTRIBUTION_REPORT_ROOT / "r2_ltr_features.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "province",
+        "bill_id",
+        "bill_name",
+        "correct_quota_id",
+        "predicted_quota_id",
+        "recall_rank",
+        "candidate_rank",
+        "candidate_quota_id",
+        "candidate_name",
+        "is_correct_candidate",
+        "is_predicted_candidate",
+        "bm25_score",
+        "vector_score",
+        "param_score",
+        "name_bonus",
+        "rerank_score",
+        "rank_stage",
+    ]
+    with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return output_path
+
+
 def print_json_summary(results: list[dict], baseline: dict = None):
     """打印JSON试卷的汇总表"""
     print(f"\n{'='*90}")
@@ -1074,6 +1403,34 @@ def print_json_summary(results: list[dict], baseline: dict = None):
             rank_miss_rescue = total_arbiter_correct_in_rank_miss / total_rank_miss * 100
             print(f"  排序miss救援: rank_miss共{total_rank_miss}条, "
                   f"仲裁器能救回{total_arbiter_correct_in_rank_miss}条({rank_miss_rescue:.0f}%)")
+
+    attribution = _build_attribution_summary(results)
+    if attribution.get("wrong_total", 0) > 0:
+        print("\nR1-R6 归因汇总:")
+        print(
+            f"  总命中率 {attribution['overall_hit_rate']:.1f}% | "
+            f"召回命中率 {attribution['recall_hit_rate']:.1f}% "
+            f"({attribution['recall_hit_count']}/{attribution['recall_eligible_total']})"
+        )
+        for category in ATTRIBUTION_CATEGORY_ORDER:
+            category_summary = attribution["categories"].get(category, _empty_attribution_category_summary())
+            province_summary = ", ".join(
+                f"{row['province']} {row['count']}({row['ratio'] * 100:.1f}%)"
+                for row in category_summary.get("top_provinces", [])
+            ) or "-"
+            print(
+                f"  {category}: {category_summary['count']} "
+                f"({category_summary['ratio'] * 100:.1f}%) | Top3省份: {province_summary}"
+            )
+            for sample in category_summary.get("samples", []):
+                print(
+                    f"    例: {sample['province']} #{sample['bill_id']} "
+                    f"正确={sample['correct_quota_id']} 系统={sample['predicted_quota_id']}"
+                )
+        if not attribution["self_check"]["counts_match_wrong_total"]:
+            print("  [WARN] R1-R6 计数和错例总数不一致，需要检查分类互斥性")
+        elif not attribution["self_check"]["r6_le_5_percent"]:
+            print("  [WARN] R6 兜底桶超过 5%，需要补分类逻辑")
 
     print(f"{'='*110}")
     return {'total': total_items, 'correct': total_correct, 'rate': round(overall_rate, 1)}
@@ -1228,6 +1585,7 @@ def build_benchmark_summary(json_results: list[dict], excel_metrics: dict,
         "json_overall": _build_json_overall(json_results),
         "json_results": json_results,
         "excel_metrics": excel_metrics,
+        "attribution": _build_attribution_summary(json_results),
         "by_province": _build_by_province_summary(json_results, baseline),
     }
 
@@ -1421,8 +1779,14 @@ def main():
     parser.add_argument("--note", default="", help="跑分备注")
     parser.add_argument("--summary-json-out", default="",
                         help="把机器可读摘要写到指定 JSON 文件，供 loop runner 使用")
+    parser.add_argument("--attribution-json-out", default="",
+                        help="write attribution report to a custom JSON path instead of baseline_YYYYMMDD.json")
+    parser.add_argument("--latest-result-out", default="",
+                        help="write latest benchmark detail payload to a custom JSON path instead of tests/benchmark_papers/_latest_result.json")
     parser.add_argument("--asset-out-dir", default="",
                         help="export benchmark error assets as JSONL")
+    parser.add_argument("--no-materialize-learning", action="store_true",
+                        help="skip writing generated province knowledge and benchmark training outputs")
     parser.add_argument("--profile", choices=["auto", "smoke", "dev", "full"], default="auto",
                         help="benchmark runtime preset; auto=dev for daily runs, auto=full for save/compare")
     args = parser.parse_args()
@@ -1573,14 +1937,30 @@ def main():
 
     # 保存详细结果（每次都存）
     if json_results:
+        attribution_report_path = _write_attribution_report(
+            _build_attribution_summary(json_results),
+            profile=profile,
+            scoring_mode=args.scoring_mode,
+            note=args.note,
+            output_path=args.attribution_json_out,
+        )
+        if attribution_report_path:
+            print(f"\n[ATTRIBUTION] baseline saved to: {attribution_report_path}")
+        r2_feature_csv_path = _write_r2_ltr_feature_csv(json_results)
+        if r2_feature_csv_path:
+            print(f"[ATTRIBUTION] R2 LTR feature CSV saved to: {r2_feature_csv_path}")
         asset_dir = export_benchmark_assets(json_results, args.asset_out_dir)
         if asset_dir:
             print(f"\n[ASSET] benchmark assets exported to: {asset_dir}")
-            learning_outputs = materialize_benchmark_learning_outputs(asset_dir)
-            print(f"[ASSET] benchmark knowledge updated: {learning_outputs['knowledge_path']}")
-            print(f"[ASSET] benchmark digest updated: {learning_outputs['digest_path']}")
-            print(f"[ASSET] benchmark training manifest: {learning_outputs['training_manifest_path']}")
-        result_file = PAPERS_DIR / '_latest_result.json'
+            if args.no_materialize_learning:
+                print("[ASSET] benchmark learning materialization skipped")
+            else:
+                learning_outputs = materialize_benchmark_learning_outputs(asset_dir)
+                print(f"[ASSET] benchmark knowledge updated: {learning_outputs['knowledge_path']}")
+                print(f"[ASSET] benchmark digest updated: {learning_outputs['digest_path']}")
+                print(f"[ASSET] benchmark training manifest: {learning_outputs['training_manifest_path']}")
+        result_file = Path(args.latest_result_out) if args.latest_result_out else (PAPERS_DIR / '_latest_result.json')
+        result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text(json.dumps({
             'run_time': datetime.now().strftime('%Y-%m-%d %H:%M'),
             'profile': profile,

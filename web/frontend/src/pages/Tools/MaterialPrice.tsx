@@ -66,6 +66,11 @@ interface RawRow {
   lookup_url?: string | null;
   lookup_label?: string | null;
   lookup_confidence?: string | null;
+  lookup_source_type?: string | null;
+  matched_name?: string | null;
+  matched_spec?: string | null;
+  matched_unit?: string | null;
+  matched_object_type?: string | null;
   risk_level?: string | null;
   risk_reasons?: string[] | string | null;
   recommended_write_target?: string | null;
@@ -110,6 +115,11 @@ interface MaterialDisplayRow {
   lookup_url: string | null;
   lookup_label: string | null;
   lookup_confidence: string | null;
+  lookup_source_type: string | null;
+  matched_name: string | null;
+  matched_spec: string | null;
+  matched_unit: string | null;
+  matched_object_type: string | null;
   risk_level: string | null;
   risk_reasons: string[] | string | null;
   recommended_write_target: string | null;
@@ -150,6 +160,11 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         lookup_url: r.lookup_url ?? null,
         lookup_label: r.lookup_label ?? null,
         lookup_confidence: r.lookup_confidence ?? null,
+        lookup_source_type: r.lookup_source_type ?? null,
+        matched_name: r.matched_name ?? null,
+        matched_spec: r.matched_spec ?? null,
+        matched_unit: r.matched_unit ?? null,
+        matched_object_type: r.matched_object_type ?? null,
         risk_level: r.risk_level ?? null,
         risk_reasons: r.risk_reasons ?? null,
         recommended_write_target: r.recommended_write_target ?? null,
@@ -185,6 +200,11 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         lookup_url: r.lookup_url ?? null,
         lookup_label: r.lookup_label ?? null,
         lookup_confidence: r.lookup_confidence ?? null,
+        lookup_source_type: r.lookup_source_type ?? null,
+        matched_name: r.matched_name ?? null,
+        matched_spec: r.matched_spec ?? null,
+        matched_unit: r.matched_unit ?? null,
+        matched_object_type: r.matched_object_type ?? null,
         risk_level: r.risk_level ?? null,
         risk_reasons: r.risk_reasons ?? null,
         recommended_write_target: r.recommended_write_target ?? null,
@@ -432,6 +452,7 @@ export default function MaterialPrice() {
           name: m.edited_name.trim() || m._raw.name,
           spec: m.edited_spec.trim(),
           unit: m._raw.unit || '',
+          project_key: fileKey,
           object_type: m.object_type || '',
           family: m.family || '',
           critical_spec_text: m.critical_spec_text || '',
@@ -440,6 +461,7 @@ export default function MaterialPrice() {
         city: selectedCity,
         period_end: selectedPeriod,
         price_type: priceType,
+        project_key: fileKey,
       });
       const results = res.data.results || [];
       setDisplayRows(prev => {
@@ -455,6 +477,11 @@ export default function MaterialPrice() {
               lookup_url: r.lookup_url ?? null,
               lookup_label: r.lookup_label ?? null,
               lookup_confidence: r.lookup_confidence ?? null,
+              lookup_source_type: r.lookup_source_type ?? null,
+              matched_name: r.matched_name ?? null,
+              matched_spec: r.matched_spec ?? null,
+              matched_unit: r.matched_unit ?? null,
+              matched_object_type: r.matched_object_type ?? null,
               risk_level: r.risk_level ?? null,
               risk_reasons: r.risk_reasons ?? null,
               recommended_write_target: r.recommended_write_target ?? null,
@@ -510,6 +537,11 @@ export default function MaterialPrice() {
           spec: m.edited_spec.trim(),
           unit: m._raw.unit || '',
           price: m.user_price, province: selectedProvince, city: selectedCity,
+          project_key: fileKey,
+          raw_feature_desc: m._raw.desc || '',
+          extraction_evidence: m.critical_spec_text || '',
+          risk_reasons: m.risk_reasons,
+          asset_scope: 'project',
         }));
       if (userItems.length > 0) {
         try {
@@ -541,6 +573,11 @@ export default function MaterialPrice() {
             lookup_price: m.lookup_price,
             lookup_source: m.lookup_source,
             lookup_confidence: m.lookup_confidence,
+            lookup_source_type: m.lookup_source_type,
+            matched_name: m.matched_name,
+            matched_spec: m.matched_spec,
+            matched_unit: m.matched_unit,
+            matched_object_type: m.matched_object_type,
             risk_level: m.risk_level,
             risk_reasons: m.risk_reasons,
             recommended_write_target: m.recommended_write_target,

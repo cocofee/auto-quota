@@ -1595,6 +1595,7 @@ def material_price_lookup(
     city = req.get("city", "")
     period_end = req.get("period_end", "")
     materials = req.get("materials", [])
+    project_key = str(req.get("project_key") or "").strip()
 
     # 普通查价默认只查信息价；不再走市场价缓存兜底。
     source_filter = ""
@@ -1605,6 +1606,38 @@ def material_price_lookup(
         source_filter = "market"
 
     results = []
+
+    def _db_lookup_result(mat: dict, price_info: dict, lookup_name: str, lookup_spec: str) -> dict:
+        matched_name = str(price_info.get("matched_name") or lookup_name or "").strip()
+        matched_spec = str(price_info.get("matched_spec") or lookup_spec or "").strip()
+        result = {
+            **mat,
+            "lookup_price": price_info["price"],
+            "lookup_source": price_info.get("source", "价格库"),
+            "lookup_source_type": price_info.get("source_type", ""),
+            "lookup_confidence": "高",
+            "lookup_url": None,
+            "lookup_label": _build_lookup_label(
+                name=lookup_name,
+                spec=lookup_spec,
+                unit=price_info.get("unit") or mat.get("unit") or "",
+                price=price_info.get("price"),
+                source=price_info.get("source", "价格库"),
+            ),
+            "matched_name": matched_name,
+            "matched_spec": matched_spec,
+            "matched_unit": price_info.get("matched_unit") or price_info.get("unit") or mat.get("unit") or "",
+            "matched_object_type": price_info.get("matched_object_type") or "",
+            "tax_mode": "含税",
+        }
+        decision = decide_material_price(result)
+        result.update({
+            "risk_level": decision["risk_level"],
+            "risk_reasons": decision["risk_reasons"],
+            "recommended_write_target": decision["write_target"],
+        })
+        return result
+
     for mat in materials:
         name = mat.get("name", "").strip()
         spec = mat.get("spec", "").strip()
@@ -1612,25 +1645,23 @@ def material_price_lookup(
         if not name:
             results.append({**mat, "lookup_price": None, "lookup_source": "名称为空", "lookup_url": None, "lookup_label": None})
             continue
-        price_info = db.search_price_by_name(
+        price_info = None
+        if hasattr(db, "search_material_asset"):
+            price_info = db.search_material_asset(
+                name=name,
+                spec=spec,
+                unit=unit,
+                province=province,
+                city=city,
+                project_key=str(mat.get("project_key") or project_key or "").strip(),
+            )
+        price_info = price_info or db.search_price_by_name(
             name, province=province, city=city, period_end=period_end,
             spec=spec, target_unit=unit,
             source_type=source_filter
         )
         if price_info:
-            results.append({
-                **mat,
-                "lookup_price": price_info["price"],
-                "lookup_source": price_info.get("source", "价格库"),
-                "lookup_url": None,
-                "lookup_label": _build_lookup_label(
-                    name=name,
-                    spec=spec,
-                    unit=price_info.get("unit") or unit,
-                    price=price_info.get("price"),
-                    source=price_info.get("source", "价格库"),
-                ),
-            })
+            results.append(_db_lookup_result(mat, price_info, name, spec))
             continue
         # 从名称中提取规格再查一次
         m = _re.search(r'[Dd][Nn]\s*\d+|De\s*\d+|Φ\s*\d+|\d+mm', name)
@@ -1644,19 +1675,7 @@ def material_price_lookup(
                     source_type=source_filter
                 )
                 if price_info2:
-                    results.append({
-                        **mat,
-                        "lookup_price": price_info2["price"],
-                        "lookup_source": price_info2.get("source", "价格库"),
-                        "lookup_url": None,
-                        "lookup_label": _build_lookup_label(
-                            name=short_name,
-                            spec=extracted_spec,
-                            unit=price_info2.get("unit") or unit,
-                            price=price_info2.get("price"),
-                            source=price_info2.get("source", "价格库"),
-                        ),
-                    })
+                    results.append(_db_lookup_result(mat, price_info2, short_name, extracted_spec))
                     continue
         results.append({**mat, "lookup_price": None, "lookup_source": "未查到", "lookup_url": None, "lookup_label": None})
 
@@ -1689,6 +1708,12 @@ def material_price_contribute(
         price = item.get("price")
         province = item.get("province", "").strip()
         city = item.get("city", "").strip()
+        project_key = str(item.get("project_key") or "").strip()
+        raw_feature_desc = str(item.get("raw_feature_desc") or item.get("desc") or "").strip()
+        extraction_evidence = str(item.get("extraction_evidence") or "").strip()
+        risk_reasons = str(item.get("risk_reasons") or "").strip()
+        asset_scope = "project"
+        asset_status = "project_confirmed"
         if not name or price is None:
             continue
         try:
@@ -1704,8 +1729,26 @@ def material_price_contribute(
             source_type="user_contribute",
             province=province, city=city, unit=unit,
             authority_level="reference",
+            usable_for_quote=0,
             source_doc="用户手填",
             dedup=True,
+        )
+        db.add_material_asset(
+            name=name,
+            spec=spec,
+            unit=unit,
+            price=price_val,
+            province=province,
+            city=city,
+            source="用户手填确认",
+            source_type="manual_confirmed",
+            project_key=project_key,
+            raw_feature_desc=raw_feature_desc,
+            extraction_evidence=extraction_evidence,
+            risk_reasons=risk_reasons,
+            scope=asset_scope,
+            status=asset_status,
+            allow_reuse=1,
         )
         saved += 1
     return {"saved": saved, "message": f"已保存 {saved} 条价格"}

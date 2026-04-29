@@ -322,6 +322,11 @@ def test_remote_lookup_passes_city_and_period_to_db(monkeypatch):
                 "price": 28.04,
                 "unit": "m",
                 "source": "江西九江信息价(2025-08-31)",
+                "source_type": "official_info",
+                "matched_name": "焊接钢管",
+                "matched_spec": "DN80",
+                "matched_unit": "m",
+                "matched_object_type": "pipe",
             }
 
     import src.material_db as material_db
@@ -343,6 +348,51 @@ def test_remote_lookup_passes_city_and_period_to_db(monkeypatch):
     row = result["results"][0]
     assert row["lookup_price"] == 28.04
     assert row["lookup_source"] == "江西九江信息价(2025-08-31)"
+    assert row["lookup_source_type"] == "official_info"
+    assert row["matched_spec"] == "DN80"
+    assert row["recommended_write_target"] == "formal_column"
+
+
+def test_material_price_contribute_keeps_client_supplied_shared_asset_unapproved(monkeypatch):
+    server = _load_local_match_server(monkeypatch)
+    asset_calls = []
+
+    class _FakeDB:
+        def add_material(self, *_args, **_kwargs):
+            return 101
+
+        def add_price(self, **_kwargs):
+            return 202
+
+        def add_material_asset(self, **kwargs):
+            asset_calls.append(kwargs)
+            return 303
+
+    import src.material_db as material_db
+
+    monkeypatch.setattr(material_db, "MaterialDB", lambda: _FakeDB())
+
+    result = server.material_price_contribute(
+        server._MaterialContributeRequest(
+            items=[
+                {
+                    "name": "HDPE pipe",
+                    "spec": "De63",
+                    "unit": "m",
+                    "price": 42.6,
+                    "province": "Guangdong",
+                    "project_key": "project-a",
+                    "asset_scope": "global",
+                    "approved": True,
+                }
+            ]
+        ),
+        x_api_key=server.API_KEY,
+    )
+
+    assert result["saved"] == 1
+    assert asset_calls[0]["scope"] == "project"
+    assert asset_calls[0]["status"] == "project_confirmed"
 
 
 def test_gldjc_cookie_verify_reports_valid(monkeypatch):
