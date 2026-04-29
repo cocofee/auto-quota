@@ -105,6 +105,78 @@ def test_global_repair_next_action_targets_largest_common_issue_cluster():
     assert action["full_validation_status"] == "pending"
 
 
+def test_global_repair_next_action_skips_pending_validation_cluster():
+    rows = build_rows(
+        [
+            {
+                "sample_id": "pending-1",
+                "is_match": False,
+                "stored_ids": ["4-9-1"],
+                "algo_id": "4-11-1",
+                "error_stage": "retriever",
+                "miss_category": "recall_miss",
+                "recall_rank": -1,
+                "pre_ltr_top1_id": "4-11-1",
+                "post_ltr_top1_id": "4-11-1",
+                "post_final_top1_id": "4-11-1",
+                "specialty": "C4",
+                "match_source": "search",
+            },
+            {
+                "sample_id": "pending-2",
+                "is_match": False,
+                "stored_ids": ["4-9-2"],
+                "algo_id": "4-11-1",
+                "error_stage": "retriever",
+                "miss_category": "recall_miss",
+                "recall_rank": -1,
+                "pre_ltr_top1_id": "4-11-1",
+                "post_ltr_top1_id": "4-11-1",
+                "post_final_top1_id": "4-11-1",
+                "specialty": "C4",
+                "match_source": "search",
+            },
+            {
+                "sample_id": "next-1",
+                "is_match": False,
+                "stored_ids": ["10-11-1"],
+                "algo_id": "10-12-1",
+                "error_stage": "retriever",
+                "miss_category": "recall_miss",
+                "recall_rank": -1,
+                "pre_ltr_top1_id": "10-12-1",
+                "post_ltr_top1_id": "10-12-1",
+                "post_final_top1_id": "10-12-1",
+                "specialty": "C10",
+                "match_source": "search",
+            },
+            {
+                "sample_id": "next-2",
+                "is_match": False,
+                "stored_ids": ["10-11-2"],
+                "algo_id": "10-12-1",
+                "error_stage": "retriever",
+                "miss_category": "recall_miss",
+                "recall_rank": -1,
+                "pre_ltr_top1_id": "10-12-1",
+                "post_ltr_top1_id": "10-12-1",
+                "post_final_top1_id": "10-12-1",
+                "specialty": "C10",
+                "match_source": "search",
+            },
+        ]
+    )
+    pending_key = rows[0]["common_issue_key"]
+
+    summary = build_summary(rows, Path("latest.jsonl"), Path("attr.json"), skip_issue_keys={pending_key})
+    action = build_next_action(summary, rows)
+
+    assert summary["skipped_pending_validation_clusters"][0]["issue_key"] == pending_key
+    assert summary["target_common_issue"]["issue_key"] != pending_key
+    assert summary["target_common_issue"]["sample_count"] == 2
+    assert action["suggested_validation_scope"]["filter_common_issue_key"] == summary["target_common_issue"]["issue_key"]
+
+
 def test_global_repair_bucket_prefers_actionable_attribution_over_generic_stage():
     rows = build_rows(
         [

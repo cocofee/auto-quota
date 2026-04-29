@@ -353,7 +353,12 @@ def build_common_issue_clusters(rows: list[dict[str, str]], max_clusters: int = 
     return clusters
 
 
-def build_summary(rows: list[dict[str, str]], latest_path: Path, attribution_path: Path) -> dict[str, Any]:
+def build_summary(
+    rows: list[dict[str, str]],
+    latest_path: Path,
+    attribution_path: Path,
+    skip_issue_keys: set[str] | None = None,
+) -> dict[str, Any]:
     bucket_counts: Counter[str] = Counter()
     for row in rows:
         bucket_counts[_bucket_for(row["error_stage"], row["attribution_category"])] += 1
@@ -361,14 +366,32 @@ def build_summary(rows: list[dict[str, str]], latest_path: Path, attribution_pat
     if bucket_counts:
         largest_bucket = sorted(bucket_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
     common_issue_clusters = build_common_issue_clusters(rows)
-    shared_clusters = [cluster for cluster in common_issue_clusters if int(cluster["sample_count"]) >= 2]
+    skipped_issue_keys = set(skip_issue_keys or set())
+    selectable_clusters = [
+        cluster for cluster in common_issue_clusters if str(cluster.get("issue_key") or "") not in skipped_issue_keys
+    ]
+    skipped_clusters = [
+        {
+            "cluster_id": cluster.get("cluster_id", ""),
+            "issue_key": cluster.get("issue_key", ""),
+            "sample_count": cluster.get("sample_count", 0),
+            "reason": "pending_full_validation",
+        }
+        for cluster in common_issue_clusters
+        if str(cluster.get("issue_key") or "") in skipped_issue_keys
+    ]
+    shared_clusters = [cluster for cluster in selectable_clusters if int(cluster["sample_count"]) >= 2]
     if shared_clusters:
         target_common_issue = shared_clusters[0]
     else:
         target_common_issue = next(
-            (cluster for cluster in common_issue_clusters if cluster["bucket"] == largest_bucket),
-            common_issue_clusters[0] if common_issue_clusters else {},
+            (cluster for cluster in selectable_clusters if cluster["bucket"] == largest_bucket),
+            selectable_clusters[0] if selectable_clusters else common_issue_clusters[0] if common_issue_clusters else {},
         )
+    if skipped_clusters and target_common_issue:
+        cluster_selection_reason = "largest selectable common_issue_cluster; pending_full_validation issue_keys skipped"
+    else:
+        cluster_selection_reason = "largest common_issue_cluster by sample_count, then bucket/key"
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
@@ -379,8 +402,9 @@ def build_summary(rows: list[dict[str, str]], latest_path: Path, attribution_pat
         "missing_field_rate": _missing_field_rate(rows),
         "largest_bucket": largest_bucket,
         "common_issue_clusters": common_issue_clusters,
+        "skipped_pending_validation_clusters": skipped_clusters,
         "target_common_issue": target_common_issue,
-        "cluster_selection_reason": "largest common_issue_cluster by sample_count, then bucket/key",
+        "cluster_selection_reason": cluster_selection_reason,
     }
 
 
@@ -446,6 +470,45 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _pending_validation_issue_keys(root: Path) -> set[str]:
+    issue_keys: set[str] = set()
+    ledger_path = root / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    if ledger_path.exists():
+        try:
+            ledger = _load_json(ledger_path)
+        except (OSError, json.JSONDecodeError):
+            ledger = {}
+        entries = ledger.get("entries") if isinstance(ledger, dict) else ledger
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("status") != "pending_full_validation":
+                    continue
+                for container_name in ("repair_unit", "target_common_issue"):
+                    container = entry.get(container_name)
+                    if isinstance(container, dict) and container.get("issue_key"):
+                        issue_keys.add(str(container["issue_key"]))
+                if entry.get("issue_key"):
+                    issue_keys.add(str(entry["issue_key"]))
+
+    manifest_dir = root / "reports" / "attribution"
+    for path in manifest_dir.glob("v36_round_manifest_*.json") if manifest_dir.exists() else []:
+        try:
+            manifest = _load_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        full_status = str(manifest.get("full_validation_status") or "")
+        pending = manifest.get("pending_full_validation")
+        pending_status = pending.get("status") if isinstance(pending, dict) else ""
+        if full_status != "pending" and pending_status != "pending_full_validation":
+            continue
+        repair_unit = manifest.get("repair_unit")
+        if isinstance(repair_unit, dict) and repair_unit.get("issue_key"):
+            issue_keys.add(str(repair_unit["issue_key"]))
+    return issue_keys
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--latest", required=True, type=Path)
@@ -473,7 +536,12 @@ def main() -> int:
     if not rows:
         raise SystemExit("no wrong samples found in latest input")
 
-    summary = build_summary(rows, args.latest, args.attribution)
+    summary = build_summary(
+        rows,
+        args.latest,
+        args.attribution,
+        skip_issue_keys=_pending_validation_issue_keys(Path.cwd()),
+    )
     if not summary["largest_bucket"]:
         raise SystemExit("largest_bucket is empty")
     next_action = build_next_action(summary, rows)
