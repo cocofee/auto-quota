@@ -23,12 +23,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Query
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse
 from loguru import logger
 
+from app.auth.permissions import require_admin
 from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
 from app.services.local_http import local_match_async_client
+from src.material_price_decision import decide_material_price
 
 router = APIRouter()
 
@@ -524,8 +526,8 @@ async def parse_materials(file: UploadFile = File(...)):
     """
     # 校验文件类型
     filename = file.filename or ""
-    if not filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "请上传Excel文件（.xlsx/.xls）")
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(400, "当前仅支持 .xlsx 文件，请先另存为 .xlsx 后上传")
 
     # 保存到临时文件（不删除，留给export用）
     content = await file.read()
@@ -618,7 +620,7 @@ def _parse_sheet(ws) -> dict:
         return {"materials": [], "all_rows": [], "is_mixed": False}
 
     # 建立列映射——扫描表头行及下一行（处理双行表头）
-    _PRICE_KEYWORDS = ("单价", "主材单价", "材料单价", "综合单价", "不含税单价", "含税单价",
+    _PRICE_KEYWORDS = ("单价", "主材单价", "材料单价", "不含税单价", "含税单价",
                        "市场价", "信息价", "除税单价", "除税信息价")
     # 也检测"序号"列（用于判断清单行，但不作为code列）
     seq_col = None
@@ -839,6 +841,58 @@ def _parse_sheet(ws) -> dict:
                 "sheet": ws.title,
                 "name": name_val,
             })
+
+    if not materials and all_rows:
+        for row in list(all_rows):
+            if row.get("type") != "bill":
+                continue
+            desc_val = str(row.get("desc") or "").strip()
+            if not desc_val:
+                continue
+            normalized = _build_normalized_material_fields(
+                str(row.get("name") or ""),
+                "",
+                str(row.get("name") or ""),
+                desc_val,
+            )
+            normalized_name = str(normalized.get("normalized_name") or "").strip()
+            if not normalized_name or not _is_viable_material_candidate(normalized_name):
+                continue
+            synthetic = {
+                "type": "material",
+                "row": row["row"],
+                "sheet": ws.title,
+                "header_row": header_row,
+                "code": "__EXTRACTED__",
+                "name": normalized_name,
+                "desc": desc_val,
+                "name_col": None,
+                "suggested_name": normalized.get("suggested_name", ""),
+                "spec": normalized.get("normalized_spec", ""),
+                "spec_col": None,
+                "suggested_spec": normalized.get("suggested_spec", ""),
+                "unit": row.get("unit", ""),
+                "qty": row.get("qty"),
+                "existing_price": None,
+                "price_col": None,
+                "lookup_price": None,
+                "lookup_source": None,
+                "lookup_url": None,
+                "lookup_label": None,
+                "normalized_name": normalized_name,
+                "normalized_spec": normalized.get("normalized_spec", ""),
+                "critical_spec_text": normalized.get("critical_spec_text", ""),
+                "normalized_query_text": normalized.get("normalized_query_text", ""),
+                "object_type": normalized.get("object_type", ""),
+                "family": normalized.get("family", ""),
+                "normalization_confidence": normalized.get("normalization_confidence", ""),
+                "connection_hint": normalized.get("connection_hint", ""),
+                "material_hint": normalized.get("material_hint", ""),
+                "desc_type_hint": normalized.get("desc_type_hint", ""),
+                "extraction_evidence": desc_val,
+            }
+            materials.append(synthetic)
+            all_rows.append(synthetic)
 
     return {
         "materials": materials,
@@ -2349,6 +2403,95 @@ def _sanitize_export_lookup_label(label: str, critical_spec_text: str = "") -> s
     return text.strip()
 
 
+def _header_value(ws, header_row: int, col: int | None) -> str:
+    if col is None:
+        return ""
+    try:
+        return str(ws.cell(row=header_row, column=int(col)).value or "").strip()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _is_forbidden_formal_price_column(header: str) -> bool:
+    text = str(header or "").strip()
+    return text == "综合单价" or "综合单价" in text
+
+
+def _is_merged_cell(ws, row: int, col: int | None) -> bool:
+    if col is None:
+        return False
+    try:
+        row_idx = int(row)
+        col_idx = int(col)
+    except (TypeError, ValueError):
+        return True
+    for merged_range in ws.merged_cells.ranges:
+        if ws.cell(row=row_idx, column=col_idx).coordinate in merged_range:
+            return True
+    return False
+
+
+def _cell_has_formula(ws, row: int, col: int | None) -> bool:
+    if col is None:
+        return False
+    try:
+        value = ws.cell(row=int(row), column=int(col)).value
+    except (TypeError, ValueError):
+        return True
+    return isinstance(value, str) and value.startswith("=")
+
+
+def _row_fingerprint_mismatch(ws, mat: dict, row: int) -> bool:
+    original_name = str(mat.get("original_name") or "").strip()
+    original_spec = str(mat.get("original_spec") or "").strip()
+    name_col = mat.get("name_col")
+    spec_col = mat.get("spec_col")
+
+    if original_name and name_col is not None:
+        current_name = str(ws.cell(row=row, column=int(name_col)).value or "").strip()
+        if current_name != original_name:
+            return True
+    if original_spec and spec_col is not None:
+        current_spec = str(ws.cell(row=row, column=int(spec_col)).value or "").strip()
+        if current_spec != original_spec:
+            return True
+    return False
+
+
+def _risk_text(reasons: object) -> str:
+    if isinstance(reasons, list):
+        return "；".join(str(item).strip() for item in reasons if str(item).strip())
+    return str(reasons or "").strip()
+
+
+def _decision_for_export(ws, mat: dict, row: int, header_row: int) -> dict:
+    decision = dict(decide_material_price(mat))
+    price_col = mat.get("price_col")
+    price_header = _header_value(ws, header_row, price_col)
+
+    extra_reasons = list(decision.get("risk_reasons") or [])
+    if price_col is not None and _is_forbidden_formal_price_column(price_header):
+        extra_reasons.append("目标列是综合单价，禁止写正式主材价")
+    if price_col is not None and _cell_has_formula(ws, row, price_col):
+        extra_reasons.append("目标单元格含公式，禁止覆盖")
+    if price_col is not None and _is_merged_cell(ws, row, price_col):
+        extra_reasons.append("目标单元格为合并单元格，禁止覆盖")
+    if _row_fingerprint_mismatch(ws, mat, row):
+        extra_reasons.append("原始行指纹不一致，疑似排序或插行")
+
+    if extra_reasons != list(decision.get("risk_reasons") or []):
+        decision["risk_reasons"] = extra_reasons
+        if decision.get("final_price") is not None:
+            decision["suggested_price"] = decision["final_price"]
+            decision["final_price"] = None
+        if decision.get("write_target") == "formal_column":
+            decision["write_target"] = "suggested_column"
+            decision["decision_type"] = "auto_suggested"
+        decision["risk_level"] = "high"
+
+    return decision
+
+
 def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
     """Write edited material names and prices back into the reviewed Excel."""
     import openpyxl
@@ -2381,13 +2524,48 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
             break
 
         inserted_price_col = None
-        need_insert_price_col = any(
-            mat.get("final_price") is not None and mat.get("price_col") is None
-            for mat in mats
+        suggested_price_col = None
+        risk_col = None
+        decisions_by_row: dict[int, dict] = {}
+        for mat in mats:
+            row = mat.get("row")
+            if row is None:
+                continue
+            try:
+                row_idx = int(row)
+            except (TypeError, ValueError):
+                continue
+            decisions_by_row[row_idx] = _decision_for_export(ws, mat, row_idx, header_row)
+
+        need_insert_price_col = False
+        for mat in mats:
+            row = mat.get("row")
+            try:
+                row_idx = int(row)
+            except (TypeError, ValueError):
+                continue
+            decision = decisions_by_row.get(row_idx, {})
+            if decision.get("write_target") == "formal_column" and mat.get("price_col") is None:
+                need_insert_price_col = True
+                break
+        need_suggested_col = any(
+            decision.get("write_target") == "suggested_column"
+            for decision in decisions_by_row.values()
         )
+        need_risk_col = any(
+            decision.get("risk_reasons")
+            for decision in decisions_by_row.values()
+        )
+
         if need_insert_price_col:
             inserted_price_col = ws.max_column + 1
             ws.cell(row=header_row, column=inserted_price_col, value="主材单价")
+        if need_suggested_col:
+            suggested_price_col = ws.max_column + 1
+            ws.cell(row=header_row, column=suggested_price_col, value="建议主材单价")
+        if need_risk_col:
+            risk_col = ws.max_column + 1
+            ws.cell(row=header_row, column=risk_col, value="主材填价风险")
 
         link_col = None
         for mat in mats:
@@ -2402,8 +2580,13 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
             row = mat.get("row")
             if row is None:
                 continue
+            try:
+                row_idx = int(row)
+            except (TypeError, ValueError):
+                continue
 
             row_written = False
+            decision = decisions_by_row.get(row_idx, {})
 
             name_col = mat.get("name_col")
             final_name = str(mat.get("final_name") or "").strip()
@@ -2413,11 +2596,12 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
             if spec_col is None and final_spec and final_spec not in final_name:
                 write_name = f"{final_name} {final_spec}".strip()
 
-            if name_col is not None and write_name:
+            allow_name_spec_update = bool(mat.get("allow_name_spec_update"))
+            if allow_name_spec_update and name_col is not None and write_name:
                 ws.cell(row=row, column=name_col, value=write_name)
                 row_written = True
 
-            if spec_col is not None:
+            if allow_name_spec_update and spec_col is not None:
                 ws.cell(row=row, column=spec_col, value=final_spec)
                 row_written = True
 
@@ -2433,8 +2617,8 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
                 row_written = True
 
             price_col = mat.get("price_col") if mat.get("price_col") is not None else inserted_price_col
-            final_price = mat.get("final_price")
-            if price_col is not None and final_price is not None:
+            final_price = decision.get("final_price")
+            if decision.get("write_target") == "formal_column" and price_col is not None and final_price is not None:
                 try:
                     price_val = float(final_price)
                 except (ValueError, TypeError):
@@ -2445,8 +2629,63 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
                     cell.number_format = '0.00'
                     row_written = True
 
+            suggested_price = decision.get("suggested_price")
+            if decision.get("write_target") == "suggested_column" and suggested_price_col is not None and suggested_price is not None:
+                try:
+                    suggested_val = float(suggested_price)
+                except (ValueError, TypeError):
+                    suggested_val = None
+                if suggested_val is not None:
+                    cell = ws.cell(row=row, column=suggested_price_col, value=round(suggested_val, 2))
+                    cell.number_format = '0.00'
+                    row_written = True
+
+            risk_reason_text = _risk_text(decision.get("risk_reasons"))
+            if risk_col is not None and risk_reason_text:
+                ws.cell(row=row, column=risk_col, value=risk_reason_text)
+                row_written = True
+
             if row_written:
                 written += 1
+
+    audit_ws = wb.create_sheet("主材填价审计")
+    audit_ws.append([
+        "sheet", "row", "material", "spec", "write_target", "final_price",
+        "suggested_price", "confidence", "risk_level", "risk_reasons",
+    ])
+    for sheet_name, mats in sheet_materials.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        header_row = 1
+        for mat in mats:
+            raw_header_row = mat.get("header_row")
+            try:
+                header_row = int(raw_header_row) if raw_header_row is not None else 1
+            except (TypeError, ValueError):
+                header_row = 1
+            break
+        for mat in mats:
+            row = mat.get("row")
+            if row is None:
+                continue
+            try:
+                row_idx = int(row)
+            except (TypeError, ValueError):
+                continue
+            decision = _decision_for_export(ws, mat, row_idx, header_row)
+            audit_ws.append([
+                sheet_name,
+                row_idx,
+                mat.get("final_name") or mat.get("name") or mat.get("original_name") or "",
+                mat.get("final_spec") or mat.get("spec") or mat.get("original_spec") or "",
+                decision.get("write_target"),
+                decision.get("final_price"),
+                decision.get("suggested_price"),
+                decision.get("confidence"),
+                decision.get("risk_level"),
+                _risk_text(decision.get("risk_reasons")),
+            ])
 
     wb.save(excel_path)
     wb.close()
@@ -2458,7 +2697,7 @@ def _do_write_material_updates(excel_path: str, materials: list[dict]) -> int:
 # ============================================================
 
 @router.post("/material-price/gldjc-lookup")
-async def gldjc_lookup(body: dict):
+async def gldjc_lookup(body: dict, _admin=Depends(require_admin)):
     """管理员专用：对DB查不到的材料，实时爬广材网查价
 
     请求体:
@@ -2516,7 +2755,7 @@ async def gldjc_lookup(body: dict):
 
 
 @router.post("/material-price/gldjc-cookie-verify")
-async def gldjc_cookie_verify(body: dict):
+async def gldjc_cookie_verify(body: dict, _admin=Depends(require_admin)):
     """快速验证广材网Cookie是否有效。"""
     cookie = body.get("cookie", "").strip()
     province = body.get("province", "").strip()
@@ -2879,6 +3118,11 @@ def _do_gldjc_lookup(
         )
 
         if selected_price:
+            risk_reasons = []
+            if used_approximate:
+                risk_reasons.append("广材网近似匹配")
+            if confidence == "低":
+                risk_reasons.append("广材网低置信度")
             update_cache(cache, name, unit, {
                 "price_with_tax": selected_price,
                 "price_without_tax": round(selected_price / 1.13, 2),
@@ -2892,13 +3136,28 @@ def _do_gldjc_lookup(
                 "match_label": match_label,
                 "gldjc_scope": scope_label,
             }, spec=spec, region=scope_label)
-            results.append({
+            row_result = {
                 **mat,
                 "gldjc_price": selected_price,
                 "gldjc_source": f"{'广材网近似价' if used_approximate else '广材网市场价'}({scope_label})",
                 "gldjc_url": lookup_url,
                 "gldjc_label": match_label,
+                "gldjc_confidence": confidence,
+                "gldjc_risk_reasons": risk_reasons,
+            }
+            decision = decide_material_price({
+                **row_result,
+                "lookup_price": selected_price,
+                "lookup_source": row_result["gldjc_source"],
+                "lookup_confidence": confidence,
+                "risk_reasons": risk_reasons,
             })
+            row_result.update({
+                "risk_level": decision["risk_level"],
+                "risk_reasons": decision["risk_reasons"],
+                "recommended_write_target": decision["write_target"],
+            })
+            results.append(row_result)
         else:
             update_cache(cache, name, unit, {
                 "price_with_tax": selected_price,

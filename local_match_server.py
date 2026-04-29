@@ -29,6 +29,7 @@ import uvicorn
 
 from loguru import logger
 from src.excel_compat import ensure_openpyxl_input, validate_excel_upload
+from src.material_price_decision import decide_material_price
 from src.output_writer import safe_excel_text
 
 # 加载项目 .env
@@ -2043,6 +2044,11 @@ def material_price_gldjc_lookup(
         )
 
         if selected_price:
+            risk_reasons = []
+            if used_approximate:
+                risk_reasons.append("广材网近似匹配")
+            if confidence == "低":
+                risk_reasons.append("广材网低置信度")
             update_cache(cache, name, unit, {
                 "price_with_tax": selected_price,
                 "price_without_tax": round(selected_price / 1.13, 2),
@@ -2054,13 +2060,28 @@ def material_price_gldjc_lookup(
                 "gldjc_url": lookup_url,
                 "match_label": match_label,
             }, spec=spec, region=scope_label)
-            results.append({
+            row_result = {
                 **mat,
                 "gldjc_price": selected_price,
                 "gldjc_source": f"{'广材网近似价' if used_approximate else '广材网市场价'}({scope_label})",
                 "gldjc_url": lookup_url,
                 "gldjc_label": match_label,
+                "gldjc_confidence": confidence,
+                "gldjc_risk_reasons": risk_reasons,
+            }
+            decision = decide_material_price({
+                **row_result,
+                "lookup_price": selected_price,
+                "lookup_source": row_result["gldjc_source"],
+                "lookup_confidence": confidence,
+                "risk_reasons": risk_reasons,
             })
+            row_result.update({
+                "risk_level": decision["risk_level"],
+                "risk_reasons": decision["risk_reasons"],
+                "recommended_write_target": decision["write_target"],
+            })
+            results.append(row_result)
         else:
             update_cache(cache, name, unit, {
                 "price_with_tax": selected_price,

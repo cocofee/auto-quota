@@ -65,6 +65,10 @@ interface RawRow {
   lookup_source?: string | null;
   lookup_url?: string | null;
   lookup_label?: string | null;
+  lookup_confidence?: string | null;
+  risk_level?: string | null;
+  risk_reasons?: string[] | string | null;
+  recommended_write_target?: string | null;
 }
 
 // 前端展示行
@@ -105,6 +109,10 @@ interface MaterialDisplayRow {
   lookup_source: string | null;
   lookup_url: string | null;
   lookup_label: string | null;
+  lookup_confidence: string | null;
+  risk_level: string | null;
+  risk_reasons: string[] | string | null;
+  recommended_write_target: string | null;
   user_price: number | null;
 }
 
@@ -141,6 +149,10 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         lookup_source: r.lookup_source ?? null,
         lookup_url: r.lookup_url ?? null,
         lookup_label: r.lookup_label ?? null,
+        lookup_confidence: r.lookup_confidence ?? null,
+        risk_level: r.risk_level ?? null,
+        risk_reasons: r.risk_reasons ?? null,
+        recommended_write_target: r.recommended_write_target ?? null,
         user_price: null,
       });
     }
@@ -172,6 +184,10 @@ function buildDisplayRows(allRows: RawRow[], isMixed: boolean): DisplayRow[] {
         lookup_source: r.lookup_source ?? null,
         lookup_url: r.lookup_url ?? null,
         lookup_label: r.lookup_label ?? null,
+        lookup_confidence: r.lookup_confidence ?? null,
+        risk_level: r.risk_level ?? null,
+        risk_reasons: r.risk_reasons ?? null,
+        recommended_write_target: r.recommended_write_target ?? null,
         user_price: null,
       });
     }
@@ -295,11 +311,11 @@ export default function MaterialPrice() {
   const [lookupLoading, setLookupLoading] = useState(false);
 
   // 贡献开关
-  const [contributeEnabled, setContributeEnabled] = useState(true);
+  const [contributeEnabled, setContributeEnabled] = useState(false);
 
   // 广材网查价（管理员专用）
   const [gldjcModalOpen, setGldjcModalOpen] = useState(false);
-  const [gldjcCookie, setGldjcCookie] = useState(() => localStorage.getItem('gldjc_cookie') || '');
+  const [gldjcCookie, setGldjcCookie] = useState('');
   const [gldjcLoading, setGldjcLoading] = useState(false);
   const [gldjcProgress, setGldjcProgress] = useState('');
   const [gldjcVerifyLoading, setGldjcVerifyLoading] = useState(false);
@@ -438,6 +454,10 @@ export default function MaterialPrice() {
               lookup_source: r.lookup_source ?? null,
               lookup_url: r.lookup_url ?? null,
               lookup_label: r.lookup_label ?? null,
+              lookup_confidence: r.lookup_confidence ?? null,
+              risk_level: r.risk_level ?? null,
+              risk_reasons: r.risk_reasons ?? null,
+              recommended_write_target: r.recommended_write_target ?? null,
             };
           }
           return row;
@@ -501,27 +521,33 @@ export default function MaterialPrice() {
     if (fileKey) {
       const exportMaterials = materialRows
         .map(m => {
-          const finalPrice = m.user_price ?? m.lookup_price ?? null;
           const finalName = m.edited_name.trim() || m._raw.name;
           const finalSpec = m.edited_spec.trim();
-          const originalSpec = m._raw.spec || '';
-          const nameChanged = finalName !== m._raw.name;
-          const specChanged = finalSpec !== originalSpec;
           const isManualOverride = m.user_price != null;
           const lookupUrl = isManualOverride ? '' : (m.lookup_url?.trim() || '');
-          if (finalPrice == null && !nameChanged && !specChanged && !lookupUrl) return null;
+          if (m.user_price == null && m.lookup_price == null && !lookupUrl) return null;
           return {
             row: m._raw.row,
             sheet: m._raw.sheet,
             header_row: m._raw.header_row,
             name_col: m._raw.name_col,
+            original_name: m._raw.name,
             final_name: finalName,
             spec_col: m._raw.spec_col,
+            original_spec: m._raw.spec || '',
             final_spec: finalSpec,
             price_col: m._raw.price_col,
-            final_price: finalPrice,
+            user_price: m.user_price,
+            lookup_price: m.lookup_price,
+            lookup_source: m.lookup_source,
+            lookup_confidence: m.lookup_confidence,
+            risk_level: m.risk_level,
+            risk_reasons: m.risk_reasons,
+            recommended_write_target: m.recommended_write_target,
+            existing_price: m._raw.existing_price,
+            normalization_confidence: m.normalization_confidence,
             lookup_url: lookupUrl || null,
-            lookup_label: buildExportLookupLabel(m, finalPrice),
+            lookup_label: buildExportLookupLabel(m, m.user_price ?? m.lookup_price ?? null),
             critical_spec_text: m.critical_spec_text || '',
           };
         }).filter(Boolean);
@@ -566,8 +592,6 @@ export default function MaterialPrice() {
     for (let i = 0; i < unfound.length; i += batchSize) {
       batches.push(unfound.slice(i, i + batchSize));
     }
-    // 保存cookie到localStorage
-    localStorage.setItem('gldjc_cookie', gldjcCookie);
     setGldjcModalOpen(false);
     setGldjcLoading(true);
     setGldjcProgress(`正在查询 1/${batches.length} 批，共${unfound.length} 条...`);
@@ -581,6 +605,9 @@ export default function MaterialPrice() {
             name: m.edited_name.trim() || m._raw.name,
             spec: m.edited_spec.trim(),
             unit: m._raw.unit || '',
+            object_type: m.object_type || '',
+            family: m.family || '',
+            critical_spec_text: m.critical_spec_text || '',
             _rowKey: m._rowKey,
           })),
           cookie: gldjcCookie,
@@ -588,8 +615,27 @@ export default function MaterialPrice() {
           city: selectedCity,
           period_end: selectedPeriod,
         }, { timeout: 600000 });
-        const batchResults: Array<{ _rowKey?: string; gldjc_price?: number | null; gldjc_source?: string; gldjc_url?: string | null; gldjc_label?: string | null }> = batchRes.data.results || [];
-        const batchResultMap = new Map<string, { price: number | null; source: string | null; url: string | null; label: string | null }>();
+        const batchResults: Array<{
+          _rowKey?: string;
+          gldjc_price?: number | null;
+          gldjc_source?: string;
+          gldjc_url?: string | null;
+          gldjc_label?: string | null;
+          gldjc_confidence?: string | null;
+          risk_level?: string | null;
+          risk_reasons?: string[] | string | null;
+          recommended_write_target?: string | null;
+        }> = batchRes.data.results || [];
+        const batchResultMap = new Map<string, {
+          price: number | null;
+          source: string | null;
+          url: string | null;
+          label: string | null;
+          confidence: string | null;
+          riskLevel: string | null;
+          riskReasons: string[] | string | null;
+          writeTarget: string | null;
+        }>();
         for (const item of batchResults) {
           if (item._rowKey) {
             batchResultMap.set(item._rowKey, {
@@ -597,14 +643,28 @@ export default function MaterialPrice() {
               source: item.gldjc_source || null,
               url: item.gldjc_url ?? null,
               label: item.gldjc_label ?? null,
+              confidence: item.gldjc_confidence ?? null,
+              riskLevel: item.risk_level ?? null,
+              riskReasons: item.risk_reasons ?? null,
+              writeTarget: item.recommended_write_target ?? null,
             });
           }
         }
         setDisplayRows(prev =>
           prev.map(row => {
             if (row._rowType === 'material' && batchResultMap.has(row._rowKey)) {
-              const { price, source, url, label } = batchResultMap.get(row._rowKey)!;
-              return { ...row, lookup_price: price, lookup_source: source, lookup_url: url, lookup_label: label };
+              const { price, source, url, label, confidence, riskLevel, riskReasons, writeTarget } = batchResultMap.get(row._rowKey)!;
+              return {
+                ...row,
+                lookup_price: price,
+                lookup_source: source,
+                lookup_url: url,
+                lookup_label: label,
+                lookup_confidence: confidence,
+                risk_level: riskLevel,
+                risk_reasons: riskReasons,
+                recommended_write_target: writeTarget,
+              };
             }
             return row;
           })
@@ -626,7 +686,6 @@ export default function MaterialPrice() {
       message.warning('请先输入广材网Cookie');
       return;
     }
-    localStorage.setItem('gldjc_cookie', gldjcCookie);
     setGldjcVerifyLoading(true);
     setGldjcVerifyResult(null);
     try {
@@ -938,7 +997,7 @@ export default function MaterialPrice() {
     {
       title: (
         <span>
-          手填价格 <Tooltip title="查不到的可以手填，会自动贡献到价格库">
+          手填价格 <Tooltip title="查不到的可以手填；默认不会贡献到价格库">
             <QuestionCircleOutlined style={{ color: '#94a3b8' }} />
           </Tooltip>
         </span>
@@ -1009,10 +1068,10 @@ export default function MaterialPrice() {
                 </div>
               ) : (
                 <Upload
-                  maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+                  maxCount={1} accept=".xlsx" showUploadList={false}
                   beforeUpload={(f) => {
-                    if (!f.name.endsWith('.xlsx') && !f.name.endsWith('.xls')) {
-                      message.error('只支持Excel文件');
+                    if (!f.name.toLowerCase().endsWith('.xlsx')) {
+                      message.error('当前仅支持 .xlsx 文件');
                       return Upload.LIST_IGNORE;
                     }
                     setFile({ uid: Date.now().toString(), name: f.name, size: f.size, originFileObj: f } as UploadFile);
@@ -1128,7 +1187,7 @@ export default function MaterialPrice() {
             )}
             {hasData && (
               <>
-                <Tooltip title="开启后，你手填的价格会贡献到系统价格库">
+                <Tooltip title="默认不贡献；开启后，手填价格会作为候选数据保存">
                   <Switch
                     checked={contributeEnabled}
                     onChange={setContributeEnabled}
@@ -1149,11 +1208,11 @@ export default function MaterialPrice() {
       {!hasData && inputMode === 'upload' && !file && (
         <Card style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Dragger
-            fileList={[]} maxCount={1} accept=".xlsx,.xls" showUploadList={false}
+            fileList={[]} maxCount={1} accept=".xlsx" showUploadList={false}
             style={{ padding: '40px 80px' }}
             beforeUpload={(f) => {
-              if (!f.name.endsWith('.xlsx') && !f.name.endsWith('.xls')) {
-                message.error('只支持Excel文件');
+              if (!f.name.toLowerCase().endsWith('.xlsx')) {
+                message.error('当前仅支持 .xlsx 文件');
                 return Upload.LIST_IGNORE;
               }
               setFile({ uid: Date.now().toString(), name: f.name, size: f.size, originFileObj: f } as UploadFile);
@@ -1162,7 +1221,7 @@ export default function MaterialPrice() {
           >
             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
             <p className="ant-upload-text">拖拽材料表或套完定额的Excel到此处</p>
-            <p className="ant-upload-hint">支持 .xlsx / .xls</p>
+            <p className="ant-upload-hint">支持 .xlsx</p>
           </Dragger>
         </Card>
       )}
@@ -1272,7 +1331,7 @@ export default function MaterialPrice() {
           </p>
           <p style={{ marginBottom: 4, fontSize: 12, color: '#999' }}>
             每条间隔5~8秒（随机模拟人工，避免过快触发限制），预计 <b>{Math.ceil(emptyCount * 6.5 / 60)}</b> 分钟。
-            查到的价格自动缓存，下次不再重复查。
+            本次查询会返回风险等级和建议写入目标；低置信或近似价只写建议列。
           </p>
           <p style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
             Cookie获取：登录 gldjc.com → F12开发者工具 → Network → 复制请求头中的Cookie

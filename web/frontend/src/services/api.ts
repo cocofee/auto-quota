@@ -7,7 +7,7 @@
 
 import axios from 'axios';
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { ApiError, TokenResponse } from '../types.ts';
+import type { ApiError, TokenResponse } from '../types';
 import { repairMojibakeData } from '../utils/text.ts';
 
 const API_BASE = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_API_BASE || '/api';

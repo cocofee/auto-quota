@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import shutil
 from pathlib import Path
 import sys
+from uuid import uuid4
 
 import openpyxl
+import pytest
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
@@ -12,6 +15,21 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.append(str(BACKEND_ROOT))
 
 from app.api import material_price as material_price_api  # noqa: E402
+
+
+def _prepare_temp_root(name: str) -> Path:
+    temp_root = (Path("output") / f"_tmp_web_material_price_{name}_{uuid4().hex}").resolve()
+    temp_root.mkdir(parents=True, exist_ok=True)
+    return temp_root
+
+
+@pytest.fixture
+def tmp_path(request) -> Path:
+    temp_root = _prepare_temp_root(request.node.name)
+    try:
+        yield temp_root
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def test_parse_sheet_exposes_material_name_and_spec_columns(tmp_path: Path):
@@ -52,7 +70,8 @@ def test_write_material_updates_writes_name_spec_and_price(tmp_path: Path):
                 "final_spec": "DN32",
                 "final_name": "镀锌钢管",
                 "price_col": 6,
-                "final_price": 18.5,
+                "user_price": 18.5,
+                "allow_name_spec_update": True,
             }
         ],
     )
@@ -157,6 +176,24 @@ def test_parse_sheet_recognizes_bill_rows_without_seq_header():
     assert bill_rows[0]["desc"] == "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石"
     assert len(quota_rows) == 1
     assert quota_rows[0]["desc"] == "1.名称:管道垫层\n2.材料品种、强度要求、配比:碎石"
+
+
+def test_parse_sheet_builds_material_candidate_when_no_explicit_material_row():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["序号", "项目编码", "项目名称", "项目特征描述", "单位", "工程量"])
+    ws.append(["1", "031001006001", "塑料管", "1.材质:PPR给水管\n2.规格:De25 S5\n3.连接形式:热熔连接", "m", 10])
+    ws.append(["", "A10-1-1", "给排水管道 室内塑料给水管 热熔连接", "", "10m", 1])
+
+    result = material_price_api._parse_sheet(ws)
+
+    material_rows = [row for row in result["materials"] if row["type"] == "material"]
+    assert len(material_rows) == 1
+    assert material_rows[0]["code"] == "__EXTRACTED__"
+    assert material_rows[0]["normalized_name"] == "PPR给水管"
+    assert material_rows[0]["normalized_spec"] == "De25 S5"
+    assert material_rows[0]["row"] == 2
 
 
 def test_parse_sheet_does_not_guess_price_col_for_mixed_table():
@@ -531,7 +568,8 @@ def test_write_material_updates_merges_spec_into_name_when_no_spec_column(tmp_pa
                 "spec_col": None,
                 "final_spec": "DN32",
                 "price_col": 3,
-                "final_price": 18.5,
+                "user_price": 18.5,
+                "allow_name_spec_update": True,
             }
         ],
     )
@@ -567,7 +605,8 @@ def test_write_material_updates_inserts_price_column_when_missing(tmp_path: Path
                 "spec_col": None,
                 "final_spec": "1FAL",
                 "price_col": None,
-                "final_price": 888.88,
+                "user_price": 888.88,
+                "allow_name_spec_update": True,
             }
         ],
     )
@@ -579,6 +618,119 @@ def test_write_material_updates_inserts_price_column_when_missing(tmp_path: Path
     assert ws2.cell(row=1, column=8).value == "主材单价"
     assert ws2.cell(row=2, column=3).value == "成套配电箱 1FAL"
     assert ws2.cell(row=2, column=8).value == 888.88
+    wb2.close()
+
+
+def test_write_material_updates_does_not_change_name_spec_by_default(tmp_path: Path):
+    file_path = tmp_path / "reviewed-default-no-name-spec.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "原主材名", "DN25", "m", 12, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "name_col": 2,
+                "final_name": "镀锌钢管",
+                "spec_col": 3,
+                "final_spec": "DN32",
+                "price_col": 6,
+                "user_price": 18.5,
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=2).value == "原主材名"
+    assert ws2.cell(row=2, column=3).value == "DN25"
+    assert ws2.cell(row=2, column=6).value == 18.5
+    wb2.close()
+
+
+def test_low_confidence_gldjc_price_writes_suggested_column_only(tmp_path: Path):
+    file_path = tmp_path / "reviewed-low-confidence.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "主材表"
+    ws.append(["材料编码", "材料名称", "规格型号", "单位", "数量", "单价"])
+    ws.append(["26010101", "镀锌钢管", "DN25", "m", 12, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "主材表",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "镀锌钢管",
+                "spec_col": 3,
+                "final_spec": "DN25",
+                "price_col": 6,
+                "lookup_price": 128.82,
+                "lookup_source": "广材网近似价(全国)",
+                "lookup_confidence": "低",
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["主材表"]
+    assert ws2.cell(row=2, column=6).value is None
+    assert ws2.cell(row=1, column=7).value == "建议主材单价"
+    assert ws2.cell(row=2, column=7).value == 128.82
+    assert ws2.cell(row=1, column=8).value == "主材填价风险"
+    assert "近似" in ws2.cell(row=2, column=8).value
+    wb2.close()
+
+
+def test_write_material_updates_never_writes_formal_price_to_comprehensive_unit_price(tmp_path: Path):
+    file_path = tmp_path / "reviewed-comprehensive-price.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "标准组价数据"
+    ws.append(["项目编码", "项目名称", "单位", "工程量", "综合单价"])
+    ws.append(["补充主材001", "成套配电箱", "台", 1, None])
+    wb.save(file_path)
+    wb.close()
+
+    written = material_price_api._do_write_material_updates(
+        str(file_path),
+        [
+            {
+                "row": 2,
+                "sheet": "标准组价数据",
+                "header_row": 1,
+                "name_col": 2,
+                "final_name": "成套配电箱",
+                "price_col": 5,
+                "user_price": 888.88,
+            }
+        ],
+    )
+
+    assert written == 1
+
+    wb2 = openpyxl.load_workbook(file_path, data_only=True)
+    ws2 = wb2["标准组价数据"]
+    assert ws2.cell(row=2, column=5).value is None
+    assert ws2.cell(row=1, column=6).value == "建议主材单价"
+    assert ws2.cell(row=2, column=6).value == 888.88
+    assert "综合单价" in ws2.cell(row=2, column=7).value
     wb2.close()
 
 
@@ -604,7 +756,8 @@ def test_write_material_updates_inserts_gldjc_link_after_spec_column(tmp_path: P
                 "spec_col": 3,
                 "final_spec": "DN32",
                 "price_col": 4,
-                "final_price": 18.5,
+                "user_price": 18.5,
+                "allow_name_spec_update": True,
                 "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1",
                 "lookup_label": "贵盈 | 镀锌钢管 DN32 | m | 18.50",
             }
@@ -646,7 +799,8 @@ def test_write_material_updates_inserts_gldjc_link_after_name_when_no_spec_colum
                 "spec_col": None,
                 "final_spec": "DN32",
                 "price_col": 3,
-                "final_price": 18.5,
+                "user_price": 18.5,
+                "allow_name_spec_update": True,
                 "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=%E9%95%80%E9%94%8C%E9%92%A2%E7%AE%A1%20DN32&l=1",
                 "lookup_label": "贵盈 | 镀锌钢管 DN32 | m | 18.50",
             }
@@ -687,7 +841,9 @@ def test_write_material_updates_strips_critical_spec_from_export_link_label(tmp_
                 "spec_col": 3,
                 "final_spec": "De63",
                 "price_col": 4,
-                "final_price": 128.82,
+                "lookup_price": 128.82,
+                "lookup_source": "广东信息价",
+                "lookup_confidence": "高",
                 "lookup_url": "https://www.gldjc.com/scj/so.html?keyword=HDPE%20De63&l=440000",
                 "lookup_label": "广东信息价 | 给水管HDPE De63 | 关键规格: 1.60MPa | m | 128.82",
                 "critical_spec_text": "1.60MPa",
