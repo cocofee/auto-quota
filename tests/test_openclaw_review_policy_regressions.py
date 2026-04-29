@@ -218,6 +218,62 @@ def test_build_auto_review_draft_request_overrides_pipe_support_with_search_cand
     assert "candidate_source:candidate_pool" in (req.openclaw_reason_codes or [])
 
 
+def test_forced_smart_search_does_not_displace_safe_candidate_pool(monkeypatch):
+    async def _fake_search_quotas(*, keyword, province, book, chapter, limit, user):
+        _ = (keyword, province, book, chapter, limit, user)
+        return {"items": [], "total": 0}
+
+    async def _fake_smart_search(*, name, province, description, specialty, limit, user):
+        _ = (name, province, description, specialty, limit, user)
+        return {
+            "items": [
+                {
+                    "quota_id": "C4-10-114",
+                    "name": "live smart-search candidate",
+                    "unit": "m",
+                    "score": 0.99,
+                    "book": "C4",
+                }
+            ],
+            "search_query": "forced live search",
+        }
+
+    monkeypatch.setattr(openclaw_api.quota_search_api, "search_quotas", _fake_search_quotas)
+    monkeypatch.setattr(openclaw_api.quota_search_api, "smart_search", _fake_smart_search)
+
+    task = SimpleNamespace(id=uuid.uuid4(), province="北京市建设工程施工消耗量标准(2024)")
+    match_result = _make_match_result(
+        bill_name="配管（SC20）",
+        bill_description="配管SC20，暗敷,从配电箱至灯位",
+        bill_unit="m",
+        specialty="C4",
+    )
+
+    candidate, rejection_reasons, candidate_source = asyncio.run(
+        openclaw_api._choose_best_safe_candidate(
+            task=task,
+            match_result=match_result,
+            current_quotas=[{"quota_id": "C4-4-37", "name": "current", "unit": "台"}],
+            candidate_pool=[
+                {
+                    "quota_id": "C4-4-38",
+                    "name": "配电箱箱体安装 配电箱半周长(m以内) 暗装 1",
+                    "unit": "m",
+                    "source": "candidate_pool",
+                    "rerank_score": 0.25,
+                }
+            ],
+            search_name_override="配管安装 SC20 暗敷",
+            allow_slow_search=True,
+        )
+    )
+
+    assert candidate is not None
+    assert candidate["quota_id"] == "C4-4-38"
+    assert candidate_source == "candidate_pool"
+    assert rejection_reasons == []
+
+
 def test_build_auto_review_draft_request_can_agentically_search_beyond_bad_candidate_pool(monkeypatch):
     async def _fake_object_guard(**kwargs):
         _ = kwargs

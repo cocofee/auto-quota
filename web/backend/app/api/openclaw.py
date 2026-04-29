@@ -1753,6 +1753,11 @@ async def _search_better_quota_candidates(
         _build_review_search_name(match_result),
     ])[:4]
     should_force_smart_search = bool(str(search_name_override or "").strip())
+    smart_search_queries = (
+        _dedupe_review_strings([search_name_override])[:1]
+        if should_force_smart_search
+        else search_queries[:2]
+    )
     merged_items: list[dict[str, Any]] = []
     seen: set[str] = set()
     smart_search_items: list[dict[str, Any]] = []
@@ -1813,7 +1818,7 @@ async def _search_better_quota_candidates(
         if merged_items and not should_force_smart_search:
             return merged_items[:limit]
 
-    for query in search_queries[:2]:
+    for query in smart_search_queries:
         if len(merged_items) >= limit and not should_force_smart_search:
             break
         try:
@@ -1869,12 +1874,29 @@ async def _search_better_quota_candidates(
             )
 
     if smart_search_items:
-        _append_unique_review_candidates(
-            target=merged_items,
-            seen=seen,
-            candidates=smart_search_items,
-            limit=limit,
-        )
+        if should_force_smart_search:
+            merged_after_smart: list[dict[str, Any]] = []
+            seen_after_smart: set[str] = set()
+            _append_unique_review_candidates(
+                target=merged_after_smart,
+                seen=seen_after_smart,
+                candidates=merged_items,
+                limit=limit,
+            )
+            _append_unique_review_candidates(
+                target=merged_after_smart,
+                seen=seen_after_smart,
+                candidates=smart_search_items,
+                limit=limit,
+            )
+            merged_items = merged_after_smart
+        else:
+            _append_unique_review_candidates(
+                target=merged_items,
+                seen=seen,
+                candidates=smart_search_items,
+                limit=limit,
+            )
     return merged_items[:limit]
 
 
@@ -1960,6 +1982,8 @@ async def _choose_best_safe_candidate(
         candidates=searched_candidates,
     )
     rejection_reasons.extend(search_rejections)
+    if pool_candidate and search_name_override:
+        return pool_candidate, rejection_reasons, pool_source
     if pool_candidate and search_candidate:
         best_candidate, _, best_source = _pick_best_review_candidate(
             task=task,
