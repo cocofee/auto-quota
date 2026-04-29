@@ -1,0 +1,563 @@
+import argparse
+import csv
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from tools.build_global_repair_decision import (
+    build_next_action,
+    build_rows,
+    build_summary,
+    _iter_latest_records,
+)
+
+
+SCHEMA_VERSION = "v36_gate.v1"
+ARTIFACT_PREFIXES = (
+    "reports/attribution/",
+    "reports/agent_state/",
+    "output/",
+    "models/",
+    "tmp/",
+    "test_artifacts/",
+)
+ARTIFACT_NAMES = {
+    "diff_code.txt",
+}
+GIANT_OWNER_FILES = {
+    "src/ltr_ranker.py",
+    "src/query_builder.py",
+    "src/param_validator.py",
+    "src/match_engine.py",
+    "web/backend/app/api/openclaw.py",
+    "web/backend/app/api/material_price.py",
+}
+MOJIBAKE_MARKERS = (
+    "\u951b", "\u9225", "\u9346", "\u7ee0", "\u7f01", "\u934a", "\u7459", "\u9422",
+    "\u5a34", "\u95ab", "\u95c0", "\u95bf", "\u9363", "\u7035", "\u95bd", "\u942a",
+    "\u942a", "\u942a", "\u9359", "\u5bee", "\u93c1", "\u93c9", "\u8113",
+)
+SECRET_PATTERNS = (
+    re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*=\s*['\"][^'\"]{8,}['\"]"),
+    re.compile(r"(?i)verify\s*=\s*false"),
+)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _repo_root(root: Path | None = None) -> Path:
+    return (root or Path.cwd()).resolve()
+
+
+def _rel(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _run_git(root: Path, args: list[str]) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return 127, "", "git executable not found"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _git_status_entries(root: Path) -> list[dict[str, str]]:
+    top_code, top_stdout, _ = _run_git(root, ["rev-parse", "--show-toplevel"])
+    if top_code != 0:
+        return []
+    try:
+        if Path(top_stdout.strip()).resolve() != root.resolve():
+            return []
+    except OSError:
+        return []
+    code, stdout, stderr = _run_git(root, ["status", "--short"])
+    if code != 0:
+        return [{"status": "!!", "path": "", "error": stderr.strip() or stdout.strip()}]
+    entries: list[dict[str, str]] = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        status = line[:2]
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        entries.append({"status": status, "path": path.replace("\\", "/")})
+    return entries
+
+
+def _is_artifact_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    name = Path(normalized).name
+    return (
+        normalized.startswith(ARTIFACT_PREFIXES)
+        or name in ARTIFACT_NAMES
+        or normalized.endswith((".pid", ".stdout.log", ".stderr.log"))
+        or normalized.startswith("data/ltr_")
+    )
+
+
+def _scan_changed_text_risks(root: Path, entries: list[dict[str, str]]) -> dict[str, Any]:
+    risky_paths: list[str] = []
+    artifact_mojibake_paths: list[str] = []
+    skipped_large: list[str] = []
+    for entry in entries:
+        raw_path = entry.get("path") or ""
+        if not raw_path:
+            continue
+        path = root / raw_path
+        if not path.is_file() or path.suffix.lower() not in {".py", ".md", ".json", ".yaml", ".yml", ".txt"}:
+            continue
+        try:
+            if path.stat().st_size > 1_000_000:
+                skipped_large.append(raw_path)
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        has_secret = any(pattern.search(text) for pattern in SECRET_PATTERNS)
+        has_mojibake = any(marker in text for marker in MOJIBAKE_MARKERS)
+        if has_secret or (has_mojibake and not _is_artifact_path(raw_path)):
+            risky_paths.append(raw_path)
+        elif has_mojibake:
+            artifact_mojibake_paths.append(raw_path)
+    return {
+        "status": "warn" if risky_paths else "pass",
+        "paths": risky_paths,
+        "artifact_mojibake_paths": artifact_mojibake_paths[:20],
+        "skipped_large_text_files": skipped_large[:20],
+    }
+
+
+def _latest_existing(paths: list[Path]) -> Path | None:
+    existing = [path for path in paths if path.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda path: path.stat().st_mtime)
+
+
+def _find_baseline_snapshot(root: Path) -> dict[str, Any]:
+    candidates = list((root / "eval" / "baselines").glob("*.json")) if (root / "eval" / "baselines").exists() else []
+    candidates.extend((root / "reports" / "attribution").glob("baseline_*.json"))
+    latest = _latest_existing(candidates)
+    code, commit, _ = _run_git(root, ["rev-parse", "--short", "HEAD"])
+    return {
+        "status": "present" if latest else "missing",
+        "path": _rel(root, latest) if latest else "",
+        "commit": commit.strip() if code == 0 else "",
+    }
+
+
+def _find_global_input(root: Path) -> dict[str, Any]:
+    latest = root / "reports" / "attribution" / "global_repair_v36_full_latest.json"
+    attribution = root / "reports" / "attribution" / "global_repair_v36_full_attribution.json"
+    summary = root / "reports" / "attribution" / "global_repair_v36_full_summary.json"
+    if latest.exists() and attribution.exists():
+        return {
+            "status": "present",
+            "input_freshness": "fresh",
+            "latest_path": _rel(root, latest),
+            "attribution_path": _rel(root, attribution),
+            "summary_path": _rel(root, summary) if summary.exists() else "",
+            "reason": "found v36 full/global output",
+        }
+
+    legacy_latest = root / "output" / "benchmark_assets" / "ltr_v2_full_20260422" / "all_errors.jsonl"
+    legacy_attr = root / "reports" / "attribution" / "ltr_v2_full_20260422.json"
+    if legacy_latest.exists() and legacy_attr.exists():
+        return {
+            "status": "present",
+            "input_freshness": "stale",
+            "latest_path": _rel(root, legacy_latest),
+            "attribution_path": _rel(root, legacy_attr),
+            "summary_path": "",
+            "reason": "using legacy full benchmark input; v36 full output not found",
+        }
+
+    return {
+        "status": "missing",
+        "input_freshness": "missing",
+        "latest_path": "",
+        "attribution_path": "",
+        "summary_path": "",
+        "reason": "no qualified full/global latest plus attribution pair found",
+    }
+
+
+def _pending_summary(root: Path) -> dict[str, Any]:
+    path = root / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    if not path.exists():
+        return {"status": "none", "path": _rel(root, path), "total": 0, "pending": 0}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {"status": "invalid", "path": _rel(root, path), "error": str(exc), "total": 0, "pending": 0}
+    entries = data.get("entries") if isinstance(data, dict) else data
+    if not isinstance(entries, list):
+        return {"status": "invalid", "path": _rel(root, path), "error": "entries is not a list", "total": 0, "pending": 0}
+    pending = [entry for entry in entries if isinstance(entry, dict) and entry.get("status") == "pending_full_validation"]
+    return {"status": "present", "path": _rel(root, path), "total": len(entries), "pending": len(pending)}
+
+
+def _has_complete_pure_search_metrics(root: Path) -> bool:
+    path = root / "reports" / "attribution" / "pure_search_diagnosis.json"
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    metrics = payload.get("pure_search_metrics") if isinstance(payload, dict) else None
+    if not isinstance(metrics, dict):
+        return False
+    required = (
+        "recall_at_k",
+        "rank_at_k",
+        "validator_veto_rate",
+        "route_filter_loss",
+        "prior_candidates_delta",
+        "latency_breakdown_ms",
+    )
+    return all(metrics.get(key) is not None for key in required)
+
+
+def build_preflight(root: Path | None = None) -> dict[str, Any]:
+    root = _repo_root(root)
+    entries = _git_status_entries(root)
+    paths = [entry.get("path", "") for entry in entries if entry.get("path")]
+    artifact_paths = [path for path in paths if _is_artifact_path(path)]
+    giant_paths = [path for path in paths if path in GIANT_OWNER_FILES]
+    text_risks = _scan_changed_text_risks(root, entries)
+    selected_input = _find_global_input(root)
+    baseline = _find_baseline_snapshot(root)
+    pending = _pending_summary(root)
+
+    hard_blocks: list[str] = []
+    if selected_input["status"] == "missing":
+        hard_blocks.append("no qualified full/global input")
+    if text_risks["paths"]:
+        hard_blocks.append("secret or mojibake risk in changed text files")
+
+    p0_status = "block" if hard_blocks else "warn" if artifact_paths or giant_paths else "pass"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "preflight",
+        "p0_gate_status": p0_status,
+        "block_reasons": hard_blocks,
+        "git_status_summary": {
+            "changed_total": len(entries),
+            "untracked_total": sum(1 for entry in entries if entry.get("status") == "??"),
+            "artifact_path_total": len(artifact_paths),
+            "artifact_path_examples": artifact_paths[:20],
+        },
+        "dirty_artifact_risk": {
+            "status": "warn" if artifact_paths else "pass",
+            "paths": artifact_paths[:50],
+        },
+        "giant_file_touch_risk": {
+            "status": "warn" if giant_paths else "pass",
+            "paths": giant_paths,
+        },
+        "secret_or_mojibake_risk": text_risks,
+        "test_tier_plan": "targeted plus optional slice benchmark; full/global remains Step 5",
+        "pure_search_risk": {
+            "status": "not_applicable",
+            "pure_search_metrics_present": False,
+        },
+        "baseline_snapshot": baseline,
+        "selected_input": selected_input,
+        "pending_full_validation_summary": pending,
+        "full_validation_status": "pending" if selected_input.get("input_freshness") == "stale" else "unknown",
+        "release_gate_status": "blocked_pending_full_validation",
+    }
+
+
+def freeze_baseline(
+    root: Path | None,
+    latest_path: Path,
+    attribution_path: Path,
+    out_path: Path,
+    command: str,
+) -> dict[str, Any]:
+    root = _repo_root(root)
+    attr_abs = (root / attribution_path).resolve() if not attribution_path.is_absolute() else attribution_path
+    latest_abs = (root / latest_path).resolve() if not latest_path.is_absolute() else latest_path
+    if not latest_abs.exists():
+        raise SystemExit(f"latest not found: {latest_path}")
+    if not attr_abs.exists():
+        raise SystemExit(f"attribution not found: {attribution_path}")
+    try:
+        attr = json.loads(attr_abs.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        attr = {}
+    code, commit, _ = _run_git(root, ["rev-parse", "HEAD"])
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "freeze-baseline",
+        "commit": commit.strip() if code == 0 else "",
+        "benchmark_command": command,
+        "latest_path": _rel(root, latest_abs),
+        "attribution_path": _rel(root, attr_abs),
+        "profile": attr.get("profile", ""),
+        "scoring_mode": attr.get("scoring_mode", ""),
+        "total": attr.get("total"),
+        "correct_total": attr.get("correct_total"),
+        "wrong_total": attr.get("wrong_total"),
+        "overall_hit_rate": attr.get("overall_hit_rate"),
+        "recall_hit_rate": attr.get("recall_hit_rate"),
+        "stage_counts": attr.get("counts", {}),
+        "no_materialize_learning": "--no-materialize-learning" in command,
+    }
+    out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+    _write_json(out_abs, payload)
+    return payload
+
+
+def choose_next_action(
+    root: Path | None,
+    latest_path: Path | None,
+    attribution_path: Path | None,
+    decision_table_path: Path,
+    summary_path: Path,
+    next_action_path: Path,
+) -> dict[str, Any]:
+    root = _repo_root(root)
+    selected = _find_global_input(root)
+    latest = latest_path or Path(selected["latest_path"])
+    attribution = attribution_path or Path(selected["attribution_path"])
+    latest_abs = (root / latest).resolve() if not latest.is_absolute() else latest
+    attribution_abs = (root / attribution).resolve() if not attribution.is_absolute() else attribution
+    if not latest_abs.exists():
+        raise SystemExit(f"latest not found: {latest}")
+    if not attribution_abs.exists():
+        raise SystemExit(f"attribution not found: {attribution}")
+
+    records = _iter_latest_records(latest_abs)
+    rows = build_rows(records)
+    if not rows:
+        raise SystemExit("no wrong samples found in latest input")
+    summary = build_summary(rows, latest, attribution)
+    next_action = build_next_action(summary, rows)
+    if next_action.get("action") == "fix_r1_recall" and not _has_complete_pure_search_metrics(root):
+        next_action["action"] = "improve_diagnostics"
+        next_action["reason"] = (
+            f"{next_action.get('reason', '')}; pure_search_metrics missing for R1 recall action"
+        ).strip("; ")
+        next_action["pure_search_metrics_required"] = True
+
+    decision_abs = (root / decision_table_path).resolve() if not decision_table_path.is_absolute() else decision_table_path
+    decision_abs.parent.mkdir(parents=True, exist_ok=True)
+    with decision_abs.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    _write_json((root / summary_path).resolve() if not summary_path.is_absolute() else summary_path, summary)
+    _write_json((root / next_action_path).resolve() if not next_action_path.is_absolute() else next_action_path, next_action)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "choose-next-action",
+        "decision_table": _rel(root, decision_abs),
+        "summary": _rel(root, (root / summary_path).resolve() if not summary_path.is_absolute() else summary_path),
+        "next_action": _rel(root, (root / next_action_path).resolve() if not next_action_path.is_absolute() else next_action_path),
+        "wrong_total": len(rows),
+        "action": next_action["action"],
+        "target_common_issue": next_action.get("target_common_issue", {}),
+        "full_validation_status": next_action.get("full_validation_status", "pending"),
+    }
+
+
+def register_validation(
+    root: Path | None,
+    fix_id: str,
+    action: str,
+    description: str,
+    files: list[str],
+    validation: list[str],
+    status: str,
+    ledger_path: Path,
+) -> dict[str, Any]:
+    root = _repo_root(root)
+    ledger_abs = (root / ledger_path).resolve() if not ledger_path.is_absolute() else ledger_path
+    if ledger_abs.exists():
+        try:
+            payload = json.loads(ledger_abs.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {"schema_version": SCHEMA_VERSION, "entries": []}
+    else:
+        payload = {"schema_version": SCHEMA_VERSION, "entries": []}
+    entries = payload.setdefault("entries", [])
+    if not isinstance(entries, list):
+        entries = []
+        payload["entries"] = entries
+    entry = {
+        "fix_id": fix_id,
+        "registered_at": _now_iso(),
+        "action": action,
+        "description": description,
+        "files": files,
+        "validation": validation,
+        "status": status,
+    }
+    for index, existing in enumerate(entries):
+        if isinstance(existing, dict) and existing.get("fix_id") == fix_id:
+            entries[index] = entry
+            break
+    else:
+        entries.append(entry)
+    payload["updated_at"] = _now_iso()
+    _write_json(ledger_abs, payload)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "command": "register-validation",
+        "ledger_path": _rel(root, ledger_abs),
+        "fix_id": fix_id,
+        "status": status,
+        "pending_full_validation_summary": _pending_summary(root),
+    }
+
+
+def release_check(root: Path | None, ledger_path: Path) -> dict[str, Any]:
+    root = _repo_root(root)
+    selected = _find_global_input(root)
+    pending = _pending_summary(root)
+    ledger_abs = (root / ledger_path).resolve() if not ledger_path.is_absolute() else ledger_path
+    release_status = "pass"
+    reasons: list[str] = []
+    if selected["status"] != "present" or selected["input_freshness"] != "fresh":
+        release_status = "block"
+        reasons.append("fresh v36 full/global input is missing")
+    if pending.get("pending", 0):
+        release_status = "block"
+        reasons.append("pending_full_validation entries remain")
+    if not ledger_abs.exists():
+        release_status = "block"
+        reasons.append("pending validation ledger is missing")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "release-check",
+        "release_gate_status": release_status,
+        "block_reasons": reasons,
+        "selected_input": selected,
+        "pending_full_validation_summary": pending,
+    }
+
+
+def diagnose_pure_search(root: Path | None, out_path: Path) -> dict[str, Any]:
+    root = _repo_root(root)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "diagnose-pure-search",
+        "status": "needs_benchmark_integration",
+        "pure_search_metrics": {
+            "recall_at_k": None,
+            "rank_at_k": None,
+            "validator_veto_rate": None,
+            "route_filter_loss": None,
+            "prior_candidates_delta": None,
+            "latency_breakdown_ms": None,
+        },
+        "bottleneck_classification": "unknown",
+        "next_allowed_action": "improve_diagnostics",
+    }
+    out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+    _write_json(out_abs, payload)
+    return payload
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="V36 governance gate")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    preflight_parser = sub.add_parser("preflight")
+    preflight_parser.add_argument("--out", type=Path, default=Path("reports/attribution/v36_preflight.json"))
+
+    freeze_parser = sub.add_parser("freeze-baseline")
+    freeze_parser.add_argument("--latest", type=Path, required=True)
+    freeze_parser.add_argument("--attribution", type=Path, required=True)
+    freeze_parser.add_argument("--command-line", default="")
+    freeze_parser.add_argument("--out", type=Path, default=Path("eval/baselines/v36_baseline_latest.json"))
+
+    diagnose_parser = sub.add_parser("diagnose-pure-search")
+    diagnose_parser.add_argument("--out", type=Path, default=Path("reports/attribution/pure_search_diagnosis.json"))
+
+    choose_parser = sub.add_parser("choose-next-action")
+    choose_parser.add_argument("--latest", type=Path)
+    choose_parser.add_argument("--attribution", type=Path)
+    choose_parser.add_argument("--decision-table", type=Path, default=Path("reports/attribution/global_repair_decision_table.csv"))
+    choose_parser.add_argument("--summary", type=Path, default=Path("reports/attribution/global_repair_decision_summary.json"))
+    choose_parser.add_argument("--next-action", type=Path, default=Path("reports/attribution/global_repair_next_action.json"))
+
+    register_parser = sub.add_parser("register-validation")
+    register_parser.add_argument("--fix-id", required=True)
+    register_parser.add_argument("--action", required=True)
+    register_parser.add_argument("--description", default="")
+    register_parser.add_argument("--file", action="append", default=[])
+    register_parser.add_argument("--validation", action="append", default=[])
+    register_parser.add_argument("--status", default="pending_full_validation")
+    register_parser.add_argument("--ledger", type=Path, default=Path("reports/agent_state/v36_pending_full_validation.json"))
+
+    release_parser = sub.add_parser("release-check")
+    release_parser.add_argument("--ledger", type=Path, default=Path("reports/agent_state/v36_pending_full_validation.json"))
+
+    args = parser.parse_args()
+    root = Path.cwd()
+    if args.command == "preflight":
+        result = build_preflight(root)
+        _write_json(root / args.out, result)
+    elif args.command == "freeze-baseline":
+        result = freeze_baseline(root, args.latest, args.attribution, args.out, args.command_line)
+    elif args.command == "diagnose-pure-search":
+        result = diagnose_pure_search(root, args.out)
+    elif args.command == "choose-next-action":
+        result = choose_next_action(root, args.latest, args.attribution, args.decision_table, args.summary, args.next_action)
+    elif args.command == "register-validation":
+        result = register_validation(
+            root,
+            args.fix_id,
+            args.action,
+            args.description,
+            args.file,
+            args.validation,
+            args.status,
+            args.ledger,
+        )
+    elif args.command == "release-check":
+        result = release_check(root, args.ledger)
+    else:
+        raise SystemExit(f"unsupported command: {args.command}")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
