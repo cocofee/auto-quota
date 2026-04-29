@@ -62,6 +62,15 @@ class TestCategoryHardRejects:
             "导线BV-2.5", "电缆敷设")
         assert penalty >= 0.3, f"导线vs电缆应硬排斥，实际惩罚: {penalty}"
 
+    def test_cable_work_content_wire_conduit_noise_no_reject(self):
+        """电缆主项工作内容里的导线管噪声，不应反向拒绝电缆敷设定额"""
+        penalty, detail = ParamValidator._check_category_conflict(
+            "电力电缆 WDZC-YJY-4*25+1*16 材质:铜芯 敷设方式、部位:沿桥架或穿管 "
+            "工作内容:电线进入现有导线管 接地 测绝缘电阻 电缆头供货",
+            "室内敷设电力电缆 铜芯电力电缆敷设 电缆截面(mm2) ≤35",
+        )
+        assert penalty == 0.0, f"电缆主项不应被导线管工作内容误拒: {detail}"
+
     def test_tray_vs_conduit_reject(self):
         """桥架 vs 穿线管 → 硬排斥"""
         penalty, detail = ParamValidator._check_category_conflict(

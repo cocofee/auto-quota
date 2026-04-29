@@ -2921,6 +2921,31 @@ class ParamValidator:
         return ""
 
     @classmethod
+    def _category_reject_applies(cls, bill_text: str, bill_kw: str, reject_kw: str, quota_name: str) -> bool:
+        if reject_kw not in quota_name or bill_kw not in bill_text:
+            return False
+
+        primary_text = re.split(
+            r"(?:工作内容|施工内容|工程内容|主要工作内容|包含内容|含:|含：)\s*[:：]?",
+            bill_text,
+            maxsplit=1,
+        )[0]
+
+        if bill_kw == "导线" and reject_kw == "电缆":
+            if (
+                "电缆" in primary_text
+                and "导线" not in primary_text
+                and re.search(r"(?:电线进入现有)?导线管", bill_text)
+            ):
+                return False
+
+        if bill_kw == "电缆头" and reject_kw == "电缆敷设":
+            if "电缆" in primary_text and "电缆头" not in primary_text:
+                return False
+
+        return True
+
+    @classmethod
     def _check_category_conflict(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
         """
         品类互斥检查：清单核心品类和定额核心品类冲突时降分
@@ -2956,7 +2981,7 @@ class ParamValidator:
                     continue
                 if bill_kw in bill_text:
                     for reject_kw in reject_list:
-                        if reject_kw in quota_name:
+                        if cls._category_reject_applies(bill_text, bill_kw, reject_kw, quota_name):
                             return 0.3, f"品类硬排斥: 清单含'{bill_kw}' ≠ 定额含'{reject_kw}'"
             return 0.0, ""
 
@@ -2976,7 +3001,7 @@ class ParamValidator:
                 continue
             if bill_kw in bill_text:
                 for reject_kw in reject_list:
-                    if reject_kw in quota_name:
+                    if cls._category_reject_applies(bill_text, bill_kw, reject_kw, quota_name):
                         return 0.3, f"品类硬排斥: 清单含'{bill_kw}' ≠ 定额含'{reject_kw}'"
 
         return 0.0, ""
