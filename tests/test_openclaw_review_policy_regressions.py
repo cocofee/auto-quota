@@ -274,6 +274,64 @@ def test_forced_smart_search_does_not_displace_safe_candidate_pool(monkeypatch):
     assert rejection_reasons == []
 
 
+def test_forced_smart_search_survives_keyword_limit(monkeypatch):
+    async def _fake_search_quotas(*, keyword, province, book, chapter, limit, user):
+        _ = (keyword, province, book, chapter, user)
+        return {
+            "items": [
+                {
+                    "quota_id": f"K-{idx}",
+                    "name": f"keyword candidate {idx}",
+                    "unit": "套",
+                    "score": 0.99 - idx / 100,
+                    "book": "C10",
+                }
+                for idx in range(limit)
+            ],
+            "total": limit,
+        }
+
+    async def _fake_smart_search(*, name, province, description, specialty, limit, user):
+        _ = (name, province, description, specialty, limit, user)
+        return {
+            "items": [
+                {
+                    "quota_id": "03-10-2-12",
+                    "name": "成品管卡安装 公称直径 32mm以内",
+                    "unit": "套",
+                    "score": 0.93,
+                    "book": "C10",
+                    "chapter": "管道支架",
+                }
+            ],
+            "search_query": "成品管卡安装 DN25",
+        }
+
+    monkeypatch.setattr(openclaw_api.quota_search_api, "search_quotas", _fake_search_quotas)
+    monkeypatch.setattr(openclaw_api.quota_search_api, "smart_search", _fake_smart_search)
+
+    task = SimpleNamespace(id=uuid.uuid4(), province="上海市安装工程预算定额(2016)")
+    match_result = _make_match_result(
+        bill_name="成品管卡",
+        bill_description="1.名称：成品管卡\n2.规格：DN25",
+        bill_unit="套",
+        specialty="C10",
+    )
+
+    candidates = asyncio.run(
+        openclaw_api._search_better_quota_candidates(
+            task=task,
+            match_result=match_result,
+            audit_queries=["给排水管道"],
+            search_name_override="成品管卡安装",
+            limit=5,
+        )
+    )
+
+    assert [item["quota_id"] for item in candidates][0] == "03-10-2-12"
+    assert len(candidates) == 5
+
+
 def test_build_auto_review_draft_request_can_agentically_search_beyond_bad_candidate_pool(monkeypatch):
     async def _fake_object_guard(**kwargs):
         _ = kwargs

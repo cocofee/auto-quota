@@ -1880,13 +1880,13 @@ async def _search_better_quota_candidates(
             _append_unique_review_candidates(
                 target=merged_after_smart,
                 seen=seen_after_smart,
-                candidates=merged_items,
+                candidates=smart_search_items,
                 limit=limit,
             )
             _append_unique_review_candidates(
                 target=merged_after_smart,
                 seen=seen_after_smart,
-                candidates=smart_search_items,
+                candidates=merged_items,
                 limit=limit,
             )
             merged_items = merged_after_smart
