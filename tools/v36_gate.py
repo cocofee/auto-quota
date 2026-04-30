@@ -1,6 +1,8 @@
 import argparse
 import csv
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -17,10 +19,12 @@ from tools.build_global_repair_decision import (
     build_next_action,
     build_rows,
     build_summary,
+    ACTION_BY_BUCKET,
     _expected_ids,
     _id_prefix,
     _iter_latest_records,
     _is_wrong,
+    _pending_validation_issue_keys,
     _sample_id,
     _selected_id,
 )
@@ -57,6 +61,19 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*=\s*['\"][^'\"]{8,}['\"]"),
     re.compile(r"(?i)verify\s*=\s*false"),
 )
+GENERATED_KNOWLEDGE_PREFIX = "data/province_plugins/generated/"
+DATA_REVIEW_QUEUE_PATH = Path("reports/agent_state/v36_data_review_queue.json")
+FLAKY_TRACKING_PATH = Path("reports/agent_state/flaky_tracking.json")
+REQUIRED_VERSION_FIELDS = (
+    "algorithm_commit",
+    "knowledge_digest_hash",
+    "quota_db_revision",
+    "bill_corpus_revision",
+    "vector_index_revision",
+    "embedding_model_version",
+    "model_profile_hash",
+    "seed",
+)
 
 
 def _now_iso() -> str:
@@ -77,6 +94,41 @@ def _rel(root: Path, path: Path) -> str:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _file_content_hash(root: Path, paths: list[Path]) -> str:
+    existing = [path for path in paths if path.exists() and path.is_file()]
+    if not existing:
+        return ""
+    digest = hashlib.sha256()
+    for path in sorted(existing, key=lambda item: _rel(root, item)):
+        digest.update(_rel(root, path).encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            continue
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _metadata_revision(root: Path, paths: list[Path]) -> str:
+    existing = [path for path in paths if path.exists() and path.is_file()]
+    if not existing:
+        return ""
+    digest = hashlib.sha256()
+    for path in sorted(existing, key=lambda item: _rel(root, item)):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        digest.update(f"{_rel(root, path)}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _run_git(root: Path, args: list[str]) -> tuple[int, str, str]:
@@ -198,6 +250,11 @@ def _is_artifact_path(path: str) -> bool:
     )
 
 
+def _is_generated_knowledge_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return normalized.startswith(GENERATED_KNOWLEDGE_PREFIX) or normalized.endswith("knowledge_digest.md")
+
+
 def _scan_changed_text_risks(root: Path, entries: list[dict[str, str]]) -> dict[str, Any]:
     risky_paths: list[str] = []
     artifact_mojibake_paths: list[str] = []
@@ -255,6 +312,118 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _list_json_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        items = payload.get("items")
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+        entries = payload.get("entries")
+        if isinstance(entries, list):
+            return [item for item in entries if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def _version_tuple(root: Path) -> dict[str, Any]:
+    code, commit, _ = _run_git(root, ["rev-parse", "HEAD"])
+    generated = root / "data" / "province_plugins" / "generated"
+    knowledge_paths = list(generated.glob("knowledge*.json")) + [generated / "knowledge_digest.md"]
+    quota_paths = list((root / "db").glob("**/*.sqlite3")) + list((root / "db").glob("**/*.db"))
+    bill_paths = [
+        root / "data" / "bill_library.db",
+        root / "data" / "bill_library_all.json",
+        root / "data" / "bill_features_2024.json",
+        root / "data" / "bill_synonyms.json",
+    ]
+    vector_paths = list((root / "db" / "chroma").glob("**/*.sqlite3"))
+    embedding_source = "|".join(sorted({_rel(root, path.parent) for path in vector_paths[:50]}))
+    model_profile_hash = _sha256_text(embedding_source) if embedding_source else ""
+    seed = ""
+    for name in ("V36_SEED", "BENCHMARK_SEED", "PYTHONHASHSEED"):
+        value = str(os.environ.get(name, "")).strip()
+        if value:
+            seed = value
+            break
+    return {
+        "algorithm_commit": commit.strip() if code == 0 else "",
+        "knowledge_digest_hash": _file_content_hash(root, knowledge_paths),
+        "quota_db_revision": _metadata_revision(root, quota_paths),
+        "bill_corpus_revision": _metadata_revision(root, bill_paths),
+        "vector_index_revision": _metadata_revision(root, vector_paths),
+        "embedding_model_version": "qwen3" if vector_paths else "",
+        "model_profile_hash": model_profile_hash,
+        "seed": seed,
+    }
+
+
+def _version_tuple_status(version: dict[str, Any]) -> dict[str, Any]:
+    missing = [field for field in REQUIRED_VERSION_FIELDS if not str(version.get(field) or "").strip()]
+    return {
+        "status": "complete" if not missing else "missing_fields",
+        "missing_fields": missing,
+    }
+
+
+def _data_review_queue_summary(root: Path) -> dict[str, Any]:
+    path = root / DATA_REVIEW_QUEUE_PATH
+    if not path.exists():
+        return {
+            "status": "missing",
+            "path": DATA_REVIEW_QUEUE_PATH.as_posix(),
+            "total": 0,
+            "open": 0,
+            "fixed_in_corpus": 0,
+            "wontfix": 0,
+            "ambiguous_kept": 0,
+            "closed_sample_ids": [],
+            "open_sample_ids": [],
+        }
+    payload = _read_json_file(path)
+    items = _list_json_items(payload)
+    counts = Counter(str(item.get("status") or "open") for item in items)
+    closed = [
+        str(item.get("sample_id") or "").strip()
+        for item in items
+        if str(item.get("sample_id") or "").strip() and str(item.get("status") or "open") != "open"
+    ]
+    opened = [
+        str(item.get("sample_id") or "").strip()
+        for item in items
+        if str(item.get("sample_id") or "").strip() and str(item.get("status") or "open") == "open"
+    ]
+    return {
+        "status": "present",
+        "path": DATA_REVIEW_QUEUE_PATH.as_posix(),
+        "total": len(items),
+        "open": counts.get("open", 0),
+        "fixed_in_corpus": counts.get("fixed_in_corpus", 0),
+        "wontfix": counts.get("wontfix", 0),
+        "ambiguous_kept": counts.get("ambiguous_kept", 0),
+        "closed_sample_ids": closed,
+        "open_sample_ids": opened,
+    }
+
+
+def _flaky_tracking_summary(root: Path) -> dict[str, Any]:
+    path = root / FLAKY_TRACKING_PATH
+    if not path.exists():
+        return {"status": "missing", "path": FLAKY_TRACKING_PATH.as_posix(), "total": 0, "triggered": 0}
+    payload = _read_json_file(path)
+    items = _list_json_items(payload)
+    triggered = [
+        item for item in items
+        if int(item.get("count") or 0) >= 3 and str(item.get("status") or "open") not in {"fixed", "closed"}
+    ]
+    return {
+        "status": "present",
+        "path": FLAKY_TRACKING_PATH.as_posix(),
+        "total": len(items),
+        "triggered": len(triggered),
+        "triggered_signatures": [str(item.get("signature") or "") for item in triggered[:20]],
+    }
 
 
 def _full_global_result_summary(attr_payload: dict[str, Any]) -> dict[str, Any]:
@@ -627,11 +796,180 @@ def _classify_bottleneck(metrics: dict[str, Any]) -> str:
     return "ranking_or_final_selection"
 
 
+def _normalize_v36_commonality(summary: dict[str, Any]) -> dict[str, Any]:
+    wrong_total = int(summary.get("wrong_total") or 0)
+    clusters = summary.get("common_issue_clusters")
+    if not isinstance(clusters, list):
+        return summary
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            continue
+        count = int(cluster.get("sample_count") or 0)
+        ratio = (count / wrong_total) if wrong_total else 0.0
+        cluster["sample_ratio"] = round(ratio, 4)
+        if count >= 3 and ratio >= 0.01:
+            cluster["commonality"] = "shared"
+        elif count >= 2:
+            cluster["commonality"] = "weak_shared"
+        else:
+            cluster["commonality"] = "singleton_only"
+    shared = [cluster for cluster in clusters if isinstance(cluster, dict) and cluster.get("commonality") == "shared"]
+    if shared:
+        summary["target_common_issue"] = shared[0]
+        summary["cluster_selection_reason"] = "largest shared cluster by sample_count, then bucket/key"
+    elif clusters:
+        summary["target_common_issue"] = clusters[0]
+        summary["cluster_selection_reason"] = "no shared cluster; selected diagnostic target only"
+    return summary
+
+
+def _owner_for_action(action: str) -> str:
+    return {
+        "improve_diagnostics": "tools/diagnostics",
+        "fix_r1_recall": "src/search_routing|src/search_features",
+        "fix_r2_ltr": "src/ranking_rules",
+        "fix_r3_cgr": "src/ranking_rules",
+        "fix_r4_picker": "src/ranking_rules",
+        "fix_r5_validator": "src/validation_rules",
+        "review_data": "reports/agent_state/v36_data_review_queue.json",
+    }.get(action, "")
+
+
+def _build_v36_next_action(summary: dict[str, Any], rows: list[dict[str, str]], *, pure_metrics_present: bool) -> dict[str, Any]:
+    largest_bucket = summary.get("largest_bucket") or "R6"
+    target_common_issue = summary.get("target_common_issue") or {}
+    target_bucket = target_common_issue.get("bucket") or largest_bucket
+    commonality = str(target_common_issue.get("commonality") or "")
+    missing_rate = float(summary.get("missing_field_rate") or 0.0)
+    if not rows:
+        action = "improve_diagnostics"
+        reason = "no actionable wrong samples after data_review exclusion"
+    elif missing_rate > 0.1:
+        action = "improve_diagnostics"
+        reason = "missing_field_rate > 10%"
+    elif commonality == "weak_shared":
+        action = "improve_diagnostics"
+        reason = "target_common_issue.commonality=weak_shared; diagnostics only"
+    elif commonality == "singleton_only":
+        action = "review_data" if target_bucket in {"R6", "R6_known_data_issue"} else "improve_diagnostics"
+        reason = f"target_common_issue.commonality=singleton_only; bucket={target_bucket}; diagnostics/data review only"
+    elif target_bucket == "R6_known_data_issue":
+        action = "review_data"
+        reason = "known data issue bucket; update data review queue"
+    else:
+        bucket = target_bucket if target_bucket in ACTION_BY_BUCKET else "R6"
+        action = ACTION_BY_BUCKET[bucket]
+        reason = (
+            f"target_common_issue={target_common_issue.get('cluster_id')}; "
+            f"bucket={bucket}; samples={target_common_issue.get('sample_count')}; "
+            f"commonality={target_common_issue.get('commonality')}"
+        )
+    if action == "fix_r1_recall" and not pure_metrics_present:
+        action = "improve_diagnostics"
+        reason = f"{reason}; pure_search_metrics missing for R1 recall action"
+
+    representative_ids = list(target_common_issue.get("representative_sample_ids") or [])
+    if not representative_ids and rows:
+        representative_rows = [row for row in rows if row.get("common_issue_key") == target_common_issue.get("issue_key")]
+        if not representative_rows:
+            representative_rows = rows[:10]
+        representative_ids = [row["sample_id"] for row in representative_rows[:10]]
+    cluster_sample_count = int(target_common_issue.get("sample_count") or len(representative_ids))
+    scope = {
+        "latest_path": summary.get("input_latest_path", ""),
+        "attribution_path": summary.get("input_attribution_path", ""),
+        "filter_bucket": target_bucket,
+        "filter_cluster_id": target_common_issue.get("cluster_id", ""),
+        "filter_common_issue_key": target_common_issue.get("issue_key", ""),
+        "sample_limit": min(50, cluster_sample_count or int(summary.get("wrong_total") or 0)),
+        "owner_module": _owner_for_action(action),
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "action": action,
+        "reason": reason,
+        "largest_bucket": largest_bucket,
+        "sample_count": cluster_sample_count,
+        "target_common_issue": target_common_issue,
+        "cluster_sample_ids": representative_ids,
+        "representative_sample_ids": representative_ids,
+        "suggested_validation_scope": scope,
+        "input_latest_path": summary.get("input_latest_path", ""),
+        "input_attribution_path": summary.get("input_attribution_path", ""),
+        "full_validation_status": "pending",
+        "deterministic": True,
+        "llm_used": False,
+    }
+
+
+def _update_data_review_queue(
+    root: Path,
+    next_action: dict[str, Any],
+    *,
+    latest_path: Path,
+    attribution_path: Path,
+) -> dict[str, Any]:
+    if next_action.get("action") != "review_data":
+        return {"status": "not_applicable"}
+    path = root / DATA_REVIEW_QUEUE_PATH
+    payload = _read_json_file(path) if path.exists() else {
+        "schema_version": "v36.data_review_queue.v1",
+        "description": "Data issues isolated from V36 algorithm repair rounds.",
+        "items": [],
+    }
+    items = payload.setdefault("items", [])
+    if not isinstance(items, list):
+        items = []
+        payload["items"] = items
+    existing = {str(item.get("sample_id") or ""): item for item in items if isinstance(item, dict)}
+    added = 0
+    updated = 0
+    target = next_action.get("target_common_issue") if isinstance(next_action.get("target_common_issue"), dict) else {}
+    for sample_id in next_action.get("representative_sample_ids") or []:
+        sample_id = str(sample_id or "").strip()
+        if not sample_id:
+            continue
+        entry = existing.get(sample_id)
+        if entry is None:
+            entry = {
+                "sample_id": sample_id,
+                "suspected_reason": "unknown",
+                "evidence_paths": [_rel(root, latest_path), _rel(root, attribution_path)],
+                "status": "open",
+                "fix_revision": "",
+                "created_at": _now_iso(),
+                "updated_at": _now_iso(),
+                "owner": "human_data_review",
+                "target_common_issue": {
+                    "cluster_id": target.get("cluster_id", ""),
+                    "issue_key": target.get("issue_key", ""),
+                    "bucket": target.get("bucket", ""),
+                    "commonality": target.get("commonality", ""),
+                },
+            }
+            items.append(entry)
+            existing[sample_id] = entry
+            added += 1
+        else:
+            paths = entry.setdefault("evidence_paths", [])
+            if isinstance(paths, list):
+                for evidence in (_rel(root, latest_path), _rel(root, attribution_path)):
+                    if evidence and evidence not in paths:
+                        paths.append(evidence)
+            entry["updated_at"] = _now_iso()
+            updated += 1
+    payload["updated_at"] = _now_iso()
+    _write_json(path, payload)
+    return {"status": "updated", "path": DATA_REVIEW_QUEUE_PATH.as_posix(), "added": added, "updated": updated}
+
+
 def build_preflight(root: Path | None = None) -> dict[str, Any]:
     root = _repo_root(root)
     entries = _git_status_entries(root)
     paths = [entry.get("path", "") for entry in entries if entry.get("path")]
     artifact_paths = [path for path in paths if _is_artifact_path(path)]
+    generated_knowledge_paths = [path for path in paths if _is_generated_knowledge_path(path)]
     giant_paths = [path for path in paths if path in GIANT_OWNER_FILES]
     giant_change_summary = _giant_file_change_summary(root, giant_paths)
     owner_boundary = _find_owner_boundary_manifest(root)
@@ -639,6 +977,11 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
     selected_input = _find_global_input(root)
     baseline = _find_baseline_snapshot(root)
     pending = _pending_summary(root)
+    version = _version_tuple(root)
+    version_status = _version_tuple_status(version)
+    data_review = _data_review_queue_summary(root)
+    flaky = _flaky_tracking_summary(root)
+    pure_metrics_present = _has_complete_pure_search_metrics(root)
 
     hard_blocks: list[str] = []
     if selected_input["status"] == "missing":
@@ -647,6 +990,10 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         hard_blocks.append("secret or mojibake risk in changed text files")
     if giant_paths and owner_boundary["status"] != "present":
         hard_blocks.append("giant owner files touched without owner_boundary governance manifest")
+    if generated_knowledge_paths and pending.get("pending", 0):
+        hard_blocks.append("generated knowledge changed while pending_full_validation entries remain")
+    if flaky.get("triggered", 0):
+        hard_blocks.append("flaky signatures reached governance threshold")
     giant_bridge_budget = int(owner_boundary.get("max_new_lines_in_any_giant_owner_file") or DEFAULT_GIANT_BRIDGE_LINE_BUDGET)
     giant_over_budget = [
         item for item in giant_change_summary["changed_files"]
@@ -654,15 +1001,28 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
     ]
     giant_missing_boundary = giant_paths and owner_boundary["status"] != "present"
 
-    p0_status = "block" if hard_blocks else "warn" if artifact_paths or giant_paths or pending.get("pending", 0) else "pass"
+    p0_status = "block" if hard_blocks else "warn" if (
+        artifact_paths
+        or giant_paths
+        or pending.get("pending", 0)
+        or generated_knowledge_paths
+        or version_status["status"] != "complete"
+        or data_review.get("open", 0)
+    ) else "pass"
     recommended_target = ""
-    if giant_paths:
+    if flaky.get("triggered", 0):
+        recommended_target = "diagnostic_completeness"
+    elif generated_knowledge_paths and pending.get("pending", 0):
+        recommended_target = "pending_validation_closure"
+    elif giant_paths:
         recommended_target = "owner_boundary"
     elif artifact_paths:
         recommended_target = "artifact_hygiene"
     elif pending.get("pending", 0):
         recommended_target = "pending_validation_closure"
     elif selected_input["status"] == "missing":
+        recommended_target = "baseline_freeze"
+    elif version_status["status"] != "complete":
         recommended_target = "baseline_freeze"
 
     input_freshness = str(selected_input.get("input_freshness", "") or "")
@@ -685,6 +1045,8 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
             "untracked_total": sum(1 for entry in entries if entry.get("status") == "??"),
             "artifact_path_total": len(artifact_paths),
             "artifact_path_examples": artifact_paths[:20],
+            "generated_knowledge_path_total": len(generated_knowledge_paths),
+            "generated_knowledge_path_examples": generated_knowledge_paths[:20],
         },
         "dirty_artifact_risk": {
             "status": "warn" if artifact_paths else "pass",
@@ -702,14 +1064,21 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         "secret_or_mojibake_risk": text_risks,
         "test_tier_plan": "targeted plus optional slice benchmark; full/global remains Step 5",
         "pure_search_risk": {
-            "status": "not_applicable",
-            "pure_search_metrics_present": False,
+            "status": "pass" if pure_metrics_present else "missing",
+            "pure_search_metrics_present": pure_metrics_present,
         },
         "baseline_snapshot": baseline,
+        "version_tuple": version,
+        "version_tuple_status": version_status,
         "selected_input": selected_input,
         "pending_full_validation_summary": pending,
+        "data_review_queue_summary": {
+            key: value for key, value in data_review.items()
+            if key not in {"closed_sample_ids", "open_sample_ids"}
+        },
+        "flaky_tracking_summary": flaky,
         "full_validation_status": full_validation_status,
-        "release_gate_status": "blocked_pending_full_validation",
+        "release_gate_status": "block" if pending.get("pending", 0) or generated_knowledge_paths else "warn",
     }
 
 
@@ -775,22 +1144,56 @@ def choose_next_action(
         raise SystemExit(f"attribution not found: {attribution}")
 
     records = _iter_latest_records(latest_abs)
-    rows = build_rows(records)
-    if not rows:
+    original_rows = build_rows(records)
+    if not original_rows:
         raise SystemExit("no wrong samples found in latest input")
-    summary = build_summary(rows, latest, attribution)
-    next_action = build_next_action(summary, rows)
-    if next_action.get("action") == "fix_r1_recall" and not _has_complete_pure_search_metrics(root):
-        next_action["action"] = "improve_diagnostics"
-        next_action["reason"] = (
-            f"{next_action.get('reason', '')}; pure_search_metrics missing for R1 recall action"
-        ).strip("; ")
+    data_review = _data_review_queue_summary(root)
+    closed_review_ids = set(data_review.get("closed_sample_ids") or [])
+    rows = [row for row in original_rows if row.get("sample_id") not in closed_review_ids]
+    excluded_rows = [row for row in original_rows if row.get("sample_id") in closed_review_ids]
+    skip_issue_keys = _pending_validation_issue_keys(root)
+    if rows:
+        summary = build_summary(rows, latest, attribution, skip_issue_keys=skip_issue_keys)
+        summary = _normalize_v36_commonality(summary)
+    else:
+        summary = {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": _now_iso(),
+            "input_latest_path": str(latest),
+            "input_attribution_path": str(attribution),
+            "wrong_total": 0,
+            "stage_counts": {},
+            "missing_field_rate": 0.0,
+            "largest_bucket": "",
+            "common_issue_clusters": [],
+            "skipped_pending_validation_clusters": [],
+            "target_common_issue": {},
+            "cluster_selection_reason": "all wrong samples excluded by data review queue",
+        }
+    summary["wrong_total_before_data_review_exclusion"] = len(original_rows)
+    summary["data_review_exclusion_summary"] = {
+        "queue_path": DATA_REVIEW_QUEUE_PATH.as_posix(),
+        "excluded_total": len(excluded_rows),
+        "excluded_sample_ids": [row.get("sample_id", "") for row in excluded_rows[:50]],
+        "open_total": data_review.get("open", 0),
+    }
+    pure_metrics_present = _has_complete_pure_search_metrics(root)
+    next_action = _build_v36_next_action(summary, rows, pure_metrics_present=pure_metrics_present)
+    if next_action.get("action") == "fix_r1_recall":
+        next_action["pure_search_metrics_required"] = False
+    elif "pure_search_metrics missing" in str(next_action.get("reason") or ""):
         next_action["pure_search_metrics_required"] = True
+    next_action["data_review_queue_update"] = _update_data_review_queue(
+        root,
+        next_action,
+        latest_path=latest_abs,
+        attribution_path=attribution_abs,
+    )
 
     decision_abs = (root / decision_table_path).resolve() if not decision_table_path.is_absolute() else decision_table_path
     decision_abs.parent.mkdir(parents=True, exist_ok=True)
     with decision_abs.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(fh, fieldnames=list(original_rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
     _write_json((root / summary_path).resolve() if not summary_path.is_absolute() else summary_path, summary)
@@ -803,9 +1206,13 @@ def choose_next_action(
         "summary": _rel(root, (root / summary_path).resolve() if not summary_path.is_absolute() else summary_path),
         "next_action": _rel(root, (root / next_action_path).resolve() if not next_action_path.is_absolute() else next_action_path),
         "wrong_total": len(rows),
+        "wrong_total_before_data_review_exclusion": len(original_rows),
+        "data_review_exclusion_summary": summary["data_review_exclusion_summary"],
         "action": next_action["action"],
         "target_common_issue": next_action.get("target_common_issue", {}),
         "full_validation_status": next_action.get("full_validation_status", "pending"),
+        "deterministic": True,
+        "llm_used": False,
     }
 
 

@@ -1,0 +1,7 @@
+{
+  "schema_version": "v36.regression_golden.v1",
+  "description": "Fast regression cases created from V36 repair rounds.",
+  "cases_path": "eval/regression_golden/cases.jsonl",
+  "active_case_count": 0,
+  "cases": []
+}
