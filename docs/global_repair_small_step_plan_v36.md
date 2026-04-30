@@ -381,8 +381,8 @@ python tools/v36_gate.py release-check
     "output": {"pure_search_metrics": {}, "metric_confidence": {}, "candidate_lifecycle_trace": {}}
   },
   "choose-next-action": {
-    "input": {"summary_path": "", "data_review_queue_path": "reports/agent_state/v36_data_review_queue.json"},
-    "output": {"action": "", "target_common_issue": {}, "reason": "", "full_validation_status": ""}
+    "input": {"summary_path": "", "data_review_queue_path": "reports/agent_state/v36_data_review_queue.json", "round_manifest_glob": "reports/attribution/v36_round_manifest_*.json", "pending_path": "reports/agent_state/v36_pending_full_validation.json"},
+    "output": {"action": "", "target_common_issue": {}, "reason": "", "full_validation_status": "", "selector_state_inputs": {}, "skipped_repair_units": [], "blocked_next_stage_repair_units": []}
   },
   "register-validation": {
     "input": {"repair_report_path": "", "golden_case": {}, "rollback_plan": {}},
@@ -838,6 +838,10 @@ R 桶映射：
 - `review_data`
 
 决策规则：
+- 选择器必须先读取 `pending_full_validation` 台账和 `reports/attribution/v36_round_manifest_*.json`，形成 `selector_state_inputs`，再选择 `target_common_issue`。Step 4 已处理过的 repair unit 不能只因为 full/global 输入未刷新就再次成为算法修复目标。
+- 若某个 repair unit 在 manifest 中出现 `partial_validation_status=blocked_by_next_stage|candidate_lifecycle_pass|local_behavior_pass`，或出现 duplicate guard，或 `failed_slice_next_action.same_repair_unit=false`，该 repair unit 必须加入 `skipped_repair_units`；其中 `blocked_by_next_stage` 还必须加入 `blocked_next_stage_repair_units`，即使它没有登记为 `pending_full_validation`。
+- 若最大簇被 `skipped_repair_units` 跳过，选择器只能在剩余未处理共性簇中重新选择；如果剩余簇不足以授权算法修复，则输出 `improve_diagnostics`、`review_data` 或 `start_step5_full_validation` 对应的治理/诊断动作，不得重复输出同一个 R1/R2/R3/R4/R5 修复 action。
+- 若 `blocked_next_stage_repair_units` 指向下一阶段，例如 R1 已推进但被 R2/LTR 阻断，下一轮只能先输出下一阶段诊断授权或等待新的确定性 next_action；不得在当前 Step 4 继续叠加 R1 或 R2/LTR patch。
 - `missing_field_rate > 10%`：`improve_diagnostics`
 - `target_common_issue.commonality=weak_shared`：`improve_diagnostics`；只能在 `reason` 中记录归属桶和疑似修复方向，不得输出算法修复 action。
 - `target_common_issue.commonality=singleton_only`：若 bucket 为 R6 则 `review_data`，否则 `improve_diagnostics`；只能在 `reason` 中记录归属桶和疑似修复方向，不得输出算法修复 action。
@@ -864,6 +868,9 @@ next_action 必须包含：
 - `input_latest_path`
 - `input_attribution_path`
 - `full_validation_status`
+- `selector_state_inputs`
+- `skipped_repair_units`
+- `blocked_next_stage_repair_units`
 - `data_review_queue_update`（仅 `action=review_data` 时必填）
 
 验收：
@@ -874,6 +881,8 @@ next_action 必须包含：
 - 当 `target_common_issue.commonality != shared` 时，算法修复 action 必须降级为诊断动作或在 `reason` 中明确写出不得进入 Step 4 算法补丁。
 - 当 `action=review_data` 时，必须写入或更新 `reports/agent_state/v36_data_review_queue.json`；否则不通过。
 - `suggested_validation_scope` 包含 `filter_cluster_id` 或 `filter_common_issue_key`。
+- 若同一 full/global 输入连续选择同一个已处理 repair unit，必须判定为选择器治理失败；本轮只能修 `choose-next-action` 状态读取或补诊断，不得进入算法补丁。
+- `skipped_repair_units` 必须写明 `issue_key`、`cluster_id`、`reason`、`source_manifest` 和 `next_stage`（如可判定）。
 - 时间上限 20 分钟。
 
 失败退出：
@@ -1083,6 +1092,8 @@ Step 4 新增 `partial_validation_status`，允许记录本轮推进到哪一层
 
 只有 `benchmark_pass` 才能直接登记为 `pending_full_validation`。`local_behavior_pass`、`candidate_lifecycle_pass`、`blocked_by_next_stage` 可以保留 patch，但必须登记在本轮报告和 `failed_slice_next_action` 中，不得冒充验收通过。
 
+`local_behavior_pass`、`candidate_lifecycle_pass`、`blocked_by_next_stage` 虽然不能进入 `pending_full_validation`，但必须作为选择器保留状态写入本轮 manifest。下一轮 Step 0-3 必须读取这些 manifest，并把原 repair unit 当作已处理或被下一阶段阻断；不得因为 full/global 输入尚未刷新就重复选择同一个 issue_key 做同阶段算法 patch。
+
 无论是否达到 `benchmark_pass`，只要本轮 patch 准备保留，`regression_golden_status` 必须为 `pass`；否则 `partial_validation_status` 固定为 `failed`，并进入回退或关闭流程。
 
 ### 4. 失败切片后的下一动作
@@ -1108,6 +1119,8 @@ Step 4 新增 `partial_validation_status`，允许记录本轮推进到哪一层
 - `convert_to_data_review`：暴露的是 expected、题库、主辅项或省份定额语义问题。
 - `need_more_diagnostics`：生命周期字段不足，先补 trace。
 - `start_step5_full_validation`：局部通过但全局风险较高，需要 full/global。
+
+当 `failed_slice_next_action.same_repair_unit=false` 时，下一轮不得沿用当前 Step 4 的 action 直接追加 patch；必须回到 Step 0-3，由 `choose-next-action` 根据 selector state 重新授权。若工具仍输出同一个已阻断 repair unit，本轮唯一合法动作是修选择器状态或补诊断。
 
 ### 5. expected 语义和主辅项
 
@@ -1292,6 +1305,9 @@ full/global 未通过时，不得把本批 `pending_full_validation` 直接标�
 - rollback_plan
 - release_gate_status
 - pending_full_validation_summary
+- selector_state_inputs（Step 3 必填）
+- skipped_repair_units（Step 3 必填；无则写空数组）
+- blocked_next_stage_repair_units（Step 3 必填；无则写空数组）
 - policy_check_status
 - regression_golden_status
 - data_review_queue_summary
