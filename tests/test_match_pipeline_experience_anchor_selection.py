@@ -224,6 +224,152 @@ def test_run_rank_pipeline_tracks_full_stage_ids_for_param_matched_branch(monkey
     assert explicit_override["advisory_applied"] is True
 
 
+def test_run_rank_pipeline_preserves_cgr_top1_after_advisory_arbiter(monkeypatch):
+    _patch_pipeline(monkeypatch)
+
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "rerank_candidates_with_ltr",
+        lambda item, candidates, ctx: (
+            [dict(candidates[1]), dict(candidates[2]), dict(candidates[0])],
+            {"post_ltr_top1_id": "Q-LTR", "post_cgr_top1_id": "Q-CGR"},
+        ),
+    )
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "arbitrate_candidates",
+        lambda item, candidates, route_profile=None: (
+            list(candidates),
+            {
+                "applied": False,
+                "advisory_applied": True,
+                "reason": "structured_candidate_swap_advisory",
+                "recommended_quota_id": "Q-LTR",
+            },
+        ),
+    )
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "_pick_category_safe_candidate",
+        lambda item, candidates: dict(candidates[0]),
+    )
+
+    ordered, ranking_meta, arbitration, _, best = match_pipeline._run_rank_pipeline(
+        {"name": "test item", "query_route": {"route": "installation_spec"}},
+        [
+            _candidate("Q-SEED", param_match=True, param_score=0.9),
+            _candidate("Q-LTR", param_match=True, param_score=0.8),
+            _candidate("Q-CGR", param_match=True, param_score=0.7),
+        ],
+        reservoir=[
+            _candidate("Q-SEED", param_match=True, param_score=0.9),
+            _candidate("Q-LTR", param_match=True, param_score=0.8),
+            _candidate("Q-CGR", param_match=True, param_score=0.7),
+        ],
+        allow_arbiter=True,
+        allow_explicit=False,
+    )
+
+    assert ordered[0]["quota_id"] == "Q-CGR"
+    assert best["quota_id"] == "Q-CGR"
+    assert ranking_meta["post_ltr_top1_id"] == "Q-LTR"
+    assert ranking_meta["post_cgr_top1_id"] == "Q-CGR"
+    assert ranking_meta["post_arbiter_top1_id"] == "Q-CGR"
+    assert ranking_meta["post_anchor_top1_id"] == "Q-CGR"
+    assert ranking_meta["selected_top1_id"] == "Q-CGR"
+    assert arbitration["cgr_top1_restored_after_advisory"] is True
+    assert arbitration["restored_cgr_top1_id"] == "Q-CGR"
+
+
+def test_run_rank_pipeline_records_rank_stage_trace_steps(monkeypatch):
+    _patch_pipeline(monkeypatch)
+
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "rerank_candidates_with_ltr",
+        lambda item, candidates, ctx: (
+            [dict(candidates[1]), dict(candidates[0]), *[dict(c) for c in candidates[2:]]],
+            {
+                "post_ltr_top1_id": "Q-LTR",
+                "post_cgr_top1_id": "Q-CGR",
+                "fallback_reason": "disabled",
+            },
+        ),
+    )
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "arbitrate_candidates",
+        lambda item, candidates, route_profile=None: (
+            list(candidates),
+            {
+                "applied": False,
+                "advisory_applied": False,
+                "reason": "route_not_ready",
+                "recommended_quota_id": "",
+            },
+        ),
+    )
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "_promote_explicit_distribution_box_candidate",
+        lambda item, candidates: (
+            list(candidates),
+            {
+                "applied": False,
+                "advisory_applied": True,
+                "reason": "explicit_advisory",
+                "recommended_quota_id": "Q-EXPLICIT",
+            },
+        ),
+    )
+    _patch_public_and_orchestrator(
+        monkeypatch,
+        "_pick_category_safe_candidate",
+        lambda item, candidates: dict(candidates[0]),
+    )
+
+    _, ranking_meta, _, _, _ = match_pipeline._run_rank_pipeline(
+        {"name": "测试项", "query_route": {"route": "installation_spec"}},
+        [
+            _candidate("Q-SEED", param_match=True, param_score=0.92, rerank_score=0.92),
+            _candidate("Q-LTR", param_match=True, param_score=0.91, rerank_score=0.91),
+            _candidate("Q-ALT", param_match=True, param_score=0.70, rerank_score=0.70),
+        ],
+        reservoir=[
+            _candidate("Q-SEED", param_match=True, param_score=0.92, rerank_score=0.92),
+            _candidate("Q-LTR", param_match=True, param_score=0.91, rerank_score=0.91),
+            _candidate("Q-ALT", param_match=True, param_score=0.70, rerank_score=0.70),
+        ],
+        allow_arbiter=True,
+        allow_explicit=True,
+    )
+
+    rank_steps = ranking_meta["rank_stage_trace_steps"]
+    assert [step["name"] for step in rank_steps] == [
+        "ltr",
+        "cgr_ranker",
+        "candidate_arbiter",
+        "explicit_picker",
+        "category_safe",
+    ]
+    assert rank_steps[0]["prev_top1_id"] == "Q-SEED"
+    assert rank_steps[0]["top1_id"] == "Q-LTR"
+    assert rank_steps[0]["overridden"] is True
+    assert "Q-SEED->Q-LTR" in rank_steps[0]["override_reason"]
+    assert rank_steps[1]["prev_top1_id"] == "Q-LTR"
+    assert rank_steps[1]["top1_id"] == "Q-CGR"
+    assert rank_steps[1]["overridden"] is True
+    assert rank_steps[2]["prev_top1_id"] == "Q-CGR"
+    assert rank_steps[2]["top1_id"] == "Q-LTR"
+    assert rank_steps[2]["overridden"] is True
+    assert rank_steps[3]["prev_top1_id"] == "Q-LTR"
+    assert rank_steps[3]["top1_id"] == "Q-LTR"
+    assert rank_steps[3]["overridden"] is False
+    assert rank_steps[4]["prev_top1_id"] == "Q-LTR"
+    assert rank_steps[4]["top1_id"] == "Q-LTR"
+    assert rank_steps[4]["overridden"] is False
+
+
 def test_run_rank_pipeline_uses_default_no_param_arbitration(monkeypatch):
     _patch_pipeline(monkeypatch)
 

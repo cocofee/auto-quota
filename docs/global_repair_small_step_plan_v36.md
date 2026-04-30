@@ -843,6 +843,39 @@ reports/attribution/v36_round_manifest_<topic>.json
 
 超过预算时，停止并汇报 `need_more_diagnostics` 或给出 Step 5 独立运行命令，不在当前回合继续消耗。
 
+## V36.2 补充协议：full/global 结果冻结和失败续航
+
+本节来自 2026-04-30 full/global benchmark 结果。full/global 可以刷新下一轮诊断输入，但只有在产物完整、可追溯且 release gate 可判断时才允许作为 Step 0 冻结输入。
+
+### 1. full/global 产物最小可接受集
+
+一次 full/global 运行若要作为下一轮 Step 0 输入，至少需要：
+- `reports/attribution/*full*_attribution.json`：必须包含 total、correct、wrong、overall_hit_rate、recall_hit_rate 和 R1-R6 counts。
+- `output/benchmark_assets/<full_run>/manifest.json`：必须记录 `all_errors.jsonl`、`rerank_pairs.jsonl`、`synonym_gaps.jsonl`、`route_errors.jsonl`、`tier_errors.jsonl` 的路径和计数。
+- `output/benchmark_assets/<full_run>/all_errors.jsonl`：必须存在，且错误总数与 attribution 的 `wrong_total` 一致。
+
+如果 `global_repair_v36_full_latest.json` 缺失，但上述三项存在且一致，可以把 `output/benchmark_assets/<full_run>/all_errors.jsonl` 作为 full/global error input；Step 0 必须在 `selected_input.reason` 中写明 `latest_missing_using_asset_all_errors`，不得静默回退到更旧输入。
+
+如果 attribution、manifest、all_errors 三者不一致，或任一缺失，则该 full/global 运行只能作为人工参考，不能刷新 Step 0 输入。
+
+### 2. full/global 失败时的处理
+
+full/global 未通过时，不得把本批 `pending_full_validation` 直接标记为通过，也不得发布或刷新正式知识库。合法动作只有：
+- 回到 Step 1/Step 2，用本次 full/global error input 重新生成全局决策表和共性簇。
+- 若结果显示明显回归，先定位是否由最近 pending patch 引入；无法归因时，暂停继续叠加修复。
+- 若结果主要暴露新的最大桶，例如 R2/LTR 或 R1/召回，则下一轮必须从新的 `common_issue_clusters` 选择唯一动作。
+
+### 3. 2026-04-30 full/global 基线记录
+
+- 输出：`reports/attribution/global_repair_v36_full_attribution.json`、`reports/attribution/global_repair_v36_full_summary.json`、`output/benchmark_assets/global_repair_v36_full/`。
+- 规模：4577 题，命中 1737，错误 2840，整体命中率 38.0%。
+- 召回：recall_hit_rate 77.7%，R1_召回未命中 1022，占错误 36.0%。
+- 排序：R2_LTR选错 1425，占错误 50.2%，为当前最大桶。
+- 后处理：R4_Picker推翻正确 262，R3_CGR推翻正确 93，R6_其它 38，R5_经验库直通错 0。
+- benchmark assets：`output/benchmark_assets/global_repair_v36_full/manifest.json` 记录 all_errors=2840、rerank_pairs=1134、synonym_gaps=1437、route_errors=356、tier_errors=814。
+- 验收结论：full/global 未通过；release gate 继续 blocked；下一轮应优先基于本次 full/global error input 重新生成 Step 1/Step 2，而不是继续沿用 `ltr_v2_full_20260422`。
+- 产物状态：已确认 `reports/attribution/global_repair_v36_full_latest.json` 存在；若后续某次 full/global 缺失 latest，Step 0 工具应按 V36.2 规则接受 asset all_errors 作为冻结输入。
+
 ## 当前执行记录
 
 ### 2026-04-29 弱电箱 Step 4 局部修复

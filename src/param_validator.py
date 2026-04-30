@@ -76,6 +76,7 @@ class ParamValidator:
     """候选定额的参数验证器"""
     _RECTIFY_REORDER_ENABLED = False
     _HARD_PENALTY_THRESHOLD = 0.3
+    _SLEEVE_SUBTYPE_MATERIAL_TOKENS = ("防水套管", "密闭套管", "穿墙套管", "填料套管")
     _TIER_UP_HARD_FAIL_RATIO = {
         "dn": 4.0,
         "conduit_dn": 4.0,
@@ -212,47 +213,6 @@ class ParamValidator:
         "prior_family": 0.12,
         "context_hints": 0.08,
     }
-    """
-    _SPECIALTY_SYSTEM_MAP = {
-        "C4": "鐢垫皵",
-        "C5": "鐢垫皵",
-        "C7": "閫氶绌鸿皟",
-        "C9": "娑堥槻",
-        "C10": "缁欐帓姘?,
-        "C11": "鐢垫皵",
-    }
-    _CONTEXT_SYSTEM_HARD_CONFLICTS = {
-        frozenset(("鐢垫皵", "缁欐帓姘?)),
-        frozenset(("鐢垫皵", "閫氶绌鸿皟")),
-        frozenset(("缁欐帓姘?, "閫氶绌鸿皟")),
-    }
-    _FEATURE_FAMILY_HARD_CONFLICTS = {
-        frozenset(("bridge_support", "bridge_raceway")),
-        frozenset(("bridge_support", "pipe_support")),
-        frozenset(("pipe_support", "bridge_raceway")),
-        frozenset(("valve_body", "valve_accessory")),
-        frozenset(("air_terminal", "air_valve")),
-        frozenset(("air_terminal", "air_device")),
-        frozenset(("air_valve", "air_device")),
-        frozenset(("electrical_box", "conduit_raceway")),
-        frozenset(("electrical_box", "cable_family")),
-        frozenset(("cable_head_accessory", "cable_family")),
-        frozenset(("pipe_run", "pipe_sleeve")),
-        frozenset(("pipe_run", "valve_body")),
-        frozenset(("pipe_run", "valve_accessory")),
-    }
-    _FEATURE_STRICT_FAMILY_ENTITY_MATCH = {
-        "bridge_raceway",
-        "bridge_support",
-        "pipe_support",
-        "valve_accessory",
-        "air_device",
-        "sanitary_fixture",
-        "electrical_box",
-        "conduit_raceway",
-    }
-    _CONTEXT_CABLE_TYPES = ("鐢电嚎", "鐢电紗", "鍏夌紗", "鍙岀粸绾?, "杞绾?)
-    """
     _SPECIALTY_SYSTEM_MAP = {
         "C4": "电气",
         "C5": "电气",
@@ -994,7 +954,7 @@ class ParamValidator:
         }
 
     def _context_rectify(self, candidates: list[dict]):
-        """瀵逛笂涓嬫枃鍛戒腑鏄庢樉鏇村ソ鐨勫€欓€夊仛淇濆畧绾犲亸銆?"""
+        """Prefer a clearly better context-aligned candidate."""
         if not candidates or len(candidates) < 2:
             return
 
@@ -1931,6 +1891,8 @@ class ParamValidator:
 
         bill_material = str(bill_canonical_features.get("material") or "")
         candidate_material = str(candidate_features.get("material") or "")
+        bill_material = self._material_for_hard_param_check(bill_material, bill_canonical_features)
+        candidate_material = self._material_for_hard_param_check(candidate_material, candidate_features)
         if bill_material and candidate_material:
             if bill_material == candidate_material:
                 material_score = 1.0
@@ -2730,6 +2692,31 @@ class ParamValidator:
         """判断两种材质是否兼容（委托给 compat_primitives 统一实现）"""
         return _compat_materials_compatible(mat1, mat2)
 
+    @classmethod
+    def _is_sleeve_subtype_pseudo_material(
+        cls,
+        material: str,
+        features: dict | None = None,
+    ) -> bool:
+        """Return True when a sleeve subtype leaked into the material field."""
+        material = str(material or "").strip()
+        if not material or not any(token in material for token in cls._SLEEVE_SUBTYPE_MATERIAL_TOKENS):
+            return False
+        features = dict(features or {})
+        entity = str(features.get("entity") or "")
+        family = str(features.get("family") or "")
+        return not entity or entity == "套管" or family == "pipe_sleeve"
+
+    @classmethod
+    def _material_for_hard_param_check(
+        cls,
+        material: str,
+        features: dict | None = None,
+    ) -> str:
+        if cls._is_sleeve_subtype_pseudo_material(material, features):
+            return ""
+        return str(material or "").strip()
+
     def _is_strict_cable_material_conflict(
         self,
         bill_material: str,
@@ -3476,10 +3463,21 @@ class ParamValidator:
 
         # === 7. 材质（硬性参数：钢塑≠铝塑，材质错了直接降权） ===
         if "material" in bill_params:
-            if "material" in quota_params:
+            bill_mat = self._material_for_hard_param_check(
+                bill_params.get("material", ""),
+                bill_canonical_features,
+            )
+            quota_mat = self._material_for_hard_param_check(
+                quota_params.get("material", ""),
+                quota_canonical_features,
+            )
+            if self._is_sleeve_subtype_pseudo_material(
+                str(quota_params.get("material", "") or ""),
+                quota_canonical_features,
+            ):
+                details.append("定额套管子类型不作为材质硬校验")
+            if bill_mat and quota_mat:
                 check_count += 1
-                bill_mat = bill_params["material"]
-                quota_mat = quota_params["material"]
                 if bill_mat == quota_mat:
                     score_sum += 1.0
                     details.append(f"材质'{bill_mat}'匹配")
@@ -3492,12 +3490,12 @@ class ParamValidator:
                     has_hard_fail = True
                     score_sum += 0.0
                     details.append(f"材质'{bill_mat}'≠'{quota_mat}' 不匹配")
-            else:
+            elif bill_mat:
                 # 清单有材质但定额无材质信息 → 信息缺失微惩罚
                 # 通用定额不分材质是正常的，不算hard_fail，但排序应低于精确匹配
                 check_count += 1
                 score_sum += 0.7
-                details.append(f"清单有材质'{bill_params['material']}'但定额无材质信息")
+                details.append(f"清单有材质'{bill_mat}'但定额无材质信息")
 
         # === 8. 连接方式（硬性参数：螺纹≠沟槽、热熔≠粘接 必须匹配） ===
         if "connection" in bill_params:

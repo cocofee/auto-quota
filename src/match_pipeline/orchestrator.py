@@ -158,6 +158,23 @@ def _merge_explicit_annotations(base_candidates: list[dict], explicit_candidates
     return ordered
 
 
+def _promote_candidate_by_quota_id(candidates: list[dict], quota_id: str) -> tuple[list[dict], bool]:
+    quota_id = str(quota_id or "").strip()
+    ordered = [dict(candidate) for candidate in (candidates or [])]
+    if not ordered or not quota_id:
+        return ordered, False
+
+    if str(ordered[0].get("quota_id", "") or "").strip() == quota_id:
+        return ordered, False
+
+    for index, candidate in enumerate(ordered[1:], start=1):
+        if str(candidate.get("quota_id", "") or "").strip() != quota_id:
+            continue
+        promoted = ordered.pop(index)
+        return [promoted] + ordered, True
+    return ordered, False
+
+
 def _init_ranking_meta() -> dict:
     return {
         "pre_ltr_top1_id": "",
@@ -173,6 +190,7 @@ def _init_ranking_meta() -> dict:
         "rank_stage_trace_steps": [],
         "candidate_count": 0,
         "hard_param_fail_rejected_count": 0,
+        "hard_param_fail_rejected_candidates": [],
         "ltr": {},
         "explicit_override": {},
         "unified_ranking_enabled": False,
@@ -191,6 +209,48 @@ def _init_ranking_meta() -> dict:
         "unified_ranking_diagnostics": {},
         "unified_ranking_error": "",
     }
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _hard_param_fail_reason_codes(candidate: dict) -> list[str]:
+    reason_codes = []
+    if bool(candidate.get("param_hard_fail")):
+        reason_codes.append("param_hard_fail")
+    if str(candidate.get("param_validation_tier", "") or "").strip() == "hard_fail":
+        reason_codes.append("param_validation_tier_hard_fail")
+    if _safe_int(candidate.get("param_tier", 1), default=1) == 0:
+        reason_codes.append("param_tier_zero")
+    return reason_codes or ["param_hard_fail"]
+
+
+def _build_hard_param_fail_snapshots(candidates: list[dict], *, top_n: int = 20) -> list[dict]:
+    snapshots = []
+    for candidate in list(candidates or [])[:top_n]:
+        snapshots.append({
+            "quota_id": str(candidate.get("quota_id", "") or ""),
+            "name": str(candidate.get("name", "") or ""),
+            "unit": str(candidate.get("unit", "") or ""),
+            "reason_codes": _hard_param_fail_reason_codes(candidate),
+            "param_match": bool(candidate.get("param_match", True)),
+            "param_hard_fail": bool(candidate.get("param_hard_fail")),
+            "param_tier": _safe_int(candidate.get("param_tier", 1), default=1),
+            "param_validation_tier": str(candidate.get("param_validation_tier", "") or ""),
+            "param_detail": str(candidate.get("param_detail", "") or ""),
+            "param_score": candidate.get("param_score"),
+            "hybrid_score": candidate.get("hybrid_score"),
+            "rerank_score": candidate.get("rerank_score"),
+            "candidate_major_prefix": str(candidate.get("candidate_major_prefix", "") or ""),
+            "target_db_type": str(candidate.get("target_db_type", "") or ""),
+            "candidate_scope_match": candidate.get("candidate_scope_match"),
+            "candidate_scope_conflict": candidate.get("candidate_scope_conflict"),
+        })
+    return snapshots
 
 
 def _build_rank_stage_reason(name: str,
@@ -952,6 +1012,16 @@ def _run_rank_pipeline(item: dict,
                 "reason": str(arbitration.get("reason") or "structured_candidate_swap_advisory"),
                 "reorder_ignored_by_pipeline": True,
             }
+        ordered, restored_cgr_top1 = _promote_candidate_by_quota_id(
+            ordered,
+            ranking_meta["post_cgr_top1_id"],
+        )
+        if restored_cgr_top1:
+            arbitration = {
+                **dict(arbitration or {}),
+                "cgr_top1_restored_after_advisory": True,
+                "restored_cgr_top1_id": ranking_meta["post_cgr_top1_id"],
+            }
         ranking_meta["post_arbiter_top1_id"] = _top_candidate_id(ordered)
     else:
         arbitration = {
@@ -1081,6 +1151,7 @@ def _assemble_search_result_payload(item: dict,
         "candidates_count": len(valid_candidates),
         "candidate_count": len(valid_candidates),
         "hard_param_fail_rejected_count": ranking_meta["hard_param_fail_rejected_count"],
+        "hard_param_fail_rejected_candidates": list(ranking_meta.get("hard_param_fail_rejected_candidates") or []),
         "all_candidate_ids": all_candidate_ids,
         "recall_topk_ids": list(recall_topk_ids or []),
         "candidate_snapshots": _build_ranked_candidate_snapshots(valid_candidates, top_n=20),
@@ -1155,6 +1226,8 @@ def _assemble_search_result_payload(item: dict,
         ltr_rerank=result.get("ltr_rerank", {}),
         candidates_count=len(valid_candidates),
         candidates=_summarize_candidates_for_trace(candidates),
+        hard_param_fail_rejected_count=result.get("hard_param_fail_rejected_count", 0),
+        hard_param_fail_rejected_candidates=result.get("hard_param_fail_rejected_candidates", []),
     )
     result["_pending_rank_stage_trace_steps"] = list(ranking_meta.get("rank_stage_trace_steps") or [])
     return result
@@ -1294,6 +1367,7 @@ def _build_search_result_from_candidates(item: dict,
         valid_candidates = _annotate_candidate_scope_signals(item, valid_candidates)
     valid_candidates, hard_param_fail_candidates = filter_param_hard_fail_candidates(valid_candidates)
     ranking_meta["hard_param_fail_rejected_count"] = len(hard_param_fail_candidates)
+    ranking_meta["hard_param_fail_rejected_candidates"] = _build_hard_param_fail_snapshots(hard_param_fail_candidates)
     ranking_meta["candidate_count"] = len(valid_candidates)
     if candidates and not valid_candidates:
         if hard_param_fail_candidates:

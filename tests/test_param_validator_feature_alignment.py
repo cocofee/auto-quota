@@ -1,6 +1,30 @@
 # -*- coding: utf-8 -*-
 
 from src.param_validator import ParamValidator
+from src.text_parser import parser
+
+
+def test_beijing_weak_current_box_dark_bill_keeps_wall_mount_quota_match():
+    validator = ParamValidator()
+    results = validator.validate_candidates(
+        query_text="弱电箱 名称:弱电箱 安装形式:暗装 未尽事项详见施工图纸及相关技术规范标准综合报价",
+        candidates=[
+            {
+                "quota_id": "C5-2-10",
+                "name": "弱电箱体挂墙安装 半周长1m以内",
+                "rerank_score": 0.10,
+                "hybrid_score": 0.10,
+            },
+        ],
+        bill_params={"install_method": "暗装", "half_perimeter": 1000},
+        context_prior={"specialty": "C5"},
+        reorder_candidates=False,
+    )
+
+    weak_box = results[0]
+    assert weak_box["param_match"] is True
+    assert "安装方式弱电箱兼容" in weak_box["param_detail"]
+    assert weak_box["feature_alignment_hard_conflict"] is False
 
 
 def test_feature_alignment_rejects_bridge_for_conduit_query():
@@ -421,6 +445,40 @@ def test_feature_alignment_prefers_sleeve_over_generic_pipe():
     assert results[0]["quota_id"] == "B"
     wrong = next(item for item in results if item["quota_id"] == "A")
     assert wrong["feature_alignment_hard_conflict"] is True
+
+
+def test_sleeve_subtype_material_does_not_hard_fail_against_steel_plate_bill():
+    validator = ParamValidator()
+    query_text = (
+        "人防密闭穿墙套管DN150 材质:钢管/钢板 "
+        "工作内容:套管制作、安装、套管内封堵、止水钢板、止水翼环"
+    )
+    canonical_features = parser.parse_canonical(
+        query_text,
+        specialty="C10",
+        params={"dn": 150, "material": "钢板"},
+    )
+
+    results = validator.validate_candidates(
+        query_text=query_text,
+        candidates=[
+            {
+                "quota_id": "10-11-85",
+                "name": "刚性防水套管安装 介质管道公称直径(mm以内) 150",
+                "rerank_score": 0.99,
+                "hybrid_score": 0.99,
+            },
+        ],
+        bill_params={"dn": 150, "material": "钢板"},
+        canonical_features=canonical_features,
+        context_prior={"specialty": "C10"},
+    )
+
+    sleeve = results[0]
+    assert sleeve["param_match"] is True
+    assert sleeve["param_tier"] != 0
+    assert sleeve["param_hard_fail"] is False
+    assert "定额套管子类型不作为材质硬校验" in sleeve["param_detail"]
 
 
 def test_feature_alignment_prefers_gate_valve_over_check_valve():

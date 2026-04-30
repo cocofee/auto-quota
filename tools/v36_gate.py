@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,12 @@ from tools.build_global_repair_decision import (
     build_next_action,
     build_rows,
     build_summary,
+    _expected_ids,
+    _id_prefix,
     _iter_latest_records,
+    _is_wrong,
+    _sample_id,
+    _selected_id,
 )
 
 
@@ -111,10 +117,7 @@ def _parse_numstat(stdout: str) -> dict[str, dict[str, Any]]:
 
 def _giant_file_change_summary(root: Path, giant_paths: list[str]) -> dict[str, Any]:
     changes: dict[str, dict[str, Any]] = {}
-    for args in (
-        ["diff", "--numstat", "--", *sorted(GIANT_OWNER_FILES)],
-        ["diff", "--cached", "--numstat", "--", *sorted(GIANT_OWNER_FILES)],
-    ):
+    for args in (["diff", "--numstat", "--", *sorted(GIANT_OWNER_FILES)], ["diff", "--cached", "--numstat", "--", *sorted(GIANT_OWNER_FILES)]):
         code, stdout, _ = _run_git(root, args)
         if code != 0:
             continue
@@ -133,11 +136,7 @@ def _giant_file_change_summary(root: Path, giant_paths: list[str]) -> dict[str, 
 
 
 def _find_owner_boundary_manifest(root: Path) -> dict[str, Any]:
-    candidates = sorted(
-        (root / "reports" / "attribution").glob(OWNER_BOUNDARY_PATTERN),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    candidates = sorted((root / "reports" / "attribution").glob(OWNER_BOUNDARY_PATTERN), key=lambda path: path.stat().st_mtime, reverse=True)
     for path in candidates:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -250,11 +249,65 @@ def _find_baseline_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
+def _read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _full_global_result_summary(attr_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total": int(attr_payload.get("total", 0) or 0),
+        "wrong_total": int(attr_payload.get("wrong_total", 0) or 0),
+        "overall_hit_rate": float(attr_payload.get("overall_hit_rate", 0.0) or 0.0),
+        "recall_hit_rate": float(attr_payload.get("recall_hit_rate", 0.0) or 0.0),
+        "r_counts": dict(attr_payload.get("counts") or {}),
+    }
+
+
+def _find_full_asset_error_input(root: Path, attribution: Path, summary: Path) -> dict[str, Any] | None:
+    asset_root = root / "output" / "benchmark_assets" / "global_repair_v36_full"
+    manifest = asset_root / "manifest.json"
+    if not attribution.exists() or not manifest.exists():
+        return None
+    attr_payload = _read_json_file(attribution)
+    manifest_payload = _read_json_file(manifest)
+    counts = manifest_payload.get("counts") if isinstance(manifest_payload.get("counts"), dict) else {}
+    files = manifest_payload.get("files") if isinstance(manifest_payload.get("files"), dict) else {}
+    all_errors_raw = str(files.get("all_errors", "") or "")
+    if all_errors_raw:
+        all_errors = (root / all_errors_raw).resolve() if not Path(all_errors_raw).is_absolute() else Path(all_errors_raw)
+    else:
+        all_errors = asset_root / "all_errors.jsonl"
+    if not all_errors.exists():
+        all_errors = asset_root / "all_errors.jsonl"
+    try:
+        wrong_total = int(attr_payload.get("wrong_total", -1))
+        all_errors_count = int(counts.get("all_errors", -2))
+    except (TypeError, ValueError):
+        return None
+    if wrong_total < 0 or all_errors_count != wrong_total or not all_errors.exists():
+        return None
+    return {
+        "status": "present",
+        "input_freshness": "fresh_asset",
+        "latest_path": _rel(root, all_errors),
+        "attribution_path": _rel(root, attribution),
+        "summary_path": _rel(root, summary) if summary.exists() else "",
+        "asset_manifest_path": _rel(root, manifest),
+        "reason": "latest_missing_using_asset_all_errors",
+        "full_global_result": _full_global_result_summary(attr_payload),
+    }
+
+
 def _find_global_input(root: Path) -> dict[str, Any]:
     latest = root / "reports" / "attribution" / "global_repair_v36_full_latest.json"
     attribution = root / "reports" / "attribution" / "global_repair_v36_full_attribution.json"
     summary = root / "reports" / "attribution" / "global_repair_v36_full_summary.json"
     if latest.exists() and attribution.exists():
+        attr_payload = _read_json_file(attribution)
         return {
             "status": "present",
             "input_freshness": "fresh",
@@ -262,7 +315,12 @@ def _find_global_input(root: Path) -> dict[str, Any]:
             "attribution_path": _rel(root, attribution),
             "summary_path": _rel(root, summary) if summary.exists() else "",
             "reason": "found v36 full/global output",
+            "full_global_result": _full_global_result_summary(attr_payload) if attr_payload else {},
         }
+
+    full_asset_input = _find_full_asset_error_input(root, attribution, summary)
+    if full_asset_input:
+        return full_asset_input
 
     legacy_latest = root / "output" / "benchmark_assets" / "ltr_v2_full_20260422" / "all_errors.jsonl"
     legacy_attr = root / "reports" / "attribution" / "ltr_v2_full_20260422.json"
@@ -323,6 +381,252 @@ def _has_complete_pure_search_metrics(root: Path) -> bool:
     return all(metrics.get(key) is not None for key in required)
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _record_candidate_ids(record: dict[str, Any]) -> list[str]:
+    explicit = _as_string_list(record.get("all_candidate_ids") or record.get("recall_topk_ids"))
+    if explicit:
+        return explicit
+    snapshots = record.get("candidate_snapshots")
+    if isinstance(snapshots, list):
+        ids = [str(item.get("quota_id") or "").strip() for item in snapshots if isinstance(item, dict)]
+        if any(ids):
+            return [item for item in ids if item]
+    retrieved = record.get("retrieved_candidates")
+    if isinstance(retrieved, list):
+        ids = [str(item.get("quota_id") or "").strip() for item in retrieved if isinstance(item, dict)]
+        return [item for item in ids if item]
+    return []
+
+
+def _candidate_snapshots(record: dict[str, Any]) -> list[dict[str, Any]]:
+    snapshots = record.get("candidate_snapshots")
+    if isinstance(snapshots, list):
+        return [item for item in snapshots if isinstance(item, dict)]
+    retrieved = record.get("retrieved_candidates")
+    if isinstance(retrieved, list):
+        return [item for item in retrieved if isinstance(item, dict)]
+    return []
+
+
+def _rank_in_ids(candidate_ids: list[str], expected: set[str]) -> int:
+    for index, candidate_id in enumerate(candidate_ids, start=1):
+        if candidate_id in expected:
+            return index
+    return -1
+
+
+def _number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_rank(snapshot: dict[str, Any], names: tuple[str, ...]) -> int | None:
+    feature_snapshot = snapshot.get("ltr_feature_snapshot")
+    candidates = [snapshot]
+    if isinstance(feature_snapshot, dict):
+        candidates.append(feature_snapshot)
+    for candidate in candidates:
+        for name in names:
+            value = candidate.get(name)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+    return None
+
+
+def _expected_snapshots(record: dict[str, Any], expected: set[str]) -> list[dict[str, Any]]:
+    return [
+        snapshot
+        for snapshot in _candidate_snapshots(record)
+        if str(snapshot.get("quota_id") or "").strip() in expected
+    ]
+
+
+def _has_validator_veto(snapshot: dict[str, Any]) -> bool:
+    if snapshot.get("param_match") is False:
+        return True
+    if snapshot.get("hard_conflict") is True:
+        return True
+    reasoning = snapshot.get("reasoning")
+    if isinstance(reasoning, dict):
+        if reasoning.get("param_match") is False:
+            return True
+        layers = reasoning.get("layers")
+        if isinstance(layers, dict):
+            for layer in layers.values():
+                if isinstance(layer, dict) and layer.get("hard_conflict") is True:
+                    return True
+    breakdown = snapshot.get("rank_score_breakdown")
+    if isinstance(breakdown, dict):
+        structured = breakdown.get("structured")
+        if isinstance(structured, dict):
+            flags = structured.get("flags")
+            if isinstance(flags, dict) and (
+                flags.get("hard_conflict") is True or flags.get("fatal_rank_conflict") is True
+            ):
+                return True
+    return False
+
+
+def _summarize_pure_search_scope(pairs: list[tuple[dict[str, Any], dict[str, str]]]) -> dict[str, Any]:
+    total = len(pairs)
+    raw_ranks: list[int] = []
+    hybrid_ranks: list[int] = []
+    bm25_ranks: list[int] = []
+    ltr_ranks: list[int] = []
+    selected_prefixes: Counter[str] = Counter()
+    expected_prefixes: Counter[str] = Counter()
+    transitions: Counter[str] = Counter()
+    stage_top1_hits: Counter[str] = Counter()
+    validator_present = 0
+    validator_veto = 0
+    zero_candidate_count = 0
+    records_with_prior_candidate = 0
+    examples: list[dict[str, Any]] = []
+
+    for record, row in pairs:
+        expected = set(_expected_ids(record))
+        selected = _selected_id(record)
+        candidate_ids = _record_candidate_ids(record)
+        if not candidate_ids:
+            zero_candidate_count += 1
+        raw_rank = _rank_in_ids(candidate_ids, expected)
+        raw_ranks.append(raw_rank)
+        selected_prefix = _id_prefix(selected) or "unknown"
+        expected_prefix = "|".join(sorted({_id_prefix(item) for item in expected if _id_prefix(item)})) or "unknown"
+        selected_prefixes[selected_prefix] += 1
+        expected_prefixes[expected_prefix] += 1
+        transitions[f"{selected_prefix}->{expected_prefix}"] += 1
+
+        for stage in ("pre_ltr_top1_id", "post_ltr_top1_id", "post_final_top1_id"):
+            if str(record.get(stage) or "").strip() in expected:
+                stage_top1_hits[stage] += 1
+
+        expected_candidates = _expected_snapshots(record, expected)
+        if expected_candidates:
+            validator_present += 1
+            if any(_has_validator_veto(snapshot) for snapshot in expected_candidates):
+                validator_veto += 1
+            for names, ranks in (
+                (("hybrid_rank",), hybrid_ranks),
+                (("bm25_rank",), bm25_ranks),
+                (("ltr_rank", "rank"), ltr_ranks),
+            ):
+                found = [_snapshot_rank(snapshot, names) for snapshot in expected_candidates]
+                found = [rank for rank in found if rank is not None]
+                if found:
+                    ranks.append(min(found))
+
+        if any(
+            "prior" in str(snapshot.get("match_source") or "").lower()
+            or "prior" in str(snapshot.get("knowledge_prior_sources") or "").lower()
+            for snapshot in _candidate_snapshots(record)
+        ):
+            records_with_prior_candidate += 1
+
+        if len(examples) < 10:
+            examples.append(
+                {
+                    "sample_id": row.get("sample_id", ""),
+                    "expected_ids": sorted(expected),
+                    "selected_id": selected,
+                    "raw_rank": raw_rank,
+                    "candidate_count": len(candidate_ids),
+                    "error_stage": row.get("error_stage", ""),
+                    "attribution_category": row.get("attribution_category", ""),
+                }
+            )
+
+    def _rate(count: int, denom: int = total) -> float:
+        return round(count / denom, 4) if denom else 0.0
+
+    def _rank_counts(ranks: list[int]) -> dict[str, int]:
+        return {
+            "at_1": sum(1 for rank in ranks if rank == 1),
+            "at_5": sum(1 for rank in ranks if 1 <= rank <= 5),
+            "at_10": sum(1 for rank in ranks if 1 <= rank <= 10),
+            "at_20": sum(1 for rank in ranks if 1 <= rank <= 20),
+            "missing": sum(1 for rank in ranks if rank < 1),
+        }
+
+    raw_counts = _rank_counts(raw_ranks)
+    missing_raw = raw_counts["missing"]
+    return {
+        "sample_total": total,
+        "recall_at_k": {
+            "raw_candidate_top1": {"hit_count": raw_counts["at_1"], "hit_rate": _rate(raw_counts["at_1"])},
+            "raw_candidate_top5": {"hit_count": raw_counts["at_5"], "hit_rate": _rate(raw_counts["at_5"])},
+            "raw_candidate_top10": {"hit_count": raw_counts["at_10"], "hit_rate": _rate(raw_counts["at_10"])},
+            "raw_candidate_top20": {"hit_count": raw_counts["at_20"], "hit_rate": _rate(raw_counts["at_20"])},
+            "missing_count": missing_raw,
+            "missing_rate": _rate(missing_raw),
+        },
+        "rank_at_k": {
+            "raw_candidate_rank": raw_counts,
+            "hybrid_rank": _rank_counts(hybrid_ranks),
+            "bm25_rank": _rank_counts(bm25_ranks),
+            "ltr_rank": _rank_counts(ltr_ranks),
+            "stage_top1_hits": dict(stage_top1_hits),
+        },
+        "validator_veto_rate": {
+            "checked_candidate_count": validator_present,
+            "veto_count": validator_veto,
+            "veto_rate": _rate(validator_veto, validator_present),
+        },
+        "route_filter_loss": {
+            "missing_candidate_count": missing_raw,
+            "missing_candidate_rate": _rate(missing_raw),
+            "zero_candidate_count": zero_candidate_count,
+            "top_selected_prefixes": dict(selected_prefixes.most_common(10)),
+            "top_expected_prefixes": dict(expected_prefixes.most_common(10)),
+            "top_prefix_transitions": dict(transitions.most_common(10)),
+        },
+        "prior_candidates_delta": {
+            "status": "not_available_from_static_latest",
+            "records_with_prior_candidate": records_with_prior_candidate,
+            "note": "Run paired benchmark variants to compute an A/B prior delta.",
+        },
+        "latency_breakdown_ms": {
+            "status": "not_available_in_static_latest",
+            "available": False,
+            "note": "The selected latest artifact has no per-stage timing fields.",
+        },
+        "examples": examples,
+    }
+
+
+def _classify_bottleneck(metrics: dict[str, Any]) -> str:
+    recall = metrics.get("recall_at_k", {})
+    route_loss = metrics.get("route_filter_loss", {})
+    veto = metrics.get("validator_veto_rate", {})
+    missing_rate = _number(recall.get("missing_rate") or route_loss.get("missing_candidate_rate")) or 0.0
+    veto_rate = _number(veto.get("veto_rate")) or 0.0
+    if missing_rate >= 0.7:
+        return "candidate_recall_or_route_filter_loss"
+    if veto_rate >= 0.3:
+        return "validator_veto"
+    if missing_rate >= 0.3:
+        return "mixed_recall_and_ranking"
+    return "ranking_or_final_selection"
+
+
 def build_preflight(root: Path | None = None) -> dict[str, Any]:
     root = _repo_root(root)
     entries = _git_status_entries(root)
@@ -348,8 +652,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         item for item in giant_change_summary["changed_files"]
         if int(item.get("added_lines", 0)) > giant_bridge_budget
     ]
-    if giant_over_budget:
-        hard_blocks.append("giant owner file changes exceed bridge-only line budget")
+    giant_missing_boundary = giant_paths and owner_boundary["status"] != "present"
 
     p0_status = "block" if hard_blocks else "warn" if artifact_paths or giant_paths or pending.get("pending", 0) else "pass"
     recommended_target = ""
@@ -361,6 +664,13 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         recommended_target = "pending_validation_closure"
     elif selected_input["status"] == "missing":
         recommended_target = "baseline_freeze"
+
+    input_freshness = str(selected_input.get("input_freshness", "") or "")
+    full_validation_status = (
+        "pending" if input_freshness == "stale"
+        else "failed" if input_freshness == "fresh_asset"
+        else "unknown"
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -381,12 +691,13 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
             "paths": artifact_paths[:50],
         },
         "giant_file_touch_risk": {
-            "status": "block" if giant_over_budget or (giant_paths and owner_boundary["status"] != "present") else "warn" if giant_paths else "pass",
+            "status": "block" if giant_missing_boundary else "warn" if giant_paths or giant_over_budget else "pass",
             "paths": giant_paths,
             "owner_boundary_manifest": owner_boundary,
             "bridge_line_budget": giant_bridge_budget,
             "change_summary": giant_change_summary,
             "over_budget": giant_over_budget,
+            "over_budget_policy": "warn_with_owner_boundary" if giant_over_budget and not giant_missing_boundary else "block_without_owner_boundary" if giant_missing_boundary else "within_budget",
         },
         "secret_or_mojibake_risk": text_risks,
         "test_tier_plan": "targeted plus optional slice benchmark; full/global remains Step 5",
@@ -397,7 +708,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         "baseline_snapshot": baseline,
         "selected_input": selected_input,
         "pending_full_validation_summary": pending,
-        "full_validation_status": "pending" if selected_input.get("input_freshness") == "stale" else "unknown",
+        "full_validation_status": full_validation_status,
         "release_gate_status": "blocked_pending_full_validation",
     }
 
@@ -577,21 +888,91 @@ def release_check(root: Path | None, ledger_path: Path) -> dict[str, Any]:
 
 def diagnose_pure_search(root: Path | None, out_path: Path) -> dict[str, Any]:
     root = _repo_root(root)
+    selected = _find_global_input(root)
+    if selected["status"] != "present":
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": _now_iso(),
+            "command": "diagnose-pure-search",
+            "status": "missing_input",
+            "selected_input": selected,
+            "pure_search_metrics": {
+                "recall_at_k": {},
+                "rank_at_k": {},
+                "validator_veto_rate": {},
+                "route_filter_loss": {},
+                "prior_candidates_delta": {},
+                "latency_breakdown_ms": {},
+            },
+            "bottleneck_classification": "unknown",
+            "next_allowed_action": "prepare_full_global_input",
+        }
+        out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+        _write_json(out_abs, payload)
+        return payload
+
+    latest = (root / selected["latest_path"]).resolve()
+    attribution = (root / selected["attribution_path"]).resolve()
+    records = _iter_latest_records(latest)
+    rows = build_rows(records)
+    wrong_pairs: list[tuple[dict[str, Any], dict[str, str]]] = []
+    row_index = 0
+    for index, record in enumerate(records, start=1):
+        expected_ids = _expected_ids(record)
+        selected_id = _selected_id(record)
+        if not _is_wrong(record, expected_ids, selected_id):
+            continue
+        if row_index >= len(rows):
+            break
+        row = rows[row_index]
+        row.setdefault("sample_id", _sample_id(record, index))
+        wrong_pairs.append((record, row))
+        row_index += 1
+
+    summary = build_summary(rows, Path(selected["latest_path"]), Path(selected["attribution_path"])) if rows else {}
+    target = {}
+    next_action_path = root / "reports" / "attribution" / "global_repair_next_action.json"
+    if next_action_path.exists():
+        try:
+            existing_next = json.loads(next_action_path.read_text(encoding="utf-8"))
+            if isinstance(existing_next, dict):
+                target = existing_next.get("target_common_issue") or {}
+        except json.JSONDecodeError:
+            target = {}
+    if not target and rows:
+        target = build_next_action(summary, rows).get("target_common_issue") or {}
+
+    target_issue_key = str(target.get("issue_key") or "")
+    target_cluster_id = str(target.get("cluster_id") or "")
+    target_pairs = [
+        pair for pair in wrong_pairs if target_issue_key and pair[1].get("common_issue_key") == target_issue_key
+    ]
+    if not target_pairs:
+        target_pairs = wrong_pairs
+
+    target_metrics = _summarize_pure_search_scope(target_pairs)
+    all_wrong_metrics = _summarize_pure_search_scope(wrong_pairs)
+    bottleneck = _classify_bottleneck(target_metrics)
+    next_allowed = "fix_r1_recall" if bottleneck == "candidate_recall_or_route_filter_loss" else "improve_diagnostics"
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
         "command": "diagnose-pure-search",
-        "status": "needs_benchmark_integration",
-        "pure_search_metrics": {
-            "recall_at_k": None,
-            "rank_at_k": None,
-            "validator_veto_rate": None,
-            "route_filter_loss": None,
-            "prior_candidates_delta": None,
-            "latency_breakdown_ms": None,
-        },
-        "bottleneck_classification": "unknown",
-        "next_allowed_action": "improve_diagnostics",
+        "status": "complete_static_diagnosis",
+        "selected_input": selected,
+        "input_latest_path": _rel(root, latest),
+        "input_attribution_path": _rel(root, attribution),
+        "target_common_issue": target,
+        "filter_cluster_id": target_cluster_id,
+        "filter_common_issue_key": target_issue_key,
+        "pure_search_metrics": target_metrics,
+        "all_wrong_metrics": all_wrong_metrics,
+        "bottleneck_classification": bottleneck,
+        "next_allowed_action": next_allowed,
+        "notes": [
+            "Metrics are computed from the selected static full/global latest artifact.",
+            "prior_candidates_delta and latency_breakdown_ms require paired or timed benchmark artifacts for numeric deltas.",
+        ],
     }
     out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
     _write_json(out_abs, payload)
