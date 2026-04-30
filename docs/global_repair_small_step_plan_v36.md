@@ -348,7 +348,8 @@ python tools/v36_gate.py preflight
 python tools/v36_gate.py freeze-baseline
 python tools/v36_gate.py diagnose-pure-search
 python tools/v36_gate.py choose-next-action
-python tools/v36_gate.py register-validation
+python tools/v36_gate.py validate-step4-manifest --manifest reports/attribution/v36_round_manifest_xxx.json
+python tools/v36_gate.py register-validation --manifest reports/attribution/v36_round_manifest_xxx.json
 python tools/v36_gate.py release-check
 ```
 
@@ -357,7 +358,8 @@ python tools/v36_gate.py release-check
 - `freeze-baseline`：保存可比较基线和配置快照，不修改算法。
 - `diagnose-pure-search`：生成 `reports/attribution/pure_search_diagnosis.json`，只做诊断。
 - `choose-next-action`：根据 full/global 或纯搜索诊断选择唯一下一步。
-- `register-validation`：把局部通过的修复写入 `reports/agent_state/v36_pending_full_validation.json`，并同步维护 `eval/regression_golden/`。
+- `validate-step4-manifest`：读取 round manifest、before/after benchmark 产物、`policy_check_report` 和 `regression_golden_report`，程序复算 `partial_validation_status`、`accuracy_impact`、`speed_impact`、`threshold_check`、`rollback_integrity` 和 `agent_claim_mismatch`；若报告路径存在，以报告文件状态为准，不信任 manifest 手填状态；若声明或派生为 `benchmark_pass`，`rollback_plan` 缺失或不合法时不得登记 pending。
+- `register-validation`：只接受带 `--manifest` 的 `benchmark_pass` 修复，把它写入 `reports/agent_state/v36_pending_full_validation.json`，并同步维护 `eval/regression_golden/`；`local_behavior_pass`、`candidate_lifecycle_pass`、`blocked_by_next_stage` 不得登记为 pending。
 - `release-check`：检查 full/global、pending 台账、generated knowledge 来源和发布门禁。
 
 入口工具不得承载算法业务逻辑；它只调度检查、诊断、登记和门禁。
@@ -384,9 +386,13 @@ python tools/v36_gate.py release-check
     "input": {"summary_path": "", "data_review_queue_path": "reports/agent_state/v36_data_review_queue.json", "round_manifest_glob": "reports/attribution/v36_round_manifest_*.json", "pending_path": "reports/agent_state/v36_pending_full_validation.json"},
     "output": {"action": "", "target_common_issue": {}, "reason": "", "full_validation_status": "", "selector_state_inputs": {}, "skipped_repair_units": [], "blocked_next_stage_repair_units": []}
   },
+  "validate-step4-manifest": {
+    "input": {"manifest_path": "", "before_artifact": "", "after_artifact": "", "policy_check_report": "", "regression_golden_report": "", "candidate_lifecycle_trace": {}},
+    "output": {"partial_validation_status": "", "derived_partial_validation_status": "", "agent_claim_mismatch": false, "accuracy_impact": "", "speed_impact": "", "complexity_impact": "", "threshold_check": {}, "rollback_integrity": {}, "register_validation_allowed": false}
+  },
   "register-validation": {
-    "input": {"repair_report_path": "", "golden_case": {}, "rollback_plan": {}},
-    "output": {"pending_full_validation_entry": {}, "regression_golden_status": "pass|fail", "version_tuple": {}}
+    "input": {"manifest_path": "", "required_manifest_fields": {"partial_validation_status": "benchmark_pass", "policy_check_status": "pass", "regression_golden_status": "pass"}, "golden_case": {}, "rollback_plan": {}},
+    "output": {"pending_full_validation_entry": {}, "source_manifest": "", "regression_golden_status": "pass|fail", "version_tuple": {}}
   },
   "release-check": {
     "input": {"full_latest_path": "", "pending_path": "reports/agent_state/v36_pending_full_validation.json", "data_review_queue_path": "reports/agent_state/v36_data_review_queue.json"},
@@ -407,6 +413,7 @@ python tools/v36_gate.py release-check
 - 是否修改 `data/province_plugins/generated/**` 或 `knowledge_digest.md`。
 - 是否新增 secret/token/API key 模式。
 - 是否在生产路径关闭 SSL 校验。
+- 使用 `--next-action reports/attribution/global_repair_next_action.json` 时，是否修改了 `suggested_validation_scope.owner_module` 之外的 `src/` 或 `web/` 生产代码；越界即 `owner_scope_violation`。
 - 复杂度增量：生产 LOC delta、新增 `if/elif/match/case`、新增公开符号、新增规则表项。
 
 `policy_check` 不通过时，当前 patch 直接拒绝，不进入 golden set、targeted benchmark 或 pending 登记。
@@ -477,6 +484,8 @@ V36 必须有一层介于单轮切片 benchmark 和 Step 5 full/global 之间的
 - `affected_files`：本修复影响文件清单。
 - `rollback_command_or_change`：关闭配置、移除调用点或 `git revert <commit>`。
 - `post_rollback_validation`：回滚后必须跑的 targeted/golden 验证命令。
+
+`validate-step4-manifest` 必须校验 `rollback_plan`。当本轮声明或由程序派生为 `benchmark_pass` 时，缺少 `rollback_plan`、`rollback_type` 非法、`affected_files` 为空、`rollback_target` 为空、`rollback_command_or_change` 为空或 `post_rollback_validation` 为空，均使 `rollback_integrity.status=fail`，不得进入 `register-validation`。
 
 不合格回滚固定判失败：
 - 需要再写一段“反向修复逻辑”才能撤销。
@@ -574,6 +583,7 @@ P0 治理回合固定只选一个治理目标：
 
 - `artifact_hygiene`：清点、归类、隔离本地产物，避免 reports/output/models/训练 CSV/log/pid/diff_code 误提交。
 - `owner_boundary`：为巨型文件建立 owner 边界和迁移入口，避免继续向 `query_builder.py`、`param_validator.py`、`match_engine.py`、`ltr_ranker.py` 等文件塞新业务分支。
+- `code_health_triage`：清点大文件、逻辑风险文件和冗余文件，输出 `large_file_decomposition`、`logic_error_triage`、`redundant_file_hygiene` 子目标；只做识别、归属和处理计划，不在同一回合顺手重构或删除。
 - `pending_validation_closure`：处理 `pending_full_validation` 台账，决定启动 Step 5、标记 rejected/rollback_required，或明确继续快速修复线的风险条件。
 - `baseline_freeze`：补齐可比较基线，包括 commit、命令、输入、配置、准确率、召回率、耗时和失败分布。
 - `diagnostic_completeness`：补齐 pure search、candidate lifecycle、threshold check 等诊断字段，避免靠最终 pass/fail 猜原因。
@@ -584,6 +594,7 @@ P0 治理回合的通过标准：
 - 输出 `p0_remediation_target`、`before_risk`、`after_risk`、`remaining_risk` 和 `next_allowed_action`。
 - 如果治理目标是 `artifact_hygiene`，必须只做清点和隔离方案；删除、移动、忽略规则变更必须单独汇报，不得顺手清空用户工作区。
 - 如果治理目标是 `owner_boundary`，必须先定义 owner 目录、桥接边界和禁止新增分支的规则；只有下一轮才能迁移具体算法逻辑。
+- 如果治理目标是 `code_health_triage`，必须把大文件、逻辑风险文件、冗余文件分别列出：大文件只能先拆 owner 和迁移边界；逻辑风险文件只能指向未通过 manifest、失败阶段和下一诊断；冗余文件只能标记候选和来源，删除/移动必须另起 P0 回合。
 - 如果治理目标是 `pending_validation_closure`，不得把 pending 项直接当作已通过；必须进入 Step 5，或明确登记为 `rejected`、`rollback_required`、`deferred_with_reason`。
 
 P0 状态解释固定为：
@@ -599,11 +610,13 @@ P0 阻断建议不是简单“越严越好”。以下情况必须 `block`：
 - 缺少可比较 baseline，却准备声明准确率、召回率或速度提升。
 - `pending_full_validation` 台账损坏，或发布/刷新知识前仍有 pending 项。
 - 本轮准备把短切片 benchmark 产物写入 generated knowledge。
+- 大文件、逻辑风险文件或冗余文件被检测到但没有 `code_health_risk` 产物时，不得进入相关 P0 处理或算法修复。
 
 以下情况默认 `warn`，但如果本轮要进入 Step 4 算法修复，应先做 P0 治理：
 
 - 大量 reports/output/models/训练 CSV/log/pid/diff_code 处于未跟踪或待提交状态。
 - 本轮会触碰巨型 owner 文件，且没有 owner 迁移说明。
+- `code_health_risk.status=warn`，说明存在大文件拆分、逻辑风险或冗余文件候选，下一步优先一个 P0 子目标。
 - 当前 full/global 输入是 stale，但仍有旧的合格输入可用。
 - 已存在 pending_full_validation，但本轮不是发布，也不是刷新正式知识。
 
@@ -634,7 +647,8 @@ V36 固定拆成三条线：
 5. LLM agent 只在 action/owner/repair_unit 内改代码。
 6. `policy_check.py` 拒绝越界 patch。
 7. 自动运行 golden、targeted、slice benchmark 和生命周期诊断。
-8. `v36_gate.py register-validation` 写入 pending 或 partial 台账；失败时 orchestrator 回滚到 patch 前快照。
+8. `v36_gate.py validate-step4-manifest --manifest <round_manifest>` 复算 Step 4 结论；如 `agent_claim_mismatch=true`，本轮不得登记 pending。
+9. `v36_gate.py register-validation --manifest <round_manifest>` 只把 validate 派生的 `benchmark_pass` 写入 pending；partial 状态只留在 round manifest 供下一轮选择器跳过，失败时 orchestrator 回滚到 patch 前快照。
 
 熔断规则：
 - 同一 cluster 连续 3 轮无推进，拉黑该 cluster，等待 Step 5 重新聚类。
@@ -652,6 +666,7 @@ V36 固定拆成三条线：
   - `git_status_summary`：是否存在大量未跟踪产物、是否影响本轮。
   - `dirty_artifact_risk`：是否出现 reports/output/models/temp/训练数据等本地产物准备被误提交。
   - `giant_file_touch_risk`：本轮是否可能触碰巨型核心文件。
+  - `code_health_risk`：大文件、逻辑风险文件和冗余文件候选；必须输出 `recommended_p0_subtargets`，可选值为 `large_file_decomposition|logic_error_triage|redundant_file_hygiene`。
   - `secret_or_mojibake_risk`：是否发现本轮相关路径存在硬编码密钥、SSL bypass 或新增乱码风险。
   - `test_tier_plan`：本轮如果进入 Step 4，预计使用 smoke、targeted、slice benchmark 还是 Step 5 full/global。
   - `pure_search_risk`：如果本轮涉及纯搜索，说明是否已有 `pure_search_metrics`；若纯搜索准确率低于 40% 且没有链路拆分指标，默认 `p0_gate_status=block`，下一步只能补诊断。
@@ -862,6 +877,8 @@ next_action 必须包含：
 - `largest_bucket`
 - `sample_count`
 - `target_common_issue`
+- `repair_unit`
+- `repair_unit_id`
 - `cluster_sample_ids`
 - `representative_sample_ids`
 - `suggested_validation_scope`
@@ -881,8 +898,8 @@ next_action 必须包含：
 - 当 `target_common_issue.commonality != shared` 时，算法修复 action 必须降级为诊断动作或在 `reason` 中明确写出不得进入 Step 4 算法补丁。
 - 当 `action=review_data` 时，必须写入或更新 `reports/agent_state/v36_data_review_queue.json`；否则不通过。
 - `suggested_validation_scope` 包含 `filter_cluster_id` 或 `filter_common_issue_key`。
-- 若同一 full/global 输入连续选择同一个已处理 repair unit，必须判定为选择器治理失败；本轮只能修 `choose-next-action` 状态读取或补诊断，不得进入算法补丁。
-- `skipped_repair_units` 必须写明 `issue_key`、`cluster_id`、`reason`、`source_manifest` 和 `next_stage`（如可判定）。
+- 若同一 full/global 输入连续选择同一个已处理 `repair_unit_id`，必须判定为选择器治理失败；本轮只能修 `choose-next-action` 状态读取或补诊断，不得进入算法补丁。旧 manifest 没有 `repair_unit_id` 时才按 `issue_key` 兼容跳过。
+- `skipped_repair_units` 必须写明 `issue_key`、`repair_unit_id`、`cluster_id`、`mechanism`、`owner_module`、`reason`、`source_manifest` 和 `next_stage`（如可判定）。
 - 时间上限 20 分钟。
 
 失败退出：
@@ -924,10 +941,10 @@ next_action 必须包含：
 
 验收顺序：
 1. 先跑相关单测或目标函数级测试。
-2. 再跑 `tools/policy_check.py` 或等价确定性 policy check；不通过即拒绝 patch。
+2. 再跑 `tools/policy_check.py --next-action reports/attribution/global_repair_next_action.json` 或等价确定性 policy check；不通过即拒绝 patch。
 3. 再跑 `eval/regression_golden/` 历史回归集；任一历史 case 退化即 `regress`，停止本轮，不得继续目标切片。
 4. 再跑 `next_action.suggested_validation_scope` 指向的最小 benchmark；短切片必须加 `--no-materialize-learning`，避免把局部错误资产写回默认 `data/province_plugins/generated`。
-5. 由程序解析 targeted/golden/slice/lifecycle 结果并计算 `partial_validation_status`；agent 不得手填。
+5. 运行 `tools/v36_gate.py validate-step4-manifest --manifest <round_manifest>`，由程序解析 targeted/golden/slice/lifecycle 结果并计算 `partial_validation_status`、`accuracy_impact`、`speed_impact`、`complexity_impact`、`threshold_check`；agent 不得手填。
 6. 若本轮达到 `benchmark_pass` 并准备登记 `pending_full_validation`，先把代表样本、同簇 1-2 个正样本和至少 1 个反例写入或更新 `eval/regression_golden/`。
 7. 输出 `test_tier`、`changed`、`improved`、`regressed`、`policy_check_status`、`regression_golden_status`、代表样本变化，以及未跑 full/global 的理由。
 8. 纯搜索相关修复由程序输出 `pure_search_metrics`、`latency_budget`、`bottleneck_classification` 和修复前后指标变化。
@@ -935,7 +952,7 @@ next_action 必须包含：
 10. 程序输出 `threshold_check`：说明版本元组、top1、recall@20、总耗时 P95、阶段耗时 P95、复杂度、flaky 和 tradeoff 相对冻结基线是否通过；`recall@5` 和 `recall@100` 作为诊断字段同时保留但不作为 Step 4 硬门禁。
 11. 输出 `rollback_plan`：必须符合“回滚计划契约”，并明确 `rollback_type`、`rollback_target`、`affected_files`、`rollback_command_or_change` 和 `post_rollback_validation`。
 12. 程序输出 `p0_gate_after_patch`：确认未新增本地产物污染、巨型分支、secret、mojibake、全局状态写入或静默失败。
-13. 修复通过后，由 `v36_gate.py register-validation` 把本修复写入 `reports/agent_state/v36_pending_full_validation.json`，状态为 `pending_full_validation`；下一步唯一动作是“回到 Step 0 开始下一轮小修复”或“启动 Step 5 full/global 验收”，二选一，不在当前回合继续叠加第二个算法修复。
+13. 修复通过后，由 `v36_gate.py register-validation --manifest <round_manifest>` 把 validate 派生为 `benchmark_pass` 的修复写入 `reports/agent_state/v36_pending_full_validation.json`，状态为 `pending_full_validation`；下一步唯一动作是“回到 Step 0 开始下一轮小修复”或“启动 Step 5 full/global 验收”，二选一，不在当前回合继续叠加第二个算法修复。
 
 失败退出：
 - 出现回归：停止，不叠加第二个修复。
@@ -1029,13 +1046,14 @@ python tools/run_benchmark.py `
 一轮 Step 4 的修复单元固定为：
 
 ```text
-repair_unit = target_common_issue.cluster_id + failing_stage + mechanism
+repair_unit_id = target_common_issue.cluster_id + target_common_issue.issue_key + mechanism + owner_module
 ```
 
 其中：
 - `target_common_issue.cluster_id`：来自 Step 2/Step 3 的共性簇。
-- `failing_stage`：本轮实际处理的链路阶段，例如 `query_build`、`raw_recall`、`candidate_merge`、`family_gate`、`validator`、`ltr_rank`、`picker`、`final_validate`。
+- `target_common_issue.issue_key`：共性问题键；仅靠它不足以区分同簇下的不同机制。
 - `mechanism`：本轮处理的共性机制，例如 `surface_process_route_hijack`、`book_scope_loss`、`hard_validator_drop`、`wrong_family_gate`。
+- `owner_module`：来自 `suggested_validation_scope.owner_module`，用于限制 Step 4 生产代码改动边界。
 
 禁止把同一簇下多个独立机制揉成一个大 patch。允许在同一簇下继续做“下一阶段诊断”，但若要做下一阶段算法补丁，必须重新生成或更新 `failed_slice_next_action`，并说明它不是第二个独立修复点。
 

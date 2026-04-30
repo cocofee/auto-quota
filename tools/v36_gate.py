@@ -24,7 +24,6 @@ from tools.build_global_repair_decision import (
     _id_prefix,
     _iter_latest_records,
     _is_wrong,
-    _pending_validation_issue_keys,
     _sample_id,
     _selected_id,
 )
@@ -51,6 +50,7 @@ GIANT_OWNER_FILES = {
     "web/backend/app/api/material_price.py",
 }
 DEFAULT_GIANT_BRIDGE_LINE_BUDGET = 25
+LARGE_SOURCE_FILE_LINE_THRESHOLD = 1200
 OWNER_BOUNDARY_PATTERN = "v36_p0_owner_boundary_*.json"
 MOJIBAKE_MARKERS = (
     "\u951b", "\u9225", "\u9346", "\u7ee0", "\u7f01", "\u934a", "\u7459", "\u9422",
@@ -64,6 +64,13 @@ SECRET_PATTERNS = (
 GENERATED_KNOWLEDGE_PREFIX = "data/province_plugins/generated/"
 DATA_REVIEW_QUEUE_PATH = Path("reports/agent_state/v36_data_review_queue.json")
 FLAKY_TRACKING_PATH = Path("reports/agent_state/flaky_tracking.json")
+CODE_HEALTH_SOURCE_PREFIXES = ("src/", "tools/", "web/")
+CODE_HEALTH_PARTIAL_STATUSES = {"failed", "local_behavior_pass", "candidate_lifecycle_pass", "blocked_by_next_stage"}
+REDUNDANT_FILE_PATTERNS = (
+    re.compile(r"(^|/)(?:old|backup|bak|tmp|temp)(?:_|-|/)", re.IGNORECASE),
+    re.compile(r"(?:_|-)(?:old|backup|bak|tmp|temp|copy)(?=\.|_|-|$)", re.IGNORECASE),
+    re.compile(r"\.(?:bak|tmp|orig|copy)$", re.IGNORECASE),
+)
 REQUIRED_VERSION_FIELDS = (
     "algorithm_commit",
     "knowledge_digest_hash",
@@ -74,6 +81,7 @@ REQUIRED_VERSION_FIELDS = (
     "model_profile_hash",
     "seed",
 )
+VALID_ROLLBACK_TYPES = {"config_flag", "isolated_module_call", "git_revert"}
 
 
 def _now_iso() -> str:
@@ -471,6 +479,149 @@ def _find_full_asset_error_input(root: Path, attribution: Path, summary: Path) -
     }
 
 
+def _git_list_files(root: Path, prefixes: tuple[str, ...]) -> list[str]:
+    code, stdout, _ = _run_git(root, ["ls-files", "--", *prefixes])
+    if code != 0:
+        return []
+    return [line.replace("\\", "/") for line in stdout.splitlines() if line.strip()]
+
+
+def _code_line_count(path: Path) -> int:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+
+def _is_redundant_file_candidate(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    name = Path(normalized).name
+    if normalized.startswith(("reports/", "output/", "tmp/", "test_artifacts/")):
+        return True
+    return any(pattern.search(normalized) or pattern.search(name) for pattern in REDUNDANT_FILE_PATTERNS)
+
+
+def _manifest_code_change_paths(manifest: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for key in ("code_changes", "changed_code_files", "changed_files", "affected_files"):
+        value = manifest.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    result.append(item.replace("\\", "/"))
+                elif isinstance(item, dict) and item.get("path"):
+                    result.append(str(item["path"]).replace("\\", "/"))
+    rollback = manifest.get("rollback_plan")
+    if isinstance(rollback, dict):
+        affected = rollback.get("affected_files")
+        if isinstance(affected, list):
+            result.extend(str(item).replace("\\", "/") for item in affected if isinstance(item, str))
+    return sorted(set(path for path in result if path.startswith(CODE_HEALTH_SOURCE_PREFIXES)))
+
+
+def _code_health_inventory(root: Path, entries: list[dict[str, str]]) -> dict[str, Any]:
+    tracked_sources = set(_git_list_files(root, CODE_HEALTH_SOURCE_PREFIXES))
+    changed_paths = {entry.get("path", "").replace("\\", "/") for entry in entries if entry.get("path")}
+    source_paths = sorted(
+        path for path in (tracked_sources | changed_paths)
+        if path.startswith(CODE_HEALTH_SOURCE_PREFIXES)
+    )
+
+    large_files: list[dict[str, Any]] = []
+    for rel_path in source_paths:
+        abs_path = root / rel_path
+        if not abs_path.exists() or not abs_path.is_file():
+            continue
+        loc = _code_line_count(abs_path)
+        if loc >= LARGE_SOURCE_FILE_LINE_THRESHOLD or rel_path in GIANT_OWNER_FILES:
+            large_files.append(
+                {
+                    "path": rel_path,
+                    "lines": loc,
+                    "bytes": abs_path.stat().st_size,
+                    "category": "giant_owner" if rel_path in GIANT_OWNER_FILES else "large_source_file",
+                    "recommended_p0_subtarget": "large_file_decomposition",
+                }
+            )
+
+    logic_files: dict[str, dict[str, Any]] = {}
+    manifest_dir = root / "reports" / "attribution"
+    if manifest_dir.exists():
+        for path in sorted(manifest_dir.glob("v36_round_manifest_*.json")):
+            manifest = _read_json_file(path)
+            if not manifest:
+                continue
+            partial_status = str(manifest.get("partial_validation_status") or "")
+            failed_next = manifest.get("failed_slice_next_action")
+            if partial_status not in CODE_HEALTH_PARTIAL_STATUSES and not isinstance(failed_next, dict):
+                continue
+            repair_unit = manifest.get("repair_unit") if isinstance(manifest.get("repair_unit"), dict) else {}
+            target = manifest.get("target_common_issue") if isinstance(manifest.get("target_common_issue"), dict) else {}
+            for rel_path in _manifest_code_change_paths(manifest):
+                existing = logic_files.setdefault(
+                    rel_path,
+                    {
+                        "path": rel_path,
+                        "statuses": [],
+                        "source_manifests": [],
+                        "issue_keys": [],
+                        "next_stages": [],
+                        "recommended_p0_subtarget": "logic_error_triage",
+                    },
+                )
+                if partial_status and partial_status not in existing["statuses"]:
+                    existing["statuses"].append(partial_status)
+                manifest_rel = _rel(root, path)
+                if manifest_rel not in existing["source_manifests"]:
+                    existing["source_manifests"].append(manifest_rel)
+                issue_key = str(repair_unit.get("issue_key") or target.get("issue_key") or "")
+                if issue_key and issue_key not in existing["issue_keys"]:
+                    existing["issue_keys"].append(issue_key)
+                next_stage = failed_next.get("next_failing_stage", "") if isinstance(failed_next, dict) else ""
+                if next_stage and next_stage not in existing["next_stages"]:
+                    existing["next_stages"].append(next_stage)
+
+    redundant_candidates = [
+        {
+            "path": path,
+            "status": next((entry.get("status", "") for entry in entries if entry.get("path", "").replace("\\", "/") == path), "tracked"),
+            "recommended_p0_subtarget": "redundant_file_hygiene",
+        }
+        for path in sorted(set(_git_list_files(root, ("src/", "tools/", "docs/", "tests/")) + list(changed_paths)))
+        if path and _is_redundant_file_candidate(path)
+    ]
+
+    recommended_subtargets: list[str] = []
+    for candidate_list in (large_files, list(logic_files.values()), redundant_candidates):
+        for item in candidate_list:
+            subtarget = str(item.get("recommended_p0_subtarget") or "")
+            if subtarget and subtarget not in recommended_subtargets:
+                recommended_subtargets.append(subtarget)
+
+    return {
+        "status": "warn" if recommended_subtargets else "pass",
+        "recommended_p0_remediation_target": "code_health_triage" if recommended_subtargets else "",
+        "recommended_p0_subtargets": recommended_subtargets,
+        "large_file_inventory": {
+            "status": "warn" if large_files else "pass",
+            "line_threshold": LARGE_SOURCE_FILE_LINE_THRESHOLD,
+            "files": large_files[:50],
+            "total": len(large_files),
+        },
+        "logic_error_file_inventory": {
+            "status": "warn" if logic_files else "pass",
+            "files": list(logic_files.values())[:50],
+            "total": len(logic_files),
+        },
+        "redundant_file_inventory": {
+            "status": "warn" if redundant_candidates else "pass",
+            "files": redundant_candidates[:50],
+            "total": len(redundant_candidates),
+        },
+    }
+
+
 def _find_global_input(root: Path) -> dict[str, Any]:
     latest = root / "reports" / "attribution" / "global_repair_v36_full_latest.json"
     attribution = root / "reports" / "attribution" / "global_repair_v36_full_attribution.json"
@@ -801,6 +952,11 @@ def _normalize_v36_commonality(summary: dict[str, Any]) -> dict[str, Any]:
     clusters = summary.get("common_issue_clusters")
     if not isinstance(clusters, list):
         return summary
+    skipped_issue_keys = {
+        str(cluster.get("issue_key") or "")
+        for cluster in summary.get("skipped_pending_validation_clusters", [])
+        if isinstance(cluster, dict) and cluster.get("issue_key")
+    }
     for cluster in clusters:
         if not isinstance(cluster, dict):
             continue
@@ -813,14 +969,248 @@ def _normalize_v36_commonality(summary: dict[str, Any]) -> dict[str, Any]:
             cluster["commonality"] = "weak_shared"
         else:
             cluster["commonality"] = "singleton_only"
-    shared = [cluster for cluster in clusters if isinstance(cluster, dict) and cluster.get("commonality") == "shared"]
+    selectable = [
+        cluster
+        for cluster in clusters
+        if isinstance(cluster, dict) and str(cluster.get("issue_key") or "") not in skipped_issue_keys
+    ]
+    shared = [cluster for cluster in selectable if cluster.get("commonality") == "shared"]
     if shared:
         summary["target_common_issue"] = shared[0]
-        summary["cluster_selection_reason"] = "largest shared cluster by sample_count, then bucket/key"
-    elif clusters:
-        summary["target_common_issue"] = clusters[0]
+        if skipped_issue_keys:
+            summary["cluster_selection_reason"] = "largest selectable shared cluster; pending_full_validation issue_keys skipped"
+        else:
+            summary["cluster_selection_reason"] = "largest shared cluster by sample_count, then bucket/key"
+    elif selectable:
+        summary["target_common_issue"] = selectable[0]
         summary["cluster_selection_reason"] = "no shared cluster; selected diagnostic target only"
+    else:
+        summary["target_common_issue"] = {}
+        summary["cluster_selection_reason"] = "no selectable common_issue_cluster; all known repair units skipped"
     return summary
+
+
+def _repair_unit_issue_key(payload: dict[str, Any]) -> str:
+    for container_name in ("repair_unit", "target_common_issue"):
+        container = payload.get(container_name)
+        if isinstance(container, dict) and container.get("issue_key"):
+            return str(container["issue_key"])
+    if payload.get("issue_key"):
+        return str(payload["issue_key"])
+    return ""
+
+
+def _repair_unit_cluster_id(payload: dict[str, Any]) -> str:
+    for container_name in ("repair_unit", "target_common_issue"):
+        container = payload.get(container_name)
+        if isinstance(container, dict) and container.get("cluster_id"):
+            return str(container["cluster_id"])
+    if payload.get("cluster_id"):
+        return str(payload["cluster_id"])
+    return ""
+
+
+def _repair_unit_mechanism(payload: dict[str, Any]) -> str:
+    repair_unit = payload.get("repair_unit") if isinstance(payload.get("repair_unit"), dict) else {}
+    for key in ("mechanism", "failing_stage"):
+        if repair_unit.get(key):
+            return str(repair_unit[key])
+    if payload.get("mechanism"):
+        return str(payload["mechanism"])
+    if payload.get("action"):
+        return str(payload["action"])
+    failed_next = payload.get("failed_slice_next_action")
+    if isinstance(failed_next, dict) and failed_next.get("action"):
+        return str(failed_next["action"])
+    return ""
+
+
+def _repair_unit_owner_module(payload: dict[str, Any]) -> str:
+    repair_unit = payload.get("repair_unit") if isinstance(payload.get("repair_unit"), dict) else {}
+    if repair_unit.get("owner_module"):
+        return str(repair_unit["owner_module"])
+    scope = payload.get("suggested_validation_scope")
+    if isinstance(scope, dict) and scope.get("owner_module"):
+        return str(scope["owner_module"])
+    if payload.get("owner_module"):
+        return str(payload["owner_module"])
+    return ""
+
+
+def _explicit_repair_unit_id(payload: dict[str, Any]) -> str:
+    repair_unit = payload.get("repair_unit") if isinstance(payload.get("repair_unit"), dict) else {}
+    if repair_unit.get("repair_unit_id"):
+        return str(repair_unit["repair_unit_id"])
+    if payload.get("repair_unit_id"):
+        return str(payload["repair_unit_id"])
+    return ""
+
+
+def _build_repair_unit_id(cluster_id: str, issue_key: str, mechanism: str, owner_module: str) -> str:
+    parts = [cluster_id, issue_key, mechanism, owner_module]
+    if not all(str(part or "").strip() for part in parts):
+        return ""
+    return "::".join(str(part).strip() for part in parts)
+
+
+def _repair_unit_id(payload: dict[str, Any]) -> str:
+    explicit = _explicit_repair_unit_id(payload)
+    if explicit:
+        return explicit
+    return _build_repair_unit_id(
+        _repair_unit_cluster_id(payload),
+        _repair_unit_issue_key(payload),
+        _repair_unit_mechanism(payload),
+        _repair_unit_owner_module(payload),
+    )
+
+
+def _selector_entry(
+    *,
+    payload: dict[str, Any],
+    reason: str,
+    source_manifest: str,
+    next_stage: str = "",
+    force_issue_key_scope: bool = False,
+) -> tuple[str, dict[str, Any]] | None:
+    issue_key = _repair_unit_issue_key(payload)
+    if not issue_key:
+        return None
+    explicit_id = _explicit_repair_unit_id(payload)
+    repair_unit_id = _repair_unit_id(payload)
+    key_type = "issue_key" if force_issue_key_scope or not explicit_id else "repair_unit_id"
+    key = issue_key if key_type == "issue_key" else explicit_id
+    entry = {
+        "issue_key": issue_key,
+        "repair_unit_id": repair_unit_id,
+        "cluster_id": _repair_unit_cluster_id(payload),
+        "mechanism": _repair_unit_mechanism(payload),
+        "owner_module": _repair_unit_owner_module(payload),
+        "selector_key": key,
+        "selector_key_type": key_type,
+        "reason": reason,
+        "source_manifest": source_manifest,
+        "next_stage": next_stage,
+    }
+    return key, entry
+
+
+def _selector_state_units(
+    root: Path,
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
+    skipped: dict[str, dict[str, Any]] = {}
+    blocked: dict[str, dict[str, Any]] = {}
+    skipped_by_id: dict[str, dict[str, Any]] = {}
+    blocked_by_id: dict[str, dict[str, Any]] = {}
+    partial_skip_statuses = {"blocked_by_next_stage", "candidate_lifecycle_pass", "local_behavior_pass"}
+    ledger_path = root / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    ledger = _read_json_file(ledger_path)
+    for entry in _list_json_items(ledger):
+        if entry.get("status") != "pending_full_validation":
+            continue
+        selector = _selector_entry(
+            payload=entry,
+            reason="pending_full_validation",
+            source_manifest=_rel(root, ledger_path),
+        )
+        if not selector:
+            continue
+        key, value = selector
+        if value["selector_key_type"] == "repair_unit_id":
+            skipped_by_id[key] = value
+        else:
+            skipped[key] = value
+
+    manifest_dir = root / "reports" / "attribution"
+    if not manifest_dir.exists():
+        return skipped, blocked, skipped_by_id, blocked_by_id
+    for path in sorted(manifest_dir.glob("v36_round_manifest_*.json")):
+        manifest = _read_json_file(path)
+        if not manifest:
+            continue
+        full_status = str(manifest.get("full_validation_status") or "")
+        pending = manifest.get("pending_full_validation")
+        pending_status = pending.get("status") if isinstance(pending, dict) else ""
+        if full_status == "pending" or pending_status == "pending_full_validation":
+            selector = _selector_entry(
+                payload=manifest,
+                reason="pending_full_validation",
+                source_manifest=_rel(root, path),
+            )
+            if selector:
+                key, value = selector
+                if value["selector_key_type"] == "repair_unit_id":
+                    skipped_by_id[key] = value
+                else:
+                    skipped[key] = value
+        failed_next = manifest.get("failed_slice_next_action")
+        partial_status = str(manifest.get("partial_validation_status") or "")
+        failed_next_same_unit = failed_next.get("same_repair_unit") if isinstance(failed_next, dict) else None
+        should_skip_partial = partial_status in partial_skip_statuses or failed_next_same_unit is False
+        if should_skip_partial:
+            selector = _selector_entry(
+                payload=manifest,
+                reason=partial_status or "failed_slice_next_action_same_repair_unit_false",
+                source_manifest=_rel(root, path),
+                next_stage=failed_next.get("next_failing_stage", "") if isinstance(failed_next, dict) else "",
+            )
+            if selector:
+                key, value = selector
+                if value["selector_key_type"] == "repair_unit_id":
+                    skipped_by_id[key] = value
+                else:
+                    skipped[key] = value
+        is_blocked = partial_status == "blocked_by_next_stage" or "blocked_by_next_stage" in str(manifest.get("status") or "")
+        if is_blocked:
+            next_stage = failed_next.get("next_failing_stage", "") if isinstance(failed_next, dict) else ""
+            selector = _selector_entry(
+                payload=manifest,
+                reason="blocked_by_next_stage",
+                source_manifest=_rel(root, path),
+                next_stage=next_stage,
+            )
+            if selector:
+                key, value = selector
+                if value["selector_key_type"] == "repair_unit_id":
+                    blocked_by_id[key] = value
+                else:
+                    blocked[key] = value
+    return skipped, blocked, skipped_by_id, blocked_by_id
+
+
+def _enrich_skipped_repair_units(
+    summary: dict[str, Any],
+    skipped_units_by_issue: dict[str, dict[str, Any]],
+    skipped_units_by_id: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for cluster in summary.get("skipped_pending_validation_clusters", []):
+        if not isinstance(cluster, dict):
+            continue
+        issue_key = str(cluster.get("issue_key") or "")
+        if not issue_key or issue_key in seen:
+            continue
+        seen.add(issue_key)
+        enriched = dict(skipped_units_by_issue.get(issue_key) or {})
+        enriched.setdefault("issue_key", issue_key)
+        enriched["cluster_id"] = str(enriched.get("cluster_id") or cluster.get("cluster_id") or "")
+        enriched.setdefault("reason", str(cluster.get("reason") or "pending_full_validation"))
+        enriched.setdefault("source_manifest", "")
+        enriched.setdefault("next_stage", "")
+        result.append(enriched)
+    for key, entry in sorted((skipped_units_by_id or {}).items()):
+        marker = f"repair_unit_id:{key}"
+        if marker in seen:
+            continue
+        seen.add(marker)
+        result.append(dict(entry))
+    return result
 
 
 def _owner_for_action(action: str) -> str:
@@ -844,6 +1234,9 @@ def _build_v36_next_action(summary: dict[str, Any], rows: list[dict[str, str]], 
     if not rows:
         action = "improve_diagnostics"
         reason = "no actionable wrong samples after data_review exclusion"
+    elif not target_common_issue:
+        action = "improve_diagnostics"
+        reason = "no selectable common_issue_cluster after selector state skips"
     elif missing_rate > 0.1:
         action = "improve_diagnostics"
         reason = "missing_field_rate > 10%"
@@ -884,6 +1277,18 @@ def _build_v36_next_action(summary: dict[str, Any], rows: list[dict[str, str]], 
         "sample_limit": min(50, cluster_sample_count or int(summary.get("wrong_total") or 0)),
         "owner_module": _owner_for_action(action),
     }
+    repair_unit = {
+        "cluster_id": target_common_issue.get("cluster_id", ""),
+        "issue_key": target_common_issue.get("issue_key", ""),
+        "mechanism": action,
+        "owner_module": scope["owner_module"],
+    }
+    repair_unit["repair_unit_id"] = _build_repair_unit_id(
+        str(repair_unit["cluster_id"]),
+        str(repair_unit["issue_key"]),
+        str(repair_unit["mechanism"]),
+        str(repair_unit["owner_module"]),
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
@@ -892,6 +1297,8 @@ def _build_v36_next_action(summary: dict[str, Any], rows: list[dict[str, str]], 
         "largest_bucket": largest_bucket,
         "sample_count": cluster_sample_count,
         "target_common_issue": target_common_issue,
+        "repair_unit": repair_unit,
+        "repair_unit_id": repair_unit["repair_unit_id"],
         "cluster_sample_ids": representative_ids,
         "representative_sample_ids": representative_ids,
         "suggested_validation_scope": scope,
@@ -974,6 +1381,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
     giant_change_summary = _giant_file_change_summary(root, giant_paths)
     owner_boundary = _find_owner_boundary_manifest(root)
     text_risks = _scan_changed_text_risks(root, entries)
+    code_health = _code_health_inventory(root, entries)
     selected_input = _find_global_input(root)
     baseline = _find_baseline_snapshot(root)
     pending = _pending_summary(root)
@@ -1008,6 +1416,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         or generated_knowledge_paths
         or version_status["status"] != "complete"
         or data_review.get("open", 0)
+        or code_health["status"] != "pass"
     ) else "pass"
     recommended_target = ""
     if flaky.get("triggered", 0):
@@ -1018,6 +1427,8 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         recommended_target = "owner_boundary"
     elif artifact_paths:
         recommended_target = "artifact_hygiene"
+    elif code_health["status"] != "pass":
+        recommended_target = "code_health_triage"
     elif pending.get("pending", 0):
         recommended_target = "pending_validation_closure"
     elif selected_input["status"] == "missing":
@@ -1062,6 +1473,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
             "over_budget_policy": "warn_with_owner_boundary" if giant_over_budget and not giant_missing_boundary else "block_without_owner_boundary" if giant_missing_boundary else "within_budget",
         },
         "secret_or_mojibake_risk": text_risks,
+        "code_health_risk": code_health,
         "test_tier_plan": "targeted plus optional slice benchmark; full/global remains Step 5",
         "pure_search_risk": {
             "status": "pass" if pure_metrics_present else "missing",
@@ -1151,25 +1563,42 @@ def choose_next_action(
     closed_review_ids = set(data_review.get("closed_sample_ids") or [])
     rows = [row for row in original_rows if row.get("sample_id") not in closed_review_ids]
     excluded_rows = [row for row in original_rows if row.get("sample_id") in closed_review_ids]
-    skip_issue_keys = _pending_validation_issue_keys(root)
-    if rows:
-        summary = build_summary(rows, latest, attribution, skip_issue_keys=skip_issue_keys)
-        summary = _normalize_v36_commonality(summary)
-    else:
-        summary = {
-            "schema_version": SCHEMA_VERSION,
-            "generated_at": _now_iso(),
-            "input_latest_path": str(latest),
-            "input_attribution_path": str(attribution),
-            "wrong_total": 0,
-            "stage_counts": {},
-            "missing_field_rate": 0.0,
-            "largest_bucket": "",
-            "common_issue_clusters": [],
-            "skipped_pending_validation_clusters": [],
-            "target_common_issue": {},
-            "cluster_selection_reason": "all wrong samples excluded by data review queue",
-        }
+    skipped_units_by_issue, blocked_units_by_issue, skipped_units_by_id, blocked_units_by_id = _selector_state_units(root)
+    skip_issue_keys = set(skipped_units_by_issue)
+    summary: dict[str, Any]
+    next_action: dict[str, Any]
+    exact_skip_iterations = 0
+    while True:
+        if rows:
+            summary = build_summary(rows, latest, attribution, skip_issue_keys=skip_issue_keys)
+            summary = _normalize_v36_commonality(summary)
+        else:
+            summary = {
+                "schema_version": SCHEMA_VERSION,
+                "generated_at": _now_iso(),
+                "input_latest_path": str(latest),
+                "input_attribution_path": str(attribution),
+                "wrong_total": 0,
+                "stage_counts": {},
+                "missing_field_rate": 0.0,
+                "largest_bucket": "",
+                "common_issue_clusters": [],
+                "skipped_pending_validation_clusters": [],
+                "target_common_issue": {},
+                "cluster_selection_reason": "all wrong samples excluded by data review queue",
+            }
+        pure_metrics_present = _has_complete_pure_search_metrics(root)
+        next_action = _build_v36_next_action(summary, rows, pure_metrics_present=pure_metrics_present)
+        current_repair_unit_id = str(next_action.get("repair_unit_id") or "")
+        current_skipped_unit = skipped_units_by_id.get(current_repair_unit_id)
+        current_issue_key = _repair_unit_issue_key(next_action)
+        if current_skipped_unit and current_issue_key and current_issue_key not in skip_issue_keys:
+            skipped_units_by_issue[current_issue_key] = dict(current_skipped_unit)
+            skip_issue_keys.add(current_issue_key)
+            exact_skip_iterations += 1
+            if exact_skip_iterations <= 20:
+                continue
+        break
     summary["wrong_total_before_data_review_exclusion"] = len(original_rows)
     summary["data_review_exclusion_summary"] = {
         "queue_path": DATA_REVIEW_QUEUE_PATH.as_posix(),
@@ -1177,12 +1606,25 @@ def choose_next_action(
         "excluded_sample_ids": [row.get("sample_id", "") for row in excluded_rows[:50]],
         "open_total": data_review.get("open", 0),
     }
-    pure_metrics_present = _has_complete_pure_search_metrics(root)
-    next_action = _build_v36_next_action(summary, rows, pure_metrics_present=pure_metrics_present)
     if next_action.get("action") == "fix_r1_recall":
         next_action["pure_search_metrics_required"] = False
     elif "pure_search_metrics missing" in str(next_action.get("reason") or ""):
         next_action["pure_search_metrics_required"] = True
+    next_action["selector_state_inputs"] = {
+        "pending_full_validation_path": "reports/agent_state/v36_pending_full_validation.json",
+        "round_manifest_glob": "reports/attribution/v36_round_manifest_*.json",
+        "data_review_queue_path": DATA_REVIEW_QUEUE_PATH.as_posix(),
+        "pending_issue_key_count": len(skip_issue_keys),
+        "pending_repair_unit_id_count": len(skipped_units_by_id),
+        "blocked_next_stage_issue_key_count": len(blocked_units_by_issue),
+        "blocked_next_stage_repair_unit_id_count": len(blocked_units_by_id),
+    }
+    next_action["skipped_repair_units"] = _enrich_skipped_repair_units(
+        summary,
+        skipped_units_by_issue,
+        skipped_units_by_id,
+    )
+    next_action["blocked_next_stage_repair_units"] = list(blocked_units_by_issue.values()) + list(blocked_units_by_id.values())
     next_action["data_review_queue_update"] = _update_data_review_queue(
         root,
         next_action,
@@ -1211,9 +1653,384 @@ def choose_next_action(
         "action": next_action["action"],
         "target_common_issue": next_action.get("target_common_issue", {}),
         "full_validation_status": next_action.get("full_validation_status", "pending"),
+        "selector_state_inputs": next_action["selector_state_inputs"],
+        "skipped_repair_units": next_action["skipped_repair_units"],
+        "blocked_next_stage_repair_units": next_action["blocked_next_stage_repair_units"],
         "deterministic": True,
         "llm_used": False,
     }
+
+
+def _as_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _numbers_match(left: Any, right: Any, *, tolerance: float = 0.05) -> bool:
+    left_num = _as_number(left)
+    right_num = _as_number(right)
+    if left_num is None or right_num is None:
+        return False
+    return abs(left_num - right_num) <= tolerance
+
+
+def _summary_metrics(root: Path, artifact_path: str) -> dict[str, Any]:
+    if not artifact_path:
+        return {"status": "missing", "path": ""}
+    path = (root / artifact_path).resolve()
+    if not path.exists() or not path.is_file():
+        return {"status": "missing", "path": artifact_path}
+    payload = _read_json_file(path)
+    if not payload:
+        return {"status": "invalid_json", "path": artifact_path}
+    overall = payload.get("json_overall") if isinstance(payload.get("json_overall"), dict) else payload
+    adaptive = overall.get("adaptive_strategy") if isinstance(overall, dict) else {}
+    return {
+        "status": "present",
+        "path": artifact_path,
+        "total": _as_number(overall.get("total")),
+        "correct": _as_number(overall.get("correct") or overall.get("correct_total")),
+        "hit_rate": _as_number(overall.get("hit_rate") or overall.get("overall_hit_rate")),
+        "recall_miss_count": _as_number(overall.get("recall_miss_count")),
+        "rank_miss_count": _as_number(overall.get("rank_miss_count")),
+        "avg_latency_sec": _as_number(adaptive.get("overall_avg_time_sec")) if isinstance(adaptive, dict) else None,
+    }
+
+
+def _compare_declared_delta(delta: dict[str, Any], before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    checks = [
+        ("slice_total", before.get("total")),
+        ("before_correct", before.get("correct")),
+        ("after_correct", after.get("correct")),
+        ("before_hit_rate", before.get("hit_rate")),
+        ("after_hit_rate", after.get("hit_rate")),
+    ]
+    for field, computed in checks:
+        if field in delta and computed is not None and not _numbers_match(delta.get(field), computed):
+            failures.append({"field": field, "declared": delta.get(field), "computed": computed})
+    before_hit = before.get("hit_rate")
+    after_hit = after.get("hit_rate")
+    if "delta_hit_rate" in delta and before_hit is not None and after_hit is not None:
+        computed_delta = after_hit - before_hit
+        if not _numbers_match(delta.get("delta_hit_rate"), computed_delta):
+            failures.append({"field": "delta_hit_rate", "declared": delta.get("delta_hit_rate"), "computed": computed_delta})
+    return failures
+
+
+def _manifest_report_path(manifest: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = manifest.get(key)
+        if value:
+            return str(value)
+    for container_name in ("artifacts", "reports", "round_artifact_manifest"):
+        container = manifest.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        for key in keys:
+            value = container.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _resolve_status_from_report(
+    root: Path,
+    manifest: dict[str, Any],
+    *,
+    manifest_status_field: str,
+    report_path_keys: tuple[str, ...],
+    report_status_fields: tuple[str, ...],
+) -> dict[str, Any]:
+    declared = str(manifest.get(manifest_status_field) or "missing")
+    report_path = _manifest_report_path(manifest, report_path_keys)
+    if not report_path:
+        return {
+            "status": declared,
+            "source": "manifest_field",
+            "path": "",
+            "declared": declared,
+            "integrity_status": "legacy_manifest_field",
+            "failures": [],
+        }
+
+    report_abs = (root / report_path).resolve()
+    report = _read_json_file(report_abs)
+    if not report:
+        return {
+            "status": "missing",
+            "source": "report",
+            "path": report_path,
+            "declared": declared,
+            "integrity_status": "fail",
+            "failures": [{"field": manifest_status_field, "reason": "report_missing_or_invalid", "path": report_path}],
+        }
+
+    value = ""
+    for field in report_status_fields:
+        if report.get(field) not in (None, ""):
+            value = str(report[field])
+            break
+    failures: list[dict[str, Any]] = []
+    if not value:
+        value = "missing"
+        failures.append({"field": manifest_status_field, "reason": "status_field_missing_in_report", "path": report_path})
+    elif declared != "missing" and declared != value:
+        failures.append(
+            {
+                "field": manifest_status_field,
+                "reason": "manifest_status_mismatch",
+                "declared": declared,
+                "reported": value,
+                "path": report_path,
+            }
+        )
+    return {
+        "status": value,
+        "source": "report",
+        "path": report_path,
+        "declared": declared,
+        "integrity_status": "fail" if failures else "pass",
+        "failures": failures,
+    }
+
+
+def _non_empty_string_or_list(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(str(item or "").strip() for item in value)
+    return False
+
+
+def _rollback_plan_integrity(manifest: dict[str, Any], *, required: bool) -> dict[str, Any]:
+    plan = manifest.get("rollback_plan")
+    if not isinstance(plan, dict):
+        if not required:
+            return {"status": "not_required", "failures": [], "rollback_type": ""}
+        return {
+            "status": "fail",
+            "failures": [{"field": "rollback_plan", "reason": "missing_or_not_object"}],
+            "rollback_type": "",
+        }
+
+    failures: list[dict[str, Any]] = []
+    rollback_type = str(plan.get("rollback_type") or "")
+    if rollback_type not in VALID_ROLLBACK_TYPES:
+        failures.append(
+            {
+                "field": "rollback_type",
+                "reason": "invalid",
+                "allowed": sorted(VALID_ROLLBACK_TYPES),
+                "value": rollback_type,
+            }
+        )
+    for field in ("rollback_target", "rollback_command_or_change", "post_rollback_validation"):
+        if not _non_empty_string_or_list(plan.get(field)):
+            failures.append({"field": field, "reason": "missing_or_empty"})
+    affected = plan.get("affected_files")
+    if not isinstance(affected, list) or not any(str(item or "").strip() for item in affected):
+        failures.append({"field": "affected_files", "reason": "missing_or_empty"})
+    return {
+        "status": "fail" if failures else "pass",
+        "failures": failures,
+        "rollback_type": rollback_type,
+    }
+
+
+def _derive_step4_status(
+    *,
+    manifest: dict[str, Any],
+    artifact_integrity_failures: list[dict[str, Any]],
+    before: dict[str, Any],
+    after: dict[str, Any],
+    policy_status: str,
+    regression_status: str,
+) -> str:
+    if artifact_integrity_failures:
+        return "failed"
+    if policy_status == "fail" or regression_status == "fail":
+        return "failed"
+
+    before_correct = before.get("correct")
+    after_correct = after.get("correct")
+    improved = before_correct is not None and after_correct is not None and after_correct > before_correct
+    regressed = before_correct is not None and after_correct is not None and after_correct < before_correct
+    if regressed:
+        return "failed"
+
+    failed_next = manifest.get("failed_slice_next_action")
+    lifecycle = manifest.get("candidate_lifecycle_trace")
+    lifecycle_status = lifecycle.get("status") if isinstance(lifecycle, dict) else ""
+    declared = str(manifest.get("partial_validation_status") or "")
+
+    if improved and not isinstance(failed_next, dict):
+        return "benchmark_pass"
+    if lifecycle_status == "candidate_lifecycle_pass" or declared == "candidate_lifecycle_pass" or improved:
+        return "candidate_lifecycle_pass"
+    if declared in {"local_behavior_pass", "blocked_by_next_stage", "diagnostic_pass"}:
+        return declared
+    return "failed"
+
+
+def validate_step4_manifest(
+    root: Path | None,
+    manifest_path: Path,
+    out_path: Path | None = None,
+) -> dict[str, Any]:
+    root = _repo_root(root)
+    manifest_abs = (root / manifest_path).resolve() if not manifest_path.is_absolute() else manifest_path
+    manifest = _read_json_file(manifest_abs)
+    if not manifest:
+        raise SystemExit(f"manifest not found or invalid: {manifest_path}")
+
+    delta = manifest.get("before_after_delta") if isinstance(manifest.get("before_after_delta"), dict) else {}
+    before_artifact = str(delta.get("before_artifact") or "")
+    after_artifact = str(delta.get("after_artifact") or "")
+    before = _summary_metrics(root, before_artifact)
+    after = _summary_metrics(root, after_artifact)
+
+    artifact_failures: list[dict[str, Any]] = []
+    if before_artifact or after_artifact:
+        if before.get("status") != "present":
+            artifact_failures.append({"field": "before_artifact", "reason": before.get("status"), "path": before_artifact})
+        if after.get("status") != "present":
+            artifact_failures.append({"field": "after_artifact", "reason": after.get("status"), "path": after_artifact})
+    if before.get("status") == "present" and after.get("status") == "present":
+        artifact_failures.extend(_compare_declared_delta(delta, before, after))
+
+    policy_resolution = _resolve_status_from_report(
+        root,
+        manifest,
+        manifest_status_field="policy_check_status",
+        report_path_keys=("policy_check_report", "policy_check_path", "policy_check"),
+        report_status_fields=("policy_check_status", "status"),
+    )
+    regression_resolution = _resolve_status_from_report(
+        root,
+        manifest,
+        manifest_status_field="regression_golden_status",
+        report_path_keys=("regression_golden_report", "regression_golden_path", "regression_golden"),
+        report_status_fields=("regression_golden_status", "status"),
+    )
+    report_failures = list(policy_resolution["failures"]) + list(regression_resolution["failures"])
+    policy_status = str(policy_resolution["status"] or "missing")
+    regression_status = str(regression_resolution["status"] or "missing")
+
+    derived_status = _derive_step4_status(
+        manifest=manifest,
+        artifact_integrity_failures=artifact_failures + report_failures,
+        before=before,
+        after=after,
+        policy_status=policy_status,
+        regression_status=regression_status,
+    )
+    declared_status = str(manifest.get("partial_validation_status") or "")
+    agent_claim_mismatch = bool(declared_status and declared_status != derived_status)
+    rollback_integrity = _rollback_plan_integrity(
+        manifest,
+        required=declared_status == "benchmark_pass" or derived_status == "benchmark_pass",
+    )
+    rollback_failures = list(rollback_integrity.get("failures") or [])
+
+    before_correct = before.get("correct")
+    after_correct = after.get("correct")
+    before_hit = before.get("hit_rate")
+    after_hit = after.get("hit_rate")
+    before_latency = before.get("avg_latency_sec")
+    after_latency = after.get("avg_latency_sec")
+    before_recall_miss = before.get("recall_miss_count")
+    after_recall_miss = after.get("recall_miss_count")
+    has_failed_next = isinstance(manifest.get("failed_slice_next_action"), dict)
+
+    top1_pass = (
+        before_correct is not None
+        and after_correct is not None
+        and after_correct >= before_correct
+    )
+    recall_pass = (
+        before_recall_miss is not None
+        and after_recall_miss is not None
+        and after_recall_miss <= before_recall_miss
+    )
+    latency_pass = (
+        before_latency is not None
+        and after_latency is not None
+        and after_latency <= before_latency * 1.10
+    )
+    complexity_pass = policy_status == "pass"
+    threshold_check = {
+        "top1_pass": top1_pass,
+        "recall_at_20_pass": recall_pass,
+        "total_p95_pass": latency_pass,
+        "stage_p95_pass": "missing",
+        "complexity_pass": complexity_pass,
+        "version_tuple_pass": "missing",
+        "flaky_pass": "missing",
+        "overall_pass": (
+            derived_status == "benchmark_pass"
+            and top1_pass
+            and (recall_pass or before_recall_miss is None)
+            and (latency_pass or before_latency is None)
+            and complexity_pass
+            and regression_status.startswith("pass")
+            and not has_failed_next
+            and not artifact_failures
+            and not report_failures
+            and not rollback_failures
+        ),
+        "baseline_id": str(manifest.get("baseline_snapshot") or ""),
+        "comparison_command": "validate-step4-manifest",
+        "tradeoff_mode": str(manifest.get("tradeoff_mode") or "none"),
+    }
+
+    accuracy_delta = after_hit - before_hit if before_hit is not None and after_hit is not None else None
+    speed_delta = after_latency - before_latency if before_latency is not None and after_latency is not None else None
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "validate-step4-manifest",
+        "manifest_path": _rel(root, manifest_abs),
+        "declared_partial_validation_status": declared_status,
+        "derived_partial_validation_status": derived_status,
+        "partial_validation_status": derived_status,
+        "agent_claim_mismatch": agent_claim_mismatch,
+        "artifact_integrity": {
+            "status": "fail" if artifact_failures else "pass" if before_artifact or after_artifact else "missing",
+            "failures": artifact_failures,
+            "before_metrics": before,
+            "after_metrics": after,
+        },
+        "report_integrity": {
+            "status": "fail" if report_failures else "pass",
+            "failures": report_failures,
+            "policy_check": policy_resolution,
+            "regression_golden": regression_resolution,
+        },
+        "rollback_integrity": rollback_integrity,
+        "accuracy_impact": "improve" if accuracy_delta and accuracy_delta > 0 else "regress" if accuracy_delta and accuracy_delta < 0 else "neutral_or_missing",
+        "accuracy_delta_hit_rate": accuracy_delta,
+        "speed_impact": "slower" if speed_delta and speed_delta > 0 else "faster" if speed_delta and speed_delta < 0 else "neutral_or_missing",
+        "speed_delta_avg_sec": speed_delta,
+        "complexity_impact": "pass" if complexity_pass else "missing_or_fail",
+        "complexity_delta": manifest.get("complexity_delta", "missing"),
+        "threshold_check": threshold_check,
+        "policy_check_status": policy_status,
+        "regression_golden_status": regression_status,
+        "failed_slice_next_action_present": has_failed_next,
+        "register_validation_allowed": threshold_check["overall_pass"],
+        "validation_status": "fail" if artifact_failures or report_failures or rollback_failures or (declared_status == "benchmark_pass" and derived_status != "benchmark_pass") else "warn" if agent_claim_mismatch else "pass",
+    }
+    if out_path is not None:
+        out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+        _write_json(out_abs, payload)
+    return payload
 
 
 def register_validation(
@@ -1225,8 +2042,42 @@ def register_validation(
     validation: list[str],
     status: str,
     ledger_path: Path,
+    manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     root = _repo_root(root)
+    manifest_rel = ""
+    if status == "pending_full_validation":
+        if manifest_path is None:
+            raise SystemExit("register-validation requires --manifest for pending_full_validation")
+        manifest_abs = (root / manifest_path).resolve() if not manifest_path.is_absolute() else manifest_path
+        manifest = _read_json_file(manifest_abs)
+        if not manifest:
+            raise SystemExit(f"manifest not found or invalid: {manifest_path}")
+        manifest_rel = _rel(root, manifest_abs)
+        validation_result = validate_step4_manifest(root, manifest_abs)
+        partial_status = str(validation_result.get("derived_partial_validation_status") or "")
+        if partial_status != "benchmark_pass" or not validation_result.get("register_validation_allowed"):
+            raise SystemExit(
+                "register-validation refused: validate-step4-manifest must derive benchmark_pass "
+                f"(got {partial_status or 'missing'})"
+            )
+        if validation_result.get("agent_claim_mismatch"):
+            raise SystemExit("register-validation refused: manifest claim mismatch")
+        regression_status = str(validation_result.get("regression_golden_status") or "")
+        if not regression_status.startswith("pass"):
+            raise SystemExit(
+                "register-validation refused: regression_golden_status must be pass "
+                f"(got {regression_status or 'missing'})"
+            )
+        policy_status = str(validation_result.get("policy_check_status") or "")
+        if policy_status != "pass":
+            raise SystemExit(
+                "register-validation refused: policy_check_status must be pass "
+                f"(got {policy_status or 'missing'})"
+            )
+        if validation_result.get("failed_slice_next_action_present"):
+            raise SystemExit("register-validation refused: failed_slice_next_action is present")
+
     ledger_abs = (root / ledger_path).resolve() if not ledger_path.is_absolute() else ledger_path
     if ledger_abs.exists():
         try:
@@ -1248,6 +2099,8 @@ def register_validation(
         "validation": validation,
         "status": status,
     }
+    if manifest_rel:
+        entry["source_manifest"] = manifest_rel
     for index, existing in enumerate(entries):
         if isinstance(existing, dict) and existing.get("fix_id") == fix_id:
             entries[index] = entry
@@ -1262,6 +2115,7 @@ def register_validation(
         "ledger_path": _rel(root, ledger_abs),
         "fix_id": fix_id,
         "status": status,
+        "source_manifest": manifest_rel,
         "pending_full_validation_summary": _pending_summary(root),
     }
 
@@ -1402,6 +2256,10 @@ def main() -> int:
     diagnose_parser = sub.add_parser("diagnose-pure-search")
     diagnose_parser.add_argument("--out", type=Path, default=Path("reports/attribution/pure_search_diagnosis.json"))
 
+    validate_step4_parser = sub.add_parser("validate-step4-manifest")
+    validate_step4_parser.add_argument("--manifest", type=Path, required=True)
+    validate_step4_parser.add_argument("--out", type=Path, default=Path("reports/attribution/v36_step4_validation.json"))
+
     choose_parser = sub.add_parser("choose-next-action")
     choose_parser.add_argument("--latest", type=Path)
     choose_parser.add_argument("--attribution", type=Path)
@@ -1417,6 +2275,7 @@ def main() -> int:
     register_parser.add_argument("--validation", action="append", default=[])
     register_parser.add_argument("--status", default="pending_full_validation")
     register_parser.add_argument("--ledger", type=Path, default=Path("reports/agent_state/v36_pending_full_validation.json"))
+    register_parser.add_argument("--manifest", type=Path)
 
     release_parser = sub.add_parser("release-check")
     release_parser.add_argument("--ledger", type=Path, default=Path("reports/agent_state/v36_pending_full_validation.json"))
@@ -1430,6 +2289,8 @@ def main() -> int:
         result = freeze_baseline(root, args.latest, args.attribution, args.out, args.command_line)
     elif args.command == "diagnose-pure-search":
         result = diagnose_pure_search(root, args.out)
+    elif args.command == "validate-step4-manifest":
+        result = validate_step4_manifest(root, args.manifest, args.out)
     elif args.command == "choose-next-action":
         result = choose_next_action(root, args.latest, args.attribution, args.decision_table, args.summary, args.next_action)
     elif args.command == "register-validation":
@@ -1442,6 +2303,7 @@ def main() -> int:
             args.validation,
             args.status,
             args.ledger,
+            args.manifest,
         )
     elif args.command == "release-check":
         result = release_check(root, args.ledger)
