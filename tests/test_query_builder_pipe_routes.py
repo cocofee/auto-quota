@@ -27,6 +27,30 @@ def test_build_quota_query_prefers_general_steel_sleeve_for_wall_sleeve():
     assert "一般钢套管制作安装" in query
 
 
+def test_build_quota_query_maps_waterstop_human_defense_sleeve_to_rigid_waterproof():
+    query = build_quota_query(
+        parser,
+        "人防密闭穿墙套管DN150",
+        "材质:钢管/钢板 工作内容:套管制作、安装、套管内封堵、止水钢板、止水翼环",
+        specialty="C10",
+    )
+
+    assert "刚性防水套管制作安装" in query
+    assert "DN150" in query
+    assert "密闭套管" not in query
+
+
+def test_build_quota_query_keeps_plain_closed_wall_sleeve_out_of_waterstop_rule():
+    query = build_quota_query(
+        parser,
+        "穿墙密闭套管 D400",
+        "名称:穿墙密闭套管 规格:D400 工作内容:供货、安装",
+        specialty="C7",
+    )
+
+    assert "刚性防水套管制作安装" not in query
+
+
 def test_build_quota_query_prefers_hole_blocking_route_for_blocking_item():
     query = build_quota_query(
         parser,
@@ -48,6 +72,31 @@ def test_build_quota_query_prefers_support_family_over_surface_process_noise():
     assert "管道支架制作安装" in query
     assert "一般管架" in query
     assert "除锈" not in query
+
+
+def test_build_quota_query_maps_metal_pipe_support_to_general_pipe_support():
+    query = build_quota_query(
+        parser,
+        "管道支架",
+        "材质:金属支架 详见图纸、图集、规范等",
+        specialty="C10",
+    )
+
+    assert "管道支架制作安装" in query
+    assert "一般管架" in query
+    assert "设备支架" not in query
+
+
+def test_build_quota_query_does_not_route_duct_support_to_pipe_support_by_material_only():
+    query = build_quota_query(
+        parser,
+        "风管支架",
+        "材质:金属支架 详见图纸、图集、规范等",
+        specialty="C9",
+    )
+
+    assert "管道支架制作安装" not in query
+    assert "一般管架" not in query
 
 
 def test_build_quota_query_prefers_pipe_rubber_insulation_family():

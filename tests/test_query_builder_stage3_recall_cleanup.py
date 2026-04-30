@@ -69,6 +69,23 @@ def test_apply_synonyms_adds_stage3_electrical_recall_aliases():
     assert "点型探测器安装 感烟" in smoke_query
 
 
+def test_power_cable_work_content_marking_does_not_hijack_to_pipe_marking():
+    query = build_quota_query(
+        parser,
+        "电力电缆 WDZC-YJY-4*50+1*25",
+        "电力电缆 WDZC-YJY-4*50+1*25 材质：铜芯 "
+        "敷设方式、部位：沿桥架或穿管(包括垂直井道内) "
+        "工作内容：开盘、检查、架盘、敷设、排列、整理、固定、编号、挂牌；"
+        "接地、测绝缘电阻、临时封头及标识；揭（盖）桥架、电缆沟盖板",
+        specialty="C4",
+    )
+
+    assert "室内敷设电力电缆" in query
+    assert "电缆截面 50" in query
+    assert "管道标识" not in query
+    assert "色环" not in query
+
+
 def test_apply_synonyms_adds_stage3_mep_family_aliases():
     seamless_query = _apply_synonyms("无缝钢管")
     low_pressure_query = _apply_synonyms("低压碳钢管")
@@ -101,3 +118,36 @@ def test_build_quota_query_keeps_ppr_water_supply_query_out_of_rainwater_family(
 
     assert "给水" in query
     assert "雨水" not in query
+
+
+def test_build_quota_query_maps_foundation_ground_grid_to_equalizing_ring():
+    query = build_quota_query(
+        parser,
+        "基础接地网",
+        "名称:基础接地网 材质:利用结构钢筋 包括为满足设计、验收规范规定施工所需的一切工序",
+        specialty="C4",
+    )
+
+    assert query == "均压环焊接"
+
+
+def test_build_quota_query_maps_weak_current_box_to_box_body_family():
+    query = build_quota_query(
+        parser,
+        "弱电箱",
+        "名称:弱电箱 安装形式:暗装 未尽事项详见施工图纸及相关技术规范标准综合报价",
+        specialty="C5",
+    )
+
+    assert query == "弱电箱体挂墙安装 半周长1m以内"
+
+
+def test_build_quota_query_preserves_weak_current_box_explicit_half_perimeter_bucket():
+    query = build_quota_query(
+        parser,
+        "弱电箱",
+        "名称:弱电箱 规格:半周长1.5m 安装形式:暗装",
+        specialty="C5",
+    )
+
+    assert query == "弱电箱体挂墙安装 半周长1.5m以内"

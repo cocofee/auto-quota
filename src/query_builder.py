@@ -31,6 +31,7 @@ from src.query_builder_specialized_rules import (
     _normalize_distribution_box_name,
 )
 from src.rule_matcher import try_rule_match
+from src.search_features.sleeve_queries import build_structured_sleeve_query
 from src.subject_family_guard import (
     is_family_hint_term,
     resolve_primary_subject_hint,
@@ -1106,12 +1107,12 @@ def _clean_primary_field_value(label: str, value: str) -> str:
     cleaned = _normalize_primary_guard_text(value)
     cleaned = _normalize_primary_guard_text(_PRIMARY_BRACKET_PATTERN.sub(" ", cleaned))
     if label in {
-        "宸ヤ綔鍐呭",
-        "鏈敖浜嬪疁",
-        "鍏朵粬",
-        "鍏朵粬璇存槑",
-        "澶囨敞",
-        "鍘嬪姏璇曢獙鍙婂惞銆佹礂璁捐瑕佹眰",
+        "工作内容",
+        "未尽事宜",
+        "其他",
+        "其他说明",
+        "备注",
+        "压力试验及吹、洗设计要求",
     }:
         return ""
     return cleaned
@@ -1442,18 +1443,18 @@ def build_primary_query_profile(name: str, description: str = "", fields: dict |
     primary_subject = _normalize_primary_guard_text(subject_info.get("primary_subject", ""))
 
     field_aliases = (
-        ("名称", ("名称", "鍚嶇О")),
-        ("材质", ("材质", "鏉愯川")),
-        ("规格", ("规格", "瑙勬牸")),
-        ("连接形式", ("连接形式", "杩炴帴褰㈠紡")),
-        ("连接方式", ("连接方式", "杩炴帴鏂瑰紡")),
-        ("安装部位", ("安装部位", "瀹夎閮ㄤ綅")),
-        ("介质", ("介质", "浠嬭川")),
-        ("类型", ("类型", "绫诲瀷")),
-        ("配置形式", ("配置形式", "閰嶇疆褰㈠紡")),
-        ("敷设方式", ("敷设方式", "鏁疯鏂瑰紡")),
-        ("管径", ("管径", "绠″緞")),
-        ("型号", ("型号", "鍨嬪彿")),
+        ("名称", ("名称",)),
+        ("材质", ("材质",)),
+        ("规格", ("规格",)),
+        ("连接形式", ("连接形式",)),
+        ("连接方式", ("连接方式",)),
+        ("安装部位", ("安装部位",)),
+        ("介质", ("介质",)),
+        ("类型", ("类型",)),
+        ("配置形式", ("配置形式",)),
+        ("敷设方式", ("敷设方式",)),
+        ("管径", ("管径",)),
+        ("型号", ("型号",)),
     )
     has_decisive_fields = any(
         any(alias in normalized_fields for alias in aliases)
@@ -2165,6 +2166,7 @@ def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
 
     support_scope = str(params.get("support_scope") or "")
     support_action = str(params.get("support_action") or "")
+    support_material = str(params.get("support_material") or "")
     surface_process = str(params.get("surface_process") or "")
     prefer_aseismic = support_scope == "抗震支架" or "抗震" in full_text
     prefer_bridge = support_scope == "桥架支架" or any(
@@ -2178,10 +2180,42 @@ def _build_support_query(name: str, full_text: str, params: dict) -> str | None:
         for keyword in ("支架", "吊架", "支吊架", "支撑架")
     )
     has_detail_bucket = any(keyword in full_text for keyword in ("03S402", "单件重量", "每组重量"))
+    has_pipe_support_context = support_scope == "管道支架" or any(
+        keyword in full_text
+        for keyword in (
+            "管道支架",
+            "管道支吊架",
+            "管道吊架",
+            "管架",
+            "一般管架",
+            "管道",
+            "给水",
+            "排水",
+            "消防管",
+            "喷淋管",
+            "雨水管",
+            "污水管",
+            "废水管",
+            "冷凝水管",
+            "冷媒管",
+        )
+    )
     action = "制作安装" if support_action in {"制作", "安装", "制作安装"} else "制作安装"
     if support_scope == "管道支架" and not has_detail_bucket:
         if surface_process or any(keyword in full_text for keyword in ("按需制作", "一般管架")):
             return f"管道支架{action} 一般管架"
+    if (
+        name_has_support_anchor
+        and not has_detail_bucket
+        and not (prefer_aseismic or prefer_bridge or prefer_equipment)
+        and has_pipe_support_context
+        and (
+            support_scope == "管道支架"
+            or support_material
+            or any(keyword in full_text for keyword in ("金属支架", "基础型钢"))
+        )
+    ):
+        return f"管道支架{action} 一般管架"
     if prefer_aseismic and name_has_support_anchor:
         support_parts = ["抗震支架", "抗震支吊架", "单向支撑"]
         if prefer_bridge:
@@ -2213,6 +2247,11 @@ def _build_surface_process_query(name: str, full_text: str, params: dict) -> str
     text = " ".join(part for part in (name or "", full_text or "") if part)
     name_text = name or ""
     if not any(keyword in text for keyword in ("刷油", "防腐", "油漆", "标识", "色环")):
+        return None
+    if (
+        "电缆" in name_text
+        and not any(keyword in name_text for keyword in ("刷油", "防腐", "油漆", "标识", "色环"))
+    ):
         return None
 
     if (
@@ -2656,6 +2695,94 @@ def _finalize_rule_match_query(
     )
 
 
+def _build_described_lamp_query(
+    name: str,
+    subject_name: str,
+    full_text: str,
+    fields: dict,
+) -> str | None:
+    """Build a lamp query when generic bill names carry specifics in description fields."""
+    raw_name = str(name or "")
+    if "灯" not in raw_name:
+        return None
+
+    desc_name = _get_desc_field(fields, "名称")
+    spec = _get_desc_field(fields, "规格")
+    install_form = (
+        _get_desc_field(fields, "安装形式")
+        or _get_desc_field(fields, "安装方式")
+        or _get_desc_field(fields, "安装方法")
+    )
+    lamp_text = f"{subject_name or ''} {desc_name or ''} {spec or ''}".strip()
+    if not lamp_text:
+        return None
+
+    if re.search(_SPECIAL_LAMP_PATTERN, lamp_text):
+        return None
+    if any(marker in f"{raw_name} {lamp_text}" for marker in ("应急", "疏散", "指示", "标志", "诱导", "消防")):
+        return None
+    if any(marker in lamp_text for marker in ("射灯", "筒灯", "面板灯", "格栅灯", "感应灯", "感应")):
+        return None
+
+    looks_like_linear_lamp = bool(
+        re.search(r"LED|荧光|直管|管灯|灯管|单管|双管|三管", lamp_text, flags=re.IGNORECASE)
+    )
+    if not looks_like_linear_lamp:
+        return None
+
+    tube = "单管"
+    combined = f"{lamp_text} {full_text or ''}"
+    if re.search(r"三管|3\s*管|3\s*[xX×*]\s*\d+\s*W", combined, flags=re.IGNORECASE):
+        tube = "三管"
+    elif re.search(r"双管|2\s*管|2\s*[xX×*]\s*\d+\s*W", combined, flags=re.IGNORECASE):
+        tube = "双管"
+
+    install_text = str(install_form or "")
+    if re.search(r"管吊|吊管|吊杆|吊装|吊链", install_text):
+        install = "吊链式" if "吊链" in install_text else "吊杆式"
+        ceiling = "有吊顶处" if "有吊顶" in install_text else "无吊顶处"
+        return f"{install}荧光灯安装 {ceiling} {tube}"
+
+    return None
+
+
+def _build_foundation_grounding_query(name: str, full_text: str) -> str | None:
+    """Map foundation grounding grids using structural rebar to the Beijing quota family."""
+    combined = f"{name or ''} {full_text or ''}"
+    if "基础接地网" not in combined:
+        return None
+    if "利用结构钢筋" not in combined and "利用基础钢筋" not in combined and "利用基础内钢筋" not in combined:
+        return None
+    return "均压环焊接"
+
+
+def _build_weak_current_box_query(
+    name: str,
+    full_text: str,
+    params: dict | None = None,
+    fields: dict | None = None,
+    specialty: str = "",
+) -> str | None:
+    """Map weak-current box bills to the Beijing C5 weak-current box family."""
+    combined = f"{name or ''} {full_text or ''}"
+    if "弱电箱" not in combined:
+        return None
+    if any(token in combined for token in ("弱电桥架", "弱电配线", "弱电软线")):
+        return None
+    if specialty and not str(specialty).startswith(("C5", "A5")):
+        return None
+    spec_text = _get_desc_field(fields or {}, "规格")
+    half_perimeter_mm = _extract_distribution_box_half_perimeter_mm(
+        combined,
+        spec_text,
+        params or {},
+    )
+    bucket = _bucket_distribution_box_half_perimeter(half_perimeter_mm)
+    if bucket:
+        return f"弱电箱体挂墙安装 半周长{bucket.replace('.0m', 'm')}以内"
+    return "弱电箱体挂墙安装 半周长1m以内"
+
+
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
                       bill_params: dict = None,
@@ -2849,9 +2976,9 @@ def build_quota_query(parser, name: str, description: str = "",
     if not usage:
         canonical_system = canonical_features.get("system", "")
         system_usage_map = {
-            "消防": "娑堥槻",
-            "给排水": "缁欐按",
-            "通风空调": "閫氶",
+            "消防": "消防",
+            "给排水": "给水",
+            "通风空调": "通风",
         }
         usage = system_usage_map.get(canonical_system, usage)
 
@@ -3028,6 +3155,20 @@ def build_quota_query(parser, name: str, description: str = "",
         )
     )
     if is_explicit_sleeve and not protect_primary_subject:
+        structured_sleeve_query = build_structured_sleeve_query(
+            name=name,
+            full_text=full_text,
+            dn=dn,
+            specialty=specialty,
+        )
+        if structured_sleeve_query:
+            return _finalize_query(
+                structured_sleeve_query,
+                specialty=specialty,
+                canonical_features=canonical_features,
+                context_prior=context_prior,
+                apply_synonyms=False,
+            )
         sleeve_parts = []
         if any(keyword in sleeve_text for keyword in ("堵洞", "封堵")):
             sleeve_parts.append("堵洞")
@@ -3519,6 +3660,44 @@ def build_quota_query(parser, name: str, description: str = "",
     apply_discovered_subject = _should_apply_discovered_subject(raw_input_name, fields, subject_info)
     if apply_discovered_subject:
         subject_name = str(subject_info.get("primary_subject") or subject_name)
+    weak_current_box_query = _build_weak_current_box_query(
+        subject_name or name,
+        full_text,
+        params=params,
+        fields=fields,
+        specialty=specialty,
+    )
+    if weak_current_box_query:
+        return _finalize_query(
+            weak_current_box_query,
+            specialty=specialty,
+            canonical_features=None,
+            context_prior=None,
+            apply_synonyms=False,
+        )
+    foundation_grounding_query = _build_foundation_grounding_query(subject_name or name, full_text)
+    if foundation_grounding_query:
+        return _finalize_query(
+            foundation_grounding_query,
+            specialty=specialty,
+            canonical_features=None,
+            context_prior=None,
+            apply_synonyms=False,
+        )
+    described_lamp_query = _build_described_lamp_query(
+        name=raw_input_name or name,
+        subject_name=subject_name,
+        full_text=full_text,
+        fields=fields,
+    )
+    if described_lamp_query:
+        return _finalize_query(
+            described_lamp_query,
+            specialty=specialty,
+            canonical_features=None,
+            context_prior=None,
+            apply_synonyms=False,
+        )
     normalized_name = _normalize_bill_name(subject_name)
     query_parts = list(subject_seed_terms[:2])
     for alias_term in quota_alias_seed_terms:
