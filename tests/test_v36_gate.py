@@ -822,6 +822,53 @@ def test_v36_diagnose_pure_search_populates_required_metrics():
         _cleanup(tmp_path)
 
 
+def test_v36_diagnose_pure_search_keeps_weak_shared_as_diagnostics_only():
+    tmp_path = _workspace()
+    latest = tmp_path / "output" / "benchmark_assets" / "ltr_v2_full_20260422" / "all_errors.jsonl"
+    latest.parent.mkdir(parents=True)
+    records = [
+        {
+            "sample_id": f"weak-r1-{index}",
+            "is_match": False,
+            "expected_quota_ids": [f"C4-4-{index}"],
+            "predicted_quota_id": f"C4-4-{index + 10}",
+            "error_stage": "retriever",
+            "miss_category": "recall_miss",
+            "all_candidate_ids": [f"C4-4-{index + 10}", f"C4-4-{index + 20}"],
+            "specialty": "C4",
+            "match_source": "search",
+        }
+        for index in range(1, 3)
+    ]
+    latest.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+    attr = tmp_path / "reports" / "attribution" / "ltr_v2_full_20260422.json"
+    attr.parent.mkdir(parents=True)
+    attr.write_text("{}", encoding="utf-8")
+    next_action = attr.parent / "global_repair_next_action.json"
+    next_action.write_text(
+        json.dumps(
+            {
+                "target_common_issue": {
+                    "cluster_id": "R1-weak",
+                    "bucket": "R1",
+                    "issue_key": "R1::recall_miss::c4::search::C4-4->C4-4",
+                    "commonality": "weak_shared",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = diagnose_pure_search(tmp_path, Path("reports/attribution/pure_search_diagnosis.json"))
+
+        assert result["bottleneck_classification"] == "candidate_recall_or_route_filter_loss"
+        assert result["target_common_issue"]["commonality"] == "weak_shared"
+        assert result["next_allowed_action"] == "improve_diagnostics"
+    finally:
+        _cleanup(tmp_path)
+
+
 def test_v36_validate_step4_manifest_derives_benchmark_pass():
     tmp_path = _workspace()
     before = tmp_path / "reports" / "attribution" / "before_summary.json"

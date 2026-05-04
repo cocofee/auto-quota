@@ -2214,7 +2214,11 @@ def diagnose_pure_search(root: Path | None, out_path: Path) -> dict[str, Any]:
     target_metrics = _summarize_pure_search_scope(target_pairs)
     all_wrong_metrics = _summarize_pure_search_scope(wrong_pairs)
     bottleneck = _classify_bottleneck(target_metrics)
-    next_allowed = "fix_r1_recall" if bottleneck == "candidate_recall_or_route_filter_loss" else "improve_diagnostics"
+    target_commonality = str(target.get("commonality") or "")
+    if target_commonality and target_commonality != "shared":
+        next_allowed = "improve_diagnostics"
+    else:
+        next_allowed = "fix_r1_recall" if bottleneck == "candidate_recall_or_route_filter_loss" else "improve_diagnostics"
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
