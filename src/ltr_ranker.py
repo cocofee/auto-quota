@@ -17,6 +17,7 @@ from src.constrained_ranker import apply_constrained_gated_ranker
 from src.ltr_feature_extractor import extract_group_features
 from src.ltr_model_cache import LTRModelCache
 from src.query_router import normalize_query_route
+from src.ranking_rules import apply_registered_ranking_guards
 from src.text_parser import parser as text_parser
 from src.utils import safe_float
 
@@ -4766,6 +4767,25 @@ class LTRRanker:
         challenger = ltr_ranked[0]
         incumbent_id = str(incumbent.get("quota_id", "") or "").strip()
         challenger_id = str(challenger.get("quota_id", "") or "").strip()
+        registered_blocked, registered_reason, registered_details, registered_ranked = apply_registered_ranking_guards(
+            item,
+            ltr_ranked,
+            context,
+        )
+        meta["registered_ranking_guards"] = {
+            "blocked": registered_blocked,
+            "reason": registered_reason,
+            "details": registered_details,
+        }
+        if registered_blocked:
+            rescued_id = str(registered_ranked[0].get("quota_id", "") or "") if registered_ranked else ""
+            registered_ranked[0]["_rank_score_source"] = "manual"
+            registered_ranked[0]["ltr_guard_blocked"] = True
+            meta["action"] = "blocked"
+            meta["reason"] = registered_reason
+            meta["final_top1_id"] = rescued_id
+            return registered_ranked, meta
+
         slab_blocked, slab_reason, slab_details, slab_ranked = cls._apply_precast_laminated_slab_rescue(
             item,
             ltr_ranked,
