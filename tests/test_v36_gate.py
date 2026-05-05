@@ -10,8 +10,10 @@ from tools.v36_gate import (
     build_preflight,
     choose_next_action,
     diagnose_pure_search,
+    goal_next,
     register_validation,
     release_check,
+    update_goal_progress,
     validate_step4_manifest,
 )
 
@@ -124,6 +126,52 @@ def _write_step4_summary(path: Path, *, total: int, correct: int, hit_rate: floa
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_goal_full_input(root: Path, *, total: int = 10, correct: int = 4, hit_rate: float = 40.0) -> None:
+    reports = root / "reports" / "attribution"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "global_repair_v36_full_latest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "s1",
+                    "is_match": False,
+                    "stored_ids": ["Q1"],
+                    "algo_id": "W1",
+                    "error_stage": "retriever",
+                    "miss_category": "recall_miss",
+                    "recall_rank": -1,
+                    "pre_ltr_top1_id": "W1",
+                    "post_ltr_top1_id": "W1",
+                    "post_final_top1_id": "W1",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (reports / "global_repair_v36_full_attribution.json").write_text(
+        json.dumps(
+            {
+                "profile": "full",
+                "total": total,
+                "correct_total": correct,
+                "wrong_total": total - correct,
+                "overall_hit_rate": hit_rate,
+                "recall_hit_rate": 70.0,
+                "counts": {"R1_召回未命中": total - correct},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_step4_summary(
+        reports / "global_repair_v36_full_summary.json",
+        total=total,
+        correct=correct,
+        hit_rate=hit_rate,
+        recall_miss_count=total - correct,
+    )
+
+
 def _valid_rollback_plan() -> dict:
     return {
         "rollback_type": "isolated_module_call",
@@ -131,6 +179,17 @@ def _valid_rollback_plan() -> dict:
         "affected_files": ["src/example.py"],
         "rollback_command_or_change": "remove isolated module call",
         "post_rollback_validation": ["pytest tests/test_example.py"],
+    }
+
+
+def _valid_goal_contribution() -> dict:
+    return {
+        "stage": "retriever",
+        "expected_benefit": "reduce_recall_miss",
+        "accuracy_budget": "targeted_slice_or_full_global_metric",
+        "speed_budget": "bounded_top_k",
+        "complexity_budget": "neutral",
+        "forbidden_shortcut_checked": True,
     }
 
 
@@ -151,6 +210,23 @@ def test_v36_preflight_selects_legacy_full_input():
     assert result["selected_input"]["status"] == "present"
     assert result["selected_input"]["input_freshness"] == "stale"
     assert result["p0_gate_status"] in {"pass", "warn"}
+
+
+def test_v36_preflight_reads_repo_seed_contract():
+    tmp_path = _workspace()
+    try:
+        _init_git_workspace(tmp_path)
+        _write_legacy_full_input(tmp_path)
+        seed_path = tmp_path / "eval" / "v36_seed.json"
+        seed_path.parent.mkdir(parents=True, exist_ok=True)
+        seed_path.write_text(json.dumps({"schema_version": "v36.seed.v1", "seed": "42"}), encoding="utf-8")
+
+        result = build_preflight(tmp_path)
+
+        assert result["version_tuple"]["seed"] == "42"
+        assert "seed" not in result["version_tuple_status"]["missing_fields"]
+    finally:
+        _cleanup(tmp_path)
 
 
 def test_v36_preflight_selects_full_asset_when_latest_missing():
@@ -324,6 +400,326 @@ def test_v36_choose_next_action_writes_contract_outputs():
         assert result["action"] == "improve_diagnostics"
         assert (tmp_path / "decision.csv").exists()
         assert json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))["full_validation_status"] == "pending"
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_update_goal_progress_from_full_summary():
+    tmp_path = _workspace()
+    summary = tmp_path / "reports" / "attribution" / "global_repair_v36_full_summary.json"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    summary.write_text(
+        json.dumps(
+            {
+                "json_overall": {
+                    "total": 4577,
+                    "correct": 1737,
+                    "hit_rate": 38.0,
+                    "error_stage_counts": {
+                        "retriever": 1706,
+                        "ranker": 720,
+                        "ltr_ranker": 276,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = update_goal_progress(
+            tmp_path,
+            Path("reports/attribution/global_repair_v36_full_summary.json"),
+            Path("reports/agent_state/v36_accuracy_goal_progress.json"),
+        )
+        persisted = json.loads(
+            (tmp_path / "reports" / "agent_state" / "v36_accuracy_goal_progress.json").read_text(encoding="utf-8")
+        )
+
+        assert result["current_hit_rate"] == 38.0
+        assert result["target_correct"] == 3433
+        assert result["needed_net_new_correct"] == 1696
+        assert result["milestone"] == "M1"
+        assert result["achieved_milestones"] == []
+        assert result["history_status"]["status"] == "insufficient_history"
+        assert len(result["history"]) == 1
+        assert result["largest_remaining_bottleneck"] == "retriever"
+        assert result["next_priority_hint"] == "prefer_recall_or_candidate_pool"
+        assert persisted["current_correct"] == 1737
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_update_goal_progress_detects_plateau_history():
+    tmp_path = _workspace()
+    summary = tmp_path / "reports" / "attribution" / "full_summary_3.json"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    summary.write_text(
+        json.dumps(
+            {
+                "json_overall": {
+                    "total": 1000,
+                    "correct": 382,
+                    "hit_rate": 38.2,
+                    "error_stage_counts": {"retriever": 50},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress = tmp_path / "reports" / "agent_state" / "v36_accuracy_goal_progress.json"
+    progress.parent.mkdir(parents=True, exist_ok=True)
+    progress.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_gate.v1",
+                "history": [
+                    {"summary_path": "reports/attribution/full_summary_1.json", "total": 1000, "correct": 380, "hit_rate": 38.0},
+                    {"summary_path": "reports/attribution/full_summary_2.json", "total": 1000, "correct": 381, "hit_rate": 38.1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = update_goal_progress(
+            tmp_path,
+            Path("reports/attribution/full_summary_3.json"),
+            Path("reports/agent_state/v36_accuracy_goal_progress.json"),
+        )
+
+        assert result["history_status"]["status"] == "plateau_block"
+        assert result["history_status"]["plateau_window_delta"] == 0.2
+        assert len(result["history"]) == 3
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_release_check_reports_accuracy_goal_milestone_gate():
+    tmp_path = _workspace()
+    reports = tmp_path / "reports" / "attribution"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "global_repair_v36_full_latest.json").write_text("[]", encoding="utf-8")
+    (reports / "global_repair_v36_full_attribution.json").write_text(
+        json.dumps({"overall_hit_rate": 46.0, "wrong_total": 0}),
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(json.dumps({"schema_version": "v36_gate.v1", "entries": []}), encoding="utf-8")
+    progress = tmp_path / "reports" / "agent_state" / "v36_accuracy_goal_progress.json"
+    progress.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_gate.v1",
+                "status": "present",
+                "target_hit_rate": 75.0,
+                "current_hit_rate": 46.0,
+                "current_correct": 46,
+                "target_correct": 75,
+                "needed_net_new_correct": 29,
+                "milestone": "M2",
+                "milestone_status": "in_progress",
+                "achieved_milestones": ["M1"],
+                "largest_remaining_bottleneck": "retriever",
+                "next_priority_hint": "prefer_recall_or_candidate_pool",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = release_check(tmp_path, Path("reports/agent_state/v36_pending_full_validation.json"))
+
+        assert result["release_gate_status"] == "pass"
+        assert result["accuracy_goal_gate_status"] == "milestone_pass"
+        assert result["accuracy_goal_progress"]["latest_achieved_milestone"] == "M1"
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_release_check_blocks_accuracy_goal_plateau():
+    tmp_path = _workspace()
+    reports = tmp_path / "reports" / "attribution"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "global_repair_v36_full_latest.json").write_text("[]", encoding="utf-8")
+    (reports / "global_repair_v36_full_attribution.json").write_text(
+        json.dumps({"overall_hit_rate": 38.2, "wrong_total": 0}),
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(json.dumps({"schema_version": "v36_gate.v1", "entries": []}), encoding="utf-8")
+    progress = tmp_path / "reports" / "agent_state" / "v36_accuracy_goal_progress.json"
+    progress.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_gate.v1",
+                "status": "present",
+                "target_hit_rate": 75.0,
+                "current_hit_rate": 38.2,
+                "needed_net_new_correct": 100,
+                "milestone": "M1",
+                "milestone_status": "in_progress",
+                "achieved_milestones": [],
+                "history_status": {
+                    "status": "plateau_block",
+                    "history_count": 3,
+                    "plateau_window_delta": 0.2,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = release_check(tmp_path, Path("reports/agent_state/v36_pending_full_validation.json"))
+
+        assert result["release_gate_status"] == "pass"
+        assert result["accuracy_goal_gate_status"] == "plateau_block"
+        assert result["next_allowed_action"] == "diagnostics_or_governance"
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_release_check_blocks_pending_limit_with_step5_action():
+    tmp_path = _workspace()
+    reports = tmp_path / "reports" / "attribution"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "global_repair_v36_full_latest.json").write_text("[]", encoding="utf-8")
+    (reports / "global_repair_v36_full_attribution.json").write_text(
+        json.dumps({"overall_hit_rate": 38.0, "wrong_total": 1}),
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_gate.v1",
+                "entries": [{"fix_id": f"fix-{index}", "status": "pending_full_validation"} for index in range(5)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = release_check(tmp_path, Path("reports/agent_state/v36_pending_full_validation.json"))
+
+        assert result["release_gate_status"] == "block"
+        assert result["pending_full_validation_summary"]["pending"] == 5
+        assert result["next_allowed_action"] == "step5_full_global"
+        assert any("reaches limit 5" in reason for reason in result["block_reasons"])
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_goal_next_allows_autonomous_next_action_and_updates_progress():
+    tmp_path = _workspace()
+    try:
+        _write_goal_full_input(tmp_path, total=10, correct=4, hit_rate=40.0)
+        ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(json.dumps({"schema_version": "v36_gate.v1", "entries": []}), encoding="utf-8")
+
+        result = goal_next(tmp_path, Path("reports/agent_state/v36_goal_next.json"))
+
+        assert result["command"] == "goal-next"
+        assert result["mode"] == "autonomous_goal"
+        assert result["autonomous_allowed"] is True
+        assert result["requires_user_confirmation"] is False
+        assert result["decision"] in {"improve_diagnostics", "fix_r1_recall"}
+        assert result["accuracy_goal_progress"]["current_hit_rate"] == 40.0
+        assert result["next_action_path"] == "reports/attribution/global_repair_next_action.json"
+        assert (tmp_path / "reports" / "agent_state" / "v36_goal_next.json").exists()
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_goal_next_routes_to_step5_when_pending_limit_reached():
+    tmp_path = _workspace()
+    try:
+        _write_goal_full_input(tmp_path)
+        ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v36_gate.v1",
+                    "entries": [{"fix_id": f"fix-{index}", "status": "pending_full_validation"} for index in range(5)],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = goal_next(tmp_path, Path("reports/agent_state/v36_goal_next.json"))
+
+        assert result["decision"] == "step5_full_global"
+        assert result["execution_class"] == "long_validation"
+        assert result["autonomy_budget"]["remaining_step4_before_step5"] == 0
+        assert result["next_action_path"] == ""
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_choose_next_action_includes_accuracy_goal_context():
+    tmp_path = _workspace()
+    progress = tmp_path / "reports" / "agent_state" / "v36_accuracy_goal_progress.json"
+    progress.parent.mkdir(parents=True, exist_ok=True)
+    progress.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36_gate.v1",
+                "status": "present",
+                "milestone": "M1",
+                "milestone_status": "in_progress",
+                "current_hit_rate": 38.0,
+                "target_hit_rate": 75.0,
+                "needed_net_new_correct": 1696,
+                "largest_remaining_bottleneck": "retriever",
+                "next_priority_hint": "prefer_recall_or_candidate_pool",
+            }
+        ),
+        encoding="utf-8",
+    )
+    latest = tmp_path / "latest.json"
+    latest.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "s1",
+                    "is_match": False,
+                    "stored_ids": ["Q1"],
+                    "algo_id": "W1",
+                    "error_stage": "retriever",
+                    "miss_category": "recall_miss",
+                    "recall_rank": -1,
+                    "pre_ltr_top1_id": "W1",
+                    "post_ltr_top1_id": "W1",
+                    "post_final_top1_id": "W1",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    attr = tmp_path / "attr.json"
+    attr.write_text("{}", encoding="utf-8")
+
+    try:
+        result = choose_next_action(
+            tmp_path,
+            latest,
+            attr,
+            Path("decision.csv"),
+            Path("summary.json"),
+            Path("next_action.json"),
+        )
+        next_action = json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))
+
+        assert result["accuracy_goal_context"]["milestone"] == "M1"
+        assert result["accuracy_goal_context"]["next_priority_hint"] == "prefer_recall_or_candidate_pool"
+        assert next_action["accuracy_goal_context"]["needed_net_new_correct"] == 1696
     finally:
         _cleanup(tmp_path)
 
@@ -650,6 +1046,164 @@ def test_v36_choose_next_action_does_not_skip_same_issue_different_explicit_repa
         _cleanup(tmp_path)
 
 
+def test_v36_choose_next_action_scopes_action_manifest_skip_to_repair_unit():
+    tmp_path = _workspace()
+    issue_key = "R2::confidence_miss::c4::search::C4-4->C4-4"
+    latest = tmp_path / "latest.json"
+    records = [
+        {
+            "sample_id": f"same-issue-{index}",
+            "is_match": False,
+            "stored_ids": [f"C4-4-{30 + index}"],
+            "algo_id": f"C4-4-{40 + index}",
+            "error_stage": "ltr_ranker",
+            "miss_category": "confidence_miss",
+            "recall_rank": 1,
+            "pre_ltr_top1_id": f"C4-4-{30 + index}",
+            "post_ltr_top1_id": f"C4-4-{40 + index}",
+            "post_final_top1_id": f"C4-4-{40 + index}",
+            "specialty": "C4",
+            "match_source": "search",
+        }
+        for index in range(1, 4)
+    ]
+    latest.write_text(json.dumps(records), encoding="utf-8")
+    attr = tmp_path / "attr.json"
+    attr.write_text("{}", encoding="utf-8")
+    manifest = tmp_path / "reports" / "attribution" / "v36_round_manifest_action_scoped.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "action": "fix_r2_ltr",
+                "partial_validation_status": "local_behavior_pass",
+                "target_common_issue": {
+                    "cluster_id": "R2-03",
+                    "issue_key": issue_key,
+                    "bucket": "R2",
+                    "commonality": "shared",
+                },
+                "repair_unit": {
+                    "cluster_id": "R2-03",
+                    "issue_key": issue_key,
+                    "mechanism": "c4_count_tier_guard",
+                },
+                "pending_full_validation": {
+                    "status": "not_registered",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = choose_next_action(
+            tmp_path,
+            latest,
+            attr,
+            Path("decision.csv"),
+            Path("summary.json"),
+            Path("next_action.json"),
+        )
+        next_action = json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))
+
+        assert result["action"] == "fix_r2_ltr"
+        assert result["target_common_issue"]["issue_key"] == issue_key
+        assert next_action["target_common_issue"]["issue_key"] == issue_key
+        assert next_action["repair_unit_id"] != next_action["skipped_repair_units"][0]["repair_unit_id"]
+        assert next_action["skipped_repair_units"][0]["selector_key_type"] == "repair_unit_id"
+        assert next_action["skipped_repair_units"][0]["owner_module"] == "src/ranking_rules"
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_choose_next_action_skips_open_data_review_issue():
+    tmp_path = _workspace()
+    data_issue_key = "R1::recall_miss::c10::search::C10-3->C10-3"
+    next_issue_key = "R2::confidence_miss::c4::search::C4-4->C4-4"
+    latest = tmp_path / "latest.json"
+    records = []
+    for index in range(1, 4):
+        records.append(
+            {
+                "sample_id": f"data-{index}",
+                "is_match": False,
+                "stored_ids": [f"C10-3-{index}"],
+                "algo_id": f"C10-3-{100 + index}",
+                "error_stage": "retriever",
+                "miss_category": "recall_miss",
+                "recall_rank": -1,
+                "pre_ltr_top1_id": f"C10-3-{100 + index}",
+                "post_ltr_top1_id": f"C10-3-{100 + index}",
+                "post_final_top1_id": f"C10-3-{100 + index}",
+                "specialty": "C10",
+                "match_source": "search",
+            }
+        )
+    for index in range(1, 4):
+        records.append(
+            {
+                "sample_id": f"next-{index}",
+                "is_match": False,
+                "stored_ids": [f"C4-4-{30 + index}"],
+                "algo_id": f"C4-4-{40 + index}",
+                "error_stage": "ltr_ranker",
+                "miss_category": "confidence_miss",
+                "recall_rank": 1,
+                "pre_ltr_top1_id": f"C4-4-{30 + index}",
+                "post_ltr_top1_id": f"C4-4-{40 + index}",
+                "post_final_top1_id": f"C4-4-{40 + index}",
+                "specialty": "C4",
+                "match_source": "search",
+            }
+        )
+    latest.write_text(json.dumps(records), encoding="utf-8")
+    attr = tmp_path / "attr.json"
+    attr.write_text("{}", encoding="utf-8")
+    queue = tmp_path / "reports" / "agent_state" / "v36_data_review_queue.json"
+    queue.parent.mkdir(parents=True)
+    queue.write_text(
+        json.dumps(
+            {
+                "schema_version": "v36.data_review_queue.v1",
+                "items": [
+                    {
+                        "sample_id": "data-1",
+                        "status": "open",
+                        "target_common_issue": {
+                            "cluster_id": "R1-02",
+                            "issue_key": data_issue_key,
+                            "bucket": "R1",
+                            "commonality": "shared",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = choose_next_action(
+            tmp_path,
+            latest,
+            attr,
+            Path("decision.csv"),
+            Path("summary.json"),
+            Path("next_action.json"),
+        )
+        next_action = json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))
+
+        assert result["action"] == "fix_r2_ltr"
+        assert result["target_common_issue"]["issue_key"] == next_issue_key
+        assert next_action["target_common_issue"]["issue_key"] == next_issue_key
+        assert next_action["skipped_repair_units"][0]["issue_key"] == data_issue_key
+        assert next_action["skipped_repair_units"][0]["reason"] == "data_review_open"
+        assert next_action["skipped_repair_units"][0]["selector_key_type"] == "issue_key"
+    finally:
+        _cleanup(tmp_path)
+
+
 def test_v36_choose_next_action_degrades_when_all_explicit_repair_units_skipped():
     tmp_path = _workspace()
     issue_key = "R1::recall_miss::c7::search::7-3->7-3"
@@ -885,6 +1439,7 @@ def test_v36_validate_step4_manifest_derives_benchmark_pass():
                     "policy_check_status": "pass",
                     "regression_golden_status": "pass",
                     "rollback_plan": _valid_rollback_plan(),
+                    "goal_contribution": _valid_goal_contribution(),
                     "before_after_delta": {
                         "before_artifact": "reports/attribution/before_summary.json",
                         "after_artifact": "reports/attribution/after_summary.json",
@@ -905,6 +1460,7 @@ def test_v36_validate_step4_manifest_derives_benchmark_pass():
         assert result["derived_partial_validation_status"] == "benchmark_pass"
         assert result["register_validation_allowed"] is True
         assert result["threshold_check"]["overall_pass"] is True
+        assert result["goal_contribution_integrity"]["status"] == "pass"
         assert result["agent_claim_mismatch"] is False
     finally:
         _cleanup(tmp_path)
@@ -1037,6 +1593,47 @@ def test_v36_validate_step4_manifest_refuses_benchmark_pass_without_rollback_pla
         _cleanup(tmp_path)
 
 
+def test_v36_validate_step4_manifest_refuses_benchmark_pass_without_goal_contribution():
+    tmp_path = _workspace()
+    before = tmp_path / "reports" / "attribution" / "before_summary.json"
+    after = tmp_path / "reports" / "attribution" / "after_summary.json"
+    manifest = tmp_path / "reports" / "attribution" / "v36_round_manifest_missing_goal.json"
+    try:
+        _write_step4_summary(before, total=10, correct=6, hit_rate=60.0, recall_miss_count=4)
+        _write_step4_summary(after, total=10, correct=8, hit_rate=80.0, recall_miss_count=2)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "partial_validation_status": "benchmark_pass",
+                    "policy_check_status": "pass",
+                    "regression_golden_status": "pass",
+                    "rollback_plan": _valid_rollback_plan(),
+                    "before_after_delta": {
+                        "before_artifact": "reports/attribution/before_summary.json",
+                        "after_artifact": "reports/attribution/after_summary.json",
+                        "slice_total": 10,
+                        "before_correct": 6,
+                        "after_correct": 8,
+                        "before_hit_rate": 60.0,
+                        "after_hit_rate": 80.0,
+                        "delta_hit_rate": 20.0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_step4_manifest(tmp_path, Path("reports/attribution/v36_round_manifest_missing_goal.json"))
+
+        assert result["derived_partial_validation_status"] == "benchmark_pass"
+        assert result["goal_contribution_integrity"]["status"] == "missing"
+        assert result["threshold_check"]["goal_contribution_pass"] is False
+        assert result["register_validation_allowed"] is False
+        assert result["validation_status"] == "fail"
+    finally:
+        _cleanup(tmp_path)
+
+
 def test_v36_register_validation_updates_ledger_and_blocks_release():
     tmp_path = _workspace()
     ledger = Path("reports/agent_state/v36_pending_full_validation.json")
@@ -1053,6 +1650,7 @@ def test_v36_register_validation_updates_ledger_and_blocks_release():
                 "regression_golden_status": "pass",
                 "policy_check_status": "pass",
                 "rollback_plan": _valid_rollback_plan(),
+                "goal_contribution": _valid_goal_contribution(),
                 "before_after_delta": {
                     "before_artifact": "reports/attribution/before_summary.json",
                     "after_artifact": "reports/attribution/after_summary.json",

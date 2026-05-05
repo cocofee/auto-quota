@@ -1,4 +1,4 @@
-# 全专业算法修复小步验收计划 v36.3
+# 全专业算法修复小步验收计划 v36.4
 
 ## 使用说明
 
@@ -37,7 +37,142 @@ python tools\v36_gate.py choose-next-action `
 
 规则：`preflight` 和 `choose-next-action` 是确定性判定，零 LLM 调用；Codex 只负责 Step 4 中被框定的代码修改和解释原因。`accuracy_impact`、`speed_impact`、`complexity_impact`、`threshold_check`、`partial_validation_status` 等可计算字段必须来自程序产物，不由 Codex 自判。
 
-本文档是后续全专业算法修复的唯一固定执行契约。V36.3 是合并版协议：阈值、题库版本、回归 golden、data review、回滚、执行者行为、trade-off、flaky 和发布门禁必须在同一条链路内判断，不再靠零散补丁解释。以后需要修复时，不再重新讨论方案是否完善，不再另开同类修复计划，直接从 Step 0 开始小步执行。
+本文档是后续全专业算法修复的唯一固定执行契约。V36.4 是合并版协议：阈值、题库版本、回归 golden、data review、回滚、执行者行为、trade-off、flaky、发布门禁和长期三约束目标必须在同一条链路内判断，不再靠零散补丁解释。以后需要修复时，不再重新讨论方案是否完善，不再另开同类修复计划，直接从 Step 0 开始小步执行。
+
+## 长期三约束目标
+
+V36.4 引入长期三约束目标，但不改变每轮小步修复纪律。长期目标只能影响 Step 2/Step 3 的优先级、Step 5 的里程碑验收和发布汇报；不得替代 `preflight`、`choose-next-action`、`validate-step4-manifest`、`release-check` 或每轮只修一个共性根因的约束。
+
+默认长期目标不是单一准确率，而是三约束同时成立：
+
+```text
+full/global top1 hit_rate >= 75.0%
+recall@20 不下降
+总耗时 P95 不超过冻结基线 110%（或合规 tradeoff）
+complexity_impact != increase
+release-check pass
+```
+
+当前可用参考基线来自 `reports/attribution/global_repair_v36_full_summary.json`：
+
+```json
+{
+  "baseline_source": "reports/attribution/global_repair_v36_full_summary.json",
+  "baseline_total": 4577,
+  "baseline_correct": 1737,
+  "baseline_hit_rate": 38.0,
+  "target_hit_rate": 75.0,
+  "target_correct": 3433,
+  "needed_net_new_correct": 1696,
+  "baseline_wrong_by_stage": {
+    "retriever": 1706,
+    "ranker": 720,
+    "ltr_ranker": 276,
+    "cgr_ranker": 100,
+    "final_validator": 38
+  }
+}
+```
+
+如果 Step 0 冻结了新的 full/global 基线，以上数字必须由新 `baseline_snapshot` 和 full/global summary 重新计算，不得继续沿用旧数字声称进度。
+
+长期目标分四个准确率里程碑推进，但每个里程碑都必须同时满足速度和复杂度门禁：
+
+- M1：`38.0% -> 45.0%`
+- M2：`45.0% -> 55.0%`
+- M3：`55.0% -> 65.0%`
+- M4：`65.0% -> 75.0%`
+
+每个里程碑必须通过 full/global 和 release gate；局部 slice、单省、单专题、smoke、dev profile 都不能宣布里程碑达成。若 hit_rate 达标但速度、复杂度、golden、holdout 或 pending 台账不通过，里程碑状态只能是 `blocked`，不得写 `pass`。
+
+长期目标的硬约束：
+
+- 不允许 benchmark 答案硬编码、样本 ID 直查、按公开试卷答案做特化返回。
+- 不允许为了追数字跳过数据质量隔离；expected 错、题库歧义、省份/专业错必须走 `review_data`。
+- 不允许用局部准确率替代 full/global top1。
+- 不允许只优化当前公开 benchmark 而牺牲 `eval/regression_golden/`、holdout 或真实用户清单稳定性。
+- 不允许为了召回全局扩大慢路径、重复向量检索、无缓存 KB 查找、无边界 prior 注入或全局提高 top_k。
+- 不允许为了准确率继续向 `ltr_ranker.py`、`query_builder.py`、`param_validator.py`、`match_engine.py`、`hybrid_searcher.py` 等巨型文件塞长分支；新逻辑必须优先进入 owner 小模块、表驱动规则或已有机制的窄桥接点。
+- 不允许用大量新增规则项换小幅准确率。若 `rule_entry_delta > 5` 或新增分支超过 P0-9 中立阈值，本轮默认不合格，除非 full/global 证明收益足以进入合规 trade-off。
+- 若准确率目标和速度、复杂度、回归门禁冲突，默认服从门禁；只有 `threshold_check.tradeoff_mode` 明确通过时才允许进入受控 trade-off。
+
+长期目标必须按算法全过程分桶推进。一次修复只能选择其中一个阶段，不得跨层揉成大 patch：
+
+```text
+parser / text normalizer / query router
+-> retriever / raw recall
+-> candidate merge / prior injection / route scope filter
+-> validator / family gate / param extraction
+-> ranker / LTR / CGR / confidence calibration
+-> picker / final validator / output
+```
+
+长期目标的方向优先级：
+
+```text
+R1 recall_miss / route / query / candidate pool
+> route/book/scope filter loss
+> rank_miss / param alignment / confidence calibration
+> LTR/CGR/final flip
+> data review
+> diagnostics only
+```
+
+原因：当前错误结构显示，仅修排序和后处理即使全部成功，也不足以达到 75%；必须优先降低 retriever 召回缺失和候选池覆盖问题。该优先级只约束选择器排序，不授权 agent 绕过 `target_common_issue` 或扩大 Step 4 patch。
+
+每轮修复必须填写 `goal_contribution`，用于说明本轮对长期目标的贡献和成本：
+
+```json
+{
+  "stage": "parser|router|retriever|candidate_pool|validator|ranker|post_rank|data_review|diagnostics",
+  "expected_benefit": "reduce_recall_miss|reduce_rank_miss|reduce_post_rank_flip|improve_diagnostics|isolate_data_issue",
+  "accuracy_budget": "targeted_slice_or_full_global_metric",
+  "speed_budget": "no_global_slow_path|cached|bounded_top_k|not_applicable",
+  "complexity_budget": "decrease|neutral",
+  "forbidden_shortcut_checked": true
+}
+```
+
+`goal_contribution` 不得写成“提高准确率”这种空话；必须指向一个阶段、一个错误类型和一个成本边界。缺失、`speed_budget` 越界、`complexity_budget` 不是 `decrease|neutral` 或未确认 `forbidden_shortcut_checked=true` 时，`validate-step4-manifest` 不得允许登记 `pending_full_validation`。
+
+每次 Step 5 full/global 后必须输出 `accuracy_goal_progress`：
+
+```json
+{
+  "target_hit_rate": 75.0,
+  "current_hit_rate": 0.0,
+  "current_correct": 0,
+  "target_correct": 0,
+  "needed_net_new_correct": 0,
+  "milestone": "M1|M2|M3|M4",
+  "milestone_status": "not_started|in_progress|pass|blocked",
+  "remaining_wrong_by_stage": {},
+  "largest_remaining_bottleneck": "",
+  "next_priority_hint": "",
+  "speed_goal": {
+    "overall_avg_time_sec": null,
+    "p95_pass": null,
+    "deep_rate": null
+  },
+  "complexity_goal": {
+    "latest_complexity_impact": "unknown",
+    "giant_file_added_branches": 0,
+    "rule_entry_delta": 0
+  }
+}
+```
+
+这些字段必须来自程序产物或 full/global summary；agent 不得手填或用自然语言替代。
+
+长期 GOAL 模式只允许长期保持目标和调度记忆，不允许替代 V36 的确定性判断。为避免长期执行跑偏，固定以下防漏洞规则：
+
+- 状态漂移防护：`accuracy_goal_progress` 只能由 `update-goal-progress` 从 full/global summary 生成；题库、知识库、算法版本或 seed 变化后，历史进度只能作为参考，必须重新冻结基线。
+- 过拟合防护：里程碑达成必须同时看 full/global、golden、holdout 或等价未见样本；公开 benchmark 局部上涨不得直接宣布长期目标推进。
+- pending 堆积防护：`pending_full_validation` 达到 5 个时，下一步必须 Step 5 full/global，不允许继续积累小修复。
+- 平台期防护：连续 3 次 full/global 净收益低于 1 个百分点时，下一步必须补诊断、重分桶或治理数据，不继续按旧方向堆补丁。
+- 回归防护：连续 full/global 退化时，下一步必须回滚、定位或重验基线，不允许用“长期目标还没到 75%”解释继续开发。
+- 速度债防护：任何召回、候选池或 prior 扩展都必须有 `speed_budget`，默认只能是缓存、短路或 bounded top-k，不得引入全局慢路径。
+- 复杂度债防护：`complexity_budget` 默认只能是 `decrease|neutral`；`increase` 不得进入普通长期 GOAL 推进，只能进入显式 trade-off 评审。
 
 ## 后续启动语
 
@@ -59,9 +194,16 @@ python tools\v36_gate.py choose-next-action `
 按 docs/global_repair_small_step_plan_v36.md 执行。优先使用我提供的 latest/attribution/audit 输入；如果不符合全专业输入标准，先停止并说明原因。
 ```
 
+如果你想明确把 75% 作为长期三约束目标，可以说：
+
+```text
+按 docs/global_repair_small_step_plan_v36.md 执行，并以 full/global top1 >=75.0%、recall@20 不下降、P95 不超过冻结基线 110%、complexity_impact 不增加作为长期 release 目标。不要跳过 V36 小步门禁；每轮只执行 v36_gate.py 给出的 next_action，优先服务召回、路由、query 和候选池这些高收益共性问题。
+```
+
 ## 总原则
 
 - 主线固定为全专业优先，不用浙江-only、单专题、smoke 替代全专业判断。
+- 长期三约束目标固定为 full/global top1 `>=75.0%`、recall@20 不下降、速度和复杂度不过门禁不计入推进；它只作为 release 级目标和选择优先级，不作为单轮 Step 4 验收条件。
 - 每一步只交付一个最小结果；验收失败、超时、口径不清，就停止汇报。
 - Step 0 到 Step 3 只做诊断工具和产物，不进入算法修复。
 - 不回滚、不整理无关脏工作区；只改目标工具、必要测试和本轮产物。
@@ -95,9 +237,9 @@ python tools\v36_gate.py choose-next-action `
 
 后续如果需要新增规则、诊断口径、执行记录或补充协议，必须直接更新本文档对应章节；不得再创建新的同类“算法修复计划”“下一步计划”“最终执行方案”。主材查价、OpenClaw 接入、知识库治理等非套定额算法主题，可以保留自己的专题文档，但不能替代本文档的套定额算法修复入口。
 
-## V36.3 完整闭环定义
+## V36.4 完整闭环定义
 
-V36.3 不再只是算法修复步骤，而是一套工程控制面。完整闭环固定为 13 个模块：
+V36.4 不再只是算法修复步骤，而是一套工程控制面。完整闭环固定为 14 个模块：
 
 1. 统一入口工具：`tools/v36_gate.py`。
 2. 基线冻结：记录算法版本、题库/知识库版本、命令、数据集、配置、准确率、耗时和失败分布。
@@ -112,6 +254,7 @@ V36.3 不再只是算法修复步骤，而是一套工程控制面。完整闭�
 11. 巨型文件 owner 边界：新逻辑进入小模块，不继续塞入巨型文件。
 12. 灰度/回滚机制：每个算法修复必须能单独关闭、撤销或定位。
 13. 发布后监控：跟踪 top1、人工改派率、validator 否决率、P95/P99、fallback 和异常率。
+14. 长期三约束目标：把 full/global top1 `>=75.0%`、recall@20、P95 和复杂度作为 release 级目标，用里程碑和 `accuracy_goal_progress` 跟踪，不作为单轮 Step 4 放行条件。
 
 缺少任一模块时，V36 只能进入诊断或治理补齐，不进入大范围算法修复。
 
@@ -132,10 +275,11 @@ V36.3 不再只是算法修复步骤，而是一套工程控制面。完整闭�
 | 11 owner 边界 | P0-2、P0-4、Owner 边界 | 先做 owner_boundary 治理 |
 | 12 灰度/回滚 | 回滚计划契约 | rollback 不合格则停止 |
 | 13 发布后监控 | release-check、flaky tracking | 补监控或治理 |
+| 14 长期三约束目标 | 长期三约束目标、Step 3、Step 5 | 补目标进度、重新冻结基线或优先高收益共性簇 |
 
 ## 判定权边界
 
-V36.3 的核心原则是：能由规则或指标判断的内容必须由确定性程序判断，不交给 LLM agent 自判。LLM 只能在被 `choose-next-action` 框定的修复空间内写代码和解释原因。
+V36.4 的核心原则是：能由规则或指标判断的内容必须由确定性程序判断，不交给 LLM agent 自判。LLM 只能在被 `choose-next-action` 框定的修复空间内写代码和解释原因。
 
 确定性程序负责，且不得调用 LLM：
 - Step 0：P0 preflight、输入选择、baseline/version tuple 比对。
@@ -259,11 +403,13 @@ V36 从本版开始先止血，再修算法。任何 Step 4 修复前必须通�
 目标：防止只提高一个样本，却牺牲全局准确率、运行速度和代码可维护性。
 
 - 每个算法修复必须同时回答三件事：准确率预期提升在哪里，速度影响在哪里，复杂度是否下降或至少不增加。
+- 长期 75% 目标不得放宽本闸门。准确率上涨但速度或复杂度失败时，不计入长期目标推进；`accuracy_goal_progress` 只能记录为 `blocked_by_speed_or_complexity` 或等待 Step 5/release-check 判定。
 - 优先修召回、路由、归一化、特征、约束、排序协议这类共性机制；不优先修单个定额文本。
 - 不允许为了一个小簇引入全局高成本扫描、重复向量检索、重复 LLM 调用或无缓存数据库循环。
 - 候选池、rerank、validator、knowledge prior 的执行顺序必须保持“先便宜后昂贵”：轻量规则和结构化特征在前，模型和外部服务在后。
 - 新增逻辑必须有明确适用范围和退出条件；不能让所有清单都多走一条昂贵路径。
 - 如果修复让核心路径变慢，必须说明补偿手段：缓存、短路、限流、top-k 限制、懒加载或只在目标簇触发。
+- 默认禁止的复杂化路径：全局提高 `HYBRID_TOP_K`、无条件启用 deep search、全局扩大 aux province 搜索、把 benchmark 错题转为大段 if/elif、继续堆 LTR rescue 链、批量新增同义词但无反例边界、把诊断字段当生产决策字段。
 
 复杂度量化固定为 `complexity_delta`，至少包含：
 - `file_loc_delta`：本轮触碰的每个代码文件新增行数、删除行数和净增行数。
@@ -347,6 +493,7 @@ V36 的长期入口固定为 `tools/v36_gate.py`。后续可以分阶段实现�
 python tools/v36_gate.py preflight
 python tools/v36_gate.py freeze-baseline
 python tools/v36_gate.py diagnose-pure-search
+python tools/v36_gate.py goal-next
 python tools/v36_gate.py choose-next-action
 python tools/v36_gate.py validate-step4-manifest --manifest reports/attribution/v36_round_manifest_xxx.json
 python tools/v36_gate.py register-validation --manifest reports/attribution/v36_round_manifest_xxx.json
@@ -357,6 +504,7 @@ python tools/v36_gate.py release-check
 - `preflight`：执行 P0 自动闸门，10 秒内完成，不跑 benchmark。
 - `freeze-baseline`：保存可比较基线和配置快照，不修改算法。
 - `diagnose-pure-search`：生成 `reports/attribution/pure_search_diagnosis.json`，只做诊断。
+- `goal-next`：GOAL 自动模式入口，串联 preflight、`update-goal-progress`、release gate 和 `choose-next-action`，输出本轮是否允许自主执行、唯一动作、自动预算和停止条件。
 - `choose-next-action`：根据 full/global 或纯搜索诊断选择唯一下一步。
 - `validate-step4-manifest`：读取 round manifest、before/after benchmark 产物、`policy_check_report` 和 `regression_golden_report`，程序复算 `partial_validation_status`、`accuracy_impact`、`speed_impact`、`threshold_check`、`rollback_integrity` 和 `agent_claim_mismatch`；若报告路径存在，以报告文件状态为准，不信任 manifest 手填状态；若声明或派生为 `benchmark_pass`，`rollback_plan` 缺失或不合法时不得登记 pending。
 - `register-validation`：只接受带 `--manifest` 的 `benchmark_pass` 修复，把它写入 `reports/agent_state/v36_pending_full_validation.json`，并同步维护 `eval/regression_golden/`；`local_behavior_pass`、`candidate_lifecycle_pass`、`blocked_by_next_stage` 不得登记为 pending。
@@ -364,7 +512,7 @@ python tools/v36_gate.py release-check
 
 入口工具不得承载算法业务逻辑；它只调度检查、诊断、登记和门禁。
 
-`tools/v36_gate.py` 的 6 个子命令必须完全确定性、可复现、零 LLM 调用。输入只能是仓库状态、JSON/CSV/benchmark 产物、git diff 和显式参数；输出只能是结构化 JSON。任何子命令需要“判断语义但没有字段”时，输出 `missing` 或 `requires_human_review`，不得让 LLM 补判断。
+`tools/v36_gate.py` 的子命令必须完全确定性、可复现、零 LLM 调用。输入只能是仓库状态、JSON/CSV/benchmark 产物、git diff 和显式参数；输出只能是结构化 JSON。任何子命令需要“判断语义但没有字段”时，输出 `missing` 或 `requires_human_review`，不得让 LLM 补判断。
 
 子命令最小输入输出 schema 固定如下，后续实现不得漂移：
 
@@ -381,6 +529,10 @@ python tools/v36_gate.py release-check
   "diagnose-pure-search": {
     "input": {"latest_path": "", "attribution_path": "", "filter_cluster_id": ""},
     "output": {"pure_search_metrics": {}, "metric_confidence": {}, "candidate_lifecycle_trace": {}}
+  },
+  "goal-next": {
+    "input": {"summary_path": "reports/attribution/global_repair_v36_full_summary.json", "pending_path": "reports/agent_state/v36_pending_full_validation.json"},
+    "output": {"mode": "autonomous_goal", "decision": "", "execution_class": "", "autonomous_allowed": false, "requires_user_confirmation": false, "autonomy_budget": {}, "agent_instruction": "", "stop_conditions": []}
   },
   "choose-next-action": {
     "input": {"summary_path": "", "data_review_queue_path": "reports/agent_state/v36_data_review_queue.json", "round_manifest_glob": "reports/attribution/v36_round_manifest_*.json", "pending_path": "reports/agent_state/v36_pending_full_validation.json"},
@@ -638,9 +790,29 @@ V36 固定拆成三条线：
 
 ## 自动化编排模型
 
-推荐先半自动、后自动。外层 orchestrator 只负责调度，不负责替代 gate 判定：
+GOAL 模式的默认入口是：
 
-1. `v36_gate.py preflight` 输出 P0 状态；`block` 时停止并交给人选择 P0 治理策略。
+```powershell
+python tools/v36_gate.py goal-next
+```
+
+GOAL 不再等人每轮确认“下一步是什么”。它每轮先读 `reports/agent_state/v36_goal_next.json`，只要 `autonomous_allowed=true` 且 `requires_user_confirmation=false`，Codex 可以按 `agent_instruction` 自主继续一轮。外层 orchestrator 只负责调度，不负责替代 gate 判定。
+
+自动允许的动作：
+- `execution_class=step4_small_patch`：按 `global_repair_next_action.json` 做一个最小 Step 4 修复，必须带 `goal_contribution`，通过 `validate-step4-manifest` 后才可登记 pending。
+- `execution_class=diagnostics`：只补诊断、data review 队列或纯搜索指标，不改算法主链路。
+- `execution_class=governance_patch`：只处理 preflight 指定的 P0 子目标，不扩大到无关清理。
+- `execution_class=long_validation`：pending 达到上限或里程碑需要验证时，进入 Step 5 full/global；完成后必须重新 `update-goal-progress` 和 `release-check`。
+
+仍需停下来汇报、不能自动越过的边界：
+- `requires_user_confirmation=true`。
+- release 发布、generated knowledge 发布、显式 trade-off、破坏性清理或需要人工裁定的数据语义。
+- `goal-next.stop_conditions` 中任一条件触发。
+- 连续平台期或回归后仍没有新的诊断字段能定位瓶颈。
+
+编排顺序固定为：
+
+1. `v36_gate.py goal-next` 输出自动决策；内部先执行 preflight，若 `block` 只允许 bounded P0 remediation，不进入算法修复。
 2. `v36_gate.py freeze-baseline` 或读取已冻结 baseline，确认 `version_tuple`。
 3. Step 1/Step 2 产物由确定性工具生成。
 4. `v36_gate.py choose-next-action` 生成唯一 action、owner 和 validation scope。
@@ -652,7 +824,7 @@ V36 固定拆成三条线：
 
 熔断规则：
 - 同一 cluster 连续 3 轮无推进，拉黑该 cluster，等待 Step 5 重新聚类。
-- `pending_full_validation` 累计达到 10 条，强制触发 Step 5。
+- `pending_full_validation` 累计达到 5 条，强制触发 Step 5。
 - 单轮生产 patch 超过 200 行，policy check 默认失败，除非人显式批准拆分计划。
 - generated knowledge 或 `version_tuple` 变化，全部旧 pending 作废并重跑 Step 5。
 - 每日自动修复轮数必须有上限；超过上限只允许诊断和汇报。
@@ -857,6 +1029,9 @@ R 桶映射：
 - 若某个 repair unit 在 manifest 中出现 `partial_validation_status=blocked_by_next_stage|candidate_lifecycle_pass|local_behavior_pass`，或出现 duplicate guard，或 `failed_slice_next_action.same_repair_unit=false`，该 repair unit 必须加入 `skipped_repair_units`；其中 `blocked_by_next_stage` 还必须加入 `blocked_next_stage_repair_units`，即使它没有登记为 `pending_full_validation`。
 - 若最大簇被 `skipped_repair_units` 跳过，选择器只能在剩余未处理共性簇中重新选择；如果剩余簇不足以授权算法修复，则输出 `improve_diagnostics`、`review_data` 或 `start_step5_full_validation` 对应的治理/诊断动作，不得重复输出同一个 R1/R2/R3/R4/R5 修复 action。
 - 若 `blocked_next_stage_repair_units` 指向下一阶段，例如 R1 已推进但被 R2/LTR 阻断，下一轮只能先输出下一阶段诊断授权或等待新的确定性 next_action；不得在当前 Step 4 继续叠加 R1 或 R2/LTR patch。
+- 为服务长期 75% 目标，选择器在多个 `shared` 簇都合格时应优先选择高收益路径：`R1 recall_miss / route / query / candidate pool` 优先于 `R2 rank_miss`，`R2 rank_miss` 优先于 `R3/R4/R5` 后处理翻错；但该优先级不得覆盖 `pending_full_validation`、`data_review`、`missing_field_rate`、`commonality` 和 owner 边界。
+- 当 R1 簇存在但 `pure_search_metrics`、`candidate_lifecycle_trace` 或 route/filter loss 字段不足以定位瓶颈时，下一步应优先 `improve_diagnostics`，不得为了 75% 目标直接扩大 top_k、增加全局 prior 或添加未证明的同义词。
+- 当排序/后处理簇的理论最大收益不足以推进当前里程碑时，Step 3 的 `reason` 应提示 `next_priority_hint=prefer_recall_or_candidate_pool`；该提示只用于下一轮选择器和人工判断，不授权当前 Step 4 跨层修改。
 - `missing_field_rate > 10%`：`improve_diagnostics`
 - `target_common_issue.commonality=weak_shared`：`improve_diagnostics`；只能在 `reason` 中记录归属桶和疑似修复方向，不得输出算法修复 action。
 - `target_common_issue.commonality=singleton_only`：若 bucket 为 R6 则 `review_data`，否则 `improve_diagnostics`；只能在 `reason` 中记录归属桶和疑似修复方向，不得输出算法修复 action。
@@ -888,6 +1063,7 @@ next_action 必须包含：
 - `selector_state_inputs`
 - `skipped_repair_units`
 - `blocked_next_stage_repair_units`
+- `accuracy_goal_context`：包含当前目标里程碑、同等条件下的主要剩余错误阶段和本轮选择为什么服务或暂不服务长期目标。
 - `data_review_queue_update`（仅 `action=review_data` 时必填）
 
 验收：
@@ -913,6 +1089,7 @@ next_action 必须包含：
 前置硬约束：
 - `p0_gate_status=block` 时不得进入 Step 4；必须先处理 P0 闸门。
 - 必须写明 `target_common_issue.cluster_id`、`issue_key`、`commonality`、共性根因假设和影响代码路径。
+- 必须写明 `goal_contribution`，说明本轮属于 parser/router/retriever/candidate_pool/validator/ranker/post_rank/data_review/diagnostics 哪一阶段，预期降低哪类错误，以及速度、复杂度预算。没有 `goal_contribution` 时不得登记 `pending_full_validation`。
 - `commonality=shared` 时，修复必须同时验证同簇至少 3 个样本；若同簇样本多于 5 个，默认验证 5 个代表样本并覆盖不同 `shared_signals` 或 expected/selected 示例。只改善代表样本、不改善同簇样本的改动视为过拟合，不能通过。
 - `commonality=weak_shared` 时，不能进入算法修复；允许动作只有补诊断字段、补聚类特征、扩大合格 full/global 输入、跑最小冒烟或等待 Step 5/full-global 生成更多同类样本。
 - `commonality=singleton_only` 时，不能按该单个定额打算法补丁；允许动作只有补诊断字段、补聚类特征、跑最小冒烟或等待 Step 5/full-global 生成更多同类样本。
@@ -929,6 +1106,7 @@ next_action 必须包含：
 - 必须由程序输出 `accuracy_impact`、`speed_impact`、`complexity_impact`。如果为了局部准确率引入全局慢路径，默认不通过。
 - 必须声明 `tradeoff_mode`，默认 `none`；任何 trade-off 都必须符合 P0-9 矩阵。
 - 必须遵守执行者行为闸门；不得把部分推进包装为 benchmark 通过。
+- 必须遵守三约束目标：若本轮为了提升准确率引入 `complexity_impact=increase`、全局慢路径或未设边界的 prior/search 扩展，则默认停止并压缩方案；不得把 75% 长期目标作为复杂化理由。
 
 允许范围：
 - `improve_diagnostics`：只补诊断字段。
@@ -949,7 +1127,7 @@ next_action 必须包含：
 7. 输出 `test_tier`、`changed`、`improved`、`regressed`、`policy_check_status`、`regression_golden_status`、代表样本变化，以及未跑 full/global 的理由。
 8. 纯搜索相关修复由程序输出 `pure_search_metrics`、`latency_budget`、`bottleneck_classification` 和修复前后指标变化。
 9. 程序输出 `accuracy_impact`、`speed_impact`、`complexity_impact`、`complexity_delta`。
-10. 程序输出 `threshold_check`：说明版本元组、top1、recall@20、总耗时 P95、阶段耗时 P95、复杂度、flaky 和 tradeoff 相对冻结基线是否通过；`recall@5` 和 `recall@100` 作为诊断字段同时保留但不作为 Step 4 硬门禁。
+10. 程序输出 `threshold_check`：说明版本元组、top1、recall@20、总耗时 P95、阶段耗时 P95、复杂度、flaky 和 tradeoff 相对冻结基线是否通过；`recall@5` 和 `recall@100` 作为诊断字段同时保留但不作为 Step 4 硬门禁。长期目标相关回合还必须说明本轮是否满足 `accuracy + speed + complexity` 三约束。
 11. 输出 `rollback_plan`：必须符合“回滚计划契约”，并明确 `rollback_type`、`rollback_target`、`affected_files`、`rollback_command_or_change` 和 `post_rollback_validation`。
 12. 程序输出 `p0_gate_after_patch`：确认未新增本地产物污染、巨型分支、secret、mojibake、全局状态写入或静默失败。
 13. 修复通过后，由 `v36_gate.py register-validation --manifest <round_manifest>` 把 validate 派生为 `benchmark_pass` 的修复写入 `reports/agent_state/v36_pending_full_validation.json`，状态为 `pending_full_validation`；下一步唯一动作是“回到 Step 0 开始下一轮小修复”或“启动 Step 5 full/global 验收”，二选一，不在当前回合继续叠加第二个算法修复。
@@ -1023,6 +1201,8 @@ python tools/run_benchmark.py `
 - `global_repair_v36_full_latest.json` 存在且是 full/global。
 - `global_repair_v36_full_attribution.json` 存在。
 - `global_repair_v36_full_summary.json` 存在。
+- `accuracy_goal_progress` 已根据本次 full/global summary 重新计算，包含当前 hit_rate、当前 correct、目标 correct、距离 75% 还差多少净正确样本、当前里程碑状态和剩余错误阶段分布。
+- 若本次 full/global 达到 M1/M2/M3/M4 任一里程碑，必须同时满足 release gate；未通过 release gate 时只能写 `milestone_status=blocked`，不得宣布里程碑达成。
 - full/global 没有不可接受回归，或回归已明确归因。
 - `reports/agent_state/v36_pending_full_validation.json` 中本批修复已逐条判定为 `full_validated`、`rejected` 或 `rollback_required`。
 - `reports/agent_state/v36_data_review_queue.json` 已检查；`data_review_open_rate > 5%` 时必须附 `data_revision_plan`，`> 10%` 且无计划时 release block。
@@ -1031,6 +1211,7 @@ python tools/run_benchmark.py `
 
 完成后：
 - 下一轮 Step 0 优先使用 Step 5 产物。
+- 下一轮 Step 2/Step 3 必须读取最新 `accuracy_goal_progress`；如果最大剩余瓶颈仍是 `retriever` 或候选池覆盖，则优先继续召回、路由、query 和 candidate pool 共性簇。
 - 通过后，把本批 `pending_full_validation` 标记为 `full_validated`。
 - 通过后，确认 `eval/regression_golden/manifest.json` 中本批 case 状态为 `active`，并记录对应 full/global 验收产物路径。
 - 通过后，记录最终发布的 `version_tuple` 和 generated knowledge digest。
@@ -1318,12 +1499,15 @@ full/global 未通过时，不得把本批 `pending_full_validation` 直接标�
 - speed_impact
 - complexity_impact
 - complexity_delta
+- goal_contribution（Step 4 必填；非 Step 4 可写 not_applicable）
 - threshold_check
 - tradeoff_mode
 - rollback_plan
 - release_gate_status
+- accuracy_goal_progress（Step 5/full-global 或 release 回合必填；普通 Step 4 可写 not_run）
 - pending_full_validation_summary
 - selector_state_inputs（Step 3 必填）
+- accuracy_goal_context（Step 3 必填；普通非选择器回合可写 not_applicable）
 - skipped_repair_units（Step 3 必填；无则写空数组）
 - blocked_next_stage_repair_units（Step 3 必填；无则写空数组）
 - policy_check_status

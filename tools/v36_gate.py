@@ -2,6 +2,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -64,6 +65,45 @@ SECRET_PATTERNS = (
 GENERATED_KNOWLEDGE_PREFIX = "data/province_plugins/generated/"
 DATA_REVIEW_QUEUE_PATH = Path("reports/agent_state/v36_data_review_queue.json")
 FLAKY_TRACKING_PATH = Path("reports/agent_state/flaky_tracking.json")
+V36_SEED_PATH = Path("eval/v36_seed.json")
+ACCURACY_GOAL_PROGRESS_PATH = Path("reports/agent_state/v36_accuracy_goal_progress.json")
+ACCURACY_GOAL_TARGET_HIT_RATE = 75.0
+ACCURACY_GOAL_HISTORY_LIMIT = 20
+ACCURACY_GOAL_PLATEAU_WINDOW = 3
+ACCURACY_GOAL_PLATEAU_MIN_DELTA = 1.0
+PENDING_FULL_VALIDATION_LIMIT = 5
+GOAL_NEXT_PATH = Path("reports/agent_state/v36_goal_next.json")
+ACCURACY_GOAL_MILESTONES = (
+    ("M1", 45.0),
+    ("M2", 55.0),
+    ("M3", 65.0),
+    ("M4", 75.0),
+)
+GOAL_CONTRIBUTION_STAGES = {
+    "parser",
+    "router",
+    "retriever",
+    "candidate_pool",
+    "validator",
+    "ranker",
+    "post_rank",
+    "data_review",
+    "diagnostics",
+}
+GOAL_CONTRIBUTION_BENEFITS = {
+    "reduce_recall_miss",
+    "reduce_rank_miss",
+    "reduce_post_rank_flip",
+    "improve_diagnostics",
+    "isolate_data_issue",
+}
+GOAL_CONTRIBUTION_SPEED_BUDGETS = {
+    "no_global_slow_path",
+    "cached",
+    "bounded_top_k",
+    "not_applicable",
+}
+GOAL_CONTRIBUTION_COMPLEXITY_BUDGETS = {"decrease", "neutral"}
 CODE_HEALTH_SOURCE_PREFIXES = ("src/", "tools/", "web/")
 CODE_HEALTH_PARTIAL_STATUSES = {"failed", "local_behavior_pass", "candidate_lifecycle_pass", "blocked_by_next_stage"}
 REDUNDANT_FILE_PATTERNS = (
@@ -349,12 +389,7 @@ def _version_tuple(root: Path) -> dict[str, Any]:
     vector_paths = list((root / "db" / "chroma").glob("**/*.sqlite3"))
     embedding_source = "|".join(sorted({_rel(root, path.parent) for path in vector_paths[:50]}))
     model_profile_hash = _sha256_text(embedding_source) if embedding_source else ""
-    seed = ""
-    for name in ("V36_SEED", "BENCHMARK_SEED", "PYTHONHASHSEED"):
-        value = str(os.environ.get(name, "")).strip()
-        if value:
-            seed = value
-            break
+    seed = _v36_seed(root)
     return {
         "algorithm_commit": commit.strip() if code == 0 else "",
         "knowledge_digest_hash": _file_content_hash(root, knowledge_paths),
@@ -365,6 +400,21 @@ def _version_tuple(root: Path) -> dict[str, Any]:
         "model_profile_hash": model_profile_hash,
         "seed": seed,
     }
+
+
+def _v36_seed(root: Path) -> str:
+    for name in ("V36_SEED", "BENCHMARK_SEED", "PYTHONHASHSEED"):
+        value = str(os.environ.get(name, "")).strip()
+        if value:
+            return value
+    seed_path = root / V36_SEED_PATH
+    if seed_path.exists():
+        payload = _read_json_file(seed_path)
+        for key in ("seed", "default_seed"):
+            value = str(payload.get(key, "") or "").strip()
+            if value:
+                return value
+    return ""
 
 
 def _version_tuple_status(version: dict[str, Any]) -> dict[str, Any]:
@@ -1034,6 +1084,10 @@ def _repair_unit_owner_module(payload: dict[str, Any]) -> str:
         return str(scope["owner_module"])
     if payload.get("owner_module"):
         return str(payload["owner_module"])
+    if payload.get("action"):
+        owner = _owner_for_action(str(payload["action"]))
+        if owner:
+            return owner
     return ""
 
 
@@ -1076,10 +1130,9 @@ def _selector_entry(
     issue_key = _repair_unit_issue_key(payload)
     if not issue_key:
         return None
-    explicit_id = _explicit_repair_unit_id(payload)
     repair_unit_id = _repair_unit_id(payload)
-    key_type = "issue_key" if force_issue_key_scope or not explicit_id else "repair_unit_id"
-    key = issue_key if key_type == "issue_key" else explicit_id
+    key_type = "issue_key" if force_issue_key_scope or not repair_unit_id else "repair_unit_id"
+    key = issue_key if key_type == "issue_key" else repair_unit_id
     entry = {
         "issue_key": issue_key,
         "repair_unit_id": repair_unit_id,
@@ -1117,6 +1170,7 @@ def _selector_state_units(
             payload=entry,
             reason="pending_full_validation",
             source_manifest=_rel(root, ledger_path),
+            force_issue_key_scope=True,
         )
         if not selector:
             continue
@@ -1125,6 +1179,23 @@ def _selector_state_units(
             skipped_by_id[key] = value
         else:
             skipped[key] = value
+
+    data_review_path = root / DATA_REVIEW_QUEUE_PATH
+    data_review = _read_json_file(data_review_path)
+    for item in _list_json_items(data_review):
+        if item.get("status") != "open":
+            continue
+        selector = _selector_entry(
+            payload=item,
+            reason="data_review_open",
+            source_manifest=_rel(root, data_review_path),
+            next_stage="data_review",
+            force_issue_key_scope=True,
+        )
+        if not selector:
+            continue
+        key, value = selector
+        skipped[key] = value
 
     manifest_dir = root / "reports" / "attribution"
     if not manifest_dir.exists():
@@ -1136,11 +1207,12 @@ def _selector_state_units(
         full_status = str(manifest.get("full_validation_status") or "")
         pending = manifest.get("pending_full_validation")
         pending_status = pending.get("status") if isinstance(pending, dict) else ""
-        if full_status == "pending" or pending_status == "pending_full_validation":
+        if pending_status == "pending_full_validation":
             selector = _selector_entry(
                 payload=manifest,
                 reason="pending_full_validation",
                 source_manifest=_rel(root, path),
+                force_issue_key_scope=True,
             )
             if selector:
                 key, value = selector
@@ -1151,13 +1223,31 @@ def _selector_state_units(
         failed_next = manifest.get("failed_slice_next_action")
         partial_status = str(manifest.get("partial_validation_status") or "")
         failed_next_same_unit = failed_next.get("same_repair_unit") if isinstance(failed_next, dict) else None
+        next_failing_stage = failed_next.get("next_failing_stage", "") if isinstance(failed_next, dict) else ""
+        failed_next_action = failed_next.get("action", "") if isinstance(failed_next, dict) else ""
+        data_review_stage = (
+            next_failing_stage == "data_review"
+            or failed_next_action == "convert_to_data_review"
+            or manifest.get("action") == "review_data"
+        )
+        if partial_status == "failed" and data_review_stage:
+            selector = _selector_entry(
+                payload=manifest,
+                reason="data_review_open",
+                source_manifest=_rel(root, path),
+                next_stage="data_review",
+                force_issue_key_scope=True,
+            )
+            if selector:
+                key, value = selector
+                skipped[key] = value
         should_skip_partial = partial_status in partial_skip_statuses or failed_next_same_unit is False
         if should_skip_partial:
             selector = _selector_entry(
                 payload=manifest,
                 reason=partial_status or "failed_slice_next_action_same_repair_unit_false",
                 source_manifest=_rel(root, path),
-                next_stage=failed_next.get("next_failing_stage", "") if isinstance(failed_next, dict) else "",
+                next_stage=next_failing_stage,
             )
             if selector:
                 key, value = selector
@@ -1631,6 +1721,7 @@ def choose_next_action(
         latest_path=latest_abs,
         attribution_path=attribution_abs,
     )
+    next_action["accuracy_goal_context"] = _accuracy_goal_context(root)
 
     decision_abs = (root / decision_table_path).resolve() if not decision_table_path.is_absolute() else decision_table_path
     decision_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -1656,6 +1747,7 @@ def choose_next_action(
         "selector_state_inputs": next_action["selector_state_inputs"],
         "skipped_repair_units": next_action["skipped_repair_units"],
         "blocked_next_stage_repair_units": next_action["blocked_next_stage_repair_units"],
+        "accuracy_goal_context": next_action["accuracy_goal_context"],
         "deterministic": True,
         "llm_used": False,
     }
@@ -1678,6 +1770,322 @@ def _numbers_match(left: Any, right: Any, *, tolerance: float = 0.05) -> bool:
     if left_num is None or right_num is None:
         return False
     return abs(left_num - right_num) <= tolerance
+
+
+def _summary_overall(summary_payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(summary_payload, dict):
+        return {}
+    overall = summary_payload.get("json_overall")
+    if isinstance(overall, dict):
+        return overall
+    overall = summary_payload.get("overall")
+    if isinstance(overall, dict):
+        return overall
+    return summary_payload
+
+
+def _int_metric(payload: dict[str, Any], *names: str) -> int:
+    for name in names:
+        number = _as_number(payload.get(name))
+        if number is not None:
+            return int(round(number))
+    return 0
+
+
+def _float_metric(payload: dict[str, Any], *names: str) -> float:
+    for name in names:
+        number = _as_number(payload.get(name))
+        if number is not None:
+            return float(number)
+    return 0.0
+
+
+def _remaining_wrong_by_stage(overall: dict[str, Any]) -> dict[str, int]:
+    raw_counts = overall.get("error_stage_counts")
+    if not isinstance(raw_counts, dict):
+        raw_counts = overall.get("stage_counts")
+    if not isinstance(raw_counts, dict):
+        raw_counts = {}
+    result: dict[str, int] = {}
+    for key, value in raw_counts.items():
+        number = _as_number(value)
+        if number is not None:
+            result[str(key)] = int(round(number))
+    if result:
+        return result
+    fallback = {
+        "retriever": overall.get("recall_miss_count"),
+        "ranker": overall.get("rank_miss_count"),
+        "post_rank": overall.get("post_rank_miss_count") or overall.get("confidence_miss_count"),
+    }
+    for key, value in fallback.items():
+        number = _as_number(value)
+        if number is not None and number > 0:
+            result[key] = int(round(number))
+    return result
+
+
+def _largest_bottleneck(remaining_wrong_by_stage: dict[str, int]) -> str:
+    if not remaining_wrong_by_stage:
+        return ""
+    return max(remaining_wrong_by_stage.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+def _goal_priority_hint(bottleneck: str) -> str:
+    normalized = str(bottleneck or "").strip().lower()
+    if normalized in {"retriever", "recall", "recall_miss", "route", "candidate_pool"}:
+        return "prefer_recall_or_candidate_pool"
+    if normalized in {"ranker", "rank", "rank_miss"}:
+        return "prefer_rank_param_alignment"
+    if normalized in {"ltr_ranker", "cgr_ranker", "final_validator", "post_rank"}:
+        return "prefer_post_rank_guard"
+    if normalized:
+        return "inspect_largest_bottleneck"
+    return "missing_full_global_progress"
+
+
+def _milestone_for_rate(hit_rate: float) -> tuple[str, str, float]:
+    for name, threshold in ACCURACY_GOAL_MILESTONES:
+        if hit_rate < threshold:
+            return name, "in_progress", threshold
+    return ACCURACY_GOAL_MILESTONES[-1][0], "pass", ACCURACY_GOAL_MILESTONES[-1][1]
+
+
+def _achieved_milestones(hit_rate: float) -> list[str]:
+    return [name for name, threshold in ACCURACY_GOAL_MILESTONES if hit_rate >= threshold]
+
+
+def _goal_history_entry(
+    *,
+    generated_at: str,
+    summary_path: str,
+    total: int,
+    correct: int,
+    hit_rate: float,
+    remaining_wrong_by_stage: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "generated_at": generated_at,
+        "summary_path": summary_path,
+        "total": total,
+        "correct": correct,
+        "hit_rate": hit_rate,
+        "remaining_wrong_by_stage": remaining_wrong_by_stage,
+    }
+
+
+def _append_goal_history(previous: dict[str, Any], entry: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_history = previous.get("history")
+    history = [item for item in raw_history if isinstance(item, dict)] if isinstance(raw_history, list) else []
+    comparable_keys = ("summary_path", "total", "correct", "hit_rate")
+    if history and all(history[-1].get(key) == entry.get(key) for key in comparable_keys):
+        history[-1] = entry
+    else:
+        history.append(entry)
+    return history[-ACCURACY_GOAL_HISTORY_LIMIT:]
+
+
+def _goal_history_status(history: list[dict[str, Any]]) -> dict[str, Any]:
+    rates = [_as_number(item.get("hit_rate")) for item in history if isinstance(item, dict)]
+    rates = [float(rate) for rate in rates if rate is not None]
+    if len(rates) < 2:
+        return {
+            "status": "insufficient_history",
+            "history_count": len(rates),
+            "plateau_window": ACCURACY_GOAL_PLATEAU_WINDOW,
+            "plateau_min_delta": ACCURACY_GOAL_PLATEAU_MIN_DELTA,
+        }
+    latest_delta = round(rates[-1] - rates[-2], 4)
+    regression = len(rates) >= 3 and rates[-1] < rates[-2] and rates[-2] < rates[-3]
+    plateau = False
+    plateau_delta = None
+    if len(rates) >= ACCURACY_GOAL_PLATEAU_WINDOW:
+        window = rates[-ACCURACY_GOAL_PLATEAU_WINDOW:]
+        plateau_delta = round(window[-1] - window[0], 4)
+        plateau = plateau_delta < ACCURACY_GOAL_PLATEAU_MIN_DELTA
+    if regression:
+        status = "regression_block"
+    elif plateau:
+        status = "plateau_block"
+    else:
+        status = "progressing"
+    return {
+        "status": status,
+        "history_count": len(rates),
+        "latest_delta_hit_rate": latest_delta,
+        "plateau_window": ACCURACY_GOAL_PLATEAU_WINDOW,
+        "plateau_min_delta": ACCURACY_GOAL_PLATEAU_MIN_DELTA,
+        "plateau_window_delta": plateau_delta,
+    }
+
+
+def _load_accuracy_goal_progress(root: Path) -> dict[str, Any]:
+    path = root / ACCURACY_GOAL_PROGRESS_PATH
+    if not path.exists():
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "status": "missing",
+            "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+            "progress_path": ACCURACY_GOAL_PROGRESS_PATH.as_posix(),
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "status": "invalid",
+            "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+            "progress_path": ACCURACY_GOAL_PROGRESS_PATH.as_posix(),
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "status": "invalid",
+            "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+            "progress_path": ACCURACY_GOAL_PROGRESS_PATH.as_posix(),
+        }
+    payload.setdefault("status", "present")
+    payload.setdefault("progress_path", ACCURACY_GOAL_PROGRESS_PATH.as_posix())
+    return payload
+
+
+def _accuracy_goal_context(root: Path) -> dict[str, Any]:
+    progress = _load_accuracy_goal_progress(root)
+    bottleneck = str(progress.get("largest_remaining_bottleneck") or "")
+    return {
+        "status": progress.get("status", "present"),
+        "progress_path": progress.get("progress_path", ACCURACY_GOAL_PROGRESS_PATH.as_posix()),
+        "milestone": progress.get("milestone", ""),
+        "milestone_status": progress.get("milestone_status", ""),
+        "current_hit_rate": progress.get("current_hit_rate"),
+        "target_hit_rate": progress.get("target_hit_rate", ACCURACY_GOAL_TARGET_HIT_RATE),
+        "needed_net_new_correct": progress.get("needed_net_new_correct"),
+        "largest_remaining_bottleneck": bottleneck,
+        "next_priority_hint": progress.get("next_priority_hint") or _goal_priority_hint(bottleneck),
+    }
+
+
+def update_goal_progress(root: Path | None, summary_path: Path, out_path: Path) -> dict[str, Any]:
+    root = _repo_root(root)
+    summary_abs = (root / summary_path).resolve() if not summary_path.is_absolute() else summary_path
+    if not summary_abs.exists():
+        raise SystemExit(f"summary not found: {summary_path}")
+    try:
+        summary_payload = json.loads(summary_abs.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"summary is not valid JSON: {summary_path}") from exc
+    overall = _summary_overall(summary_payload)
+    total = _int_metric(overall, "total", "json_total")
+    correct = _int_metric(overall, "correct", "correct_total")
+    hit_rate = _float_metric(overall, "hit_rate", "overall_hit_rate")
+    if not hit_rate and total:
+        hit_rate = round(correct / max(total, 1) * 100, 1)
+    target_correct = int(math.ceil(total * ACCURACY_GOAL_TARGET_HIT_RATE / 100.0)) if total else 0
+    remaining_wrong = _remaining_wrong_by_stage(overall)
+    bottleneck = _largest_bottleneck(remaining_wrong)
+    milestone, milestone_status, milestone_threshold = _milestone_for_rate(hit_rate)
+
+    out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+    previous: dict[str, Any] = {}
+    if out_abs.exists():
+        try:
+            loaded = json.loads(out_abs.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                previous = loaded
+        except (json.JSONDecodeError, OSError):
+            previous = {}
+
+    baseline_total = _int_metric(previous, "baseline_total") or total
+    baseline_correct = _int_metric(previous, "baseline_correct") or correct
+    baseline_hit_rate = _float_metric(previous, "baseline_hit_rate") or hit_rate
+
+    generated_at = _now_iso()
+    summary_rel = _rel(root, summary_abs)
+    history_entry = _goal_history_entry(
+        generated_at=generated_at,
+        summary_path=summary_rel,
+        total=total,
+        correct=correct,
+        hit_rate=hit_rate,
+        remaining_wrong_by_stage=remaining_wrong,
+    )
+    history = _append_goal_history(previous, history_entry)
+    history_status = _goal_history_status(history)
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "command": "update-goal-progress",
+        "status": "present",
+        "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+        "baseline_total": baseline_total,
+        "baseline_correct": baseline_correct,
+        "baseline_hit_rate": baseline_hit_rate,
+        "current_total": total,
+        "current_correct": correct,
+        "current_hit_rate": hit_rate,
+        "target_correct": target_correct,
+        "needed_net_new_correct": max(target_correct - correct, 0),
+        "milestone": milestone,
+        "milestone_threshold": milestone_threshold,
+        "milestone_status": milestone_status,
+        "achieved_milestones": _achieved_milestones(hit_rate),
+        "remaining_wrong_by_stage": remaining_wrong,
+        "largest_remaining_bottleneck": bottleneck,
+        "next_priority_hint": _goal_priority_hint(bottleneck),
+        "history": history,
+        "history_status": history_status,
+        "last_full_global_summary": summary_rel,
+        "progress_path": _rel(root, out_abs),
+        "notes": [
+            "Progress is informational until release-check confirms release gates.",
+            "If benchmark scope or version tuple changes, target_correct is recalculated from current_total.",
+        ],
+    }
+    _write_json(out_abs, payload)
+    return payload
+
+
+def _accuracy_goal_release_gate(root: Path, release_gate_status: str) -> dict[str, Any]:
+    progress = _load_accuracy_goal_progress(root)
+    status = str(progress.get("status") or "")
+    if status in {"missing", "invalid"}:
+        return {
+            "status": "missing_progress" if status == "missing" else "invalid_progress",
+            "progress_path": progress.get("progress_path", ACCURACY_GOAL_PROGRESS_PATH.as_posix()),
+            "release_gate_required": "update-goal-progress",
+            "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+        }
+    achieved = list(progress.get("achieved_milestones") or [])
+    current_hit_rate = _float_metric(progress, "current_hit_rate")
+    history_status = progress.get("history_status") if isinstance(progress.get("history_status"), dict) else {}
+    history_gate_status = str(history_status.get("status") or "")
+    if history_gate_status in {"plateau_block", "regression_block"}:
+        gate_status = history_gate_status
+    elif release_gate_status != "pass":
+        gate_status = "blocked_by_release_gate"
+    elif current_hit_rate >= ACCURACY_GOAL_TARGET_HIT_RATE:
+        gate_status = "target_pass"
+    elif achieved:
+        gate_status = "milestone_pass"
+    else:
+        gate_status = "in_progress"
+    return {
+        "status": gate_status,
+        "progress_path": progress.get("progress_path", ACCURACY_GOAL_PROGRESS_PATH.as_posix()),
+        "target_hit_rate": progress.get("target_hit_rate", ACCURACY_GOAL_TARGET_HIT_RATE),
+        "current_hit_rate": progress.get("current_hit_rate"),
+        "current_correct": progress.get("current_correct"),
+        "target_correct": progress.get("target_correct"),
+        "needed_net_new_correct": progress.get("needed_net_new_correct"),
+        "milestone": progress.get("milestone", ""),
+        "milestone_status": progress.get("milestone_status", ""),
+        "achieved_milestones": achieved,
+        "latest_achieved_milestone": achieved[-1] if achieved else "",
+        "largest_remaining_bottleneck": progress.get("largest_remaining_bottleneck", ""),
+        "next_priority_hint": progress.get("next_priority_hint", ""),
+        "history_status": history_status,
+    }
 
 
 def _summary_metrics(root: Path, artifact_path: str) -> dict[str, Any]:
@@ -1879,6 +2287,51 @@ def _derive_step4_status(
     return "failed"
 
 
+def _goal_contribution_integrity(manifest: dict[str, Any], *, required: bool) -> dict[str, Any]:
+    contribution = manifest.get("goal_contribution")
+    if not isinstance(contribution, dict):
+        return {
+            "status": "missing" if required else "not_required",
+            "required": required,
+            "failures": [{"field": "goal_contribution", "reason": "missing"}] if required else [],
+            "goal_contribution": contribution if contribution is not None else "missing",
+        }
+
+    failures: list[dict[str, Any]] = []
+
+    stage = str(contribution.get("stage") or "")
+    if stage not in GOAL_CONTRIBUTION_STAGES:
+        failures.append({"field": "goal_contribution.stage", "reason": "invalid_or_missing", "value": stage})
+
+    benefit = str(contribution.get("expected_benefit") or "")
+    if benefit not in GOAL_CONTRIBUTION_BENEFITS:
+        failures.append({"field": "goal_contribution.expected_benefit", "reason": "invalid_or_missing", "value": benefit})
+
+    accuracy_budget = contribution.get("accuracy_budget")
+    if not isinstance(accuracy_budget, str) or not accuracy_budget.strip():
+        failures.append({"field": "goal_contribution.accuracy_budget", "reason": "missing"})
+
+    speed_budget = str(contribution.get("speed_budget") or "")
+    if speed_budget not in GOAL_CONTRIBUTION_SPEED_BUDGETS:
+        failures.append({"field": "goal_contribution.speed_budget", "reason": "invalid_or_missing", "value": speed_budget})
+
+    complexity_budget = str(contribution.get("complexity_budget") or "")
+    if complexity_budget not in GOAL_CONTRIBUTION_COMPLEXITY_BUDGETS:
+        failures.append(
+            {"field": "goal_contribution.complexity_budget", "reason": "invalid_or_complexity_increase", "value": complexity_budget}
+        )
+
+    if contribution.get("forbidden_shortcut_checked") is not True:
+        failures.append({"field": "goal_contribution.forbidden_shortcut_checked", "reason": "must_be_true"})
+
+    return {
+        "status": "fail" if failures else "pass",
+        "required": required,
+        "failures": failures,
+        "goal_contribution": contribution,
+    }
+
+
 def validate_step4_manifest(
     root: Path | None,
     manifest_path: Path,
@@ -1938,6 +2391,11 @@ def validate_step4_manifest(
         required=declared_status == "benchmark_pass" or derived_status == "benchmark_pass",
     )
     rollback_failures = list(rollback_integrity.get("failures") or [])
+    goal_contribution_integrity = _goal_contribution_integrity(
+        manifest,
+        required=declared_status == "benchmark_pass" or derived_status == "benchmark_pass",
+    )
+    goal_contribution_failures = list(goal_contribution_integrity.get("failures") or [])
 
     before_correct = before.get("correct")
     after_correct = after.get("correct")
@@ -1973,6 +2431,7 @@ def validate_step4_manifest(
         "complexity_pass": complexity_pass,
         "version_tuple_pass": "missing",
         "flaky_pass": "missing",
+        "goal_contribution_pass": not goal_contribution_failures,
         "overall_pass": (
             derived_status == "benchmark_pass"
             and top1_pass
@@ -1984,6 +2443,7 @@ def validate_step4_manifest(
             and not artifact_failures
             and not report_failures
             and not rollback_failures
+            and not goal_contribution_failures
         ),
         "baseline_id": str(manifest.get("baseline_snapshot") or ""),
         "comparison_command": "validate-step4-manifest",
@@ -2014,6 +2474,7 @@ def validate_step4_manifest(
             "regression_golden": regression_resolution,
         },
         "rollback_integrity": rollback_integrity,
+        "goal_contribution_integrity": goal_contribution_integrity,
         "accuracy_impact": "improve" if accuracy_delta and accuracy_delta > 0 else "regress" if accuracy_delta and accuracy_delta < 0 else "neutral_or_missing",
         "accuracy_delta_hit_rate": accuracy_delta,
         "speed_impact": "slower" if speed_delta and speed_delta > 0 else "faster" if speed_delta and speed_delta < 0 else "neutral_or_missing",
@@ -2025,7 +2486,7 @@ def validate_step4_manifest(
         "regression_golden_status": regression_status,
         "failed_slice_next_action_present": has_failed_next,
         "register_validation_allowed": threshold_check["overall_pass"],
-        "validation_status": "fail" if artifact_failures or report_failures or rollback_failures or (declared_status == "benchmark_pass" and derived_status != "benchmark_pass") else "warn" if agent_claim_mismatch else "pass",
+        "validation_status": "fail" if artifact_failures or report_failures or rollback_failures or goal_contribution_failures or (declared_status == "benchmark_pass" and derived_status != "benchmark_pass") else "warn" if agent_claim_mismatch else "pass",
     }
     if out_path is not None:
         out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
@@ -2133,9 +2594,20 @@ def release_check(root: Path | None, ledger_path: Path) -> dict[str, Any]:
     if pending.get("pending", 0):
         release_status = "block"
         reasons.append("pending_full_validation entries remain")
+    if int(pending.get("pending", 0) or 0) >= PENDING_FULL_VALIDATION_LIMIT:
+        release_status = "block"
+        reasons.append(f"pending_full_validation reaches limit {PENDING_FULL_VALIDATION_LIMIT}; run Step 5 full/global")
     if not ledger_abs.exists():
         release_status = "block"
         reasons.append("pending validation ledger is missing")
+    accuracy_goal_gate = _accuracy_goal_release_gate(root, release_status)
+    next_allowed_action = "release"
+    if int(pending.get("pending", 0) or 0) >= PENDING_FULL_VALIDATION_LIMIT:
+        next_allowed_action = "step5_full_global"
+    elif accuracy_goal_gate["status"] in {"plateau_block", "regression_block"}:
+        next_allowed_action = "diagnostics_or_governance"
+    elif release_status == "block":
+        next_allowed_action = "resolve_release_blocks"
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
@@ -2144,7 +2616,127 @@ def release_check(root: Path | None, ledger_path: Path) -> dict[str, Any]:
         "block_reasons": reasons,
         "selected_input": selected,
         "pending_full_validation_summary": pending,
+        "accuracy_goal_progress": accuracy_goal_gate,
+        "accuracy_goal_gate_status": accuracy_goal_gate["status"],
+        "next_allowed_action": next_allowed_action,
     }
+
+
+def goal_next(root: Path | None, out_path: Path) -> dict[str, Any]:
+    root = _repo_root(root)
+    selected = _find_global_input(root)
+    preflight = build_preflight(root)
+
+    progress: dict[str, Any] = _load_accuracy_goal_progress(root)
+    summary_path = str(selected.get("summary_path") or "")
+    if summary_path:
+        summary_abs = root / summary_path
+        if summary_abs.exists():
+            progress = update_goal_progress(root, Path(summary_path), ACCURACY_GOAL_PROGRESS_PATH)
+
+    release = release_check(root, Path("reports/agent_state/v36_pending_full_validation.json"))
+    pending = release.get("pending_full_validation_summary") if isinstance(release, dict) else {}
+    pending_count = int(pending.get("pending", 0) or 0) if isinstance(pending, dict) else 0
+    progress_gate = str(release.get("accuracy_goal_gate_status") or "")
+
+    next_action_result: dict[str, Any] | None = None
+    decision = "choose_next_action"
+    autonomous_allowed = True
+    requires_user_confirmation = False
+    stop_reason = ""
+    execution_class = "step4_small_patch"
+
+    if selected.get("status") != "present":
+        decision = "prepare_full_global_input"
+        autonomous_allowed = False
+        requires_user_confirmation = True
+        stop_reason = "qualified full/global input is missing"
+        execution_class = "input_preparation"
+    elif preflight.get("p0_gate_status") == "block":
+        decision = "p0_remediation"
+        autonomous_allowed = True
+        execution_class = "governance_patch"
+        stop_reason = "p0 gate blocks algorithm repair; only bounded P0 remediation is allowed"
+    elif pending_count >= PENDING_FULL_VALIDATION_LIMIT:
+        decision = "step5_full_global"
+        execution_class = "long_validation"
+        stop_reason = "pending_full_validation limit reached; run Step 5 before more Step 4 patches"
+    elif progress_gate in {"plateau_block", "regression_block"}:
+        decision = "diagnostics_or_governance"
+        execution_class = "diagnostics"
+        stop_reason = f"accuracy goal history status is {progress_gate}; refresh diagnostics before more patches"
+    elif release.get("accuracy_goal_gate_status") == "target_pass" and release.get("release_gate_status") == "pass":
+        decision = "release"
+        autonomous_allowed = False
+        requires_user_confirmation = True
+        execution_class = "release"
+        stop_reason = "75% target and release gate passed; release requires human approval"
+    else:
+        next_action_result = choose_next_action(
+            root,
+            None,
+            None,
+            Path("reports/attribution/global_repair_decision_table.csv"),
+            Path("reports/attribution/global_repair_decision_summary.json"),
+            Path("reports/attribution/global_repair_next_action.json"),
+        )
+        action = str(next_action_result.get("action") or "")
+        decision = action or "choose_next_action"
+        execution_class = "diagnostics" if action in {"improve_diagnostics", "review_data"} else "step4_small_patch"
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _now_iso(),
+        "command": "goal-next",
+        "mode": "autonomous_goal",
+        "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
+        "decision": decision,
+        "execution_class": execution_class,
+        "autonomous_allowed": autonomous_allowed,
+        "requires_user_confirmation": requires_user_confirmation,
+        "stop_reason": stop_reason,
+        "selected_input": selected,
+        "p0_gate_status": preflight.get("p0_gate_status"),
+        "p0_block_reasons": preflight.get("block_reasons", []),
+        "pending_full_validation_summary": pending,
+        "accuracy_goal_progress": _accuracy_goal_context(root),
+        "accuracy_goal_gate_status": release.get("accuracy_goal_gate_status"),
+        "release_gate_status": release.get("release_gate_status"),
+        "next_action_result": next_action_result or {},
+        "next_action_path": "reports/attribution/global_repair_next_action.json" if next_action_result else "",
+        "autonomy_budget": {
+            "pending_full_validation_limit": PENDING_FULL_VALIDATION_LIMIT,
+            "pending_full_validation_count": pending_count,
+            "remaining_step4_before_step5": max(PENDING_FULL_VALIDATION_LIMIT - pending_count, 0),
+            "one_repair_unit_per_round": True,
+        },
+        "agent_instruction": _goal_agent_instruction(decision, execution_class, autonomous_allowed),
+        "stop_conditions": [
+            "p0_gate_status=block and remediation is outside the reported P0 target",
+            "validate-step4-manifest does not derive benchmark_pass",
+            "goal_contribution is missing or exceeds speed/complexity budget",
+            "pending_full_validation reaches the configured limit",
+            "accuracy goal history reports plateau_block or regression_block",
+            "release, destructive cleanup, generated knowledge publication, or trade-off approval is required",
+        ],
+    }
+    out_abs = (root / out_path).resolve() if not out_path.is_absolute() else out_path
+    _write_json(out_abs, payload)
+    return payload
+
+
+def _goal_agent_instruction(decision: str, execution_class: str, autonomous_allowed: bool) -> str:
+    if not autonomous_allowed:
+        return "Stop and report the requested approval boundary; do not modify algorithm code."
+    if decision == "step5_full_global":
+        return "Run Step 5 full/global validation according to V36, then update-goal-progress and release-check."
+    if decision == "p0_remediation":
+        return "Perform only the bounded P0 remediation reported by preflight, then rerun goal-next."
+    if decision == "diagnostics_or_governance":
+        return "Refresh diagnostics or governance artifacts only; do not add another algorithm patch yet."
+    if execution_class == "diagnostics":
+        return "Execute the diagnostic or data-review action from global_repair_next_action.json, then rerun goal-next."
+    return "Execute exactly one Step 4 minimal repair from global_repair_next_action.json, include goal_contribution, validate, and register only if V36 gates pass."
 
 
 def diagnose_pure_search(root: Path | None, out_path: Path) -> dict[str, Any]:
@@ -2260,6 +2852,13 @@ def main() -> int:
     diagnose_parser = sub.add_parser("diagnose-pure-search")
     diagnose_parser.add_argument("--out", type=Path, default=Path("reports/attribution/pure_search_diagnosis.json"))
 
+    goal_parser = sub.add_parser("update-goal-progress")
+    goal_parser.add_argument("--summary", type=Path, default=Path("reports/attribution/global_repair_v36_full_summary.json"))
+    goal_parser.add_argument("--out", type=Path, default=ACCURACY_GOAL_PROGRESS_PATH)
+
+    goal_next_parser = sub.add_parser("goal-next")
+    goal_next_parser.add_argument("--out", type=Path, default=GOAL_NEXT_PATH)
+
     validate_step4_parser = sub.add_parser("validate-step4-manifest")
     validate_step4_parser.add_argument("--manifest", type=Path, required=True)
     validate_step4_parser.add_argument("--out", type=Path, default=Path("reports/attribution/v36_step4_validation.json"))
@@ -2293,6 +2892,10 @@ def main() -> int:
         result = freeze_baseline(root, args.latest, args.attribution, args.out, args.command_line)
     elif args.command == "diagnose-pure-search":
         result = diagnose_pure_search(root, args.out)
+    elif args.command == "update-goal-progress":
+        result = update_goal_progress(root, args.summary, args.out)
+    elif args.command == "goal-next":
+        result = goal_next(root, args.out)
     elif args.command == "validate-step4-manifest":
         result = validate_step4_manifest(root, args.manifest, args.out)
     elif args.command == "choose-next-action":
