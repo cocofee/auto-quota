@@ -5765,6 +5765,8 @@ class LTRRanker:
                 ranked, cgr_meta = cls._apply_cgr_shadow_guard(ranked, cgr_ranked, cgr_meta)
                 meta["cgr"] = cgr_meta
                 meta["post_cgr_top1_id"] = str((ranked[0].get("quota_id", "") if ranked else "") or "")
+            elif ltr_guard_meta.get("action") == "blocked":
+                meta["post_cgr_top1_id"] = meta["post_ltr_top1_id"]
             if config.LTR_FEATURE_LOGGING:
                 top_k = max(int(config.LTR_FEATURE_LOG_TOPK), 1)
                 preview = []

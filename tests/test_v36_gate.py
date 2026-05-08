@@ -224,6 +224,9 @@ def test_v36_preflight_reads_repo_seed_contract():
         result = build_preflight(tmp_path)
 
         assert result["version_tuple"]["seed"] == "42"
+        assert result["version_tuple"]["runtime_version_tuple"]["seed"] == "42"
+        assert "data_version_tuple" in result["version_tuple"]
+        assert result["version_tuple"]["code_version_range"]["current_commit"]
         assert "seed" not in result["version_tuple_status"]["missing_fields"]
     finally:
         _cleanup(tmp_path)
@@ -263,6 +266,30 @@ def test_v36_preflight_rejects_mismatched_full_asset_and_uses_legacy():
     assert result["selected_input"]["reason"] == "using legacy full benchmark input; v36 full output not found"
 
 
+def test_v36_preflight_rejects_partial_v36_full_input_without_legacy_fallback():
+    tmp_path = _workspace()
+    try:
+        _write_legacy_full_input(tmp_path)
+        reports = tmp_path / "reports" / "attribution"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "global_repair_v36_full_latest.json").write_text('{"results": [', encoding="utf-8")
+        (reports / "global_repair_v36_full_attribution.json").write_text('{"total": 10,', encoding="utf-8")
+        (reports / "global_repair_v36_full_summary.json").write_text('{"json_overall":', encoding="utf-8")
+
+        result = build_preflight(tmp_path)
+
+        selected = result["selected_input"]
+        assert selected["status"] == "invalid"
+        assert selected["input_freshness"] == "invalid"
+        assert "latest_json_invalid" in " ".join(selected["qualification_failures"])
+        assert result["p0_gate_status"] == "block"
+        assert result["p0_severity"] == "hard_block"
+        assert result["recommended_p0_remediation_target"] == "baseline_freeze"
+        assert "no qualified full/global input" in result["block_reasons"]
+    finally:
+        _cleanup(tmp_path)
+
+
 def test_v36_preflight_blocks_giant_file_without_owner_boundary():
     tmp_path = _workspace()
     try:
@@ -273,6 +300,7 @@ def test_v36_preflight_blocks_giant_file_without_owner_boundary():
         result = build_preflight(tmp_path)
 
         assert result["p0_gate_status"] == "block"
+        assert result["p0_severity"] == "hard_block"
         assert result["recommended_p0_remediation_target"] == "owner_boundary"
         assert result["giant_file_touch_risk"]["status"] == "block"
         assert "giant owner files touched without owner_boundary governance manifest" in result["block_reasons"]
@@ -292,6 +320,7 @@ def test_v36_preflight_warns_giant_file_over_bridge_budget_with_owner_boundary()
         result = build_preflight(tmp_path)
 
         assert result["p0_gate_status"] == "warn"
+        assert result["p0_severity"] == "soft_block"
         assert result["recommended_p0_remediation_target"] == "owner_boundary"
         assert result["giant_file_touch_risk"]["status"] == "warn"
         assert result["giant_file_touch_risk"]["over_budget"][0]["path"] == "src/query_builder.py"
@@ -627,12 +656,75 @@ def test_v36_goal_next_allows_autonomous_next_action_and_updates_progress():
 
         assert result["command"] == "goal-next"
         assert result["mode"] == "autonomous_goal"
+        assert result["state"] in {"needs_diagnostics", "ready_for_step4"}
+        assert result["p0_severity"] in {"pass", "warn_only", "soft_block"}
         assert result["autonomous_allowed"] is True
         assert result["requires_user_confirmation"] is False
         assert result["decision"] in {"improve_diagnostics", "fix_r1_recall"}
         assert result["accuracy_goal_progress"]["current_hit_rate"] == 40.0
         assert result["next_action_path"] == "reports/attribution/global_repair_next_action.json"
         assert (tmp_path / "reports" / "agent_state" / "v36_goal_next.json").exists()
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_goal_next_reports_needs_baseline_without_qualified_input():
+    tmp_path = _workspace()
+    try:
+        result = goal_next(tmp_path, Path("reports/agent_state/v36_goal_next.json"))
+
+        assert result["state"] == "needs_baseline"
+        assert result["decision"] == "prepare_full_global_input"
+        assert result["p0_severity"] == "hard_block"
+        assert result["autonomous_allowed"] is False
+        assert result["requires_user_confirmation"] is True
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_goal_next_stops_when_selector_has_no_target():
+    tmp_path = _workspace()
+    try:
+        _write_goal_full_input(tmp_path, total=10, correct=4, hit_rate=40.0)
+        ledger = tmp_path / "reports" / "agent_state" / "v36_pending_full_validation.json"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(json.dumps({"schema_version": "v36_gate.v1", "entries": []}), encoding="utf-8")
+
+        data_review_queue = tmp_path / "reports" / "agent_state" / "v36_data_review_queue.json"
+        data_review_queue.parent.mkdir(parents=True, exist_ok=True)
+        data_review_queue.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v36.data_review_queue.v1",
+                    "items": [
+                        {
+                            "sample_id": "s1",
+                            "status": "open",
+                            "target_common_issue": {
+                                "cluster_id": "R1-01",
+                                "issue_key": "R1::recall_miss::unknown::unknown::W1->Q1",
+                                "bucket": "R1",
+                                "commonality": "singleton_only",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = goal_next(tmp_path, Path("reports/agent_state/v36_goal_next.json"))
+
+        assert result["decision"] == "improve_diagnostics"
+        assert result["state"] == "needs_diagnostics"
+        assert result["execution_class"] == "diagnostics"
+        assert result["autonomous_allowed"] is False
+        assert result["requires_user_confirmation"] is True
+        assert "no selectable common_issue_cluster" in result["stop_reason"]
+        assert result["next_action_result"]["target_common_issue"] == {}
+        assert result["selector_boundary_next_action"]["action"] == "data_review"
+        assert result["next_action_result"]["selector_boundary_next_action"]["action"] == "data_review"
+        assert result["agent_instruction"] == "Stop and report the requested approval boundary; do not modify algorithm code."
     finally:
         _cleanup(tmp_path)
 
@@ -656,6 +748,7 @@ def test_v36_goal_next_routes_to_step5_when_pending_limit_reached():
         result = goal_next(tmp_path, Path("reports/agent_state/v36_goal_next.json"))
 
         assert result["decision"] == "step5_full_global"
+        assert result["state"] == "needs_step5"
         assert result["execution_class"] == "long_validation"
         assert result["autonomy_budget"]["remaining_step4_before_step5"] == 0
         assert result["next_action_path"] == ""
@@ -1234,6 +1327,11 @@ def test_v36_choose_next_action_degrades_when_all_explicit_repair_units_skipped(
         json.dumps(
             {
                 "partial_validation_status": "local_behavior_pass",
+                "failed_slice_next_action": {
+                    "action": "continue_same_issue_next_stage",
+                    "same_repair_unit": False,
+                    "next_failing_stage": "cgr_confidence_subcluster_selection",
+                },
                 "repair_unit": {
                     "cluster_id": "R1-01",
                     "issue_key": issue_key,
@@ -1260,6 +1358,163 @@ def test_v36_choose_next_action_degrades_when_all_explicit_repair_units_skipped(
         assert result["action"] == "improve_diagnostics"
         assert next_action["target_common_issue"] == {}
         assert next_action["reason"] == "no selectable common_issue_cluster after selector state skips"
+        assert next_action["selector_boundary_next_action"]["action"] == "cgr_confidence_subcluster_selection"
+        assert next_action["selector_boundary_next_action"]["autonomous_allowed"] is False
+        assert "src/**" in next_action["selector_boundary_next_action"]["forbidden_write_scopes"]
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_choose_next_action_emits_candidate_pool_governance_when_selector_exhausted():
+    tmp_path = _workspace()
+    issue_key = "R1::recall_miss::c10::search::10-11->10-11"
+    latest = tmp_path / "latest.json"
+    records = [
+        {
+            "sample_id": f"candidate-blocked-{index}",
+            "is_match": False,
+            "stored_ids": [f"10-11-{index}"],
+            "algo_id": "10-11-999",
+            "error_stage": "retriever",
+            "miss_category": "recall_miss",
+            "recall_rank": -1,
+            "pre_ltr_top1_id": "10-11-999",
+            "post_ltr_top1_id": "10-11-999",
+            "post_final_top1_id": "10-11-999",
+            "specialty": "C10",
+            "match_source": "search",
+        }
+        for index in range(1, 4)
+    ]
+    latest.write_text(json.dumps(records), encoding="utf-8")
+    attr = tmp_path / "attr.json"
+    attr.write_text("{}", encoding="utf-8")
+    manifest = tmp_path / "reports" / "attribution" / "v36_round_manifest_candidate_pool_blocked.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "partial_validation_status": "blocked_by_next_stage",
+                "failed_slice_next_action": {
+                    "action": "continue_same_issue_next_stage",
+                    "same_repair_unit": False,
+                    "next_failing_stage": "candidate_pool_or_validator",
+                },
+                "repair_unit": {
+                    "cluster_id": "R1-01",
+                    "issue_key": issue_key,
+                    "mechanism": "improve_diagnostics",
+                    "owner_module": "tools/diagnostics",
+                    "repair_unit_id": f"R1-01::{issue_key}::improve_diagnostics::tools/diagnostics",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = choose_next_action(
+            tmp_path,
+            latest,
+            attr,
+            Path("decision.csv"),
+            Path("summary.json"),
+            Path("next_action.json"),
+        )
+        next_action = json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))
+
+        assert result["action"] == "improve_diagnostics"
+        assert result["target_common_issue"] == {}
+        boundary = next_action["selector_boundary_next_action"]
+        assert boundary["action"] == "candidate_pool_subcluster_selection"
+        assert boundary["selected_units"][0]["next_stage"] == "candidate_pool_or_validator"
+        assert result["selector_boundary_next_action"]["action"] == "candidate_pool_subcluster_selection"
+    finally:
+        _cleanup(tmp_path)
+
+
+def test_v36_selector_boundary_uses_latest_blocked_stage_for_same_issue():
+    tmp_path = _workspace()
+    issue_key = "R1::recall_miss::c10::search::10-11->10-11"
+    latest = tmp_path / "latest.json"
+    records = [
+        {
+            "sample_id": f"candidate-blocked-{index}",
+            "is_match": False,
+            "stored_ids": [f"10-11-{index}"],
+            "algo_id": "10-11-999",
+            "error_stage": "retriever",
+            "miss_category": "recall_miss",
+            "recall_rank": -1,
+            "pre_ltr_top1_id": "10-11-999",
+            "post_ltr_top1_id": "10-11-999",
+            "post_final_top1_id": "10-11-999",
+            "specialty": "C10",
+            "match_source": "search",
+        }
+        for index in range(1, 4)
+    ]
+    latest.write_text(json.dumps(records), encoding="utf-8")
+    attr = tmp_path / "attr.json"
+    attr.write_text("{}", encoding="utf-8")
+    manifest_dir = tmp_path / "reports" / "attribution"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "v36_round_manifest_old_candidate_pool.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-04-30T01:21:00+08:00",
+                "partial_validation_status": "blocked_by_next_stage",
+                "target_common_issue": {
+                    "cluster_id": "R1-02",
+                    "issue_key": issue_key,
+                    "commonality": "shared",
+                },
+                "failed_slice_next_action": {
+                    "action": "continue_same_issue_next_stage",
+                    "same_repair_unit": False,
+                    "next_failing_stage": "candidate_pool_or_validator",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_dir / "v36_round_manifest_new_ltr.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-04-30T12:24:00+08:00",
+                "partial_validation_status": "blocked_by_next_stage",
+                "repair_unit": {
+                    "cluster_id": "R1-01",
+                    "issue_key": issue_key,
+                    "mechanism": "waterstop_human_defense_sleeve_query_lacks_rigid_waterproof_intent",
+                    "owner_module": "src/search_routing|src/search_features",
+                },
+                "failed_slice_next_action": {
+                    "action": "continue_same_issue_next_stage",
+                    "same_repair_unit": False,
+                    "next_failing_stage": "R2_LTR",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        result = choose_next_action(
+            tmp_path,
+            latest,
+            attr,
+            Path("decision.csv"),
+            Path("summary.json"),
+            Path("next_action.json"),
+        )
+        next_action = json.loads((tmp_path / "next_action.json").read_text(encoding="utf-8"))
+
+        assert result["action"] == "improve_diagnostics"
+        boundary = next_action["selector_boundary_next_action"]
+        assert boundary["action"] == "ranker_or_ltr_subcluster_selection"
+        assert boundary["selected_units"][0]["next_stage"] == "R2_LTR"
+        assert boundary["priority_basis"]["stale_superseded_repair_unit_count"] == 1
     finally:
         _cleanup(tmp_path)
 

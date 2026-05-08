@@ -390,15 +390,32 @@ def _version_tuple(root: Path) -> dict[str, Any]:
     embedding_source = "|".join(sorted({_rel(root, path.parent) for path in vector_paths[:50]}))
     model_profile_hash = _sha256_text(embedding_source) if embedding_source else ""
     seed = _v36_seed(root)
-    return {
-        "algorithm_commit": commit.strip() if code == 0 else "",
+    algorithm_commit = commit.strip() if code == 0 else ""
+    data_version_tuple = {
         "knowledge_digest_hash": _file_content_hash(root, knowledge_paths),
         "quota_db_revision": _metadata_revision(root, quota_paths),
         "bill_corpus_revision": _metadata_revision(root, bill_paths),
         "vector_index_revision": _metadata_revision(root, vector_paths),
+    }
+    runtime_version_tuple = {
         "embedding_model_version": "qwen3" if vector_paths else "",
         "model_profile_hash": model_profile_hash,
         "seed": seed,
+    }
+    # Keep the legacy flat fields while exposing the split tuple needed by the
+    # long-running GOAL state machine. Pending records can bind to data/runtime
+    # stability without making every code commit invalidate old local evidence.
+    return {
+        "algorithm_commit": commit.strip() if code == 0 else "",
+        **data_version_tuple,
+        **runtime_version_tuple,
+        "data_version_tuple": data_version_tuple,
+        "runtime_version_tuple": runtime_version_tuple,
+        "code_version_range": {
+            "current_commit": algorithm_commit,
+            "base_commit": "",
+            "allowed_commits": [algorithm_commit] if algorithm_commit else [],
+        },
     }
 
 
@@ -465,6 +482,38 @@ def _data_review_queue_summary(root: Path) -> dict[str, Any]:
     }
 
 
+def _p0_severity(
+    *,
+    p0_status: str,
+    hard_blocks: list[str],
+    recommended_target: str,
+    artifact_paths: list[str],
+    giant_paths: list[str],
+    pending_count: int,
+    generated_knowledge_paths: list[str],
+    version_status: dict[str, Any],
+    data_review_open: int,
+    code_health_status: str,
+) -> str:
+    if p0_status == "block" or hard_blocks:
+        return "hard_block"
+    if p0_status != "warn":
+        return "pass"
+    if (
+        recommended_target
+        or giant_paths
+        or pending_count
+        or generated_knowledge_paths
+        or version_status.get("status") != "complete"
+        or data_review_open
+        or code_health_status != "pass"
+    ):
+        return "soft_block"
+    if artifact_paths:
+        return "warn_only"
+    return "warn_only"
+
+
 def _flaky_tracking_summary(root: Path) -> dict[str, Any]:
     path = root / FLAKY_TRACKING_PATH
     if not path.exists():
@@ -491,6 +540,48 @@ def _full_global_result_summary(attr_payload: dict[str, Any]) -> dict[str, Any]:
         "overall_hit_rate": float(attr_payload.get("overall_hit_rate", 0.0) or 0.0),
         "recall_hit_rate": float(attr_payload.get("recall_hit_rate", 0.0) or 0.0),
         "r_counts": dict(attr_payload.get("counts") or {}),
+    }
+
+
+def _qualified_v36_full_input(root: Path, latest: Path, attribution: Path, summary: Path) -> dict[str, Any]:
+    attr_payload = _read_json_file(attribution)
+    failures: list[str] = []
+    if not attr_payload:
+        failures.append("attribution_json_invalid_or_empty")
+    elif not any(key in attr_payload for key in ("total", "wrong_total", "overall_hit_rate")):
+        failures.append("attribution_missing_full_global_metrics")
+
+    try:
+        _iter_latest_records(latest)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        failures.append(f"latest_json_invalid:{exc.__class__.__name__}")
+
+    if summary.exists():
+        try:
+            json.loads(summary.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            failures.append(f"summary_json_invalid:{exc.__class__.__name__}")
+
+    if failures:
+        return {
+            "status": "invalid",
+            "input_freshness": "invalid",
+            "latest_path": _rel(root, latest),
+            "attribution_path": _rel(root, attribution),
+            "summary_path": _rel(root, summary) if summary.exists() else "",
+            "reason": "v36 full/global output exists but is not a qualified Step 0 input",
+            "qualification_failures": failures,
+            "full_global_result": {},
+        }
+
+    return {
+        "status": "present",
+        "input_freshness": "fresh",
+        "latest_path": _rel(root, latest),
+        "attribution_path": _rel(root, attribution),
+        "summary_path": _rel(root, summary) if summary.exists() else "",
+        "reason": "found qualified v36 full/global output",
+        "full_global_result": _full_global_result_summary(attr_payload),
     }
 
 
@@ -677,16 +768,7 @@ def _find_global_input(root: Path) -> dict[str, Any]:
     attribution = root / "reports" / "attribution" / "global_repair_v36_full_attribution.json"
     summary = root / "reports" / "attribution" / "global_repair_v36_full_summary.json"
     if latest.exists() and attribution.exists():
-        attr_payload = _read_json_file(attribution)
-        return {
-            "status": "present",
-            "input_freshness": "fresh",
-            "latest_path": _rel(root, latest),
-            "attribution_path": _rel(root, attribution),
-            "summary_path": _rel(root, summary) if summary.exists() else "",
-            "reason": "found v36 full/global output",
-            "full_global_result": _full_global_result_summary(attr_payload) if attr_payload else {},
-        }
+        return _qualified_v36_full_input(root, latest, attribution, summary)
 
     full_asset_input = _find_full_asset_error_input(root, attribution, summary)
     if full_asset_input:
@@ -1143,6 +1225,7 @@ def _selector_entry(
         "selector_key_type": key_type,
         "reason": reason,
         "source_manifest": source_manifest,
+        "generated_at": str(payload.get("generated_at") or ""),
         "next_stage": next_stage,
     }
     return key, entry
@@ -1301,6 +1384,124 @@ def _enrich_skipped_repair_units(
         seen.add(marker)
         result.append(dict(entry))
     return result
+
+
+def _selector_governance_bucket(next_stage: str) -> str:
+    stage = str(next_stage or "").lower()
+    if "candidate_pool" in stage or "validator" in stage:
+        return "candidate_pool_subcluster_selection"
+    if "cgr" in stage or "confidence_subcluster" in stage:
+        return "cgr_confidence_subcluster_selection"
+    if "data_review" in stage:
+        return "data_review"
+    if "subcluster_selection" in stage:
+        return "subcluster_selection"
+    if "ltr" in stage or "ranker" in stage:
+        return "ranker_or_ltr_subcluster_selection"
+    return "selector_manifest_review"
+
+
+def _selector_boundary_next_action(
+    *,
+    skipped_repair_units: list[dict[str, Any]],
+    blocked_next_stage_repair_units: list[dict[str, Any]],
+    data_review_summary: dict[str, Any],
+    accuracy_goal_context: dict[str, Any],
+) -> dict[str, Any]:
+    units = [unit for unit in blocked_next_stage_repair_units if isinstance(unit, dict)]
+    if not units:
+        units = [unit for unit in skipped_repair_units if isinstance(unit, dict)]
+
+    latest_units_by_issue: dict[str, dict[str, Any]] = {}
+    stale_superseded_unit_count = 0
+    for unit in units:
+        issue_key = str(unit.get("issue_key") or "")
+        if not issue_key:
+            latest_units_by_issue[f"__no_issue__:{len(latest_units_by_issue)}"] = unit
+            continue
+        previous = latest_units_by_issue.get(issue_key)
+        if previous is None:
+            latest_units_by_issue[issue_key] = unit
+            continue
+        previous_key = (str(previous.get("generated_at") or ""), str(previous.get("source_manifest") or ""))
+        current_key = (str(unit.get("generated_at") or ""), str(unit.get("source_manifest") or ""))
+        stale_superseded_unit_count += 1
+        if current_key >= previous_key:
+            latest_units_by_issue[issue_key] = unit
+    units = list(latest_units_by_issue.values())
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for unit in units:
+        bucket = _selector_governance_bucket(str(unit.get("next_stage") or ""))
+        groups.setdefault(bucket, []).append(unit)
+
+    open_review = int(data_review_summary.get("open", 0) or 0)
+    if open_review and not groups:
+        groups["data_review"] = []
+
+    priority = [
+        "candidate_pool_subcluster_selection",
+        "cgr_confidence_subcluster_selection",
+        "data_review",
+        "subcluster_selection",
+        "ranker_or_ltr_subcluster_selection",
+        "selector_manifest_review",
+    ]
+    hint = str(accuracy_goal_context.get("next_priority_hint") or "")
+    if "recall" in hint or "candidate_pool" in hint:
+        priority = [
+            "candidate_pool_subcluster_selection",
+            "data_review",
+            "cgr_confidence_subcluster_selection",
+            "subcluster_selection",
+            "ranker_or_ltr_subcluster_selection",
+            "selector_manifest_review",
+        ]
+
+    selected = next((bucket for bucket in priority if groups.get(bucket)), "")
+    if not selected and open_review:
+        selected = "data_review"
+    selected_units = groups.get(selected, []) if selected else []
+    grouped_counts = {bucket: len(items) for bucket, items in sorted(groups.items())}
+    if open_review and "data_review" not in grouped_counts:
+        grouped_counts["data_review_open_items"] = open_review
+
+    if selected == "candidate_pool_subcluster_selection":
+        instruction = "Open a bounded candidate_pool/validator subcluster diagnostic from blocked_next_stage units; do not edit src/**."
+    elif selected == "cgr_confidence_subcluster_selection":
+        instruction = "Open a bounded CGR confidence subcluster diagnostic from selector-skipped/blocked units; do not edit src/**."
+    elif selected == "data_review":
+        instruction = "Resolve or further isolate the open data_review queue items before another algorithm repair."
+    elif selected:
+        instruction = f"Open a bounded {selected} governance diagnostic; do not edit src/**."
+    else:
+        instruction = "Inspect selector manifests and data_review queue; do not edit src/**."
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "action": selected or "selector_manifest_review",
+        "execution_class": "selector_governance",
+        "autonomous_allowed": False,
+        "requires_user_confirmation": True,
+        "reason": "goal-next has no selectable common_issue_cluster after selector state skips",
+        "priority_basis": {
+            "blocked_next_stage_repair_unit_count": len(blocked_next_stage_repair_units),
+            "skipped_repair_unit_count": len(skipped_repair_units),
+            "stale_superseded_repair_unit_count": stale_superseded_unit_count,
+            "data_review_open_total": open_review,
+            "accuracy_next_priority_hint": hint,
+        },
+        "grouped_next_stage_counts": grouped_counts,
+        "selected_units": selected_units[:10],
+        "allowed_write_scopes": [
+            "reports/attribution",
+            "reports/agent_state",
+            "tests/test_v36_gate.py",
+            "tools/v36_gate.py",
+        ],
+        "forbidden_write_scopes": ["src/**", "generated/formal knowledge"],
+        "agent_instruction": instruction,
+    }
 
 
 def _owner_for_action(action: str) -> str:
@@ -1482,7 +1683,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
     pure_metrics_present = _has_complete_pure_search_metrics(root)
 
     hard_blocks: list[str] = []
-    if selected_input["status"] == "missing":
+    if selected_input["status"] != "present":
         hard_blocks.append("no qualified full/global input")
     if text_risks["paths"]:
         hard_blocks.append("secret or mojibake risk in changed text files")
@@ -1521,7 +1722,7 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         recommended_target = "code_health_triage"
     elif pending.get("pending", 0):
         recommended_target = "pending_validation_closure"
-    elif selected_input["status"] == "missing":
+    elif selected_input["status"] != "present":
         recommended_target = "baseline_freeze"
     elif version_status["status"] != "complete":
         recommended_target = "baseline_freeze"
@@ -1532,12 +1733,25 @@ def build_preflight(root: Path | None = None) -> dict[str, Any]:
         else "failed" if input_freshness == "fresh_asset"
         else "unknown"
     )
+    p0_severity = _p0_severity(
+        p0_status=p0_status,
+        hard_blocks=hard_blocks,
+        recommended_target=recommended_target,
+        artifact_paths=artifact_paths,
+        giant_paths=giant_paths,
+        pending_count=int(pending.get("pending", 0) or 0),
+        generated_knowledge_paths=generated_knowledge_paths,
+        version_status=version_status,
+        data_review_open=int(data_review.get("open", 0) or 0),
+        code_health_status=str(code_health.get("status") or ""),
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
         "command": "preflight",
         "p0_gate_status": p0_status,
+        "p0_severity": p0_severity,
         "block_reasons": hard_blocks,
         "recommended_p0_remediation_target": recommended_target,
         "next_allowed_action": "p0_remediation" if p0_status == "block" else "diagnose_or_p0_remediation",
@@ -1722,6 +1936,13 @@ def choose_next_action(
         attribution_path=attribution_abs,
     )
     next_action["accuracy_goal_context"] = _accuracy_goal_context(root)
+    if next_action.get("action") == "improve_diagnostics" and not next_action.get("target_common_issue"):
+        next_action["selector_boundary_next_action"] = _selector_boundary_next_action(
+            skipped_repair_units=next_action["skipped_repair_units"],
+            blocked_next_stage_repair_units=next_action["blocked_next_stage_repair_units"],
+            data_review_summary=data_review,
+            accuracy_goal_context=next_action["accuracy_goal_context"],
+        )
 
     decision_abs = (root / decision_table_path).resolve() if not decision_table_path.is_absolute() else decision_table_path
     decision_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -1742,11 +1963,13 @@ def choose_next_action(
         "wrong_total_before_data_review_exclusion": len(original_rows),
         "data_review_exclusion_summary": summary["data_review_exclusion_summary"],
         "action": next_action["action"],
+        "reason": next_action.get("reason", ""),
         "target_common_issue": next_action.get("target_common_issue", {}),
         "full_validation_status": next_action.get("full_validation_status", "pending"),
         "selector_state_inputs": next_action["selector_state_inputs"],
         "skipped_repair_units": next_action["skipped_repair_units"],
         "blocked_next_stage_repair_units": next_action["blocked_next_stage_repair_units"],
+        "selector_boundary_next_action": next_action.get("selector_boundary_next_action", {}),
         "accuracy_goal_context": next_action["accuracy_goal_context"],
         "deterministic": True,
         "llm_used": False,
@@ -2622,6 +2845,42 @@ def release_check(root: Path | None, ledger_path: Path) -> dict[str, Any]:
     }
 
 
+def _goal_state(
+    *,
+    selected: dict[str, Any],
+    preflight: dict[str, Any],
+    decision: str,
+    execution_class: str,
+    pending_count: int,
+    progress_gate: str,
+    release_status: str,
+    next_action_result: dict[str, Any] | None,
+) -> str:
+    if selected.get("status") != "present":
+        return "needs_baseline"
+    if preflight.get("p0_severity") == "hard_block" or preflight.get("p0_gate_status") == "block":
+        return "preflight_blocked"
+    if pending_count >= PENDING_FULL_VALIDATION_LIMIT or decision == "step5_full_global":
+        return "needs_step5"
+    if decision == "release" and release_status == "pass":
+        return "goal_complete"
+    if release_status == "block" and decision == "release":
+        return "release_blocked"
+    if progress_gate in {"plateau_block", "regression_block"}:
+        return "needs_diagnostics"
+    if next_action_result is None:
+        return "ready_for_next_action"
+    target = next_action_result.get("target_common_issue")
+    target_empty = not isinstance(target, dict) or not target
+    if target_empty or execution_class == "diagnostics":
+        return "needs_diagnostics"
+    if execution_class == "step4_small_patch":
+        return "ready_for_step4"
+    if pending_count:
+        return "pending_full_validation"
+    return "ready_for_next_action"
+
+
 def goal_next(root: Path | None, out_path: Path) -> dict[str, Any]:
     root = _repo_root(root)
     selected = _find_global_input(root)
@@ -2683,12 +2942,31 @@ def goal_next(root: Path | None, out_path: Path) -> dict[str, Any]:
         action = str(next_action_result.get("action") or "")
         decision = action or "choose_next_action"
         execution_class = "diagnostics" if action in {"improve_diagnostics", "review_data"} else "step4_small_patch"
+        target = next_action_result.get("target_common_issue")
+        target_empty = not isinstance(target, dict) or not target
+        reason = str(next_action_result.get("reason") or "")
+        if action == "improve_diagnostics" and target_empty:
+            autonomous_allowed = False
+            requires_user_confirmation = True
+            stop_reason = reason or "no selectable common_issue_cluster after selector state skips"
+
+    state = _goal_state(
+        selected=selected,
+        preflight=preflight,
+        decision=decision,
+        execution_class=execution_class,
+        pending_count=pending_count,
+        progress_gate=progress_gate,
+        release_status=str(release.get("release_gate_status") or ""),
+        next_action_result=next_action_result,
+    )
 
     payload = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now_iso(),
         "command": "goal-next",
         "mode": "autonomous_goal",
+        "state": state,
         "target_hit_rate": ACCURACY_GOAL_TARGET_HIT_RATE,
         "decision": decision,
         "execution_class": execution_class,
@@ -2697,12 +2975,14 @@ def goal_next(root: Path | None, out_path: Path) -> dict[str, Any]:
         "stop_reason": stop_reason,
         "selected_input": selected,
         "p0_gate_status": preflight.get("p0_gate_status"),
+        "p0_severity": preflight.get("p0_severity", ""),
         "p0_block_reasons": preflight.get("block_reasons", []),
         "pending_full_validation_summary": pending,
         "accuracy_goal_progress": _accuracy_goal_context(root),
         "accuracy_goal_gate_status": release.get("accuracy_goal_gate_status"),
         "release_gate_status": release.get("release_gate_status"),
         "next_action_result": next_action_result or {},
+        "selector_boundary_next_action": (next_action_result or {}).get("selector_boundary_next_action", {}),
         "next_action_path": "reports/attribution/global_repair_next_action.json" if next_action_result else "",
         "autonomy_budget": {
             "pending_full_validation_limit": PENDING_FULL_VALIDATION_LIMIT,

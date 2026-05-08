@@ -296,6 +296,135 @@ def test_ltr_ranker_cgr_shadow_guard_keeps_valid_ltr_top1(monkeypatch):
     assert meta["cgr"]["override_reason"] == "incumbent_protected"
 
 
+def test_ltr_ranker_disabled_cgr_inherits_ltr_top1(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.10, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "B",
+            "name": "stale pre-ltr head",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.70,
+            "feature_alignment_score": 0.70,
+            "context_alignment_score": 0.70,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.70,
+        },
+        {
+            "quota_id": "A",
+            "name": "ltr rescued top1",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.90,
+            "feature_alignment_score": 0.90,
+            "context_alignment_score": 0.90,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.90,
+        },
+    ]
+    monkeypatch.setattr(
+        LTRRanker,
+        "_apply_ltr_guard",
+        classmethod(
+            lambda cls, item, manual_ranked, ltr_ranked, context=None: (
+                list(ltr_ranked),
+                {
+                    "action": "blocked",
+                    "reason": "c4_count_tier_rescued",
+                    "snapshot_guard": {"blocked": True, "reason": "c4_count_tier_rescued"},
+                },
+            )
+        ),
+    )
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {"name": "test item", "description": "rescue A"},
+        candidates,
+        {},
+    )
+
+    assert ranked[0]["quota_id"] == "A"
+    assert meta["pre_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "A"
+    assert meta["post_cgr_top1_id"] == "A"
+    assert meta["cgr"] == {}
+
+
+def test_ltr_ranker_disabled_cgr_does_not_broaden_plain_ltr_override(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.10, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "B",
+            "name": "stale pre-ltr head",
+            "param_match": True,
+            "param_score": 0.70,
+            "logic_score": 0.70,
+            "feature_alignment_score": 0.70,
+            "context_alignment_score": 0.70,
+            "rerank_score": 0.70,
+            "hybrid_score": 0.70,
+        },
+        {
+            "quota_id": "A",
+            "name": "plain ltr challenger",
+            "param_match": True,
+            "param_score": 0.90,
+            "logic_score": 0.90,
+            "feature_alignment_score": 0.90,
+            "context_alignment_score": 0.90,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.90,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {"name": "test item", "description": "plain ltr"},
+        candidates,
+        {},
+    )
+
+    assert ranked[0]["quota_id"] == "A"
+    assert meta["pre_ltr_top1_id"] == "B"
+    assert meta["post_ltr_top1_id"] == "A"
+    assert meta["post_cgr_top1_id"] == "B"
+    assert meta["ltr_guard"]["action"] != "blocked"
+    assert meta["cgr"] == {}
+
+
 def test_ltr_ranker_cgr_shadow_guard_allows_invalid_ltr_top1_override(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", True)
