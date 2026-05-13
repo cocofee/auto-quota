@@ -125,3 +125,13 @@ skills-lock.json
 
 # 根目录空数据库
 experience.db
+
+# Local generated reports and agent scratch space.
+.codex_stage/
+.pytest_tmp_*/
+pytest_tmp_*/
+reports/agent_state/
+reports/attribution/
+data/ltr_mixed_safety_training_data.csv
+data/ltr_r2_silver_training_data*.csv
+eval/v36_seed.json
