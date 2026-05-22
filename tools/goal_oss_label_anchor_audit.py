@@ -29,6 +29,7 @@ DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "anchor_audit"
 DEFAULT_REPORT_JSON = PROJECT_ROOT / "reports" / "agent_state" / "goal_oss_label_anchor_audit_summary.json"
 DEFAULT_REPORT_MD = PROJECT_ROOT / "reports" / "agent_state" / "goal_oss_label_anchor_audit_summary.md"
 DEFAULT_DETAILS_CSV = PROJECT_ROOT / "reports" / "agent_state" / "goal_oss_label_anchor_audit_details.csv"
+DEFAULT_LOCAL_ASSETS_DB_DIR = PROJECT_ROOT.parent / "auto-quota-local-assets-20260522" / "db"
 
 DOMAIN_BUCKETS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("waterproof_joint", ("防水", "防潮", "涂膜", "卷材", "砂浆防水", "变形缝", "施工缝", "止水"), ("防水", "防潮", "涂膜", "卷材", "砂浆", "变形缝", "施工缝", "止水")),
@@ -119,6 +120,38 @@ class ProvinceQuotaLookup:
                 )
             )
         self.cache[quota_id] = records
+
+
+def _has_any_quota_db(provinces_dir: Path) -> bool:
+    if not provinces_dir.exists():
+        return False
+    return any(provinces_dir.glob("*/quota.db"))
+
+
+def _configure_db_dirs(db_dir_arg: str) -> dict[str, Any]:
+    configured_db_dir = Path(db_dir_arg) if db_dir_arg else Path(config.DB_DIR)
+    candidates = [configured_db_dir]
+    if DEFAULT_LOCAL_ASSETS_DB_DIR not in candidates:
+        candidates.append(DEFAULT_LOCAL_ASSETS_DB_DIR)
+
+    selected_db_dir = configured_db_dir
+    selected_reason = "configured"
+    for candidate in candidates:
+        if _has_any_quota_db(candidate / "provinces"):
+            selected_db_dir = candidate
+            selected_reason = "configured" if candidate == configured_db_dir else "local_assets_fallback"
+            break
+
+    config.DB_DIR = selected_db_dir
+    config.COMMON_DB_DIR = selected_db_dir / "common"
+    config.PROVINCES_DB_DIR = selected_db_dir / "provinces"
+    return {
+        "db_dir": str(config.DB_DIR),
+        "common_db_dir": str(config.COMMON_DB_DIR),
+        "provinces_db_dir": str(config.PROVINCES_DB_DIR),
+        "reason": selected_reason,
+        "has_quota_db": _has_any_quota_db(config.PROVINCES_DB_DIR),
+    }
 
 
 def _clean(value: Any) -> str:
@@ -334,6 +367,23 @@ def _load_split_rows(split_dir: Path, split: str) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _build_raw_split_group_meta(split_full_rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for group_id, row in split_full_rows.items():
+        result.append(
+            {
+                "group_id": group_id,
+                "sample_id": _clean(row.get("sample_id") or row.get("bill_id") or row.get("idx")),
+                "source_file": _clean(row.get("source_file")),
+                "project_name": _clean(row.get("project_name")),
+                "province": _clean(row.get("province")),
+                "query": _clean(row.get("bill_name") or row.get("name")),
+                "expected_ids": _expected_ids(row),
+            }
+        )
+    return result
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
@@ -426,8 +476,11 @@ def _audit(args: argparse.Namespace) -> dict[str, Any]:
     split_summaries: list[dict[str, Any]] = []
 
     for split in splits:
-        group_meta_rows = _read_jsonl(data_dir / f"ltr_group_{split}.jsonl")
         split_full_rows = _load_split_rows(split_dir, split)
+        if getattr(args, "raw_split_groups", False):
+            group_meta_rows = _build_raw_split_group_meta(split_full_rows)
+        else:
+            group_meta_rows = _read_jsonl(data_dir / f"ltr_group_{split}.jsonl")
         group_level_rows: list[dict[str, Any]] = []
 
         for meta in group_meta_rows:
@@ -534,6 +587,7 @@ def _audit(args: argparse.Namespace) -> dict[str, Any]:
         "read_only": True,
         "no_model_tuning": True,
         "no_ranking_change": True,
+        "db_config": getattr(args, "db_config", {}),
         "data_dir": str(data_dir),
         "split_dir": str(split_dir),
         "output_dir": str(output_dir),
@@ -614,6 +668,8 @@ def main() -> int:
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
     parser.add_argument("--split-dir", default=str(DEFAULT_SPLIT_DIR))
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--db-dir", default="", help="Optional db root containing provinces/ and common/. Falls back to local assets when project db is empty.")
+    parser.add_argument("--raw-split-groups", action="store_true", help="Audit every row from split-dir instead of ltr_group_<split>.jsonl.")
     parser.add_argument("--splits", nargs="+", default=["heldout", "hard"])
     parser.add_argument("--details-csv", default=str(DEFAULT_DETAILS_CSV))
     parser.add_argument("--report-json", default=str(DEFAULT_REPORT_JSON))
@@ -621,6 +677,9 @@ def main() -> int:
     args = parser.parse_args()
 
     started = time.perf_counter()
+    args.db_config = _configure_db_dirs(args.db_dir)
+    if not args.db_config["has_quota_db"]:
+        raise ValueError(f"no quota.db found under {args.db_config['provinces_db_dir']}")
     report = _audit(args)
     report["elapsed_sec"] = round(time.perf_counter() - started, 3)
 

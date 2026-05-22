@@ -700,4 +700,21 @@ def main() -> int:
                     "read_only": True,
                     "elapsed_sec": report["elapsed_sec"],
                     "rows": summary["rows"],
-                    "by_diagnosis": summary["by_diagnos
+                    "by_diagnosis": summary["by_diagnosis"],
+                },
+                "artifacts": {
+                    "report_json": str(report_json),
+                    "report_md": args.report_md,
+                    "details_csv": args.details_csv,
+                    "buckets_csv": args.buckets_csv,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
