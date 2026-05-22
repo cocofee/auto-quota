@@ -1,0 +1,126 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local caches
+.venv/
+venv/
+env/
+.cache/
+
+# Node / frontend build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# IDE and local agent state
+.vscode/
+.idea/
+.claude/
+.trae/
+.agents/
+.codex_stage/
+.codex_tmp*/
+skills-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+nul
+None/
+
+# Runtime output, logs, temp files
+logs/
+output/
+tmp/
+temp/
+test_artifacts/
+raw_files/
+pytest_tmp_*/
+.pytest_tmp_*/
+pytest-cache-files-*/
+_tmp_*.log
+tmp_*
+*.bak
+*.bak.*
+*.tar
+*.lpk
+
+# Local databases and indexes
+experience.db
+*.db-wal
+*.db-shm
+data/*.db
+data/*.db-wal
+data/*.db-shm
+db/provinces/
+db/chroma/
+db/chroma_cache/
+db/common/*.db
+db/**/*.db
+db/**/*.sqlite
+db/**/*.sqlite3
+
+# Large local data assets
+2.计价/
+models/
+data/experience/
+data/reference/
+data/quota_rules/
+data/quota_data/
+data/pdf_info_price/
+data/oss_samples/
+data/source_packs/
+data/goal_search/national_index.sqlite
+data/goal_search/hard_pairs/
+data/goal_search/ltr_features_*.csv
+data/goal_search/ltr_features_*.jsonl
+data/goal_search/ltr_matrix_*.csv
+data/goal_search/ltr_group_*.jsonl
+data/goal_search/ltr_group_*.txt
+data/qwen3_training_triplets*.jsonl
+data/qwen3_exp_triplets*.jsonl
+data/bill_library*.json
+data/bill_library*.db
+data/ltr_training_data.csv
+data/ltr_mixed_safety_training_data.csv
+data/ltr_r2_silver_training_data*.csv
+data/ltr_model*.txt
+data/auto_synonyms_*.json
+data/*.pdf
+
+# Generated reports and agent scratch state
+reports/agent_state/
+reports/attribution/
+reports/**/*.tmp
+tests/benchmark_papers/_latest_result.json
+eval/v36_seed.json
+
+# Local tool state
+tools/.collect_history.json
+tools/.pull_history.json
+tools/tmp_*
+tools/download_oss_remaining.py
+
+# Project-specific scratch directories
+aq-fix-*/
+jarvis-correct-*/
+backups/
+downloads/
