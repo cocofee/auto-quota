@@ -1,0 +1,2 @@
+[console_scripts]
+cli-anything-auto-quota = cli_anything.auto_quota.auto_quota_cli:cli

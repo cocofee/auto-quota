@@ -400,6 +400,49 @@ def _should_override_seeded_specialty(seed_primary: str, inferred: dict) -> bool
     return False
 
 
+def _should_keep_c4_decorative_emergency_lamp_seed(
+    item: dict | None,
+    name: str,
+    desc: str,
+    inferred: dict | None,
+) -> bool:
+    item = dict(item or {})
+    inferred = dict(inferred or {})
+    if str(item.get("specialty") or "").strip() != "C4":
+        return False
+    if str(inferred.get("primary") or "").strip() != "C9":
+        return False
+
+    canonical_query = dict(item.get("canonical_query") or {})
+    search_query = str(canonical_query.get("search_query") or "").strip()
+    if "\u6807\u5fd7\u3001\u8bf1\u5bfc" not in search_query or "\u706f\u5177\u5b89\u88c5" not in search_query:
+        return False
+
+    context_prior = dict(item.get("context_prior") or {})
+    unified_plan = dict(item.get("unified_plan") or context_prior.get("unified_plan") or {})
+    preferred_books = _dedupe_books(
+        [unified_plan.get("primary_book")]
+        + list(unified_plan.get("preferred_books") or [])
+    )
+    if "C4" not in preferred_books:
+        return False
+
+    raw_text = " ".join(
+        str(value or "").strip()
+        for value in (
+            name,
+            desc,
+            item.get("bill_name"),
+            context_prior.get("bill_name"),
+            canonical_query.get("raw_query"),
+        )
+        if str(value or "").strip()
+    )
+    if "\u88c5\u9970\u706f" not in raw_text:
+        return False
+    return "\u5e94\u6025\u7167\u660e" in raw_text or "\u6d88\u9632\u5e94\u6025" in raw_text
+
+
 def _drop_incompatible_standard_classification(classification: dict, province: str | None) -> dict:
     classification = dict(classification or {})
     province = str(province or "").strip()
@@ -897,7 +940,15 @@ def _build_classification(item: dict, name: str, desc: str, section: str,
         else:
             classification = {"primary": None, "fallbacks": []}
     classification = _merge_seeded_classification_scope(classification, inferred)
-    if not classification["primary"] or _should_override_seeded_specialty(primary, inferred):
+    should_override_seed = _should_override_seeded_specialty(primary, inferred)
+    if should_override_seed and _should_keep_c4_decorative_emergency_lamp_seed(
+        item,
+        name,
+        desc,
+        inferred,
+    ):
+        should_override_seed = False
+    if not classification["primary"] or should_override_seed:
         classification = inferred
     unified_plan_fallback = _build_unified_plan_fallback_classification(item, province)
     if not unified_plan_fallback and classification.get("primary"):

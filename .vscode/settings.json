@@ -1,0 +1,8 @@
+{
+    "claudeCode.useTerminal": true,
+    "chatgpt.apiKeySource": "openai",
+    "chatgpt.openaiBaseUrl": "http://47.243.74.21:8080/v1",
+    "chatgpt.openaiApiKey": "sk-429939c1dce41c95138ae36bd533dcee15c9ae506bce9def5cd608799888aa67",
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": true
+}

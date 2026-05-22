@@ -1672,6 +1672,166 @@ class ParamValidator:
         return frozenset((bill_system, candidate_system)) in cls._FEATURE_SYSTEM_HARD_CONFLICTS
 
     @classmethod
+    def _is_fire_emergency_lighting_electrical_compatible(
+        cls,
+        bill_system: str,
+        candidate_system: str,
+        *,
+        bill_canonical_features: dict | None = None,
+        candidate_features: dict | None = None,
+        candidate: dict | None = None,
+    ) -> bool:
+        if frozenset((str(bill_system or ""), str(candidate_system or ""))) != frozenset(("消防", "电气")):
+            return False
+
+        candidate_book = get_book_from_quota_id((candidate or {}).get("quota_id", ""))
+        if candidate_book and candidate_book not in {"C4", "C5"}:
+            return False
+
+        bill_features = dict(bill_canonical_features or {})
+        candidate_features = dict(candidate_features or {})
+        bill_text = " ".join(
+            str(value or "")
+            for value in (
+                bill_features.get("raw_text"),
+                bill_features.get("normalized_text"),
+                bill_features.get("canonical_name"),
+                bill_features.get("entity"),
+                bill_features.get("lamp_type"),
+                " ".join(bill_features.get("traits") or []),
+            )
+        )
+        candidate_text = " ".join(
+            str(value or "")
+            for value in (
+                (candidate or {}).get("name"),
+                candidate_features.get("raw_text"),
+                candidate_features.get("normalized_text"),
+                candidate_features.get("canonical_name"),
+                candidate_features.get("entity"),
+                candidate_features.get("lamp_type"),
+                " ".join(candidate_features.get("traits") or []),
+            )
+        )
+
+        blocked_bill_terms = ("消火栓", "喷淋", "报警按钮", "探测器", "模块", "消防广播", "消防电话", "消防管")
+        if any(term in bill_text for term in blocked_bill_terms):
+            return False
+
+        bill_lighting_terms = ("消防应急", "应急照明", "疏散指示", "标志灯", "诱导灯", "装饰灯")
+        candidate_lighting_terms = ("标志", "诱导", "应急照明", "疏散指示")
+        return (
+            "灯" in bill_text
+            and any(term in bill_text for term in bill_lighting_terms)
+            and "灯" in candidate_text
+            and any(term in candidate_text for term in candidate_lighting_terms)
+        )
+
+    @classmethod
+    def _has_installation_hard_fail_detail(cls, details: list[str]) -> bool:
+        hard_markers = ("冲突", "不匹配", "但定额是")
+        return any(any(marker in detail for marker in hard_markers) for detail in details)
+
+    @classmethod
+    def _is_weak_current_box_wall_mount_compatible(
+        cls,
+        bill_params: dict,
+        quota_params: dict,
+        bill_canonical_features: dict | None,
+        quota_canonical_features: dict | None,
+    ) -> bool:
+        bill_install = str(bill_params.get("install_method") or "").strip()
+        quota_install = str(quota_params.get("install_method") or "").strip()
+        if bill_install != "暗装" or quota_install not in {"挂墙", "挂壁", "壁挂"}:
+            return False
+
+        bill_features = dict(bill_canonical_features or {})
+        quota_features = dict(quota_canonical_features or {})
+        bill_text = " ".join(
+            str(value or "")
+            for value in (
+                bill_features.get("raw_text"),
+                bill_features.get("normalized_text"),
+                bill_features.get("canonical_name"),
+                bill_features.get("entity"),
+            )
+        )
+        quota_text = " ".join(
+            str(value or "")
+            for value in (
+                quota_params.get("_quota_name"),
+                quota_features.get("raw_text"),
+                quota_features.get("normalized_text"),
+                quota_features.get("canonical_name"),
+                quota_features.get("entity"),
+            )
+        )
+        return "弱电箱" in bill_text and "弱电箱" in quota_text
+
+    def _relax_installation_result_for_known_compatibility(
+        self,
+        install_result: dict,
+        *,
+        bill_params: dict,
+        quota_params: dict,
+        bill_canonical_features: dict | None,
+        quota_canonical_features: dict | None,
+    ) -> dict:
+        details = list(install_result.get("details") or [])
+        if not details:
+            return install_result
+
+        result = dict(install_result)
+        score_credit = 0.0
+        changed = False
+
+        bill_system = str((bill_canonical_features or {}).get("system") or "").strip()
+        quota_system = str((quota_canonical_features or {}).get("system") or "").strip()
+        candidate = {
+            "quota_id": quota_params.get("_quota_id", ""),
+            "name": quota_params.get("_quota_name", ""),
+        }
+        if self._is_fire_emergency_lighting_electrical_compatible(
+            bill_system,
+            quota_system,
+            bill_canonical_features=bill_canonical_features,
+            candidate_features=quota_canonical_features,
+            candidate=candidate,
+        ):
+            system_conflict = f"系统冲突:{bill_system}!={quota_system}"
+            new_details = [detail for detail in details if detail != system_conflict]
+            if len(new_details) != len(details):
+                details = new_details
+                details.append(f"系统兼容:{bill_system}~{quota_system}")
+                score_credit += 0.85
+                changed = True
+
+        if self._is_weak_current_box_wall_mount_compatible(
+            bill_params,
+            quota_params,
+            bill_canonical_features,
+            quota_canonical_features,
+        ):
+            bill_install = str(bill_params.get("install_method") or "").strip()
+            quota_install = str(quota_params.get("install_method") or "").strip()
+            install_conflict = f"安装方式冲突:{bill_install}!={quota_install}"
+            new_details = [detail for detail in details if detail != install_conflict]
+            if len(new_details) != len(details):
+                details = new_details
+                details.append(f"安装方式弱电箱兼容:{bill_install}~{quota_install}")
+                score_credit += 0.8
+                changed = True
+
+        if not changed:
+            return install_result
+
+        result["details"] = details
+        result["score_sum"] = float(result.get("score_sum") or 0.0) + score_credit
+        if not self._has_installation_hard_fail_detail(details):
+            result["hard_fail"] = False
+        return result
+
+    @classmethod
     def _find_trait_hard_conflict(cls, bill_traits: set[str],
                                   candidate_traits: set[str]) -> tuple[str, str] | None:
         if not bill_traits or not candidate_traits:
@@ -1877,6 +2037,13 @@ class ParamValidator:
             if bill_system == candidate_system:
                 system_score = 1.0
                 exact_anchor_count += 1
+            elif self._is_fire_emergency_lighting_electrical_compatible(
+                bill_system,
+                candidate_system,
+                bill_canonical_features=bill_canonical_features,
+                candidate_features=candidate_features,
+            ):
+                system_score = 0.85
             elif self._is_system_hard_conflict(bill_system, candidate_system):
                 system_score = 0.0
                 hard_conflict = True
@@ -1885,6 +2052,7 @@ class ParamValidator:
             components.append(("system", self._FEATURE_ALIGNMENT_WEIGHTS["system"], system_score))
             details.append(
                 f"系统:{candidate_system}" if system_score == 1.0
+                else f"系统兼容:{bill_system}~{candidate_system}" if system_score >= 0.8
                 else f"系统冲突:{bill_system}!={candidate_system}" if system_score == 0.0
                 else f"系统偏差:{bill_system}!={candidate_system}"
             )
@@ -2139,8 +2307,20 @@ class ParamValidator:
 
     @classmethod
     def _context_system_hard_conflict(cls, expected_system: str,
-                                      candidate_system: str) -> bool:
+                                      candidate_system: str,
+                                      *,
+                                      bill_canonical_features: dict | None = None,
+                                      candidate_features: dict | None = None,
+                                      candidate: dict | None = None) -> bool:
         if not expected_system or not candidate_system or expected_system == candidate_system:
+            return False
+        if cls._is_fire_emergency_lighting_electrical_compatible(
+            expected_system,
+            candidate_system,
+            bill_canonical_features=bill_canonical_features,
+            candidate_features=candidate_features,
+            candidate=candidate,
+        ):
             return False
         if "消防" in (expected_system, candidate_system):
             other = candidate_system if expected_system == "消防" else expected_system
@@ -2187,14 +2367,27 @@ class ParamValidator:
             )
 
         if expected_system and candidate_system:
-            system_score = 1.0 if expected_system == candidate_system else 0.15
+            systems_compatible = self._is_fire_emergency_lighting_electrical_compatible(
+                expected_system,
+                candidate_system,
+                bill_canonical_features=bill_canonical_features,
+                candidate_features=candidate_features,
+                candidate=candidate,
+            )
+            system_score = 1.0 if expected_system == candidate_system else 0.75 if systems_compatible else 0.15
             components.append(("system", self._CONTEXT_WEIGHTS["system"], system_score))
             details.append(
                 f"上下文系统:{candidate_system}" if system_score == 1.0
+                else f"上下文系统兼容:{expected_system}~{candidate_system}" if systems_compatible
                 else f"上下文系统冲突:{expected_system}!={candidate_system}"
             )
             hard_conflict = hard_conflict or self._context_system_hard_conflict(
-                expected_system, candidate_system)
+                expected_system,
+                candidate_system,
+                bill_canonical_features=bill_canonical_features,
+                candidate_features=candidate_features,
+                candidate=candidate,
+            )
 
         expected_cable_type = str(context_prior.get("cable_type") or "").strip()
         if not expected_cable_type:
@@ -3298,6 +3491,13 @@ class ParamValidator:
             plugin_hints=(context_prior or {}).get("plugin_hints", {}),
             candidate_quota_id=str(quota_params.get("_quota_id", "") or ""),
             candidate_quota_name=str(quota_params.get("_quota_name", "") or ""),
+        )
+        install_result = self._relax_installation_result_for_known_compatibility(
+            install_result,
+            bill_params=bill_params,
+            quota_params=quota_params,
+            bill_canonical_features=bill_canonical_features,
+            quota_canonical_features=quota_canonical_features,
         )
         details.extend(install_result["details"])
         score_sum += install_result["score_sum"]

@@ -62,6 +62,120 @@ def _make_searcher():
     return searcher
 
 
+def test_materialize_quota_candidate_uses_session_cache(monkeypatch):
+    searcher = _make_searcher()
+    calls = []
+
+    def fake_search_by_id(quota_id, province=None, conn=None):
+        calls.append((quota_id, province, conn))
+        return quota_id, f"name {quota_id}", "m"
+
+    monkeypatch.setattr(hybrid_searcher_module, "search_by_id", fake_search_by_id)
+    monkeypatch.setattr(searcher, "_quota_lookup_connection", lambda: "conn")
+    monkeypatch.setattr(
+        hybrid_searcher_module.text_parser,
+        "parse_canonical",
+        lambda text, specialty="": {"canonical_name": text, "specialty": specialty},
+    )
+
+    first = searcher._materialize_quota_candidate("C4-1-1")
+    first["name"] = "mutated"
+    second = searcher._materialize_quota_candidate("C4-1-1")
+
+    assert calls == [("C4-1-1", "test", "conn")]
+    assert second["name"] == "name C4-1-1"
+    assert second["candidate_canonical_features"]["specialty"] == "C4"
+
+
+def test_materialize_quota_candidate_does_not_cache_missing_without_fallback(monkeypatch):
+    searcher = _make_searcher()
+    calls = []
+
+    def fake_search_by_id(quota_id, province=None, conn=None):
+        calls.append((quota_id, province, conn))
+        return None
+
+    monkeypatch.setattr(hybrid_searcher_module, "search_by_id", fake_search_by_id)
+    monkeypatch.setattr(searcher, "_quota_lookup_connection", lambda: "conn")
+    monkeypatch.setattr(
+        hybrid_searcher_module.text_parser,
+        "parse_canonical",
+        lambda text, specialty="": {"canonical_name": text, "specialty": specialty},
+    )
+
+    missing = searcher._materialize_quota_candidate("C4-1-404")
+    fallback = searcher._materialize_quota_candidate("C4-1-404", fallback_name="fallback name")
+
+    assert missing is None
+    assert fallback["name"] == "fallback name"
+    assert calls == [("C4-1-404", "test", "conn"), ("C4-1-404", "test", "conn")]
+
+
+def test_unified_prior_does_not_auto_create_experience_db_without_injection(monkeypatch):
+    from src import unified_data_layer as unified_data_layer_module
+
+    searcher = _make_searcher()
+    monkeypatch.setattr(config, "SEARCH_UNIFIED_DATA_PRIOR_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "SEARCH_UNIFIED_DATA_PRIOR_REQUIRES_EXPERIENCE", True, raising=False)
+    init_experience_dbs = []
+
+    class _FakeUnifiedDataLayer:
+        def __init__(self, province=None, experience_db=None):
+            self.province = province
+            self.experience_db = experience_db
+            self.sources = []
+            init_experience_dbs.append(experience_db)
+
+        def search(self, payload, sources=None, **kwargs):
+            self.sources.append(list(sources or []))
+            return {"grouped": {"experience": [], "universal_kb": [], "quota": []}}
+
+    monkeypatch.setattr(unified_data_layer_module, "UnifiedDataLayer", _FakeUnifiedDataLayer)
+
+    assert searcher._experience_db is None
+    assert searcher._collect_unified_data_prior_candidates(query_text="test query") == []
+    assert isinstance(init_experience_dbs[0], hybrid_searcher_module._NoExperienceDB)
+    assert searcher._unified_data_layer.sources == [["universal_kb", "quota"]]
+
+
+def test_unified_prior_omits_experience_source_without_experience_db(monkeypatch):
+    searcher = _make_searcher()
+    monkeypatch.setattr(config, "SEARCH_UNIFIED_DATA_PRIOR_REQUIRES_EXPERIENCE", False, raising=False)
+
+    class _FakeUnifiedDataLayer:
+        def __init__(self):
+            self.sources = []
+
+        def search(self, payload, sources=None, **kwargs):
+            self.sources.append(list(sources or []))
+            return {"grouped": {"experience": [], "universal_kb": [], "quota": []}}
+
+    unified = _FakeUnifiedDataLayer()
+    searcher._unified_data_layer = unified
+
+    assert searcher._collect_unified_data_prior_candidates(query_text="test query") == []
+    assert unified.sources == [["universal_kb", "quota"]]
+
+
+def _patch_basic_search_flow(monkeypatch, searcher):
+    monkeypatch.setattr(config, "VECTOR_ENABLED", True)
+    monkeypatch.setattr(
+        hybrid_searcher_module.text_parser,
+        "parse_canonical",
+        lambda query: {"family": "test"},
+    )
+    monkeypatch.setattr(
+        hybrid_searcher_module,
+        "build_query_route_profile",
+        lambda query, canonical_features=None, context_prior=None: {"route": "test"},
+    )
+    searcher._resolve_rank_window = lambda **kwargs: 2
+    searcher._resolve_engine_top_k = lambda **kwargs: kwargs["rank_window"]
+    searcher._get_adaptive_weights = lambda **kwargs: (0.5, 0.5, "balanced")
+    searcher._build_query_variants = lambda *args, **kwargs: [{"query": args[0], "tag": "raw", "weight": 1.0}]
+    searcher._finalize_candidates = lambda candidates, query_text, expected_books=None: list(candidates)
+
+
 def test_search_session_cache_key_separates_adaptive_strategy(monkeypatch):
     searcher = _make_searcher()
 
@@ -202,6 +316,86 @@ def test_search_session_cache_stores_prefinalized_rrf_results(monkeypatch):
     assert [candidate["quota_id"] for candidate in cached] == ["Q-1", "Q-2"]
 
 
+def test_search_session_cache_stores_no_result_terminal_state(monkeypatch):
+    searcher = _make_searcher()
+    _patch_basic_search_flow(monkeypatch, searcher)
+
+    def _empty_bm25(query, top_k=None, books=None):
+        searcher.bm25_engine.calls.append({"query": query, "top_k": top_k, "books": books})
+        return []
+
+    def _empty_vector(query, top_k=None, books=None, precomputed_embedding=None):
+        searcher.vector_engine.calls.append({
+            "query": query,
+            "top_k": top_k,
+            "books": books,
+            "precomputed_embedding": precomputed_embedding,
+        })
+        return []
+
+    searcher.bm25_engine.search = _empty_bm25
+    searcher.vector_engine.search = _empty_vector
+
+    first = searcher.search("no result query", top_k=2)
+    second = searcher.search("no result query", top_k=2)
+
+    assert first == []
+    assert second == []
+    assert len(searcher.bm25_engine.calls) == 1
+    assert len(searcher.vector_engine.calls) == 1
+    assert next(iter(searcher._session_cache.values()))["value"] == []
+
+
+def test_search_session_cache_stores_single_engine_results(monkeypatch):
+    searcher = _make_searcher()
+    _patch_basic_search_flow(monkeypatch, searcher)
+
+    def _empty_vector(query, top_k=None, books=None, precomputed_embedding=None):
+        searcher.vector_engine.calls.append({
+            "query": query,
+            "top_k": top_k,
+            "books": books,
+            "precomputed_embedding": precomputed_embedding,
+        })
+        return []
+
+    searcher.vector_engine.search = _empty_vector
+
+    first = searcher.search("bm25 only query", top_k=2)
+    second = searcher.search("bm25 only query", top_k=2)
+
+    assert [candidate["quota_id"] for candidate in first] == ["Q-1"]
+    assert [candidate["quota_id"] for candidate in second] == ["Q-1"]
+    assert len(searcher.bm25_engine.calls) == 1
+    assert len(searcher.vector_engine.calls) == 1
+    assert len(searcher._session_cache) == 1
+
+
+def test_search_session_cache_key_separates_effective_vector_budget(monkeypatch):
+    searcher = _make_searcher()
+    _patch_basic_search_flow(monkeypatch, searcher)
+    monkeypatch.setattr(config, "HYBRID_STANDARD_VECTOR_SKIP_SPECIALTIES", ("C5",), raising=False)
+
+    searcher.search("same query", top_k=2, item={"adaptive_strategy": "standard", "specialty": "C5"})
+    searcher.search("same query", top_k=2, item={"adaptive_strategy": "standard", "specialty": "C4"})
+
+    assert len(searcher.bm25_engine.calls) == 2
+    assert len(searcher.vector_engine.calls) == 1
+    assert len(searcher._session_cache) == 2
+
+
+def test_standard_vector_skip_uses_books_when_specialty_missing(monkeypatch):
+    searcher = _make_searcher()
+    _patch_basic_search_flow(monkeypatch, searcher)
+    monkeypatch.setattr(config, "HYBRID_STANDARD_VECTOR_SKIP_SPECIALTIES", ("C5",), raising=False)
+
+    searcher.search("weak current query", top_k=2, books=["5"], item={"adaptive_strategy": "standard"})
+    searcher.search("weak current query c5", top_k=2, books=["C05"], item={"adaptive_strategy": "standard"})
+
+    assert len(searcher.bm25_engine.calls) == 2
+    assert len(searcher.vector_engine.calls) == 0
+
+
 def test_search_session_cache_expires_by_ttl(monkeypatch):
     searcher = _make_searcher()
     searcher._SESSION_CACHE_TTL_SEC = 5.0
@@ -251,8 +445,10 @@ def test_search_session_cache_expires_by_ttl(monkeypatch):
 def test_kb_keyword_cache_expires_by_ttl(monkeypatch):
     searcher = _make_searcher()
     searcher._KB_KEYWORD_CACHE_TTL_SEC = 5.0
+    searcher._store_session_search_results = lambda cache_key, results: list(results or [])
 
     monkeypatch.setattr(config, "VECTOR_ENABLED", False)
+    monkeypatch.setattr(config, "HYBRID_STANDARD_KB_HINTS_ENABLED", True, raising=False)
     monkeypatch.setattr(
         hybrid_searcher_module.text_parser,
         "parse_canonical",

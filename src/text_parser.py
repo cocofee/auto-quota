@@ -1005,10 +1005,15 @@ class TextParser:
         """
         提取功率（kW）— 电动机、水泵等设备按功率分档
 
-        支持格式: 18.5kW, 18.5KW, 功率(kW) 18.5, 容量(kW):18.5KW以下
+        支持格式: 18.5kW, 18.5KW, 灯具18W, 功率(kW) 18.5, 容量(kW):18.5KW以下
         定额格式: (功率kW以下) 220, 功率(kw) ≤30
         注意区分kW和kVA（变压器用kVA，电机用kW）
         """
+        if any(keyword in text for keyword in ("灯", "筒灯", "照明", "灯具", "荧光")):
+            watt_match = re.search(r'(?<![A-Za-z])(\d+(?:\.\d+)?)\s*[wW](?![A-Za-z])', text)
+            if watt_match:
+                return float(watt_match.group(1)) / 1000
+
         patterns = [
             # 格式: 数字kW/KW（排除kVA/kv·a）
             r'(\d+(?:\.\d+)?)\s*[kK][wW](?![·.]?[aA])',
@@ -1154,6 +1159,11 @@ class TextParser:
             return None
 
         explicit_rules = (
+            (r"铝皮(?:保护层)?", "铝皮"),
+            (r"铁皮(?:保护层)?", "铁皮"),
+            (r"薄钢板(?:风管)?", "薄钢板"),
+            (r"镀锌(?:薄)?钢板|白铁皮|白铁", "镀锌钢板"),
+            (r"碳钢(?:板|管|通风管道)?", "碳钢"),
             (r"PSP钢塑复合管", "钢塑复合管"),
             (r"钢塑复合(?:压力)?(?:给水)?管", "钢塑复合管"),
             (r"钢骨架塑料复合管", "钢骨架塑料复合管"),
@@ -1373,6 +1383,7 @@ class TextParser:
             (("沟槽连接", "沟槽", "卡箍连接", "卡箍"), "沟槽连接"),
             (("螺纹连接", "螺纹", "丝扣连接", "丝扣"), "螺纹连接"),
             (("法兰连接", "法兰"), "法兰连接"),
+            (("铆钉固定", "铆钉"), "铆钉固定"),
             (("承插连接", "承插"), "承插连接"),
             (("焊接连接", "焊接"), "焊接连接"),
             (("粘接", "粘结", "粘结连接"), "粘接"),
@@ -1410,6 +1421,9 @@ class TextParser:
         if not text:
             return ""
         valve_rules = (
+            ("排烟防火阀", ("排烟防火阀",)),
+            ("防火阀", ("防火阀", "防火调节阀")),
+            ("调节阀", ("多叶调节阀", "对开多叶调节阀", "电动调节阀", "调节阀")),
             ("止回阀", ("止回阀", "逆止阀", "回流阀")),
             ("截止阀", ("截止阀", "截断阀")),
             ("闸阀", ("闸阀", "软密封闸阀", "信号闸阀")),
@@ -2082,6 +2096,8 @@ class TextParser:
         """提取桥架细类锚点。"""
         if not text:
             return ""
+        if "网式" in text:
+            return "网式"
         if "槽式" in text:
             return "槽式"
         if "托盘式" in text:
@@ -2097,13 +2113,13 @@ class TextParser:
         if not text or "桥架" not in text:
             return None
 
-        named_match = re.search(
+        for pattern in (
+            r'宽\+高[^\d]{0,24}[≤≥<>=]?\s*(\d+(?:\.\d+)?)',
             r'宽\+高(?:\s*\([^)]+\)|\s*(?:mm|毫米)?(?:以内|以下|以上))?\)?\s*[≤≥<>=]?\s*(\d+(?:\.\d+)?)',
-            text,
-            re.IGNORECASE,
-        )
-        if named_match:
-            return float(named_match.group(1))
+        ):
+            named_match = re.search(pattern, text, re.IGNORECASE)
+            if named_match:
+                return float(named_match.group(1))
 
         spec_match = re.search(
             r'(?:规格(?:型号)?[：:]?\s*|MR-?|CT-?)?(\d{2,4})\s*[*×xX]\s*(\d{2,4})(?:\s*[*×xX]\s*\d{2,4})?',

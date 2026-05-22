@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>auto-quota 架构地图</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #1f2933;
+      --muted: #627080;
+      --line: #d9e0e8;
+      --accent: #2364aa;
+      --accent-2: #0f766e;
+      --warn: #b7791f;
+      --danger: #b42318;
+      --code: #eef2f6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    header {
+      background: #12304a;
+      color: white;
+      padding: 32px 24px 28px;
+    }
+
+    header .inner,
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 34px;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      font-size: 23px;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0 0 10px;
+    }
+
+    code {
+      background: var(--code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    main {
+      padding: 24px;
+    }
+
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+
+    .lead {
+      color: #d9e7f7;
+      max-width: 920px;
+      font-size: 16px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      color: #ecf4ff;
+      border-radius: 999px;
+      padding: 5px 11px;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+
+    .card h3 {
+      color: var(--accent);
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .tag {
+      background: #e8f1fb;
+      color: #174a7a;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+    }
+
+    .tag.green {
+      background: #e5f4f1;
+      color: #0f766e;
+    }
+
+    .tag.amber {
+      background: #fff4db;
+      color: #8a5a00;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow .step {
+      min-height: 86px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px;
+      background: #f9fbfd;
+      position: relative;
+    }
+
+    .flow .step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -9px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .step b {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--accent-2);
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .matrix th,
+    .matrix td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .matrix th {
+      background: #eef3f8;
+      color: #263b50;
+    }
+
+    ul {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    .map {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .lane {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fbfcfe;
+    }
+
+    .lane h3 {
+      background: #eef3f8;
+      padding: 11px 12px;
+      margin: 0;
+      color: #263b50;
+    }
+
+    .lane .node {
+      margin: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+    }
+
+    .risk {
+      border-left: 4px solid var(--warn);
+      padding-left: 12px;
+      margin-top: 10px;
+    }
+
+    .danger {
+      border-left-color: var(--danger);
+    }
+
+    footer {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 24px 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .grid.cols-2,
+      .grid.cols-3,
+      .map,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow .step:not(:last-child)::after {
+        content: "v";
+        right: 12px;
+        top: auto;
+        bottom: -17px;
+        transform: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="inner">
+      <h1>auto-quota 架构地图</h1>
+      <p class="lead">这是给 Codex 和维护者快速重新进入代码库的单页地图。它把用户入口、后台任务、核心匹配算法、知识闭环、OpenClaw 适配层、数据资产和测试落点串成一张可读的系统说明。</p>
+      <div class="meta">
+        <span class="pill">生成日期：2026-05-15</span>
+        <span class="pill">核心：Python / FastAPI / Celery</span>
+        <span class="pill">前端：React / Vite / Ant Design</span>
+        <span class="pill">数据：PostgreSQL / Redis / SQLite / Markdown Wiki</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>一眼看懂</h2>
+      <div class="map">
+        <div class="lane">
+          <h3>用户与外部入口</h3>
+          <div class="node"><b>React Web</b><br><code>web/frontend/src/routes/index.tsx</code><br>任务、结果、工具、管理端。</div>
+          <div class="node"><b>命令行</b><br><code>main.py</code><br>直接批量匹配 Excel。</div>
+          <div class="node"><b>OpenClaw</b><br><code>/api/openclaw/*</code><br>二审、source pack、审核写回。</div>
+          <div class="node"><b>本地算力服务</b><br><code>local_match_server.py</code><br>轻量部署远程调用本机匹配能力。</div>
+        </div>
+        <div class="lane">
+          <h3>业务编排</h3>
+          <div class="node"><b>FastAPI</b><br><code>web/backend/app/main.py</code><br>注册 API、初始化 DB、预热缓存。</div>
+          <div class="node"><b>Celery Worker</b><br><code>web/backend/app/tasks/match_task.py</code><br>执行长耗时匹配、写进度、扣额度、保存结果。</div>
+          <div class="node"><b>服务层</b><br><code>web/backend/app/services/</code><br>上传、匹配、远程匹配、额度、邀请、LLM 配置。</div>
+          <div class="node"><b>SQLAlchemy Models</b><br><code>web/backend/app/models/</code><br>User、Task、MatchResult、Order、QuotaLog 等。</div>
+        </div>
+        <div class="lane">
+          <h3>核心算法与知识</h3>
+          <div class="node"><b>匹配编排</b><br><code>src/match_engine.py</code> + <code>src/match_pipeline/</code></div>
+          <div class="node"><b>召回与排序</b><br><code>src/hybrid_searcher.py</code>、<code>src/param_validator.py</code>、<code>src/candidate_scoring.py</code></div>
+          <div class="node"><b>经验与反馈</b><br><code>src/experience_db.py</code>、<code>src/feedback_bus.py</code></div>
+          <div class="node"><b>知识层</b><br><code>src/knowledge_staging.py</code>、<code>knowledge_wiki/</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>主流程：Web 匹配任务</h2>
+      <div class="flow">
+        <div class="step"><b>1. 上传</b>React 创建任务，提交 Excel 到 <code>/api/tasks</code>。</div>
+        <div class="step"><b>2. 入库</b>后端保存上传文件，创建 <code>Task</code>，投递 Celery。</div>
+        <div class="step"><b>3. 执行</b><code>execute_match</code> 选择本地或远程匹配后端。</div>
+        <div class="step"><b>4. 匹配</b><code>main.run</code> 读取、清洗、路由、召回、排序、校验。</div>
+        <div class="step"><b>5. 保存</b>压缩 quotas、alternatives、trace 后写入 <code>MatchResult</code>。</div>
+        <div class="step"><b>6. 闭环</b>前端展示、人工确认、OpenClaw 二审、经验和知识回流。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>核心匹配管线</h2>
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>关键文件</th>
+            <th>职责</th>
+            <th>改动提示</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>读取与清洗</td>
+            <td><code>src/bill_reader.py</code><br><code>src/bill_compiler.py</code><br><code>src/bill_cleaner.py</code><br><code>src/text_parser.py</code></td>
+            <td>读取 Excel，解析清单项，标准化名称、描述、单位、参数和项目上下文。</td>
+            <td>清单识别问题先看这里，测试常在 <code>tests/test_bill_*.py</code> 和 <code>tests/test_text_parser*.py</code>。</td>
+          </tr>
+          <tr>
+            <td>路由与查询</td>
+            <td><code>src/specialty_classifier.py</code><br><code>src/query_router.py</code><br><code>src/query_builder.py</code><br><code>src/province_plugins/</code></td>
+            <td>决定专业册、省份范围、同义词扩展、检索 query 和硬约束。</td>
+            <td>召回方向错了先查路由和 query，配套测试多为 <code>tests/test_query_builder_*.py</code>。</td>
+          </tr>
+          <tr>
+            <td>召回</td>
+            <td><code>src/hybrid_searcher.py</code><br><code>src/bm25_engine.py</code><br><code>src/vector_engine.py</code><br><code>src/quota_search.py</code></td>
+            <td>BM25 + 向量 + RRF 融合，支持跨省辅助、知识提示和按 ID 查询。</td>
+            <td>注意 session cache 和省份级缓存，避免把请求级状态留在长期对象里。</td>
+          </tr>
+          <tr>
+            <td>校验与排序</td>
+            <td><code>src/param_validator.py</code><br><code>src/installation_validator.py</code><br><code>src/candidate_scoring.py</code><br><code>src/ltr_ranker.py</code><br><code>src/final_validator.py</code></td>
+            <td>参数、材质、连接、安装方式、上下文、LTR/CGR/reranker、最终置信度和风险。</td>
+            <td>质量修复优先补窄回归测试，避免只调权重而不保护案例。</td>
+          </tr>
+          <tr>
+            <td>编排与 trace</td>
+            <td><code>src/match_engine.py</code><br><code>src/match_core.py</code><br><code>src/match_pipeline/orchestrator.py</code></td>
+            <td>经验直通、规则预匹配、候选合并、备选、置信度、reason、trace 和兜底。</td>
+            <td>OpenClaw 和管理端依赖 trace 字段，变更要保持向后兼容。</td>
+          </tr>
+          <tr>
+            <td>输出</td>
+            <td><code>src/output_writer.py</code><br><code>web/backend/app/services/match_service.py</code></td>
+            <td>生成 Excel/JSON，保存结果到 DB，并保留可回流的推理摘要。</td>
+            <td>广联达导入格式对列和空值敏感，输出层改动要跑导出相关测试。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>API 与页面地图</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>后端主路由</h3>
+          <ul>
+            <li><code>/api/auth</code>：注册、登录、刷新、退出、当前用户。</li>
+            <li><code>/api/tasks</code>：创建、列表、详情、取消、预览、进度。</li>
+            <li><code>/api/tasks/{id}/results</code>：结果查看、确认、导出。</li>
+            <li><code>/api/admin/*</code>：用户、配置、经验、知识、日志、分析、额度。</li>
+            <li><code>/api/tools/*</code>：智能填价、编清单、主材查价。</li>
+            <li><code>/api/file-intake/*</code>：统一上传、分类、解析、路由、确认。</li>
+            <li><code>/api/openclaw/*</code>：外部审核兼容面和二审闭环。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>前端主页面</h3>
+          <ul>
+            <li><code>/login</code>：登录和注册。</li>
+            <li><code>/dashboard</code>：系统概览。</li>
+            <li><code>/tasks/create</code>：上传清单创建任务。</li>
+            <li><code>/tasks</code>：任务列表。</li>
+            <li><code>/tasks/:taskId/results</code>：结果、候选、确认、导出。</li>
+            <li><code>/tools/price-backfill</code>、<code>/tools/bill-compiler</code>、<code>/tools/material-price</code>：工具入口。</li>
+            <li><code>/admin</code> 和 <code>/admin/*</code>：管理端。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>知识与反馈闭环</h2>
+      <div class="grid cols-3">
+        <div class="card">
+          <h3>经验库</h3>
+          <p>人工确认、纠错和历史命中进入 <code>src/experience_db.py</code> 及相关管理工具。匹配时先尝试经验直通，但受置信度、时效和审核规则约束。</p>
+          <div class="tag-row">
+            <span class="tag green">direct pass</span>
+            <span class="tag">confidence decay</span>
+            <span class="tag">disputed guard</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>知识候选</h3>
+          <p><code>src/knowledge_staging.py</code> 接收 audit errors、promotion candidates 和 source learning 结果。候选不直接等于正式知识。</p>
+          <div class="tag-row">
+            <span class="tag amber">staging</span>
+            <span class="tag">review</span>
+            <span class="tag">rollback</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>正式 Wiki</h3>
+          <p><code>knowledge_wiki/</code> 保存 cases、rules、methods、reviews、sources，面向 Obsidian 和人工维护，要求保留 source refs。</p>
+          <div class="tag-row">
+            <span class="tag">cases</span>
+            <span class="tag">rules</span>
+            <span class="tag">methods</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>数据与运行时</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Docker 拓扑</h3>
+          <ul>
+            <li><code>postgres</code>：业务数据库。</li>
+            <li><code>redis</code>：Celery broker/backend。</li>
+            <li><code>backend</code>：FastAPI，默认 <code>8000</code>。</li>
+            <li><code>celery-worker</code>：后台匹配与 benchmark。</li>
+            <li><code>frontend</code>：Nginx 托管前端，默认 <code>3300</code>。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>关键数据资产</h3>
+          <ul>
+            <li><code>data/quota_library.db</code>、<code>db/</code>：定额与索引。</li>
+            <li><code>data/material_prices.db</code>、<code>data/material_prices.json</code>：主材价格。</li>
+            <li><code>models/</code>、<code>data/ltr_model*.txt</code>：模型和排序资产。</li>
+            <li><code>data/source_packs/</code>：文件入口生成的可追溯来源包。</li>
+            <li><code>output/</code>、<code>logs/</code>：任务输出和运行日志。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>给下一个智能体的落点</h2>
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>需求类型</th>
+            <th>先看哪里</th>
+            <th>常见测试</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>前端新功能</td>
+            <td><code>web/frontend/src/routes/index.tsx</code>、目标页面、<code>web/frontend/src/services/api.ts</code></td>
+            <td><code>cd web/frontend && npm test</code>、<code>npm run build</code></td>
+          </tr>
+          <tr>
+            <td>新增后端 API</td>
+            <td><code>web/backend/app/api/</code>、<code>schemas/</code>、<code>models/</code>、<code>main.py</code></td>
+            <td><code>tests/test_web_*.py</code></td>
+          </tr>
+          <tr>
+            <td>匹配质量修复</td>
+            <td><code>src/match_pipeline/</code>、<code>src/query_builder.py</code>、<code>src/param_validator.py</code>、<code>src/candidate_scoring.py</code></td>
+            <td><code>tests/test_match_pipeline_*.py</code>、<code>tests/test_query_builder_*.py</code>、<code>tests/test_param_validator_*.py</code></td>
+          </tr>
+          <tr>
+            <td>OpenClaw 合同</td>
+            <td><code>web/backend/app/api/openclaw.py</code>、<code>docs/OpenClaw统一入口接口定义.md</code></td>
+            <td><code>tests/test_web_openclaw.py</code>、OpenClaw policy regressions</td>
+          </tr>
+          <tr>
+            <td>价格/主材</td>
+            <td><code>src/material_price_decision.py</code>、<code>src/price_reference_db.py</code>、<code>web/backend/app/api/material_price.py</code></td>
+            <td><code>tests/test_web_material_price.py</code>、<code>tests/test_price_*.py</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>需要小心的地方</h2>
+      <div class="risk">
+        <b>dict 字段是隐式合同。</b>
+        <p>核心匹配链路大量通过候选 dict 和 result dict 传递字段。改字段前先查生产者、消费者、trace 压缩和前端展示。</p>
+      </div>
+      <div class="risk">
+        <b>OpenClaw 是外部兼容面。</b>
+        <p><code>review-draft</code>、<code>review-confirm</code>、task/result/export 相关字段要保持向后兼容。</p>
+      </div>
+      <div class="risk">
+        <b>运行时缓存可能跨任务复用。</b>
+        <p><code>src/runtime_cache.py</code> 缓存省份级重对象。请求级状态要显式清理，避免污染下一次匹配。</p>
+      </div>
+      <div class="risk danger">
+        <b>本地和远程匹配路径都要想一遍。</b>
+        <p><code>MATCH_BACKEND=local</code> 走 Celery 进程内匹配，<code>remote</code> 走 <code>local_match_server.py</code>。任务语义改动需要检查两条路径。</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    配套机器可读文件：<code>docs/architecture-map.json</code>。新增核心模块、API、数据表、后台任务或主页面时，请同步更新这两份架构地图。
+  </footer>
+</body>
+</html>

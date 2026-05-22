@@ -1,0 +1,212 @@
+{
+  "total_rows": 109,
+  "total_components": 5,
+  "ratios": {
+    "dev": 0.6,
+    "heldout": 0.2,
+    "hard": 0.2
+  },
+  "target_rows": {
+    "dev": 65,
+    "heldout": 22,
+    "hard": 22
+  },
+  "actual_rows": {
+    "dev": 94,
+    "heldout": 12,
+    "hard": 3
+  },
+  "actual_components": {
+    "dev": 1,
+    "heldout": 2,
+    "hard": 2
+  },
+  "split_stats": {
+    "dev": {
+      "rows": 94,
+      "provinces": {
+        "北京市建设工程施工消耗量标准(2024)": 10,
+        "宁夏安装工程计价定额(2019)": 8,
+        "广东省通用安装工程综合定额(2018)": 16,
+        "江苏省安装工程计价定额(2014)": 13,
+        "江西省通用安装工程消耗量定额及统一基价表(2017)": 5,
+        "河南省通用安装工程预算定额(2016)": 8,
+        "浙江省通用安装工程预算定额(2018)": 9,
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)": 10,
+        "福建省通用安装工程预算定额(2017)": 11,
+        "辽宁省通用安装工程定额(2024)": 4
+      },
+      "source_files": {
+        "v36_a3_r14g_global_rank_miss_shadow_details.jsonl": 43,
+        "v36_data_fuel_r10_hard_param_guardrail_shadow_details.jsonl": 9,
+        "v36_data_fuel_r2_shadow_comparator_details.jsonl": 11,
+        "v36_oss_r2_canonicalizer_alignment_top.jsonl": 21,
+        "v36_oss_r3_speed_details.jsonl": 1,
+        "v36_oss_r3_speed_disabled_limit20_details.jsonl": 9
+      },
+      "buckets": {
+        "": 52,
+        "snapshot_window_too_short": 6,
+        "pre_ltr_or_final_overturned_correct": 4,
+        "correct_low_in_snapshot": 1,
+        "recall_rank_minus_1": 21,
+        "high_frequency_error": 10
+      },
+      "hard_eligible_rows": 93
+    },
+    "heldout": {
+      "rows": 12,
+      "provinces": {
+        "浙江省通用安装工程预算定额(2018)": 7,
+        "福建省通用安装工程预算定额(2017)": 3,
+        "北京市建设工程施工消耗量标准(2024)": 1,
+        "广东省通用安装工程综合定额(2018)": 1
+      },
+      "source_files": {
+        "v36_a2_r7_primary_param_consumption_guarded_speed_details.jsonl": 10,
+        "v36_oss_r3_speed_disabled_details.jsonl": 2
+      },
+      "buckets": {
+        "historical_slow_proxy": 10,
+        "recent_focused_chain": 2
+      },
+      "hard_eligible_rows": 0
+    },
+    "hard": {
+      "rows": 3,
+      "provinces": {
+        "江西省通用安装工程消耗量定额及统一基价表(2017)": 1,
+        "广东省通用安装工程综合定额(2018)": 2
+      },
+      "source_files": {
+        "v36_oss_r3_speed_enabled_top2_limit20_details.jsonl": 2,
+        "v36_oss_r3_speed_enabled_top1_limit20_details.jsonl": 1
+      },
+      "buckets": {
+        "high_frequency_error": 3
+      },
+      "hard_eligible_rows": 3
+    }
+  },
+  "leakage_check": {
+    "shared_keys_across_splits": 0,
+    "examples": []
+  },
+  "largest_components": [
+    {
+      "id": "69fae4e58231",
+      "split": "dev",
+      "rows": 94,
+      "hard_rows": 93,
+      "source_files": [
+        "v36_a3_r14g_global_rank_miss_shadow_details.jsonl",
+        "v36_data_fuel_r10_hard_param_guardrail_shadow_details.jsonl",
+        "v36_data_fuel_r2_shadow_comparator_details.jsonl",
+        "v36_oss_r2_canonicalizer_alignment_top.jsonl",
+        "v36_oss_r3_speed_details.jsonl",
+        "v36_oss_r3_speed_disabled_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "北京市建设工程施工消耗量标准(2024)",
+        "宁夏安装工程计价定额(2019)",
+        "广东省通用安装工程综合定额(2018)",
+        "江苏省安装工程计价定额(2014)",
+        "江西省通用安装工程消耗量定额及统一基价表(2017)",
+        "河南省通用安装工程预算定额(2016)",
+        "浙江省通用安装工程预算定额(2018)",
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
+        "福建省通用安装工程预算定额(2017)",
+        "辽宁省通用安装工程定额(2024)"
+      ],
+      "buckets": {
+        "": 52,
+        "snapshot_window_too_short": 6,
+        "pre_ltr_or_final_overturned_correct": 4,
+        "correct_low_in_snapshot": 1,
+        "recall_rank_minus_1": 21,
+        "high_frequency_error": 10
+      }
+    },
+    {
+      "id": "9f8bf46484aa",
+      "split": "heldout",
+      "rows": 10,
+      "hard_rows": 0,
+      "source_files": [
+        "v36_a2_r7_primary_param_consumption_guarded_speed_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "北京市建设工程施工消耗量标准(2024)",
+        "广东省通用安装工程综合定额(2018)",
+        "浙江省通用安装工程预算定额(2018)",
+        "福建省通用安装工程预算定额(2017)"
+      ],
+      "buckets": {
+        "historical_slow_proxy": 8,
+        "recent_focused_chain": 2
+      }
+    },
+    {
+      "id": "8ee2ea4ecae9",
+      "split": "heldout",
+      "rows": 2,
+      "hard_rows": 0,
+      "source_files": [
+        "v36_oss_r3_speed_disabled_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "浙江省通用安装工程预算定额(2018)"
+      ],
+      "buckets": {
+        "historical_slow_proxy": 2
+      }
+    },
+    {
+      "id": "0329b8d0a9ed",
+      "split": "hard",
+      "rows": 2,
+      "hard_rows": 2,
+      "source_files": [
+        "v36_oss_r3_speed_enabled_top2_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "广东省通用安装工程综合定额(2018)",
+        "江西省通用安装工程消耗量定额及统一基价表(2017)"
+      ],
+      "buckets": {
+        "high_frequency_error": 2
+      }
+    },
+    {
+      "id": "eb197b799e30",
+      "split": "hard",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "v36_oss_r3_speed_enabled_top1_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "广东省通用安装工程综合定额(2018)"
+      ],
+      "buckets": {
+        "high_frequency_error": 1
+      }
+    }
+  ],
+  "warnings": [
+    "largest leakage component is larger than heldout/hard targets; split ratios are approximate until OSS sample diversity grows"
+  ],
+  "input": "data\\goal_search\\oss_samples.jsonl",
+  "output_dir": "data\\goal_search\\splits",
+  "outputs": {
+    "dev": "data\\goal_search\\splits\\dev.jsonl",
+    "heldout": "data\\goal_search\\splits\\heldout.jsonl",
+    "hard": "data\\goal_search\\splits\\hard.jsonl"
+  },
+  "summary_output": "data\\goal_search\\splits\\split_summary.json"
+}

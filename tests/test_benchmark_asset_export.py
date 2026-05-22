@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tools.run_benchmark import (
     _build_benchmark_asset_buckets,
+    _diagnostic_slice,
     export_benchmark_assets,
     materialize_benchmark_learning_outputs,
 )
@@ -38,9 +39,21 @@ def _sample_json_results():
                     "candidate_count": 2,
                     "pre_ltr_top1_id": "C4-1-2",
                     "post_ltr_top1_id": "C4-1-1",
+                    "post_ltr_structural_top1_id": "C4-1-1",
                     "post_arbiter_top1_id": "C4-1-2",
                     "post_final_top1_id": "C4-1-2",
                     "final_changed_by": "arbiter",
+                    "decision_advisories": [
+                        {
+                            "stage": "post_ltr_structural_ranker",
+                            "from_top1_id": "C4-1-2",
+                            "suggested_top1_id": "C4-1-1",
+                            "accepted_by_final_decider": True,
+                            "rejected_by_final_decider": False,
+                            "final_decider_reason": "test_accept",
+                            "details": {"evidence_groups": {"family": "same"}},
+                        }
+                    ],
                     "miss_stage": "post_rank_miss",
                     "error_stage": "candidate_arbiter",
                     "error_type": "post_ltr_correct_but_arbiter_changed",
@@ -120,6 +133,21 @@ def test_build_benchmark_asset_buckets_groups_records():
     assert rerank_pair["retrieved_candidates"][0]["quota_id"] == "C4-1-2"
 
 
+def test_asset_export_preserves_stage_chain_advisories_and_candidate_comparison():
+    buckets = _build_benchmark_asset_buckets(_sample_json_results())
+    record = buckets["all_errors"][0]
+
+    assert record["post_ltr_structural_top1_id"] == "C4-1-1"
+    assert record["stage_top1_chain"]["post_ltr_structural_top1_id"] == "C4-1-1"
+    assert record["decision_advisories"][0]["stage"] == "post_ltr_structural_ranker"
+    assert record["decision_advisories"][0]["from_top1_id"] == "C4-1-2"
+    assert record["decision_advisories"][0]["suggested_top1_id"] == "C4-1-1"
+    assert record["decision_advisories"][0]["accepted_by_final_decider"] is True
+    comparison = record["candidate_decision_comparison"]
+    assert comparison["predicted"]["quota_id"] == "C4-1-2"
+    assert comparison["expected_best"]["quota_id"] == "C4-1-1"
+
+
 def test_build_benchmark_asset_buckets_keeps_top10_rerank_candidates():
     json_results = [
         {
@@ -156,6 +184,61 @@ def test_build_benchmark_asset_buckets_keeps_top10_rerank_candidates():
     rerank_pair = buckets["rerank_pairs"][0]
     assert len(rerank_pair["retrieved_candidates"]) == 10
     assert rerank_pair["retrieved_candidates"][1]["reasoning"]["detail"] == "detail-1"
+
+
+def test_diagnostic_slice_keeps_top50_snapshot_window():
+    rows = [{"quota_id": f"C4-1-{i}"} for i in range(60)]
+
+    sliced = _diagnostic_slice(rows)
+
+    assert len(sliced) == 50
+    assert sliced[-1]["quota_id"] == "C4-1-49"
+
+
+def test_asset_export_preserves_diagnostic_candidate_and_hard_param_snapshots():
+    diagnostic_candidates = [
+        {"quota_id": f"C4-1-{i}", "name": f"candidate-{i}"}
+        for i in range(50)
+    ]
+    hard_candidates = [
+        {
+            "quota_id": f"C4-H-{i}",
+            "name": f"hard-{i}",
+            "candidate_canonical_features": {"family": "electrical_box"},
+            "canonical_feature_present_fields": ["family"],
+        }
+        for i in range(50)
+    ]
+    json_results = [
+        {
+            "province": "diagnostic",
+            "details": [
+                {
+                    "is_match": False,
+                    "cause": "wrong_tier",
+                    "bill_name": "box",
+                    "bill_text": "box",
+                    "specialty": "C4",
+                    "stored_ids": ["C4-1-1"],
+                    "stored_names": ["correct"],
+                    "algo_id": "C4-1-2",
+                    "algo_name": "wrong",
+                    "confidence": 62,
+                    "oracle_in_candidates": True,
+                    "all_candidate_ids": ["C4-1-2", "C4-1-1"],
+                    "candidate_snapshots": diagnostic_candidates,
+                    "hard_param_fail_rejected_count": 50,
+                    "hard_param_fail_rejected_candidates": hard_candidates,
+                }
+            ],
+        }
+    ]
+
+    record = _build_benchmark_asset_buckets(json_results)["all_errors"][0]
+
+    assert len(record["candidate_snapshots"]) == 50
+    assert len(record["hard_param_fail_rejected_candidates"]) == 50
+    assert record["hard_param_fail_rejected_candidates"][0]["candidate_canonical_features"]["family"] == "electrical_box"
 
 
 def test_export_benchmark_assets_writes_manifest_and_jsonl():

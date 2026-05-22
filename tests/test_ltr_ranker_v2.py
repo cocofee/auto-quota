@@ -425,6 +425,134 @@ def test_ltr_ranker_disabled_cgr_does_not_broaden_plain_ltr_override(monkeypatch
     assert meta["cgr"] == {}
 
 
+def test_ltr_ranker_disabled_cgr_inherits_c4_emergency_lighting_ltr_top1(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.10, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "C4-12-191",
+            "name": "标志、诱导装饰灯具安装 吊杆式 示意图号:171、172、173、174",
+            "param_match": True,
+            "param_score": 0.94,
+            "logic_score": 0.50,
+            "feature_alignment_score": 0.85,
+            "context_alignment_score": 0.82,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "C4-12-192",
+            "name": "标志、诱导装饰灯具安装 墙壁式 示意图号:171、172、173、174",
+            "param_match": True,
+            "param_score": 0.89,
+            "logic_score": 0.50,
+            "feature_alignment_score": 0.60,
+            "context_alignment_score": 0.82,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.88,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "装饰灯 名称：集中控制型消防应急照明灯-E10",
+            "description": "装饰灯 名称：集中控制型消防应急照明灯-E10",
+        },
+        candidates,
+        {},
+    )
+
+    assert ranked[0]["quota_id"] == "C4-12-192"
+    assert meta["pre_ltr_top1_id"] == "C4-12-191"
+    assert meta["post_ltr_top1_id"] == "C4-12-192"
+    assert meta["post_cgr_top1_id"] == "C4-12-192"
+    assert meta["disabled_cgr_inheritance"] == {
+        "applied": True,
+        "reason": "c4_wall_emergency_lighting_ltr_top1",
+    }
+    assert meta["cgr"] == {}
+
+
+def test_ltr_ranker_disabled_cgr_inherits_beijing_emergency_lighting_wall_top1(monkeypatch):
+    monkeypatch.setattr("config.LTR_V2_ENABLED", True)
+    monkeypatch.setattr("config.LTR_GUARD_ENABLED", True)
+    monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", False)
+
+    class _FakeModel:
+        def predict(self, matrix):
+            return [0.10, 0.95]
+
+    monkeypatch.setattr(
+        LTRRanker,
+        "_load",
+        classmethod(lambda cls: (_FakeModel(), ["f1"])),
+    )
+    monkeypatch.setattr(
+        "src.ltr_ranker.extract_group_features",
+        lambda item, candidates, context: [{"f1": 0.0}, {"f1": 1.0}],
+    )
+
+    candidates = [
+        {
+            "quota_id": "C4-12-65",
+            "name": "标志、诱导灯安装 吊杆式",
+            "param_match": True,
+            "param_score": 0.97,
+            "logic_score": 0.50,
+            "feature_alignment_score": 0.50,
+            "context_alignment_score": 0.50,
+            "rerank_score": 0.90,
+            "hybrid_score": 0.90,
+        },
+        {
+            "quota_id": "C4-12-67",
+            "name": "标志、诱导灯安装 壁式",
+            "param_match": True,
+            "param_score": 0.86,
+            "logic_score": 0.50,
+            "feature_alignment_score": 0.40,
+            "context_alignment_score": 0.50,
+            "rerank_score": 0.88,
+            "hybrid_score": 0.88,
+        },
+    ]
+
+    ranked, meta = LTRRanker.rerank_candidates_with_ltr(
+        {
+            "name": "消防应急照明灯",
+            "description": "消防应急照明灯",
+        },
+        candidates,
+        {},
+    )
+
+    assert ranked[0]["quota_id"] == "C4-12-67"
+    assert meta["pre_ltr_top1_id"] == "C4-12-65"
+    assert meta["post_ltr_top1_id"] == "C4-12-67"
+    assert meta["post_cgr_top1_id"] == "C4-12-67"
+    assert meta["disabled_cgr_inheritance"] == {
+        "applied": True,
+        "reason": "c4_wall_emergency_lighting_ltr_top1",
+    }
+    assert meta["cgr"] == {}
+
+
 def test_ltr_ranker_cgr_shadow_guard_allows_invalid_ltr_top1_override(monkeypatch):
     monkeypatch.setattr("config.LTR_V2_ENABLED", True)
     monkeypatch.setattr("config.CONSTRAINED_GATED_RANKER_ENABLED", True)

@@ -425,6 +425,61 @@ def test_collect_prior_candidates_uses_unified_data_layer_when_available(monkeyp
     assert quota_prior["knowledge_prior_sources"] == ["quota"]
 
 
+def test_collect_prior_candidates_caps_long_alias_exact_for_standard_c5_lightweight(monkeypatch):
+    searcher = HybridSearcher.__new__(HybridSearcher)
+    searcher.province = "TestProvince"
+    searcher._experience_db = None
+    searcher._universal_kb = False
+    searcher._unified_data_layer = object()
+    searcher._bm25_engine = _FakeBM25()
+    searcher._uses_standard_books = True
+
+    monkeypatch.setattr("config.SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", True, raising=False)
+    monkeypatch.setattr("config.HYBRID_STANDARD_VECTOR_SKIP_SPECIALTIES", ("C5",), raising=False)
+    monkeypatch.setattr(searcher, "_collect_quota_name_fallback_prior_candidates", lambda **kwargs: [])
+    monkeypatch.setattr(searcher, "_collect_quota_id_neighbor_prior_candidates", lambda **kwargs: [])
+    monkeypatch.setattr(searcher, "_collect_experience_exact_prior_candidates", lambda **kwargs: [])
+    monkeypatch.setattr(searcher, "_collect_universal_kb_exact_prior_candidates", lambda **kwargs: [])
+    monkeypatch.setattr(searcher, "_collect_experience_prior_candidates", lambda **kwargs: [])
+    monkeypatch.setattr(searcher, "_collect_universal_kb_prior_candidates", lambda **kwargs: [])
+    alias_kwargs = []
+    called = {"unified": 0}
+
+    def fake_alias(**kwargs):
+        alias_kwargs.append(kwargs)
+        return []
+
+    def fake_unified(**kwargs):
+        del kwargs
+        called["unified"] += 1
+        return [{"quota_id": "Q-U", "name": "Unified", "knowledge_prior_score": 0.9}]
+
+    monkeypatch.setattr(searcher, "_collect_quota_alias_exact_prior_candidates", fake_alias)
+    monkeypatch.setattr(searcher, "_collect_unified_data_prior_candidates", fake_unified)
+
+    standard_c5 = searcher.collect_prior_candidates(
+        "weak current",
+        books=["5"],
+        item={},
+        adaptive_strategy="standard",
+    )
+    deep_c5 = searcher.collect_prior_candidates(
+        "weak current",
+        books=["5"],
+        item={},
+        adaptive_strategy="deep",
+    )
+
+    assert standard_c5[0]["quota_id"] == "Q-U"
+    assert deep_c5[0]["quota_id"] == "Q-U"
+    assert called["unified"] == 2
+    assert alias_kwargs[0]["max_aliases"] == 2
+    assert alias_kwargs[0]["max_compact_len"] == 32
+    assert alias_kwargs[1]["max_aliases"] is None
+    assert alias_kwargs[1]["max_compact_len"] is None
+    assert searcher._last_prior_collect_trace["lightweight_standard_c5"] is False
+
+
 def test_collect_prior_candidates_skips_non_authority_bill_name_exact_fallback(monkeypatch):
     class _VerifiedOnlyExperienceDB:
         def _find_exact_match(self, variant, province, authority_only=True, exclude_sources=None):

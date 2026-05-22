@@ -153,6 +153,28 @@ def test_installation_validator_rejects_entity_conflict_from_canonical_features(
     assert any("实体冲突" in detail for detail in result["details"])
 
 
+def test_installation_validator_allows_cable_conduit_anchor_with_laying_evidence():
+    assert InstallationValidator._is_cable_conduit_anchor_compatible(
+        bill_entity="电缆",
+        quota_entity="配管",
+        bill_family="cable_family",
+        quota_family="conduit_raceway",
+        bill_params={"laying_method": "管内敷设"},
+        quota_params={"laying_method": "穿管"},
+    ) is True
+
+
+def test_installation_validator_does_not_allow_unrelated_conduit_anchor_pair():
+    assert InstallationValidator._is_cable_conduit_anchor_compatible(
+        bill_entity="配电箱",
+        quota_entity="配管",
+        bill_family="electrical_box",
+        quota_family="conduit_raceway",
+        bill_params={"install_method": "明装"},
+        quota_params={"laying_method": "穿管"},
+    ) is False
+
+
 def test_installation_validator_rejects_trait_conflict_from_canonical_features():
     result = _validator().validate(
         {},

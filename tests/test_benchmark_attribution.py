@@ -165,6 +165,81 @@ def test_build_attribution_summary_uses_trace_rank_stage_steps_when_flat_fields_
     assert summary["counts"]["R6_其它"] == 0
 
 
+def test_final_decider_post_cgr_advisory_override_counts_as_r3():
+    detail = {
+        "bill_id": "d4-1",
+        "bill_name": "final_decider post_cgr",
+        "stored_ids": ["Q-CORRECT"],
+        "algo_id": "Q-WRONG",
+        "is_match": False,
+        "match_source": "search",
+        "recall_topk_ids": ["Q-CORRECT", "Q-WRONG"],
+        "post_ltr_top1_id": "Q-CORRECT",
+        "post_cgr_top1_id": "Q-CORRECT",
+        "post_explicit_top1_id": "Q-CORRECT",
+        "post_final_top1_id": "Q-WRONG",
+        "final_changed_by": "final_decider",
+        "decision_advisories": [
+            {
+                "stage": "post_cgr",
+                "from_top1_id": "Q-CORRECT",
+                "suggested_top1_id": "Q-WRONG",
+                "selected_quota_id": "Q-WRONG",
+                "decision_owner": "final_decider",
+                "accepted_by_final_decider": True,
+            }
+        ],
+    }
+
+    assert _classify_attribution_category(detail) == "R3_CGR推翻正确"
+
+
+def test_final_decider_cgr_lifecycle_advisory_override_counts_as_r3_from_trace():
+    json_results = [
+        {
+            "province": "河南",
+            "details": [
+                {
+                    "bill_id": "d4-2",
+                    "bill_name": "final_decider lifecycle",
+                    "stored_ids": ["Q-CORRECT"],
+                    "algo_id": "Q-WRONG",
+                    "is_match": False,
+                    "match_source": "search",
+                    "recall_topk_ids": ["Q-CORRECT", "Q-WRONG"],
+                    "post_ltr_top1_id": "Q-CORRECT",
+                    "post_cgr_top1_id": "Q-CORRECT",
+                    "post_explicit_top1_id": "Q-CORRECT",
+                    "post_final_top1_id": "Q-WRONG",
+                    "final_changed_by": "final_decider",
+                    "trace": {
+                        "steps": [
+                            {
+                                "stage": "search_select",
+                                "decision_advisories": [
+                                    {
+                                        "stage": "cgr_lifecycle_guard",
+                                        "from_top1_id": "Q-CORRECT",
+                                        "suggested_top1_id": "Q-WRONG",
+                                        "selected_quota_id": "Q-WRONG",
+                                        "decision_owner": "final_decider",
+                                        "accepted_by_final_decider": True,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    ]
+
+    summary = _build_attribution_summary(json_results)
+
+    assert summary["counts"]["R3_CGR推翻正确"] == 1
+    assert summary["counts"]["R6_其它"] == 0
+
+
 def test_build_benchmark_summary_embeds_attribution_summary():
     json_results = [
         {

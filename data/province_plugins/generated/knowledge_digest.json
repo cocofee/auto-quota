@@ -1,45 +1,85 @@
 {
-  "generated_at": "2026-04-05 11:04:03",
-  "source_asset_root": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\output\\benchmark_assets\\20260405_110403",
+  "generated_at": "2026-05-20 10:47:46",
+  "source_asset_root": "reports\\agent_state\\v36_sys_r9_global_validation_assets",
   "record_counts": {
-    "synonym_records": 5,
-    "route_records": 2,
-    "tier_records": 12
+    "synonym_records": 45,
+    "route_records": 6,
+    "tier_records": 30
   },
   "top_national_synonyms": [
     {
-      "term": "壁式排风机",
-      "count": 1,
+      "term": "配电箱",
+      "count": 4,
       "aliases": [
-        "风扇安装 排气扇"
+        "成套配电箱2AEZ1",
+        "成套配电箱 AC-pf",
+        "双电源配电箱 ATxdt",
+        "应急照明集中电源箱B1ALE1a~c"
       ]
     },
     {
-      "term": "天花板管道式换气扇",
-      "count": 1,
+      "term": "普通灯具",
+      "count": 2,
       "aliases": [
-        "风扇安装 天花式排气扇"
+        "点光源艺术装饰灯具,吸顶式 示意图号 11601H 158(包含“成套灯具“)",
+        "吸顶灯(LED光源,1*18W)"
       ]
     },
     {
-      "term": "柔性软风管-超高",
-      "count": 1,
+      "term": "电力电缆",
+      "count": 2,
       "aliases": [
-        "柔性接口及伸缩节 有法兰"
+        "铜芯电力电缆敷设 一般四芯电缆 电缆截面35mm2以下",
+        "铜芯电力电缆敷设 一般五芯电缆 电缆截面35mm2以下"
       ]
     },
     {
-      "term": "通风管道绝热绝热材料品种隔热棉-50",
+      "term": "LED屏支架",
       "count": 1,
       "aliases": [
-        "风管纤维类制品(板)安装 其他纤维类制品(板)"
+        "显示器支架安装"
       ]
     },
     {
-      "term": "通风管道绝热绝热材料品种隔热棉-50-超高",
+      "term": "LED屏视屏处理器",
       "count": 1,
       "aliases": [
-        "风管纤维类制品(板)安装 其他纤维类制品(板)"
+        "LED屏视屏处理器"
+      ]
+    },
+    {
+      "term": "一体化空气流量指示器",
+      "count": 1,
+      "aliases": [
+        "多功能多参数在线分析仪"
+      ]
+    },
+    {
+      "term": "一般路灯",
+      "count": 1,
+      "aliases": [
+        "工厂其他灯具安装 投光灯"
+      ]
+    },
+    {
+      "term": "不锈钢地漏",
+      "count": 1,
+      "aliases": [
+        "地漏安装 100"
+      ]
+    },
+    {
+      "term": "低压不锈钢管件",
+      "count": 1,
+      "aliases": [
+        "低压碳钢管件(沟槽式连接) 90°弯头DN40"
+      ]
+    },
+    {
+      "term": "低压碳钢管",
+      "count": 1,
+      "aliases": [
+        "低压钢管(沟槽式连接) 公称直径75mm以内"
       ]
     }
   ],
@@ -48,12 +88,93 @@
   "province_summaries": [
     {
       "province": "广东省通用安装工程综合定额(2018)",
-      "synonym_terms": 5,
+      "synonym_terms": 6,
       "route_terms": 2,
-      "tier_terms": 12,
-      "synonym_count": 5,
+      "tier_terms": 4,
+      "synonym_count": 6,
       "route_count": 4,
-      "tier_count": 24
+      "tier_count": 8
+    },
+    {
+      "province": "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
+      "synonym_terms": 3,
+      "route_terms": 1,
+      "tier_terms": 6,
+      "synonym_count": 3,
+      "route_count": 2,
+      "tier_count": 12
+    },
+    {
+      "province": "浙江省通用安装工程预算定额(2018)",
+      "synonym_terms": 4,
+      "route_terms": 2,
+      "tier_terms": 4,
+      "synonym_count": 4,
+      "route_count": 4,
+      "tier_count": 8
+    },
+    {
+      "province": "江苏省安装工程计价定额(2014)",
+      "synonym_terms": 9,
+      "route_terms": 0,
+      "tier_terms": 1,
+      "synonym_count": 11,
+      "route_count": 0,
+      "tier_count": 2
+    },
+    {
+      "province": "福建省通用安装工程预算定额(2017)",
+      "synonym_terms": 9,
+      "route_terms": 0,
+      "tier_terms": 0,
+      "synonym_count": 12,
+      "route_count": 0,
+      "tier_count": 0
+    },
+    {
+      "province": "北京市建设工程施工消耗量标准(2024)",
+      "synonym_terms": 0,
+      "route_terms": 1,
+      "tier_terms": 4,
+      "synonym_count": 0,
+      "route_count": 2,
+      "tier_count": 8
+    },
+    {
+      "province": "河南省通用安装工程预算定额(2016)",
+      "synonym_terms": 6,
+      "route_terms": 0,
+      "tier_terms": 2,
+      "synonym_count": 6,
+      "route_count": 0,
+      "tier_count": 4
+    },
+    {
+      "province": "宁夏安装工程计价定额(2019)",
+      "synonym_terms": 3,
+      "route_terms": 0,
+      "tier_terms": 3,
+      "synonym_count": 3,
+      "route_count": 0,
+      "tier_count": 6
+    },
+    {
+      "province": "江西省通用安装工程消耗量定额及统一基价表(2017)",
+      "synonym_terms": 0,
+      "route_terms": 0,
+      "tier_terms": 4,
+      "synonym_count": 0,
+      "route_count": 0,
+      "tier_count": 8
+    },
+    {
+      "province": "辽宁省通用安装工程定额(2024)",
+      "synonym_terms": 0,
+      "route_terms": 0,
+      "tier_terms": 2,
+      "synonym_count": 0,
+      "route_count": 0,
+      "tier_count": 4
     }
   ]
 }

@@ -2717,6 +2717,17 @@ def _build_described_lamp_query(
     if not lamp_text:
         return None
 
+    combined_text = f"{raw_name} {lamp_text} {full_text or ''}"
+    if (
+        "装饰灯" in combined_text
+        and "应急" in combined_text
+        and ("消防" in combined_text or "集中控制" in combined_text)
+    ):
+        install_terms = []
+        if re.search(r"壁挂|挂墙|墙壁|壁装|壁", combined_text):
+            install_terms.extend(["墙壁式", "壁式", "挂墙"])
+        return " ".join(["标志、诱导装饰灯具安装", *install_terms]).strip()
+
     if re.search(_SPECIAL_LAMP_PATTERN, lamp_text):
         return None
     if any(marker in f"{raw_name} {lamp_text}" for marker in ("应急", "疏散", "指示", "标志", "诱导", "消防")):

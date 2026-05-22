@@ -1,0 +1,17 @@
+setup.py
+cli_anything/auto_quota/__init__.py
+cli_anything/auto_quota/__main__.py
+cli_anything/auto_quota/auto_quota_cli.py
+cli_anything/auto_quota/core/__init__.py
+cli_anything/auto_quota/skills/SKILL.md
+cli_anything/auto_quota/tests/test_core.py
+cli_anything/auto_quota/tests/test_full_e2e.py
+cli_anything/auto_quota/utils/__init__.py
+cli_anything/auto_quota/utils/auto_quota_backend.py
+cli_anything/auto_quota/utils/repl_skin.py
+cli_anything_auto_quota.egg-info/PKG-INFO
+cli_anything_auto_quota.egg-info/SOURCES.txt
+cli_anything_auto_quota.egg-info/dependency_links.txt
+cli_anything_auto_quota.egg-info/entry_points.txt
+cli_anything_auto_quota.egg-info/requires.txt
+cli_anything_auto_quota.egg-info/top_level.txt

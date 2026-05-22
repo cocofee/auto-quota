@@ -1,0 +1,27 @@
+{
+  "stage": "Goal LTR v1 / stage 2.4 OOF safety gate calibration",
+  "no_search_integration": true,
+  "selected_gate": {
+    "name": "strict_same_family_book_param_or_margin_1_25",
+    "mode": "strict_or_margin",
+    "margin": 1.25,
+    "rule": "allow LTR Top1 override when strict same family/book/no param conflict, or LTR score margin exceeds threshold"
+  },
+  "selection_split": "dev_oof",
+  "selection_policy": {
+    "net_floor_ratio": 0.8,
+    "min_loss_reduction_ratio": 0.5,
+    "threshold_candidates": "strict_or_margin variants only"
+  },
+  "selection_status": "selected_by_dev_loss_reduction",
+  "selection_note": "Selected on dev by loss reduction first, then lower residual loss, then net gain.",
+  "calibration": {
+    "raw_oof_hit1_net": 108,
+    "raw_oof_hit1_loss": 29,
+    "oof_net_floor": 87,
+    "eligible_threshold_candidates": 5,
+    "folds": 3
+  },
+  "model_path": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\data\\goal_search\\goal_ltr_oof_full_dev_v1.txt",
+  "whitelist": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota\\data\\goal_search\\ltr_feature_whitelist_v1.json"
+}

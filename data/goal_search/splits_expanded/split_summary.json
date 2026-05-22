@@ -1,0 +1,359 @@
+{
+  "total_rows": 2945,
+  "total_components": 2755,
+  "ratios": {
+    "dev": 0.6,
+    "heldout": 0.2,
+    "hard": 0.2
+  },
+  "aggregate_source_files": [
+    "global_repair_decision_table.csv"
+  ],
+  "target_rows": {
+    "dev": 1767,
+    "heldout": 589,
+    "hard": 589
+  },
+  "actual_rows": {
+    "dev": 1767,
+    "heldout": 589,
+    "hard": 589
+  },
+  "actual_components": {
+    "dev": 1577,
+    "hard": 589,
+    "heldout": 589
+  },
+  "split_stats": {
+    "dev": {
+      "rows": 1767,
+      "provinces": {
+        "北京市建设工程施工消耗量标准(2024)": 107,
+        "宁夏安装工程计价定额(2019)": 44,
+        "广东省通用安装工程综合定额(2018)": 234,
+        "江苏省安装工程计价定额(2014)": 87,
+        "江西省通用安装工程消耗量定额及统一基价表(2017)": 156,
+        "河南省通用安装工程预算定额(2016)": 55,
+        "浙江省通用安装工程预算定额(2018)": 261,
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)": 23,
+        "福建省通用安装工程预算定额(2017)": 137,
+        "辽宁省通用安装工程定额(2024)": 20,
+        "福建省房屋建筑与装饰工程预算定额(2017)": 110,
+        "福建省市政工程预算定额(2017)": 100,
+        "江苏省建筑与装饰工程计价定额(2014)": 44,
+        "重庆市通用安装工程计价定额(2018)": 58,
+        "浙江省市政工程预算定额(2018)": 194,
+        "福建省园林绿化工程预算定额(2017)": 81,
+        "广东省房屋建筑与装饰工程综合定额(2018)": 42,
+        "宁夏房屋建筑装饰工程计价定额(2019)": 8,
+        "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": 6
+      },
+      "source_files": {
+        "v36_a3_r14g_global_rank_miss_shadow_details.jsonl": 43,
+        "v36_data_fuel_r10_hard_param_guardrail_shadow_details.jsonl": 9,
+        "v36_data_fuel_r2_shadow_comparator_details.jsonl": 11,
+        "v36_oss_r2_canonicalizer_alignment_top.jsonl": 21,
+        "v36_oss_r3_speed_details.jsonl": 1,
+        "v36_oss_r3_speed_disabled_limit20_details.jsonl": 9,
+        "global_repair_decision_table.csv": 1658,
+        "v36_a2_r7_primary_param_consumption_guarded_speed_details.jsonl": 10,
+        "v36_oss_r3_speed_disabled_details.jsonl": 2,
+        "v36_oss_r3_speed_enabled_top2_limit20_details.jsonl": 2,
+        "v36_oss_r3_speed_enabled_top1_limit20_details.jsonl": 1
+      },
+      "buckets": {
+        "": 52,
+        "snapshot_window_too_short": 6,
+        "pre_ltr_or_final_overturned_correct": 4,
+        "correct_low_in_snapshot": 1,
+        "recall_rank_minus_1": 21,
+        "high_frequency_error": 13,
+        "confidence_miss": 233,
+        "recall_miss": 1030,
+        "rank_miss": 395,
+        "historical_slow_proxy": 10,
+        "recent_focused_chain": 2
+      },
+      "hard_eligible_rows": 1754
+    },
+    "heldout": {
+      "rows": 589,
+      "provinces": {
+        "浙江省通用安装工程预算定额(2018)": 70,
+        "浙江省市政工程预算定额(2018)": 61,
+        "广东省房屋建筑与装饰工程综合定额(2018)": 11,
+        "福建省房屋建筑与装饰工程预算定额(2017)": 53,
+        "北京市建设工程施工消耗量标准(2024)": 35,
+        "江西省通用安装工程消耗量定额及统一基价表(2017)": 64,
+        "福建省市政工程预算定额(2017)": 59,
+        "福建省通用安装工程预算定额(2017)": 37,
+        "江苏省安装工程计价定额(2014)": 28,
+        "重庆市通用安装工程计价定额(2018)": 29,
+        "河南省通用安装工程预算定额(2016)": 8,
+        "广东省通用安装工程综合定额(2018)": 73,
+        "福建省园林绿化工程预算定额(2017)": 23,
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)": 3,
+        "宁夏房屋建筑装饰工程计价定额(2019)": 2,
+        "宁夏安装工程计价定额(2019)": 8,
+        "江苏省建筑与装饰工程计价定额(2014)": 17,
+        "辽宁省通用安装工程定额(2024)": 6,
+        "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": 2
+      },
+      "source_files": {
+        "global_repair_decision_table.csv": 589
+      },
+      "buckets": {
+        "recall_miss": 331,
+        "rank_miss": 167,
+        "confidence_miss": 91
+      },
+      "hard_eligible_rows": 589
+    },
+    "hard": {
+      "rows": 589,
+      "provinces": {
+        "浙江省市政工程预算定额(2018)": 72,
+        "福建省市政工程预算定额(2017)": 39,
+        "北京市建设工程施工消耗量标准(2024)": 36,
+        "河南省通用安装工程预算定额(2016)": 13,
+        "福建省通用安装工程预算定额(2017)": 45,
+        "江西省通用安装工程消耗量定额及统一基价表(2017)": 53,
+        "广东省通用安装工程综合定额(2018)": 74,
+        "福建省房屋建筑与装饰工程预算定额(2017)": 44,
+        "江苏省建筑与装饰工程计价定额(2014)": 20,
+        "浙江省通用安装工程预算定额(2018)": 76,
+        "重庆市通用安装工程计价定额(2018)": 25,
+        "福建省园林绿化工程预算定额(2017)": 27,
+        "广东省房屋建筑与装饰工程综合定额(2018)": 19,
+        "江苏省安装工程计价定额(2014)": 25,
+        "辽宁省通用安装工程定额(2024)": 4,
+        "宁夏房屋建筑装饰工程计价定额(2019)": 5,
+        "宁夏安装工程计价定额(2019)": 7,
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)": 4,
+        "江西省房屋建筑与装饰工程消耗量定额及统一基价表(2017)": 1
+      },
+      "source_files": {
+        "global_repair_decision_table.csv": 589
+      },
+      "buckets": {
+        "rank_miss": 158,
+        "recall_miss": 342,
+        "confidence_miss": 89
+      },
+      "hard_eligible_rows": 589
+    }
+  },
+  "leakage_check": {
+    "shared_keys_across_splits": 0,
+    "examples": []
+  },
+  "largest_components": [
+    {
+      "id": "15442da72f9d",
+      "split": "dev",
+      "rows": 165,
+      "hard_rows": 164,
+      "source_files": [
+        "global_repair_decision_table.csv",
+        "v36_a3_r14g_global_rank_miss_shadow_details.jsonl",
+        "v36_data_fuel_r10_hard_param_guardrail_shadow_details.jsonl",
+        "v36_data_fuel_r2_shadow_comparator_details.jsonl",
+        "v36_oss_r2_canonicalizer_alignment_top.jsonl",
+        "v36_oss_r3_speed_details.jsonl",
+        "v36_oss_r3_speed_disabled_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "北京市建设工程施工消耗量标准(2024)",
+        "宁夏安装工程计价定额(2019)",
+        "广东省通用安装工程综合定额(2018)",
+        "江苏省安装工程计价定额(2014)",
+        "江西省通用安装工程消耗量定额及统一基价表(2017)",
+        "河南省通用安装工程预算定额(2016)",
+        "浙江省通用安装工程预算定额(2018)",
+        "湖北省通用安装工程消耗量定额及全费用基价表(2024)",
+        "福建省通用安装工程预算定额(2017)",
+        "辽宁省通用安装工程定额(2024)"
+      ],
+      "buckets": {
+        "": 52,
+        "snapshot_window_too_short": 6,
+        "pre_ltr_or_final_overturned_correct": 4,
+        "correct_low_in_snapshot": 1,
+        "recall_rank_minus_1": 21,
+        "high_frequency_error": 10,
+        "confidence_miss": 16,
+        "recall_miss": 47,
+        "rank_miss": 8
+      }
+    },
+    {
+      "id": "74402390660b",
+      "split": "dev",
+      "rows": 20,
+      "hard_rows": 10,
+      "source_files": [
+        "global_repair_decision_table.csv",
+        "v36_a2_r7_primary_param_consumption_guarded_speed_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "北京市建设工程施工消耗量标准(2024)",
+        "广东省通用安装工程综合定额(2018)",
+        "浙江省通用安装工程预算定额(2018)",
+        "福建省通用安装工程预算定额(2017)"
+      ],
+      "buckets": {
+        "historical_slow_proxy": 8,
+        "recent_focused_chain": 2,
+        "rank_miss": 7,
+        "recall_miss": 3
+      }
+    },
+    {
+      "id": "e684657d0632",
+      "split": "dev",
+      "rows": 4,
+      "hard_rows": 2,
+      "source_files": [
+        "global_repair_decision_table.csv",
+        "v36_oss_r3_speed_disabled_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "浙江省通用安装工程预算定额(2018)"
+      ],
+      "buckets": {
+        "historical_slow_proxy": 2,
+        "recall_miss": 1,
+        "rank_miss": 1
+      }
+    },
+    {
+      "id": "f552bd8c3c49",
+      "split": "dev",
+      "rows": 4,
+      "hard_rows": 4,
+      "source_files": [
+        "global_repair_decision_table.csv",
+        "v36_oss_r3_speed_enabled_top2_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "广东省通用安装工程综合定额(2018)",
+        "江西省通用安装工程消耗量定额及统一基价表(2017)"
+      ],
+      "buckets": {
+        "high_frequency_error": 2,
+        "recall_miss": 2
+      }
+    },
+    {
+      "id": "8ddf58373267",
+      "split": "dev",
+      "rows": 2,
+      "hard_rows": 2,
+      "source_files": [
+        "global_repair_decision_table.csv",
+        "v36_oss_r3_speed_enabled_top1_limit20_details.jsonl"
+      ],
+      "projects": [],
+      "provinces": [
+        "广东省通用安装工程综合定额(2018)"
+      ],
+      "buckets": {
+        "high_frequency_error": 1,
+        "recall_miss": 1
+      }
+    },
+    {
+      "id": "43dafe2ff877",
+      "split": "dev",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "global_repair_decision_table.csv"
+      ],
+      "projects": [],
+      "provinces": [
+        "福建省房屋建筑与装饰工程预算定额(2017)"
+      ],
+      "buckets": {
+        "confidence_miss": 1
+      }
+    },
+    {
+      "id": "3b91914f4a47",
+      "split": "dev",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "global_repair_decision_table.csv"
+      ],
+      "projects": [],
+      "provinces": [
+        "福建省市政工程预算定额(2017)"
+      ],
+      "buckets": {
+        "rank_miss": 1
+      }
+    },
+    {
+      "id": "9a34d329fe31",
+      "split": "dev",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "global_repair_decision_table.csv"
+      ],
+      "projects": [],
+      "provinces": [
+        "江西省通用安装工程消耗量定额及统一基价表(2017)"
+      ],
+      "buckets": {
+        "confidence_miss": 1
+      }
+    },
+    {
+      "id": "c8d66eeecd79",
+      "split": "dev",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "global_repair_decision_table.csv"
+      ],
+      "projects": [],
+      "provinces": [
+        "江苏省建筑与装饰工程计价定额(2014)"
+      ],
+      "buckets": {
+        "recall_miss": 1
+      }
+    },
+    {
+      "id": "40219c7248a4",
+      "split": "dev",
+      "rows": 1,
+      "hard_rows": 1,
+      "source_files": [
+        "global_repair_decision_table.csv"
+      ],
+      "projects": [],
+      "provinces": [
+        "重庆市通用安装工程计价定额(2018)"
+      ],
+      "buckets": {
+        "confidence_miss": 1
+      }
+    }
+  ],
+  "warnings": [],
+  "input": "data\\goal_search\\oss_samples_expanded.jsonl",
+  "output_dir": "data\\goal_search\\splits_expanded",
+  "outputs": {
+    "dev": "data\\goal_search\\splits_expanded\\dev.jsonl",
+    "heldout": "data\\goal_search\\splits_expanded\\heldout.jsonl",
+    "hard": "data\\goal_search\\splits_expanded\\hard.jsonl"
+  },
+  "summary_output": "data\\goal_search\\splits_expanded\\split_summary.json"
+}

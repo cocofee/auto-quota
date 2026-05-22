@@ -366,6 +366,7 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "retriever": retriever_trace,
         "ranker": ranker_trace,
         "candidate_snapshots": list(result.get("candidate_snapshots") or [])[:20],
+        "candidate_lifecycle_trace": list(result.get("candidate_lifecycle_trace") or [])[:20],
         "pre_ltr_top1_id": str(result.get("pre_ltr_top1_id", "") or ""),
         "post_ltr_top1_id": str(result.get("post_ltr_top1_id", "") or ""),
         "post_cgr_top1_id": str(result.get("post_cgr_top1_id", "") or ""),

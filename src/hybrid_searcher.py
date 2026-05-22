@@ -17,6 +17,7 @@ RRF算法原理：
 - k=60是标准常数，防止排名第1的权重过大
 """
 
+import copy
 import json
 import re
 import threading
@@ -31,12 +32,18 @@ from db.sqlite import connect as _db_connect
 from src.bm25_engine import BM25Engine
 from src.candidate_canonicalizer import attach_candidate_canonical_features
 from src.feedback_bus import get_feedback_bias_rows
+from src.oss_semantic_prior import collect_oss_semantic_prior_candidates
 from src.province_book_mapper import normalize_requested_books_for_search
 from src.quota_search import search_by_id
 from src.query_router import build_query_route_profile, count_spec_signals
 from src.specialty_classifier import get_book_from_quota_id
 from src.text_parser import parser as text_parser
 from src.utils import safe_json_list
+
+
+class _NoExperienceDB:
+    def search_experience(self, *args, **kwargs):
+        return []
 
 
 class HybridSearcher:
@@ -151,6 +158,9 @@ class HybridSearcher:
 
         # 编号体系检测缓存（行业定额用纯数字book，不兼容C1-C12搜索）
         self._uses_standard_books = None
+        self._materialized_quota_cache = {}
+        self._quota_lookup_conn = None
+        self._quota_lookup_conn_path = ""
 
     def set_experience_db(self, experience_db) -> None:
         """设置经验库实例（延迟注入，避免循环依赖）。"""
@@ -303,7 +313,8 @@ class HybridSearcher:
                                  vector_weight: float,
                                  weight_reason: str,
                                  bm25_top_k: int,
-                                 vector_top_k: int) -> str:
+                                 vector_top_k: int,
+                                 vector_enabled: bool | None = None) -> str:
         payload = {
             "query": str(query or ""),
             "books": sorted(str(book).strip() for book in (books or []) if str(book).strip()),
@@ -318,10 +329,99 @@ class HybridSearcher:
             "weight_reason": str(weight_reason or ""),
             "bm25_top_k": int(bm25_top_k),
             "vector_top_k": int(vector_top_k),
-            "vector_enabled": bool(config.VECTOR_ENABLED),
+            "vector_enabled": bool(config.VECTOR_ENABLED if vector_enabled is None else vector_enabled),
         }
         normalized = self._normalize_session_cache_key_part(payload)
         return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _new_mixed_search_trace(*, query: str, books: list[str] | None,
+                                adaptive_strategy: str) -> dict:
+        return {
+            "query": str(query or "")[:120],
+            "books": [str(book) for book in (books or [])],
+            "adaptive_strategy": str(adaptive_strategy or "standard"),
+            "hybrid_search_call_count": 1,
+            "session_cache_hit_count": 0,
+            "session_cache_miss_count": 0,
+            "bm25_call_count": 0,
+            "vector_call_count": 0,
+            "vector_filter_fallback_count": 0,
+            "old_vector_index_fallback_count": 0,
+            "query_variant_count": 0,
+            "bm25_hit_count": 0,
+            "vector_hit_count": 0,
+            "substage_sec": {},
+            "slowest_substage": "",
+        }
+
+    @staticmethod
+    def _standard_vector_skip_applies(*, specialty: str, books: list[str] | None) -> bool:
+        vector_skip_specialties = set(
+            str(value).strip().upper()
+            for value in getattr(config, "HYBRID_STANDARD_VECTOR_SKIP_SPECIALTIES", ())
+            if str(value).strip()
+        )
+        if not vector_skip_specialties:
+            return False
+        requested = {
+            str(book or "").strip().upper()
+            for book in (books or [])
+            if str(book or "").strip()
+        }
+        for book in list(requested):
+            match = re.match(r"^C0*(\d+)$", book)
+            if match:
+                book_no = int(match.group(1))
+                requested.add(str(book_no))
+                requested.add(f"C{book_no}")
+            elif re.match(r"^\d+$", book):
+                requested.add(f"C{int(book)}")
+        signals = set(requested)
+        if str(specialty or "").strip():
+            signals.add(str(specialty or "").strip().upper())
+        return bool(signals & vector_skip_specialties)
+
+    @staticmethod
+    def _add_mixed_search_substage(trace: dict, name: str, elapsed: float) -> None:
+        if not isinstance(trace, dict) or not name:
+            return
+        substages = trace.setdefault("substage_sec", {})
+        substages[name] = round(float(substages.get(name, 0.0) or 0.0) + float(elapsed or 0.0), 6)
+        slowest_name, _slowest_elapsed = max(
+            substages.items(),
+            key=lambda item: float(item[1] or 0.0),
+        )
+        trace["slowest_substage"] = str(slowest_name)
+
+    @staticmethod
+    def _attach_mixed_search_trace(candidates: list[dict], trace: dict) -> list[dict]:
+        if not isinstance(trace, dict):
+            return candidates
+        for candidate in candidates or []:
+            if isinstance(candidate, dict):
+                candidate["_mixed_search_trace"] = dict(trace)
+        return candidates
+
+    def _store_session_search_results(self, cache_key: str, results: list[dict]) -> list[dict]:
+        """Store pre-finalized search results and return a detached cached copy."""
+        import copy
+
+        self._store_cache_value(
+            self._session_cache,
+            cache_key,
+            copy.deepcopy(list(results or [])),
+            ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
+            max_size=int(getattr(self, "_SESSION_CACHE_MAX", 1000) or 0),
+        )
+        return copy.deepcopy(
+            self._get_cache_value(
+                self._session_cache,
+                cache_key,
+                ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
+            )
+            or []
+        )
 
     @staticmethod
     def _stable_result_identity(candidate: dict) -> tuple[str, str, str]:
@@ -407,11 +507,34 @@ class HybridSearcher:
         item: dict | None = None,
         top_k: int = 8,
         exact_only: bool = False,
+        adaptive_strategy: str = "standard",
     ) -> list[dict]:
+        trace = {
+            "adaptive_strategy": str(adaptive_strategy or "standard"),
+            "books": [str(book) for book in (books or [])],
+            "source_substage_sec": {},
+            "source_candidate_count": {},
+            "skipped_sources": [],
+        }
+        self._last_prior_collect_trace = trace
+
+        def _record_source(name: str, elapsed: float, rows: list[dict] | None = None) -> None:
+            trace["source_substage_sec"][name] = round(
+                float(trace["source_substage_sec"].get(name, 0.0) or 0.0) + float(elapsed or 0.0),
+                6,
+            )
+            if rows is not None:
+                trace["source_candidate_count"][name] = (
+                    int(trace["source_candidate_count"].get(name, 0) or 0) + len(rows or [])
+                )
+
+        def _skip_source(name: str, reason: str) -> None:
+            trace["skipped_sources"].append({"source": name, "reason": reason})
+
         if not bool(getattr(config, "SEARCH_PRIOR_CANDIDATES_ENABLED", True)):
+            _skip_source("all", "SEARCH_PRIOR_CANDIDATES_ENABLED=false")
             return []
 
-        priors: list[dict] = []
         if books and not self.uses_standard_books:
             available_books = set(self.bm25_engine.quota_books.values())
             books = self._normalize_requested_books_for_nonstandard_db(
@@ -419,54 +542,73 @@ class HybridSearcher:
                 available_books,
                 province=self.province,
             )
-        priors.extend(
-            self._collect_quota_alias_exact_prior_candidates(
+            trace["books"] = [str(book) for book in (books or [])]
+        item = dict(item or {})
+        specialty = str(item.get("specialty") or item.get("major") or "").strip().upper()
+        lightweight_standard_c5 = (
+            bool(getattr(config, "SEARCH_PRIOR_CANDIDATES_LIGHTWEIGHT", True))
+            and not exact_only
+            and str(adaptive_strategy or "standard").strip().lower() == "standard"
+            and self._standard_vector_skip_applies(specialty=specialty, books=books)
+        )
+        trace["lightweight_standard_c5"] = bool(lightweight_standard_c5)
+        priors: list[dict] = []
+        started = time.perf_counter()
+        rows = self._collect_quota_alias_exact_prior_candidates(
+            query_text=query_text,
+            full_query=full_query,
+            item=item,
+            books=books,
+            top_k=max(1, min(top_k, 4)),
+            max_aliases=2 if lightweight_standard_c5 else None,
+            max_compact_len=32 if lightweight_standard_c5 else None,
+        )
+        _record_source("quota_alias_exact", time.perf_counter() - started, rows)
+        priors.extend(rows)
+        if not exact_only:
+            started = time.perf_counter()
+            rows = self._collect_quota_name_fallback_prior_candidates(
                 query_text=query_text,
                 full_query=full_query,
                 item=item,
                 books=books,
                 top_k=max(1, min(top_k, 4)),
             )
-        )
-        if not exact_only:
-            priors.extend(
-                self._collect_quota_name_fallback_prior_candidates(
-                    query_text=query_text,
-                    full_query=full_query,
-                    item=item,
-                    books=books,
-                    top_k=max(1, min(top_k, 4)),
-                )
+            _record_source("quota_name_fallback", time.perf_counter() - started, rows)
+            priors.extend(rows)
+            started = time.perf_counter()
+            rows = self._collect_quota_id_neighbor_prior_candidates(
+                query_text=query_text,
+                books=books,
+                top_k=max(1, min(top_k, 6)),
             )
-            priors.extend(
-                self._collect_quota_id_neighbor_prior_candidates(
-                    query_text=query_text,
-                    books=books,
-                    top_k=max(1, min(top_k, 6)),
-                )
-            )
+            _record_source("quota_id_neighbor", time.perf_counter() - started, rows)
+            priors.extend(rows)
         if bool(getattr(config, "SEARCH_EXPERIENCE_INJECTION_ENABLED", True)):
-            priors.extend(
-                self._collect_experience_exact_prior_candidates(
-                    query_text=query_text,
-                    full_query=full_query,
-                    item=item,
-                    top_k=max(1, min(top_k, 4)),
-                )
+            started = time.perf_counter()
+            rows = self._collect_experience_exact_prior_candidates(
+                query_text=query_text,
+                full_query=full_query,
+                item=item,
+                top_k=max(1, min(top_k, 4)),
             )
+            _record_source("experience_exact", time.perf_counter() - started, rows)
+            priors.extend(rows)
         if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
-            priors.extend(
-                self._collect_universal_kb_exact_prior_candidates(
-                    query_text=query_text,
-                    full_query=full_query,
-                    item=item,
-                    books=books,
-                    top_k=max(1, min(top_k, 4)),
-                )
+            started = time.perf_counter()
+            rows = self._collect_universal_kb_exact_prior_candidates(
+                query_text=query_text,
+                full_query=full_query,
+                item=item,
+                books=books,
+                top_k=max(1, min(top_k, 4)),
             )
+            _record_source("universal_kb_exact", time.perf_counter() - started, rows)
+            priors.extend(rows)
         if not exact_only:
             unified_priors = None
             if bool(getattr(config, "SEARCH_UNIFIED_DATA_PRIOR_ENABLED", True)):
+                started = time.perf_counter()
                 unified_priors = self._collect_unified_data_prior_candidates(
                     query_text=query_text,
                     full_query=full_query,
@@ -474,28 +616,41 @@ class HybridSearcher:
                     books=books,
                     top_k=max(1, min(top_k, 4)),
                 )
+                _record_source("unified_data_prior", time.perf_counter() - started, unified_priors)
             if unified_priors is not None:
                 priors.extend(unified_priors)
             else:
                 if bool(getattr(config, "SEARCH_EXPERIENCE_INJECTION_ENABLED", True)):
-                    priors.extend(
-                        self._collect_experience_prior_candidates(
-                            query_text=query_text,
-                            full_query=full_query,
-                            item=item,
-                            top_k=max(1, min(top_k, 4)),
-                        )
+                    started = time.perf_counter()
+                    rows = self._collect_experience_prior_candidates(
+                        query_text=query_text,
+                        full_query=full_query,
+                        item=item,
+                        top_k=max(1, min(top_k, 4)),
                     )
+                    _record_source("experience_fuzzy", time.perf_counter() - started, rows)
+                    priors.extend(rows)
                 if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
-                    priors.extend(
-                        self._collect_universal_kb_prior_candidates(
-                            query_text=query_text,
-                            full_query=full_query,
-                            item=item,
-                            books=books,
-                            top_k=max(1, min(top_k, 4)),
-                        )
+                    started = time.perf_counter()
+                    rows = self._collect_universal_kb_prior_candidates(
+                        query_text=query_text,
+                        full_query=full_query,
+                        item=item,
+                        books=books,
+                        top_k=max(1, min(top_k, 4)),
                     )
+                    _record_source("universal_kb_fuzzy", time.perf_counter() - started, rows)
+                    priors.extend(rows)
+            started = time.perf_counter()
+            rows = collect_oss_semantic_prior_candidates(
+                province=self.province,
+                query_text=query_text,
+                full_query=full_query,
+                item=item,
+                top_k=max(1, min(top_k, getattr(config, "OSS_SEMANTIC_PRIOR_TOP_K", 6))),
+            )
+            _record_source("oss_semantic_prior", time.perf_counter() - started, rows)
+            priors.extend(rows)
 
         deduped: dict[str, dict] = {}
         for candidate in priors:
@@ -524,7 +679,12 @@ class HybridSearcher:
             ),
             reverse=True,
         )
-        return results[:top_k]
+        final_results = results[:top_k]
+        trace["returned_count"] = len(final_results)
+        for candidate in final_results:
+            if isinstance(candidate, dict):
+                candidate["_prior_collect_trace"] = dict(trace)
+        return final_results
 
     @staticmethod
     def _normalize_alias_text(text: str) -> str:
@@ -538,6 +698,8 @@ class HybridSearcher:
         item: dict | None = None,
         books: list[str] | None = None,
         top_k: int = 3,
+        max_aliases: int | None = None,
+        max_compact_len: int | None = None,
     ) -> list[dict]:
         item = dict(item or {})
         variants = self._build_prior_query_variants(
@@ -566,6 +728,8 @@ class HybridSearcher:
             normalized_alias = self._normalize_alias_text(alias)
             if not normalized_alias or normalized_alias in seen_aliases:
                 continue
+            if max_compact_len is not None and len(normalized_alias) > max(1, int(max_compact_len)):
+                continue
             seen_aliases.add(normalized_alias)
             try:
                 matched = self.bm25_engine.search(alias, top_k=max(6, top_k * 3), books=books)
@@ -588,6 +752,8 @@ class HybridSearcher:
                 seen_quota_ids.add(quota_id)
                 if len(candidates) >= top_k:
                     return candidates
+            if max_aliases is not None and len(seen_aliases) >= max(1, int(max_aliases)):
+                break
         return candidates
 
     @staticmethod
@@ -1028,21 +1194,55 @@ class HybridSearcher:
             try:
                 from src.unified_data_layer import UnifiedDataLayer
 
+                experience_db = self._experience_db
+                if (
+                    experience_db is None
+                    and bool(getattr(config, "SEARCH_UNIFIED_DATA_PRIOR_REQUIRES_EXPERIENCE", True))
+                ):
+                    experience_db = _NoExperienceDB()
                 self._unified_data_layer = UnifiedDataLayer(
                     province=self.province,
-                    experience_db=self._experience_db,
+                    experience_db=experience_db,
                 )
             except Exception as e:
                 logger.debug(f"缁熶竴鏁版嵁灞傚姞杞藉け璐ワ紙鍥為€€鍒版棫妫€绱㈤€昏緫锛? {e}")
                 self._unified_data_layer = False
         return self._unified_data_layer if self._unified_data_layer is not False else None
 
+    def _quota_lookup_connection(self):
+        db_path = config.get_quota_db_path(self.province)
+        if not Path(db_path).exists():
+            return None
+        current_path = str(db_path)
+        conn = getattr(self, "_quota_lookup_conn", None)
+        if conn is not None and getattr(self, "_quota_lookup_conn_path", "") == current_path:
+            return conn
+        conn = _db_connect(db_path)
+        self._quota_lookup_conn = conn
+        self._quota_lookup_conn_path = current_path
+        return conn
+
     def _materialize_quota_candidate(self, quota_id: str, fallback_name: str = "",
                                      fallback_unit: str = "") -> dict | None:
         quota_id = str(quota_id or "").strip()
         if not quota_id:
             return None
-        row = search_by_id(quota_id, province=self.province)
+        cache = getattr(self, "_materialized_quota_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._materialized_quota_cache = cache
+        cache_key = (str(self.province or ""), quota_id)
+        if cache_key in cache:
+            cached = cache[cache_key]
+            return copy.deepcopy(cached) if isinstance(cached, dict) else None
+
+        conn = self._quota_lookup_connection()
+        row = None
+        if conn is not None:
+            try:
+                row = search_by_id(quota_id, province=self.province, conn=conn)
+            except TypeError:
+                row = search_by_id(quota_id, province=self.province)
         if row:
             quota_id, quota_name, unit = row
         else:
@@ -1050,7 +1250,7 @@ class HybridSearcher:
             unit = str(fallback_unit or "").strip()
             if not quota_name:
                 return None
-        return {
+        candidate = {
             "quota_id": str(quota_id or "").strip(),
             "name": str(quota_name or "").strip(),
             "unit": str(unit or "").strip(),
@@ -1061,6 +1261,8 @@ class HybridSearcher:
                 specialty=get_book_from_quota_id(quota_id) or "",
             ),
         }
+        cache[cache_key] = copy.deepcopy(candidate)
+        return candidate
 
     def _collect_unified_data_prior_candidates(
         self,
@@ -1079,6 +1281,9 @@ class HybridSearcher:
         query = str(full_query or query_text or "").strip()
         if not query:
             return []
+        sources = ["universal_kb", "quota"]
+        if getattr(self, "_experience_db", None) is not None:
+            sources.insert(0, "experience")
 
         payload = {
             "text": query,
@@ -1094,7 +1299,7 @@ class HybridSearcher:
         try:
             search_result = unified_data_layer.search(
                 payload,
-                sources=["experience", "universal_kb", "quota"],
+                sources=sources,
                 strategy="auto",
                 top_k=max(top_k * 2, top_k),
                 authority_only=True,
@@ -1605,6 +1810,16 @@ class HybridSearcher:
             )
 
         # 会话缓存检查：相同query+books组合复用搜索结果
+        # The cache key must reflect the effective vector budget for this call.
+        vector_enabled = config.VECTOR_ENABLED
+        specialty = str(item.get("specialty") or item.get("major") or "").strip().upper()
+        if (
+            vector_enabled
+            and adaptive_strategy == "standard"
+            and self._standard_vector_skip_applies(specialty=specialty, books=books)
+        ):
+            vector_enabled = False
+
         cache_key = self._build_session_cache_key(
             query=query,
             books=books,
@@ -1619,27 +1834,47 @@ class HybridSearcher:
             weight_reason=weight_reason,
             bm25_top_k=bm25_top_k,
             vector_top_k=vector_top_k,
+            vector_enabled=vector_enabled,
         )
+        mixed_trace = self._new_mixed_search_trace(
+            query=query,
+            books=books,
+            adaptive_strategy=adaptive_strategy,
+        )
+        cache_started = time.perf_counter()
         cached = self._get_cache_value(
             self._session_cache,
             cache_key,
             ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
         )
+        self._add_mixed_search_substage(
+            mixed_trace,
+            "session_cache_lookup",
+            time.perf_counter() - cache_started,
+        )
         if cached is not None:
             import copy
+            mixed_trace["session_cache_hit_count"] = 1
             logger.debug(f"搜索缓存命中: '{query[:20]}...' ({len(cached)}条)")
             finalized = self._finalize_candidates(
                 copy.deepcopy(cached),
                 query_text=query,
                 expected_books=books,
             )
+            self._attach_mixed_search_trace(finalized, mixed_trace)
             return finalized[:top_k]
+        mixed_trace["session_cache_miss_count"] = 1
 
         # ============================================================
         # 第0步：查通用知识库获取搜索增强关键词
         # ============================================================
         kb_hints = []
-        if adaptive_strategy == "standard" and self.universal_kb:
+        kb_started = time.perf_counter()
+        if (
+            adaptive_strategy == "standard"
+            and bool(getattr(config, "HYBRID_STANDARD_KB_HINTS_ENABLED", False))
+            and self.universal_kb
+        ):
             try:
                 cached_kb_hints = self._get_cache_value(
                     self._kb_keyword_cache,
@@ -1672,8 +1907,8 @@ class HybridSearcher:
                             )
                             kb_hints = []
                         except Exception as e:
-                                logger.debug(f"閫氱敤鐭ヨ瘑搴撴煡璇㈠け璐ワ紙涓嶅奖鍝嶆悳绱級: {e}")
-                                kb_hints = []
+                            logger.debug(f"KB keyword lookup failed: {e}")
+                            kb_hints = []
                     else:
                         kb_hints = self.universal_kb.get_search_keywords(query)
                     with self._get_cache_lock():
@@ -1696,6 +1931,12 @@ class HybridSearcher:
         # ============================================================
         # 第1步：多查询变体检索（Query2doc / MuGI 思路的轻量落地）
         # ============================================================
+        self._add_mixed_search_substage(
+            mixed_trace,
+            "kb_hints",
+            time.perf_counter() - kb_started,
+        )
+        variants_started = time.perf_counter()
         query_variants = self._build_query_variants(
             query,
             kb_hints,
@@ -1704,15 +1945,29 @@ class HybridSearcher:
             primary_query_profile=primary_query_profile,
             adaptive_strategy=adaptive_strategy,
         )
+        mixed_trace["query_variant_count"] = len(query_variants)
+        self._add_mixed_search_substage(
+            mixed_trace,
+            "build_query_variants",
+            time.perf_counter() - variants_started,
+        )
         bm25_runs = []
         vector_runs = []
         total_bm25_hits = 0
         total_vector_hits = 0
         # 向量搜索开关（环境变量VECTOR_ENABLED=false可关闭，Docker/懒猫无GPU时用）
         vector_enabled = config.VECTOR_ENABLED
+        specialty = str(item.get("specialty") or item.get("major") or "").strip().upper()
+        if (
+            vector_enabled
+            and adaptive_strategy == "standard"
+            and self._standard_vector_skip_applies(specialty=specialty, books=books)
+        ):
+            vector_enabled = False
 
         # 批量预编码所有查询变体的向量（一次GPU调用，比逐条快很多）
         variant_queries = [v["query"] for v in query_variants]
+        vector_encode_started = time.perf_counter()
         if vector_enabled:
             try:
                 all_embeddings = self.vector_engine.encode_queries(variant_queries)
@@ -1721,6 +1976,11 @@ class HybridSearcher:
                 all_embeddings = [None] * len(variant_queries)
         else:
             all_embeddings = [None] * len(variant_queries)
+        self._add_mixed_search_substage(
+            mixed_trace,
+            "vector_encode_batch",
+            time.perf_counter() - vector_encode_started,
+        )
 
         for idx, variant in enumerate(query_variants, start=1):
             q_text = variant["query"]
@@ -1729,9 +1989,16 @@ class HybridSearcher:
 
             bm25_results = []
             try:
+                bm25_started = time.perf_counter()
                 bm25_results = self.bm25_engine.search(
                     q_text, top_k=bm25_top_k, books=books
                 )
+                self._add_mixed_search_substage(
+                    mixed_trace,
+                    "bm25_search",
+                    time.perf_counter() - bm25_started,
+                )
+                mixed_trace["bm25_call_count"] += 1
                 total_bm25_hits += len(bm25_results)
             except Exception as e:
                 logger.warning(f"BM25搜索失败[{q_tag}]: {e}")
@@ -1741,10 +2008,17 @@ class HybridSearcher:
                 try:
                     # 使用预计算的向量，跳过逐条编码
                     embedding = all_embeddings[idx - 1] if all_embeddings[0] is not None else None
+                    vector_started = time.perf_counter()
                     vector_results = self.vector_engine.search(
                         q_text, top_k=vector_top_k, books=books,
                         precomputed_embedding=embedding
                     )
+                    self._add_mixed_search_substage(
+                        mixed_trace,
+                        "vector_search",
+                        time.perf_counter() - vector_started,
+                    )
+                    mixed_trace["vector_call_count"] += 1
                     total_vector_hits += len(vector_results)
                 except Exception as e:
                     logger.warning(f"向量搜索失败[{q_tag}]: {e}")
@@ -1768,14 +2042,24 @@ class HybridSearcher:
             )
 
         # 如果两路都没有结果，返回空
+        mixed_trace["bm25_hit_count"] = total_bm25_hits
+        mixed_trace["vector_hit_count"] = total_vector_hits
+
         if total_bm25_hits == 0 and total_vector_hits == 0:
+            self._store_session_search_results(cache_key, [])
             logger.warning(f"两路搜索均无结果: '{query}'")
             return []
 
         # 如果只有一路有结果，做该路的多查询融合排序后返回
         if total_bm25_hits == 0:
+            fusion_started = time.perf_counter()
             vector_only = self._merge_single_engine_runs(
                 vector_runs, engine="vector", k=config.RRF_K
+            )
+            self._add_mixed_search_substage(
+                mixed_trace,
+                "rrf_fusion",
+                time.perf_counter() - fusion_started,
             )
             top_results = vector_only[:rank_window]
             for r in top_results:
@@ -1785,12 +2069,20 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
+            cached_results = self._store_session_search_results(cache_key, top_results)
+            finalized = self._finalize_candidates(cached_results, query_text=query, expected_books=books)
+            self._attach_mixed_search_trace(finalized, mixed_trace)
             return finalized[:top_k]
 
         if total_vector_hits == 0:
+            fusion_started = time.perf_counter()
             bm25_only = self._merge_single_engine_runs(
                 bm25_runs, engine="bm25", k=config.RRF_K
+            )
+            self._add_mixed_search_substage(
+                mixed_trace,
+                "rrf_fusion",
+                time.perf_counter() - fusion_started,
             )
             top_results = bm25_only[:rank_window]
             for r in top_results:
@@ -1800,7 +2092,9 @@ class HybridSearcher:
                 r["effective_bm25_weight"] = bm25_weight
                 r["effective_vector_weight"] = vector_weight
                 r["fusion_weight_reason"] = weight_reason
-            finalized = self._finalize_candidates(top_results, query_text=query, expected_books=books)
+            cached_results = self._store_session_search_results(cache_key, top_results)
+            finalized = self._finalize_candidates(cached_results, query_text=query, expected_books=books)
+            self._attach_mixed_search_trace(finalized, mixed_trace)
             return finalized[:top_k]
 
         # ============================================================
@@ -1809,6 +2103,7 @@ class HybridSearcher:
 
         use_multi_query = bool(getattr(config, "HYBRID_MULTI_QUERY_FUSION", True))
         multi_query_effective = use_multi_query and len(query_variants) > 1
+        fusion_started = time.perf_counter()
         if multi_query_effective:
             merged = self._rrf_fusion_multi_query(
                 bm25_runs=bm25_runs,
@@ -1825,6 +2120,11 @@ class HybridSearcher:
                 vector_weight=vector_weight,
                 k=config.RRF_K,
             )
+        self._add_mixed_search_substage(
+            mixed_trace,
+            "rrf_fusion",
+            time.perf_counter() - fusion_started,
+        )
 
         top_results = merged[:rank_window]
 
@@ -1843,30 +2143,10 @@ class HybridSearcher:
         )
 
         # 存入会话缓存（搜索结果不变的情况下复用）
-        if top_results:
-            import copy
-            with self._get_cache_lock():
-                self._store_cache_value(
-                    self._session_cache,
-                    cache_key,
-                    copy.deepcopy(top_results),
-                    ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
-                    max_size=int(getattr(self, "_SESSION_CACHE_MAX", 1000) or 0),
-                )
-            finalized = self._finalize_candidates(
-                copy.deepcopy(
-                    self._get_cache_value(
-                        self._session_cache,
-                        cache_key,
-                        ttl_sec=float(getattr(self, "_SESSION_CACHE_TTL_SEC", 900.0) or 0.0),
-                    ) or []
-                ),
-                query_text=query,
-                expected_books=books,
-            )
-            return finalized[:top_k]
-
-        return self._finalize_candidates(top_results, query_text=query, expected_books=books)[:top_k]
+        cached_results = self._store_session_search_results(cache_key, top_results)
+        finalized = self._finalize_candidates(cached_results, query_text=query, expected_books=books)
+        self._attach_mixed_search_trace(finalized, mixed_trace)
+        return finalized[:top_k]
 
     def _get_adaptive_weights(self, query: str, bm25_weight: float,
                               vector_weight: float) -> tuple[float, float, str]:

@@ -481,6 +481,49 @@ def test_sleeve_subtype_material_does_not_hard_fail_against_steel_plate_bill():
     assert "定额套管子类型不作为材质硬校验" in sleeve["param_detail"]
 
 
+def test_fire_emergency_lighting_can_match_c4_indicator_lamp_system():
+    validator = ParamValidator()
+    bill_features = {
+        "raw_text": "装饰灯 名称：集中控制型消防应急照明灯-E5-壁挂",
+        "normalized_text": "装饰灯 名称：集中控制型消防应急照明灯-E5-壁挂",
+        "specialty": "C4",
+        "system": "消防",
+        "install_method": "挂壁",
+        "traits": ["挂壁"],
+    }
+
+    results = validator.validate_candidates(
+        query_text="装饰灯 名称：集中控制型消防应急照明灯-E5-壁挂",
+        supplement_query="标志、诱导装饰灯具安装 墙壁式 壁式 挂墙",
+        candidates=[
+            {
+                "quota_id": "C4-12-192",
+                "name": "标志、诱导装饰灯具安装 墙壁式 示意图号:171、172、173、174",
+                "rerank_score": 0.98,
+                "hybrid_score": 0.04,
+            },
+            {
+                "quota_id": "C4-12-1",
+                "name": "报警按钮安装",
+                "rerank_score": 0.50,
+                "hybrid_score": 0.03,
+            },
+        ],
+        bill_params={"install_method": "挂壁"},
+        canonical_features=bill_features,
+        context_prior={"specialty": "C4"},
+        reorder_candidates=False,
+    )
+
+    indicator = next(item for item in results if item["quota_id"] == "C4-12-192")
+    alarm = next(item for item in results if item["quota_id"] == "C4-12-1")
+    assert indicator["param_hard_fail"] is False
+    assert indicator["feature_alignment_hard_conflict"] is False
+    assert indicator["context_alignment_hard_conflict"] is False
+    assert "系统兼容:消防~电气" in indicator["param_detail"]
+    assert alarm["param_hard_fail"] is True
+
+
 def test_feature_alignment_prefers_gate_valve_over_check_valve():
     validator = ParamValidator()
     results = validator.validate_candidates(

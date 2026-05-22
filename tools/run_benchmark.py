@@ -38,6 +38,7 @@ HISTORY_PATH = PROJECT_ROOT / "data" / "benchmark_history.json"
 PAPER_OVERRIDES_PATH = PAPERS_DIR / "_paper_overrides.json"
 BENCHMARK_ASSET_ROOT = PROJECT_ROOT / "output" / "benchmark_assets"
 BENCHMARK_ASSET_ALT_LIMIT = 9
+BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT = 50
 ATTRIBUTION_REPORT_ROOT = PROJECT_ROOT / "reports" / "attribution"
 ATTRIBUTION_CATEGORY_ORDER = (
     "R1_召回未命中",
@@ -48,7 +49,11 @@ ATTRIBUTION_CATEGORY_ORDER = (
     "R6_其它",
 )
 RANK_STAGE_TO_TOP1_FIELD = {
+    "pre_ltr": "pre_ltr_top1_id",
     "ltr": "post_ltr_top1_id",
+    "post_ltr_structural_ranker": "post_ltr_structural_top1_id",
+    "post_ltr_structural_comparator": "post_ltr_structural_top1_id",
+    "family_group_ranker": "post_ltr_structural_top1_id",
     "cgr": "post_cgr_top1_id",
     "cgr_ranker": "post_cgr_top1_id",
     "arbiter": "post_arbiter_top1_id",
@@ -56,8 +61,22 @@ RANK_STAGE_TO_TOP1_FIELD = {
     "explicit": "post_explicit_top1_id",
     "explicit_picker": "post_explicit_top1_id",
     "explicit_override": "post_explicit_top1_id",
+    "experience_anchor": "post_anchor_top1_id",
+    "anchor": "post_anchor_top1_id",
     "category_safe": "post_final_top1_id",
+    "final_decider": "post_final_top1_id",
+    "final": "post_final_top1_id",
 }
+
+
+def _diagnostic_slice(values, limit: int = BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT) -> list:
+    try:
+        resolved_limit = int(limit or BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT)
+    except (TypeError, ValueError):
+        resolved_limit = BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT
+    return list(values or [])[:max(1, resolved_limit)]
+
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -367,6 +386,10 @@ def run_json_paper(province: str, items: list[dict],
             'quantity': 1,
             'seq': i + 1,
             'specialty': item.get('specialty', ''),
+            '_diagnostic_snapshot_payload_enabled': True,
+            '_diagnostic_candidate_snapshot_top_n': BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT,
+            '_diagnostic_hard_param_snapshot_top_n': BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT,
+            '_diagnostic_lifecycle_trace_top_n': BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT,
         })
         card_map[i + 1] = item
 
@@ -426,6 +449,9 @@ def run_json_paper(province: str, items: list[dict],
         oracle_found = any(sid in all_cand_ids for sid in stored_ids) if stored_ids else False
         pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
         post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
+        post_ltr_structural_top1_id = str(
+            result.get('post_ltr_structural_top1_id', '') or post_ltr_top1_id
+        )
         post_cgr_top1_id = str(result.get('post_cgr_top1_id', '') or '')
         post_arbiter_top1_id = str(result.get('post_arbiter_top1_id', '') or '')
         post_explicit_top1_id = str(result.get('post_explicit_top1_id', '') or '')
@@ -463,6 +489,7 @@ def run_json_paper(province: str, items: list[dict],
                     stage_id and stage_id in stored_ids
                     for stage_id in (
                         post_ltr_top1_id,
+                        post_ltr_structural_top1_id,
                         post_cgr_top1_id,
                         post_arbiter_top1_id,
                         post_explicit_top1_id,
@@ -484,6 +511,7 @@ def run_json_paper(province: str, items: list[dict],
                 stage_id and stage_id in stored_ids
                 for stage_id in (
                     post_ltr_top1_id,
+                    post_ltr_structural_top1_id,
                     post_cgr_top1_id,
                     post_arbiter_top1_id,
                     post_explicit_top1_id,
@@ -500,6 +528,18 @@ def run_json_paper(province: str, items: list[dict],
             algo_id=algo_id,
             is_match=is_match,
             oracle_found=oracle_found,
+        )
+        candidate_snapshot_limit = int(
+            result.get("diagnostic_candidate_snapshot_top_n")
+            or BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT
+        )
+        hard_param_snapshot_limit = int(
+            result.get("diagnostic_hard_param_snapshot_top_n")
+            or BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT
+        )
+        lifecycle_trace_limit = int(
+            result.get("diagnostic_lifecycle_trace_top_n")
+            or BENCHMARK_DIAGNOSTIC_SNAPSHOT_LIMIT
         )
 
         details.append({
@@ -522,15 +562,24 @@ def run_json_paper(province: str, items: list[dict],
             'no_match_reason': result.get('no_match_reason', ''),
             'reasoning_decision': result.get('reasoning_decision', {}),
             'alternatives': result.get('alternatives', [])[:BENCHMARK_ASSET_ALT_LIMIT],
-            'candidate_snapshots': result.get('candidate_snapshots', [])[:20],
+            'candidate_snapshots': _diagnostic_slice(result.get('candidate_snapshots'), candidate_snapshot_limit),
+            'candidate_lifecycle_trace': _diagnostic_slice(result.get('candidate_lifecycle_trace'), lifecycle_trace_limit),
+            'decision_advisories': _normalize_decision_advisories_for_asset(result),
             'trace': dict(result.get('trace') or {}),
             'trace_path': list((result.get('trace') or {}).get('path') or []),
             'rank_stage_steps': _rank_stage_steps(result),
             'candidate_count': result.get('candidate_count', result.get('candidates_count', len(all_cand_ids))),
             'hard_param_fail_rejected_count': int(result.get('hard_param_fail_rejected_count', 0) or 0),
-            'hard_param_fail_rejected_candidates': list(result.get('hard_param_fail_rejected_candidates') or [])[:20],
+            'hard_param_fail_rejected_candidates': _diagnostic_slice(
+                result.get('hard_param_fail_rejected_candidates'),
+                hard_param_snapshot_limit,
+            ),
+            'diagnostic_candidate_snapshot_top_n': candidate_snapshot_limit,
+            'diagnostic_hard_param_snapshot_top_n': hard_param_snapshot_limit,
+            'diagnostic_lifecycle_trace_top_n': lifecycle_trace_limit,
             'pre_ltr_top1_id': pre_ltr_top1_id,
             'post_ltr_top1_id': post_ltr_top1_id,
+            'post_ltr_structural_top1_id': post_ltr_structural_top1_id,
             'post_cgr_top1_id': post_cgr_top1_id,
             'post_arbiter_top1_id': post_arbiter_top1_id,
             'post_explicit_top1_id': post_explicit_top1_id,
@@ -691,6 +740,9 @@ def _diagnose_error_stage(result: dict, stored_ids: list[str], *, algo_id: str, 
 
     pre_ltr_top1_id = str(result.get('pre_ltr_top1_id', '') or '')
     post_ltr_top1_id = str(result.get('post_ltr_top1_id', '') or '')
+    post_ltr_structural_top1_id = str(
+        result.get('post_ltr_structural_top1_id', '') or post_ltr_top1_id
+    )
     post_cgr_top1_id = str(result.get('post_cgr_top1_id', '') or '')
     post_arbiter_top1_id = str(result.get('post_arbiter_top1_id', '') or '')
     post_explicit_top1_id = str(result.get('post_explicit_top1_id', '') or '')
@@ -702,15 +754,29 @@ def _diagnose_error_stage(result: dict, stored_ids: list[str], *, algo_id: str, 
     vetoed = bool(final_validation.get("vetoed")) or str(final_validation.get("status") or "").strip() == "vetoed"
 
     stage_top1_ids = [
-        pre_ltr_top1_id, post_ltr_top1_id, post_cgr_top1_id,
+        pre_ltr_top1_id, post_ltr_top1_id, post_ltr_structural_top1_id, post_cgr_top1_id,
         post_arbiter_top1_id, post_explicit_top1_id, post_anchor_top1_id,
     ]
     ever_top1 = any(sid and sid in stored_ids for sid in stage_top1_ids)
 
     if pre_ltr_top1_id and pre_ltr_top1_id in stored_ids and post_ltr_top1_id and post_ltr_top1_id not in stored_ids:
         return "ltr_ranker", "pre_ltr_correct_but_ltr_changed", "confidence_miss"
+    if (
+        post_ltr_top1_id
+        and post_ltr_top1_id in stored_ids
+        and post_ltr_structural_top1_id
+        and post_ltr_structural_top1_id not in stored_ids
+    ):
+        return "post_ltr_structural_ranker", "post_ltr_correct_but_structural_changed", "confidence_miss"
     if post_ltr_top1_id and post_ltr_top1_id in stored_ids and post_cgr_top1_id and post_cgr_top1_id not in stored_ids:
         return "cgr_ranker", "post_ltr_correct_but_cgr_changed", "confidence_miss"
+    if (
+        post_ltr_structural_top1_id
+        and post_ltr_structural_top1_id in stored_ids
+        and post_cgr_top1_id
+        and post_cgr_top1_id not in stored_ids
+    ):
+        return "cgr_ranker", "post_ltr_structural_correct_but_cgr_changed", "confidence_miss"
     if post_cgr_top1_id and post_cgr_top1_id in stored_ids and post_arbiter_top1_id and post_arbiter_top1_id not in stored_ids:
         return "candidate_arbiter", "post_ltr_correct_but_arbiter_changed", "confidence_miss"
     if post_arbiter_top1_id and post_arbiter_top1_id in stored_ids and post_explicit_top1_id and post_explicit_top1_id not in stored_ids:
@@ -831,6 +897,175 @@ def _normalize_asset_candidates(selected_id: str, selected_name: str,
     return candidates
 
 
+_CANDIDATE_SCORE_FIELDS = (
+    "ltr_score",
+    "rank_score",
+    "rerank_score",
+    "semantic_rerank_score",
+    "spec_rerank_score",
+    "manual_structured_score",
+    "param_score",
+    "logic_score",
+    "feature_alignment_score",
+    "hybrid_score",
+    "bm25_score",
+    "vector_score",
+)
+
+_CANDIDATE_FEATURE_FIELDS = (
+    "family",
+    "entity",
+    "canonical_name",
+    "material",
+    "connection",
+    "install_method",
+    "system",
+    "valve_type",
+    "lamp_type",
+    "bridge_type",
+    "cable_head_type",
+    "numeric_params",
+    "dn",
+    "cable_section",
+    "bridge_wh_sum",
+    "kw",
+    "kva",
+    "ampere",
+    "circuits",
+)
+
+
+def _candidate_feature_digest(candidate: dict | None) -> dict:
+    candidate = candidate if isinstance(candidate, dict) else {}
+    features = candidate.get("candidate_canonical_features") or candidate.get("canonical_features") or {}
+    if not isinstance(features, dict):
+        features = {}
+    return {
+        key: features.get(key)
+        for key in _CANDIDATE_FEATURE_FIELDS
+        if features.get(key) not in (None, "", [], {})
+    }
+
+
+def _candidate_score_digest(candidate: dict | None) -> dict:
+    candidate = candidate if isinstance(candidate, dict) else {}
+    return {
+        key: candidate.get(key)
+        for key in _CANDIDATE_SCORE_FIELDS
+        if candidate.get(key) is not None
+    }
+
+
+def _candidate_hard_param_flags(candidate: dict | None) -> dict:
+    candidate = candidate if isinstance(candidate, dict) else {}
+    keys = (
+        "param_match",
+        "param_tier",
+        "hard_param_fail",
+        "lparam_hard_fail",
+        "family_gate_hard_conflict",
+        "feature_alignment_hard_conflict",
+        "logic_hard_conflict",
+        "context_alignment_hard_conflict",
+        "_rankable_pool_contract_protected",
+    )
+    return {key: candidate.get(key) for key in keys if key in candidate}
+
+
+def _candidate_evidence_from_pool(quota_id: str, pools: Iterable[Iterable[dict] | None]) -> dict:
+    quota_id = str(quota_id or "").strip()
+    if not quota_id:
+        return {}
+    for pool in pools:
+        for candidate in list(pool or []):
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("quota_id", "") or "").strip() != quota_id:
+                continue
+            return dict(candidate)
+    return {}
+
+
+def _candidate_diagnostic_record(quota_id: str, pools: Iterable[Iterable[dict] | None]) -> dict:
+    candidate = _candidate_evidence_from_pool(quota_id, pools)
+    return {
+        "quota_id": str(quota_id or ""),
+        "present_in_exported_snapshot": bool(candidate),
+        "name": str(candidate.get("name", "") or ""),
+        "scores": _candidate_score_digest(candidate),
+        "features": _candidate_feature_digest(candidate),
+        "hard_param_flags": _candidate_hard_param_flags(candidate),
+        "rank_stage": str(candidate.get("rank_stage", "") or ""),
+        "rank_score_source": str(candidate.get("rank_score_source", "") or candidate.get("_rank_score_source", "") or ""),
+    }
+
+
+def _stage_top1_chain(detail: dict) -> dict[str, str]:
+    chain = _extract_rank_stage_top1_ids(detail)
+    return {
+        "pre_ltr_top1_id": chain.get("pre_ltr_top1_id", ""),
+        "post_ltr_top1_id": chain.get("post_ltr_top1_id", ""),
+        "post_ltr_structural_top1_id": chain.get("post_ltr_structural_top1_id", ""),
+        "post_cgr_top1_id": chain.get("post_cgr_top1_id", ""),
+        "post_arbiter_top1_id": chain.get("post_arbiter_top1_id", ""),
+        "post_explicit_top1_id": chain.get("post_explicit_top1_id", ""),
+        "post_anchor_top1_id": chain.get("post_anchor_top1_id", ""),
+        "post_final_top1_id": chain.get("post_final_top1_id", ""),
+    }
+
+
+def _normalize_decision_advisories_for_asset(detail: dict) -> list[dict]:
+    normalized: list[dict] = []
+    for advisory in _extract_decision_advisories(detail):
+        details = advisory.get("details") if isinstance(advisory.get("details"), dict) else {}
+        evidence_groups = (
+            advisory.get("evidence_groups")
+            or details.get("evidence_groups")
+            or details.get("evidence")
+            or details.get("structural_ranking")
+            or {}
+        )
+        normalized.append({
+            "stage": str(advisory.get("stage", "") or ""),
+            "source_stage": str(advisory.get("source_stage", "") or details.get("source_stage", "") or ""),
+            "from_top1_id": str(advisory.get("from_top1_id", "") or ""),
+            "suggested_top1_id": str(advisory.get("suggested_top1_id", "") or ""),
+            "selected_quota_id": str(advisory.get("selected_quota_id", "") or ""),
+            "accepted_by_final_decider": bool(advisory.get("accepted_by_final_decider", False)),
+            "rejected_by_final_decider": bool(advisory.get("rejected_by_final_decider", False)),
+            "final_decider_reason": str(advisory.get("final_decider_reason", "") or ""),
+            "reason": str(advisory.get("reason", "") or ""),
+            "advisory_contract": str(advisory.get("advisory_contract", "") or ""),
+            "score_margin": advisory.get("score_margin"),
+            "evidence_groups": evidence_groups,
+            "details": details,
+        })
+    return normalized
+
+
+def _build_candidate_decision_comparison(detail: dict) -> dict:
+    candidate_pools = (
+        detail.get("candidate_snapshots") or [],
+        detail.get("hard_param_fail_rejected_candidates") or [],
+        detail.get("alternatives") or [],
+    )
+    expected_ids = [str(quota_id or "") for quota_id in list(detail.get("stored_ids") or []) if quota_id]
+    predicted_id = str(detail.get("algo_id", "") or "")
+    stage_chain = _stage_top1_chain(detail)
+    return {
+        "stage_top1_chain": stage_chain,
+        "predicted": _candidate_diagnostic_record(predicted_id, candidate_pools),
+        "expected_candidates": [
+            _candidate_diagnostic_record(expected_id, candidate_pools)
+            for expected_id in expected_ids
+        ],
+        "expected_best": (
+            _candidate_diagnostic_record(expected_ids[0], candidate_pools)
+            if expected_ids else {}
+        ),
+    }
+
+
 def _iter_benchmark_error_records(json_results: list[dict]) -> Iterable[dict]:
     for province_result in json_results or []:
         province = province_result.get("province", "")
@@ -863,15 +1098,26 @@ def _iter_benchmark_error_records(json_results: list[dict]) -> Iterable[dict]:
                     detail.get("alternatives") or [],
                 ),
                 "candidate_snapshots": list(detail.get("candidate_snapshots") or []),
+                "candidate_lifecycle_trace": list(detail.get("candidate_lifecycle_trace") or []),
                 "hard_param_fail_rejected_count": int(detail.get("hard_param_fail_rejected_count", 0) or 0),
                 "hard_param_fail_rejected_candidates": list(detail.get("hard_param_fail_rejected_candidates") or []),
                 "reasoning_decision": detail.get("reasoning_decision", {}),
+                "trace": dict(detail.get("trace") or {}),
                 "trace_path": list(detail.get("trace_path") or []),
+                "rank_stage_steps": list(detail.get("rank_stage_steps") or []),
+                "decision_advisories": _normalize_decision_advisories_for_asset(detail),
+                "stage_top1_chain": _stage_top1_chain(detail),
+                "candidate_decision_comparison": _build_candidate_decision_comparison(detail),
                 "match_source": str(detail.get("match_source", "") or ""),
                 "no_match_reason": str(detail.get("no_match_reason", "") or ""),
                 "candidate_count": int(detail.get("candidate_count", 0) or 0),
                 "pre_ltr_top1_id": str(detail.get("pre_ltr_top1_id", "") or ""),
                 "post_ltr_top1_id": str(detail.get("post_ltr_top1_id", "") or ""),
+                "post_ltr_structural_top1_id": str(
+                    detail.get("post_ltr_structural_top1_id", "")
+                    or detail.get("post_ltr_top1_id", "")
+                    or ""
+                ),
                 "post_cgr_top1_id": str(detail.get("post_cgr_top1_id", "") or ""),
                 "post_arbiter_top1_id": str(detail.get("post_arbiter_top1_id", "") or ""),
                 "post_explicit_top1_id": str(detail.get("post_explicit_top1_id", "") or ""),
@@ -1052,10 +1298,17 @@ def _detail_recall_rank(detail: dict) -> int | None:
 
 def _extract_rank_stage_top1_ids(detail: dict) -> dict[str, str]:
     stage_top1_ids = {
+        "pre_ltr_top1_id": str(detail.get("pre_ltr_top1_id", "") or ""),
         "post_ltr_top1_id": str(detail.get("post_ltr_top1_id", "") or ""),
+        "post_ltr_structural_top1_id": str(
+            detail.get("post_ltr_structural_top1_id", "")
+            or detail.get("post_ltr_top1_id", "")
+            or ""
+        ),
         "post_cgr_top1_id": str(detail.get("post_cgr_top1_id", "") or ""),
         "post_arbiter_top1_id": str(detail.get("post_arbiter_top1_id", "") or ""),
         "post_explicit_top1_id": str(detail.get("post_explicit_top1_id", "") or ""),
+        "post_anchor_top1_id": str(detail.get("post_anchor_top1_id", "") or ""),
         "post_final_top1_id": str(
             detail.get("post_final_top1_id", detail.get("algo_id", ""))
             or detail.get("algo_id", "")
@@ -1070,6 +1323,61 @@ def _extract_rank_stage_top1_ids(detail: dict) -> dict[str, str]:
             continue
         stage_top1_ids[target_field] = str(step.get("top1_id", "") or "")
     return stage_top1_ids
+
+
+def _extract_decision_advisories(detail: dict) -> list[dict]:
+    advisories = detail.get("decision_advisories")
+    if isinstance(advisories, list):
+        return [dict(advisory) for advisory in advisories if isinstance(advisory, dict)]
+
+    trace = detail.get("trace")
+    if not isinstance(trace, dict):
+        return []
+
+    extracted: list[dict] = []
+    for step in list(trace.get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        step_advisories = step.get("decision_advisories")
+        if not isinstance(step_advisories, list):
+            continue
+        extracted.extend(
+            dict(advisory)
+            for advisory in step_advisories
+            if isinstance(advisory, dict)
+        )
+    return extracted
+
+
+def _final_decider_cgr_advisory_overrode_expected(detail: dict, expected_ids: set[str]) -> bool:
+    if not expected_ids:
+        return False
+
+    final_id = str(
+        detail.get("post_final_top1_id")
+        or detail.get("algo_id")
+        or ""
+    )
+    if final_id in expected_ids:
+        return False
+
+    cgr_advisory_stages = {"post_cgr", "cgr_lifecycle_guard"}
+    for advisory in _extract_decision_advisories(detail):
+        stage = str(advisory.get("stage", "") or "").strip()
+        if stage not in cgr_advisory_stages:
+            continue
+        if not bool(advisory.get("accepted_by_final_decider")):
+            continue
+
+        selected_id = str(advisory.get("selected_quota_id") or advisory.get("suggested_top1_id") or "")
+        suggested_id = str(advisory.get("suggested_top1_id") or "")
+        from_id = str(advisory.get("from_top1_id") or "")
+        if selected_id in expected_ids or suggested_id in expected_ids:
+            continue
+        if from_id in expected_ids:
+            return True
+
+    return False
 
 
 def _classify_attribution_category(detail: dict) -> str:
@@ -1091,6 +1399,8 @@ def _classify_attribution_category(detail: dict) -> str:
         return "R5_经验库直通错"
     if post_cgr_top1_id in expected_ids and post_explicit_top1_id not in expected_ids:
         return "R4_Picker推翻正确"
+    if _final_decider_cgr_advisory_overrode_expected(detail, expected_ids):
+        return "R3_CGR推翻正确"
     if post_ltr_top1_id in expected_ids and post_cgr_top1_id not in expected_ids:
         return "R3_CGR推翻正确"
     if recall_rank is not None and recall_rank != -1 and post_ltr_top1_id not in expected_ids:

@@ -14,6 +14,7 @@ from src.match_core import try_experience_exact_match, try_experience_match
 from src.param_validator import ParamValidator
 from src.province_plugins import resolve_plugin_hints
 from src.review_checkers import (
+    check_anchor_conflict,
     check_category_mismatch,
     check_connection_mismatch,
     check_electric_pair,
@@ -23,6 +24,7 @@ from src.review_checkers import (
     check_parameter_deviation,
     check_pipe_usage,
     check_sleeve_mismatch,
+    check_unit_conflict,
     extract_description_lines,
 )
 from src.specialty_classifier import classify as classify_specialty

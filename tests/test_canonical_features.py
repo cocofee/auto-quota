@@ -201,6 +201,7 @@ def test_parse_canonical_extracts_hvac_and_sleeve_components():
     sleeve = parser.parse_canonical("刚性防水套管制作安装", specialty="C10")
     damper = parser.parse_canonical("风阀安装 电动调节阀", specialty="C7")
     outlet = parser.parse_canonical("风口安装 散流器", specialty="C7")
+    duct = parser.parse_canonical("不锈钢板圆形风管制作安装", specialty="C7")
     fan = parser.parse_canonical("风机安装 离心式", specialty="C7")
 
     assert sleeve["entity"] == "套管"
@@ -211,9 +212,36 @@ def test_parse_canonical_extracts_hvac_and_sleeve_components():
     assert "电动调节" in damper["traits"]
     assert outlet["entity"] == "风口"
     assert outlet["system"] == "通风空调"
+    assert duct["entity"] == "风管"
+    assert duct["family"] == "air_duct"
     assert fan["entity"] == "风机"
     assert fan["system"] == "通风空调"
     assert "离心式" in fan["traits"]
+
+
+def test_parse_canonical_extracts_bridge_split_width_height_sum_and_type():
+    parser = TextParser()
+
+    tray = parser.parse_canonical("钢制槽式桥架(宽+高)(mm以下) 400", specialty="C4")
+    mesh = parser.parse_canonical("网式桥架(宽+高)(mm以下) 200", specialty="C4")
+
+    assert tray["bridge_type"] == "槽式"
+    assert tray["bridge_wh_sum"] == 400
+    assert tray["numeric_params"]["bridge_wh_sum"] == 400
+    assert mesh["bridge_type"] == "网式"
+    assert mesh["bridge_wh_sum"] == 200
+    assert mesh["numeric_params"]["bridge_wh_sum"] == 200
+
+
+def test_parse_canonical_extracts_lighting_watts_as_kw():
+    parser = TextParser()
+
+    features = parser.parse_canonical("18W嵌入式防眩筒灯 安装形式:嵌入", specialty="C4")
+
+    assert features["lamp_type"] == "筒灯"
+    assert features["install_method"] == "嵌入"
+    assert features["kw"] == 0.018
+    assert features["numeric_params"]["kw"] == 0.018
 
 
 def test_parse_canonical_extracts_fire_alarm_and_plumbing_devices():
@@ -251,6 +279,7 @@ def test_parse_canonical_extracts_valve_lighting_outlet_and_fixture_subtypes():
     assert gate_valve["entity"] == "闸阀"
     assert gate_valve["system"] == "给排水"
     assert smoke["entity"] == "探测器"
+    assert smoke["family"] == "fire_alarm_device"
     assert "感烟" in smoke["traits"]
     assert lamp["entity"] == "吸顶灯"
     assert "吸顶灯" in lamp["traits"]
@@ -282,6 +311,20 @@ def test_parse_canonical_extracts_filter_soft_joint_and_sink_entities():
     assert fire_collar["entity"] == "阻火圈"
     assert fire_collar["family"] == "sanitary_accessory"
     assert floor_drain["family"] == "sanitary_accessory"
+
+
+def test_parse_canonical_materializes_fire_hydrant_and_air_vent_valve_families():
+    parser = TextParser()
+
+    hydrant = parser.parse_canonical("室内消火栓 暗装 单栓65", specialty="C9")
+    vent_valve = parser.parse_canonical("管道附件 自动排气阀安装 公称直径25", specialty="C10")
+
+    assert hydrant["entity"] == "消火栓"
+    assert hydrant["family"] == "fire_protection_device"
+    assert hydrant["system"] == "消防"
+    assert vent_valve["entity"] == "排气阀"
+    assert vent_valve["family"] == "valve_body"
+    assert vent_valve["valve_type"] == "排气阀"
 
 
 def test_parse_canonical_extracts_bridge_and_ventilation_subtypes():

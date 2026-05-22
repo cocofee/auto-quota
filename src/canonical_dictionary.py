@@ -33,6 +33,7 @@ ENTITY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("闸阀", ("闸阀",)),
     ("止回阀", ("止回阀",)),
     ("蝶阀", ("蝶阀",)),
+    ("排气阀", ("自动排气阀", "快速排气阀", "排气阀")),
     ("压力开关", ("压力开关",)),
     ("报警按钮", ("手动报警按钮", "报警按钮", "消火栓按钮")),
     ("消防模块", ("输入模块", "输出模块", "模块")),
@@ -565,7 +566,7 @@ def detect_family(text: str,
             return "pipe_support"
         return "pipe_support"
 
-    if entity in {"阀门", "闸阀", "止回阀", "蝶阀"}:
+    if entity in {"阀门", "闸阀", "止回阀", "蝶阀", "排气阀"}:
         return "valve_body"
 
     if entity in {"过滤器", "水表", "倒流防止器", "软接头", "减压器"}:
@@ -586,6 +587,9 @@ def detect_family(text: str,
     if entity == "风阀":
         return "air_valve"
 
+    if entity == "风管":
+        return "air_duct"
+
     if entity in {"风机", "排气扇", "卫生间通风器", "暖风机", "风机盘管"}:
         return "air_device"
 
@@ -600,6 +604,12 @@ def detect_family(text: str,
 
     if entity == "浪涌保护器":
         return "protection_device"
+
+    if entity in {"探测器", "报警按钮", "消防模块", "报警器", "消防广播", "消防电话插孔", "压力开关"}:
+        return "fire_alarm_device"
+
+    if entity in {"喷头", "报警阀组", "水流指示器", "末端试水装置", "信号阀", "消火栓"}:
+        return "fire_protection_device"
 
     if entity in {"配管", "金属软管", "接线盒"}:
         return "conduit_raceway"

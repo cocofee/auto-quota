@@ -256,6 +256,55 @@ def test_build_classification_can_override_seeded_specialty_with_strong_evidence
     assert classification["hard_book_constraints"] == ["C12"]
 
 
+def test_build_classification_keeps_c4_decorative_emergency_lamp_over_fire_hint(monkeypatch):
+    def fake_classify(name, desc, section_title=None, province=None, bill_code=None,
+                      context_prior=None, canonical_features=None, sheet_name=None):
+        return {
+            "primary": "C9",
+            "fallbacks": ["C10", "C4", "C13", "C12"],
+            "confidence": "high",
+            "reason": "关键字匹配: 应急照明 | tfidf:high | 清单标题系统提示: 消防",
+            "candidate_books": ["C9", "C4", "C10", "C13", "C12"],
+            "search_books": ["C4", "C10"],
+            "hard_book_constraints": [],
+            "routing_evidence": {
+                "C4": ["category_route:tier1"],
+                "C9": ["keyword:应急照明", "bill_system_hint:消防"],
+            },
+            "route_mode": "moderate",
+            "allow_cross_book_escape": True,
+        }
+
+    monkeypatch.setattr(match_pipeline, "classify_specialty", fake_classify)
+
+    bill_name = "装饰灯 名称：集中控制型消防应急照明灯-E5-壁挂"
+    province = "广东省通用安装工程综合定额(2018)"
+    item = {
+        "name": bill_name,
+        "description": bill_name,
+        "specialty": "C4",
+        "context_prior": {"bill_name": bill_name},
+        "_resolved_province": province,
+    }
+    context = _build_item_context(item)
+    item["plugin_hints"] = context["plugin_hints"]
+    item["unified_plan"] = context["unified_plan"]
+    item["context_prior"] = context["context_prior"]
+    item["canonical_query"] = context["canonical_query"]
+
+    classification = _build_classification(
+        item,
+        name=context["name"],
+        desc=context["desc"],
+        section=context["section"],
+        province=province,
+    )
+
+    assert context["search_query"] == "标志、诱导装饰灯具安装 墙壁式 壁式 挂墙"
+    assert classification["primary"] == "C4"
+    assert classification["search_books"][0] == "C4"
+
+
 def test_annotate_candidate_scope_signals_marks_main_install_book():
     candidates = match_pipeline._annotate_candidate_scope_signals(
         {"province": "上海市安装工程预算定额(2016)"},

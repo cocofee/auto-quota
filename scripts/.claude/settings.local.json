@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xxd:*)",
+      "Bash(python:*)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(ls:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)",
+      "Bash(npx tsc:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker:*)",
+      "Bash(rm:*)"
+    ]
+  }
+}

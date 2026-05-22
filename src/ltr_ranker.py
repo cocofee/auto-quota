@@ -5645,6 +5645,43 @@ class LTRRanker:
         return False, "incumbent_protected"
 
     @classmethod
+    def _should_inherit_disabled_cgr_ltr_top1(
+        cls,
+        item: dict,
+        ranked: list[dict],
+        ltr_top1_id: str,
+        ltr_guard_meta: dict,
+    ) -> tuple[bool, str]:
+        if str(ltr_guard_meta.get("action") or "") != "allowed":
+            return False, "ltr_guard_not_allowed"
+        if str(ltr_guard_meta.get("reason") or "") != "anchor_below_threshold":
+            return False, "not_anchor_below_threshold"
+        ltr_top = cls._find_candidate_by_quota_id(ranked, ltr_top1_id)
+        if not ltr_top:
+            return False, "missing_ltr_top1"
+        ltr_top_id = str(ltr_top.get("quota_id") or "")
+        if ltr_top_id not in {"C4-12-67", "C4-12-192"}:
+            return False, "not_c4_wall_indicator_lighting"
+
+        item_text = " ".join(
+            str(value or "")
+            for value in (
+                item.get("name"),
+                item.get("description"),
+                item.get("project_name"),
+            )
+        )
+        candidate_text = str(ltr_top.get("name") or "")
+        if (
+            any(term in item_text for term in ("消防应急照明灯", "应急照明灯", "装饰灯"))
+            and "标志、诱导" in candidate_text
+            and "灯" in candidate_text
+            and any(term in candidate_text for term in ("壁式", "墙壁式"))
+        ):
+            return True, "c4_wall_emergency_lighting_ltr_top1"
+        return False, "not_c4_emergency_lighting"
+
+    @classmethod
     def _apply_cgr_shadow_guard(
         cls,
         ltr_ranked: list[dict],
@@ -5767,6 +5804,19 @@ class LTRRanker:
                 meta["post_cgr_top1_id"] = str((ranked[0].get("quota_id", "") if ranked else "") or "")
             elif ltr_guard_meta.get("action") == "blocked":
                 meta["post_cgr_top1_id"] = meta["post_ltr_top1_id"]
+            elif not config.CONSTRAINED_GATED_RANKER_ENABLED:
+                inherit_ltr, inherit_reason = cls._should_inherit_disabled_cgr_ltr_top1(
+                    item,
+                    ranked,
+                    meta["post_ltr_top1_id"],
+                    ltr_guard_meta,
+                )
+                meta["disabled_cgr_inheritance"] = {
+                    "applied": inherit_ltr,
+                    "reason": inherit_reason,
+                }
+                if inherit_ltr:
+                    meta["post_cgr_top1_id"] = meta["post_ltr_top1_id"]
             if config.LTR_FEATURE_LOGGING:
                 top_k = max(int(config.LTR_FEATURE_LOG_TOPK), 1)
                 preview = []

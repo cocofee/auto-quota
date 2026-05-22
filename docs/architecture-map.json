@@ -1,0 +1,825 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-05-15",
+  "repository": {
+    "name": "auto-quota",
+    "root": "C:\\Users\\Administrator\\Documents\\trae_projects\\auto-quota",
+    "purpose": "读取工程量清单 Excel，自动匹配定额子目，输出可回写/可导出的匹配结果，并通过反馈、审核、知识库和价格库持续改进。",
+    "primary_language": "Python",
+    "secondary_language": "TypeScript/React",
+    "runtime_profile": "FastAPI + Celery + Redis + PostgreSQL + React/Vite，核心匹配算法也可通过命令行和本地匹配服务单独运行。"
+  },
+  "entrypoints": [
+    {
+      "id": "cli_main",
+      "name": "命令行匹配入口",
+      "kind": "cli",
+      "path": "main.py",
+      "responsibilities": [
+        "读取清单文件",
+        "解析、编清单、清洗清单项",
+        "初始化搜索、经验库和规则组件",
+        "按 search/agent 模式执行匹配",
+        "输出 JSON/Excel 结果"
+      ],
+      "key_dependencies": [
+        "src.bill_reader.BillReader",
+        "src.bill_compiler.compile_items",
+        "src.bill_cleaner.clean_bill_items",
+        "src.match_engine.init_search_components",
+        "src.match_engine.init_experience_db",
+        "src.match_engine.match_by_mode",
+        "src.output_writer.OutputWriter"
+      ],
+      "typical_command": "python main.py 清单文件.xlsx --mode search"
+    },
+    {
+      "id": "web_backend",
+      "name": "Web 后端 API",
+      "kind": "fastapi",
+      "path": "web/backend/app/main.py",
+      "responsibilities": [
+        "注册认证、任务、结果、管理、知识、价格、OpenClaw 等 API 路由",
+        "初始化数据库",
+        "启动运行时预热",
+        "统一 JSON/text UTF-8 响应头"
+      ],
+      "key_dependencies": [
+        "web/backend/app/database.py",
+        "web/backend/app/auth/router.py",
+        "web/backend/app/api/tasks.py",
+        "web/backend/app/api/results.py",
+        "web/backend/app/api/openclaw.py",
+        "src.runtime_cache"
+      ],
+      "typical_command": "cd web/backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+    },
+    {
+      "id": "celery_worker",
+      "name": "后台匹配 Worker",
+      "kind": "celery",
+      "path": "web/backend/app/celery_app.py",
+      "responsibilities": [
+        "从 Redis 接收耗时任务",
+        "执行匹配和 benchmark 任务",
+        "worker ready 后预热运行时缓存"
+      ],
+      "key_dependencies": [
+        "web/backend/app/tasks/match_task.py",
+        "web/backend/app/tasks/benchmark_task.py",
+        "src.runtime_cache"
+      ],
+      "typical_command": "cd web/backend && celery -A app.celery_app worker --loglevel=info --pool=solo"
+    },
+    {
+      "id": "local_match_server",
+      "name": "本地匹配算力服务",
+      "kind": "fastapi_service",
+      "path": "local_match_server.py",
+      "responsibilities": [
+        "向轻量部署或远程客户端暴露本机匹配能力",
+        "校验 LOCAL_MATCH_API_KEY",
+        "管理上传文件、异步匹配任务、结果下载和主材价格辅助接口"
+      ],
+      "key_dependencies": [
+        "main.py",
+        "src.excel_compat",
+        "src.material_price_decision",
+        "src.output_writer"
+      ],
+      "default_port": 9300
+    },
+    {
+      "id": "frontend",
+      "name": "Web 前端",
+      "kind": "react_vite",
+      "path": "web/frontend/src/main.tsx",
+      "responsibilities": [
+        "提供登录、仪表盘、任务创建、任务列表、结果查看、工具和管理页面",
+        "通过 axios 调用 /api",
+        "使用 HttpOnly Cookie 认证和自动 refresh"
+      ],
+      "key_dependencies": [
+        "web/frontend/src/routes/index.tsx",
+        "web/frontend/src/services/api.ts",
+        "web/frontend/src/components/Layout/MainLayout.tsx",
+        "web/frontend/src/stores/auth.ts",
+        "web/frontend/src/stores/province.ts"
+      ],
+      "typical_command": "cd web/frontend && npm run dev"
+    }
+  ],
+  "runtime_topology": {
+    "docker_compose": "docker-compose.yml",
+    "services": [
+      {
+        "id": "postgres",
+        "image": "postgres:16-alpine",
+        "role": "主业务数据库，存储用户、任务、匹配结果、订单、额度、咨询和 OpenClaw 审核任务。"
+      },
+      {
+        "id": "redis",
+        "image": "redis:7-alpine",
+        "role": "Celery broker/backend。"
+      },
+      {
+        "id": "backend",
+        "port": 8000,
+        "role": "FastAPI API 服务，挂载项目根目录、src、tools、data、db、output、logs 等目录。"
+      },
+      {
+        "id": "celery-worker",
+        "role": "执行匹配、benchmark 等耗时任务，复用与后端相同的代码和数据卷。"
+      },
+      {
+        "id": "frontend",
+        "port": 3300,
+        "role": "Nginx 托管 Vite 构建产物，并代理到后端。"
+      }
+    ],
+    "important_environment": [
+      "DATABASE_URL",
+      "REDIS_URL",
+      "JWT_SECRET_KEY",
+      "CORS_ORIGINS",
+      "MATCH_BACKEND",
+      "VECTOR_ENABLED",
+      "LTR_V2_ENABLED",
+      "LTR_V2_MODEL_PATH",
+      "LTR_GENERICITY_STATS_PATH",
+      "AGENT_LLM",
+      "VERIFY_LLM",
+      "LOCAL_MATCH_API_KEY",
+      "LOCAL_MATCH_URL"
+    ]
+  },
+  "major_directories": [
+    {
+      "path": "src/",
+      "role": "核心匹配算法、检索、排序、规则、经验库、知识库、主材和输出逻辑。"
+    },
+    {
+      "path": "web/backend/app/",
+      "role": "FastAPI 后端、SQLAlchemy 模型、Celery 任务、API schemas 和服务层。"
+    },
+    {
+      "path": "web/frontend/src/",
+      "role": "React 页面、路由、组件、状态管理和 API 客户端。"
+    },
+    {
+      "path": "tools/",
+      "role": "导入、训练、评测、回收、OpenClaw 桥接、价格回填和批处理脚本。"
+    },
+    {
+      "path": "tests/",
+      "role": "核心算法、Web API、OpenClaw、价格库、知识库和回归用例。"
+    },
+    {
+      "path": "data/",
+      "role": "定额库、主材库、同义词、模型、训练集、source packs 和省份插件数据。"
+    },
+    {
+      "path": "db/",
+      "role": "本地 SQLite/索引类资产，供核心算法和工具复用。"
+    },
+    {
+      "path": "knowledge_wiki/",
+      "role": "可人工维护的 Markdown 知识层，包含案例、规则、方法、reviews 和来源索引。"
+    },
+    {
+      "path": "docs/",
+      "role": "项目说明、OpenClaw 接入、知识架构、实施计划、验收记录和本架构地图。"
+    }
+  ],
+  "core_algorithm_modules": [
+    {
+      "id": "input_pipeline",
+      "name": "清单读取与标准化",
+      "files": [
+        "src/bill_reader.py",
+        "src/bill_compiler.py",
+        "src/bill_cleaner.py",
+        "src/text_parser.py",
+        "src/bill_feature_builder.py",
+        "src/bill_item_context.py"
+      ],
+      "responsibilities": [
+        "读取 xls/xlsx",
+        "解析 sheet/分部/清单项",
+        "识别非匹配费用类行",
+        "标准化名称、描述、单位、参数、清单编码、上下文和特征"
+      ]
+    },
+    {
+      "id": "routing_and_query",
+      "name": "专业路由与查询构造",
+      "files": [
+        "src/specialty_classifier.py",
+        "src/book_classifier.py",
+        "src/query_router.py",
+        "src/query_builder.py",
+        "src/query_builder_specialized_rules.py",
+        "src/province_book_mapper.py",
+        "src/province_plugins/loader.py",
+        "data/province_plugins/"
+      ],
+      "responsibilities": [
+        "把清单文本映射到专业册/章节/省份范围",
+        "构造检索 query、同义词扩展和硬约束",
+        "加载省份插件和路由边界"
+      ]
+    },
+    {
+      "id": "retrieval",
+      "name": "候选召回",
+      "files": [
+        "src/hybrid_searcher.py",
+        "src/bm25_engine.py",
+        "src/vector_engine.py",
+        "src/quota_search.py",
+        "src/qmd_index.py",
+        "src/unified_retrieval.py",
+        "src/unified_data_layer.py",
+        "src/unified_knowledge.py",
+        "src/source_pack.py"
+      ],
+      "responsibilities": [
+        "BM25 关键词检索",
+        "向量语义检索",
+        "RRF/融合召回",
+        "按定额 ID 精确查询",
+        "跨省辅助库和通用知识提示",
+        "统一数据层聚合定额、经验、规则和知识"
+      ]
+    },
+    {
+      "id": "validation_and_ranking",
+      "name": "候选校验与排序",
+      "files": [
+        "src/param_validator.py",
+        "src/installation_validator.py",
+        "src/candidate_canonicalizer.py",
+        "src/candidate_scoring.py",
+        "src/candidate_arbiter.py",
+        "src/constrained_ranker.py",
+        "src/ltr_ranker.py",
+        "src/ltr_feature_extractor.py",
+        "src/reranker.py",
+        "src/final_validator.py",
+        "src/review_checkers.py",
+        "src/ranking_rules/"
+      ],
+      "responsibilities": [
+        "参数、材质、连接、安装方式和上下文校验",
+        "候选 canonical feature 标注",
+        "候选分层排序、LTR/CGR/reranker 加权",
+        "最终结果审核、风险标记和置信度校准"
+      ]
+    },
+    {
+      "id": "match_orchestration",
+      "name": "匹配编排",
+      "files": [
+        "src/match_engine.py",
+        "src/match_core.py",
+        "src/match_pipeline/orchestrator.py",
+        "src/match_pipeline/classifiers.py",
+        "src/match_pipeline/gates.py",
+        "src/match_pipeline/pickers.py",
+        "src/match_pipeline/reconcilers.py",
+        "src/match_pipeline/reasons.py",
+        "src/match_pipeline/scope.py"
+      ],
+      "responsibilities": [
+        "初始化搜索、经验、规则和 reranker 组件",
+        "批次上下文构建",
+        "按 fast/standard/deep 自适应策略执行",
+        "经验直通、规则预匹配、搜索候选、备选合并、审查和兜底",
+        "生成 trace、reason、confidence、alternatives"
+      ]
+    },
+    {
+      "id": "learning_and_feedback",
+      "name": "经验、反馈和学习",
+      "files": [
+        "src/experience_db.py",
+        "src/experience_manager.py",
+        "src/experience_confidence.py",
+        "src/feedback_learner.py",
+        "src/feedback_bus.py",
+        "src/active_learner.py",
+        "src/diff_learner.py",
+        "src/accuracy_tracker.py",
+        "src/ranking_feedback_db.py"
+      ],
+      "responsibilities": [
+        "存储人工确认和审核结果",
+        "管理经验置信度、时效、直通阈值",
+        "把反馈用于检索偏置、纠错建议和统计",
+        "输出准确率和知识命中分析"
+      ]
+    },
+    {
+      "id": "knowledge_layers",
+      "name": "知识库与规则晋升",
+      "files": [
+        "src/knowledge_staging.py",
+        "src/knowledge_promotion.py",
+        "src/knowledge_promotion_rules.py",
+        "src/rule_knowledge.py",
+        "src/rule_validator.py",
+        "src/rule_matcher.py",
+        "src/method_cards.py",
+        "src/universal_kb.py",
+        "src/source_learning.py",
+        "knowledge_wiki/"
+      ],
+      "responsibilities": [
+        "接收审计错误、候选规则、方法卡片和 source pack 学习结果",
+        "区分候选知识与正式知识",
+        "支持人工确认、晋升、回滚和 Wiki 同步"
+      ]
+    },
+    {
+      "id": "pricing_and_output",
+      "name": "价格、主材与输出",
+      "files": [
+        "src/material_db.py",
+        "src/material_price_decision.py",
+        "src/price_reference_db.py",
+        "src/price_validator.py",
+        "src/priced_bill_parser.py",
+        "src/output_writer.py",
+        "tools/price_backfill.py",
+        "tools/gldjc_price.py"
+      ],
+      "responsibilities": [
+        "主材标准化与查价",
+        "历史价格与综合单价参考",
+        "结果 Excel 输出、广联达导入格式保护",
+        "价格回填与外部查价接口"
+      ]
+    }
+  ],
+  "web_backend": {
+    "framework": "FastAPI",
+    "database": "SQLAlchemy 2.0 async/sync sessions",
+    "models": [
+      "User",
+      "Task",
+      "MatchResult",
+      "OpenClawReviewJob",
+      "RefreshToken",
+      "ConsultSubmission",
+      "Order",
+      "QuotaLog"
+    ],
+    "router_prefixes": [
+      {
+        "prefix": "/api/auth",
+        "module": "app.auth.router",
+        "role": "注册、登录、refresh、logout、me。"
+      },
+      {
+        "prefix": "/api/tasks",
+        "module": "app.api.tasks",
+        "role": "创建、列表、详情、取消、预览、SSE/进度。"
+      },
+      {
+        "prefix": "/api",
+        "module": "app.api.results",
+        "role": "匹配结果查询、人工确认、导出。"
+      },
+      {
+        "prefix": "/api/admin",
+        "module": "app.api.admin",
+        "role": "用户、邀请码、LLM/校验配置。"
+      },
+      {
+        "prefix": "/api/admin/analytics",
+        "module": "app.api.analytics",
+        "role": "准确率、趋势、专业/省份分析、benchmark。"
+      },
+      {
+        "prefix": "/api/admin/experience",
+        "module": "app.api.experience",
+        "role": "经验库统计、搜索、升降级、删除和批量操作。"
+      },
+      {
+        "prefix": "/api/admin/knowledge-staging",
+        "module": "app.api.knowledge_staging",
+        "role": "知识候选、audit errors、promotion、rollback、影响评估。"
+      },
+      {
+        "prefix": "/api/admin/knowledge",
+        "module": "app.api.knowledge",
+        "role": "方法卡、通用知识库和规则管理。"
+      },
+      {
+        "prefix": "/api/tools",
+        "modules": [
+          "app.api.price_backfill",
+          "app.api.bill_library",
+          "app.api.material_price"
+        ],
+        "role": "智能填价、编清单、主材查价。"
+      },
+      {
+        "prefix": "/api/file-intake",
+        "module": "app.api.file_intake",
+        "role": "统一文件上传、分类、解析、路由、人工确认。"
+      },
+      {
+        "prefix": "/api/openclaw",
+        "module": "app.api.openclaw",
+        "role": "OpenClaw 适配层：文件入口、定额搜索、任务、结果、二审、source packs、review jobs。"
+      },
+      {
+        "prefix": "/api/reference",
+        "module": "app.api.reference",
+        "role": "材料/综合单价参考检索。"
+      },
+      {
+        "prefix": "/api/quota-search",
+        "module": "app.api.quota_search",
+        "role": "定额搜索、按 ID 查询、省份列表和 smart search。"
+      },
+      {
+        "prefix": "/api/quota",
+        "module": "app.api.quota",
+        "role": "用户额度、订单和支付通知。"
+      }
+    ],
+    "task_lifecycle": [
+      "POST /api/tasks 保存上传文件并创建 Task",
+      "Celery execute_match 接收 task_id/file_path/params",
+      "本地模式调用 main.run；远程模式调用 local_match_server",
+      "进度写回 Task.progress 和 output/task/results_live.jsonl",
+      "扣减额度",
+      "save_results_to_db 将结果压缩入 MatchResult",
+      "结果查询、人工确认和导出由 app.api.results 处理"
+    ]
+  },
+  "frontend": {
+    "framework": "React 19 + Vite + Ant Design + React Router",
+    "api_client": "web/frontend/src/services/api.ts",
+    "auth_model": "HttpOnly Cookie + /auth/refresh 自动续期；前端不持久化 token。",
+    "routes": [
+      {
+        "path": "/login",
+        "page": "pages/Login",
+        "role": "登录/注册入口。"
+      },
+      {
+        "path": "/dashboard",
+        "page": "pages/Dashboard",
+        "role": "系统概览。"
+      },
+      {
+        "path": "/tasks/create",
+        "page": "pages/Task/CreatePage",
+        "role": "上传清单并创建匹配任务。"
+      },
+      {
+        "path": "/tasks",
+        "page": "pages/Task/ListPage",
+        "role": "查看用户任务。"
+      },
+      {
+        "path": "/tasks/:taskId/results",
+        "page": "pages/Results",
+        "role": "查看匹配结果、候选、确认、导出。"
+      },
+      {
+        "path": "/tools/price-backfill",
+        "page": "pages/Tools/PriceBackfill",
+        "role": "智能填价。"
+      },
+      {
+        "path": "/tools/bill-compiler",
+        "page": "pages/Tools/BillCompiler",
+        "role": "编清单辅助。"
+      },
+      {
+        "path": "/tools/material-price",
+        "page": "pages/Tools/MaterialPrice",
+        "role": "主材查价。"
+      },
+      {
+        "path": "/admin",
+        "page": "pages/Admin/AdminHub",
+        "role": "管理端聚合入口。"
+      },
+      {
+        "path": "/admin/knowledge-staging",
+        "page": "pages/Admin/KnowledgeStagingPage",
+        "role": "知识候选审阅和晋升。"
+      },
+      {
+        "path": "/admin/openclaw-reviews",
+        "page": "pages/Admin/OpenClawReviewPage",
+        "role": "OpenClaw 审核结果管理。"
+      }
+    ]
+  },
+  "principal_flows": [
+    {
+      "id": "interactive_match",
+      "name": "Web 匹配任务",
+      "steps": [
+        "用户在 React 创建任务并上传 Excel",
+        "POST /api/tasks 保存文件并创建 Task",
+        "Celery execute_match 执行本地或远程匹配",
+        "main.run 读取清单、清洗、初始化组件、逐条匹配",
+        "match_pipeline 生成 quotas、confidence、trace、alternatives",
+        "结果写入 PostgreSQL match_results",
+        "前端通过 /api/tasks/{id}/progress 和 /api/tasks/{id}/results 展示",
+        "人工确认后进入经验库/反馈/知识候选链路"
+      ],
+      "primary_files": [
+        "web/frontend/src/pages/Task/CreatePage.tsx",
+        "web/backend/app/api/tasks.py",
+        "web/backend/app/tasks/match_task.py",
+        "main.py",
+        "src/match_engine.py",
+        "src/match_pipeline/orchestrator.py",
+        "web/backend/app/services/match_service.py",
+        "web/backend/app/api/results.py"
+      ]
+    },
+    {
+      "id": "cli_batch_match",
+      "name": "命令行/脚本匹配",
+      "steps": [
+        "脚本或用户调用 python main.py 或 tools/jarvis_pipeline.py",
+        "BillReader 读取 Excel",
+        "compile_items 和 clean_bill_items 标准化",
+        "match_engine 执行 search/agent",
+        "OutputWriter 输出 Excel，JSON 可选落盘"
+      ],
+      "primary_files": [
+        "main.py",
+        "tools/jarvis_pipeline.py",
+        "src/output_writer.py"
+      ]
+    },
+    {
+      "id": "candidate_selection",
+      "name": "单条清单匹配与候选选择",
+      "steps": [
+        "构建 BillItemContext 和批次上下文",
+        "输入门检查措施费/不可匹配项",
+        "经验库精确命中尝试直通",
+        "规则预匹配尝试高置信直通或注入 backup",
+        "HybridSearcher 召回候选",
+        "ParamValidator/InstallationValidator/规则和插件信号标注",
+        "LTR/CGR/Reranker/候选仲裁排序",
+        "最终校验、置信度计算、备选和 trace 生成"
+      ],
+      "primary_files": [
+        "src/match_pipeline/orchestrator.py",
+        "src/match_pipeline/gates.py",
+        "src/match_pipeline/reconcilers.py",
+        "src/hybrid_searcher.py",
+        "src/param_validator.py",
+        "src/candidate_scoring.py",
+        "src/final_validator.py"
+      ]
+    },
+    {
+      "id": "feedback_learning",
+      "name": "人工确认、反馈与经验学习",
+      "steps": [
+        "用户或 OpenClaw 确认/修正结果",
+        "results/openclaw/feedback API 接收 payload",
+        "经验库记录确认样本和 disputed 样本",
+        "feedback_bus 给后续检索和一致性判断提供提示",
+        "knowledge_staging 接收可晋升的规则、错误和 source learning 候选",
+        "人工审核后晋升到正式知识层或回滚"
+      ],
+      "primary_files": [
+        "web/backend/app/api/results.py",
+        "web/backend/app/api/feedback.py",
+        "web/backend/app/api/openclaw.py",
+        "src/experience_db.py",
+        "src/feedback_bus.py",
+        "src/knowledge_staging.py",
+        "src/knowledge_promotion.py"
+      ]
+    },
+    {
+      "id": "file_intake_to_knowledge",
+      "name": "文件入口到知识层",
+      "steps": [
+        "上传文档/图片/视频/聊天记录",
+        "file_intake 分类、解析、路由",
+        "source_pack 生成可追溯来源包",
+        "source_learning 抽取规则/案例/方法候选",
+        "候选进入 knowledge_staging",
+        "人工确认后同步到 knowledge_wiki 和正式知识"
+      ],
+      "primary_files": [
+        "web/backend/app/api/file_intake.py",
+        "src/source_pack.py",
+        "src/source_learning.py",
+        "src/knowledge_staging.py",
+        "knowledge_wiki/"
+      ]
+    },
+    {
+      "id": "openclaw_review_loop",
+      "name": "OpenClaw 二审闭环",
+      "steps": [
+        "OpenClaw 通过 /api/openclaw 创建任务、读取结果或上传文件",
+        "review-draft 写入审核建议",
+        "auto-review/batch-auto-review 或人工 review-confirm 形成结构化决策",
+        "确认后的错误、规则、候选或人工反馈进入经验库/knowledge_staging",
+        "导出最终结果或触发后续修复"
+      ],
+      "primary_files": [
+        "web/backend/app/api/openclaw.py",
+        "web/backend/app/models/openclaw_review_job.py",
+        "tools/openclaw_bridge_review.ps1",
+        "tools/openclaw_bridge_batch_review.ps1",
+        "docs/OpenClaw统一入口接口定义.md"
+      ]
+    }
+  ],
+  "data_stores": [
+    {
+      "id": "postgres",
+      "kind": "PostgreSQL",
+      "access_layer": "web/backend/app/database.py",
+      "models": [
+        "User",
+        "RefreshToken",
+        "Task",
+        "MatchResult",
+        "OpenClawReviewJob",
+        "ConsultSubmission",
+        "Order",
+        "QuotaLog"
+      ],
+      "used_by": [
+        "FastAPI routes",
+        "Celery worker",
+        "admin analytics",
+        "quota billing"
+      ]
+    },
+    {
+      "id": "redis",
+      "kind": "Redis",
+      "access_layer": "web/backend/app/celery_app.py",
+      "used_by": [
+        "Celery broker",
+        "Celery result backend"
+      ]
+    },
+    {
+      "id": "quota_library",
+      "kind": "SQLite/data files",
+      "paths": [
+        "data/quota_library.db",
+        "db/",
+        "data/province_plugins/"
+      ],
+      "used_by": [
+        "quota_search",
+        "HybridSearcher",
+        "BookClassifier",
+        "province plugins"
+      ]
+    },
+    {
+      "id": "experience_db",
+      "kind": "SQLite/data files",
+      "paths": [
+        "db/",
+        "data/"
+      ],
+      "used_by": [
+        "ExperienceDB",
+        "feedback learner",
+        "match pipeline"
+      ]
+    },
+    {
+      "id": "material_price",
+      "kind": "SQLite/JSON",
+      "paths": [
+        "data/material_prices.db",
+        "data/material_prices.json",
+        "data/material_lib.db",
+        "data/material.db"
+      ],
+      "used_by": [
+        "material price tools",
+        "price backfill",
+        "reference APIs"
+      ]
+    },
+    {
+      "id": "model_and_index_assets",
+      "kind": "model/index files",
+      "paths": [
+        "models/",
+        "data/ltr_model.txt",
+        "data/ltr_model_v3_good.txt",
+        "data/route_model.pkl",
+        "output/ltr/"
+      ],
+      "used_by": [
+        "VectorEngine",
+        "LTR ranker",
+        "route model",
+        "runtime prewarm"
+      ]
+    },
+    {
+      "id": "knowledge_wiki",
+      "kind": "Markdown knowledge base",
+      "paths": [
+        "knowledge_wiki/cases/",
+        "knowledge_wiki/rules/",
+        "knowledge_wiki/methods/",
+        "knowledge_wiki/reviews/",
+        "knowledge_wiki/sources/"
+      ],
+      "used_by": [
+        "knowledge promotion",
+        "Obsidian/manual review",
+        "method cards",
+        "rule knowledge"
+      ]
+    }
+  ],
+  "extension_guidance_for_next_agent": {
+    "when_adding_a_frontend_feature": [
+      "Start in web/frontend/src/routes/index.tsx to locate the page or route.",
+      "Use web/frontend/src/services/api.ts for API calls; do not store auth tokens in localStorage/sessionStorage.",
+      "Mirror existing Ant Design layout and MainLayout/RequireAuth/RequireAdmin wrappers.",
+      "Add focused tests under web/frontend/tests when adding text/download utilities."
+    ],
+    "when_adding_a_backend_api": [
+      "Add or extend a router under web/backend/app/api/.",
+      "Register new routers in web/backend/app/main.py.",
+      "Put database models in web/backend/app/models/ and import them in models/__init__.py before init_db.",
+      "Put request/response models in web/backend/app/schemas/.",
+      "Use get_db for async routes; use get_sync_session only in worker/sync code."
+    ],
+    "when_touching_match_quality": [
+      "Identify the stage first: input parsing, routing/query, retrieval, validation, ranking, final validation, feedback, or output.",
+      "Prefer adding a regression test in tests/test_match_pipeline_*.py, tests/test_query_builder_*.py, tests/test_param_validator_*.py, or the narrow module test.",
+      "Preserve trace fields because OpenClaw, admin UI, and feedback learning rely on them.",
+      "Check whether the issue belongs in rules/knowledge/experience before hard-coding algorithm behavior."
+    ],
+    "when_touching_openclaw": [
+      "Treat web/backend/app/api/openclaw.py as the compatibility surface.",
+      "Keep review-draft and review-confirm payloads backward compatible.",
+      "Review docs/OpenClaw统一入口接口定义.md and docs/lobster_review_feedback_protocol.md before changing contracts.",
+      "Regression tests usually live in tests/test_web_openclaw.py and OpenClaw-specific policy tests."
+    ],
+    "when_touching_prices": [
+      "Separate main-material decision logic from API presentation.",
+      "Look at src/material_price_decision.py, src/price_reference_db.py, src/price_validator.py, and web/backend/app/api/material_price.py.",
+      "Add tests around parsing, lookup, export, and task integration."
+    ],
+    "safe_test_entrypoints": [
+      "python -m pytest tests/test_match_engine_structure.py",
+      "python -m pytest tests/test_web_tasks_validation.py",
+      "python -m pytest tests/test_web_openclaw.py",
+      "python -m pytest tests/test_query_builder.py",
+      "python -m pytest tests/test_param_validator_feature_alignment.py",
+      "cd web/frontend && npm test",
+      "cd web/frontend && npm run build"
+    ]
+  },
+  "known_architecture_risks": [
+    {
+      "risk": "核心匹配链路很宽，许多模块通过 dict 共享字段。",
+      "mitigation": "改动前先定位 trace/候选字段的生产者和消费者，优先补回归测试。"
+    },
+    {
+      "risk": "README 和部分历史文档存在编码显示异常。",
+      "mitigation": "优先以源码和测试为准，新增文档使用 UTF-8。"
+    },
+    {
+      "risk": "OpenClaw API 是外部兼容面，字段改动容易破坏二审闭环。",
+      "mitigation": "新增字段保持向后兼容，避免删除或重命名已有 payload 字段。"
+    },
+    {
+      "risk": "运行时缓存复用重对象，跨任务状态污染会影响结果。",
+      "mitigation": "需要清理请求级状态时使用 reset_runtime_state 或确保新字段不会落入省份级缓存。"
+    },
+    {
+      "risk": "本地/远程 MATCH_BACKEND 两种模式共享业务语义但实现路径不同。",
+      "mitigation": "任务相关改动同时检查 web/backend/app/tasks/match_task.py 和 local_match_server.py。"
+    }
+  ],
+  "maintenance_notes": [
+    "这份 JSON 是给后续智能体的导航索引，不替代源码。",
+    "新增核心模块、API 路由、数据表、后台任务或前端主页面时，应同步更新本文件和 docs/architecture-map.html。",
+    "字段尽量保持稳定；新增内容优先追加，不要删除已有 id，方便自动化工具引用。"
+  ]
+}

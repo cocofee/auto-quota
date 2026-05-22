@@ -5,6 +5,7 @@ import inspect
 import json
 import random
 import re
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Callable
@@ -20,6 +21,7 @@ from src.feedback_bus import lookup_cross_province_hints, remember_cross_provinc
 from src.experience_confidence import allows_direct_pass, describe_effective_confidence
 from src.text_parser import parser as text_parser
 from src.hybrid_searcher import HybridSearcher
+from src.candidate_canonicalizer import build_candidate_canonical_features_no_store
 from src.param_validator import ParamValidator
 from src.performance_monitor import PerformanceMonitor, measure_call
 from src.policy_engine import PolicyEngine
@@ -1040,6 +1042,36 @@ def _merge_with_aux(main_candidates: list[dict], aux_candidates: list[dict],
     return merged[:top_k]
 
 
+def _merge_stage_candidates(previous: list[dict], current: list[dict]) -> list[dict]:
+    """Keep earlier scoped hits when later cascade stages add broader candidates."""
+    if not previous:
+        return list(current or [])
+    if not current:
+        return list(previous or [])
+
+    merged_by_identity: dict[object, dict] = {}
+    for candidate in list(previous or []) + list(current or []):
+        identity = HybridSearcher._stable_result_identity(candidate)
+        existing = merged_by_identity.get(identity)
+        if existing is None:
+            merged_by_identity[identity] = candidate
+            continue
+        existing_score = float(existing.get("hybrid_score", 0.0) or 0.0)
+        candidate_score = float(candidate.get("hybrid_score", 0.0) or 0.0)
+        if candidate_score > existing_score:
+            existing_stages = list(existing.get("_cascade_stages") or [])
+            candidate = dict(candidate)
+            candidate["_cascade_stages"] = _normalize_fallbacks(
+                existing_stages + list(candidate.get("_cascade_stages") or [])
+            )
+            merged_by_identity[identity] = candidate
+
+    merged = list(merged_by_identity.values())
+    merged.sort(key=HybridSearcher._stable_result_identity)
+    merged.sort(key=HybridSearcher._hybrid_result_sort_key)
+    return merged
+
+
 def _normalize_route_book_code(value: object) -> str:
     return normalize_route_book_code(value)
 
@@ -1418,6 +1450,61 @@ def _record_retrieval_resolution_call(
     })
 
 
+def _record_mixed_search_trace(
+    resolution_trace: dict | None,
+    *,
+    target: str,
+    stage: str,
+    results: list[dict] | None,
+) -> None:
+    if not isinstance(resolution_trace, dict):
+        return
+    trace = {}
+    for candidate in results or []:
+        if isinstance(candidate, dict) and isinstance(candidate.get("_mixed_search_trace"), dict):
+            trace = dict(candidate.get("_mixed_search_trace") or {})
+            break
+    if not trace:
+        return
+
+    row = {
+        "target": str(target or ""),
+        "stage": str(stage or ""),
+        **trace,
+    }
+    resolution_trace.setdefault("mixed_search_traces", []).append(row)
+
+    numeric_fields = [
+        "hybrid_search_call_count",
+        "session_cache_hit_count",
+        "session_cache_miss_count",
+        "bm25_call_count",
+        "vector_call_count",
+        "vector_filter_fallback_count",
+        "old_vector_index_fallback_count",
+        "query_variant_count",
+        "bm25_hit_count",
+        "vector_hit_count",
+    ]
+    totals = resolution_trace.setdefault("mixed_search_totals", {})
+    for field in numeric_fields:
+        totals[field] = int(totals.get(field, 0) or 0) + int(trace.get(field, 0) or 0)
+    if str(target or "") == "main":
+        totals["cascade_stage_count"] = int(totals.get("cascade_stage_count", 0) or 0) + 1
+    substage_totals = totals.setdefault("substage_sec", {})
+    for name, elapsed in dict(trace.get("substage_sec") or {}).items():
+        substage_totals[str(name)] = round(
+            float(substage_totals.get(str(name), 0.0) or 0.0) + float(elapsed or 0.0),
+            6,
+        )
+    if substage_totals:
+        slowest_name, _elapsed = max(
+            substage_totals.items(),
+            key=lambda item: float(item[1] or 0.0),
+        )
+        totals["slowest_substage"] = str(slowest_name)
+
+
 def _allows_unresolved_open_search(target_searcher, requested_books: list[str] | None) -> bool:
     requested = [
         str(book or "").strip().upper()
@@ -1573,6 +1660,12 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                     item=item,
                     context_prior=context_prior,
                 )
+                _record_mixed_search_trace(
+                    retrieval_resolution,
+                    target="aux",
+                    stage="aux",
+                    results=aux_results,
+                )
                 for result in aux_results:
                     result["_source_province"] = aux.province
                 aux_candidates.extend(aux_results)
@@ -1585,6 +1678,80 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
         if defer_aux_search:
             return candidates[:limit]
         return _merge_with_aux(candidates, _collect_aux_candidates(), limit)
+
+    def _main_pool_saturates_aux_budget(candidates: list[dict]) -> tuple[bool, str]:
+        if strategy not in {"standard", "deep"}:
+            return False, ""
+        if strategy == "standard" and len(candidates or []) >= CASCADE_MIN_CANDIDATES:
+            return True, "standard_main_pool_saturated"
+        if strategy == "deep" and len(candidates or []) >= max(top_k, CASCADE_MIN_CANDIDATES * 2):
+            return True, "deep_main_pool_saturated"
+        return False, ""
+
+    def _standard_main_pool_saturates_aux_budget(candidates: list[dict]) -> bool:
+        if strategy not in {"standard", "deep"}:
+            return False
+        if not aux_searchers:
+            return False
+        saturated, _reason = _main_pool_saturates_aux_budget(candidates)
+        return saturated
+
+    def _record_aux_budget_deferred(reason: str) -> None:
+        for aux in aux_searchers:
+            _record_retrieval_resolution_call(
+                retrieval_resolution,
+                target="aux",
+                stage="aux_budget_deferred",
+                requested_books=aux_books,
+                resolved_books=[],
+                source_province=str(getattr(aux, "province", "") or ""),
+                uses_standard_books=getattr(aux, "uses_standard_books", None),
+                open_search=False,
+            )
+        retrieval_resolution["aux_budget_reason"] = reason
+
+    executed_main_stages: set[str] = set()
+
+    def _rankable_candidate_count(candidates: list[dict]) -> int:
+        count = 0
+        for candidate in candidates or []:
+            if not isinstance(candidate, dict):
+                continue
+            if not str(candidate.get("quota_id", "") or "").strip():
+                continue
+            if not str(candidate.get("name", "") or "").strip():
+                continue
+            count += 1
+        return count
+
+    def _should_defer_deep_escape(candidates: list[dict]) -> tuple[bool, str]:
+        if strategy != "deep":
+            return False, ""
+        if "expanded" not in executed_main_stages:
+            return False, ""
+        if not candidates:
+            return False, ""
+        required = max(top_k, CASCADE_MIN_CANDIDATES * 2)
+        if len(candidates or []) >= required:
+            return True, "deep_escape_candidate_pool_saturated"
+        if _rankable_candidate_count(candidates) >= required:
+            return True, "deep_escape_rankable_pool_saturated"
+        return False, ""
+
+    def _record_escape_budget_deferred(reason: str, candidates: list[dict]) -> None:
+        _record_retrieval_resolution_call(
+            retrieval_resolution,
+            target="main",
+            stage="escape_budget_deferred",
+            requested_books=[],
+            resolved_books=[],
+            source_province=str(getattr(searcher, "province", "") or ""),
+            uses_standard_books=getattr(searcher, "uses_standard_books", None),
+            open_search=False,
+        )
+        retrieval_resolution["escape_budget_reason"] = reason
+        retrieval_resolution["escape_budget_candidate_count"] = len(candidates or [])
+        retrieval_resolution["escape_budget_rankable_count"] = _rankable_candidate_count(candidates)
 
     def _default_stage_stop(stage: SearchStage, found: list[dict], _resolved_books: list[str]) -> bool:
         return _search_is_good_enough(found, min_candidates=stage.min_candidates)
@@ -1613,18 +1780,21 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
                 source_province=source_province,
                 uses_standard_books=uses_standard_books,
             )
-            return (
-                _search_with_optional_context(
-                    searcher,
-                    search_query,
-                    top_k=stage.max_candidates,
-                    books=None,
-                    item=item,
-                    context_prior=context_prior,
-                ),
-                [],
-                stage.max_candidates,
+            stage_results = _search_with_optional_context(
+                searcher,
+                search_query,
+                top_k=stage.max_candidates,
+                books=None,
+                item=item,
+                context_prior=context_prior,
             )
+            _record_mixed_search_trace(
+                retrieval_resolution,
+                target="main",
+                stage=stage.name,
+                results=stage_results,
+            )
+            return (stage_results, [], stage.max_candidates)
 
         if not _should_search_target_for_books(searcher, stage.books):
             _record_retrieval_resolution_call(
@@ -1660,18 +1830,27 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
         )
         if not resolved_books and not open_search:
             return [], resolved_books, None
-        return (
-            _search_with_optional_context(
-                searcher,
-                search_query,
-                top_k=stage.max_candidates,
-                books=resolved_books or None,
-                item=item,
-                context_prior=context_prior,
-            ),
-            resolved_books,
-            stage.max_candidates,
+        stage_results = _search_with_optional_context(
+            searcher,
+            search_query,
+            top_k=stage.max_candidates,
+            books=resolved_books or None,
+            item=item,
+            context_prior=context_prior,
         )
+        _record_mixed_search_trace(
+            retrieval_resolution,
+            target="main",
+            stage=stage.name,
+            results=stage_results,
+        )
+        for candidate in stage_results or []:
+            stages_seen = list(candidate.get("_cascade_stages") or [])
+            if stage.name not in stages_seen:
+                stages_seen.append(stage.name)
+            candidate["_cascade_stage"] = candidate.get("_cascade_stage") or stage.name
+            candidate["_cascade_stages"] = stages_seen
+        return stage_results, resolved_books, stage.max_candidates
 
     stages: list[SearchStage]
     if not primary_stage_books and not expanded_stage_books:
@@ -1724,13 +1903,27 @@ def _cascade_search_legacy(searcher: HybridSearcher, search_query: str,
     for stage in stages:
         if not stage.should_run(best_candidates):
             continue
+        if stage.name == "escape":
+            defer_escape, reason = _should_defer_deep_escape(best_candidates)
+            if defer_escape:
+                _record_escape_budget_deferred(reason, best_candidates)
+                continue
         stage_candidates, resolved_books, stage_limit = _run_main_stage(stage)
         if stage_candidates is None:
             continue
+        executed_main_stages.add(stage.name)
         if stage_candidates or not stage.keep_previous_on_empty:
-            best_candidates = stage_candidates
+            if stage.keep_previous_on_empty and best_candidates:
+                best_candidates = _merge_stage_candidates(best_candidates, stage_candidates)
+            else:
+                best_candidates = stage_candidates
         if stage.stop_when(stage, best_candidates, resolved_books):
             return _finalize_candidates(best_candidates, stage_limit or top_k)
+
+    if defer_aux_search and _standard_main_pool_saturates_aux_budget(best_candidates):
+        _saturated, reason = _main_pool_saturates_aux_budget(best_candidates)
+        _record_aux_budget_deferred(reason or "main_pool_saturated")
+        return best_candidates[:top_k]
 
     return _merge_with_aux(best_candidates, _collect_aux_candidates(), top_k)
 
@@ -1808,6 +2001,181 @@ def _is_measure_item(name: str, desc: str, unit, quantity) -> bool:
 # 候选准备
 # ============================================================
 
+_RANKABLE_POOL_CORE_FEATURES = (
+    "family",
+    "entity",
+    "canonical_name",
+    "material",
+    "connection",
+    "install_method",
+)
+
+_RANKABLE_POOL_PRIMARY_PARAM_FIELDS = (
+    "dn",
+    "conduit_dn",
+    "cable_section",
+    "cable_cores",
+    "kw",
+    "kva",
+    "ampere",
+    "circuits",
+    "perimeter",
+    "half_perimeter",
+    "large_side",
+    "bridge_type",
+    "valve_type",
+    "lamp_type",
+    "laying_method",
+    "box_mount_mode",
+)
+
+
+def _rankable_feature_value(features: dict, key: str):
+    value = (features or {}).get(key)
+    if value not in (None, "", [], {}):
+        return value
+    for nested_key in ("numeric_params", "specs"):
+        nested = (features or {}).get(nested_key) or {}
+        if isinstance(nested, dict):
+            value = nested.get(key)
+            if value not in (None, "", [], {}):
+                return value
+    return None
+
+
+def _rankable_pool_feature_missing_fields(features: dict) -> list[str]:
+    missing = [
+        field for field in _RANKABLE_POOL_CORE_FEATURES
+        if _rankable_feature_value(features, field) in (None, "", [], {})
+    ]
+    if not any(
+        _rankable_feature_value(features, field) not in (None, "", [], {})
+        for field in _RANKABLE_POOL_PRIMARY_PARAM_FIELDS
+    ):
+        missing.append("primary_params")
+    return missing
+
+
+def _merge_rankable_candidate_features(existing: dict, rebuilt: dict) -> dict:
+    """Merge no-store parser output into a cached feature shell.
+
+    Existing values win because they may come from a curated feature store. The
+    rebuilt no-store values only fill gaps, so this step supplies ranking fuel
+    without changing the feature contract into a hidden final-answer rule.
+    """
+    merged = dict(rebuilt or {})
+    existing = dict(existing or {})
+    for key, value in existing.items():
+        if key == "numeric_params":
+            continue
+        if value not in (None, "", [], {}):
+            merged[key] = value
+
+    numeric_params = dict((rebuilt or {}).get("numeric_params") or {})
+    existing_numeric = existing.get("numeric_params") or {}
+    if isinstance(existing_numeric, dict):
+        for key, value in existing_numeric.items():
+            if value not in (None, "", [], {}):
+                numeric_params[key] = value
+    if numeric_params:
+        merged["numeric_params"] = numeric_params
+    return merged
+
+
+def _materialize_rankable_pool_candidate_features(
+    candidates: list[dict],
+    *,
+    classification: dict | None = None,
+) -> list[dict]:
+    """Ensure rankable-pool candidates carry canonical features before rerank.
+
+    This is intentionally no-store: it must not write candidate_features.db or
+    make any candidate a final answer by itself. It only fills the candidate
+    contract consumed by downstream ranking/validation.
+    """
+    if not candidates:
+        return list(candidates or [])
+
+    classification = classification if isinstance(classification, dict) else {}
+    default_specialty = str(
+        classification.get("primary")
+        or next(iter(classification.get("search_books") or []), "")
+        or next(iter(classification.get("candidate_books") or []), "")
+        or ""
+    ).strip()
+    meta = {
+        "checked_count": 0,
+        "existing_count": 0,
+        "hydrated_existing_count": 0,
+        "no_store_count": 0,
+        "empty_count": 0,
+        "core_ready_count": 0,
+    }
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        meta["checked_count"] += 1
+        features = candidate.get("candidate_canonical_features") or candidate.get("canonical_features")
+        source = "existing" if isinstance(features, dict) and features else ""
+        if source:
+            features = dict(features)
+            meta["existing_count"] += 1
+
+        missing_before = _rankable_pool_feature_missing_fields(features if isinstance(features, dict) else {})
+        existing_features = dict(features or {}) if source else {}
+        should_rebuild_no_store = not source or bool(missing_before)
+        if should_rebuild_no_store:
+            specialty = str(
+                candidate.get("specialty")
+                or default_specialty
+                or ""
+            ).strip()
+            try:
+                features = build_candidate_canonical_features_no_store(
+                    candidate,
+                    specialty=specialty,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "rankable pool candidate feature materialization failed: "
+                    f"{candidate.get('quota_id', '')} {exc}"
+                )
+                rebuilt_features = {}
+            else:
+                rebuilt_features = dict(features or {})
+
+            if rebuilt_features:
+                meta["no_store_count"] += 1
+                if source:
+                    meta["hydrated_existing_count"] += 1
+                    features = _merge_rankable_candidate_features(existing_features, rebuilt_features)
+                    source = "existing+no_store"
+                else:
+                    features = rebuilt_features
+                    source = "no_store"
+            elif not source:
+                features = {}
+                source = "empty"
+                meta["empty_count"] += 1
+
+        features = dict(features or {})
+        if features:
+            candidate["candidate_canonical_features"] = dict(features)
+            candidate.setdefault("canonical_features", dict(features))
+
+        missing_fields = _rankable_pool_feature_missing_fields(features)
+        if len(missing_fields) <= len(_RANKABLE_POOL_CORE_FEATURES) - 2:
+            meta["core_ready_count"] += 1
+        candidate["candidate_feature_materialized"] = bool(features)
+        candidate["candidate_feature_source"] = source
+        candidate["candidate_feature_missing_fields"] = missing_fields
+
+    if classification is not None:
+        resolution = classification.setdefault("retrieval_resolution", {})
+        resolution["rankable_pool_feature_materialization"] = meta
+    return candidates
+
 def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamValidator,
                         search_query: str, full_query: str,
                         classification: dict,
@@ -1821,11 +2189,30 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                         adaptive_strategy: str = "standard",
                         performance_monitor: PerformanceMonitor | None = None) -> list[dict]:
     """Run hybrid search, rerank, and parameter validation for candidate preparation."""
+
+    def _record_outer_substage(name: str, elapsed: float) -> None:
+        if not isinstance(classification, dict) or not name:
+            return
+        resolution = classification.setdefault("retrieval_resolution", {})
+        mixed_totals = resolution.setdefault("mixed_search_totals", {})
+        outer = mixed_totals.setdefault("outer_substage_sec", {})
+        outer[name] = round(float(outer.get(name, 0.0) or 0.0) + float(elapsed or 0.0), 6)
+        mixed_totals["outer_substage_total_sec"] = round(
+            sum(float(value or 0.0) for value in outer.values()),
+            6,
+        )
+        slowest_name, _slowest_elapsed = max(
+            outer.items(),
+            key=lambda item: float(item[1] or 0.0),
+        )
+        mixed_totals["slowest_outer_substage"] = str(slowest_name)
+
     with (
         performance_monitor.measure("混合搜索")
         if performance_monitor is not None else nullcontext()
     ):
         search_top_k = _resolve_adaptive_search_top_k(adaptive_strategy)
+        substage_started = time.perf_counter()
         try:
             candidates = cascade_search(
                 searcher,
@@ -1847,6 +2234,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
                 )
             except TypeError:
                 candidates = cascade_search(searcher, search_query, classification)
+        _record_outer_substage("cascade_search", time.perf_counter() - substage_started)
         include_prior_candidates = bool(include_prior_candidates) and adaptive_strategy != "fast"
         if (
             include_prior_candidates
@@ -1856,28 +2244,62 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         ):
             include_prior_candidates = False
         if include_prior_candidates:
+            substage_started = time.perf_counter()
             prior_candidates = _collect_all_prior_candidates(
                 searcher,
                 search_query=search_query,
                 full_query=full_query,
                 classification=classification,
                 item=item,
+                existing_candidates=candidates,
+                adaptive_strategy=adaptive_strategy,
             )
-            prior_candidates.extend(
-                _collect_existing_candidate_neighbor_priors(
-                    searcher,
-                    candidates,
-                    classification=classification,
+            _record_outer_substage("prior_collect", time.perf_counter() - substage_started)
+            substage_started = time.perf_counter()
+            neighbor_prior_candidates = _collect_existing_candidate_neighbor_priors(
+                searcher,
+                candidates,
+                classification=classification,
+            )
+            _record_outer_substage("neighbor_prior_collect", time.perf_counter() - substage_started)
+            if isinstance(classification, dict):
+                resolution = classification.setdefault("retrieval_resolution", {})
+                mixed_totals = resolution.setdefault("mixed_search_totals", {})
+                mixed_totals["prior_collect_count"] = (
+                    int(mixed_totals.get("prior_collect_count", 0) or 0) + 1
                 )
-            )
+                mixed_totals["prior_candidate_count"] = (
+                    int(mixed_totals.get("prior_candidate_count", 0) or 0)
+                    + len(prior_candidates or [])
+                )
+                mixed_totals["neighbor_prior_collect_count"] = (
+                    int(mixed_totals.get("neighbor_prior_collect_count", 0) or 0) + 1
+                )
+                mixed_totals["neighbor_prior_candidate_count"] = (
+                    int(mixed_totals.get("neighbor_prior_candidate_count", 0) or 0)
+                    + len(neighbor_prior_candidates or [])
+                )
+            substage_started = time.perf_counter()
+            prior_candidates.extend(neighbor_prior_candidates)
             if prior_candidates:
                 candidates = _merge_prior_candidates(candidates, prior_candidates)
+            _record_outer_substage("prior_merge", time.perf_counter() - substage_started)
+        substage_started = time.perf_counter()
         candidates, route_scope_filter = _filter_candidates_to_route_scope(candidates, classification)
+        _record_outer_substage("route_scope_filter", time.perf_counter() - substage_started)
         if isinstance(classification, dict):
             classification["route_scope_filter"] = route_scope_filter
+        substage_started = time.perf_counter()
         candidates, candidate_scope_guard = _filter_candidates_to_effective_guard_scope(candidates, classification)
+        _record_outer_substage("effective_guard_scope", time.perf_counter() - substage_started)
         if isinstance(classification, dict):
             classification["candidate_scope_guard"] = candidate_scope_guard
+        substage_started = time.perf_counter()
+        candidates = _materialize_rankable_pool_candidate_features(
+            candidates,
+            classification=classification,
+        )
+        _record_outer_substage("rankable_feature_materialization", time.perf_counter() - substage_started)
 
     # ? (quota_id + ???) ???RRF????????????????????
     # ??hybrid_score??????????reranker?LLM?????
@@ -1919,6 +2341,7 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
             except TypeError:
                 candidates = reranker.rerank(search_query, rerank_input)
             candidates = _retain_knowledge_prior_candidates(candidates, prerank_candidates)
+            candidates = _retain_primary_stage_candidates(candidates, prerank_candidates)
     if candidates:
         # ?classification???search_books???v3 LTR??book_match?
         search_books = classification.get("search_books", []) if classification else []
@@ -1947,10 +2370,37 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
                                   search_query: str,
                                   full_query: str,
                                   classification: dict | None,
-                                  item: dict | None) -> list[dict]:
+                                  item: dict | None,
+                                  existing_candidates: list[dict] | None = None,
+                                  adaptive_strategy: str | None = None) -> list[dict]:
     prior_candidates: list[dict] = []
+    classification_ref = classification if isinstance(classification, dict) else None
     classification = dict(classification or {})
     base_books = list(classification.get("search_books", []) or [])
+    strategy = str(adaptive_strategy or "standard").strip().lower()
+
+    def _record_prior_collect_trace(search_target) -> None:
+        trace = getattr(search_target, "_last_prior_collect_trace", None)
+        if not isinstance(trace, dict) or classification_ref is None:
+            return
+        resolution = classification_ref.setdefault("retrieval_resolution", {})
+        mixed_totals = resolution.setdefault("mixed_search_totals", {})
+        source_sec = mixed_totals.setdefault("prior_source_substage_sec", {})
+        for key, value in dict(trace.get("source_substage_sec") or {}).items():
+            source_sec[key] = round(
+                float(source_sec.get(key, 0.0) or 0.0) + float(value or 0.0),
+                6,
+            )
+        source_counts = mixed_totals.setdefault("prior_source_candidate_count", {})
+        for key, value in dict(trace.get("source_candidate_count") or {}).items():
+            source_counts[key] = int(source_counts.get(key, 0) or 0) + int(value or 0)
+        skipped = list(trace.get("skipped_sources") or [])
+        if skipped:
+            mixed_totals.setdefault("prior_source_skipped", []).extend(skipped)
+        if trace.get("lightweight_standard_c5"):
+            mixed_totals["prior_lightweight_standard_c5_count"] = (
+                int(mixed_totals.get("prior_lightweight_standard_c5_count", 0) or 0) + 1
+            )
 
     def _collect_from(search_target, books: list[str] | None, *, source_province: str = "") -> None:
         collector = getattr(search_target, "collect_prior_candidates", None)
@@ -1963,6 +2413,7 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
                 books=books,
                 item=item,
                 exact_only=bool(source_province),
+                adaptive_strategy=adaptive_strategy or "standard",
             )
         except TypeError:
             try:
@@ -1984,6 +2435,7 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
                 f"{getattr(search_target, 'province', source_province) or 'unknown'} {e}"
             )
             return
+        _record_prior_collect_trace(search_target)
         for row in rows or []:
             candidate = dict(row)
             if source_province and not candidate.get("_source_province"):
@@ -1992,6 +2444,12 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
 
     if _should_search_target_for_books(searcher, base_books):
         _collect_from(searcher, base_books)
+
+    if (
+        strategy == "standard"
+        and len(existing_candidates or []) >= CASCADE_MIN_CANDIDATES
+    ):
+        return prior_candidates
 
     aux_books = _normalize_fallbacks(
         base_books
@@ -2186,6 +2644,36 @@ def _retain_knowledge_prior_candidates(candidates: list[dict],
         retained.append(candidate)
         retained_keys.add(identity)
     return retained
+
+
+def _retain_primary_stage_candidates(candidates: list[dict],
+                                     prerank_candidates: list[dict],
+                                     *,
+                                     limit: int = 5) -> list[dict]:
+    retained = list(candidates or [])
+    retained_keys = {
+        HybridSearcher._stable_result_identity(candidate)
+        for candidate in retained
+    }
+    added = 0
+    for candidate in prerank_candidates or []:
+        stages = set(candidate.get("_cascade_stages") or [])
+        if candidate.get("_cascade_stage") != "primary" and "primary" not in stages:
+            continue
+        identity = HybridSearcher._stable_result_identity(candidate)
+        if identity in retained_keys:
+            continue
+        retained.append(candidate)
+        retained_keys.add(identity)
+        added += 1
+        if added >= limit:
+            break
+    if added:
+        retained.sort(key=HybridSearcher._stable_result_identity)
+        retained.sort(key=HybridSearcher._hybrid_result_sort_key)
+    return retained
+
+
 def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, reranker,
                                           classification: dict) -> list[dict]:
     if not isinstance(item, dict):

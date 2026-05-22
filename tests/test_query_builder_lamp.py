@@ -126,3 +126,15 @@ def test_wall_light_unchanged():
     """壁灯 → 壁灯安装（不变）"""
     query = build_quota_query(parser, "壁灯")
     assert "壁灯安装" in query
+
+
+def test_decorative_emergency_wall_lamp_uses_sign_induction_decorative_query():
+    """广东装饰应急灯应召回标志、诱导装饰灯具墙壁式定额。"""
+    query = build_quota_query(
+        parser,
+        "装饰灯",
+        "名称：集中控制型消防应急照明灯-E5-壁挂",
+        specialty="C4",
+    )
+    assert "标志、诱导装饰灯具安装" in query
+    assert "墙壁式" in query

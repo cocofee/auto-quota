@@ -1,3 +1,4 @@
+import config
 from src.candidate_canonicalizer import (
     attach_candidate_canonical_features,
     build_candidate_canonical_features,
@@ -47,6 +48,83 @@ def test_attach_candidate_canonical_features_sets_default_field():
 
     assert candidates[0]["canonical_features"]["entity"] == "电缆"
     assert candidates[0]["canonical_features"]["numeric_params"]["cable_cores"] == 5
+
+
+def test_build_candidate_canonical_features_replaces_empty_feature_shell():
+    candidate = {
+        "quota_id": "C4-8-236",
+        "name": "户内干包式非铠装电力电缆终端头制作安装 1kV以下(mm2以内) 5×16",
+        "candidate_canonical_features": {},
+        "canonical_features": {},
+    }
+
+    features = build_candidate_canonical_features(candidate, specialty="C4")
+
+    assert features["cable_section"] == 16
+    assert features["numeric_params"]["cable_cores"] == 5
+    assert candidate["candidate_canonical_features"]["cable_section"] == 16
+
+
+def test_build_candidate_canonical_features_hydrates_stale_air_valve_shell():
+    candidate = {
+        "quota_id": "C7-AIR-VALVE-1",
+        "name": "碳钢调节阀安装 风管防火阀周长(mm) ≤3600",
+        "candidate_canonical_features": {
+            "raw_text": "碳钢调节阀安装 风管防火阀周长(mm) ≤3600",
+            "entity": "风阀",
+            "family": "air_valve",
+            "material": "",
+            "valve_type": "",
+        },
+    }
+
+    features = build_candidate_canonical_features(candidate, specialty="C7")
+
+    assert features["entity"] == "风阀"
+    assert features["family"] == "air_valve"
+    assert features["material"] == "碳钢"
+    assert features["valve_type"] == "防火阀"
+    assert candidate["candidate_canonical_features"]["valve_type"] == "防火阀"
+
+
+def test_build_candidate_canonical_features_hydrates_stale_air_duct_family_shell():
+    candidate = {
+        "quota_id": "C7-AIR-DUCT-1",
+        "name": "不锈钢板圆形风管制作安装",
+        "candidate_canonical_features": {
+            "raw_text": "不锈钢板圆形风管制作安装",
+            "entity": "风管",
+            "canonical_name": "风管",
+            "family": "",
+        },
+    }
+
+    features = build_candidate_canonical_features(candidate, specialty="C7")
+
+    assert features["entity"] == "风管"
+    assert features["family"] == "air_duct"
+    assert candidate["candidate_canonical_features"]["family"] == "air_duct"
+
+
+def test_build_candidate_canonical_features_extracts_protection_layer_materials():
+    aluminum = build_candidate_canonical_features(
+        {
+            "quota_id": "C7-AIR-MATERIAL-AL-1",
+            "name": "0.8MM厚铝皮保护层 铝皮保护层",
+        },
+        specialty="C7",
+    )
+    iron = build_candidate_canonical_features(
+        {
+            "quota_id": "C7-AIR-MATERIAL-FE-1",
+            "name": "铁皮保护层 铆钉固定",
+        },
+        specialty="C7",
+    )
+
+    assert aluminum["material"] == "铝皮"
+    assert iron["material"] == "铁皮"
+    assert iron["connection"] == "铆钉固定"
 
 
 def test_hybrid_searcher_finalize_candidates_attaches_canonical_features():
@@ -181,14 +259,19 @@ def test_hybrid_searcher_builds_general_pipe_support_variants_without_weight_noi
 
 
 def test_hybrid_searcher_expands_rank_window_for_family_spec_query():
+    original_cap = getattr(config, "HYBRID_STANDARD_RANK_WINDOW_CAP", 32)
+    config.HYBRID_STANDARD_RANK_WINDOW_CAP = 50
     searcher = HybridSearcher(province="通用")
-    window = searcher._resolve_rank_window(
-        top_k=10,
-        query_features={"family": "valve_accessory"},
-        route_profile={"route": "installation_spec", "spec_signal_count": 2},
-    )
+    try:
+        window = searcher._resolve_rank_window(
+            top_k=10,
+            query_features={"family": "valve_accessory"},
+            route_profile={"route": "installation_spec", "spec_signal_count": 2},
+        )
 
-    assert window >= 50
+        assert window >= 50
+    finally:
+        config.HYBRID_STANDARD_RANK_WINDOW_CAP = original_cap
 
 
 def test_hybrid_searcher_filters_steel_kb_hints_for_electrical_conduit_query():

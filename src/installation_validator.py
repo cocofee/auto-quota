@@ -145,6 +145,43 @@ class InstallationValidator:
         return bool(left and right and left != right and frozenset((left, right)) in conflicts)
 
     @classmethod
+    def _is_cable_conduit_anchor_compatible(cls,
+                                            *,
+                                            bill_entity: str = "",
+                                            quota_entity: str = "",
+                                            bill_family: str = "",
+                                            quota_family: str = "",
+                                            bill_params: dict | None = None,
+                                            quota_params: dict | None = None) -> bool:
+        entity_pair = frozenset((
+            str(bill_entity or "").strip(),
+            str(quota_entity or "").strip(),
+        ))
+        family_pair = frozenset((
+            str(bill_family or "").strip(),
+            str(quota_family or "").strip(),
+        ))
+        if (
+            entity_pair != frozenset(("电缆", "配管"))
+            and family_pair != frozenset(("cable_family", "conduit_raceway"))
+        ):
+            return False
+
+        marker_text_parts = []
+        for params in (bill_params, quota_params):
+            if not isinstance(params, dict):
+                continue
+            for key in ("laying_method", "install_method", "conduit_type", "conduit_dn"):
+                value = params.get(key)
+                if value not in (None, ""):
+                    marker_text_parts.append(str(value))
+        marker_text = " ".join(marker_text_parts)
+        return any(
+            marker in marker_text
+            for marker in ("穿管", "管内", "配管", "暗配", "明配", "导管", "线管")
+        )
+
+    @classmethod
     def _find_trait_conflict(cls, bill_traits: list[str], quota_traits: list[str]) -> tuple[str, str] | None:
         bill_set = {str(item or "").strip() for item in bill_traits if str(item or "").strip()}
         quota_set = {str(item or "").strip() for item in quota_traits if str(item or "").strip()}
