@@ -20,6 +20,23 @@ explicitly overrides them:
 4. For multi-step work, persist progress to files.
 5. Verify the changed area before claiming completion.
 
+## Internal Rules
+
+### 编码前思考
+陈述你的假设。不确定时提问。绝不猜测。
+
+### 简洁优先
+写出解决这个问题的最少代码。
+不要添加没人要求的抽象。
+
+### 做精准的修改
+不要修改与请求无关的代码。
+每行更改都必须追溯到所要求的内容。
+
+### 以目标为导向的执行
+将模糊的指令转化为可验证的成功标准。
+在编写任何一行代码之前。
+
 ## Long-Task Workflow
 
 For tasks that may take multiple rounds, use file-backed state instead of chat memory.
