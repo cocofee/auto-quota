@@ -532,6 +532,40 @@ HYBRID_FEEDBACK_BIAS_MAX = 0.08                 # 反馈偏置最大幅度（避
 HYBRID_FEEDBACK_BIAS_REFRESH_SEC = 300          # 偏置缓存刷新周期（秒）
 HYBRID_FEEDBACK_MIN_SAMPLES = 60                # 启用偏置的最小样本数
 
+# OSS guarded alias candidate source (15.x). Default-off; offline/dev-OOF only
+# unless explicitly enabled by a future integration gate.
+OSS_GUARDED_ALIAS_ENABLED = os.getenv("OSS_GUARDED_ALIAS_ENABLED", "false").lower() == "true"
+OSS_GUARDED_ALIAS_INDEX_PATH = os.getenv(
+    "OSS_GUARDED_ALIAS_INDEX_PATH",
+    str(DATA_DIR / "goal_search" / "guarded_oss_alias_index.jsonl"),
+)
+OSS_GUARDED_ALIAS_TOP_K = int(os.getenv("OSS_GUARDED_ALIAS_TOP_K", "6"))
+OSS_GUARDED_ALIAS_MIN_SUPPORT = int(os.getenv("OSS_GUARDED_ALIAS_MIN_SUPPORT", "2"))
+OSS_GUARDED_ALIAS_CORE_FAMILIES = tuple(
+    part.strip()
+    for part in os.getenv("OSS_GUARDED_ALIAS_CORE_FAMILIES", "concrete,rebar,pipe,pump,support").split(",")
+    if part.strip()
+)
+
+OSS_RECALL_INDEX_ENABLED = os.getenv("OSS_RECALL_INDEX_ENABLED", "false").lower() == "true"
+OSS_RECALL_INDEX_PATH = os.getenv(
+    "OSS_RECALL_INDEX_PATH",
+    str(DATA_DIR / "goal_search" / "oss_recall_index.jsonl"),
+)
+# OSS recall/index candidate source (16.x). Default-off. If manually enabled,
+# keep the approved 16.6 scope narrow: support exact-name only, one candidate.
+OSS_RECALL_INDEX_TOP_K = int(os.getenv("OSS_RECALL_INDEX_TOP_K", "1"))
+OSS_RECALL_INDEX_MIN_SUPPORT = int(os.getenv("OSS_RECALL_INDEX_MIN_SUPPORT", "6"))
+OSS_RECALL_INDEX_MIN_SOURCE_FAMILIES = int(os.getenv("OSS_RECALL_INDEX_MIN_SOURCE_FAMILIES", "2"))
+OSS_RECALL_INDEX_MIN_OVERLAP = int(os.getenv("OSS_RECALL_INDEX_MIN_OVERLAP", "4"))
+OSS_RECALL_INDEX_MIN_SPECIFIC_OVERLAP = int(os.getenv("OSS_RECALL_INDEX_MIN_SPECIFIC_OVERLAP", "1"))
+OSS_RECALL_INDEX_INTERVENTION_MODE = os.getenv("OSS_RECALL_INDEX_INTERVENTION_MODE", "exact_name").strip().lower()
+OSS_RECALL_INDEX_CORE_FAMILIES = tuple(
+    part.strip()
+    for part in os.getenv("OSS_RECALL_INDEX_CORE_FAMILIES", "support").split(",")
+    if part.strip()
+)
+
 # Reranker重排配置（交叉编码器，精度远高于向量搜索）
 # 可用环境变量覆盖为本地目录：
 #   RERANKER_MODEL_NAME=C:\path\to\local\reranker

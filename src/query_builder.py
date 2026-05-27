@@ -2794,6 +2794,30 @@ def _build_weak_current_box_query(
     return "弱电箱体挂墙安装 半周长1m以内"
 
 
+def _build_goal_11x_parser_recall_query(name: str, full_text: str) -> str | None:
+    """Small 11.1 dev/OOF parser-empty recall hints; each row is independently removable."""
+    name_compact = re.sub(r"\s+", "", str(name or "").lower())
+    if "\u7535\u7bb1" in name_compact and "\u914d\u7535\u7bb1" not in name_compact and "\u5f31\u7535\u7bb1" not in name_compact:
+        return "\u914d\u7535\u7bb1 " + (name or "\u7535\u7bb1")
+    if "\u9632\u6c34\u9632\u5c18\u5438\u9876led" in name_compact or ("\u5438\u9876led" in name_compact and "\u5c4f" not in name_compact):
+        return "\u666e\u901a\u706f\u5177\u5b89\u88c5 \u5438\u9876\u706f \u9632\u6c34\u9632\u5c18 LED"
+    if "led\u5c4f" in name_compact or "\u663e\u793a\u5c4f" in name_compact:
+        return "\u663e\u793a\u8bbe\u5907 LED\u663e\u793a\u5c4f " + (name or "")
+    if "\u76d1\u63a7\u6444\u50cf" in name_compact or "\u6444\u50cf\u8bbe\u5907" in name_compact:
+        return "\u76d1\u63a7\u6444\u50cf\u8bbe\u5907 \u6444\u50cf\u673a " + (name or "")
+    if "\u89c6\u9891\u4f20\u8f93" in name_compact:
+        return "\u89c6\u9891\u4f20\u8f93\u8bbe\u5907 \u7f16\u7801\u5668 \u89e3\u7801\u5668 " + (name or "")
+    if "\u89c6\u9891\u63a7\u5236" in name_compact or "\u89c6\u9891\u7efc\u5408" in name_compact:
+        return "\u89c6\u9891\u63a7\u5236\u8bbe\u5907 \u7efc\u5408\u5b89\u9632\u7ba1\u7406\u5e73\u53f0 " + (name or "")
+    if "\u6269\u58f0" in name_compact:
+        return "\u6269\u58f0\u7cfb\u7edf\u8bbe\u5907 \u516c\u5171\u5e7f\u64ad " + (name or "")
+    if "\u80cc\u666f\u97f3\u4e50" in name_compact:
+        return "\u516c\u5171\u5e7f\u64ad \u80cc\u666f\u97f3\u4e50\u7cfb\u7edf\u8bbe\u5907 " + (name or "")
+    if "\u76ee\u6807\u8bc6\u522b" in name_compact or "\u8bfb\u5361" in name_compact:
+        return "\u51fa\u5165\u53e3\u76ee\u6807\u8bc6\u522b\u8bbe\u5907 \u95e8\u7981 \u8bfb\u5361\u5668 " + (name or "")
+    return None
+
+
 def build_quota_query(parser, name: str, description: str = "",
                       specialty: str = "",
                       bill_params: dict = None,
@@ -2890,6 +2914,16 @@ def build_quota_query(parser, name: str, description: str = "",
         and discovered_routing_subject not in _PRIMARY_SUBJECT_GENERIC_NAMES
     ):
         name = discovered_routing_subject
+
+    early_goal_11x_recall_query = _build_goal_11x_parser_recall_query(name, full_text)
+    if early_goal_11x_recall_query:
+        return _finalize_query(
+            early_goal_11x_recall_query,
+            specialty=specialty,
+            canonical_features=None,
+            context_prior=None,
+            apply_synonyms=False,
+        )
 
     # --- 防火门/金属门窗硬锚点：在通用路由前先稳定家族召回，避免被编码或配管规则带偏 ---
     pre_route_match = try_rule_match(
@@ -3704,6 +3738,15 @@ def build_quota_query(parser, name: str, description: str = "",
     if described_lamp_query:
         return _finalize_query(
             described_lamp_query,
+            specialty=specialty,
+            canonical_features=None,
+            context_prior=None,
+            apply_synonyms=False,
+        )
+    goal_11x_recall_query = _build_goal_11x_parser_recall_query(subject_name or name, full_text)
+    if goal_11x_recall_query:
+        return _finalize_query(
+            goal_11x_recall_query,
             specialty=specialty,
             canonical_features=None,
             context_prior=None,

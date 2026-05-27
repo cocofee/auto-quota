@@ -22,6 +22,8 @@ from src.goal_search.national_index import (
     query_same_cluster,
     tokenize,
 )
+from src.goal_search.oss_alias_prior import collect_guarded_oss_alias_candidates, reset_guarded_oss_alias_prior_source
+from src.goal_search.oss_recall_prior import collect_oss_recall_candidates, reset_oss_recall_prior_source
 
 try:
     from rank_bm25 import BM25Okapi
@@ -1309,6 +1311,8 @@ class GoalSearcher:
             self._collect_shadow_priors(raw_item, query, query_text, query_tokens, prior_bonus, prior_reasons, candidate_indices)
         self._collect_local_family_candidates(query_signal, query_text, query_tokens, query.specialty, candidate_indices)
         self._collect_national_index_candidates(query_signal, query.unit, prior_bonus, prior_reasons, candidate_indices)
+        self._collect_guarded_oss_alias_priors(raw_item, query, query_text, query_signal, prior_bonus, prior_reasons, candidate_indices)
+        self._collect_oss_recall_priors(raw_item, query, query_text, query_signal, prior_bonus, prior_reasons, candidate_indices)
 
         hits: list[GoalSearchHit] = []
         query_token_set = set(query_tokens)
@@ -1489,6 +1493,99 @@ class GoalSearcher:
             label = clean_text(row.get("national_match")) or "national_index"
             prior_bonus[quota_id] = max(prior_bonus.get(quota_id, 0.0), bonus)
             prior_reasons.setdefault(quota_id, []).append(label)
+
+    def _collect_guarded_oss_alias_priors(
+        self,
+        raw_item: dict[str, Any],
+        query: GoalSearchItem,
+        query_text: str,
+        query_signal: QuotaSignal,
+        prior_bonus: dict[str, float],
+        prior_reasons: dict[str, list[str]],
+        candidate_indices: set[int],
+        ) -> None:
+        seen_queries: set[str] = set()
+        seen_quota_ids: set[str] = set()
+        top_k = int(getattr(config, "OSS_RECALL_INDEX_TOP_K", 8) or 8)
+        for text in (query.bill_name, query.text, query_text):
+            text = clean_text(text)
+            if not text or text in seen_queries:
+                continue
+            if len(text) > 500:
+                text = text[:500]
+            seen_queries.add(text)
+            rows = collect_guarded_oss_alias_candidates(
+                province=self.province,
+                query_text=text,
+                query_family=query_signal.family,
+                item=raw_item,
+                top_k=int(getattr(config, "OSS_GUARDED_ALIAS_TOP_K", 6) or 6),
+            )
+            for row in rows:
+                quota_id = clean_text(row.get("quota_id"))
+                if not quota_id or quota_id in seen_quota_ids:
+                    continue
+                seen_quota_ids.add(quota_id)
+                quota_index = self.index.quota_index_by_id.get(quota_id)
+                if quota_index is None:
+                    continue
+                candidate_indices.add(quota_index)
+                bonus = max(0.0, min(0.22, float(row.get("knowledge_prior_score") or 0.0)))
+                prior_bonus[quota_id] = max(prior_bonus.get(quota_id, 0.0), bonus)
+                support = int(row.get("oss_alias_support_count") or 0)
+                source_count = int(row.get("oss_alias_source_family_count") or 0)
+                prior_reasons.setdefault(quota_id, []).append(
+                    f"oss_guarded_alias:support{support}/sources{source_count}"
+                )
+
+    def _collect_oss_recall_priors(
+        self,
+        raw_item: dict[str, Any],
+        query: GoalSearchItem,
+        query_text: str,
+        query_signal: QuotaSignal,
+        prior_bonus: dict[str, float],
+        prior_reasons: dict[str, list[str]],
+        candidate_indices: set[int],
+        ) -> None:
+        seen_queries: set[str] = set()
+        seen_quota_ids: set[str] = set()
+        top_k = int(getattr(config, "OSS_RECALL_INDEX_TOP_K", 8) or 8)
+        for text in (query.bill_name, query.text, query_text):
+            text = clean_text(text)
+            if not text or text in seen_queries:
+                continue
+            if len(text) > 500:
+                text = text[:500]
+            seen_queries.add(text)
+            rows = collect_oss_recall_candidates(
+                province=self.province,
+                query_text=text,
+                query_family=query_signal.family,
+                item=raw_item,
+                top_k=top_k,
+            )
+            for row in rows:
+                quota_id = clean_text(row.get("quota_id"))
+                if not quota_id or quota_id in seen_quota_ids:
+                    continue
+                seen_quota_ids.add(quota_id)
+                quota_index = self.index.quota_index_by_id.get(quota_id)
+                if quota_index is None:
+                    continue
+                candidate_indices.add(quota_index)
+                bonus = max(0.0, min(0.2, float(row.get("knowledge_prior_score") or 0.0)))
+                prior_bonus[quota_id] = max(prior_bonus.get(quota_id, 0.0), bonus)
+                overlap = int(row.get("oss_recall_overlap") or 0)
+                support = int(row.get("oss_recall_support_count") or 0)
+                source_count = int(row.get("oss_recall_source_family_count") or 0)
+                exact_name = int(bool(row.get("oss_recall_exact_name")))
+                mode = clean_text(row.get("oss_recall_intervention_mode")) or "unknown"
+                prior_reasons.setdefault(quota_id, []).append(
+                    f"oss_recall_index:mode{mode}/exact{exact_name}/overlap{overlap}/support{support}/sources{source_count}"
+                )
+                if len(seen_quota_ids) >= top_k:
+                    return
 
     def _apply_quota_bonus(
         self,
@@ -1682,3 +1779,5 @@ def _get_index(province: str) -> _GoalIndex:
 
 def clear_goal_search_cache() -> None:
     _get_index.cache_clear()
+    reset_guarded_oss_alias_prior_source()
+    reset_oss_recall_prior_source()

@@ -118,6 +118,39 @@ MATERIAL_WORDS = (
 CONNECTION_WORDS = ("法兰", "螺纹", "焊接", "热熔", "电熔", "沟槽", "卡箍", "粘接", "承插")
 INSTALL_METHOD_WORDS = ("明装", "暗装", "明配", "暗配", "落地", "悬挂", "嵌入", "埋地", "架空", "户内", "户外")
 
+QUERY_FAMILY_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "electrical_box",
+        (
+            "\u7535\u7bb1",
+        ),
+    ),
+    (
+        "weak_current_device",
+        (
+            "led\u5c4f",
+            "\u663e\u793a\u5c4f",
+            "\u89c6\u9891\u4f20\u8f93",
+            "\u89c6\u9891\u63a7\u5236",
+            "\u89c6\u9891\u7efc\u5408",
+            "\u76d1\u63a7\u6444\u50cf",
+            "\u6444\u50cf\u8bbe\u5907",
+            "\u6444\u50cf\u673a",
+            "\u6269\u58f0",
+            "\u80cc\u666f\u97f3\u4e50",
+            "\u76ee\u6807\u8bc6\u522b",
+            "\u8bfb\u5361",
+        ),
+    ),
+    (
+        "lamp",
+        (
+            "\u5438\u9876led",
+            "\u9632\u6c34\u9632\u5c18\u5438\u9876led",
+        ),
+    ),
+)
+
 
 @dataclass(slots=True)
 class QuotaSignal:
@@ -205,6 +238,15 @@ def first_match(text: str, words: Iterable[str]) -> str:
     return ""
 
 
+def _family_hint(compact: str) -> str:
+    if "\u5f31\u7535\u7bb1" in compact:
+        return "weak_current_device"
+    for family, hints in QUERY_FAMILY_HINTS:
+        if any(hint in compact for hint in hints):
+            return family
+    return ""
+
+
 def _chinese_core_count(value: str) -> int | None:
     if not value:
         return None
@@ -239,6 +281,9 @@ def _compound_cable_cores(text: str) -> int | None:
 def infer_family(value: object) -> str:
     text = normalize_text(value)
     compact = text.replace(" ", "")
+    hinted_family = _family_hint(compact)
+    if hinted_family:
+        return hinted_family
     if "电缆头" in compact or "终端头" in compact or "中间头" in compact:
         return "cable_head"
     if any(word in compact for word in ("支吊架", "支/吊架", "支架", "吊架", "支撑架", "基础型钢", "管架")):
