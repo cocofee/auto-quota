@@ -1,0 +1,41 @@
+{
+  "model": {
+    "intercept": -3.5,
+    "weights": {
+      "param_match": 2.1,
+      "param_score": 1.9,
+      "name_bonus": 1.4,
+      "score_gap": 1.2,
+      "rerank_score": 0.9,
+      "family_aligned": 1.0,
+      "family_hard_conflict": -1.2,
+      "candidate_support": 0.25,
+      "ambiguous_short": -0.7
+    }
+  },
+  "isotonic": [
+    {
+      "raw": 0.0,
+      "calibrated": 0.5385
+    },
+    {
+      "raw": 0.0138,
+      "calibrated": 0.5385
+    },
+    {
+      "raw": 0.1613,
+      "calibrated": 0.5385
+    },
+    {
+      "raw": 0.2556,
+      "calibrated": 0.7302
+    },
+    {
+      "raw": 1.0,
+      "calibrated": 0.7302
+    }
+  ],
+  "ambiguous_short_ceiling": 75,
+  "calibration_source": "goldenset_100_with_experience",
+  "sample_count": 100
+}

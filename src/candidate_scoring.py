@@ -261,10 +261,11 @@ def _family_selection_score(candidate: dict, *, primary_score: float | None = No
     )
     if _family_stage_supported(candidate):
         score += 0.10
+    # P0-1c: 对称化 family_gate 奖惩权重（原 0.03 vs 0.06 不对称）
     if family_gate > 0:
-        score += family_gate * 0.03
+        score += family_gate * 0.045
     elif family_gate < 0:
-        score += family_gate * 0.06
+        score += family_gate * 0.045
     if candidate.get("logic_exact_primary_match"):
         score += 0.03
     if candidate.get("family_gate_hard_conflict"):
@@ -273,7 +274,7 @@ def _family_selection_score(candidate: dict, *, primary_score: float | None = No
         score -= 0.25
     if candidate.get("logic_hard_conflict"):
         score -= 0.15
-    if _candidate_scope_conflict(candidate) and not _has_exact_experience_anchor(candidate):
+    if _candidate_scope_conflict(candidate):
         score -= 0.08
     if not candidate.get("param_match", True):
         score -= 0.03
@@ -312,7 +313,7 @@ def _within_family_score(candidate: dict, *, primary_score: float | None = None)
         score -= 0.18
     if candidate.get("family_gate_hard_conflict"):
         score -= 0.10
-    if _candidate_scope_conflict(candidate) and not _has_exact_experience_anchor(candidate):
+    if _candidate_scope_conflict(candidate):
         score -= 0.02
     return score
 
@@ -372,26 +373,29 @@ def compute_candidate_prior_score(candidate: dict) -> float:
     match_source = str(candidate.get("match_source", "") or "").strip().lower()
     experience_layer = str(candidate.get("experience_layer") or candidate.get("layer") or "").strip().lower()
 
+    result = 0.0
     if "experience" in knowledge_sources:
         exact_experience = match_source == "experience_injected_exact" or prior_score >= 1.05
         authority_experience = exact_experience or experience_layer == "authority"
         if authority_experience:
-            return 0.10 * prior_score
-        return 0.06 * prior_score
-
-    if "universal_kb" in knowledge_sources:
+            result = 0.10 * prior_score
+        else:
+            result = 0.06 * prior_score
+    elif "universal_kb" in knowledge_sources:
         exact_kb = match_source == "kb_injected_exact" or prior_score >= 1.0
         if exact_kb:
-            return 0.05 * prior_score
-        return 0.03 * prior_score
-
-    if "quota_alias" in knowledge_sources:
+            result = 0.05 * prior_score
+        else:
+            result = 0.03 * prior_score
+    elif "quota_alias" in knowledge_sources:
         exact_alias = match_source == "quota_alias_exact" or prior_score >= 0.95
         if exact_alias:
-            return 0.08 * prior_score
-        return 0.04 * prior_score
+            result = 0.08 * prior_score
+        else:
+            result = 0.04 * prior_score
 
-    return 0.0
+    # P2-3b: 先验分数上限，防止记忆信号过度压制语义匹配
+    return min(result, 0.18)
 
 
 def _has_exact_experience_anchor(candidate: dict) -> bool:
@@ -498,11 +502,11 @@ def compute_candidate_structured_score(candidate: dict, *, include_plugin: bool 
     )
 
     if strong_family:
-        w_param = 0.28
-        w_rerank = 0.22
+        w_param = 0.35
+        w_rerank = 0.15
     else:
-        w_param = 0.10
-        w_rerank = 0.40
+        w_param = 0.20
+        w_rerank = 0.30
 
     scope_weight = 0.26
     scope_conflict_penalty = 0.08
@@ -529,7 +533,7 @@ def compute_candidate_structured_score(candidate: dict, *, include_plugin: bool 
         score -= 0.20
     if not candidate.get("param_match", True):
         score -= 0.12
-    if scope_conflict and not _has_exact_experience_anchor(candidate):
+    if scope_conflict:
         score -= scope_conflict_penalty
     return score
 
@@ -554,11 +558,11 @@ def explain_candidate_structured_score(candidate: dict, *, include_plugin: bool 
     )
 
     if strong_family:
-        w_param = 0.28
-        w_rerank = 0.22
+        w_param = 0.35
+        w_rerank = 0.15
     else:
-        w_param = 0.10
-        w_rerank = 0.40
+        w_param = 0.20
+        w_rerank = 0.30
 
     scope_weight = 0.26
     scope_conflict_penalty = 0.08
@@ -629,7 +633,7 @@ def explain_candidate_structured_score(candidate: dict, *, include_plugin: bool 
         penalties["fatal_structured_conflict"] = -0.20
     if not candidate.get("param_match", True):
         penalties["param_mismatch"] = -0.12
-    if scope_conflict and not _has_exact_experience_anchor(candidate):
+    if scope_conflict:
         penalties["scope_conflict"] = -scope_conflict_penalty
 
     base_score = sum(part["contribution"] for part in components.values())
@@ -682,13 +686,26 @@ def two_stage_sort(candidates: list[dict], *, primary_score_field: str | None = 
 
     ranked_groups: list[tuple[tuple, list[dict]]] = []
     for family_bucket, group in family_groups.items():
-        representative = max(
+        # P1-2d: 用族内前3名加权投票选代表，避免单个误判拖累整个族
+        # 按 _within_family_score 降序排列组内候选
+        within_sorted = sorted(
             group,
-            key=lambda candidate: _family_stage_rank_key(
+            key=lambda candidate: _within_family_score(
                 candidate,
                 primary_score=primary_scores[_candidate_identity_key(candidate)],
             ),
+            reverse=True,
         )
+        top3 = within_sorted[:3]
+
+        # P1-2d: fatal-conflict 的候选不能当族代表，自动跳过
+        representative = top3[0]
+        if _has_fatal_rank_conflict(representative) and len(top3) >= 2:
+            if not _has_fatal_rank_conflict(top3[1]):
+                representative = top3[1]
+            elif len(top3) >= 3 and not _has_fatal_rank_conflict(top3[2]):
+                representative = top3[2]
+
         ranked_group = list(group)
         ranked_group.sort(key=_candidate_identity_key)
         ranked_group.sort(

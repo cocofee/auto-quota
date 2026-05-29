@@ -512,6 +512,12 @@ class ParamValidator:
                 if usage_penalty > 0:
                     c["param_score"] = max(0.0, c["param_score"] - usage_penalty)
                     c["param_detail"] += f"; {usage_detail}"
+                # 名称语义匹配（重量档位/安装方式/材料子类型/管道用途）
+                semantic_delta, semantic_detail = self._check_name_semantic_match(
+                    query_text, c.get("name", ""))
+                if semantic_delta != 0:
+                    c["param_score"] = max(0.0, min(1.0, c["param_score"] + semantic_delta))
+                    c["param_detail"] += f"; {semantic_detail}"
                 c["param_match"], c["param_score"], c["param_detail"] = self._apply_logic_alignment(
                     candidate=c,
                     is_match=c["param_match"],
@@ -636,6 +642,13 @@ class ParamValidator:
             if usage_penalty > 0:
                 score = max(0.0, score - usage_penalty)
                 detail += f"; {usage_detail}"
+
+            # 名称语义匹配（重量档位/安装方式/材料子类型/管道用途）
+            semantic_delta, semantic_detail = self._check_name_semantic_match(
+                query_text, candidate.get("name", ""))
+            if semantic_delta != 0:
+                score = max(0.0, min(1.0, score + semantic_delta))
+                detail += f"; {semantic_detail}"
 
             is_match, score, detail = self._apply_logic_alignment(
                 candidate=candidate,
@@ -3068,6 +3081,101 @@ class ParamValidator:
             return 0.25, f"介质冲突: 清单'{conflict_bill}'≠定额'{conflict_quota}'"
 
         return 0.0, ""
+
+    # ── 名称语义型（非数值参数）区分检查 ──────────────────────────
+    # 针对结构参数(DN等)相同但名称文本不同的候选, 从bill_text和quota_name
+    # 中提取区分性特征(重量档位/安装方式/材料子类型/用途), 匹配加分, 冲突减分
+
+    _WEIGHT_PATTERN = re.compile(
+        r"(?:质量|重量|设备重量|单重).{0,5}?(\d+\.?\d*)\s*(?:t|吨|kg|千克|公斤)?",
+        re.IGNORECASE,
+    )
+    _INSTALL_TYPES = {"台上式", "台下式", "挂墙式", "挂壁式", "嵌入式",
+                       "落地式", "立柱式", "壁挂式", "明装", "暗装", "半暗装"}
+    _PIPE_USAGE_TYPES = {"给水", "排水", "雨水", "消防", "采暖", "热水", "中水", "污水"}
+    _SLEEVE_TYPES = {"刚性防水", "柔性防水", "一般钢", "成品防火", "人防", "密闭"}
+
+    @classmethod
+    def _check_name_semantic_match(cls, bill_text: str, quota_name: str) -> tuple[float, str]:
+        """Check if bill_text and quota_name share distinguishing semantic features.
+
+        Returns (bonus_or_penalty, reason). Positive = match bonus, negative = conflict penalty.
+        """
+        bill_lower = bill_text.lower() if bill_text else ""
+        quota_lower = quota_name.lower() if quota_name else ""
+        if not bill_lower or not quota_lower:
+            return 0.0, ""
+
+        score = 0.0
+        reasons = []
+
+        # 1. Weight tier: "质量:0.75t" → "设备重量（t以内）1.0"
+        weight_match = cls._WEIGHT_PATTERN.search(bill_lower)
+        if weight_match:
+            bill_weight = float(weight_match.group(1))
+            tier_match = re.search(r"(?:设备)?重量.{0,8}?(\d+\.?\d*)\s*(?:t|吨|kg)?", quota_lower)
+            if tier_match:
+                quota_tier = float(tier_match.group(1))
+                if bill_weight > quota_tier:
+                    score -= 0.18
+                    reasons.append(f"重量档位超限({bill_weight}t>{quota_tier}t)")
+                else:
+                    # Bonus proportional to closeness: closer tier → higher bonus
+                    proximity = max(0.0, 1.0 - (quota_tier - bill_weight) / max(quota_tier, 0.001))
+                    tier_bonus = 0.40 * proximity
+                    if tier_bonus > 0.02:
+                        score += tier_bonus
+                        reasons.append(f"重量档位({bill_weight}t≤{quota_tier}t,紧密度{proximity:.2f})")
+
+        # 2. Installation type
+        bill_install = cls._INSTALL_TYPES & set(bill_lower.replace("：", ":").replace("、", " ").split())
+        if not bill_install:
+            # Try common patterns: "安装方式:台上式" or "台上式安装"
+            for it in cls._INSTALL_TYPES:
+                if it in bill_lower:
+                    bill_install = {it}
+                    break
+        quota_install = cls._INSTALL_TYPES & set(quota_lower.replace("（", " ").replace("）", " ").split())
+        if bill_install:
+            if quota_install and bill_install & quota_install:
+                score += 0.10
+                reasons.append(f"安装方式匹配({'/'.join(bill_install & quota_install)})")
+            elif quota_install and not (bill_install & quota_install):
+                score -= 0.15
+                reasons.append(f"安装方式冲突(清单{'/'.join(bill_install)}≠定额{'/'.join(quota_install)})")
+
+        # 3. Pipe purpose (给水/排水/消防)
+        bill_purpose = cls._PIPE_USAGE_TYPES & set(bill_lower.split())
+        if not bill_purpose:
+            for pt in cls._PIPE_USAGE_TYPES:
+                if pt in bill_lower:
+                    bill_purpose = {pt}
+                    break
+        quota_purpose = cls._PIPE_USAGE_TYPES & set(quota_lower.split())
+        if bill_purpose:
+            if quota_purpose and bill_purpose & quota_purpose:
+                score += 0.08
+                reasons.append(f"管道用途匹配({'/'.join(bill_purpose & quota_purpose)})")
+            elif quota_purpose and not (bill_purpose & quota_purpose):
+                score -= 0.15
+                reasons.append(f"管道用途冲突(清单{'/'.join(bill_purpose)}≠定额{'/'.join(quota_purpose)})")
+
+        # 4. Material subtype (刚性防水 vs 一般钢, etc.)
+        for st in cls._SLEEVE_TYPES:
+            if st in bill_lower:
+                if st in quota_lower:
+                    score += 0.10
+                    reasons.append(f"材料子类型匹配({st})")
+                else:
+                    # Check if any OTHER sleeve type is in quota (conflict)
+                    for st2 in cls._SLEEVE_TYPES:
+                        if st2 != st and st2 in quota_lower:
+                            score -= 0.15
+                            reasons.append(f"材料子类型冲突(清单{st}≠定额{st2})")
+                            break
+                break  # Only check first matching type
+
+        return score, "; ".join(reasons) if reasons else ""
 
     @classmethod
     def _extract_main_sanitary_fixture_from_intent(cls, bill_text: str) -> str:

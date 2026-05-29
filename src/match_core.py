@@ -39,15 +39,38 @@ from src.confidence_calibrator import compute_confidence_score
 CASCADE_MIN_CANDIDATES = 5
 # 规则预匹配直通阈值（低于该值时仅作为备选，不提前截断后续流程）
 RULE_DIRECT_CONFIDENCE = 80
-# 措施项弱关键词（需要同时无单位无工程量才跳过，防止误伤正常清单）
-# 强关键词在STRONG_MEASURE_KEYWORDS中，不管有没有单位/工程量都跳过
-MEASURE_KEYWORDS = [
+
+# P2-3a: 关键词规则从 JSON 配置文件加载，硬编码值仅作后备
+def _load_keyword_rules():
+    """Load keyword rules from data/keyword_rules.json, fall back to hardcoded defaults."""
+    import json
+    from pathlib import Path
+    try:
+        rules_path = Path(__file__).resolve().parent.parent / "data" / "keyword_rules.json"
+        if rules_path.exists():
+            rules = json.loads(rules_path.read_text(encoding="utf-8"))
+            mk = rules.get("measure_keywords", {})
+            return (
+                mk.get("weak", MEASURE_KEYWORDS_DEFAULT),
+                mk.get("strong", STRONG_MEASURE_KEYWORDS_DEFAULT),
+                set(mk.get("exact_names", _MEASURE_EXACT_NAMES_DEFAULT)),
+                tuple(mk.get("contains", _MEASURE_CONTAINS_KEYWORDS_DEFAULT)),
+            )
+    except Exception:
+        pass
+    return (
+        MEASURE_KEYWORDS_DEFAULT,
+        STRONG_MEASURE_KEYWORDS_DEFAULT,
+        _MEASURE_EXACT_NAMES_DEFAULT,
+        _MEASURE_CONTAINS_KEYWORDS_DEFAULT,
+    )
+
+# 硬编码默认值（后备）
+MEASURE_KEYWORDS_DEFAULT = [
     "操作高度增加", "超高增加",
     "特殊地区施工", "干扰增加",
 ]
-# 强措施费关键词——名称完全是费用类，不管有没有单位/工程量都跳过
-# （区别于普通关键词：普通关键词仍要求无单位无工程量才跳过）
-STRONG_MEASURE_KEYWORDS = [
+STRONG_MEASURE_KEYWORDS_DEFAULT = [
     "施工费", "增加费", "复测费", "措施费",
     "临时设施费", "工程保险费", "进出场费",
     "赶工费", "疫情防控",
@@ -64,40 +87,25 @@ STRONG_MEASURE_KEYWORDS = [
     "夜间施工", "冬雨季施工",
     "二次搬运费", "已完工程及设备保护费", "暂列金额",
 ]
-
-
-# ============================================================
-# 统一打分函数
-# ============================================================
-
-_MEASURE_EXACT_NAMES = {
-    "暂列金额",
-    "暂估价",
-    "专业工程暂估价",
-    "二次搬运费",
-    "已完工程及设备保护费",
-    "总承包服务费",
-    "预算包干费",
-    "工程优质费",
-    "现场签证费用",
-    "税前工程造价",
-    "总造价",
-    "人工费",
-    "概算幅度差",
-    "索赔费用",
-    "其他项目",
-    "其他费用",
-    "计日工",
-    "地下管线交叉降效费",
-    "增值税销项税额",
+_MEASURE_EXACT_NAMES_DEFAULT = {
+    "暂列金额", "暂估价", "专业工程暂估价",
+    "二次搬运费", "已完工程及设备保护费",
+    "总承包服务费", "预算包干费", "工程优质费",
+    "现场签证费用", "税前工程造价", "总造价",
+    "人工费", "概算幅度差", "索赔费用",
+    "其他项目", "其他费用", "计日工",
+    "地下管线交叉降效费", "增值税销项税额",
 }
-
-_MEASURE_CONTAINS_KEYWORDS = (
-    "二次搬运",
-    "暂列金额",
-    "暂估价",
-    "已完工程及设备保护",
+_MEASURE_CONTAINS_KEYWORDS_DEFAULT = (
+    "二次搬运", "暂列金额", "暂估价", "已完工程及设备保护",
 )
+
+# P2-3a: 模块加载时从 JSON 读取，不可用时回退到硬编码默认值
+_loaded = _load_keyword_rules()
+MEASURE_KEYWORDS = _loaded[0]
+STRONG_MEASURE_KEYWORDS = _loaded[1]
+_MEASURE_EXACT_NAMES = _loaded[2]
+_MEASURE_CONTAINS_KEYWORDS = _loaded[3]
 
 
 def calculate_confidence(param_score: float, param_match: bool = True,

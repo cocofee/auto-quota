@@ -594,6 +594,17 @@ class HybridSearcher:
             )
             _record_source("experience_exact", time.perf_counter() - started, rows)
             priors.extend(rows)
+        # 跨省 cluster 候选注入: bill→经验库cluster_key→national_index→本地定额
+        if bool(getattr(config, "SEARCH_CLUSTER_PRIOR_ENABLED", True)):
+            started = time.perf_counter()
+            rows = self._collect_cluster_prior_candidates(
+                query_text=query_text,
+                full_query=full_query,
+                item=item,
+                top_k=max(1, min(top_k, 4)),
+            )
+            _record_source("cluster_prior", time.perf_counter() - started, rows)
+            priors.extend(rows)
         if bool(getattr(config, "SEARCH_UNIVERSAL_KB_INJECTION_ENABLED", True)):
             started = time.perf_counter()
             rows = self._collect_universal_kb_exact_prior_candidates(
@@ -1397,6 +1408,82 @@ class HybridSearcher:
                 break
 
         return candidates[:top_k]
+
+    def _collect_cluster_prior_candidates(
+        self,
+        *,
+        query_text: str,
+        full_query: str = "",
+        item: dict | None = None,
+        top_k: int = 4,
+    ) -> list[dict]:
+        """Cross-province cluster: bill→experience cluster_key→filtered local quotas."""
+        import sqlite3 as _sqlite3
+        if not self._experience_db:
+            return []
+
+        item = dict(item or {})
+        bill_name = str(item.get("name") or item.get("bill_name") or query_text or "").strip()
+        bill_desc = str(item.get("description") or full_query or query_text or "")
+        query_tokens = set((bill_name + " " + bill_desc).split())
+
+        # Get cluster_key from experience DB
+        exp_db_path = getattr(self._experience_db, "db_path", None)
+        if not exp_db_path:
+            return []
+        try:
+            exp_conn = _sqlite3.connect(str(exp_db_path))
+            row = exp_conn.execute(
+                "SELECT cluster_key FROM experiences WHERE bill_name=? AND cluster_key IS NOT NULL LIMIT 1",
+                (bill_name,)
+            ).fetchone()
+            exp_conn.close()
+        except Exception:
+            return []
+        if not row or not row[0]:
+            return []
+
+        cluster_key = row[0]
+        index_path = config.DATA_DIR / "goal_search" / "national_index.sqlite"
+        if not index_path.exists():
+            return []
+
+        candidates: list[dict] = []
+        seen: set[str] = set()
+        try:
+            nat_conn = _sqlite3.connect(str(index_path))
+            # Get cluster members, score by token overlap with query
+            rows = nat_conn.execute(
+                "SELECT quota_id, name, unit FROM national_quotas "
+                "WHERE cluster_key=? AND province=?",
+                (cluster_key, self.province)
+            ).fetchall()
+            nat_conn.close()
+        except Exception:
+            return []
+
+        # Score by token overlap then pick top_k
+        scored = []
+        for qid, qname, unit in rows:
+            qid = str(qid or "").strip()
+            if not qid or qid in seen:
+                continue
+            seen.add(qid)
+            qname_tokens = set(str(qname or "").split())
+            overlap = len(query_tokens & qname_tokens)
+            if overlap >= 1:  # at least one token in common
+                scored.append((overlap, qid, str(qname or ""), str(unit or "")))
+
+        scored.sort(key=lambda x: -x[0])
+        for overlap, qid, qname, unit in scored[:top_k]:
+            local = self._materialize_quota_candidate(
+                qid, fallback_name=qname, fallback_unit=unit)
+            if local:
+                local["knowledge_prior_sources"] = ["cluster_cross_province"]
+                local["knowledge_prior_score"] = 0.70 + 0.05 * min(overlap, 5)
+                candidates.append(local)
+
+        return candidates
 
     def _collect_experience_prior_candidates(
         self,

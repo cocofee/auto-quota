@@ -53,6 +53,23 @@ def _has_backup_conflict(candidates: list[dict],
     return False
 
 
+def _top1_has_strong_evidence(candidate: dict) -> bool:
+    """Top1 candidate must have reliable signals to bypass small-gap rejection:
+    param_match, high param_score, no fatal conflicts, AND knowledge anchor."""
+    if not candidate.get("param_match", True):
+        return False
+    if safe_float(candidate.get("param_score"), 0.0) < 0.85:
+        return False
+    for flag in ("family_gate_hard_conflict", "feature_alignment_hard_conflict", "logic_hard_conflict"):
+        if candidate.get(flag):
+            return False
+    # Must have experience or knowledge anchor — pure search results without anchor are too risky
+    sources = {str(s).strip().lower() for s in list(candidate.get("knowledge_prior_sources") or []) if str(s).strip()}
+    if not (sources & {"experience", "universal_kb"}):
+        return False
+    return True
+
+
 def analyze_ambiguity(candidates: list[dict],
                       exp_backup: dict | None = None,
                       rule_backup: dict | None = None,
@@ -277,6 +294,21 @@ def analyze_ambiguity(candidates: list[dict],
         candidates[1].get("rerank_score", candidates[1].get("hybrid_score", 0.0)), 0.0)
     gap = top1_rs - top2_rs
     if gap < policy.agent_fastpath_score_gap:
+        if _top1_has_strong_evidence(top):
+            return AmbiguityDecision(
+                can_fastpath=True,
+                is_ambiguous=False,
+                reason="small_gap_strong_evidence",
+                top_quota_id=top_id,
+                top_param_score=top_score,
+                top_score_gap=gap,
+                candidates_count=len(candidates),
+                conflict_with_backup=False,
+                route=route,
+                require_final_review=False,
+                risk_level="medium",
+                arbitration_applied=arbitration_applied,
+            )
         return AmbiguityDecision(
             can_fastpath=False,
             is_ambiguous=True,

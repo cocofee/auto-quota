@@ -39,10 +39,13 @@ class VectorModelProfile:
 # ============================================================
 
 # BGE基线模型
+_BGE_MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "bge-construction-v1"
+# 微调模型暂不启用 (跨省泛化需验证), 保留以备后续使用
+# _BGE_PROFILE = VectorModelProfile(key="bge", model_name=str(_BGE_MODEL_DIR) if _BGE_MODEL_DIR.exists() else "BAAI/bge-large-zh-v1.5", ...)
 _BGE_PROFILE = VectorModelProfile(
     key="bge",
     model_name="BAAI/bge-large-zh-v1.5",
-    embedding_dim=768,
+    embedding_dim=1024,
     query_prefix="为这个句子生成表示以用于检索中文文档: ",
     load_kwargs={},
     cpu_load_kwargs={},

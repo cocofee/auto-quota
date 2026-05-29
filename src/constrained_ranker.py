@@ -222,14 +222,8 @@ def _candidate_features(candidate: dict) -> dict:
 
 
 def _route_adjustment(route: str) -> float:
-    if route == "installation_spec":
-        return -0.65
-    if route == "material":
-        return -0.25
-    if route == "semantic_description":
-        return 0.35
-    if route == "ambiguous_short":
-        return 0.50
+    # P0-1c: 路由偏移默认全部为 0，消除人为偏差
+    # 原值: installation_spec=-0.65, material=-0.25, semantic_description=+0.35, ambiguous_short=+0.50
     return 0.0
 
 
@@ -854,11 +848,113 @@ def _score_constrained_gated_ranker(
     return ranked, meta, query_summary
 
 
+# P1-2a: 解耦 CGR 门控与排序，新增轻量门控入口
+
+def compute_cgr_features(
+    item: dict,
+    candidates: list[dict],
+    context: dict | None = None,
+) -> tuple[list[dict], dict]:
+    """提取 CGR 特征行和查询摘要，不排序不评分。
+
+    返回 (feature_rows, query_summary)。
+    """
+    context = context or {}
+    feature_rows = extract_group_features(item, candidates, context)
+    query_summary = _build_query_summary(item, candidates, feature_rows, context)
+    return feature_rows, query_summary
+
+
+def compute_cgr_gate_only(
+    item: dict,
+    candidates: list[dict],
+    context: dict | None = None,
+    feature_rows: list[dict] | None = None,
+    query_summary: dict | None = None,
+) -> float:
+    """仅计算 CGR gate 值（0~1），不排序不覆盖候选。
+
+    如果提供了 feature_rows 和 query_summary 则复用，否则重新计算。
+    """
+    context = context or {}
+    if feature_rows is None or query_summary is None:
+        feature_rows, query_summary = compute_cgr_features(item, candidates, context)
+    model_data = _maybe_get_cgr_model()
+    gate_model = model_data.get("gate") or {}
+    if gate_model:
+        return _sigmoid(_dot_with_linear_model(_build_gate_model_features(query_summary), gate_model))
+    return _compute_gate(query_summary)
+
+
+def apply_cgr_gate(
+    candidates: list[dict],
+    item: dict | None = None,
+    context: dict | None = None,
+) -> dict:
+    """对已排序的候选列表执行 CGR 门控判定，不修改候选顺序。
+
+    返回 meta dict 包含 {accept, accept_score, gate, top_probability, applied}。
+    """
+    meta = {
+        "enabled": _cgr_enabled(),
+        "applied": False,
+        "accept": False,
+        "accept_score": 0.0,
+        "gate": 0.5,
+        "top_probability": 0.0,
+    }
+    if not candidates or not _cgr_enabled():
+        return meta
+
+    context = context or {}
+    item = item or {}
+    feature_rows, query_summary = compute_cgr_features(item, candidates, context)
+    gate = compute_cgr_gate_only(item, candidates, context,
+                                 feature_rows=feature_rows,
+                                 query_summary=query_summary)
+    meta["gate"] = gate
+
+    model_data = _maybe_get_cgr_model()
+    semantic_model = model_data.get("semantic_expert") or {}
+    structural_model = model_data.get("structural_expert") or {}
+
+    # 只跑一轮打分用于 accept 判定，不修改候选的 rank_score
+    scored = [
+        dict(c) for c in candidates[:min(len(candidates), 20)]
+    ]
+    for i, (candidate, row) in enumerate(zip(scored, feature_rows[:len(scored)])):
+        sem = (_dot_with_linear_model(_build_semantic_model_features(candidate, row), semantic_model)
+               if semantic_model else _compute_semantic_raw(candidate, row))
+        struc = (_dot_with_linear_model(_build_structural_model_features(candidate, row), structural_model)
+                 if structural_model else _compute_structural_raw(candidate, row))
+        candidate["_cgr_gate_score"] = sem * gate + struc * (1.0 - gate)
+
+    # Normalize
+    scores = [c.get("_cgr_gate_score", 0.0) for c in scored]
+    min_s, max_s = min(scores) if scores else 0, max(scores) if scores else 1
+    if abs(max_s - min_s) > 1e-9:
+        probs = _softmax([(s - min_s) / (max_s - min_s) for s in scores], config.CGR_TEMPERATURE)
+    else:
+        probs = [1.0 / len(scored)] * len(scored) if scored else []
+
+    for c, p in zip(scored, probs):
+        c["cgr_probability"] = p
+
+    _attach_accept_head(scored, query_summary, meta, model_data)
+    meta["applied"] = True
+    meta["top_probability"] = safe_float(scored[0].get("cgr_probability"), 0.0) if scored else 0.0
+    return meta
+
+
 def apply_constrained_gated_ranker(
     item: dict,
     candidates: list[dict],
     context: dict | None = None,
 ) -> tuple[list[dict], dict]:
+    """完整 CGR 流水线：特征提取 → 打分 → 排序 → 门控判定。
+
+    兼容原有接口，内部委托给 _score_constrained_gated_ranker。
+    """
     ranked, meta, _ = _score_constrained_gated_ranker(item, candidates, context)
     return ranked, meta
 

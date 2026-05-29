@@ -83,7 +83,8 @@ def test_constrained_ranker_prefers_structured_exact_match_for_spec_query(monkey
     ranked, meta = apply_constrained_gated_ranker(item, candidates, {})
 
     assert ranked[0]["quota_id"] == "C10-1-1"
-    assert meta["gate"] < 0.5
+    # P0-1c: 移除路由偏差后 gate 不再被压低到 0.5 以下，但仍倾向结构分
+    assert meta["gate"] < 0.6
     assert ranked[0]["cgr_probability"] > ranked[1]["cgr_probability"]
 
 

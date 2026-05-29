@@ -1068,6 +1068,8 @@ def _promote_family_group_stronger_candidate(
     max_scan: int = 20,
 ) -> tuple[list[dict], dict]:
     ordered = [dict(candidate) for candidate in (candidates or [])]
+    if not bool(getattr(config, "POST_RANKING_CORRECTIONS_ENABLED", False)):
+        return ordered, {"post_ranking_corrections": "disabled"}
     if len(ordered) < 2:
         return ordered, {}
 
@@ -1322,6 +1324,8 @@ def _promote_rankable_contract_structural_candidate(
     max_scan: int = 20,
 ) -> tuple[list[dict], dict]:
     ordered = [dict(candidate) for candidate in (candidates or [])]
+    if not bool(getattr(config, "POST_RANKING_CORRECTIONS_ENABLED", False)):
+        return ordered, {"post_ranking_corrections": "disabled"}
     if len(ordered) < 2:
         return ordered, {}
 
@@ -1572,6 +1576,8 @@ def _promote_lifecycle_stronger_candidate(
     protect_structural_advantage: bool = True,
 ) -> tuple[list[dict], dict]:
     ordered = [dict(candidate) for candidate in (candidates or [])]
+    if not bool(getattr(config, "POST_RANKING_CORRECTIONS_ENABLED", False)):
+        return ordered, {"post_ranking_corrections": "disabled"}
     if len(ordered) < 2:
         return ordered, {}
 
@@ -4172,6 +4178,52 @@ def _resolve_search_mode_result(item: dict, candidates: list[dict],
 # 统一前置处理
 # ============================================================
 
+def _get_experience_keywords(bill_name: str, search_query: str) -> str | None:
+    """Returns augmented search query with keywords from experience DB, or None."""
+    import sqlite3 as _sq
+    import json as _js
+    bill_name = str(bill_name or "").strip()
+    if not bill_name or len(bill_name) < 2:
+        return None
+    try:
+        exp_path = config.COMMON_DB_DIR / "experience.db"
+        if not exp_path.exists():
+            return None
+        conn = _sq.connect(str(exp_path))
+        rows = conn.execute(
+            "SELECT quota_names FROM experiences WHERE bill_name=? LIMIT 3",
+            (bill_name,)
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+    if not rows:
+        return None
+
+    existing = set((search_query or "").split())
+    added: set[str] = set()
+    for (qnames_json,) in rows:
+        try:
+            qlist = _js.loads(qnames_json) if qnames_json else []
+        except Exception:
+            continue
+        for qname in qlist:
+            for word in str(qname).split():
+                w = word.strip("(),.（）").strip()
+                if len(w) >= 3 and w not in existing and w not in added:
+                    added.add(w)
+                    if len(added) >= 8:
+                        break
+            if len(added) >= 8:
+                break
+        if len(added) >= 8:
+            break
+
+    if added:
+        return (search_query or "") + " " + " ".join(sorted(added))
+    return None
+
+
 def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleValidator,
                                province: str = None, exact_exp_direct: bool = False,
                                lightweight_experience: bool = False,
@@ -4198,9 +4250,18 @@ def _prepare_item_for_matching(item: dict, experience_db, rule_validator: RuleVa
     item["canonical_query"] = ctx.get("canonical_query") or {}
     name = ctx["name"]
     desc = ctx["desc"]
-    canonical_query = ctx.get("canonical_query") or {}
+    canonical_query = dict(ctx.get("canonical_query") or {})
     full_query = canonical_query.get("validation_query") or ctx["full_query"]
     search_query = canonical_query.get("search_query") or ctx["search_query"]
+
+    # 搜索词扩充: 用经验库匹配记录中的定额名关键词扩充搜索词
+    augmented = _get_experience_keywords(item.get("name", ""), search_query)
+    if augmented:
+        search_query = augmented
+        canonical_query["search_query"] = augmented
+        item["canonical_query"] = canonical_query
+        if isinstance(ctx, dict):
+            ctx["search_query"] = augmented
     normalized_query = canonical_query.get("normalized_query") or ctx["normalized_query"]
     input_gate = ctx.get("input_gate") or {}
 
