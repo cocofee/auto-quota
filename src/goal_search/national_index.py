@@ -399,12 +399,17 @@ def extract_signal(value: object) -> QuotaSignal:
             param_type = key
             break
 
+    action = first_match(text, ACTION_WORDS)
+    material = first_match(text, MATERIAL_WORDS)
+    connection = first_match(text, CONNECTION_WORDS)
+    install_method = first_match(text, INSTALL_METHOD_WORDS)
+
     return QuotaSignal(
         family=family,
-        action=first_match(text, ACTION_WORDS),
-        material=first_match(text, MATERIAL_WORDS),
-        connection=first_match(text, CONNECTION_WORDS),
-        install_method=first_match(text, INSTALL_METHOD_WORDS),
+        action=action,
+        material=material,
+        connection=connection,
+        install_method=install_method,
         dn=float(dns[0]) if dns else None,
         cable_section=section,
         cable_cores=cable_cores,
@@ -709,30 +714,33 @@ def query_same_cluster(
         cross_province_cluster = bool(evidence and int(evidence["province_count"] or 0) > 1)
 
         if len(results) < limit and (cross_province_cluster or not results):
+            # Build ORDER BY dynamically: only include fields that have non-empty
+            # signal values (avoid penalizing correct candidates when signal extraction
+            # is incomplete, e.g. bill text missing action words)
+            order_clauses: list[str] = []
+            order_params: list = []
+            # Skip unit in ORDER BY: bill unit (e.g. "m2") often differs in format
+            # from quota unit (e.g. "10m2") even for the same concept
+            for field, sig_value in (
+                ("action", signal.action),
+                ("material", signal.material),
+                ("connection", signal.connection),
+                ("param_type", signal.param_type),
+            ):
+                if sig_value:
+                    order_clauses.append(f"case when {field} = ? then 0 else 1 end")
+                    order_params.append(sig_value)
+            order_sql = ", ".join(order_clauses) if order_clauses else "1"
             family_rows = conn.execute(
-                """
+                f"""
                 select quota_id, name, unit, family, action, material, connection,
                        install_method, param_type, cluster_key
                 from national_quotas
                 where province = ? and family = ?
-                order by
-                    case when action = ? then 0 else 1 end,
-                    case when material = ? then 0 else 1 end,
-                    case when connection = ? then 0 else 1 end,
-                    case when unit = ? then 0 else 1 end,
-                    case when param_type = ? then 0 else 1 end
+                order by {order_sql}
                 limit ?
                 """,
-                (
-                    province,
-                    signal.family,
-                    signal.action,
-                    signal.material,
-                    signal.connection,
-                    unit,
-                    signal.param_type,
-                    max(0, limit - len(results)),
-                ),
+                [province, signal.family] + order_params + [max(0, limit - len(results))],
             ).fetchall()
             add_rows(
                 family_rows,

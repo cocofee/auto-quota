@@ -393,6 +393,10 @@ def compute_candidate_prior_score(candidate: dict) -> float:
             result = 0.08 * prior_score
         else:
             result = 0.04 * prior_score
+    elif "cluster_cross_province" in knowledge_sources:
+        # 跨省 cluster 桥接：信号级概念对齐，比纯文本 BM25 可靠但低于经验直通
+        # prior_score 已在 _collect_cluster_prior_candidates 中设为 0.70~0.95
+        result = 0.07 * prior_score
 
     # P2-3b: 先验分数上限，防止记忆信号过度压制语义匹配
     return min(result, 0.18)

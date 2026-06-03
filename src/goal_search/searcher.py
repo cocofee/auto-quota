@@ -276,7 +276,69 @@ def _has_any(text: str, terms: Iterable[str]) -> bool:
 
 
 def _book_of_record(quota: _QuotaRecord) -> str:
-    return clean_text(quota.book).upper() or _quota_book(quota.quota_id)
+    quota_id = clean_text(quota.quota_id)
+    install_match = re.match(r"2-(\d+)-", quota_id)
+    if install_match:
+        return f"C{int(install_match.group(1))}"
+    return clean_text(quota.book).upper() or _quota_book(quota_id)
+
+
+def _specialty_from_bill_code(code: object) -> str:
+    text = clean_text(code)
+    if len(text) >= 4 and text.startswith("03") and text[2:4].isdigit():
+        return f"C{int(text[2:4])}"
+    if text.startswith("01"):
+        return "A"
+    return ""
+
+
+def _specialty_from_bill_item(item: dict[str, Any]) -> str:
+    specialty = clean_text(item.get("specialty"))
+    if specialty:
+        return specialty
+    code_specialty = _specialty_from_bill_code(item.get("code") or item.get("bill_code"))
+    text = clean_text(" ".join(str(item.get(key) or "") for key in ("name", "bill_name", "description", "text")))
+    if code_specialty == "C7" and "通风工程" in text and "调试" in text:
+        return ""
+    if code_specialty == "C1" and _has_any(
+        text,
+        ("混流式通风机", "斜流式通风机", "离心式通风机", "消防高温排烟风机", "排烟风机", "正压送风机", "加压送风机"),
+    ):
+        return "C7"
+    return code_specialty
+
+
+def _hvac_component_patterns(query_text: str, requested_book: str) -> list[tuple[str, tuple[str, ...], tuple[str, ...], float]]:
+    text = clean_text(query_text)
+    if not text:
+        return []
+    is_hvac_context = requested_book.upper() == "C7" or _has_any(
+        text,
+        ("通风", "风管", "风口", "风阀", "送风", "排烟", "防火阀", "通风机", "排烟风机"),
+    )
+    if not is_hvac_context:
+        return []
+
+    patterns: list[tuple[str, tuple[str, ...], tuple[str, ...], float]] = []
+    if _has_any(text, ("多叶调节阀", "电动多叶调节阀", "对开多叶调节阀")):
+        patterns.append(("hvac_multi_leaf_damper", ("对开多叶调节阀",), ("勘误删除",), 0.48))
+    if "止回阀" in text:
+        patterns.append(("hvac_duct_check_damper", ("风管止回阀",), ("勘误删除",), 0.48))
+    if "防火阀" in text:
+        patterns.append(("hvac_fire_damper", ("风管防火阀",), ("调试", "勘误删除"), 0.48))
+    if "电动风阀" in text:
+        patterns.append(("hvac_electric_damper", ("风管防火阀",), ("调试", "勘误删除"), 0.34))
+        patterns.append(("hvac_electric_damper", ("对开多叶调节阀",), ("勘误删除",), 0.30))
+    if "塑料通风管道" in text or "塑料风管" in text:
+        if _has_any(text, ("圆形", "直径", "φ", "Φ")):
+            patterns.append(("hvac_plastic_round_duct", ("塑料圆形风管",), (), 0.44))
+        elif "矩形" in text:
+            patterns.append(("hvac_plastic_rect_duct", ("塑料矩形风管",), (), 0.44))
+        else:
+            patterns.append(("hvac_plastic_duct", ("塑料", "风管"), (), 0.36))
+    if _has_any(text, ("通风工程检测、调试", "通风工程检测", "通风工程调试", "通风空调系统调试")):
+        patterns.append(("hvac_commissioning", ("通风空调系统调试",), ("安防", "安全防范", "消防通信"), 0.50))
+    return patterns
 
 
 def _first_number_after(text: str, markers: Iterable[str]) -> float | None:
@@ -340,9 +402,13 @@ def _duct_param_score(query_text: str, quota_text: str) -> tuple[float, list[str
 
 def _first_air_volume(text: str) -> float | None:
     match = re.search(r"风量(?:\([^)]*\))?[^0-9]*(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
-    if not match:
-        return None
-    return float(match.group(1))
+    if match:
+        return float(match.group(1))
+    shorthand = [
+        float(value)
+        for value in re.findall(r"\b[LG]\s*=\s*(\d+(?:\.\d+)?)\s*(?:m3|m³|m)?\s*/\s*h", text, flags=re.IGNORECASE)
+    ]
+    return max(shorthand) if shorthand else None
 
 
 def _fan_param_score(query_text: str, quota_text: str) -> tuple[float, list[str]]:
@@ -365,19 +431,24 @@ def _apply_strong_name_signal(query_signal: QuotaSignal, bill_name: str) -> Quot
     strong_branch_pipe = _has_any(name_compact, ("分歧器", "分歧管"))
     strong_steel = _has_any(name_compact, ("无缝钢管", "焊接钢管", "镀锌钢管"))
     strong_air_duct = _is_air_duct_run_query(name_compact, bill_name)
-    if not (strong_branch_pipe or strong_steel or strong_air_duct):
-        return query_signal
-    name_signal = extract_signal(bill_name)
-    if strong_branch_pipe and name_signal.family == "pipe" and query_signal.family in {"", "sleeve", "support"}:
-        query_signal.family = "pipe"
-        query_signal.material = name_signal.material or "分歧管"
-    elif strong_steel and name_signal.family == "pipe" and query_signal.family in {"", "sleeve", "support"}:
-        query_signal.family = "pipe"
-        query_signal.material = name_signal.material or "钢管"
-    elif strong_air_duct and name_signal.family == "duct" and query_signal.family in {"", "sleeve", "support"}:
-        query_signal.family = "duct"
-        query_signal.material = name_signal.material or "风管"
+    if strong_branch_pipe or strong_steel or strong_air_duct:
+        name_signal = extract_signal(bill_name)
+        if strong_branch_pipe and name_signal.family == "pipe" and query_signal.family in {"", "sleeve", "support"}:
+            query_signal.family = "pipe"
+            query_signal.material = name_signal.material or "分歧管"
+        elif strong_steel and name_signal.family == "pipe" and query_signal.family in {"", "sleeve", "support"}:
+            query_signal.family = "pipe"
+            query_signal.material = name_signal.material or "钢管"
+        elif strong_air_duct and name_signal.family == "duct" and query_signal.family in {"", "sleeve", "support"}:
+            query_signal.family = "duct"
+            query_signal.material = name_signal.material or "风管"
+
     return query_signal
+
+
+# TODO: 品族默认动作/材料映射，待启用（需配套解决 false exact match 问题）
+# _FAMILY_DEFAULT_ACTION = {"duct": "安装", "pipe": "安装", "cable": "敷设", ...}
+# _FAMILY_DEFAULT_MATERIAL = {"duct": "钢板", "pipe": "钢管", ...}
 
 
 def _domain_term_score(query_text: str, query_signal: QuotaSignal, quota: _QuotaRecord) -> tuple[float, list[str]]:
@@ -1310,6 +1381,7 @@ class GoalSearcher:
             self._collect_experience_priors(raw_item, query, query_text, query_tokens, prior_bonus, prior_reasons, candidate_indices)
             self._collect_shadow_priors(raw_item, query, query_text, query_tokens, prior_bonus, prior_reasons, candidate_indices)
         self._collect_local_family_candidates(query_signal, query_text, query_tokens, query.specialty, candidate_indices)
+        self._collect_hvac_component_candidates(query_text, query.specialty, prior_bonus, prior_reasons, candidate_indices)
         self._collect_national_index_candidates(query_signal, query.unit, prior_bonus, prior_reasons, candidate_indices)
         self._collect_guarded_oss_alias_priors(raw_item, query, query_text, query_signal, prior_bonus, prior_reasons, candidate_indices)
         self._collect_oss_recall_priors(raw_item, query, query_text, query_signal, prior_bonus, prior_reasons, candidate_indices)
@@ -1361,6 +1433,11 @@ class GoalSearcher:
             bonus = prior_bonus.get(quota.quota_id, 0.0)
             if bonus:
                 score += bonus
+                if field_score > 0:
+                    score += field_score * 0.5
+                # 综合信号确认 → 小幅乘法加成
+                if field_score > 0 and bm25_norm > 0.05:
+                    score *= 1.08
                 reasons.extend(prior_reasons.get(quota.quota_id, []))
 
             score = max(0.0, score)
@@ -1411,6 +1488,31 @@ class GoalSearcher:
 
         for idx in sorted(family_indices, key=rank_key, reverse=True)[:128]:
             candidate_indices.add(idx)
+
+    def _collect_hvac_component_candidates(
+        self,
+        query_text: str,
+        requested_book: str,
+        prior_bonus: dict[str, float],
+        prior_reasons: dict[str, list[str]],
+        candidate_indices: set[int],
+    ) -> None:
+        patterns = _hvac_component_patterns(query_text, requested_book)
+        if not patterns:
+            return
+        for label, includes, excludes, bonus in patterns:
+            for idx, quota in enumerate(self.index.quotas):
+                candidate_book = _book_of_record(quota)
+                if candidate_book and not _book_matches("C7", candidate_book):
+                    continue
+                quota_text = quota.search_text or quota.name
+                if not all(term in quota_text for term in includes):
+                    continue
+                if any(term in quota_text for term in excludes):
+                    continue
+                candidate_indices.add(idx)
+                prior_bonus[quota.quota_id] = max(prior_bonus.get(quota.quota_id, 0.0), bonus)
+                prior_reasons.setdefault(quota.quota_id, []).append(label)
 
     def _collect_experience_priors(
         self,
@@ -1489,7 +1591,10 @@ class GoalSearcher:
             if quota_index is None:
                 continue
             candidate_indices.add(quota_index)
-            bonus = float(row.get("national_bonus") or 0.18)
+            # 原始 bonus 范围 0.04~0.18，缩放到有意义区间
+            # exact cluster 0.18→0.31, family fallback 0.04→0.10
+            raw = float(row.get("national_bonus") or 0.12)
+            bonus = raw * 1.5 + 0.04
             label = clean_text(row.get("national_match")) or "national_index"
             prior_bonus[quota_id] = max(prior_bonus.get(quota_id, 0.0), bonus)
             prior_reasons.setdefault(quota_id, []).append(label)
@@ -1645,7 +1750,7 @@ class GoalSearcher:
             text=text,
             unit=clean_text(item.get("unit") or item.get("bill_unit")),
             bill_name=name,
-            specialty=clean_text(item.get("specialty")),
+            specialty=_specialty_from_bill_item(item),
             no_answer_priors=GoalSearcher._no_answer_priors_from_item(item),
         )
 

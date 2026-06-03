@@ -1419,6 +1419,11 @@ class HybridSearcher:
     ) -> list[dict]:
         """Cross-province cluster: bill→experience cluster_key→filtered local quotas."""
         import sqlite3 as _sqlite3
+        try:
+            from src.goal_search.national_index import extract_signal, tokenize
+        except Exception:
+            extract_signal = None  # type: ignore[assignment]
+            tokenize = None  # type: ignore[assignment]
         if not self._experience_db:
             return []
 
@@ -1441,9 +1446,17 @@ class HybridSearcher:
         except Exception:
             return []
         if not row or not row[0]:
-            return []
-
-        cluster_key = row[0]
+            # 经验库无匹配 → 用 signal 提取直接构造 cluster_key，覆盖无经验省份
+            if extract_signal is None:
+                return []
+            signal = extract_signal(bill_name + " " + bill_desc)
+            if not signal or not signal.family:
+                return []
+            cluster_key = signal.cluster_key(unit=str(item.get("unit") or ""))
+            if not cluster_key or cluster_key.count("|") < 2:
+                return []
+        else:
+            cluster_key = row[0]
         index_path = config.DATA_DIR / "goal_search" / "national_index.sqlite"
         if not index_path.exists():
             return []
@@ -1452,27 +1465,53 @@ class HybridSearcher:
         seen: set[str] = set()
         try:
             nat_conn = _sqlite3.connect(str(index_path))
-            # Get cluster members, score by token overlap with query
+            # Phase 1: exact cluster_key match
             rows = nat_conn.execute(
                 "SELECT quota_id, name, unit FROM national_quotas "
                 "WHERE cluster_key=? AND province=?",
                 (cluster_key, self.province)
             ).fetchall()
+            # Phase 2: if no exact match, match by family+action+material+param_type
+            # (experience DB cluster_key may have empty unit while national_index has "10m2"/"m2"/etc.,
+            #  causing exact match to fail despite same concept)
+            if not rows:
+                ck_parts = cluster_key.split("|")
+                if len(ck_parts) >= 6:
+                    rows = nat_conn.execute(
+                        "SELECT quota_id, name, unit FROM national_quotas "
+                        "WHERE province=? AND family=? AND action=? AND material=? AND param_type=?",
+                        (self.province, ck_parts[0], ck_parts[1], ck_parts[2], ck_parts[5])
+                    ).fetchall()
             nat_conn.close()
         except Exception:
             return []
 
         # Score by token overlap then pick top_k
+        # Use national_index.tokenize for Chinese-aware tokenization (handles jieba + ngrams)
         scored = []
+        _overlap_seen: set[str] = set()
         for qid, qname, unit in rows:
             qid = str(qid or "").strip()
-            if not qid or qid in seen:
+            if not qid or qid in _overlap_seen:
                 continue
-            seen.add(qid)
-            qname_tokens = set(str(qname or "").split())
+            if tokenize:
+                qname_tokens = set(tokenize(str(qname or "")))
+            else:
+                qname_tokens = set(str(qname or "").split())
             overlap = len(query_tokens & qname_tokens)
-            if overlap >= 1:  # at least one token in common
+            if overlap >= 1:
                 scored.append((overlap, qid, str(qname or ""), str(unit or "")))
+                _overlap_seen.add(qid)
+
+        # If no candidate passed overlap threshold, fall back to all field-matched
+        # candidates with base score (tokenization mismatch on Chinese text is common)
+        if not scored:
+            for qid, qname, unit in rows:
+                qid = str(qid or "").strip()
+                if not qid or qid in seen:
+                    continue
+                seen.add(qid)
+                scored.append((0, qid, str(qname or ""), str(unit or "")))
 
         scored.sort(key=lambda x: -x[0])
         for overlap, qid, qname, unit in scored[:top_k]:
