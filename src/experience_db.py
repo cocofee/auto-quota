@@ -2450,8 +2450,11 @@ class ExperienceDB:
         conn = self._connect(row_factory=True)
         try:
             cursor = conn.cursor()
-            exact_clauses = ["bill_text = ?", "province = ?"]
-            exact_params: list = [bill_text, province]
+            exact_clauses = ["bill_text = ?"]
+            exact_params: list = [bill_text]
+            if province is not None:
+                exact_clauses.append("province = ?")
+                exact_params.append(province)
             if authority_only:
                 exact_clauses.append("layer = 'authority'")
             self._append_excluded_source_clauses(exact_clauses, exact_params, exclude_sources)
@@ -2473,10 +2476,12 @@ class ExperienceDB:
                     if norm_text:  # 归一化后非空才查（避免空字符串匹配所有空记录）
                         norm_clauses = [
                             "normalized_text = ?",
-                            "province = ?",
                             "normalized_text != ''",
                         ]
-                        norm_params: list = [norm_text, province]
+                        norm_params: list = [norm_text]
+                        if province is not None:
+                            norm_clauses.append("province = ?")
+                            norm_params.append(province)
                         if authority_only:
                             norm_clauses.append("layer = 'authority'")
                         self._append_excluded_source_clauses(norm_clauses, norm_params, exclude_sources)
@@ -2821,7 +2826,7 @@ class ExperienceDB:
                           materials_signature: str = "",
                           install_method: str = "",
                           quota_version: str = "") -> list[dict]:
-        province = province or self.province
+        # province=None 表示跨省搜索
         query_item = self._build_query_item(
             query_text,
             province=province,

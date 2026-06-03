@@ -693,7 +693,7 @@ def try_experience_match(query: str, item: dict, experience_db,
     similar = experience_db.search_similar(
         query, top_k=3,
         min_confidence=config.EXPERIENCE_DIRECT_THRESHOLD,
-        province=province,
+        province=None,  # 跨省搜索: cluster_key 已写入, 可跨省定位
     )
 
     if not similar:
@@ -848,14 +848,11 @@ def try_experience_exact_match(
     if not callable(exact_lookup):
         return None
 
-    target_province = province or getattr(experience_db, "province", "")
-    if not target_province:
-        return None
-
+    # 跨省: 传 province=None 搜索所有省份
     try:
-        best = exact_lookup(query, target_province, authority_only=authority_only)
+        best = exact_lookup(query, province, authority_only=authority_only)
     except TypeError:
-        best = exact_lookup(query, target_province)
+        best = exact_lookup(query, province)
 
     if not best:
         return None
@@ -933,14 +930,11 @@ def try_experience_exact_match(
     if not callable(exact_lookup):
         return None
 
-    target_province = province or getattr(experience_db, "province", "")
-    if not target_province:
-        return None
-
+    # 跨省: 传 province=None 搜索所有省份
     try:
-        best = exact_lookup(query, target_province, authority_only=authority_only)
+        best = exact_lookup(query, province, authority_only=authority_only)
     except TypeError:
-        best = exact_lookup(query, target_province)
+        best = exact_lookup(query, province)
 
     if not best:
         return None

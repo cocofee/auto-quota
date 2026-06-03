@@ -249,6 +249,198 @@ def test_goal_search_can_disable_answer_priors_and_keep_local_results(tmp_path, 
     assert {hit.quota_id for hit in hits_without_prior} <= set(searcher.index.by_quota_id)
 
 
+def test_goal_search_uses_hvac_component_candidates_from_bill_description(tmp_path, monkeypatch):
+    quota_db = tmp_path / "quota.db"
+    conn = sqlite3.connect(str(quota_db))
+    conn.execute(
+        """
+        create table quotas (
+            id integer primary key,
+            quota_id text,
+            name text,
+            unit text,
+            specialty text,
+            book text,
+            search_text text
+        )
+        """
+    )
+    conn.executemany(
+        """
+        insert into quotas(quota_id, name, unit, specialty, book, search_text)
+        values (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("HVAC-DAMPER", "碳钢调节阀安装 对开多叶调节阀周长(mm) ≤2800", "个", "C7", "C7", "碳钢调节阀安装 对开多叶调节阀 周长"),
+            ("WEAK-WRONG", "阀门及电动执行机构 水泵、风机启动柜楼控接点接线 5点以内", "个", "C5", "C5", "阀门 电动执行机构 风机 楼控 接线"),
+            ("PIPE-WRONG", "中压阀门 调节阀门 公称直径(mm以内) 20", "个", "C8", "C8", "中压阀门 调节阀门"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_DIR", tmp_path)
+    monkeypatch.setattr(config, "get_quota_db_path", lambda province=None: quota_db)
+    monkeypatch.setattr(config, "resolve_province", lambda province: province)
+    clear_goal_search_cache()
+
+    searcher = GoalSearcher("Local Test")
+    hits = searcher.search(
+        {
+            "code": "030703001001",
+            "name": "碳钢阀门",
+            "description": "1.类型：电动多叶调节阀 2.规格及型号：500x500 3.备注：与加压送风风机联锁启动",
+            "unit": "个",
+        },
+        top_k=3,
+    )
+
+    assert hits[0].quota_id == "HVAC-DAMPER"
+
+
+def test_goal_search_treats_strong_ventilation_fan_text_as_hvac_book(tmp_path, monkeypatch):
+    quota_db = tmp_path / "quota.db"
+    conn = sqlite3.connect(str(quota_db))
+    conn.execute(
+        """
+        create table quotas (
+            id integer primary key,
+            quota_id text,
+            name text,
+            unit text,
+            specialty text,
+            book text,
+            search_text text
+        )
+        """
+    )
+    conn.executemany(
+        """
+        insert into quotas(quota_id, name, unit, specialty, book, search_text)
+        values (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("C1-FAN", "风机安装 轴流通风机 设备重量(t以内) 1", "台", "C1", "C1", "风机安装 轴流通风机 设备重量"),
+            ("C7-MIXED-FAN", "轴流式、斜流式、混流式通风机安装风量(m3/h) ≤8900", "台", "C7", "C7", "轴流式 斜流式 混流式 通风机安装 风量"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_DIR", tmp_path)
+    monkeypatch.setattr(config, "get_quota_db_path", lambda province=None: quota_db)
+    monkeypatch.setattr(config, "resolve_province", lambda province: province)
+    clear_goal_search_cache()
+
+    searcher = GoalSearcher("Local Test")
+    hits = searcher.search(
+        {
+            "code": "030108006002",
+            "name": "混流式通风机",
+            "description": "规格及型号：SWF-I-No.8.5型 混流式通风机",
+            "unit": "个",
+        },
+        top_k=3,
+    )
+
+    assert hits[0].quota_id == "C7-MIXED-FAN"
+    assert "book exact" in hits[0].reasons
+
+
+def test_goal_search_uses_l_or_g_shorthand_air_volume_for_fan_tier(tmp_path, monkeypatch):
+    quota_db = tmp_path / "quota.db"
+    conn = sqlite3.connect(str(quota_db))
+    conn.execute(
+        """
+        create table quotas (
+            id integer primary key,
+            quota_id text,
+            name text,
+            unit text,
+            specialty text,
+            book text,
+            search_text text
+        )
+        """
+    )
+    conn.executemany(
+        """
+        insert into quotas(quota_id, name, unit, specialty, book, search_text)
+        values (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("FAN-SMALL", "轴流式、斜流式、混流式通风机安装风量(m3/h) ≤8900", "台", "C7", "C7", "轴流式 斜流式 混流式 通风机安装 风量(m3/h) ≤8900"),
+            ("FAN-LARGE", "轴流式、斜流式、混流式通风机安装风量(m3/h) ≤63000", "台", "C7", "C7", "轴流式 斜流式 混流式 通风机安装 风量(m3/h) ≤63000"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_DIR", tmp_path)
+    monkeypatch.setattr(config, "get_quota_db_path", lambda province=None: quota_db)
+    monkeypatch.setattr(config, "resolve_province", lambda province: province)
+    clear_goal_search_cache()
+
+    searcher = GoalSearcher("Local Test")
+    hits = searcher.search(
+        {
+            "code": "030108006002",
+            "name": "混流式通风机",
+            "description": "G=43032M/h H=1225Pa N=18.5KW 混流式通风机",
+            "unit": "个",
+        },
+        top_k=3,
+    )
+
+    assert hits[0].quota_id == "FAN-LARGE"
+    assert "fan_air_volume tier_up" in hits[0].reasons
+
+
+def test_goal_search_does_not_hard_book_generic_ventilation_commissioning(tmp_path, monkeypatch):
+    quota_db = tmp_path / "quota.db"
+    conn = sqlite3.connect(str(quota_db))
+    conn.execute(
+        """
+        create table quotas (
+            id integer primary key,
+            quota_id text,
+            name text,
+            unit text,
+            specialty text,
+            book text,
+            search_text text
+        )
+        """
+    )
+    conn.executemany(
+        """
+        insert into quotas(quota_id, name, unit, specialty, book, search_text)
+        values (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("INSTRUMENT-WRONG", "节流装置 孔板阀", "个", "C6", "C6", "节流装置 孔板阀"),
+            ("DEBUG-FALLBACK", "火灾事故广播、消防通信系统调试 通信分机", "部", "C9", "C9", "火灾事故广播 消防通信 系统调试 通信分机"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_DIR", tmp_path)
+    monkeypatch.setattr(config, "get_quota_db_path", lambda province=None: quota_db)
+    monkeypatch.setattr(config, "resolve_province", lambda province: province)
+    clear_goal_search_cache()
+
+    searcher = GoalSearcher("Local Test")
+    hits = searcher.search(
+        {
+            "code": "030704001001",
+            "name": "通风工程检测、调试",
+            "description": "通风工程检测、调试",
+            "unit": "系统",
+        },
+        top_k=3,
+    )
+
+    assert hits[0].quota_id == "DEBUG-FALLBACK"
+    assert "book conflict" not in hits[0].reasons
+
+
 def test_goal_search_uses_structured_tier_columns(tmp_path, monkeypatch):
     quota_db = tmp_path / "quota.db"
     _make_quota_db(quota_db)

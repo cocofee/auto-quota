@@ -547,13 +547,14 @@ OSS_GUARDED_ALIAS_CORE_FAMILIES = tuple(
     if part.strip()
 )
 
-OSS_RECALL_INDEX_ENABLED = os.getenv("OSS_RECALL_INDEX_ENABLED", "false").lower() == "true"
+OSS_RECALL_INDEX_ENABLED = os.getenv("OSS_RECALL_INDEX_ENABLED", "true").lower() == "true"
 OSS_RECALL_INDEX_PATH = os.getenv(
     "OSS_RECALL_INDEX_PATH",
     str(DATA_DIR / "goal_search" / "oss_recall_index.jsonl"),
 )
-# OSS recall/index candidate source (16.x). Default-off. If manually enabled,
-# keep the approved 16.6 scope narrow: support exact-name only, one candidate.
+# OSS recall/index candidate source (16.x). Controlled-on by default with the
+# approved narrow scope: support exact-name only, one candidate. Set
+# OSS_RECALL_INDEX_ENABLED=false to roll back immediately.
 OSS_RECALL_INDEX_TOP_K = int(os.getenv("OSS_RECALL_INDEX_TOP_K", "1"))
 OSS_RECALL_INDEX_MIN_SUPPORT = int(os.getenv("OSS_RECALL_INDEX_MIN_SUPPORT", "6"))
 OSS_RECALL_INDEX_MIN_SOURCE_FAMILIES = int(os.getenv("OSS_RECALL_INDEX_MIN_SOURCE_FAMILIES", "2"))

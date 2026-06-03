@@ -369,13 +369,13 @@ def do_batch_import(files: list[dict], batch_id: str, limit: int = 0):
 
         # 统计
         ok_files += 1
-        total_exp_added += exp_stats["added"]
+        total_exp_added += exp_stats["written"]
         total_exp_skipped += exp_stats["skipped"]
         total_kb_added += kb_stats["added"]
         total_kb_merged += kb_stats["merged"]
         prov_stats[prov_code]["files"] += 1
         prov_stats[prov_code]["pairs"] += len(filtered)
-        prov_stats[prov_code]["exp_added"] += exp_stats["added"]
+        prov_stats[prov_code]["exp_added"] += exp_stats["written"]
 
     # 7. 统一重建向量索引
     if total_exp_added > 0:
