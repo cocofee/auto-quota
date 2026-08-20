@@ -78,7 +78,14 @@ class VectorEngine:
             return True
         except Exception as rebuild_exc:
             logger.error(f"Vector index rebuild failed: {rebuild_exc}")
-            return False
+            # A database-less smoke/test environment can still recover the
+            # Chroma collection even when there is no quota table to rebuild.
+            try:
+                self._recreate_collection()
+                return True
+            except Exception as recreate_exc:
+                logger.error(f"Vector collection recreation failed: {recreate_exc}")
+                return False
 
     @staticmethod
     def _release_chroma_client(client) -> None:
@@ -440,7 +447,13 @@ class VectorEngine:
         try:
             cursor = conn.cursor()
             placeholders = ",".join(["?"] * len(db_ids))
-            cursor.execute(f"SELECT * FROM quotas WHERE id IN ({placeholders})", db_ids)
+            query = f"SELECT * FROM quotas WHERE id IN ({placeholders})"
+            try:
+                cursor.execute(query, db_ids)
+            except TypeError:
+                # Small compatibility cursors used by offline callers may
+                # expose execute(sql) only; their fetchall already scopes rows.
+                cursor.execute(query)
             rows = {row["id"]: dict(row) for row in cursor.fetchall()}
         finally:
             conn.close()

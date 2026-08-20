@@ -34,7 +34,7 @@ from app.api import tasks as tasks_api
 from app.api.shared import get_user_task
 from app.auth.openclaw import get_openclaw_read_user, get_openclaw_service_user
 from app.auth.permissions import require_admin
-from app.config import OPENCLAW_API_KEY, OPENCLAW_SERVICE_EMAIL, OPENCLAW_SERVICE_NICKNAME
+from app.config import HERMES_API_KEY, OPENCLAW_API_KEY, OPENCLAW_SERVICE_EMAIL, OPENCLAW_SERVICE_NICKNAME
 from app.database import get_db
 from app.models.openclaw_review_job import OpenClawReviewJob
 from app.models.result import MatchResult
@@ -2709,9 +2709,10 @@ async def route_file_intake(
 
 @router.get("/admin/key-status", response_model=OpenClawKeyStatusResponse)
 async def key_status(admin: User = Depends(require_admin)):
+    configured_key = HERMES_API_KEY or OPENCLAW_API_KEY
     return OpenClawKeyStatusResponse(
-        configured=bool(OPENCLAW_API_KEY),
-        masked_key=_mask_key(OPENCLAW_API_KEY),
+        configured=bool(configured_key),
+        masked_key=_mask_key(configured_key),
         service_email=OPENCLAW_SERVICE_EMAIL,
         service_nickname=OPENCLAW_SERVICE_NICKNAME,
         openapi_url="/api/openclaw/openapi.json",

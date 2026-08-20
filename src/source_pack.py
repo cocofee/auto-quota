@@ -163,7 +163,7 @@ def _normalize_evidence_refs(evidence_refs: list[str], *, heading: str, title_hi
 def _first_evidence_stem(evidence_refs: list[str]) -> str:
     for item in evidence_refs:
         stem = safe_text(Path(item).stem)
-        if stem and not _looks_like_mojibake(stem):
+        if stem:
             return stem
     return ""
 
@@ -216,7 +216,10 @@ def normalize_source_pack_metadata(pack: dict[str, Any]) -> dict[str, Any]:
     )
     normalized["evidence_refs"] = evidence_refs
 
-    fallback_title = heading or _first_evidence_stem(evidence_refs) or normalized["source_id"]
+    # Evidence filenames usually retain the original document title when the
+    # stored title is mojibake; use the heading only when no usable filename
+    # stem is available.
+    fallback_title = _first_evidence_stem(evidence_refs) or heading or normalized["source_id"]
     if not title or _looks_like_mojibake(title):
         title = fallback_title
     elif heading and _count_cjk(heading) >= 4 and _cjk_overlap(title, heading) == 0:

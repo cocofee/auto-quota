@@ -29,6 +29,16 @@ _CHROMA_CLIENTS: dict[str, Any] = {}
 _CACHE_LOCK = threading.Lock()
 
 
+def _vector_enabled() -> bool:
+    """Return the shared vector feature flag without importing config eagerly."""
+    try:
+        import config
+
+        return bool(getattr(config, "VECTOR_ENABLED", True))
+    except Exception:
+        return True
+
+
 def get_qmd_profile() -> VectorModelProfile:
     explicit_key = os.getenv("VECTOR_MODEL_KEY")
     if explicit_key:
@@ -49,6 +59,8 @@ def get_qmd_profile() -> VectorModelProfile:
 
 def get_vector_model():
     global _VECTOR_MODEL
+    if not _vector_enabled():
+        return None
     if _VECTOR_MODEL is not None:
         return _VECTOR_MODEL
 

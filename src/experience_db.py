@@ -2950,7 +2950,11 @@ class ExperienceDB:
             if not filtered:
                 continue
             filtered = self._annotate_effective_confidence(filtered)
-            if int(filtered.get("effective_confidence", filtered.get("confidence", 0)) or 0) < min_confidence:
+            # ``min_confidence`` controls recall eligibility.  Effective
+            # confidence remains available for ranking/direct-pass decisions,
+            # but a single-confirmed verified/candidate record must stay
+            # recallable when its stored confidence meets the requested floor.
+            if int(filtered.get("confidence", 0) or 0) < min_confidence:
                 continue
             total_score, dimension_scores = self._compute_experience_total_score(filtered, query_item)
             filtered["total_score"] = total_score

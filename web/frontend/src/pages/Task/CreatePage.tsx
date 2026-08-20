@@ -204,7 +204,6 @@ export default function TaskCreatePage() {
   const [selectedRegion, setSelectedRegion] = useState<string | undefined>(undefined);
   const [selectedSubRegion, setSelectedSubRegion] = useState<string | undefined>(undefined);
   const selectedProvince = Form.useWatch('province', form);
-  const selectedMode = Form.useWatch('mode', form);
 
   // 计算同批兄弟库
   const siblingDbs = useMemo(() => {
@@ -594,16 +593,8 @@ export default function TaskCreatePage() {
             开始匹配
           </Button>
 
-          {/* 右侧推到最右：模式提示 + 已选工作表 */}
+          {/* 右侧推到最右：已选工作表 */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
-            <span style={{
-              padding: '2px 8px', borderRadius: 3,
-              background: selectedMode === 'search' ? '#fff7e6' : '#f6ffed',
-              color: selectedMode === 'search' ? '#d46b08' : '#389e0d',
-              whiteSpace: 'nowrap',
-            }}>
-              {selectedMode === 'search' ? '⚡ 不调大模型' : '🚀 大模型逐条分析'}
-            </span>
             {selectedSheets.length > 0 && sheetNames.length > 0 && (
               <span style={{ color: '#999', whiteSpace: 'nowrap' }}>
                 已选 {selectedSheets.length}/{sheetNames.length} 个工作表

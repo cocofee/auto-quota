@@ -639,8 +639,6 @@
       "primary_files": [
         "web/backend/app/api/openclaw.py",
         "web/backend/app/models/openclaw_review_job.py",
-        "tools/openclaw_bridge_review.ps1",
-        "tools/openclaw_bridge_batch_review.ps1",
         "docs/OpenClaw统一入口接口定义.md"
       ]
     }

@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 import config
+from src import experience_db as experience_db_module
 from src.experience_db import ExperienceDB
 from src.hybrid_searcher import HybridSearcher
 from src.method_cards import MethodCards
@@ -21,6 +22,7 @@ _experience_db_cache: dict[str, ExperienceDB] = {}
 _search_bundle_cache: dict[tuple[str, tuple[str, ...]], HybridSearcher] = {}
 _method_cards_cache: MethodCards | None = None
 _unified_data_layer_cache: dict[str, UnifiedDataLayer] = {}
+_DEFAULT_EXPERIENCE_DB_CLASS = ExperienceDB
 
 _rule_bundle_lock = threading.Lock()
 _experience_db_lock = threading.Lock()
@@ -69,18 +71,21 @@ def get_rule_bundle(province: str | None = None) -> tuple[RuleValidator, Reranke
 
 def get_experience_db(province: str | None = None) -> ExperienceDB:
     key = _province_key(province)
+    factory = ExperienceDB
+    if factory is _DEFAULT_EXPERIENCE_DB_CLASS:
+        factory = getattr(experience_db_module, "ExperienceDB", factory)
     cached = _experience_db_cache.get(key)
-    if cached is not None:
+    if cached is not None and isinstance(cached, factory):
         logger.debug(f"runtime_cache hit: experience_db province={key or '<default>'}")
         return cached
     with _experience_db_lock:
         cached = _experience_db_cache.get(key)
-        if cached is not None:
+        if cached is not None and isinstance(cached, factory):
             logger.debug(f"runtime_cache hit(after-lock): experience_db province={key or '<default>'}")
             return cached
         logger.info(f"runtime_cache miss: experience_db province={key or '<default>'}，开始创建")
         started_at = time.perf_counter()
-        cached = ExperienceDB(province=province)
+        cached = factory(province=province)
         _experience_db_cache[key] = cached
         elapsed_ms = (time.perf_counter() - started_at) * 1000
         logger.info(f"runtime_cache created: experience_db province={key or '<default>'} elapsed_ms={elapsed_ms:.1f}")

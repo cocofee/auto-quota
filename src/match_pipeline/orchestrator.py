@@ -2188,7 +2188,15 @@ def _flush_rank_stage_trace_steps(result: dict) -> None:
     pending_steps = result.pop("_pending_rank_stage_trace_steps", None)
     if not isinstance(pending_steps, list):
         return
-    for step in pending_steps:
+    # Keep the historical public trace contract at five primary stages. The
+    # structural comparator remains available through ranking diagnostics and
+    # `ranking_meta`, but is not inserted into the legacy trace timeline.
+    public_steps = [
+        step
+        for step in pending_steps
+        if isinstance(step, dict) and step.get("name") != "post_ltr_structural_ranker"
+    ]
+    for step in public_steps:
         if not isinstance(step, dict):
             continue
         _append_trace_step(
@@ -3279,7 +3287,13 @@ def _run_rank_pipeline(item: dict,
         ranking_meta["final_decider_reason"] = advisory["final_decider_reason"]
         if suggested_id != current_head_id and not ranking_meta.get("final_changed_by"):
             ranking_meta["final_changed_by"] = "final_decider"
-        if suggested_id != _top_candidate_id(current_ordered):
+        # Keep the ranked list as the audit trail. Final-decider advisories
+        # still update `best`, but only ranking stages that explicitly own
+        # ordering should mutate `ordered`.
+        preserve_ranked_order = stage == "category_safe" or (
+            stage == "post_cgr" and bool(arbitration.get("advisory_applied"))
+        )
+        if suggested_id != _top_candidate_id(current_ordered) and not preserve_ranked_order:
             current_ordered, _ = _promote_candidate_by_quota_id(current_ordered, suggested_id)
         return current_ordered, candidate
 
@@ -3373,6 +3387,8 @@ def _run_rank_pipeline(item: dict,
             )
             selected_id = str((selected or {}).get("quota_id", "") or "")
             applied = bool(category_safe_id and selected_id == category_safe_id and category_safe_id != rank_head_id)
+            if applied:
+                reason = "category_safe_advisory_applied_by_final_decider"
 
         selected_id = str((selected or {}).get("quota_id", "") or "")
         ranking_meta["category_safe_advisory"] = {
@@ -3468,6 +3484,8 @@ def _run_rank_pipeline(item: dict,
         return ordered, ranking_meta, arbitration, explicit_override, best
 
     api = _api()
+    route = str((item.get("query_route") or {}).get("route") or "").strip()
+    post_rank_corrections_allowed = route in {"installation_spec", "spec_heavy", "ambiguous_short"}
     ordered, ltr_meta = api.rerank_candidates_with_ltr(item, ordered, {"item": item})
     ltr_meta = dict(ltr_meta or {})
     structural_ordered, structural_ranker = _promote_post_ltr_structural_candidate(ordered, item=item)
@@ -3492,7 +3510,10 @@ def _run_rank_pipeline(item: dict,
         )
     else:
         ranking_meta["post_ltr_structural_top1_id"] = _top_candidate_id(ordered)
-    lifecycle_ordered, ltr_lifecycle_guard = _promote_lifecycle_stronger_candidate(ordered)
+    if post_rank_corrections_allowed:
+        lifecycle_ordered, ltr_lifecycle_guard = _promote_lifecycle_stronger_candidate(ordered)
+    else:
+        lifecycle_ordered, ltr_lifecycle_guard = list(ordered), {}
     if ltr_lifecycle_guard:
         ltr_meta = {
             **dict(ltr_meta or {}),
@@ -3587,7 +3608,10 @@ def _run_rank_pipeline(item: dict,
             ordered,
             ranking_meta["post_cgr_top1_id"],
         )
-        ordered, post_arbiter_lifecycle_guard = _promote_lifecycle_stronger_candidate(ordered)
+        if post_rank_corrections_allowed:
+            ordered, post_arbiter_lifecycle_guard = _promote_lifecycle_stronger_candidate(ordered)
+        else:
+            post_arbiter_lifecycle_guard = {}
         if restored_cgr_top1:
             arbitration = {
                 **dict(arbitration or {}),
@@ -3650,7 +3674,7 @@ def _run_rank_pipeline(item: dict,
 
     ordered, best = _select_final_candidate_from_advisory(
         ordered,
-        apply_lifecycle_guard=True,
+        apply_lifecycle_guard=post_rank_corrections_allowed,
     )
     if best:
         ranking_meta["selected_top1_id"] = str(best.get("quota_id", "") or "")

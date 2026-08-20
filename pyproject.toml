@@ -1,0 +1,15 @@
+[project]
+name = "auto-quota"
+version = "1.0.0"
+description = "自动套定额系统：读取工程量清单Excel → 自动匹配定额 → 输出结果"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# src 是主包，db 是数据库辅助包
+packages = ["src", "db"]
+# config.py 在项目根目录，作为独立模块注册
+py-modules = ["config"]

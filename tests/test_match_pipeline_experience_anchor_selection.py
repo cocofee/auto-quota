@@ -279,9 +279,13 @@ def test_run_rank_pipeline_preserves_cgr_top1_after_advisory_arbiter(monkeypatch
     assert ranking_meta["post_anchor_top1_id"] == "Q-LTR"
     assert ranking_meta["selected_top1_id"] == "Q-CGR"
     assert ranking_meta["final_decider_reason"] == "post_cgr_advisory_accepted_by_final_decider"
-    assert ranking_meta["decision_advisories"][0]["stage"] == "post_cgr"
-    assert ranking_meta["decision_advisories"][0]["accepted_by_final_decider"] is True
-    assert ranking_meta["decision_advisories"][0]["decision_owner"] == "final_decider"
+    cgr_advisory = next(
+        advisory
+        for advisory in ranking_meta["decision_advisories"]
+        if advisory["stage"] == "post_cgr"
+    )
+    assert cgr_advisory["accepted_by_final_decider"] is True
+    assert cgr_advisory["decision_owner"] == "final_decider"
     assert "cgr_top1_restored_after_advisory" not in arbitration
 
 
@@ -351,6 +355,7 @@ def test_run_rank_pipeline_records_rank_stage_trace_steps(monkeypatch):
     rank_steps = ranking_meta["rank_stage_trace_steps"]
     assert [step["name"] for step in rank_steps] == [
         "ltr",
+        "post_ltr_structural_ranker",
         "cgr_ranker",
         "candidate_arbiter",
         "explicit_picker",
@@ -360,18 +365,10 @@ def test_run_rank_pipeline_records_rank_stage_trace_steps(monkeypatch):
     assert rank_steps[0]["top1_id"] == "Q-LTR"
     assert rank_steps[0]["overridden"] is True
     assert "Q-SEED->Q-LTR" in rank_steps[0]["override_reason"]
-    assert rank_steps[1]["prev_top1_id"] == "Q-LTR"
-    assert rank_steps[1]["top1_id"] == "Q-LTR"
-    assert rank_steps[1]["overridden"] is False
-    assert rank_steps[2]["prev_top1_id"] == "Q-LTR"
-    assert rank_steps[2]["top1_id"] == "Q-LTR"
-    assert rank_steps[2]["overridden"] is False
-    assert rank_steps[3]["prev_top1_id"] == "Q-LTR"
-    assert rank_steps[3]["top1_id"] == "Q-LTR"
-    assert rank_steps[3]["overridden"] is False
-    assert rank_steps[4]["prev_top1_id"] == "Q-LTR"
-    assert rank_steps[4]["top1_id"] == "Q-LTR"
-    assert rank_steps[4]["overridden"] is False
+    for step in rank_steps[1:]:
+        assert step["prev_top1_id"] == "Q-LTR"
+        assert step["top1_id"] == "Q-LTR"
+        assert step["overridden"] is False
 
 
 def test_run_rank_pipeline_uses_default_no_param_arbitration(monkeypatch):

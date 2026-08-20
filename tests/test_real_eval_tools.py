@@ -782,3 +782,48 @@ def test_run_real_eval_can_skip_unavailable_provinces(monkeypatch):
     ]
 
     dataset_path.unlink(missing_ok=True)
+
+
+def test_detail_from_result_preserves_full_recall_and_rank_stage_fields():
+    record = {
+        "sample_id": "trace-1",
+        "province": "demo-province",
+        "source": "user_correction",
+        "project_name": "demo-project",
+        "bill_name": "demo bill",
+        "bill_text": "demo bill DN50",
+        "specialty": "C10",
+        "oracle_quota_ids": ["Q-30"],
+        "oracle_quota_names": ["correct quota"],
+    }
+    recall_ids = [f"Q-{index}" for index in range(1, 81)]
+    result = {
+        "quotas": [
+            {"quota_id": "Q-1", "name": "selected"},
+            {"quota_id": "Q-2", "name": "second"},
+            {"quota_id": "Q-3", "name": "third"},
+        ],
+        "all_candidate_ids": recall_ids[:20],
+        "recall_topk_ids": recall_ids,
+        "pre_ltr_top1_id": "Q-1",
+        "post_ltr_top1_id": "Q-2",
+        "post_ltr_structural_top1_id": "Q-3",
+        "post_cgr_top1_id": "Q-4",
+        "post_arbiter_top1_id": "Q-5",
+        "post_explicit_top1_id": "Q-6",
+        "post_anchor_top1_id": "Q-7",
+        "post_final_top1_id": "Q-8",
+        "rank_stage_trace": [
+            {"name": "ltr", "top1_id": "Q-2"},
+            {"name": "post_ltr_structural_ranker", "top1_id": "Q-3"},
+        ],
+        "match_source": "search",
+        "confidence": 70,
+    }
+
+    detail = _detail_from_result(record, result)
+
+    assert detail["recall_topk_ids"] == recall_ids
+    assert detail["final_quota_ids"] == ["Q-1", "Q-2", "Q-3"]
+    assert detail["post_ltr_structural_top1_id"] == "Q-3"
+    assert detail["rank_stage_trace"] == result["rank_stage_trace"]

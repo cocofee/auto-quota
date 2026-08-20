@@ -87,7 +87,7 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,                                 # 允许的前端地址
     allow_credentials=True,                                     # 允许携带Cookie
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # 只允许必要的HTTP方法
-    allow_headers=["Content-Type", "Authorization", "Accept", "X-OpenClaw-Key"],  # 只允许必要的请求头
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-OpenClaw-Key", "X-Hermes-Key"],  # 只允许必要的请求头
     max_age=3600,                                               # 预检请求缓存1小时
 )
 

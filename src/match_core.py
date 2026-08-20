@@ -110,7 +110,7 @@ _MEASURE_CONTAINS_KEYWORDS = _loaded[3]
 
 def calculate_confidence(param_score: float, param_match: bool = True,
                          name_bonus: float = 0.0,
-                         score_gap: float = 0.0,
+                         score_gap: float | None = None,
                          rerank_score: float = 0.0,
                          family_aligned: bool = False,
                          family_hard_conflict: bool = False,
@@ -2297,10 +2297,13 @@ def _prepare_candidates(searcher: HybridSearcher, reranker, validator: ParamVali
         if isinstance(classification, dict):
             classification["candidate_scope_guard"] = candidate_scope_guard
         substage_started = time.perf_counter()
-        candidates = _materialize_rankable_pool_candidate_features(
-            candidates,
-            classification=classification,
-        )
+        # A single candidate does not enter reranking, so hydrating its name
+        # would only duplicate parser work that validation performs later.
+        if len(candidates) > 1:
+            candidates = _materialize_rankable_pool_candidate_features(
+                candidates,
+                classification=classification,
+            )
         _record_outer_substage("rankable_feature_materialization", time.perf_counter() - substage_started)
 
     # ? (quota_id + ???) ???RRF????????????????????
@@ -2424,6 +2427,7 @@ def _collect_all_prior_candidates(searcher: HybridSearcher, *,
                     full_query=full_query,
                     books=books,
                     item=item,
+                    exact_only=bool(source_province),
                 )
             except Exception as e:
                 logger.debug(

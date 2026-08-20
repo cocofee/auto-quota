@@ -340,6 +340,16 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "cause": cause,
         "oracle_in_candidates": bool(oracle_found),
         "all_candidate_ids": all_candidate_ids[:20],
+        "recall_topk_ids": [
+            str(value).strip()
+            for value in (result.get("recall_topk_ids") or result.get("all_candidate_ids") or [])
+            if str(value).strip()
+        ],
+        "final_quota_ids": [
+            str(quota.get("quota_id") or "").strip()
+            for quota in quotas
+            if str(quota.get("quota_id") or "").strip()
+        ],
         "candidate_count": int(result.get("candidate_count", result.get("candidates_count", len(all_candidate_ids))) or len(all_candidate_ids)),
         "match_source": str(result.get("match_source", "") or ""),
         "confidence": float(result.get("confidence", 0.0) or 0.0),
@@ -369,6 +379,9 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "candidate_lifecycle_trace": list(result.get("candidate_lifecycle_trace") or [])[:20],
         "pre_ltr_top1_id": str(result.get("pre_ltr_top1_id", "") or ""),
         "post_ltr_top1_id": str(result.get("post_ltr_top1_id", "") or ""),
+        "post_ltr_structural_top1_id": str(
+            result.get("post_ltr_structural_top1_id", result.get("post_ltr_top1_id", "")) or ""
+        ),
         "post_cgr_top1_id": str(result.get("post_cgr_top1_id", "") or ""),
         "post_arbiter_top1_id": str(result.get("post_arbiter_top1_id", "") or ""),
         "post_explicit_top1_id": str(result.get("post_explicit_top1_id", "") or ""),
@@ -376,6 +389,7 @@ def _detail_from_result(record: dict, result: dict) -> dict:
         "post_final_top1_id": str(result.get("post_final_top1_id", algo_id) or algo_id or ""),
         "rank_decision_owner": str(result.get("rank_decision_owner", "") or ""),
         "rank_top1_flip_count": int(result.get("rank_top1_flip_count", 0) or 0),
+        "rank_stage_trace": list(result.get("rank_stage_trace") or []),
     }
 
 

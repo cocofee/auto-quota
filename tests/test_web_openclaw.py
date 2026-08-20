@@ -402,6 +402,15 @@ def test_require_openclaw_api_key_validates_secret(monkeypatch):
     assert exc.value.status_code == 401
 
 
+def test_removed_hardcoded_openclaw_key_is_not_accepted(monkeypatch):
+    monkeypatch.setattr(openclaw_auth, "OPENCLAW_API_KEY", "")
+    assert openclaw_auth._collect_valid_openclaw_keys() == set()
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(openclaw_auth.require_openclaw_api_key("legacy-key"))
+    assert exc.value.status_code == 503
+
+
 def test_openclaw_policy_bucket():
     assert openclaw_api._openclaw_policy_bucket(95) == "green"
     assert openclaw_api._openclaw_policy_bucket(openclaw_api.GREEN_THRESHOLD) == "green"

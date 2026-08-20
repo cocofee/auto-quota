@@ -1092,7 +1092,17 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
         getattr(get_search_bundle, "__module__", "") == "src.runtime_cache"
         and getattr(get_search_bundle, "__name__", "") == "get_search_bundle"
     )
-    if aux_provinces and using_runtime_cache_search_bundle:
+    auto_aux_resolved = aux_provinces is None and using_runtime_cache_search_bundle
+    if auto_aux_resolved:
+        try:
+            aux_provinces = config.get_sibling_provinces(resolved_province) or []
+            if aux_provinces:
+                logger.info(f"  鑷姩鎸傝浇鍏勫紵搴? {aux_provinces}")
+        except Exception as e:
+            logger.warning(f"  鑷姩鍙戠幇鍏勫紵搴撳け璐? {e}")
+            aux_provinces = []
+    searcher_built_with_runtime_aux = bool(aux_provinces and using_runtime_cache_search_bundle)
+    if searcher_built_with_runtime_aux:
         cache_key = (
             runtime_cache_module._province_key(resolved_province),
             runtime_cache_module._aux_key(aux_provinces),
@@ -1126,7 +1136,8 @@ def init_search_components(resolved_province: str, aux_provinces: list = None) -
             logger.warning(f"  自动发现兄弟库失败: {e}")
             aux_provinces = []
 
-    searcher = get_search_bundle(resolved_province, aux_provinces)
+    if not searcher_built_with_runtime_aux:
+        searcher = get_search_bundle(resolved_province, aux_provinces)
     if aux_provinces:
         for aux_searcher, aux_p in zip(searcher.aux_searchers, aux_provinces):
             try:
@@ -1146,7 +1157,12 @@ def init_experience_db(no_experience: bool, province: str = None) -> 'Experience
         return experience_db
     try:
         experience_db = get_experience_db(province=province)
-        exp_total = experience_db.get_total_count_fast(province=province)
+        get_total_count_fast = getattr(experience_db, "get_total_count_fast", None)
+        if callable(get_total_count_fast):
+            exp_total = get_total_count_fast(province=province)
+        else:
+            stats = getattr(experience_db, "get_stats", lambda: {})() or {}
+            exp_total = stats.get("total", 0)
         exp_stats = {"total": exp_total}
         logger.info(f"  经验库: {exp_stats['total']} 条历史记录")
     except Exception as e:

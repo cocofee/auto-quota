@@ -130,6 +130,14 @@ def _load_spec_from_payload(payload: dict[str, Any]) -> ConfidenceCalibrationSpe
     )
 
 
+def _is_usable_calibration_spec(spec: ConfidenceCalibrationSpec) -> bool:
+    """Reject curves that assign a high floor to zero evidence."""
+    points = tuple(spec.isotonic_points or ())
+    if len(points) < 2:
+        return False
+    return points[0][0] <= 1e-9 and points[0][1] <= 0.25
+
+
 @lru_cache(maxsize=1)
 def get_confidence_calibration_spec() -> ConfidenceCalibrationSpec:
     calibration_path = Path(getattr(config, "CONFIDENCE_CALIBRATION_PATH", ""))
@@ -141,7 +149,14 @@ def get_confidence_calibration_spec() -> ConfidenceCalibrationSpec:
         payload = json.loads(calibration_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             return DEFAULT_CONFIDENCE_SPEC
-        return _load_spec_from_payload(payload)
+        spec = _load_spec_from_payload(payload)
+        if not _is_usable_calibration_spec(spec):
+            logger.warning(
+                "confidence calibration artifact has an unsafe low-evidence floor; "
+                "falling back to default"
+            )
+            return DEFAULT_CONFIDENCE_SPEC
+        return spec
     except Exception as exc:
         logger.warning(f"failed to load confidence calibration artifact from {calibration_path}: {exc}")
         return DEFAULT_CONFIDENCE_SPEC

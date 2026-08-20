@@ -1361,13 +1361,38 @@ def _classify_v2(bill_name: str,
 
     allow_cross_book_escape = route_mode != "strict"
 
-    return _finalize_routing_result(
+    result = _finalize_routing_result(
         scores,
         routing_evidence,
         hard_constraints=hard_constraints,
         route_mode=route_mode,
         allow_cross_book_escape=allow_cross_book_escape,
     )
+    if (
+        result.get("primary") == "C8"
+        and _should_expand_c8_accessory_search(
+            bill_name,
+            bill_desc=bill_desc,
+            bill_code=bill_code,
+            hard_constraints=["C8"],
+        )
+    ):
+        # Industrial valve/filter items remain C8-led, but C10 is a valid
+        # accessory borrowing route and must be searched explicitly.
+        result["candidate_books"] = _normalize_books(
+            [*result.get("candidate_books", []), "C10"]
+        )
+        result["search_books"] = _normalize_books(
+            [*result.get("search_books", []), "C10"]
+        )
+        result["advisory_search_books"] = _normalize_books(
+            [*result.get("advisory_search_books", []), "C10"]
+        )
+        result.setdefault("routing_evidence", {}).setdefault(
+            "C10", ["accessory_borrow:C8->C10"]
+        )
+        result.setdefault("book_scores", {}).setdefault("C10", 0.2)
+    return result
 
 
 def classify(bill_name: str, bill_desc: str = "",

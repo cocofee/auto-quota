@@ -97,24 +97,16 @@ description: JARVIS / auto-quota 的单文件任务处理、结果审核、OpenC
 - `调整`
 - `注意事项`
 
-## 桥接联调模式
+## 接口联调模式
 
-用于用户说：
-- “桥接通了吗”
-- “本地先联调一下 OpenClaw 接口”
-- “别先进前端，先打一下 API”
-- “看 review-draft / review-confirm 能不能走通”
-
-优先使用本地脚本：
-- `tools/openclaw_bridge_smoke.ps1`：读链路探活、拉任务 / review-items
-- `tools/openclaw_bridge_review.ps1`：单条 `review-draft / review-confirm`
-- `tools/openclaw_bridge_batch_review.ps1`：按 `light_status` 批量写 `review-draft`，支持 `WhatIf`
+用于用户要求直接验证本地审核 API 时。
 
 执行原则：
-- 先 smoke，再单条 review，再批量 review
-- 先验证读链路，再验证写链路
-- 批量写入前优先 `WhatIf`
-- 默认记录失败点：认证、参数、状态码、返回体、耗时
+- 先验证只读健康检查和任务读取，再验证单条写入；
+- 批量写入前必须 dry-run；
+- 记录失败点：认证、参数、状态码、返回体和耗时；
+- 不再依赖已删除的旧系统桥接脚本；在 Hermes API 契约落地前，只使用当前兼容 API 的只读能力。
+- 兼容 API 的密钥只能通过 `OPENCLAW_API_KEY` 环境变量提供，禁止写入 `config.json` 或源码。
 
 ## 用户明确授权后才能做的动作
 
@@ -150,14 +142,6 @@ python3 auto_match.py source-list --query "山东" --limit 20
 python3 auto_match.py source-show doc-001
 python3 auto_match.py source-learn doc-001 --dry-run
 python3 auto_match.py source-learn doc-001 --llm openai
-```
-
-本地桥接脚本：
-
-```bash
-powershell -File tools/openclaw_bridge_smoke.ps1
-powershell -File tools/openclaw_bridge_review.ps1
-powershell -File tools/openclaw_bridge_batch_review.ps1 -WhatIf
 ```
 
 ## 输出要求

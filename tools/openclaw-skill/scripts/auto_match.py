@@ -65,15 +65,16 @@ def file_hash(filepath: str) -> str:
 
 
 class AutoQuotaAPI:
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str, header_name: str = "X-OpenClaw-Key"):
         self.base_url = base_url.rstrip("/")
         self.api_key = (api_key or "").strip()
+        self.header_name = header_name
         if not self.api_key:
-            raise ValueError("缺少 OpenClaw API Key，请配置 OPENCLAW_API_KEY 或 config.json")
+            raise ValueError("缺少兼容接口 API Key，请通过 HERMES_API_KEY 或 OPENCLAW_API_KEY 环境变量配置")
 
     def _request(self, method: str, path: str, data=None, files=None, form_data=None):
         url = f"{self.base_url}{path}"
-        headers = {"X-OpenClaw-Key": self.api_key}
+        headers = {self.header_name: self.api_key}
         body = None
 
         if files:
@@ -237,7 +238,7 @@ class AutoQuotaAPI:
         url = f"{self.base_url}/api/openclaw/tasks/{task_id}/export-final"
         request = urllib.request.Request(
             url,
-            headers={"X-OpenClaw-Key": self.api_key},
+            headers={self.header_name: self.api_key},
             method="GET",
         )
         try:
@@ -252,8 +253,13 @@ class AutoQuotaAPI:
 def build_api_client() -> AutoQuotaAPI:
     cfg = load_config()
     api_cfg = cfg["api"]
-    api_key = os.getenv("OPENCLAW_API_KEY") or api_cfg.get("openclaw_api_key", "")
-    return AutoQuotaAPI(api_cfg["base_url"], api_key)
+    # Keep credentials outside the repository; config.json may only contain
+    # non-secret endpoint and workflow defaults.
+    hermes_key = os.getenv("HERMES_API_KEY", "").strip()
+    legacy_key = os.getenv("OPENCLAW_API_KEY", "").strip()
+    if hermes_key:
+        return AutoQuotaAPI(api_cfg["base_url"], hermes_key, "X-Hermes-Key")
+    return AutoQuotaAPI(api_cfg["base_url"], legacy_key, "X-OpenClaw-Key")
 
 
 def wait_for_task(api: AutoQuotaAPI, task_id: str, interval: int = 10):

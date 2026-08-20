@@ -119,6 +119,9 @@ COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
 # OpenClaw 自动化接入配置
 # ============================================================
 
+# Hermes is the current automation client. Keep the OpenClaw variable as a
+# legacy compatibility alias until the external contract is fully migrated.
+HERMES_API_KEY = os.getenv("HERMES_API_KEY", "").strip()
 OPENCLAW_API_KEY = os.getenv("OPENCLAW_API_KEY", "").strip()
 OPENCLAW_SERVICE_EMAIL = (
     os.getenv("OPENCLAW_SERVICE_EMAIL", "openclaw@system.local").strip()

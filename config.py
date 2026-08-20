@@ -567,6 +567,15 @@ OSS_RECALL_INDEX_CORE_FAMILIES = tuple(
     if part.strip()
 )
 
+# Read-only OSS semantic-prior shadow source.  It is opt-in and never an
+# authority result; callers can enable it for bounded recall experiments.
+OSS_SEMANTIC_PRIOR_ENABLED = os.getenv("OSS_SEMANTIC_PRIOR_ENABLED", "false").lower() == "true"
+OSS_SEMANTIC_PRIOR_SHADOW_PATH = os.getenv(
+    "OSS_SEMANTIC_PRIOR_SHADOW_PATH",
+    str(DATA_DIR / "goal_search" / "oss_semantic_prior_shadow.jsonl"),
+)
+OSS_SEMANTIC_PRIOR_TOP_K = int(os.getenv("OSS_SEMANTIC_PRIOR_TOP_K", "6"))
+
 # Reranker重排配置（交叉编码器，精度远高于向量搜索）
 # 可用环境变量覆盖为本地目录：
 #   RERANKER_MODEL_NAME=C:\path\to\local\reranker
@@ -575,6 +584,13 @@ RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3"
 RERANKER_TOP_K = 25                              # 重排后保留的候选数（不截断，让param_validator精确筛选）
 RERANKER_BACKEND = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
 RERANKERS_MODEL_TYPE = os.getenv("RERANKERS_MODEL_TYPE", "").strip() or None
+# Post-ranking structural/lifecycle corrections are part of the legacy rank
+# pipeline. Keep them enabled by default, with an explicit rollback switch.
+POST_RANKING_CORRECTIONS_ENABLED = os.getenv(
+    "POST_RANKING_CORRECTIONS_ENABLED", "1"
+).strip().lower() not in (
+    "0", "false", "no", "off", ""
+)
 UNIFIED_RANKING_ENABLED = os.getenv(
     "UNIFIED_RANKING_ENABLED", "0"
 ).strip().lower() not in (

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import config
 
+from src import qmd_index
 from src.qmd_index import QMDIndex, chunk_markdown_page, parse_frontmatter
 
 
@@ -215,3 +217,10 @@ related: []
     source_results = index.search("现场照片 电缆", top_k=3, source_kind="image")
     assert source_results
     assert source_results[0]["source_kind"] == "image"
+
+
+def test_qmd_vector_model_respects_vector_enabled(monkeypatch):
+    monkeypatch.setattr(config, "VECTOR_ENABLED", False)
+    monkeypatch.setattr(qmd_index, "_VECTOR_MODEL", None)
+
+    assert qmd_index.get_vector_model() is None

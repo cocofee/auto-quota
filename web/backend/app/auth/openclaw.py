@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_optional_current_user
 from app.auth.utils import hash_password
 from app.config import (
+    HERMES_API_KEY,
     OPENCLAW_API_KEY,
     OPENCLAW_SERVICE_EMAIL,
     OPENCLAW_SERVICE_NICKNAME,
@@ -28,21 +29,28 @@ from app.models.user import User
 
 
 openclaw_key_header = APIKeyHeader(name="X-OpenClaw-Key", auto_error=False)
-HARDCODED_OPENCLAW_KEYS = {
-    "oc_Bv2QPl-JVG3luiYp1KOUibIER465VAH5TfrWOMZuKm0",
-}
-
+hermes_key_header = APIKeyHeader(name="X-Hermes-Key", auto_error=False)
 
 def _collect_valid_openclaw_keys() -> set[str]:
-    return {item for item in {OPENCLAW_API_KEY, *HARDCODED_OPENCLAW_KEYS} if item}
+    """Return only the runtime-configured legacy compatibility key.
+
+    The OpenClaw-named API is retained as a compatibility surface while the
+    Hermes contract is finalized. Credentials must never be embedded in code.
+    """
+    return {key for key in (HERMES_API_KEY, OPENCLAW_API_KEY) if key}
 
 
 def _validate_openclaw_api_key(api_key: str | None) -> bool:
     return bool(api_key) and api_key in _collect_valid_openclaw_keys()
 
 
+def _validate_compat_api_key(*api_keys: str | None) -> bool:
+    return any(_validate_openclaw_api_key(api_key) for api_key in api_keys)
+
+
 async def require_openclaw_api_key(
     api_key: str | None = Security(openclaw_key_header),
+    hermes_api_key: str | None = Security(hermes_key_header),
 ) -> str:
     valid_keys = _collect_valid_openclaw_keys()
     if not valid_keys:
@@ -50,12 +58,17 @@ async def require_openclaw_api_key(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="OPENCLAW_API_KEY 未配置，OpenClaw 接口暂不可用",
         )
-    if api_key not in valid_keys:
+    selected_key = (
+        hermes_api_key
+        if isinstance(hermes_api_key, str) and hermes_api_key
+        else api_key
+    )
+    if selected_key not in valid_keys:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="OpenClaw API Key 无效",
         )
-    return api_key
+    return selected_key
 
 
 async def _get_or_create_openclaw_service_user(db: AsyncSession) -> User:
@@ -118,10 +131,11 @@ async def get_openclaw_service_user(
 
 async def get_openclaw_read_user(
     api_key: str | None = Security(openclaw_key_header),
+    hermes_api_key: str | None = Security(hermes_key_header),
     current_user: User | None = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    if _validate_openclaw_api_key(api_key):
+    if _validate_compat_api_key(hermes_api_key, api_key):
         return await _get_or_create_openclaw_service_user(db)
     if current_user and current_user.is_admin:
         return current_user
