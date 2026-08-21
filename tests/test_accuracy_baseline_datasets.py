@@ -15,6 +15,7 @@ def test_load_dataset_normalizes_fields_and_reports_rejections(tmp_path):
             "unit": "set",
             "specialty": "C10",
             "oracle_quota_ids": ["Q-1", "Q-1", "Q-2"],
+            "oracle_semantics": "any",
             "source": "user_correction",
             "source_family": "human",
             "project_name": "project-a",
@@ -78,3 +79,62 @@ def test_load_dataset_normalizes_quota_variant_markers(tmp_path):
     loaded = load_dataset(path, DatasetKind.PRIMARY)
 
     assert loaded.cases[0].oracle_quota_ids == ("A10-1-223",)
+
+
+def test_load_dataset_rejects_ambiguous_multi_oracle_and_duplicate_case_ids(tmp_path):
+    path = tmp_path / "primary.jsonl"
+    rows = [
+        {
+            "sample_id": "ambiguous",
+            "province": "demo",
+            "bill_name": "Composite work",
+            "oracle_quota_ids": ["Q-MAIN", "Q-RELATED"],
+        },
+        {
+            "sample_id": "duplicate",
+            "province": "demo",
+            "bill_name": "First",
+            "oracle_quota_ids": ["Q-1"],
+        },
+        {
+            "sample_id": "duplicate",
+            "province": "demo",
+            "bill_name": "Second",
+            "oracle_quota_ids": ["Q-2"],
+        },
+    ]
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    loaded = load_dataset(path, DatasetKind.PRIMARY)
+
+    assert [case.case_id for case in loaded.cases] == ["duplicate"]
+    assert loaded.rejection_counts == {
+        "ambiguous_oracle_semantics": 1,
+        "duplicate_case_id": 1,
+    }
+
+
+def test_load_dataset_accepts_explicit_all_oracle_semantics(tmp_path):
+    path = tmp_path / "primary.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "sample_id": "composite",
+                "province": "demo",
+                "bill_name": "Composite work",
+                "oracle_quota_ids": ["Q-MAIN", "Q-RELATED"],
+                "oracle_semantics": "all",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_dataset(path, DatasetKind.PRIMARY)
+
+    assert loaded.rejection_counts == {}
+    assert loaded.cases[0].oracle_semantics.value == "all"
+    assert loaded.cases[0].top1_evaluable is False

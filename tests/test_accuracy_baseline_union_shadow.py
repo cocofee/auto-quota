@@ -5,6 +5,7 @@ from eval.accuracy_baseline.contracts import (
     DatasetKind,
     EvalCase,
     LifecycleStage,
+    OracleSemantics,
     ProviderResult,
     ProviderStatus,
     StageSnapshot,
@@ -396,7 +397,7 @@ def test_union_shadow_provider_groups_provinces_and_exposes_diagnostics():
     assert results[0].runtime_metadata["goal_unique_ids"] == ["Q-2"]
 
 
-def test_union_shadow_provider_isolates_province_failure():
+def test_union_shadow_provider_classifies_algorithm_failure():
     def executor(province, records, *, goal_top_k, candidate_budget_policy):
         if province == "bad-province":
             raise RuntimeError("broken")
@@ -406,7 +407,7 @@ def test_union_shadow_provider_isolates_province_failure():
     results = provider.run([_case("bad", "bad-province"), _case("good", "good-province")])
     by_id = {result.case_id: result for result in results}
 
-    assert by_id["bad"].status == ProviderStatus.PROVINCE_UNAVAILABLE
+    assert by_id["bad"].status == ProviderStatus.PROVIDER_ERROR
     assert by_id["good"].status == ProviderStatus.OK
 
 
@@ -616,3 +617,42 @@ def test_aggregate_union_shadow_metrics_separates_raw_and_rankable_recall():
     assert report["raw_union_recall"] == 1.0
     assert report["rankable_recall"] == 1.0
     assert report["missing_local_goal_candidate_count"] == 1
+
+
+def test_union_shadow_metrics_use_system_denominator_and_all_semantics():
+    all_case = EvalCase(
+        case_id="case-all",
+        dataset_kind=DatasetKind.PRIMARY,
+        province="demo-province",
+        bill_name="Composite",
+        bill_text="",
+        unit="set",
+        specialty="C10",
+        oracle_quota_ids=("Q-1", "Q-2"),
+        oracle_semantics=OracleSemantics.ALL,
+        source_family="human",
+        project_id="project-a",
+    )
+    result = _union_result(
+        "case-all",
+        retrieved_ids=("Q-1",),
+        metadata={
+            "production_retrieved_ids": ["Q-1"],
+            "goal_retrieved_ids": ["Q-2"],
+            "raw_union_ids": ["Q-1", "Q-2"],
+        },
+    )
+
+    report = aggregate_union_shadow_metrics(
+        [all_case, _case("missing-case")],
+        [result],
+    )
+
+    assert report["system_denominator"] == 2
+    assert report["valid_cases"] == 1
+    assert report["production_recalled_count"] == 0
+    assert report["goal_recalled_count"] == 0
+    assert report["raw_union_recalled_count"] == 1
+    assert report["raw_union_recall"] == 0.5
+    assert report["provider_failure_count"] == 1
+    assert report["provider_failure_rate"] == 0.5

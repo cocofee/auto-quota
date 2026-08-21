@@ -26,51 +26,50 @@ REQUIRED_CANDIDATE_FIELDS = (
     "drop_reason",
     "raw_stage",
 )
+PROVIDER_FAILURE_EXCLUSIONS = {
+    "missing_result",
+    "duplicate_result",
+    ProviderStatus.PROVIDER_ERROR.value,
+}
 
 
-def _first_oracle_rank(case: EvalCase, result: ProviderResult) -> int | None:
+def _oracle_completion_rank(case: EvalCase, result: ProviderResult) -> int | None:
+    positions: dict[str, int] = {}
     for rank, quota_id in enumerate(result.retrieved_ids, start=1):
-        if quota_id in case.oracle_set:
-            return rank
-    return None
+        positions.setdefault(quota_id, rank)
+    if case.oracle_semantics.value == "all":
+        if not case.oracle_set or not case.oracle_set <= positions.keys():
+            return None
+        return max(positions[quota_id] for quota_id in case.oracle_set)
+    ranks = [positions[quota_id] for quota_id in case.oracle_set if quota_id in positions]
+    return min(ranks) if ranks else None
 
 
-def _is_correct(case: EvalCase, quota_id: str) -> bool:
+def _is_top1_correct(case: EvalCase, quota_id: str) -> bool | None:
+    if not case.top1_evaluable:
+        return None
     return bool(quota_id and quota_id in case.oracle_set)
 
 
+def _is_output_correct(case: EvalCase, result: ProviderResult) -> bool:
+    return case.output_matches(result.final_quota_ids)
+
+
+def _is_required_output_correct(case: EvalCase, result: ProviderResult) -> bool:
+    return case.required_output_matches(result.final_quota_ids)
+
+
 def _ranked_top_ids(result: ProviderResult, limit: int = 3) -> tuple[str, ...]:
-    for target_stage in (
-        LifecycleStage.VALIDATED,
-        LifecycleStage.RERANKED,
-        LifecycleStage.RETRIEVED,
-    ):
-        stage = next(
-            (
-                value
-                for value in result.lifecycle
-                if value.stage == target_stage and value.emitted and value.candidates
-            ),
-            None,
-        )
-        if stage is not None:
-            ordered = sorted(
-                stage.candidates,
-                key=lambda candidate: (
-                    candidate.rank is None,
-                    candidate.rank or 10**9,
-                    candidate.quota_id,
-                ),
-            )
-            return tuple(candidate.quota_id for candidate in ordered[:limit])
-    return result.final_quota_ids[:limit]
+    return result.ranked_quota_ids[:limit]
 
 
 def _stage_flips(case: EvalCase, result: ProviderResult) -> dict[str, tuple[int, int]]:
+    if not case.top1_evaluable:
+        return {}
     flips: dict[str, tuple[int, int]] = {}
     previous_correct: bool | None = None
     for decision in result.decisions:
-        current_correct = _is_correct(case, decision.top1_id)
+        current_correct = bool(_is_top1_correct(case, decision.top1_id))
         good = int(previous_correct is False and current_correct is True)
         bad = int(previous_correct is True and current_correct is False)
         flips[decision.name] = (good, bad)
@@ -104,44 +103,84 @@ def aggregate_provider_metrics(
     *,
     min_slice_size: int = 20,
 ) -> dict[str, Any]:
+    case_counts = Counter(case.case_id for case in cases)
+    duplicate_case_ids = sorted(case_id for case_id, count in case_counts.items() if count > 1)
+    if duplicate_case_ids:
+        raise ValueError(f"duplicate evaluation case ids: {','.join(duplicate_case_ids)}")
     case_by_id = {case.case_id: case for case in cases}
-    valid: list[tuple[EvalCase, ProviderResult]] = []
+    result_buckets: dict[str, list[ProviderResult]] = defaultdict(list)
     exclusions: Counter[str] = Counter()
     for result in results:
-        case = case_by_id.get(result.case_id)
-        if case is None:
+        if result.case_id not in case_by_id:
             exclusions["unknown_case"] += 1
-        elif result.status not in VALID_STATUSES:
-            exclusions[result.status.value] += 1
-        else:
-            valid.append((case, result))
+            continue
+        result_buckets[result.case_id].append(result)
 
-    ranks = [_first_oracle_rank(case, result) for case, result in valid]
+    valid: list[tuple[EvalCase, ProviderResult]] = []
+    for case in cases:
+        bucket = result_buckets.get(case.case_id, [])
+        if not bucket:
+            exclusions["missing_result"] += 1
+            continue
+        if len(bucket) > 1:
+            exclusions["duplicate_result"] += 1
+            continue
+        result = bucket[0]
+        if result.status not in VALID_STATUSES:
+            exclusions[result.status.value] += 1
+            continue
+        valid.append((case, result))
+
+    valid_by_id = {case.case_id: result for case, result in valid}
+    rank_by_id = {
+        case.case_id: _oracle_completion_rank(case, result)
+        for case, result in valid
+    }
+    ranks = [rank_by_id.get(case.case_id) for case in cases]
     recalled = [rank for rank in ranks if rank is not None]
     final_correct = [
-        _is_correct(case, result.final_top1_id)
+        bool(_is_top1_correct(case, result.final_top1_id))
         for case, result in valid
-        if _first_oracle_rank(case, result) is not None
+        if rank_by_id.get(case.case_id) is not None and case.top1_evaluable
     ]
     stage_counts: dict[str, Counter[str]] = defaultdict(Counter)
-    for case, result in valid:
+    lifecycle_valid = [
+        (case, result) for case, result in valid if result.status == ProviderStatus.OK
+    ]
+    for case, result in lifecycle_valid:
         for stage_name, (good, bad) in _stage_flips(case, result).items():
             stage_counts[stage_name]["good_flip"] += good
             stage_counts[stage_name]["bad_flip"] += bad
 
     slices: dict[str, dict[str, Any]] = {}
-    grouped: dict[str, list[tuple[EvalCase, ProviderResult]]] = defaultdict(list)
-    for case, result in valid:
-        grouped[f"province={case.province}"].append((case, result))
-        grouped[f"source_family={case.source_family or '<empty>'}"].append((case, result))
-        grouped[f"project={case.project_id or '<empty>'}"].append((case, result))
+    grouped: dict[str, list[EvalCase]] = defaultdict(list)
+    for case in cases:
+        grouped[f"province={case.province}"].append(case)
+        grouped[f"source_family={case.source_family or '<empty>'}"].append(case)
+        grouped[f"project={case.project_id or '<empty>'}"].append(case)
     for key, rows in sorted(grouped.items()):
-        correct = sum(_is_correct(case, result.final_top1_id) for case, result in rows)
+        output_correct = sum(
+            _is_output_correct(case, valid_by_id[case.case_id])
+            for case in rows
+            if case.case_id in valid_by_id
+        )
+        top1_rows = [case for case in rows if case.top1_evaluable]
+        top1_correct = sum(
+            bool(_is_top1_correct(case, valid_by_id[case.case_id].final_top1_id))
+            for case in top1_rows
+            if case.case_id in valid_by_id
+        )
         slices[key] = {
             "count": len(rows),
-            "correct": correct,
+            "valid_count": sum(case.case_id in valid_by_id for case in rows),
+            "correct": output_correct,
+            "final_output_accuracy": (
+                round(output_correct / len(rows), 6) if len(rows) >= min_slice_size else None
+            ),
             "top1": (
-                round(correct / len(rows), 6) if len(rows) >= min_slice_size else None
+                round(top1_correct / len(top1_rows), 6)
+                if len(top1_rows) >= min_slice_size
+                else None
             ),
         }
 
@@ -151,7 +190,7 @@ def aggregate_provider_metrics(
     route_evaluable_count = 0
     candidate_field_present: Counter[str] = Counter()
     candidate_total = 0
-    for case, result in valid:
+    for case, result in lifecycle_valid:
         retrieved_stage = next(
             (
                 stage
@@ -171,9 +210,9 @@ def aggregate_provider_metrics(
         if retrieved_stage and route_stage:
             retrieved_ids = {candidate.quota_id for candidate in retrieved_stage.candidates}
             route_ids = {candidate.quota_id for candidate in route_stage.candidates}
-            if retrieved_ids & case.oracle_set:
+            if case.oracle_covered_by(retrieved_ids):
                 route_evaluable_count += 1
-                route_loss_count += int(not bool(route_ids & case.oracle_set))
+                route_loss_count += int(not case.oracle_covered_by(route_ids))
         for stage in result.lifecycle:
             for candidate in stage.candidates:
                 candidate_total += 1
@@ -191,11 +230,24 @@ def aggregate_provider_metrics(
                 ):
                     param_false_hard_fail_keys.add((case.case_id, candidate.quota_id))
 
-    denominator = len(valid)
-    final_top1_hits = sum(_is_correct(case, result.final_top1_id) for case, result in valid)
+    denominator = len(cases)
+    provider_failure_count = sum(
+        exclusions[reason] for reason in PROVIDER_FAILURE_EXCLUSIONS
+    )
+    final_top1_evaluable = sum(case.top1_evaluable for case in cases)
+    final_top1_hits = sum(
+        bool(_is_top1_correct(case, result.final_top1_id))
+        for case, result in valid
+        if case.top1_evaluable
+    )
+    final_output_hits = sum(_is_output_correct(case, result) for case, result in valid)
+    final_required_hits = sum(
+        _is_required_output_correct(case, result) for case, result in valid
+    )
     final_top3_hits = sum(
         bool(set(_ranked_top_ids(result, 3)) & case.oracle_set)
         for case, result in valid
+        if case.top1_evaluable
     )
     refusal_count = sum(not result.final_top1_id for _, result in valid)
     calibration_rows = [
@@ -209,14 +261,18 @@ def aggregate_provider_metrics(
                     else result.confidence,
                 ),
             ),
-            float(_is_correct(case, result.final_top1_id)),
+            float(_is_output_correct(case, result)),
         )
         for case, result in valid
-        if result.final_top1_id
     ]
     return {
         "total_cases": len(cases),
-        "valid_cases": denominator,
+        "valid_cases": len(valid),
+        "system_denominator": denominator,
+        "provider_failure_count": provider_failure_count,
+        "provider_failure_rate": (
+            round(provider_failure_count / denominator, 6) if denominator else 0.0
+        ),
         "exclusions": dict(sorted(exclusions.items())),
         "recall_at": {
             str(k): (
@@ -229,8 +285,24 @@ def aggregate_provider_metrics(
         "conditional_top1": (
             round(sum(final_correct) / len(final_correct), 6) if final_correct else 0.0
         ),
-        "final_top1": round(final_top1_hits / denominator, 6) if denominator else 0.0,
-        "final_top3": round(final_top3_hits / denominator, 6) if denominator else 0.0,
+        "final_top1_evaluable_cases": final_top1_evaluable,
+        "final_top1": (
+            round(final_top1_hits / final_top1_evaluable, 6)
+            if final_top1_evaluable
+            else 0.0
+        ),
+        "final_top3_evaluable_cases": final_top1_evaluable,
+        "final_top3": (
+            round(final_top3_hits / final_top1_evaluable, 6)
+            if final_top1_evaluable
+            else 0.0
+        ),
+        "final_output_accuracy": (
+            round(final_output_hits / denominator, 6) if denominator else 0.0
+        ),
+        "final_required_output_accuracy": (
+            round(final_required_hits / denominator, 6) if denominator else 0.0
+        ),
         "refusal_rate": round(refusal_count / denominator, 6) if denominator else 0.0,
         "confidence_ece": _confidence_ece(calibration_rows),
         "mrr": (
@@ -279,10 +351,24 @@ def compare_providers(
     provider_results: dict[str, Sequence[ProviderResult]],
 ) -> dict[str, Any]:
     case_by_id = {case.case_id: case for case in cases}
-    result_maps = {
-        provider: {result.case_id: result for result in results}
-        for provider, results in provider_results.items()
-    }
+    result_maps: dict[str, dict[str, ProviderResult]] = {}
+    for provider, results in provider_results.items():
+        buckets: dict[str, list[ProviderResult]] = defaultdict(list)
+        for result in results:
+            buckets[result.case_id].append(result)
+        result_maps[provider] = {
+            case_id: bucket[0]
+            for case_id, bucket in buckets.items()
+            if len(bucket) == 1
+        }
+    production_provider = next(
+        (
+            name
+            for name in ("search_core", "production", "production_e2e")
+            if name in result_maps
+        ),
+        "production",
+    )
     production_hits = 0
     goal_hits = 0
     union_hits = 0
@@ -290,7 +376,7 @@ def compare_providers(
     excluded = 0
     rows: list[dict[str, Any]] = []
     for case_id, case in sorted(case_by_id.items()):
-        production = result_maps.get("production", {}).get(case_id)
+        production = result_maps.get(production_provider, {}).get(case_id)
         goal = result_maps.get("goal_shadow", {}).get(case_id)
         if (
             production is None
@@ -302,9 +388,9 @@ def compare_providers(
             continue
         production_ids = set(production.retrieved_ids)
         goal_ids = set(goal.retrieved_ids)
-        production_hit = bool(production_ids & case.oracle_set)
-        goal_hit = bool(goal_ids & case.oracle_set)
-        union_hit = bool((production_ids | goal_ids) & case.oracle_set)
+        production_hit = case.oracle_covered_by(production_ids)
+        goal_hit = case.oracle_covered_by(goal_ids)
+        union_hit = case.oracle_covered_by(production_ids | goal_ids)
         production_hits += int(production_hit)
         goal_hits += int(goal_hit)
         union_hits += int(union_hit)
@@ -321,6 +407,7 @@ def compare_providers(
     total = len(rows)
     return {
         "total_cases": len(cases),
+        "production_provider": production_provider,
         "comparable_cases": total,
         "excluded_cases": excluded,
         "production_recall": round(production_hits / total, 6) if total else 0.0,

@@ -266,3 +266,109 @@ def test_accuracy_baseline_cli_constructs_union_shadow_provider(tmp_path, monkey
     assert [provider.name for provider in captured["providers"]] == [
         "production_goal_union_shadow"
     ]
+
+
+def test_accuracy_baseline_cli_returns_nonzero_when_requested_coverage_gate_fails(
+    tmp_path,
+    monkeypatch,
+):
+    import tools.run_accuracy_baseline as cli
+
+    dataset = tmp_path / "primary.jsonl"
+    contract = tmp_path / "coverage.json"
+    _write_case(dataset)
+    contract.write_text("{}", encoding="utf-8")
+
+    def fake_run_accuracy_baseline(**kwargs):
+        return {
+            "summary": {
+                "datasets": {
+                    "primary": {"system_baseline_eligible": False},
+                }
+            }
+        }
+
+    monkeypatch.setattr(cli, "run_accuracy_baseline", fake_run_accuracy_baseline)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_accuracy_baseline.py",
+            "--primary",
+            str(dataset),
+            "--coverage-contract",
+            str(contract),
+            "--providers",
+            "goal_shadow",
+            "--output-dir",
+            str(tmp_path / "reports"),
+        ],
+    )
+
+    assert cli.main() == 2
+
+
+def test_runner_blocks_system_eligibility_when_dataset_rows_are_rejected(tmp_path):
+    dataset = tmp_path / "primary.jsonl"
+    rows = [
+        {
+            "sample_id": "1",
+            "province": "demo-a",
+            "bill_name": "Composite",
+            "oracle_quota_ids": ["Q-1", "Q-2"],
+            "source_family": "human/a",
+            "project_name": "project-a",
+            "specialty": "C10",
+            "split": "heldout",
+        },
+        {
+            "sample_id": "2",
+            "province": "demo-b",
+            "bill_name": "Single",
+            "oracle_quota_ids": ["Q-2"],
+            "source_family": "human/b",
+            "project_name": "project-b",
+            "specialty": "C4",
+            "split": "hard",
+        },
+    ]
+    dataset.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    contract = {
+        "contract_version": "coverage.v1",
+        "approval_reference": "approved",
+        "target_surface": "search_core",
+        "approved_for_system_baseline": True,
+        "min_cases": 2,
+        "min_provinces": 2,
+        "min_source_families": 2,
+        "min_projects": 2,
+        "min_specialties": 2,
+        "min_splits": 2,
+        "max_dominant_province_share": 0.5,
+        "max_dominant_source_family_share": 0.5,
+        "max_dominant_project_share": 0.5,
+        "max_dominant_specialty_share": 0.5,
+        "max_cross_split_query_overlap": 0,
+        "max_cross_split_source_family_overlap": 0,
+        "max_cross_split_project_overlap": 0,
+        "max_cross_split_province_overlap": 0,
+        "require_nonempty_source_family": True,
+        "require_nonempty_project": True,
+        "require_nonempty_specialty": True,
+        "require_nonempty_split": True,
+    }
+
+    result = run_accuracy_baseline(
+        datasets={"primary": dataset},
+        output_dir=tmp_path / "reports",
+        providers=[FakeProvider("search_core", "Q-2")],
+        coverage_requirements=contract,
+    )
+
+    primary = result["summary"]["datasets"]["primary"]
+    assert primary["system_baseline_eligible"] is False
+    assert primary["rejection_counts"] == {"ambiguous_oracle_semantics": 1}
+    assert "dataset_rejection:ambiguous_oracle_semantics=1" in primary["coverage"]["reasons"]

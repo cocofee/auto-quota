@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .contracts import DatasetKind, EvalCase
+from .contracts import DatasetKind, EvalCase, OracleSemantics
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +64,16 @@ def _case_from_row(
     )
     if not oracles:
         return None, "missing_oracle"
+    raw_oracle_semantics = _clean(row.get("oracle_semantics"))
+    if not raw_oracle_semantics:
+        if len(oracles) > 1:
+            return None, "ambiguous_oracle_semantics"
+        oracle_semantics = OracleSemantics.ANY
+    else:
+        try:
+            oracle_semantics = OracleSemantics(raw_oracle_semantics.lower())
+        except ValueError:
+            return None, "invalid_oracle_semantics"
     source = _clean(row.get("source") or row.get("source_file"))
     source_family = _clean(row.get("source_family") or source)
     project_id = _clean(
@@ -87,6 +97,7 @@ def _case_from_row(
         "unit",
         "specialty",
         "oracle_quota_ids",
+        "oracle_semantics",
         "expected_quota_ids",
         "expected_ids",
         "quota_ids",
@@ -108,6 +119,7 @@ def _case_from_row(
         oracle_quota_ids=oracles,
         source_family=source_family,
         project_id=project_id,
+        oracle_semantics=oracle_semantics,
         source=source,
         split=_clean(row.get("split")),
         metadata={key: value for key, value in row.items() if key not in known},
@@ -131,11 +143,15 @@ def load_dataset(path: str | Path, dataset_kind: DatasetKind) -> DatasetLoadResu
 
     cases: list[EvalCase] = []
     rejections: Counter[str] = Counter()
+    seen_case_ids: set[str] = set()
     for index, row in enumerate(rows, start=1):
         case, reason = _case_from_row(row, dataset_kind, index)
         if case is None:
             rejections[reason] += 1
+        elif case.case_id in seen_case_ids:
+            rejections["duplicate_case_id"] += 1
         else:
+            seen_case_ids.add(case.case_id)
             cases.append(case)
     return DatasetLoadResult(
         path=resolved,

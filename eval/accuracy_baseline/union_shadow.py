@@ -14,6 +14,7 @@ from .contracts import (
     ProviderStatus,
 )
 from .lifecycle import normalize_production_detail
+from .providers import bucket_provider_details, provider_status_from_exception
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,23 +600,20 @@ class GoalUnionShadowProvider:
                     goal_top_k=self._goal_top_k,
                     candidate_budget_policy=self._candidate_budget_policy,
                 )
+                detail_buckets = bucket_provider_details(payload)
             except Exception as exc:
                 results.extend(
                     _provider_error_result(
                         case,
-                        ProviderStatus.PROVINCE_UNAVAILABLE,
+                        provider_status_from_exception(exc),
                         exc,
                     )
                     for case in province_cases
                 )
                 continue
-            details = {
-                str(detail.get("sample_id") or ""): detail
-                for detail in payload.get("details") or []
-            }
             for case in province_cases:
-                detail = details.get(case.case_id)
-                if detail is None:
+                bucket = detail_buckets.get(case.case_id, [])
+                if not bucket:
                     results.append(
                         _provider_error_result(
                             case,
@@ -624,17 +622,36 @@ class GoalUnionShadowProvider:
                         )
                     )
                     continue
-                diagnostics = dict(detail.get("union_shadow_diagnostics") or {})
-                runtime_metadata = {
-                    "experiment": "production_goal_candidate_union_shadow_v1",
-                    **diagnostics,
-                }
-                results.append(
-                    _rename_provider_result(
-                        normalize_production_detail(case, detail),
-                        runtime_metadata,
+                if len(bucket) > 1:
+                    results.append(
+                        _provider_error_result(
+                            case,
+                            ProviderStatus.PROVIDER_ERROR,
+                            RuntimeError("union shadow returned duplicate case details"),
+                        )
                     )
-                )
+                    continue
+                try:
+                    detail = bucket[0]
+                    diagnostics = dict(detail.get("union_shadow_diagnostics") or {})
+                    runtime_metadata = {
+                        "experiment": "production_goal_candidate_union_shadow_v1",
+                        **diagnostics,
+                    }
+                    results.append(
+                        _rename_provider_result(
+                            normalize_production_detail(case, detail),
+                            runtime_metadata,
+                        )
+                    )
+                except Exception as exc:
+                    results.append(
+                        _provider_error_result(
+                            case,
+                            ProviderStatus.PROVIDER_ERROR,
+                            exc,
+                        )
+                    )
         return sorted(results, key=lambda result: result.case_id)
 
 
@@ -643,7 +660,13 @@ def aggregate_union_shadow_metrics(
     results: Sequence[ProviderResult],
 ) -> dict[str, Any]:
     case_by_id = {case.case_id: case for case in cases}
-    result_by_id = {result.case_id: result for result in results}
+    result_buckets: dict[str, list[ProviderResult]] = defaultdict(list)
+    exclusions: dict[str, int] = {}
+    for result in results:
+        if result.case_id not in case_by_id:
+            exclusions["unknown_case"] = exclusions.get("unknown_case", 0) + 1
+            continue
+        result_buckets[result.case_id].append(result)
     valid_statuses = {ProviderStatus.OK, ProviderStatus.TRACE_INCOMPLETE}
     valid_cases = 0
     production_recalled = 0
@@ -653,12 +676,15 @@ def aggregate_union_shadow_metrics(
     goal_unique_gain = 0
     missing_local_count = 0
     rows: list[dict[str, Any]] = []
-    exclusions: dict[str, int] = {}
     for case_id, case in sorted(case_by_id.items()):
-        result = result_by_id.get(case_id)
-        if result is None:
+        bucket = result_buckets.get(case_id, [])
+        if not bucket:
             exclusions["missing_result"] = exclusions.get("missing_result", 0) + 1
             continue
+        if len(bucket) > 1:
+            exclusions["duplicate_result"] = exclusions.get("duplicate_result", 0) + 1
+            continue
+        result = bucket[0]
         if result.status not in valid_statuses:
             key = result.status.value
             exclusions[key] = exclusions.get(key, 0) + 1
@@ -681,10 +707,10 @@ def aggregate_union_shadow_metrics(
             if str(value).strip()
         }
         rankable_ids = set(result.retrieved_ids)
-        production_hit = bool(production_ids & case.oracle_set)
-        goal_hit = bool(goal_ids & case.oracle_set)
-        raw_union_hit = bool(raw_union_ids & case.oracle_set)
-        rankable_hit = bool(rankable_ids & case.oracle_set)
+        production_hit = case.oracle_covered_by(production_ids)
+        goal_hit = case.oracle_covered_by(goal_ids)
+        raw_union_hit = case.oracle_covered_by(raw_union_ids)
+        rankable_hit = case.oracle_covered_by(rankable_ids)
         production_recalled += int(production_hit)
         goal_recalled += int(goal_hit)
         raw_union_recalled += int(raw_union_hit)
@@ -708,19 +734,38 @@ def aggregate_union_shadow_metrics(
             }
         )
 
-    denominator = valid_cases or 1
+    denominator = len(cases)
+    provider_failure_count = sum(
+        exclusions.get(reason, 0)
+        for reason in (
+            "missing_result",
+            "duplicate_result",
+            ProviderStatus.PROVIDER_ERROR.value,
+        )
+    )
     return {
         "total_cases": len(cases),
         "valid_cases": valid_cases,
+        "system_denominator": denominator,
         "exclusions": dict(sorted(exclusions.items())),
+        "provider_failure_count": provider_failure_count,
+        "provider_failure_rate": (
+            round(provider_failure_count / denominator, 6) if denominator else 0.0
+        ),
         "production_recalled_count": production_recalled,
-        "production_recall": round(production_recalled / denominator, 6) if valid_cases else 0.0,
+        "production_recall": (
+            round(production_recalled / denominator, 6) if denominator else 0.0
+        ),
         "goal_recalled_count": goal_recalled,
-        "goal_recall": round(goal_recalled / denominator, 6) if valid_cases else 0.0,
+        "goal_recall": round(goal_recalled / denominator, 6) if denominator else 0.0,
         "raw_union_recalled_count": raw_union_recalled,
-        "raw_union_recall": round(raw_union_recalled / denominator, 6) if valid_cases else 0.0,
+        "raw_union_recall": (
+            round(raw_union_recalled / denominator, 6) if denominator else 0.0
+        ),
         "rankable_recalled_count": rankable_recalled,
-        "rankable_recall": round(rankable_recalled / denominator, 6) if valid_cases else 0.0,
+        "rankable_recall": (
+            round(rankable_recalled / denominator, 6) if denominator else 0.0
+        ),
         "goal_unique_recall_gain": goal_unique_gain,
         "missing_local_goal_candidate_count": missing_local_count,
         "cases": rows,

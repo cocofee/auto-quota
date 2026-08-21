@@ -104,7 +104,12 @@ def _empty_stage(stage: LifecycleStage) -> StageSnapshot:
     return StageSnapshot(stage=stage, emitted=False)
 
 
-def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> ProviderResult:
+def normalize_production_detail(
+    case: EvalCase,
+    detail: dict[str, Any],
+    *,
+    provider_name: str = "production",
+) -> ProviderResult:
     candidate_rows = _candidate_map(detail.get("candidate_snapshots") or [])
     lifecycle_rows = _candidate_map(detail.get("candidate_lifecycle_trace") or [])
     recall_ids = tuple(
@@ -115,7 +120,7 @@ def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> Provi
     retrieved = tuple(
         _snapshot(
             case=case,
-            provider="production",
+            provider=provider_name,
             stage=LifecycleStage.RETRIEVED,
             quota_id=quota_id,
             rank=rank,
@@ -137,7 +142,7 @@ def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> Provi
     route_filtered = tuple(
         _snapshot(
             case=case,
-            provider="production",
+            provider=provider_name,
             stage=LifecycleStage.ROUTE_FILTERED,
             quota_id=quota_id,
             rank=rank,
@@ -156,7 +161,7 @@ def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> Provi
     validated = tuple(
         _snapshot(
             case=case,
-            provider="production",
+            provider=provider_name,
             stage=LifecycleStage.VALIDATED,
             quota_id=quota_id,
             rank=rank,
@@ -178,7 +183,7 @@ def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> Provi
     reranked = tuple(
         _snapshot(
             case=case,
-            provider="production",
+            provider=provider_name,
             stage=LifecycleStage.RERANKED,
             quota_id=quota_id,
             rank=rank,
@@ -245,12 +250,14 @@ def normalize_production_detail(case: EvalCase, detail: dict[str, Any]) -> Provi
         status = ProviderStatus.TRACE_INCOMPLETE
     return ProviderResult(
         case_id=case.case_id,
-        provider_name="production",
+        provider_name=provider_name,
         status=status,
         final_quota_ids=final_ids,
+        ranked_quota_ids=tuple(candidate_rows),
         confidence=float(detail.get("confidence") or 0.0),
         lifecycle=tuple(stages[stage] for stage in STAGE_ORDER),
         decisions=decisions,
+        runtime_metadata={"execution_mode": "search_core"},
         raw_trace=detail,
     )
 
@@ -311,7 +318,8 @@ def normalize_goal_hits(case: EvalCase, hits: Iterable[Any]) -> ProviderResult:
         case_id=case.case_id,
         provider_name="goal_shadow",
         status=ProviderStatus.OK,
-        final_quota_ids=tuple(candidate.quota_id for candidate in candidates[:3]),
+        final_quota_ids=((final_id,) if final_id else ()),
+        ranked_quota_ids=tuple(candidate.quota_id for candidate in candidates),
         confidence=(float(rows[0].confidence) if rows else 0.0),
         lifecycle=tuple(stages[stage] for stage in STAGE_ORDER),
         decisions=((DecisionSnapshot(name="goal_score", top1_id=final_id),) if final_id else ()),

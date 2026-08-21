@@ -24,6 +24,7 @@ UNAVAILABLE_FIELDS = (
     "elevator_stops",
     "elevator_speed",
 )
+NUMERIC_TEXT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,8 @@ class ReconstructedAssetReport:
     oracle_count: int
     missing_oracle_ids: tuple[str, ...]
     duplicate_quota_chapter_count: int
+    numeric_specialty_count: int
+    numeric_specialty_values: tuple[str, ...]
     non_empty_rates: dict[str, float]
     null_field_counts: dict[str, int]
     unavailable_fields: tuple[str, ...]
@@ -185,6 +188,12 @@ def materialize_province_db(
     finally:
         source_conn.close()
 
+    numeric_specialties = [
+        str(row.get("specialty") or "").strip()
+        for row in source_rows
+        if NUMERIC_TEXT_RE.fullmatch(str(row.get("specialty") or "").strip())
+    ]
+
     province_dir.mkdir(parents=True, exist_ok=True)
     temporary_path = database_path.with_suffix(".db.tmp")
     if temporary_path.exists():
@@ -274,6 +283,8 @@ def materialize_province_db(
         failed_gates.append("oracle_coverage")
     if duplicate_count:
         failed_gates.append("duplicate_quota_chapter")
+    if numeric_specialties:
+        failed_gates.append("numeric_specialty")
 
     manifest_path = province_dir / "asset_manifest.json"
     report = ReconstructedAssetReport(
@@ -288,6 +299,8 @@ def materialize_province_db(
         oracle_count=len(oracle_ids),
         missing_oracle_ids=missing_oracles,
         duplicate_quota_chapter_count=duplicate_count,
+        numeric_specialty_count=len(numeric_specialties),
+        numeric_specialty_values=tuple(sorted(set(numeric_specialties))[:20]),
         non_empty_rates=non_empty_rates,
         null_field_counts={field: target_row_count for field in UNAVAILABLE_FIELDS},
         unavailable_fields=UNAVAILABLE_FIELDS,

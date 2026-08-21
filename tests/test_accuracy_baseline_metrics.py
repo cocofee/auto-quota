@@ -6,6 +6,7 @@ from eval.accuracy_baseline.contracts import (
     DecisionSnapshot,
     EvalCase,
     LifecycleStage,
+    OracleSemantics,
     ProviderResult,
     ProviderStatus,
     StageSnapshot,
@@ -61,6 +62,7 @@ def _result(
         provider_name="production",
         status=ProviderStatus.OK,
         final_quota_ids=(final,),
+        ranked_quota_ids=tuple(ids),
         confidence=70,
         lifecycle=(
             StageSnapshot(
@@ -169,3 +171,125 @@ def test_route_and_taxonomy_oracle_losses_are_counted_once_per_case_candidate():
     assert report["route_filter_oracle_loss_count"] == 1
     assert report["route_filter_oracle_loss_rate"] == 1.0
     assert report["taxonomy_false_veto_count"] == 1
+
+
+def test_route_loss_requires_complete_all_oracle_coverage():
+    case = replace(
+        _case("case-1"),
+        oracle_quota_ids=("Q-1", "Q-2"),
+        oracle_semantics=OracleSemantics.ALL,
+    )
+    retrieved = StageSnapshot(
+        stage=LifecycleStage.RETRIEVED,
+        emitted=True,
+        candidates=(_candidate("Q-1", 1),),
+        top1_id="Q-1",
+    )
+    route_filtered = StageSnapshot(
+        stage=LifecycleStage.ROUTE_FILTERED,
+        emitted=True,
+        candidates=(),
+    )
+    result = ProviderResult(
+        case_id=case.case_id,
+        provider_name="search_core",
+        status=ProviderStatus.OK,
+        lifecycle=(retrieved, route_filtered),
+    )
+
+    report = aggregate_provider_metrics([case], [result], min_slice_size=1)
+
+    assert report["route_filter_oracle_loss_count"] == 0
+    assert report["route_filter_oracle_loss_rate"] is None
+
+
+def test_metrics_count_missing_and_duplicate_results_as_system_failures():
+    cases = [_case("case-1"), _case("case-2")]
+    missing_report = aggregate_provider_metrics(
+        cases,
+        [_result("case-1", ["Q-2"], [], "Q-2")],
+        min_slice_size=1,
+    )
+
+    assert missing_report["valid_cases"] == 1
+    assert missing_report["exclusions"] == {"missing_result": 1}
+    assert missing_report["provider_failure_count"] == 1
+    assert missing_report["provider_failure_rate"] == 0.5
+    assert missing_report["final_top1"] == 0.5
+
+    duplicate_report = aggregate_provider_metrics(
+        [_case("case-1")],
+        [
+            _result("case-1", ["Q-2"], [], "Q-2"),
+            _result("case-1", ["Q-1"], [], "Q-1"),
+        ],
+        min_slice_size=1,
+    )
+
+    assert duplicate_report["valid_cases"] == 0
+    assert duplicate_report["exclusions"] == {"duplicate_result": 1}
+    assert duplicate_report["provider_failure_count"] == 1
+    assert duplicate_report["provider_failure_rate"] == 1.0
+    assert duplicate_report["final_top1"] == 0.0
+
+    provider_error_report = aggregate_provider_metrics(
+        [_case("case-1")],
+        [
+            ProviderResult(
+                case_id="case-1",
+                provider_name="search_core",
+                status=ProviderStatus.PROVIDER_ERROR,
+            )
+        ],
+        min_slice_size=1,
+    )
+
+    assert provider_error_report["provider_failure_count"] == 1
+    assert provider_error_report["provider_failure_rate"] == 1.0
+
+
+def test_final_top3_uses_explicit_final_ranking_not_validated_recall_order():
+    case = _case("case-1", oracle="Q-3")
+    validated = StageSnapshot(
+        stage=LifecycleStage.VALIDATED,
+        emitted=True,
+        candidates=tuple(
+            _candidate(quota_id, rank, stage=LifecycleStage.VALIDATED)
+            for rank, quota_id in enumerate(("V-1", "V-2", "V-3"), start=1)
+        ),
+    )
+    result = ProviderResult(
+        case_id=case.case_id,
+        provider_name="search_core",
+        status=ProviderStatus.OK,
+        final_quota_ids=("Q-1",),
+        ranked_quota_ids=("Q-1", "Q-2", "Q-3"),
+        lifecycle=(validated,),
+    )
+
+    report = aggregate_provider_metrics([case], [result], min_slice_size=1)
+
+    assert report["final_top1"] == 0.0
+    assert report["final_top3"] == 1.0
+
+
+def test_all_oracle_semantics_require_the_complete_output_set():
+    case = replace(
+        _case("case-1"),
+        oracle_quota_ids=("Q-MAIN", "Q-RELATED"),
+        oracle_semantics=OracleSemantics.ALL,
+    )
+    partial = ProviderResult(
+        case_id=case.case_id,
+        provider_name="search_core",
+        status=ProviderStatus.OK,
+        final_quota_ids=("Q-RELATED",),
+    )
+    complete = replace(partial, final_quota_ids=("Q-MAIN", "Q-RELATED"))
+
+    partial_report = aggregate_provider_metrics([case], [partial], min_slice_size=1)
+    complete_report = aggregate_provider_metrics([case], [complete], min_slice_size=1)
+
+    assert partial_report["final_output_accuracy"] == 0.0
+    assert complete_report["final_output_accuracy"] == 1.0
+    assert complete_report["final_top1_evaluable_cases"] == 0

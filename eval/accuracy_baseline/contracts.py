@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping
@@ -9,6 +10,11 @@ class DatasetKind(StrEnum):
     PRIMARY = "primary"
     OSS_DIAGNOSTIC = "oss_diagnostic"
     HISTORICAL_STRESS = "historical_stress"
+
+
+class OracleSemantics(StrEnum):
+    ANY = "any"
+    ALL = "all"
 
 
 class LifecycleStage(StrEnum):
@@ -41,6 +47,7 @@ class EvalCase:
     oracle_quota_ids: tuple[str, ...]
     source_family: str
     project_id: str
+    oracle_semantics: OracleSemantics = OracleSemantics.ANY
     source: str = ""
     split: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -53,6 +60,28 @@ class EvalCase:
     def oracle_set(self) -> set[str]:
         return set(self.oracle_quota_ids)
 
+    @property
+    def top1_evaluable(self) -> bool:
+        return self.oracle_semantics == OracleSemantics.ANY or len(self.oracle_quota_ids) <= 1
+
+    def oracle_covered_by(self, quota_ids: Iterable[str]) -> bool:
+        observed = {value for value in quota_ids if value}
+        if self.oracle_semantics == OracleSemantics.ALL:
+            return bool(self.oracle_set) and self.oracle_set <= observed
+        return bool(self.oracle_set & observed)
+
+    def output_matches(self, quota_ids: tuple[str, ...]) -> bool:
+        selected = tuple(dict.fromkeys(value for value in quota_ids if value))
+        if self.oracle_semantics == OracleSemantics.ALL:
+            return bool(self.oracle_set) and set(selected) == self.oracle_set
+        return bool(selected and selected[0] in self.oracle_set)
+
+    def required_output_matches(self, quota_ids: tuple[str, ...]) -> bool:
+        selected = set(value for value in quota_ids if value)
+        if self.oracle_semantics == OracleSemantics.ALL:
+            return bool(self.oracle_set) and self.oracle_set <= selected
+        return bool(quota_ids and quota_ids[0] in self.oracle_set)
+
     def to_record(self) -> dict[str, Any]:
         return {
             "sample_id": self.case_id,
@@ -62,6 +91,7 @@ class EvalCase:
             "unit": self.unit,
             "specialty": self.specialty,
             "oracle_quota_ids": list(self.oracle_quota_ids),
+            "oracle_semantics": self.oracle_semantics.value,
             "source": self.source,
             "source_family": self.source_family,
             "project_name": self.project_id,
@@ -119,6 +149,7 @@ class ProviderResult:
     provider_name: str
     status: ProviderStatus
     final_quota_ids: tuple[str, ...] = ()
+    ranked_quota_ids: tuple[str, ...] = ()
     confidence: float = 0.0
     lifecycle: tuple[StageSnapshot, ...] = ()
     decisions: tuple[DecisionSnapshot, ...] = ()

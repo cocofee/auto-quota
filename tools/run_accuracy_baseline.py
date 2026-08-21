@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from eval.accuracy_baseline.providers import (  # noqa: E402
     GoalShadowProvider,
     ProductionProvider,
+    SearchCoreProvider,
 )
 from eval.accuracy_baseline.runner import run_accuracy_baseline  # noqa: E402
 from eval.accuracy_baseline.union_shadow import GoalUnionShadowProvider  # noqa: E402
@@ -19,13 +20,13 @@ from eval.accuracy_baseline.union_shadow import GoalUnionShadowProvider  # noqa:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run read-only accuracy baseline evaluation"
+        description="Run read-only accuracy evaluation"
     )
     parser.add_argument("--primary")
     parser.add_argument("--oss-diagnostic")
     parser.add_argument("--historical-stress")
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--providers", default="production,goal_shadow")
+    parser.add_argument("--providers", default="search_core,goal_shadow")
     parser.add_argument("--goal-top-k", type=int, default=80)
     parser.add_argument(
         "--union-budget-policy",
@@ -33,6 +34,10 @@ def main() -> int:
         default="none",
     )
     parser.add_argument("--min-slice-size", type=int, default=20)
+    parser.add_argument(
+        "--coverage-contract",
+        help="Complete JSON coverage contract required for system-baseline eligibility",
+    )
     parser.add_argument("--with-experience", action="store_true")
     parser.add_argument("--provinces-db-dir")
     args = parser.parse_args()
@@ -48,9 +53,23 @@ def main() -> int:
     }
     if not datasets:
         parser.error("at least one dataset path is required")
+    coverage_requirements = None
+    if args.coverage_contract:
+        if "primary" not in datasets:
+            parser.error("coverage contract requires a primary dataset")
+        coverage_path = Path(args.coverage_contract).resolve()
+        if not coverage_path.is_file():
+            parser.error(f"coverage contract not found: {coverage_path}")
+        try:
+            coverage_requirements = json.loads(coverage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            parser.error(f"invalid coverage contract: {exc}")
+        if not isinstance(coverage_requirements, dict):
+            parser.error("coverage contract must be a JSON object")
     requested = {value.strip() for value in args.providers.split(",") if value.strip()}
     unknown = requested - {
         "production",
+        "search_core",
         "goal_shadow",
         "production_goal_union_shadow",
     }
@@ -66,6 +85,8 @@ def main() -> int:
         config.PROVINCES_DB_DIR = resolved_provinces_dir
     try:
         providers = []
+        if "search_core" in requested:
+            providers.append(SearchCoreProvider(with_experience=args.with_experience))
         if "production" in requested:
             providers.append(ProductionProvider(with_experience=args.with_experience))
         if "goal_shadow" in requested:
@@ -83,10 +104,15 @@ def main() -> int:
             output_dir=args.output_dir,
             providers=providers,
             min_slice_size=args.min_slice_size,
+            coverage_requirements=coverage_requirements,
         )
     finally:
         config.PROVINCES_DB_DIR = original_provinces_dir
     print(json.dumps(payload["summary"], ensure_ascii=False, indent=2))
+    if args.coverage_contract:
+        primary_summary = payload["summary"].get("datasets", {}).get("primary", {})
+        if not primary_summary.get("system_baseline_eligible", False):
+            return 2
     return 0
 
 

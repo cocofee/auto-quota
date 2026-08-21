@@ -994,7 +994,11 @@ def detect_specialty_from_excel(excel_path: str) -> str:
                 for j, row in enumerate(ws.iter_rows(min_row=1, max_row=30, values_only=True)):
                     if row and len(row) > 3 and row[3]:
                         val = str(row[3]).strip()
-                        if val and val not in ("工作类型", "类型", "类别"):  # 跳过表头
+                        if (
+                            val
+                            and val not in ("工作类型", "类型", "类别")
+                            and not re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", val)
+                        ):
                             type_counts[val] = type_counts.get(val, 0) + 1
         finally:
             wb.close()
@@ -1088,4 +1092,3 @@ if __name__ == "__main__":
         logger.info(f"  总记录数: {stats['total']}")
         logger.info(f"  章节数: {stats['chapters']}")
         logger.info(f"  专业数: {stats['specialties']}")
-

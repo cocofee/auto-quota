@@ -3,11 +3,14 @@ import sqlite3
 import sys
 
 import pytest
+from openpyxl import Workbook
 
 from eval.accuracy_baseline.reconstructed_assets import materialize_province_db
+from src.goal_search.national_index import row_to_index_tuple
+from src.quota_db import detect_specialty_from_excel
 
 
-def _create_national_index(path):
+def _create_national_index(path, *, specialty="install"):
     conn = sqlite3.connect(path)
     try:
         conn.execute(
@@ -46,8 +49,8 @@ def _create_national_index(path):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                ("demo-province", "A10-1-1", "Pipe DN50", "m", "chapter-a", "install", "steel", "threaded", 50, None, 1, "pipe dn50 threaded"),
-                ("demo-province", "A10-1-2", "Pipe DN80", "m", "chapter-a", "install", "steel", "threaded", 80, None, 2, "pipe dn80 threaded"),
+                ("demo-province", "A10-1-1", "Pipe DN50", "m", "chapter-a", specialty, "steel", "threaded", 50, None, 1, "pipe dn50 threaded"),
+                ("demo-province", "A10-1-2", "Pipe DN80", "m", "chapter-a", specialty, "steel", "threaded", 80, None, 2, "pipe dn80 threaded"),
                 ("other-province", "B1-1-1", "Other", "set", "chapter-b", "other", "", "", None, None, None, "other"),
             ],
         )
@@ -137,6 +140,48 @@ def test_materialize_province_db_reports_missing_oracle_gate(tmp_path):
     assert report.gate_passed is False
     assert report.failed_gates == ("oracle_coverage",)
     assert report.missing_oracle_ids == ("MISSING",)
+
+
+def test_materialize_province_db_rejects_numeric_specialty_values(tmp_path):
+    national_index = tmp_path / "national_index.sqlite"
+    primary = tmp_path / "primary.jsonl"
+    _create_national_index(national_index, specialty="123.0")
+    _write_primary(primary)
+
+    report = materialize_province_db(
+        national_index=national_index,
+        province="demo-province",
+        output_root=tmp_path / "output",
+        primary_dataset=primary,
+        production_provinces_dir=tmp_path / "repo" / "db" / "provinces",
+    )
+
+    assert report.gate_passed is False
+    assert report.numeric_specialty_count == 2
+    assert "numeric_specialty" in report.failed_gates
+
+
+def test_numeric_specialty_is_filtered_before_database_and_index_build(tmp_path):
+    workbook_path = tmp_path / "安装定额.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.cell(row=1, column=4, value="123.0")
+    sheet.cell(row=2, column=4, value=456)
+    workbook.save(workbook_path)
+    workbook.close()
+
+    assert detect_specialty_from_excel(str(workbook_path)) == "安装"
+
+    indexed = row_to_index_tuple(
+        {
+            "province": "demo",
+            "quota_id": "Q-1",
+            "name": "Pipe",
+            "unit": "m",
+            "specialty": "123.0",
+        }
+    )
+    assert indexed[5] == ""
 
 
 def test_materialize_province_db_refuses_production_destination(tmp_path):

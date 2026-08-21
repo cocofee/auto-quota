@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from .contracts import EvalCase, ProviderError, ProviderResult, ProviderStatus
@@ -14,16 +14,42 @@ class CandidateProvider(Protocol):
     def run(self, cases: Sequence[EvalCase]) -> list[ProviderResult]: ...
 
 
+class ProvinceUnavailableError(RuntimeError):
+    pass
+
+
+def bucket_provider_details(payload: Any) -> dict[str, list[Mapping[str, Any]]]:
+    if not isinstance(payload, Mapping):
+        raise TypeError("provider payload must be an object")
+    raw_details = payload.get("details") or []
+    if not isinstance(raw_details, Sequence) or isinstance(raw_details, (str, bytes)):
+        raise TypeError("provider payload details must be a sequence")
+    buckets: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for detail in raw_details:
+        if not isinstance(detail, Mapping):
+            raise TypeError("provider detail must be an object")
+        buckets[str(detail.get("sample_id") or "")].append(detail)
+    return buckets
+
+
+def provider_status_from_exception(exc: Exception) -> ProviderStatus:
+    if isinstance(exc, (ProvinceUnavailableError, FileNotFoundError, NotADirectoryError)):
+        return ProviderStatus.PROVINCE_UNAVAILABLE
+    return ProviderStatus.PROVIDER_ERROR
+
+
 def _error_result(
     case: EvalCase,
     provider: str,
     status: ProviderStatus,
     exc: Exception,
 ) -> ProviderResult:
+    execution_mode = "search_core" if provider in {"search_core", "production"} else provider
     return ProviderResult(
         case_id=case.case_id,
         provider_name=provider,
         status=status,
+        runtime_metadata={"execution_mode": execution_mode},
         errors=(
             ProviderError(
                 code=status.value,
@@ -34,8 +60,8 @@ def _error_result(
     )
 
 
-class ProductionProvider:
-    name = "production"
+class SearchCoreProvider:
+    name = "search_core"
 
     def __init__(
         self,
@@ -64,35 +90,63 @@ class ProductionProvider:
                     [case.to_record() for case in province_cases],
                     with_experience=self._with_experience,
                 )
+                detail_buckets = bucket_provider_details(payload)
             except Exception as exc:
                 results.extend(
                     _error_result(
                         case,
                         self.name,
-                        ProviderStatus.PROVINCE_UNAVAILABLE,
+                        provider_status_from_exception(exc),
                         exc,
                     )
                     for case in province_cases
                 )
                 continue
-            details = {
-                str(detail.get("sample_id") or ""): detail
-                for detail in payload.get("details") or []
-            }
             for case in province_cases:
-                detail = details.get(case.case_id)
-                if detail is None:
+                bucket = detail_buckets.get(case.case_id, [])
+                if not bucket:
                     results.append(
                         _error_result(
                             case,
                             self.name,
                             ProviderStatus.PROVIDER_ERROR,
-                            RuntimeError("production result missing case detail"),
+                            RuntimeError("search core result missing case detail"),
+                        )
+                    )
+                elif len(bucket) > 1:
+                    results.append(
+                        _error_result(
+                            case,
+                            self.name,
+                            ProviderStatus.PROVIDER_ERROR,
+                            RuntimeError("search core returned duplicate case details"),
                         )
                     )
                 else:
-                    results.append(normalize_production_detail(case, detail))
+                    try:
+                        results.append(
+                            normalize_production_detail(
+                                case,
+                                bucket[0],
+                                provider_name=self.name,
+                            )
+                        )
+                    except Exception as exc:
+                        results.append(
+                            _error_result(
+                                case,
+                                self.name,
+                                ProviderStatus.PROVIDER_ERROR,
+                                exc,
+                            )
+                        )
         return sorted(results, key=lambda result: result.case_id)
+
+
+class ProductionProvider(SearchCoreProvider):
+    """Legacy provider name for historical report compatibility."""
+
+    name = "production"
 
 
 class GoalShadowProvider:
@@ -121,7 +175,7 @@ class GoalShadowProvider:
                     searcher = self._searcher_factory(case.province)
                     searchers[case.province] = searcher
                 local_ids = set(getattr(searcher.index, "by_quota_id", {}))
-                if case.oracle_set and not (case.oracle_set & local_ids):
+                if case.oracle_set and not case.oracle_covered_by(local_ids):
                     results.append(
                         ProviderResult(
                             case_id=case.case_id,

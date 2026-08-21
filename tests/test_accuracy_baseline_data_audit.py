@@ -85,6 +85,7 @@ def test_export_primary_cases_uses_only_human_authority_rows(tmp_path):
         "bill_text": "DN50 threaded",
         "confidence": 95,
         "oracle_quota_ids": ["Q-1", "Q-2"],
+        "oracle_semantics": "all",
         "oracle_quota_names": ["Quota 1", "Quota 2"],
         "project_name": "project-a",
         "province": "demo-province",

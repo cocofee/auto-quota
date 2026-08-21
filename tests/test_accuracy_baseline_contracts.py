@@ -8,6 +8,7 @@ from eval.accuracy_baseline.contracts import (
     DecisionSnapshot,
     EvalCase,
     LifecycleStage,
+    OracleSemantics,
     ProviderResult,
     ProviderStatus,
     StageSnapshot,
@@ -24,12 +25,14 @@ def test_eval_case_normalizes_oracles_and_exposes_bill_text():
         unit="set",
         specialty="C10",
         oracle_quota_ids=("Q-1", "Q-2"),
+        oracle_semantics=OracleSemantics.ANY,
         source_family="user_correction",
         project_id="project-a",
     )
 
     assert case.query_text == "Valve DN50 threaded"
     assert case.oracle_set == {"Q-1", "Q-2"}
+    assert case.top1_evaluable is True
     with pytest.raises(FrozenInstanceError):
         case.province = "changed"
 

@@ -8,9 +8,10 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from .contracts import DatasetKind, ProviderStatus
+from .coverage import summarize_dataset_coverage
 from .datasets import load_dataset
 from .metrics import aggregate_provider_metrics, compare_providers
 from .providers import CandidateProvider
@@ -149,7 +150,10 @@ def _dataset_metric_view(
         allowed = {
             "total_cases",
             "valid_cases",
+            "system_denominator",
             "exclusions",
+            "provider_failure_count",
+            "provider_failure_rate",
             "recall_at",
             "conditional_top1",
             "mrr",
@@ -171,7 +175,7 @@ def _dataset_metric_view(
         if result.status in {ProviderStatus.OK, ProviderStatus.TRACE_INCOMPLETE}
     ]
     repaired = sum(
-        result.final_top1_id in case_by_id[result.case_id].oracle_set
+        case_by_id[result.case_id].output_matches(result.final_quota_ids)
         for result in valid
     )
     regression_evaluable = [
@@ -180,13 +184,16 @@ def _dataset_metric_view(
         if bool(case_by_id[result.case_id].metadata.get("baseline_correct"))
     ]
     new_regressions = sum(
-        result.final_top1_id not in case_by_id[result.case_id].oracle_set
+        not case_by_id[result.case_id].output_matches(result.final_quota_ids)
         for result in regression_evaluable
     )
     return {
         "total_cases": report["total_cases"],
         "valid_cases": report["valid_cases"],
+        "system_denominator": report["system_denominator"],
         "exclusions": report["exclusions"],
+        "provider_failure_count": report["provider_failure_count"],
+        "provider_failure_rate": report["provider_failure_rate"],
         "repair_count": repaired,
         "repair_rate": round(repaired / len(valid), 6) if valid else 0.0,
         "new_regression_count": new_regressions,
@@ -202,6 +209,7 @@ def run_accuracy_baseline(
     output_dir: str | Path,
     providers: Sequence[CandidateProvider],
     min_slice_size: int = 20,
+    coverage_requirements: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     dataset_kind_map = {
         "primary": DatasetKind.PRIMARY,
@@ -216,6 +224,34 @@ def run_accuracy_baseline(
 
     for dataset_name, path in datasets.items():
         loaded = load_dataset(path, dataset_kind_map[dataset_name])
+        dataset_coverage_requirements = None
+        if coverage_requirements and dataset_name == "primary":
+            nested = coverage_requirements.get(dataset_name)
+            dataset_coverage_requirements = (
+                nested if isinstance(nested, Mapping) else coverage_requirements
+            )
+        coverage = summarize_dataset_coverage(
+            loaded.cases,
+            loaded.dataset_kind,
+            dataset_coverage_requirements,
+        )
+        if loaded.rejection_counts:
+            rejection_reasons = [
+                f"dataset_rejection:{reason}={count}"
+                for reason, count in sorted(loaded.rejection_counts.items())
+                if count
+            ]
+            coverage = {
+                **coverage,
+                "scope": "slice",
+                "system_baseline_eligible": False,
+                "gate_status": (
+                    "invalid_contract"
+                    if coverage.get("gate_status") == "invalid_contract"
+                    else "failed"
+                ),
+                "reasons": [*coverage.get("reasons", []), *rejection_reasons],
+            }
         provider_results = {
             provider.name: provider.run(loaded.cases) for provider in providers
         }
@@ -252,6 +288,9 @@ def run_accuracy_baseline(
             "total_rows": loaded.total_rows,
             "accepted_cases": len(loaded.cases),
             "rejection_counts": loaded.rejection_counts,
+            "coverage": coverage,
+            "system_baseline_eligible": coverage["system_baseline_eligible"],
+            "headline_metrics_allowed": coverage["system_baseline_eligible"],
             "providers": provider_metrics,
             "provider_comparison": {
                 key: value for key, value in comparison.items() if key != "cases"

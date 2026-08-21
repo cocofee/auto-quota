@@ -14,6 +14,8 @@
 
 ## Evidence Checkpoint: 2026-07-12
 
+> 2026-08-21 口径修正：下述 261 条 `user_correction` 全部来自安徽安装、单一来源族，只是高可信人工切片，不是完整系统基线。历史实验数字仅用于该切片的离线诊断，不得外推为跨省、跨来源族或全系统准确率。
+
 - `db/provinces` contains only a 4 KB 安徽 `quota.db`; it has no usable production quota corpus.
 - No `quota.db` exists anywhere on `D:\`; `D:\广联达临时文件\2026` contains only one unrelated `Thumbs.db`.
 - `data/goal_search/national_index.sqlite` contains 1,481,806 quota rows, including 18,096 rows for 安徽安装, but preserves only a subset of the production `quotas` schema.
@@ -27,7 +29,7 @@
 
 | Dataset | Source | Role | Allowed headline metrics |
 | --- | --- | --- | --- |
-| `primary_v0` | 261 `user_correction` authority rows | Main accuracy baseline | Goal Shadow Top1/Top3/Recall; production only after a usable province source passes the gate |
+| `primary_v0` | 261 `user_correction` authority rows | 安徽人工纠正切片 | 仅报告切片 Top1/Top3/Recall；不得作为系统总体准确率或生产上线依据 |
 | `oss_diagnostic_v1` | OSS XML or traceable `oss_import` rows | Recall, conditional ranking, taxonomy and parameter diagnostics | Recall@25/80, conditional Top1, MRR, slice metrics |
 | `historical_stress_v0` | Existing failure-oriented samples | Regression pressure test | Repair count and new regression count only |
 
@@ -171,6 +173,8 @@ Expected: gates pass or the tool exits nonzero with exact failed-gate evidence. 
 
 ### Task 4: Establish the First Accuracy Numbers
 
+> **2026-08-21 失效说明：** 本节 2026-07-13 的数值产生于旧评测契约，当时多定额未区分 `any/all`、最终候选排序与最终输出集合混用、Provider/结果缺失可能被排除在分母外。因此这些数值只能保留为历史诊断证据，不能再作为当前算法门槛、回归基线或系统准确率。重新导出带 `oracle_semantics` 的数据并通过覆盖合同前，不得重跑或发布“261 条完整基线”。
+
 **Files:**
 - Output only: `output/accuracy_baseline/baseline_v0/`
 
@@ -189,7 +193,7 @@ Expected: all evaluable cases use human authority labels; report exclusions sepa
 Run:
 
 ```powershell
-python tools/run_accuracy_baseline.py --primary output/accuracy_baseline/datasets/primary_v0.jsonl --providers production,goal_shadow --provinces-db-dir output/accuracy_baseline/reconstructed_assets/provinces --output-dir output/accuracy_baseline/baseline_v0/reconstructed_comparison
+python tools/run_accuracy_baseline.py --primary output/accuracy_baseline/datasets/primary_v0.jsonl --providers search_core,goal_shadow --provinces-db-dir output/accuracy_baseline/reconstructed_assets/provinces --output-dir output/accuracy_baseline/baseline_v0/reconstructed_comparison
 ```
 
 Expected: runtime metadata explicitly identifies reconstructed assets. These numbers are diagnostic, not canonical production baseline numbers.

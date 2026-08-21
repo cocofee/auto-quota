@@ -513,10 +513,22 @@ def iter_quota_db_rows(province: str, db_path: Path) -> Iterable[dict[str, Any]]
 
 
 def row_to_index_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
+    specialty = clean_text(row.get("specialty"))
+    if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", specialty):
+        specialty = ""
     text = " ".join(
-        clean_text(row.get(key))
-        for key in ("quota_id", "name", "unit", "chapter", "specialty", "material", "connection", "search_text")
-        if clean_text(row.get(key))
+        value
+        for value in (
+            clean_text(row.get("quota_id")),
+            clean_text(row.get("name")),
+            clean_text(row.get("unit")),
+            clean_text(row.get("chapter")),
+            specialty,
+            clean_text(row.get("material")),
+            clean_text(row.get("connection")),
+            clean_text(row.get("search_text")),
+        )
+        if value
     )
     signal = extract_signal(text)
     _apply_structured_values(signal, row)
@@ -527,7 +539,7 @@ def row_to_index_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
         clean_text(row.get("name")),
         unit,
         clean_text(row.get("chapter")),
-        clean_text(row.get("specialty")),
+        specialty,
         signal.family,
         signal.action,
         signal.material,
