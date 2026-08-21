@@ -2703,8 +2703,7 @@ async def route_file_intake(
     req: FileRouteRequest,
     service_user: User = Depends(get_openclaw_service_user),
 ):
-    _ = service_user
-    return await file_intake_api._route_file(file_id, req)
+    return await file_intake_api._route_file(file_id, req, user=service_user)
 
 
 @router.get("/admin/key-status", response_model=OpenClawKeyStatusResponse)

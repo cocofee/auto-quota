@@ -118,6 +118,40 @@ def _to_response(record: dict) -> FileIntakeResponse:
     )
 
 
+def _user_identity_values(user: User) -> set[str]:
+    return {
+        str(value).strip()
+        for value in (
+            getattr(user, "id", ""),
+            getattr(user, "email", ""),
+            getattr(user, "nickname", ""),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _can_access_file(record: dict, user: User) -> bool:
+    if bool(getattr(user, "is_admin", False)):
+        return True
+    owner_id = str(record.get("owner_id") or "").strip()
+    identities = _user_identity_values(user)
+    if owner_id:
+        return owner_id in identities
+    # Legacy rows predate owner_id. Only expose them when their recorded actor
+    # or creator still identifies the current user; unowned legacy rows stay private.
+    return any(
+        str(record.get(field) or "").strip() in identities
+        for field in ("created_by", "actor")
+    )
+
+
+def _require_file_access(file_id: str, user: User) -> dict:
+    record = FileIntakeDB().get_file(file_id)
+    if not record or not _can_access_file(record, user):
+        raise HTTPException(status_code=404, detail="file not found")
+    return record
+
+
 def _load_headers_from_excel(path: Path) -> list[str]:
     import openpyxl
 
@@ -561,6 +595,7 @@ def ingest(
                 source_file_path=(file_record.get("stored_path") if file_record else "") or "",
                 status="parsed",
                 parse_status=merged_context.get("parse_status") or "parsed",
+                owner_id=(file_record.get("owner_id") if file_record else "") or "",
             )
 
         if quote_items:
@@ -637,6 +672,7 @@ async def _save_upload(
         project_stage=project_stage,
         created_by=getattr(actor, "email", "") or getattr(actor, "nickname", "") or str(actor.id),
         actor=getattr(actor, "email", "") or getattr(actor, "nickname", "") or str(actor.id),
+        owner_id=str(actor.id),
     )
     return _to_response(record)
 
@@ -766,6 +802,7 @@ async def _route_file(file_id: str, req: FileRouteRequest, *, user: User) -> Fil
                 region=record.get("province") or "",
                 source_file_name=record.get("filename") or "",
                 status="parsed",
+                owner_id=record.get("owner_id") or (str(user.id) if not user.is_admin else ""),
             )
             target_results.append(
                 {"target": target, "status": "ok", "document_id": document_id}
@@ -912,10 +949,7 @@ async def upload_file(
 
 @router.get("/{file_id}", response_model=FileIntakeResponse)
 async def get_file(file_id: str, user: User = Depends(get_current_user)):
-    _ = user
-    record = FileIntakeDB().get_file(file_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="file not found")
+    record = _require_file_access(file_id, user)
     return _to_response(record)
 
 
@@ -925,7 +959,7 @@ async def classify_file(
     req: FileClassifyRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
+    _require_file_access(file_id, user)
     return await _classify_file(file_id, req)
 
 
@@ -935,7 +969,7 @@ async def parse_file(
     req: FileParseRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
+    _require_file_access(file_id, user)
     return await _parse_file(file_id, req)
 
 
@@ -945,6 +979,7 @@ async def route_file(
     req: FileRouteRequest,
     user: User = Depends(get_current_user),
 ):
+    _require_file_access(file_id, user)
     return await _route_file(file_id, req, user=user)
 
 
@@ -954,11 +989,8 @@ async def confirm_manual_review(
     req: FileManualReviewConfirmRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
     db = FileIntakeDB()
-    record = db.get_file(file_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="file not found")
+    record = _require_file_access(file_id, user)
     if record.get("status") != "waiting_human":
         raise HTTPException(status_code=400, detail="file is not waiting human review")
 

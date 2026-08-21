@@ -86,6 +86,7 @@ class PriceReferenceDB:
                     specialty TEXT DEFAULT '',
                     region TEXT DEFAULT '',
                     source_file_name TEXT DEFAULT '',
+                    owner_id TEXT DEFAULT '',
                     status TEXT DEFAULT 'created',
                     parse_summary TEXT DEFAULT '{}',
                     created_at REAL DEFAULT (strftime('%s','now')),
@@ -184,9 +185,13 @@ class PriceReferenceDB:
             self._ensure_column(conn, "price_documents", "status", "TEXT DEFAULT 'created'")
             self._ensure_column(conn, "price_documents", "source_file_path", "TEXT DEFAULT ''")
             self._ensure_column(conn, "price_documents", "source_file_ext", "TEXT DEFAULT ''")
+            self._ensure_column(conn, "price_documents", "owner_id", "TEXT DEFAULT ''")
             self._ensure_column(conn, "price_documents", "parse_status", "TEXT DEFAULT 'created'")
             self._ensure_column(conn, "price_documents", "parse_version", "TEXT DEFAULT ''")
             self._ensure_column(conn, "price_documents", "parse_summary", "TEXT DEFAULT '{}'")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_price_documents_owner ON price_documents(owner_id)"
+            )
             self._ensure_price_columns(conn, "historical_quote_items")
             self._ensure_price_columns(conn, "historical_boq_items")
             conn.commit()
@@ -549,6 +554,7 @@ class PriceReferenceDB:
         status: str = "created",
         parse_status: str = "",
         parse_version: str = "",
+        owner_id: str = "",
     ) -> int:
         normalized_ext = (source_file_ext or Path(source_file_name or "").suffix or "").lower()
         parse_status = parse_status or status or "created"
@@ -578,6 +584,7 @@ class PriceReferenceDB:
                         source_file_name=COALESCE(NULLIF(?, ''), source_file_name),
                         source_file_path=COALESCE(NULLIF(?, ''), source_file_path),
                         source_file_ext=COALESCE(NULLIF(?, ''), source_file_ext),
+                        owner_id=COALESCE(NULLIF(?, ''), owner_id),
                         status=COALESCE(NULLIF(?, ''), status),
                         parse_status=COALESCE(NULLIF(?, ''), parse_status),
                         parse_version=COALESCE(NULLIF(?, ''), parse_version),
@@ -592,6 +599,7 @@ class PriceReferenceDB:
                         source_file_name,
                         source_file_path,
                         normalized_ext,
+                        owner_id,
                         status,
                         parse_status,
                         parse_version,
@@ -605,9 +613,9 @@ class PriceReferenceDB:
                 INSERT INTO price_documents (
                     synthetic_key, file_id, document_type, project_name, project_stage, specialty,
                     region,
-                    source_file_name, source_file_path, source_file_ext,
+                    source_file_name, source_file_path, source_file_ext, owner_id,
                     status, parse_status, parse_version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     synthetic_key,
@@ -620,6 +628,7 @@ class PriceReferenceDB:
                     source_file_name,
                     source_file_path,
                     normalized_ext,
+                    owner_id,
                     status,
                     parse_status,
                     parse_version,
@@ -636,6 +645,7 @@ class PriceReferenceDB:
         document_type: str = "",
         page: int = 1,
         size: int = 20,
+        owner_id: str | None = None,
     ) -> dict:
         page = max(page, 1)
         size = max(1, min(size, 100))
@@ -644,6 +654,9 @@ class PriceReferenceDB:
         if document_type:
             clauses.append("document_type = ?")
             params.append(document_type)
+        if owner_id is not None:
+            clauses.append("owner_id = ?")
+            params.append(owner_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         offset = (page - 1) * size
         conn = db_connect(self.db_path, row_factory=True)
@@ -655,7 +668,7 @@ class PriceReferenceDB:
             rows = conn.execute(
                 f"""
                 SELECT id, file_id, document_type, project_name, project_stage,
-                       specialty, region, source_file_name, source_file_path, source_file_ext,
+                       specialty, region, source_file_name, source_file_path, source_file_ext, owner_id,
                        status, parse_status, parse_summary,
                        created_at, updated_at
                 FROM price_documents
@@ -674,19 +687,24 @@ class PriceReferenceDB:
             "size": size,
         }
 
-    def get_document(self, document_id: int) -> dict | None:
+    def get_document(self, document_id: int, *, owner_id: str | None = None) -> dict | None:
         conn = db_connect(self.db_path, row_factory=True)
         try:
+            where = "WHERE id=?"
+            params: tuple = (document_id,)
+            if owner_id is not None:
+                where += " AND owner_id=?"
+                params = (document_id, owner_id)
             row = conn.execute(
-                """
+                f"""
                 SELECT id, file_id, document_type, project_name, project_stage,
-                       specialty, region, source_file_name, source_file_path, source_file_ext,
+                       specialty, region, source_file_name, source_file_path, source_file_ext, owner_id,
                        status, parse_status, parse_summary,
                        created_at, updated_at
                 FROM price_documents
-                WHERE id=?
+                {where}
                 """,
-                (document_id,),
+                params,
             ).fetchone()
         finally:
             conn.close()
@@ -698,28 +716,34 @@ class PriceReferenceDB:
         *,
         status: str,
         parse_summary: dict,
+        owner_id: str | None = None,
     ) -> dict | None:
         def _action(conn):
+            where = "WHERE id=?"
+            params = [
+                status,
+                status,
+                self._json_dump(parse_summary),
+                time.time(),
+                document_id,
+            ]
+            if owner_id is not None:
+                where += " AND owner_id=?"
+                params.append(owner_id)
             conn.execute(
-                """
+                f"""
                 UPDATE price_documents
                 SET status=?,
                     parse_status=?,
                     parse_summary=?,
                     updated_at=?
-                WHERE id=?
+                {where}
                 """,
-                (
-                    status,
-                    status,
-                    self._json_dump(parse_summary),
-                    time.time(),
-                    document_id,
-                ),
+                params,
             )
             return None
         self._write_with_retry(_action)
-        return self.get_document(document_id)
+        return self.get_document(document_id, owner_id=owner_id)
 
     def replace_quote_items(self, document_id: int, items: list[dict]) -> int:
         def _action(conn):

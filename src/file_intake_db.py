@@ -66,6 +66,7 @@ class FileIntakeDB:
                     manual_review_reason TEXT DEFAULT '',
                     error_message TEXT DEFAULT '',
                     created_by TEXT DEFAULT '',
+                    owner_id TEXT DEFAULT '',
                     created_at REAL DEFAULT (strftime('%s','now')),
                     updated_at REAL DEFAULT (strftime('%s','now'))
                 )
@@ -89,6 +90,10 @@ class FileIntakeDB:
             self._ensure_column(conn, "file_intake_files", "failure_stage", "TEXT DEFAULT ''")
             self._ensure_column(conn, "file_intake_files", "needs_manual_review", "INTEGER DEFAULT 0")
             self._ensure_column(conn, "file_intake_files", "manual_review_reason", "TEXT DEFAULT ''")
+            self._ensure_column(conn, "file_intake_files", "owner_id", "TEXT DEFAULT ''")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_file_intake_owner ON file_intake_files(owner_id)"
+            )
             conn.commit()
         finally:
             conn.close()
@@ -117,6 +122,7 @@ class FileIntakeDB:
         actor: str = "",
         source_context: dict | None = None,
         created_by: str = "",
+        owner_id: str = "",
     ) -> dict:
         file_id = f"fi_{uuid.uuid4().hex[:16]}"
         now = time.time()
@@ -130,8 +136,8 @@ class FileIntakeDB:
                     ingest_intent, evidence_level, business_type, actor, source_context,
                     current_stage, next_action, receipt_summary,
                     needs_manual_review, manual_review_reason,
-                    created_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_by, owner_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     file_id,
@@ -156,6 +162,7 @@ class FileIntakeDB:
                     0,
                     "",
                     created_by,
+                    owner_id,
                     now,
                     now,
                 ),

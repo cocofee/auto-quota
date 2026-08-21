@@ -18,7 +18,7 @@ from app.schemas.price_document import (
     PriceDocumentParseResponse,
     PriceDocumentResponse,
 )
-from src.file_intake_db import FileIntakeDB
+from app.api.file_intake import _require_file_access
 from src.price_reference_db import PriceReferenceDB
 
 router = APIRouter()
@@ -61,10 +61,7 @@ async def create_price_document(
     req: PriceDocumentCreateRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
-    intake = FileIntakeDB().get_file(req.file_id)
-    if not intake:
-        raise HTTPException(status_code=404, detail="file not found")
+    intake = _require_file_access(req.file_id, user)
     document_id = PriceReferenceDB().create_document_from_file(
         file_id=req.file_id,
         document_type=req.document_type,
@@ -75,8 +72,12 @@ async def create_price_document(
         source_file_name=intake.get("filename") or "",
         source_file_path=intake.get("stored_path") or "",
         status="created",
+        owner_id=str(user.id),
     )
-    record = PriceReferenceDB().get_document(document_id)
+    record = PriceReferenceDB().get_document(
+        document_id,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     if not record:
         raise HTTPException(status_code=500, detail="document create failed")
     return _to_response(record)
@@ -89,11 +90,11 @@ async def list_price_documents(
     size: int = Query(default=20, ge=1, le=100),
     user: User = Depends(get_current_user),
 ):
-    _ = user
     payload = PriceReferenceDB().list_documents(
         document_type=document_type,
         page=page,
         size=size,
+        owner_id=None if user.is_admin else str(user.id),
     )
     return PriceDocumentListResponse(
         items=[_to_response(item) for item in payload["items"]],
@@ -108,8 +109,10 @@ async def get_price_document(
     document_id: int,
     user: User = Depends(get_current_user),
 ):
-    _ = user
-    record = PriceReferenceDB().get_document(document_id)
+    record = PriceReferenceDB().get_document(
+        document_id,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     if not record:
         raise HTTPException(status_code=404, detail="document not found")
     return _to_response(record)
@@ -121,15 +124,29 @@ async def parse_price_document(
     req: PriceDocumentParseRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
-    record = PriceReferenceDB().get_document(document_id)
+    record = PriceReferenceDB().get_document(
+        document_id,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     if not record:
         raise HTTPException(status_code=404, detail="document not found")
     summary = _normalize_parse_summary(record.get("parse_summary"))
+    status = record.get("status") or "pending"
     if not summary or req.force:
-        summary = {"warnings": ["parser not wired yet"], "document_type": record.get("document_type")}
+        summary = {
+            "warnings": ["price document parser is not implemented for this document type"],
+            "document_type": record.get("document_type"),
+            "parse_status": "not_implemented",
+        }
+        status = "pending"
+        PriceReferenceDB().update_document_parse(
+            document_id,
+            status="pending",
+            parse_summary=summary,
+            owner_id=None if user.is_admin else str(user.id),
+        )
     return PriceDocumentParseResponse(
         id=document_id,
-        status="parsed",
+        status=status,
         parse_summary=summary,
     )

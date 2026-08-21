@@ -10,6 +10,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 # src 是主包，db 是数据库辅助包
-packages = ["src", "db"]
 # config.py 在项目根目录，作为独立模块注册
 py-modules = ["config"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "db*"]

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth.deps import get_current_user
 from app.models.user import User
-from app.api.file_intake import ingest
+from app.api.file_intake import _require_file_access, ingest
 from app.schemas.price_document import (
     PriceDocumentCreateRequest,
     PriceDocumentParseRequest,
@@ -16,7 +16,6 @@ from app.schemas.price_document import (
     PriceDocumentResponse,
 )
 from app.api.price_documents import _to_response
-from src.file_intake_db import FileIntakeDB
 from src.priced_bill_parser import parse_priced_bill_document
 from src.price_reference_db import PriceReferenceDB
 
@@ -28,12 +27,9 @@ async def create_bill_price_document(
     req: PriceDocumentCreateRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
     if req.document_type and req.document_type != "priced_bill_file":
         raise HTTPException(status_code=422, detail="document_type must be priced_bill_file")
-    intake = FileIntakeDB().get_file(req.file_id)
-    if not intake:
-        raise HTTPException(status_code=404, detail="file not found")
+    intake = _require_file_access(req.file_id, user)
     document_id = PriceReferenceDB().create_document_from_file(
         file_id=req.file_id,
         document_type="priced_bill_file",
@@ -44,8 +40,12 @@ async def create_bill_price_document(
         source_file_name=intake.get("filename") or "",
         source_file_path=intake.get("stored_path") or "",
         status="created",
+        owner_id=str(user.id),
     )
-    record = PriceReferenceDB().get_document(document_id)
+    record = PriceReferenceDB().get_document(
+        document_id,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     if not record:
         raise HTTPException(status_code=500, detail="document create failed")
     return _to_response(record)
@@ -57,16 +57,16 @@ async def parse_bill_price_document(
     req: PriceDocumentParseRequest,
     user: User = Depends(get_current_user),
 ):
-    _ = user
-    record = PriceReferenceDB().get_document(document_id)
+    record = PriceReferenceDB().get_document(
+        document_id,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     if not record:
         raise HTTPException(status_code=404, detail="document not found")
     if record.get("document_type") != "priced_bill_file":
         raise HTTPException(status_code=422, detail="document is not a priced_bill_file")
 
-    intake = FileIntakeDB().get_file(record.get("file_id") or "")
-    if not intake:
-        raise HTTPException(status_code=404, detail="source file not found")
+    intake = _require_file_access(record.get("file_id") or "", user)
 
     parsed = parse_priced_bill_document(
         intake["stored_path"],
@@ -138,7 +138,12 @@ async def parse_bill_price_document(
         "learning_warnings": learning_result.warnings,
         "warnings": parsed.warnings,
     }
-    price_db.update_document_parse(document_id, status="parsed", parse_summary=summary)
+    price_db.update_document_parse(
+        document_id,
+        status="parsed",
+        parse_summary=summary,
+        owner_id=None if user.is_admin else str(user.id),
+    )
     return PriceDocumentParseResponse(
         id=document_id,
         status="parsed",
