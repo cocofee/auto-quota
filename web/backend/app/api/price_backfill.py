@@ -11,13 +11,22 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from loguru import logger
+from starlette.background import BackgroundTask
+
+from app.auth.deps import get_current_user
+from app.config import UPLOAD_MAX_MB
+from app.models.user import User
 
 # tools/price_backfill.py 中的核心函数（延迟导入，轻量镜像没有tools/目录）
 
 router = APIRouter()
+
+
+def _cleanup_result_file(path: str) -> None:
+    Path(path).unlink(missing_ok=True)
 
 
 def _validate_excel(file: UploadFile, label: str) -> None:
@@ -35,12 +44,30 @@ def _validate_excel(file: UploadFile, label: str) -> None:
 async def _save_upload(file: UploadFile, prefix: str) -> str:
     """把上传文件保存到临时目录，返回临时文件路径"""
     suffix = Path(file.filename or "upload.xlsx").suffix
-    content = await file.read()
-    with tempfile.NamedTemporaryFile(
-        mode="wb", suffix=suffix, delete=False, prefix=prefix,
-    ) as tmp:
-        tmp.write(content)
-        return tmp.name
+    max_bytes = UPLOAD_MAX_MB * 1024 * 1024
+    total = 0
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=suffix, delete=False, prefix=prefix,
+        ) as tmp:
+            tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件过大（超过 {UPLOAD_MAX_MB}MB）",
+                    )
+                tmp.write(chunk)
+        return tmp_path
+    except Exception:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 def _do_preview(orig_path: str, gld_path: str) -> dict:
@@ -133,6 +160,7 @@ def _do_execute(orig_path: str, gld_path: str) -> str:
 async def preview_backfill(
     original_file: UploadFile = File(description="甲方原始Excel（单价列为空）"),
     gld_file: UploadFile = File(description="广联达导出Excel（带价格）"),
+    user: User = Depends(get_current_user),
 ):
     """预览映射结果（不生成文件）
 
@@ -142,10 +170,12 @@ async def preview_backfill(
     _validate_excel(original_file, "甲方原始清单")
     _validate_excel(gld_file, "广联达导出文件")
 
-    orig_tmp = await _save_upload(original_file, "orig_")
-    gld_tmp = await _save_upload(gld_file, "gld_")
+    orig_tmp = None
+    gld_tmp = None
 
     try:
+        orig_tmp = await _save_upload(original_file, "orig_")
+        gld_tmp = await _save_upload(gld_file, "gld_")
         result = await asyncio.to_thread(_do_preview, orig_tmp, gld_tmp)
         # 不需要返回 col_map 给前端（内部用）
         result.pop("col_map", None)
@@ -159,7 +189,8 @@ async def preview_backfill(
         # 清理临时文件
         for p in [orig_tmp, gld_tmp]:
             try:
-                Path(p).unlink(missing_ok=True)
+                if p:
+                    Path(p).unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -168,6 +199,7 @@ async def preview_backfill(
 async def execute_backfill(
     original_file: UploadFile = File(description="甲方原始Excel（单价列为空）"),
     gld_file: UploadFile = File(description="广联达导出Excel（带价格）"),
+    user: User = Depends(get_current_user),
 ):
     """执行价格回填，返回已填价的Excel文件下载
 
@@ -176,10 +208,12 @@ async def execute_backfill(
     _validate_excel(original_file, "甲方原始清单")
     _validate_excel(gld_file, "广联达导出文件")
 
-    orig_tmp = await _save_upload(original_file, "orig_")
-    gld_tmp = await _save_upload(gld_file, "gld_")
+    orig_tmp = None
+    gld_tmp = None
 
     try:
+        orig_tmp = await _save_upload(original_file, "orig_")
+        gld_tmp = await _save_upload(gld_file, "gld_")
         result_path = await asyncio.to_thread(_do_execute, orig_tmp, gld_tmp)
 
         # 用原始文件名构造下载文件名
@@ -190,6 +224,7 @@ async def execute_backfill(
             path=result_path,
             filename=download_name,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            background=BackgroundTask(_cleanup_result_file, result_path),
         )
     except HTTPException:
         raise
@@ -200,6 +235,7 @@ async def execute_backfill(
         # 清理上传的临时文件（回填结果文件由 FileResponse 发送后由系统清理）
         for p in [orig_tmp, gld_tmp]:
             try:
-                Path(p).unlink(missing_ok=True)
+                if p:
+                    Path(p).unlink(missing_ok=True)
             except Exception:
                 pass

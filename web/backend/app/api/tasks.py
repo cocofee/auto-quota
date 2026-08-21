@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
-from sqlalchemy import select, func, desc, true as sa_true, cast, Integer
+from sqlalchemy import select, func, desc, or_, true as sa_true, cast, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 from loguru import logger
@@ -127,37 +127,41 @@ async def _has_recent_duplicate_task(
     from datetime import datetime, timezone, timedelta
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-    query = (
-        select(Task)
-        .where(
-            Task.user_id == user_id,
-            Task.status.in_(["pending", "running"]),
-            Task.created_at >= cutoff,
-        )
-        .order_by(desc(Task.created_at))
+    signature_filters = [
+        Task.user_id == user_id,
+        Task.status.in_(["pending", "running"]),
+        Task.created_at >= cutoff,
+        Task.province == province,
+        Task.mode == mode,
+        Task.use_experience == use_experience,
+    ]
+    signature_filters.append(
+        or_(Task.sheet.is_(None), Task.sheet == "")
+        if sheet is None
+        else Task.sheet == sheet
     )
-    candidates = (await db.execute(query)).scalars().all()
-    if not candidates:
+    signature_filters.append(
+        Task.limit_count.is_(None)
+        if limit_count is None
+        else Task.limit_count == limit_count
+    )
+    query = select(Task.file_path).where(*signature_filters).order_by(desc(Task.created_at))
+    candidate_paths = (await db.execute(query)).scalars().all()
+    if not candidate_paths:
         return False
 
-    new_hash = _sha256_file(file_path)
+    new_hash = await asyncio.to_thread(_sha256_file, file_path)
     if not new_hash:
         return False
 
-    for task in candidates:
-        if not _task_signature_matches(
-            task,
-            province=province,
-            mode=mode,
-            sheet=sheet,
-            limit_count=limit_count,
-            use_experience=use_experience,
-        ):
-            continue
-        existing_hash = _sha256_file(task.file_path)
-        if existing_hash and existing_hash == new_hash:
-            return True
-    return False
+    def _has_matching_hash() -> bool:
+        for candidate_path in candidate_paths:
+            existing_hash = _sha256_file(candidate_path)
+            if existing_hash and existing_hash == new_hash:
+                return True
+        return False
+
+    return await asyncio.to_thread(_has_matching_hash)
 
 
 def _estimate_task_bill_count(file_path: str, province: str, sheet: str | None, limit_count: int | None) -> int | None:

@@ -194,4 +194,5 @@ async def init_db():
             try:
                 await conn.execute(text(sql))
             except Exception as e:
-                logger.warning(f"迁移语句执行跳过（可能已存在）: {e}")
+                logger.error(f"数据库迁移失败，停止启动并回滚事务: {e}")
+                raise

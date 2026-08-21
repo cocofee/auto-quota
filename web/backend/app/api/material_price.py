@@ -18,6 +18,7 @@ parse/export 始终在本地处理（只需要操作Excel，不需要价格库�
 import asyncio
 import tempfile
 import re
+import time
 import uuid as _uuid_mod
 from pathlib import Path
 from typing import Optional
@@ -26,9 +27,12 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse
 from loguru import logger
+from starlette.background import BackgroundTask
 
+from app.auth.deps import get_current_user
 from app.auth.permissions import require_admin
 from app.config import MATCH_BACKEND, LOCAL_MATCH_URL, LOCAL_MATCH_API_KEY
+from app.models.user import User
 from app.services.local_http import local_match_async_client
 from src.material_price_decision import decide_material_price
 
@@ -40,6 +44,63 @@ _MATERIAL_DB_PATH = Path(__file__).parent.parent.parent.parent.parent / "db" / "
 # 上传文件缓存（parse后保留，export时用）
 # key=file_key(uuid), value={"path": 文件路径, "name": 原始文件名}
 _uploaded_files: dict[str, dict] = {}
+_UPLOADED_FILE_TTL_SECONDS = 30 * 60
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _cleanup_uploaded_files(now: float | None = None) -> None:
+    """Remove expired parse exports without deleting task-owned output files."""
+    now = time.monotonic() if now is None else now
+    expired_keys = [
+        key
+        for key, info in _uploaded_files.items()
+        if now - float(info.get("created_at", now)) > _UPLOADED_FILE_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        info = _uploaded_files.pop(key, None) or {}
+        path = str(info.get("path", "")).strip()
+        if info.get("delete_on_cleanup") and path:
+            Path(path).unlink(missing_ok=True)
+
+
+def _cleanup_export(file_key: str, output_path: str) -> None:
+    Path(output_path).unlink(missing_ok=True)
+    info = _uploaded_files.pop(file_key, None)
+    path = str((info or {}).get("path", "")).strip()
+    if info and info.get("delete_on_cleanup") and path:
+        Path(path).unlink(missing_ok=True)
+
+
+def _can_access_uploaded_file(info: dict, user: User) -> bool:
+    return bool(user.is_admin) or info.get("owner_id") == str(user.id)
+
+
+async def _save_material_upload(file: UploadFile, *, prefix: str) -> str:
+    """Stream an uploaded workbook to disk while enforcing the shared size limit."""
+    from app.config import UPLOAD_MAX_MB
+
+    max_bytes = UPLOAD_MAX_MB * 1024 * 1024
+    suffix = Path(file.filename or "upload.xlsx").suffix
+    total = 0
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=suffix, delete=False, prefix=prefix
+        ) as tmp:
+            tmp_path = tmp.name
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(413, f"文件过大（超过 {UPLOAD_MAX_MB}MB）")
+                tmp.write(chunk)
+        return tmp_path
+    except Exception:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 def _is_remote() -> bool:
@@ -519,7 +580,10 @@ def _format_period_label(start: str, end: str) -> str:
 # ============================================================
 
 @router.post("/material-price/parse")
-async def parse_materials(file: UploadFile = File(...)):
+async def parse_materials(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
     """上传Excel，识别出主材行，返回主材列表
 
     文件会保留在临时目录，export时用file_key找回来写入价格。
@@ -530,17 +594,18 @@ async def parse_materials(file: UploadFile = File(...)):
         raise HTTPException(400, "当前仅支持 .xlsx 文件，请先另存为 .xlsx 后上传")
 
     # 保存到临时文件（不删除，留给export用）
-    content = await file.read()
-    suffix = Path(filename).suffix
+    _cleanup_uploaded_files()
     file_key = str(_uuid_mod.uuid4())
-    with tempfile.NamedTemporaryFile(
-        mode="wb", suffix=suffix, delete=False, prefix="material_"
-    ) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    tmp_path = await _save_material_upload(file, prefix="material_")
 
     # 记录文件路径和原始文件名
-    _uploaded_files[file_key] = {"path": tmp_path, "name": Path(filename).stem}
+    _uploaded_files[file_key] = {
+        "path": tmp_path,
+        "name": Path(filename).stem,
+        "owner_id": str(user.id),
+        "created_at": time.monotonic(),
+        "delete_on_cleanup": True,
+    }
 
     # 在线程池中解析（CPU密集型）
     try:
@@ -2079,7 +2144,10 @@ def _compose_specific_pipe_fitting_name(candidate_type: str, candidate_material:
 
 
 @router.get("/material-price/from-task/{task_id}")
-async def parse_from_task(task_id: str):
+async def parse_from_task(
+    task_id: str,
+    user: User = Depends(get_current_user),
+):
     """从已完成的套定额任务中提取主材行
 
     读取任务的output Excel（带主材版本），解析出主材行。
@@ -2096,9 +2164,10 @@ async def parse_from_task(task_id: str):
         raise HTTPException(400, "无效的任务ID")
 
     async with async_session() as session:
-        result = await session.execute(
-            select(Task).where(Task.id == task_uuid)
-        )
+        query = select(Task).where(Task.id == task_uuid)
+        if not user.is_admin:
+            query = query.where(Task.user_id == user.id)
+        result = await session.execute(query)
         task = result.scalar_one_or_none()
 
     if not task:
@@ -2114,9 +2183,13 @@ async def parse_from_task(task_id: str):
         materials = result["materials"]
         # 用任务的output_path作为file_key（不需要复制，直接指向）
         file_key = f"task-{task_id}"
+        _cleanup_uploaded_files()
         _uploaded_files[file_key] = {
             "path": task.output_path,
             "name": Path(task.original_filename or "").stem or f"task_{task_id[:8]}",
+            "owner_id": str(task.user_id),
+            "created_at": time.monotonic(),
+            "delete_on_cleanup": False,
         }
         return {
             "materials": materials,
@@ -2136,7 +2209,10 @@ async def parse_from_task(task_id: str):
 # ============================================================
 
 @router.post("/material-price/lookup")
-async def lookup_prices(body: dict):
+async def lookup_prices(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
     """根据主材列表和地区信息，批量查价
 
     请求体:
@@ -2324,7 +2400,10 @@ def _do_lookup(materials: list[dict], province: str, city: str,
 # ============================================================
 
 @router.post("/material-price/contribute")
-async def contribute_price(body: dict):
+async def contribute_price(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
     """用户手填价格，存入价格库候选层
 
     请求体:
@@ -2431,7 +2510,10 @@ def _do_contribute(items: list[dict]) -> int:
 # ============================================================
 
 @router.post("/material-price/export")
-async def export_with_prices(body: dict):
+async def export_with_prices(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
     """把查到的价格写回到原Excel的主材行单价列，返回修改后的Excel下载
 
     请求体:
@@ -2448,6 +2530,7 @@ async def export_with_prices(body: dict):
         ]
     }
     """
+    _cleanup_uploaded_files()
     file_key = body.get("file_key", "")
     materials = body.get("materials", [])
 
@@ -2456,7 +2539,9 @@ async def export_with_prices(body: dict):
 
     # 找到原文件
     file_info = _uploaded_files.get(file_key)
-    if not file_info or not Path(file_info["path"]).exists():
+    if not file_info or not _can_access_uploaded_file(file_info, user):
+        raise HTTPException(404, "原始文件不存在或已过期，请重新上传")
+    if not Path(file_info["path"]).exists():
         raise HTTPException(404, "原始文件不存在或已过期，请重新上传")
 
     source_path = file_info["path"]
@@ -2483,8 +2568,7 @@ async def export_with_prices(body: dict):
             path=tmp_path,
             filename=download_name,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            # FileResponse发送完毕后自动删除临时文件
-            background=None,
+            background=BackgroundTask(_cleanup_export, file_key, tmp_path),
         )
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)

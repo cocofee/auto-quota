@@ -267,11 +267,9 @@ async def make_admin(
     """
     from app.config import JWT_SECRET_KEY, _DEV_FALLBACK_KEY
 
-    # 速率限制检查（支持反向代理场景，优先用 X-Forwarded-For）
-    client_ip = (
-        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        or (request.client.host if request.client else "unknown")
-    )
+    # Do not trust a client-supplied X-Forwarded-For value for rate limiting.
+    # A trusted proxy can normalize request.client before this application.
+    client_ip = request.client.host if request.client else "unknown"
     now = _time.time()
     attempts = _make_admin_attempts.get(client_ip, [])
     # 清除窗口期外的旧记录

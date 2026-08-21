@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import inspect
+import io
 import shutil
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from uuid import uuid4
 
 import openpyxl
 import pytest
+from fastapi import HTTPException
+from starlette.datastructures import UploadFile
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1] / "web" / "backend"
@@ -47,6 +52,75 @@ def test_parse_sheet_exposes_material_name_and_spec_columns(tmp_path: Path):
     assert material["name_col"] == 2
     assert material["spec_col"] == 3
     assert material["price_col"] == 6
+
+
+def test_material_price_sensitive_endpoints_require_login_dependency():
+    for endpoint_name in (
+        "parse_materials",
+        "parse_from_task",
+        "lookup_prices",
+        "contribute_price",
+        "export_with_prices",
+    ):
+        endpoint = getattr(material_price_api, endpoint_name)
+        assert "user" in inspect.signature(endpoint).parameters
+        assert inspect.signature(endpoint).parameters["user"].default is not inspect.Parameter.empty
+
+
+def test_uploaded_file_cache_is_owner_bound_and_expired_files_are_removed(tmp_path: Path):
+    path = tmp_path / "upload.xlsx"
+    path.write_bytes(b"data")
+    material_price_api._uploaded_files.clear()
+    material_price_api._uploaded_files["expired"] = {
+        "path": str(path),
+        "owner_id": "user-a",
+        "created_at": 0,
+        "delete_on_cleanup": True,
+    }
+
+    material_price_api._cleanup_uploaded_files(now=material_price_api._UPLOADED_FILE_TTL_SECONDS + 1)
+
+    assert "expired" not in material_price_api._uploaded_files
+    assert not path.exists()
+
+
+def test_parse_from_task_scopes_lookup_to_current_user(monkeypatch):
+    captured = {}
+
+    class _Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, query):
+            captured["query"] = query
+            return _Result()
+
+    monkeypatch.setattr("app.database.async_session", lambda: _Session())
+    user = SimpleNamespace(id=uuid4(), is_admin=False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(material_price_api.parse_from_task(str(uuid4()), user=user))
+
+    assert exc_info.value.status_code == 404
+    assert "tasks.user_id" in str(captured["query"])
+
+
+def test_material_upload_stream_enforces_shared_size_limit(monkeypatch):
+    monkeypatch.setattr(material_price_api, "_UPLOAD_CHUNK_SIZE", 2)
+    monkeypatch.setattr("app.config.UPLOAD_MAX_MB", 0)
+    upload = UploadFile(filename="large.xlsx", file=io.BytesIO(b"123"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(material_price_api._save_material_upload(upload, prefix="test_"))
+
+    assert getattr(exc_info.value, "status_code", None) == 413
 
 
 def test_write_material_updates_writes_name_spec_and_price(tmp_path: Path):

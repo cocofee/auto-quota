@@ -1,13 +1,19 @@
 """价格回填工具测试"""
 import shutil
 import uuid
+import asyncio
+import io
 from pathlib import Path
 
 import openpyxl
+import pytest
+from fastapi import HTTPException
+from starlette.datastructures import UploadFile
 
 # 添加项目根目录到path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "web" / "backend"))
 
 from tools.price_backfill import (
     _detect_original_structure,
@@ -15,6 +21,7 @@ from tools.price_backfill import (
     _build_mapping,
     backfill,
 )
+from app.api import price_backfill as price_backfill_api
 
 
 def _new_tmp_dir() -> Path:
@@ -23,6 +30,16 @@ def _new_tmp_dir() -> Path:
     d = root / f"backfill-{uuid.uuid4().hex}"
     d.mkdir(parents=True, exist_ok=False)
     return d
+
+
+def test_api_upload_stream_enforces_shared_size_limit(monkeypatch):
+    monkeypatch.setattr(price_backfill_api, "UPLOAD_MAX_MB", 0)
+    upload = UploadFile(filename="large.xlsx", file=io.BytesIO(b"x"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(price_backfill_api._save_upload(upload, "test_"))
+
+    assert getattr(exc_info.value, "status_code", None) == 413
 
 
 # ================================================================
