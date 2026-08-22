@@ -16,7 +16,7 @@ from .coverage import summarize_dataset_coverage
 from .datasets import normalize_quota_id
 from .fingerprints import province_query_fingerprint, query_fingerprint
 
-PROMOTION_VERSION = "accuracy_review_promotion.v2"
+PROMOTION_VERSION = "accuracy_review_promotion.v3"
 _CONTEXT_FIELDS = (
     "province",
     "specialty",
@@ -35,6 +35,18 @@ _CONTEXT_FIELDS = (
     "query_fingerprint",
     "province_query_fingerprint",
 )
+_SUGGESTION_LIST_FIELDS = (
+    "suggested_quota_ids",
+    "suggested_quota_names",
+    "suggested_quota_books",
+    "suggested_scores",
+    "suggested_reasons",
+)
+_SUGGESTION_CONTEXT_FIELDS = (
+    *_SUGGESTION_LIST_FIELDS,
+    "suggested_source",
+    "suggested_version",
+)
 
 
 class PromotionValidationError(ValueError):
@@ -50,6 +62,25 @@ def _clean(value: Any) -> str:
 def _stable_hash(*values: Any) -> str:
     payload = "\x1f".join(_clean(value).casefold() for value in values)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: Any) -> str:
+    parsed = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            parsed = []
+        else:
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = value
+    return json.dumps(
+        parsed,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _load_review_file(
@@ -275,6 +306,63 @@ def _validate_context_against_queue(
             continue
         if _clean(review.get(field_name)) != _clean(authority.get(field_name)):
             errors.append(f"{label}:{sample_id}:context_conflict:{field_name}")
+    for field_name in _SUGGESTION_CONTEXT_FIELDS:
+        if field_name not in authority:
+            continue
+        if field_name not in review:
+            errors.append(f"{label}:{sample_id}:missing_context:{field_name}")
+            continue
+        if field_name in _SUGGESTION_LIST_FIELDS:
+            matches = _canonical_json(review.get(field_name)) == _canonical_json(
+                authority.get(field_name)
+            )
+        else:
+            matches = _clean(review.get(field_name)) == _clean(
+                authority.get(field_name)
+            )
+        if not matches:
+            errors.append(f"{label}:{sample_id}:context_conflict:{field_name}")
+
+
+def _validate_queue_label_isolation(
+    authority: Mapping[str, Any],
+    *,
+    sample_id: str,
+    errors: list[str],
+) -> None:
+    if _string_list(authority.get("oracle_quota_ids"), quota_ids=True):
+        errors.append(f"review_queue:{sample_id}:oracle_quota_ids_must_be_blank")
+    if _string_list(authority.get("oracle_quota_names")):
+        errors.append(f"review_queue:{sample_id}:oracle_quota_names_must_be_blank")
+    for field_name in ("oracle_semantics", "reviewer", "reviewed_at"):
+        if _clean(authority.get(field_name)):
+            errors.append(f"review_queue:{sample_id}:{field_name}_must_be_blank")
+
+    if not any(field_name in authority for field_name in _SUGGESTION_CONTEXT_FIELDS):
+        return
+    values: dict[str, Any] = {}
+    for field_name in _SUGGESTION_LIST_FIELDS:
+        raw = authority.get(field_name)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw.strip() else []
+            except (TypeError, ValueError, json.JSONDecodeError):
+                errors.append(f"review_queue:{sample_id}:invalid_{field_name}")
+                raw = []
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+            errors.append(f"review_queue:{sample_id}:invalid_{field_name}")
+            raw = []
+        values[field_name] = list(raw)
+    expected_count = len(values["suggested_quota_ids"])
+    for field_name in _SUGGESTION_LIST_FIELDS[1:]:
+        if len(values[field_name]) != expected_count:
+            errors.append(
+                f"review_queue:{sample_id}:suggested_field_count_mismatch:{field_name}"
+            )
+    if expected_count and not _clean(authority.get("suggested_source")):
+        errors.append(f"review_queue:{sample_id}:missing_suggested_source")
+    if expected_count and not _clean(authority.get("suggested_version")):
+        errors.append(f"review_queue:{sample_id}:missing_suggested_version")
 
 
 def _reviewed_sample(
@@ -579,6 +667,12 @@ def build_promoted_dataset(
     first_by_id = _index_reviews(first_rows, label="review_a", errors=errors)
     second_by_id = _index_reviews(second_rows, label="review_b", errors=errors)
     queue_ids = set(queue_by_id)
+    for sample_id, authority in queue_by_id.items():
+        _validate_queue_label_isolation(
+            authority,
+            sample_id=sample_id,
+            errors=errors,
+        )
     for label, indexed in (("review_a", first_by_id), ("review_b", second_by_id)):
         for sample_id in sorted(queue_ids - set(indexed)):
             errors.append(f"{label}:{sample_id}:missing_sample")
@@ -676,6 +770,12 @@ def build_promoted_dataset(
             "timezone_aware_reviewed_at_required": True,
             "matching_oracle_payload_required": True,
             "oracle_authority_match_required": True,
+        },
+        "suggestion_isolation": {
+            "queue_oracle_fields_required_blank": True,
+            "suggestions_immutable_in_reviews": True,
+            "suggestions_excluded_from_promoted_rows": True,
+            "suggestions_never_auto_promoted": True,
         },
         "split_assignment": {
             "seed": seed,

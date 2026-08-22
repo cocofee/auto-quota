@@ -30,6 +30,8 @@ def main() -> int:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--per-province", type=int, default=20)
     parser.add_argument("--max-per-project", type=int, default=2)
+    parser.add_argument("--suggested-top-k", type=int, default=5)
+    parser.add_argument("--suggested-min-score", type=float, default=20.0)
     parser.add_argument("--seed", default="independent-gold-v1")
     args = parser.parse_args()
 
@@ -38,6 +40,8 @@ def main() -> int:
         national_index_path=args.national_index,
         target_per_province=args.per_province,
         max_per_project=args.max_per_project,
+        suggested_top_k=args.suggested_top_k,
+        suggested_min_score=args.suggested_min_score,
         seed=args.seed,
     )
     outputs = write_review_queue(
@@ -53,6 +57,15 @@ def main() -> int:
                 "selected_projects": manifest["selected_projects"],
                 "repaired_field_values": manifest["text_repair"][
                     "repaired_field_values"
+                ],
+                "suggested_rows": manifest["suggestion_contract"][
+                    "suggested_rows"
+                ],
+                "empty_suggestion_rows": manifest["suggestion_contract"][
+                    "empty_suggestion_rows"
+                ],
+                "suggested_candidates": manifest["suggestion_contract"][
+                    "suggested_candidates"
                 ],
                 "provinces_without_candidate_quota_books": manifest[
                     "provinces_without_candidate_quota_books"

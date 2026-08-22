@@ -12,8 +12,14 @@ from typing import Any
 from web.backend.app.text_utils import repair_mojibake_text
 
 from .fingerprints import province_query_fingerprint, query_fingerprint
+from .suggestions import (
+    SUGGESTION_SOURCE,
+    SUGGESTION_VERSION,
+    NationalIndexSuggestionProvider,
+    suggestion_columns,
+)
 
-REVIEW_QUEUE_VERSION = "accuracy_review_queue.v3"
+REVIEW_QUEUE_VERSION = "accuracy_review_queue.v4"
 _QUALITY_ORDER = {
     "name_description_unit": 0,
     "name_description": 1,
@@ -295,12 +301,18 @@ def build_review_queue(
     national_index_path: str | Path,
     target_per_province: int = 20,
     max_per_project: int = 2,
+    suggested_top_k: int = 5,
+    suggested_min_score: float = 20.0,
     seed: str = "independent-gold-v1",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if target_per_province <= 0:
         raise ValueError("target_per_province must be positive")
     if max_per_project <= 0:
         raise ValueError("max_per_project must be positive")
+    if suggested_top_k <= 0:
+        raise ValueError("suggested_top_k must be positive")
+    if not 0.0 <= suggested_min_score <= 100.0:
+        raise ValueError("suggested_min_score must be between 0 and 100")
     if not _clean(seed):
         raise ValueError("seed must be non-empty")
 
@@ -318,18 +330,26 @@ def build_review_queue(
 
     selected: list[dict[str, Any]] = []
     province_summaries: list[dict[str, Any]] = []
-    for province in sorted(by_province):
-        province_rows = _sample_province(
-            by_province[province],
-            target_count=target_per_province,
-            max_per_project=max_per_project,
-            seed=seed,
-        )
-        candidate_books = _candidate_quota_books(province, quota_books)
-        for rank, row in enumerate(province_rows, start=1):
-            sample_id = f"review:{_stable_hash(row['project_id'], row['source_record_id'])[:24]}"
-            selected.append(
-                {
+    suggested_rows = 0
+    suggested_candidates = 0
+    with NationalIndexSuggestionProvider(
+        national_index,
+        top_k=suggested_top_k,
+        minimum_score=suggested_min_score,
+    ) as suggestion_provider:
+        for province in sorted(by_province):
+            province_rows = _sample_province(
+                by_province[province],
+                target_count=target_per_province,
+                max_per_project=max_per_project,
+                seed=seed,
+            )
+            candidate_books = _candidate_quota_books(province, quota_books)
+            for rank, row in enumerate(province_rows, start=1):
+                sample_id = (
+                    f"review:{_stable_hash(row['project_id'], row['source_record_id'])[:24]}"
+                )
+                queue_row = {
                     "sample_id": sample_id,
                     "review_status": "pending",
                     "dataset_role": "independent_gold_candidate",
@@ -361,21 +381,26 @@ def build_review_queue(
                     "reviewed_at": "",
                     "review_notes": "",
                 }
+                suggestions = suggestion_provider.suggest(queue_row)
+                queue_row.update(suggestion_columns(suggestions))
+                if suggestions:
+                    suggested_rows += 1
+                    suggested_candidates += len(suggestions)
+                selected.append(queue_row)
+            province_summaries.append(
+                {
+                    "province": province,
+                    "eligible_unique_queries": len(by_province[province]),
+                    "selected": len(province_rows),
+                    "distinct_projects": len(
+                        {row["project_id"] for row in province_rows}
+                    ),
+                    "distinct_specialties": len(
+                        {row["specialty"] or "<unknown>" for row in province_rows}
+                    ),
+                    "candidate_quota_book_count": len(candidate_books),
+                }
             )
-        province_summaries.append(
-            {
-                "province": province,
-                "eligible_unique_queries": len(by_province[province]),
-                "selected": len(province_rows),
-                "distinct_projects": len(
-                    {row["project_id"] for row in province_rows}
-                ),
-                "distinct_specialties": len(
-                    {row["specialty"] or "<unknown>" for row in province_rows}
-                ),
-                "candidate_quota_book_count": len(candidate_books),
-            }
-        )
 
     selected.sort(key=lambda row: (row["province"], row["sample_rank_in_province"]))
     quality_counts = Counter(row["quality_tier"] for row in selected)
@@ -432,6 +457,31 @@ def build_review_queue(
                 "promoted into an evaluation dataset."
             ),
         },
+        "suggestion_contract": {
+            "version": SUGGESTION_VERSION,
+            "source": SUGGESTION_SOURCE,
+            "top_k": suggested_top_k,
+            "minimum_score": suggested_min_score,
+            "advisory_only": True,
+            "oracle_fields_prefilled": False,
+            "immutable_during_review": True,
+            "suggested_rows": suggested_rows,
+            "empty_suggestion_rows": len(selected) - suggested_rows,
+            "suggested_candidates": suggested_candidates,
+            "fields": [
+                "suggested_quota_ids",
+                "suggested_quota_names",
+                "suggested_quota_books",
+                "suggested_scores",
+                "suggested_reasons",
+                "suggested_source",
+                "suggested_version",
+            ],
+            "promotion_rule": (
+                "Suggestions are immutable advisory context and are never promoted "
+                "unless both approved reviewers independently provide the same oracle payload."
+            ),
+        },
     }
     return selected, manifest
 
@@ -479,6 +529,13 @@ def write_review_queue(
         "province_query_fingerprint",
         "sample_rank_in_province",
         "candidate_quota_books",
+        "suggested_quota_ids",
+        "suggested_quota_names",
+        "suggested_quota_books",
+        "suggested_scores",
+        "suggested_reasons",
+        "suggested_source",
+        "suggested_version",
         "oracle_quota_ids",
         "oracle_quota_names",
         "oracle_semantics",
@@ -494,6 +551,11 @@ def write_review_queue(
             payload["queue_content_sha256"] = content_sha256
             for field_name in (
                 "candidate_quota_books",
+                "suggested_quota_ids",
+                "suggested_quota_names",
+                "suggested_quota_books",
+                "suggested_scores",
+                "suggested_reasons",
                 "oracle_quota_ids",
                 "oracle_quota_names",
             ):

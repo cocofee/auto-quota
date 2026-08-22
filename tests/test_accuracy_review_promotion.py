@@ -41,6 +41,13 @@ def _queue_row(sample_id, *, project_id, bill_name):
         "province_query_fingerprint": f"上海|{query_fingerprint}",
         "sample_rank_in_province": int(sample_id),
         "candidate_quota_books": [{"name": BOOK_NAME, "quota_rows": 10}],
+        "suggested_quota_ids": [f"S-{sample_id}"],
+        "suggested_quota_names": [f"建议定额 {sample_id}"],
+        "suggested_quota_books": [BOOK_NAME],
+        "suggested_scores": [88.0],
+        "suggested_reasons": [["token_coverage:0.80"]],
+        "suggested_source": "national_index_structured_search",
+        "suggested_version": "accuracy_review_suggestions.v1",
         "oracle_quota_ids": [],
         "oracle_quota_names": [],
         "oracle_semantics": "",
@@ -50,11 +57,11 @@ def _queue_row(sample_id, *, project_id, bill_name):
     }
 
 
-def _write_queue(tmp_path, rows):
+def _write_queue(tmp_path, rows, *, version="accuracy_review_queue.v4"):
     return write_review_queue(
         rows=rows,
         manifest={
-            "version": "accuracy_review_queue.v3",
+            "version": version,
             "selected_rows": len(rows),
         },
         output_dir=tmp_path / "queue",
@@ -136,8 +143,15 @@ def _write_review_copy(
         writer.writerows(rows)
 
 
-def _build_inputs(tmp_path, rows, decisions_a, decisions_b=None):
-    queue_outputs = _write_queue(tmp_path, rows)
+def _build_inputs(
+    tmp_path,
+    rows,
+    decisions_a,
+    decisions_b=None,
+    *,
+    queue_version="accuracy_review_queue.v4",
+):
+    queue_outputs = _write_queue(tmp_path, rows, version=queue_version)
     quota_rows = []
     for decision in decisions_a.values():
         quota_rows.extend(zip(decision.get("quota_ids", []), decision.get("quota_names", [])))
@@ -218,6 +232,13 @@ def test_promotion_uses_exported_csv_and_preserves_agreed_rejections(tmp_path):
     assert manifest["scope"] == "slice"
     assert manifest["system_baseline_eligible"] is False
     assert manifest["oracle_authority"]["checked_oracles"] == 4
+    assert manifest["suggestion_isolation"] == {
+        "queue_oracle_fields_required_blank": True,
+        "suggestions_immutable_in_reviews": True,
+        "suggestions_excluded_from_promoted_rows": True,
+        "suggestions_never_auto_promoted": True,
+    }
+    assert all("suggested_quota_ids" not in row for row in promoted)
     assert all(row["source_family"] == "bill_library" for row in promoted)
     assert all(
         row["label_source_family"] == "dual_independent_human_review"
@@ -247,6 +268,7 @@ def test_promotion_rejects_queue_context_and_hash_tampering(tmp_path):
         mutate=lambda row: row.update(
             bill_text="被篡改文本",
             queue_content_sha256="wrong-hash",
+            suggested_quota_ids=json.dumps(["S-TAMPERED"]),
         ),
     )
 
@@ -254,7 +276,85 @@ def test_promotion_rejects_queue_context_and_hash_tampering(tmp_path):
         _promote(queue_outputs, national_index, registry, review_a, review_b)
 
     assert "review_a:1:context_conflict:bill_text" in exc_info.value.errors
+    assert (
+        "review_a:1:context_conflict:suggested_quota_ids"
+        in exc_info.value.errors
+    )
     assert "review_a:1:queue_content_sha256_mismatch" in exc_info.value.errors
+
+
+def test_promotion_rejects_oracle_prefilled_in_authoritative_queue(tmp_path):
+    row = _queue_row("1", project_id="project-a", bill_name="给水管")
+    row["oracle_quota_ids"] = ["Q-1"]
+    row["oracle_quota_names"] = ["给水管安装"]
+    row["oracle_semantics"] = "any"
+    decisions = {
+        "1": {
+            "status": "accepted",
+            "quota_ids": ["Q-1"],
+            "quota_names": ["给水管安装"],
+        }
+    }
+    inputs = _build_inputs(tmp_path, [row], decisions)
+
+    with pytest.raises(PromotionValidationError) as exc_info:
+        _promote(*inputs)
+
+    assert (
+        "review_queue:1:oracle_quota_ids_must_be_blank"
+        in exc_info.value.errors
+    )
+    assert (
+        "review_queue:1:oracle_quota_names_must_be_blank"
+        in exc_info.value.errors
+    )
+    assert "review_queue:1:oracle_semantics_must_be_blank" in exc_info.value.errors
+
+
+def test_promotion_rejects_inconsistent_suggestion_payload(tmp_path):
+    row = _queue_row("1", project_id="project-a", bill_name="给水管")
+    row["suggested_scores"] = []
+    decisions = {
+        "1": {
+            "status": "accepted",
+            "quota_ids": ["Q-1"],
+            "quota_names": ["给水管安装"],
+        }
+    }
+    inputs = _build_inputs(tmp_path, [row], decisions)
+
+    with pytest.raises(PromotionValidationError) as exc_info:
+        _promote(*inputs)
+
+    assert (
+        "review_queue:1:suggested_field_count_mismatch:suggested_scores"
+        in exc_info.value.errors
+    )
+
+
+def test_promotion_keeps_legacy_v3_queue_compatible(tmp_path):
+    row = _queue_row("1", project_id="project-a", bill_name="给水管")
+    for field_name in list(row):
+        if field_name.startswith("suggested_"):
+            row.pop(field_name)
+    decisions = {
+        "1": {
+            "status": "accepted",
+            "quota_ids": ["Q-1"],
+            "quota_names": ["给水管安装"],
+        }
+    }
+    inputs = _build_inputs(
+        tmp_path,
+        [row],
+        decisions,
+        queue_version="accuracy_review_queue.v3",
+    )
+
+    promoted, manifest = _promote(*inputs)
+
+    assert promoted[0]["oracle_quota_ids"] == ["Q-1"]
+    assert manifest["review_queue"]["version"] == "accuracy_review_queue.v3"
 
 
 def test_promotion_rejects_unknown_oracle_and_wrong_canonical_name(tmp_path):
