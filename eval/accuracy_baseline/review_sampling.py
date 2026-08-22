@@ -19,7 +19,7 @@ from .suggestions import (
     suggestion_columns,
 )
 
-REVIEW_QUEUE_VERSION = "accuracy_review_queue.v5"
+REVIEW_QUEUE_VERSION = "accuracy_review_queue.v6"
 REVIEW_SELECTION_VALUES = ("1", "2", "3", "4", "5", "reject")
 _QUALITY_ORDER = {
     "name_description_unit": 0,
@@ -354,7 +354,7 @@ def build_review_queue(
                     "sample_id": sample_id,
                     "review_status": "pending",
                     "review_selection": "",
-                    "dataset_role": "independent_gold_candidate",
+                    "dataset_role": "single_human_oracle_candidate",
                     "source": "bill_library.db",
                     "source_family": "bill_library",
                     "province": province,
@@ -408,7 +408,7 @@ def build_review_queue(
     quality_counts = Counter(row["quality_tier"] for row in selected)
     manifest = {
         "version": REVIEW_QUEUE_VERSION,
-        "role": "independent_human_gold_candidate_queue",
+        "role": "single_human_oracle_candidate_queue",
         "system_baseline_eligible": False,
         "review_required": True,
         "selection": {
@@ -451,12 +451,12 @@ def build_review_queue(
                 "reviewed_at",
             ],
             "allowed_review_selections": list(REVIEW_SELECTION_VALUES),
+            "required_reviews_per_sample": 1,
             "oracle_generated_by_promotion": True,
             "reviewer_oracle_fields_must_be_blank": True,
             "promotion_rule": (
-                "Only rows where two approved reviewers independently select the same "
-                "suggested rank may be promoted. Matching reject selections are preserved "
-                "as agreed rejections."
+                "One approved reviewer selects a suggested rank or reject. The selected "
+                "rank is resolved to an oracle from the immutable queue suggestions."
             ),
         },
         "suggestion_contract": {
@@ -481,7 +481,7 @@ def build_review_queue(
             ],
             "promotion_rule": (
                 "Suggestions are immutable advisory context. A suggestion becomes an oracle "
-                "only when two approved reviewers independently select the same rank."
+                "only when the approved reviewer explicitly selects its rank."
             ),
         },
     }

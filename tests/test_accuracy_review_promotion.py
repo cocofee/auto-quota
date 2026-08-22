@@ -89,15 +89,18 @@ def _write_national_index(path, rows):
     connection.close()
 
 
-def _write_reviewer_registry(path):
+def _write_reviewer_registry(
+    path,
+    reviewer_ids=("reviewer-a", "reviewer-b"),
+):
     path.write_text(
         json.dumps(
             {
                 "version": "accuracy_reviewer_registry.v1",
                 "approval_reference": "cost-team-approval-2026-08",
                 "reviewers": [
-                    {"reviewer_id": "reviewer-a", "active": True},
-                    {"reviewer_id": "reviewer-b", "active": True},
+                    {"reviewer_id": reviewer_id, "active": True}
+                    for reviewer_id in reviewer_ids
                 ],
             },
             ensure_ascii=False,
@@ -198,6 +201,79 @@ def _promote(queue_outputs, national_index, registry, review_a, review_b):
         national_index_path=national_index,
         reviewer_registry_path=registry,
     )
+
+
+def _build_single_inputs(tmp_path, rows, decisions):
+    queue_outputs = _write_queue(
+        tmp_path,
+        rows,
+        version="accuracy_review_queue.v6",
+    )
+    quota_rows = []
+    for row in rows:
+        quota_rows.extend(
+            zip(
+                row.get("suggested_quota_ids", []),
+                row.get("suggested_quota_names", []),
+            )
+        )
+    national_index = tmp_path / "national.sqlite"
+    _write_national_index(national_index, list(dict.fromkeys(quota_rows)))
+    registry = tmp_path / "reviewers.json"
+    _write_reviewer_registry(registry, reviewer_ids=("reviewer-a",))
+    review = tmp_path / "review.csv"
+    _write_review_copy(
+        queue_outputs["csv"],
+        review,
+        reviewer="reviewer-a",
+        decisions=decisions,
+    )
+    return queue_outputs, national_index, registry, review
+
+
+def _promote_single(queue_outputs, national_index, registry, review):
+    return build_promoted_dataset(
+        review_queue_path=queue_outputs["jsonl"],
+        review_queue_manifest_path=queue_outputs["manifest"],
+        review_a_path=review,
+        national_index_path=national_index,
+        reviewer_registry_path=registry,
+    )
+
+
+def test_v6_single_review_generates_oracle_and_records_rejection(tmp_path):
+    accepted = _queue_row("1", project_id="project-a", bill_name="给水管")
+    accepted["suggested_quota_ids"] = ["Q-1-1", "Q-1-2"]
+    accepted["suggested_quota_names"] = ["给水管定额一", "给水管定额二"]
+    accepted["suggested_quota_books"] = [BOOK_NAME, BOOK_NAME]
+    accepted["suggested_scores"] = [90.0, 85.0]
+    accepted["suggested_reasons"] = [["rank:1"], ["rank:2"]]
+    rejected = _queue_row("2", project_id="project-b", bill_name="无合适定额")
+    decisions = {
+        "1": {"selection": "2"},
+        "2": {"selection": "reject", "notes": "建议均不适用"},
+    }
+    inputs = _build_single_inputs(tmp_path, [accepted, rejected], decisions)
+
+    promoted, manifest = _promote_single(*inputs)
+    outputs = write_promoted_dataset(
+        rows=promoted,
+        manifest=manifest,
+        output_dir=tmp_path / "promoted",
+    )
+
+    assert promoted[0]["oracle_quota_ids"] == ["Q-1-2"]
+    assert promoted[0]["oracle_quota_names"] == ["给水管定额二"]
+    assert promoted[0]["label_source_family"] == "single_human_review"
+    assert len(promoted[0]["review_audit"]) == 1
+    assert manifest["review_contract"]["required_reviews_per_sample"] == 1
+    assert manifest["review_contract"][
+        "approved_distinct_reviewers_required"
+    ] is False
+    assert len(manifest["review_sources"]) == 1
+    assert manifest["rejected_rows"] == 1
+    assert "agreed_rejected_rows" not in manifest
+    assert outputs["rejections"].name == "rejections.jsonl"
 
 
 def test_promotion_uses_exported_csv_and_preserves_agreed_rejections(tmp_path):

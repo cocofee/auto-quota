@@ -358,7 +358,7 @@ def test_review_queue_generates_advisory_suggestions_without_prefilling_oracle(
     assert rows[0]["oracle_quota_names"] == []
     assert rows[0]["oracle_semantics"] == ""
     assert rows[0]["review_selection"] == ""
-    assert manifest["version"] == "accuracy_review_queue.v5"
+    assert manifest["version"] == "accuracy_review_queue.v6"
     assert manifest["review_contract"]["allowed_review_selections"] == [
         "1",
         "2",
@@ -368,5 +368,6 @@ def test_review_queue_generates_advisory_suggestions_without_prefilling_oracle(
         "reject",
     ]
     assert manifest["review_contract"]["oracle_generated_by_promotion"] is True
+    assert manifest["review_contract"]["required_reviews_per_sample"] == 1
     assert manifest["suggestion_contract"]["advisory_only"] is True
     assert manifest["suggestion_contract"]["oracle_fields_prefilled"] is False

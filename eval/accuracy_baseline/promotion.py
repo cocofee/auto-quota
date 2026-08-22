@@ -16,8 +16,9 @@ from .coverage import summarize_dataset_coverage
 from .datasets import normalize_quota_id
 from .fingerprints import province_query_fingerprint, query_fingerprint
 
-PROMOTION_VERSION = "accuracy_review_promotion.v4"
+PROMOTION_VERSION = "accuracy_review_promotion.v5"
 _RANK_SELECTION_QUEUE_VERSION = "accuracy_review_queue.v5"
+_SINGLE_REVIEW_QUEUE_VERSION = "accuracy_review_queue.v6"
 _REVIEW_SELECTION_VALUES = {"1", "2", "3", "4", "5", "reject"}
 _CONTEXT_FIELDS = (
     "province",
@@ -285,6 +286,8 @@ def _validate_queue_manifest(
 
 def _load_reviewer_registry(
     path: str | Path,
+    *,
+    minimum_active_reviewers: int = 2,
 ) -> tuple[set[str], dict[str, Any], Path, str]:
     registry, resolved, registry_sha256 = _load_json_object(
         path,
@@ -316,8 +319,11 @@ def _load_reviewer_registry(
             seen.add(normalized)
             if record.get("active") is True:
                 reviewer_ids.add(normalized)
-    if len(reviewer_ids) < 2:
-        errors.append("reviewer_registry:at_least_two_active_reviewers_required")
+    if len(reviewer_ids) < minimum_active_reviewers:
+        if minimum_active_reviewers == 1:
+            errors.append("reviewer_registry:at_least_one_active_reviewer_required")
+        else:
+            errors.append("reviewer_registry:at_least_two_active_reviewers_required")
     if errors:
         raise PromotionValidationError(sorted(set(errors)))
     return reviewer_ids, registry, resolved, registry_sha256
@@ -426,6 +432,129 @@ def _validate_generated_review_fields_blank(
         errors.append(f"{label}:{sample_id}:oracle_semantics_must_be_blank")
     if _clean(row.get("review_status")).casefold() not in {"", "pending"}:
         errors.append(f"{label}:{sample_id}:review_status_must_remain_pending")
+
+
+def _promoted_row(
+    authority: Mapping[str, Any],
+    *,
+    sample_id: str,
+    pairs: Sequence[tuple[str, str]],
+    semantics: str,
+    audits: Sequence[Mapping[str, str]],
+    dataset_role: str,
+    label_source_family: str,
+) -> dict[str, Any]:
+    query_key = _query_key(authority)
+    province = _clean(authority.get("province"))
+    return {
+        "sample_id": sample_id,
+        "review_status": "accepted",
+        "dataset_role": dataset_role,
+        "source": _clean(authority.get("source")),
+        "source_family": _clean(authority.get("source_family")),
+        "label_source_family": label_source_family,
+        "province": province,
+        "specialty": _clean(authority.get("specialty")),
+        "project_id": _clean(authority.get("project_id")),
+        "source_file_name": _clean(authority.get("source_file_name")),
+        "source_record_id": _clean(authority.get("source_record_id")),
+        "sheet_name": _clean(authority.get("sheet_name")),
+        "section": _clean(authority.get("section")),
+        "bill_code": _clean(authority.get("bill_code")),
+        "bill_name": _clean(authority.get("bill_name")),
+        "bill_text": _clean(authority.get("bill_text")),
+        "description": _clean(authority.get("description")),
+        "unit": _clean(authority.get("unit")),
+        "query_fingerprint": query_key,
+        "province_query_fingerprint": province_query_fingerprint(
+            province,
+            query_key,
+        ),
+        "oracle_quota_ids": [quota_id for quota_id, _ in pairs],
+        "oracle_quota_names": [name for _, name in pairs],
+        "oracle_semantics": semantics,
+        "review_audit": [dict(audit) for audit in audits],
+    }
+
+
+def _single_reviewed_sample(
+    authority: Mapping[str, Any],
+    review: Mapping[str, Any],
+    *,
+    sample_id: str,
+    queue_sha256: str,
+    approved_reviewers: set[str],
+    errors: list[str],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    row_errors: list[str] = []
+    _validate_context_against_queue(
+        authority,
+        review,
+        label="review",
+        sample_id=sample_id,
+        queue_sha256=queue_sha256,
+        errors=row_errors,
+    )
+    selection = _review_selection(
+        review,
+        label="review",
+        sample_id=sample_id,
+        errors=row_errors,
+    )
+    _validate_generated_review_fields_blank(
+        review,
+        label="review",
+        sample_id=sample_id,
+        errors=row_errors,
+    )
+    reviewer = _clean(review.get("reviewer"))
+    if not reviewer:
+        row_errors.append(f"review:{sample_id}:missing_reviewer")
+    elif reviewer.casefold() not in approved_reviewers:
+        row_errors.append(f"review:{sample_id}:reviewer_not_approved")
+    reviewed_at = _reviewed_at(
+        review,
+        label="review",
+        sample_id=sample_id,
+        errors=row_errors,
+    )
+    audit = {
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+        "review_notes": _clean(review.get("review_notes")),
+        "review_selection": selection,
+    }
+    if row_errors:
+        errors.extend(row_errors)
+        return None, None
+
+    if selection == "reject":
+        return None, {
+            "sample_id": sample_id,
+            "review_status": "rejected",
+            "review_selection": "reject",
+            "review_audit": [audit],
+        }
+
+    oracle_errors: list[str] = []
+    pairs, semantics = _suggested_oracle_payload(
+        authority,
+        selection,
+        sample_id=sample_id,
+        errors=oracle_errors,
+    )
+    if oracle_errors:
+        errors.extend(oracle_errors)
+        return None, None
+    return _promoted_row(
+        authority,
+        sample_id=sample_id,
+        pairs=pairs,
+        semantics=semantics,
+        audits=[audit],
+        dataset_role="single_human_oracle",
+        label_source_family="single_human_review",
+    ), None
 
 
 def _reviewed_sample(
@@ -546,37 +675,15 @@ def _reviewed_sample(
         return None, None
 
     pairs, semantics = first_oracle
-    query_key = _query_key(authority)
-    province = _clean(authority.get("province"))
-    return {
-        "sample_id": sample_id,
-        "review_status": "accepted",
-        "dataset_role": "independent_human_gold",
-        "source": _clean(authority.get("source")),
-        "source_family": _clean(authority.get("source_family")),
-        "label_source_family": "dual_independent_human_review",
-        "province": province,
-        "specialty": _clean(authority.get("specialty")),
-        "project_id": _clean(authority.get("project_id")),
-        "source_file_name": _clean(authority.get("source_file_name")),
-        "source_record_id": _clean(authority.get("source_record_id")),
-        "sheet_name": _clean(authority.get("sheet_name")),
-        "section": _clean(authority.get("section")),
-        "bill_code": _clean(authority.get("bill_code")),
-        "bill_name": _clean(authority.get("bill_name")),
-        "bill_text": _clean(authority.get("bill_text")),
-        "description": _clean(authority.get("description")),
-        "unit": _clean(authority.get("unit")),
-        "query_fingerprint": query_key,
-        "province_query_fingerprint": province_query_fingerprint(
-            province,
-            query_key,
-        ),
-        "oracle_quota_ids": [quota_id for quota_id, _ in pairs],
-        "oracle_quota_names": [name for _, name in pairs],
-        "oracle_semantics": semantics,
-        "review_audit": audits,
-    }, None
+    return _promoted_row(
+        authority,
+        sample_id=sample_id,
+        pairs=pairs,
+        semantics=semantics,
+        audits=audits,
+        dataset_role="independent_human_gold",
+        label_source_family="dual_independent_human_review",
+    ), None
 
 
 def _candidate_book_names(authority: Mapping[str, Any]) -> list[str]:
@@ -734,9 +841,9 @@ def build_promoted_dataset(
     *,
     review_queue_path: str | Path,
     review_a_path: str | Path,
-    review_b_path: str | Path,
     national_index_path: str | Path,
     reviewer_registry_path: str | Path,
+    review_b_path: str | Path | None = None,
     review_queue_manifest_path: str | Path | None = None,
     coverage_requirements: Mapping[str, Any] | None = None,
     split_names: Sequence[str] = ("dev", "heldout"),
@@ -755,17 +862,42 @@ def build_promoted_dataset(
         )
     )
     queue_version = _clean(queue_manifest.get("version"))
-    rank_selection_required = queue_version == _RANK_SELECTION_QUEUE_VERSION
+    single_review_required = queue_version == _SINGLE_REVIEW_QUEUE_VERSION
+    rank_selection_required = queue_version in {
+        _RANK_SELECTION_QUEUE_VERSION,
+        _SINGLE_REVIEW_QUEUE_VERSION,
+    }
     approved_reviewers, registry, registry_path, registry_sha256 = (
-        _load_reviewer_registry(reviewer_registry_path)
+        _load_reviewer_registry(
+            reviewer_registry_path,
+            minimum_active_reviewers=1 if single_review_required else 2,
+        )
     )
     first_rows, first_path, first_sha256 = _load_review_file(review_a_path)
-    second_rows, second_path, second_sha256 = _load_review_file(review_b_path)
+    second_rows: list[dict[str, Any]] = []
+    second_path: Path | None = None
+    second_sha256 = ""
+    if single_review_required:
+        if review_b_path is not None:
+            raise PromotionValidationError(
+                ["review_b_not_allowed_for_single_review_queue"]
+            )
+    else:
+        if review_b_path is None:
+            raise PromotionValidationError(
+                ["review_b_required_for_legacy_review_queue"]
+            )
+        second_rows, second_path, second_sha256 = _load_review_file(review_b_path)
 
     errors: list[str] = []
     queue_by_id = _index_reviews(queue_rows, label="review_queue", errors=errors)
-    first_by_id = _index_reviews(first_rows, label="review_a", errors=errors)
-    second_by_id = _index_reviews(second_rows, label="review_b", errors=errors)
+    first_label = "review" if single_review_required else "review_a"
+    first_by_id = _index_reviews(first_rows, label=first_label, errors=errors)
+    second_by_id = (
+        {}
+        if single_review_required
+        else _index_reviews(second_rows, label="review_b", errors=errors)
+    )
     queue_ids = set(queue_by_id)
     for sample_id, authority in queue_by_id.items():
         _validate_queue_label_isolation(
@@ -774,29 +906,45 @@ def build_promoted_dataset(
             rank_selection_required=rank_selection_required,
             errors=errors,
         )
-    for label, indexed in (("review_a", first_by_id), ("review_b", second_by_id)):
+    review_indexes = [(first_label, first_by_id)]
+    if not single_review_required:
+        review_indexes.append(("review_b", second_by_id))
+    for label, indexed in review_indexes:
         for sample_id in sorted(queue_ids - set(indexed)):
             errors.append(f"{label}:{sample_id}:missing_sample")
         for sample_id in sorted(set(indexed) - queue_ids):
             errors.append(f"{label}:{sample_id}:unknown_sample")
 
     promoted: list[dict[str, Any]] = []
-    agreed_rejections: list[dict[str, Any]] = []
-    for sample_id in sorted(queue_ids & set(first_by_id) & set(second_by_id)):
-        row, rejected = _reviewed_sample(
-            queue_by_id[sample_id],
-            first_by_id[sample_id],
-            second_by_id[sample_id],
-            sample_id=sample_id,
-            queue_sha256=queue_sha256,
-            approved_reviewers=approved_reviewers,
-            rank_selection_required=rank_selection_required,
-            errors=errors,
-        )
+    rejections: list[dict[str, Any]] = []
+    reviewed_ids = queue_ids & set(first_by_id)
+    if not single_review_required:
+        reviewed_ids &= set(second_by_id)
+    for sample_id in sorted(reviewed_ids):
+        if single_review_required:
+            row, rejected = _single_reviewed_sample(
+                queue_by_id[sample_id],
+                first_by_id[sample_id],
+                sample_id=sample_id,
+                queue_sha256=queue_sha256,
+                approved_reviewers=approved_reviewers,
+                errors=errors,
+            )
+        else:
+            row, rejected = _reviewed_sample(
+                queue_by_id[sample_id],
+                first_by_id[sample_id],
+                second_by_id[sample_id],
+                sample_id=sample_id,
+                queue_sha256=queue_sha256,
+                approved_reviewers=approved_reviewers,
+                rank_selection_required=rank_selection_required,
+                errors=errors,
+            )
         if row is not None:
             promoted.append(row)
         if rejected is not None:
-            agreed_rejections.append(rejected)
+            rejections.append(rejected)
 
     if not promoted:
         errors.append("no_promotable_rows")
@@ -826,13 +974,41 @@ def build_promoted_dataset(
         raise RuntimeError("split assignment leaked a project across splits")
 
     split_counts = Counter(row["split"] for row in promoted)
+    review_sources = [
+        {
+            "path": str(first_path),
+            "rows": len(first_rows),
+            "content_sha256": first_sha256,
+        }
+    ]
+    if second_path is not None:
+        review_sources.append(
+            {
+                "path": str(second_path),
+                "rows": len(second_rows),
+                "content_sha256": second_sha256,
+            }
+        )
     manifest = {
         "version": PROMOTION_VERSION,
-        "role": "independent_human_gold_evaluation_dataset",
+        "role": (
+            "single_human_reviewed_evaluation_dataset"
+            if single_review_required
+            else "independent_human_gold_evaluation_dataset"
+        ),
         "reviewed_rows": len(queue_rows),
         "promoted_rows": len(promoted),
-        "agreed_rejected_rows": len(agreed_rejections),
-        "agreed_rejections": agreed_rejections,
+        **(
+            {
+                "rejected_rows": len(rejections),
+                "rejections": rejections,
+            }
+            if single_review_required
+            else {
+                "agreed_rejected_rows": len(rejections),
+                "agreed_rejections": rejections,
+            }
+        ),
         "system_baseline_eligible": coverage["system_baseline_eligible"],
         "scope": coverage["scope"],
         "review_queue": {
@@ -842,18 +1018,7 @@ def build_promoted_dataset(
             "manifest_sha256": queue_manifest_sha256,
             "version": queue_manifest["version"],
         },
-        "review_sources": [
-            {
-                "path": str(first_path),
-                "rows": len(first_rows),
-                "content_sha256": first_sha256,
-            },
-            {
-                "path": str(second_path),
-                "rows": len(second_rows),
-                "content_sha256": second_sha256,
-            },
-        ],
+        "review_sources": review_sources,
         "reviewer_registry": {
             "path": str(registry_path),
             "content_sha256": registry_sha256,
@@ -866,11 +1031,14 @@ def build_promoted_dataset(
             "checked_oracles": checked_oracles,
         },
         "review_contract": {
-            "required_reviews_per_sample": 2,
-            "approved_distinct_reviewers_required": True,
+            "required_reviews_per_sample": 1 if single_review_required else 2,
+            "approved_distinct_reviewers_required": not single_review_required,
             "queue_content_hash_required": True,
             "timezone_aware_reviewed_at_required": True,
-            "matching_review_selection_required": rank_selection_required,
+            "review_selection_required": rank_selection_required,
+            "matching_review_selection_required": (
+                rank_selection_required and not single_review_required
+            ),
             "matching_oracle_payload_required": not rank_selection_required,
             "oracle_generated_from_authoritative_suggestion": (
                 rank_selection_required
@@ -883,7 +1051,9 @@ def build_promoted_dataset(
             "suggestions_immutable_in_reviews": True,
             "suggestions_excluded_from_promoted_rows": True,
             "suggestions_never_auto_promoted": True,
-            "dual_matching_rank_required": rank_selection_required,
+            "dual_matching_rank_required": (
+                rank_selection_required and not single_review_required
+            ),
         },
         "split_assignment": {
             "seed": seed,
@@ -920,7 +1090,10 @@ def write_promoted_dataset(
     resolved = Path(output_dir).resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     dataset_path = resolved / "primary_dataset.jsonl"
-    rejected_path = resolved / "agreed_rejections.jsonl"
+    rejection_key = (
+        "rejections" if "rejections" in manifest else "agreed_rejections"
+    )
+    rejected_path = resolved / f"{rejection_key}.jsonl"
     manifest_path = resolved / "promotion_manifest.json"
 
     dataset_payload = "".join(
@@ -929,7 +1102,7 @@ def write_promoted_dataset(
     )
     rejected_payload = "".join(
         json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n"
-        for row in manifest.get("agreed_rejections") or []
+        for row in manifest.get(rejection_key) or []
     )
     _write_text_atomic(dataset_path, dataset_payload)
     _write_text_atomic(rejected_path, rejected_payload)
@@ -937,7 +1110,7 @@ def write_promoted_dataset(
         **dict(manifest),
         "outputs": {
             "dataset": str(dataset_path),
-            "agreed_rejections": str(rejected_path),
+            rejection_key: str(rejected_path),
         },
         "content_sha256": hashlib.sha256(
             dataset_payload.encode("utf-8")
@@ -950,7 +1123,7 @@ def write_promoted_dataset(
     )
     return {
         "dataset": dataset_path,
-        "agreed_rejections": rejected_path,
+        rejection_key: rejected_path,
         "manifest": manifest_path,
     }
 

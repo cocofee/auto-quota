@@ -19,12 +19,13 @@ from eval.accuracy_baseline.promotion import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate two independent reviews and promote accepted rows"
+        description="Validate human reviews and promote accepted rows"
     )
     parser.add_argument("--review-queue", required=True)
     parser.add_argument("--review-queue-manifest")
-    parser.add_argument("--review-a", required=True)
-    parser.add_argument("--review-b", required=True)
+    parser.add_argument("--review", help="review file for v6 single-review queues")
+    parser.add_argument("--review-a", help="first review file for legacy queues")
+    parser.add_argument("--review-b", help="second review file for legacy queues")
     parser.add_argument("--reviewer-registry", required=True)
     parser.add_argument(
         "--national-index",
@@ -37,6 +38,11 @@ def main() -> int:
     parser.add_argument("--splits", default="dev,heldout")
     parser.add_argument("--seed", default="independent-gold-split-v1")
     args = parser.parse_args()
+    if args.review and args.review_a:
+        parser.error("use either --review or --review-a, not both")
+    primary_review = args.review or args.review_a
+    if not primary_review:
+        parser.error("--review is required for v6 queues; use --review-a for legacy queues")
 
     coverage_requirements = None
     if args.coverage_contract:
@@ -55,7 +61,7 @@ def main() -> int:
         rows, manifest = build_promoted_dataset(
             review_queue_path=args.review_queue,
             review_queue_manifest_path=args.review_queue_manifest,
-            review_a_path=args.review_a,
+            review_a_path=primary_review,
             review_b_path=args.review_b,
             national_index_path=args.national_index,
             reviewer_registry_path=args.reviewer_registry,
@@ -94,7 +100,10 @@ def main() -> int:
             {
                 "status": "promoted",
                 "promoted_rows": manifest["promoted_rows"],
-                "agreed_rejected_rows": manifest["agreed_rejected_rows"],
+                "rejected_rows": manifest.get(
+                    "rejected_rows",
+                    manifest.get("agreed_rejected_rows", 0),
+                ),
                 "scope": manifest["scope"],
                 "system_baseline_eligible": manifest[
                     "system_baseline_eligible"
