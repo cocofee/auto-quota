@@ -150,6 +150,7 @@ def test_review_queue_is_deterministic_stratified_and_project_capped(tmp_path):
         assert row["oracle_quota_ids"] == []
         assert row["oracle_semantics"] == ""
         assert row["review_status"] == "pending"
+        assert row["review_selection"] == ""
         assert row["candidate_quota_books"]
         assert row["suggested_source"] == "national_index_structured_search"
         assert row["suggested_version"] == "accuracy_review_suggestions.v1"
@@ -199,9 +200,10 @@ def test_write_review_queue_creates_jsonl_csv_and_manifest(tmp_path):
     assert csv_rows[0]["queue_content_sha256"] == written_manifest[
         "content_sha256"
     ]
-    assert "oracle_quota_names" in written_manifest["review_contract"][
+    assert "review_selection" in written_manifest["review_contract"][
         "required_fields"
     ]
+    assert csv_rows[0]["review_selection"] == ""
 
 
 def test_review_queue_repairs_text_before_grouping_and_fingerprinting(tmp_path):
@@ -355,6 +357,16 @@ def test_review_queue_generates_advisory_suggestions_without_prefilling_oracle(
     assert rows[0]["oracle_quota_ids"] == []
     assert rows[0]["oracle_quota_names"] == []
     assert rows[0]["oracle_semantics"] == ""
-    assert manifest["version"] == "accuracy_review_queue.v4"
+    assert rows[0]["review_selection"] == ""
+    assert manifest["version"] == "accuracy_review_queue.v5"
+    assert manifest["review_contract"]["allowed_review_selections"] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "reject",
+    ]
+    assert manifest["review_contract"]["oracle_generated_by_promotion"] is True
     assert manifest["suggestion_contract"]["advisory_only"] is True
     assert manifest["suggestion_contract"]["oracle_fields_prefilled"] is False

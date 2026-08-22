@@ -19,7 +19,8 @@ from .suggestions import (
     suggestion_columns,
 )
 
-REVIEW_QUEUE_VERSION = "accuracy_review_queue.v4"
+REVIEW_QUEUE_VERSION = "accuracy_review_queue.v5"
+REVIEW_SELECTION_VALUES = ("1", "2", "3", "4", "5", "reject")
 _QUALITY_ORDER = {
     "name_description_unit": 0,
     "name_description": 1,
@@ -309,8 +310,8 @@ def build_review_queue(
         raise ValueError("target_per_province must be positive")
     if max_per_project <= 0:
         raise ValueError("max_per_project must be positive")
-    if suggested_top_k <= 0:
-        raise ValueError("suggested_top_k must be positive")
+    if not 1 <= suggested_top_k <= 5:
+        raise ValueError("suggested_top_k must be between 1 and 5")
     if not 0.0 <= suggested_min_score <= 100.0:
         raise ValueError("suggested_min_score must be between 0 and 100")
     if not _clean(seed):
@@ -352,6 +353,7 @@ def build_review_queue(
                 queue_row = {
                     "sample_id": sample_id,
                     "review_status": "pending",
+                    "review_selection": "",
                     "dataset_role": "independent_gold_candidate",
                     "source": "bill_library.db",
                     "source_family": "bill_library",
@@ -444,17 +446,17 @@ def build_review_queue(
         "provinces": province_summaries,
         "review_contract": {
             "required_fields": [
-                "review_status",
-                "oracle_quota_ids",
-                "oracle_quota_names",
-                "oracle_semantics",
+                "review_selection",
                 "reviewer",
                 "reviewed_at",
             ],
-            "allowed_oracle_semantics": ["any", "all"],
+            "allowed_review_selections": list(REVIEW_SELECTION_VALUES),
+            "oracle_generated_by_promotion": True,
+            "reviewer_oracle_fields_must_be_blank": True,
             "promotion_rule": (
-                "Only independently reviewed rows with explicit oracle semantics may be "
-                "promoted into an evaluation dataset."
+                "Only rows where two approved reviewers independently select the same "
+                "suggested rank may be promoted. Matching reject selections are preserved "
+                "as agreed rejections."
             ),
         },
         "suggestion_contract": {
@@ -478,8 +480,8 @@ def build_review_queue(
                 "suggested_version",
             ],
             "promotion_rule": (
-                "Suggestions are immutable advisory context and are never promoted "
-                "unless both approved reviewers independently provide the same oracle payload."
+                "Suggestions are immutable advisory context. A suggestion becomes an oracle "
+                "only when two approved reviewers independently select the same rank."
             ),
         },
     }
@@ -509,6 +511,7 @@ def write_review_queue(
         "sample_id",
         "queue_content_sha256",
         "review_status",
+        "review_selection",
         "dataset_role",
         "source",
         "source_family",
@@ -586,4 +589,8 @@ def write_review_queue(
     }
 
 
-__all__ = ["build_review_queue", "write_review_queue"]
+__all__ = [
+    "REVIEW_SELECTION_VALUES",
+    "build_review_queue",
+    "write_review_queue",
+]

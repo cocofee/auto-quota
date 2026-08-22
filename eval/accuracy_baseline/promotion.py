@@ -16,7 +16,9 @@ from .coverage import summarize_dataset_coverage
 from .datasets import normalize_quota_id
 from .fingerprints import province_query_fingerprint, query_fingerprint
 
-PROMOTION_VERSION = "accuracy_review_promotion.v3"
+PROMOTION_VERSION = "accuracy_review_promotion.v4"
+_RANK_SELECTION_QUEUE_VERSION = "accuracy_review_queue.v5"
+_REVIEW_SELECTION_VALUES = {"1", "2", "3", "4", "5", "reject"}
 _CONTEXT_FIELDS = (
     "province",
     "specialty",
@@ -211,6 +213,38 @@ def _oracle_payload(
     return pairs, semantics
 
 
+def _review_selection(
+    row: Mapping[str, Any],
+    *,
+    label: str,
+    sample_id: str,
+    errors: list[str],
+) -> str:
+    selection = _clean(row.get("review_selection")).casefold()
+    if selection not in _REVIEW_SELECTION_VALUES:
+        errors.append(f"{label}:{sample_id}:invalid_review_selection")
+    return selection
+
+
+def _suggested_oracle_payload(
+    authority: Mapping[str, Any],
+    selection: str,
+    *,
+    sample_id: str,
+    errors: list[str],
+) -> tuple[tuple[tuple[str, str], ...], str]:
+    quota_ids = _string_list(
+        authority.get("suggested_quota_ids"),
+        quota_ids=True,
+    )
+    quota_names = _string_list(authority.get("suggested_quota_names"))
+    selected_index = int(selection) - 1
+    if selected_index >= len(quota_ids) or selected_index >= len(quota_names):
+        errors.append(f"{sample_id}:review_selection_out_of_range")
+        return (), "any"
+    return ((quota_ids[selected_index], quota_names[selected_index]),), "any"
+
+
 def _query_key(row: Mapping[str, Any]) -> str:
     stored = query_fingerprint(row.get("query_fingerprint"))
     if stored:
@@ -328,6 +362,7 @@ def _validate_queue_label_isolation(
     authority: Mapping[str, Any],
     *,
     sample_id: str,
+    rank_selection_required: bool,
     errors: list[str],
 ) -> None:
     if _string_list(authority.get("oracle_quota_ids"), quota_ids=True):
@@ -337,8 +372,17 @@ def _validate_queue_label_isolation(
     for field_name in ("oracle_semantics", "reviewer", "reviewed_at"):
         if _clean(authority.get(field_name)):
             errors.append(f"review_queue:{sample_id}:{field_name}_must_be_blank")
+    if rank_selection_required:
+        if "review_selection" not in authority:
+            errors.append(f"review_queue:{sample_id}:missing_review_selection")
+        elif _clean(authority.get("review_selection")):
+            errors.append(
+                f"review_queue:{sample_id}:review_selection_must_be_blank"
+            )
 
     if not any(field_name in authority for field_name in _SUGGESTION_CONTEXT_FIELDS):
+        if rank_selection_required:
+            errors.append(f"review_queue:{sample_id}:missing_suggestions")
         return
     values: dict[str, Any] = {}
     for field_name in _SUGGESTION_LIST_FIELDS:
@@ -354,6 +398,8 @@ def _validate_queue_label_isolation(
             raw = []
         values[field_name] = list(raw)
     expected_count = len(values["suggested_quota_ids"])
+    if rank_selection_required and expected_count > 5:
+        errors.append(f"review_queue:{sample_id}:too_many_suggestions")
     for field_name in _SUGGESTION_LIST_FIELDS[1:]:
         if len(values[field_name]) != expected_count:
             errors.append(
@@ -365,6 +411,23 @@ def _validate_queue_label_isolation(
         errors.append(f"review_queue:{sample_id}:missing_suggested_version")
 
 
+def _validate_generated_review_fields_blank(
+    row: Mapping[str, Any],
+    *,
+    label: str,
+    sample_id: str,
+    errors: list[str],
+) -> None:
+    if _string_list(row.get("oracle_quota_ids"), quota_ids=True):
+        errors.append(f"{label}:{sample_id}:oracle_quota_ids_must_be_blank")
+    if _string_list(row.get("oracle_quota_names")):
+        errors.append(f"{label}:{sample_id}:oracle_quota_names_must_be_blank")
+    if _clean(row.get("oracle_semantics")):
+        errors.append(f"{label}:{sample_id}:oracle_semantics_must_be_blank")
+    if _clean(row.get("review_status")).casefold() not in {"", "pending"}:
+        errors.append(f"{label}:{sample_id}:review_status_must_remain_pending")
+
+
 def _reviewed_sample(
     authority: Mapping[str, Any],
     first: Mapping[str, Any],
@@ -373,11 +436,13 @@ def _reviewed_sample(
     sample_id: str,
     queue_sha256: str,
     approved_reviewers: set[str],
+    rank_selection_required: bool,
     errors: list[str],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     row_errors: list[str] = []
     audits: list[dict[str, str]] = []
     statuses: list[str] = []
+    selections: list[str] = []
     reviewers: list[str] = []
 
     for label, row in (("review_a", first), ("review_b", second)):
@@ -389,9 +454,25 @@ def _reviewed_sample(
             queue_sha256=queue_sha256,
             errors=row_errors,
         )
-        status = _clean(row.get("review_status")).casefold()
-        if status not in {"accepted", "rejected"}:
-            row_errors.append(f"{label}:{sample_id}:invalid_review_status")
+        if rank_selection_required:
+            selection = _review_selection(
+                row,
+                label=label,
+                sample_id=sample_id,
+                errors=row_errors,
+            )
+            _validate_generated_review_fields_blank(
+                row,
+                label=label,
+                sample_id=sample_id,
+                errors=row_errors,
+            )
+            selections.append(selection)
+        else:
+            status = _clean(row.get("review_status")).casefold()
+            if status not in {"accepted", "rejected"}:
+                row_errors.append(f"{label}:{sample_id}:invalid_review_status")
+            statuses.append(status)
         reviewer = _clean(row.get("reviewer"))
         if not reviewer:
             row_errors.append(f"{label}:{sample_id}:missing_reviewer")
@@ -403,25 +484,34 @@ def _reviewed_sample(
             sample_id=sample_id,
             errors=row_errors,
         )
-        statuses.append(status)
         reviewers.append(reviewer)
-        audits.append(
-            {
-                "reviewer": reviewer,
-                "reviewed_at": reviewed_at,
-                "review_notes": _clean(row.get("review_notes")),
-            }
-        )
+        audit = {
+            "reviewer": reviewer,
+            "reviewed_at": reviewed_at,
+            "review_notes": _clean(row.get("review_notes")),
+        }
+        if rank_selection_required:
+            audit["review_selection"] = selection
+        audits.append(audit)
 
     if reviewers[0] and reviewers[0].casefold() == reviewers[1].casefold():
         row_errors.append(f"{sample_id}:reviewers_must_be_distinct")
-    if statuses[0] != statuses[1]:
+    if rank_selection_required and selections[0] != selections[1]:
+        row_errors.append(f"{sample_id}:review_selection_conflict")
+    if not rank_selection_required and statuses[0] != statuses[1]:
         row_errors.append(f"{sample_id}:review_status_conflict")
     if row_errors:
         errors.extend(row_errors)
         return None, None
 
-    if statuses[0] == "rejected":
+    if rank_selection_required and selections[0] == "reject":
+        return None, {
+            "sample_id": sample_id,
+            "review_status": "rejected",
+            "review_selection": "reject",
+            "review_audit": audits,
+        }
+    if not rank_selection_required and statuses[0] == "rejected":
         return None, {
             "sample_id": sample_id,
             "review_status": "rejected",
@@ -429,20 +519,28 @@ def _reviewed_sample(
         }
 
     oracle_errors: list[str] = []
-    first_oracle = _oracle_payload(
-        first,
-        label="review_a",
-        sample_id=sample_id,
-        errors=oracle_errors,
-    )
-    second_oracle = _oracle_payload(
-        second,
-        label="review_b",
-        sample_id=sample_id,
-        errors=oracle_errors,
-    )
-    if first_oracle != second_oracle:
-        oracle_errors.append(f"{sample_id}:oracle_conflict")
+    if rank_selection_required:
+        first_oracle = _suggested_oracle_payload(
+            authority,
+            selections[0],
+            sample_id=sample_id,
+            errors=oracle_errors,
+        )
+    else:
+        first_oracle = _oracle_payload(
+            first,
+            label="review_a",
+            sample_id=sample_id,
+            errors=oracle_errors,
+        )
+        second_oracle = _oracle_payload(
+            second,
+            label="review_b",
+            sample_id=sample_id,
+            errors=oracle_errors,
+        )
+        if first_oracle != second_oracle:
+            oracle_errors.append(f"{sample_id}:oracle_conflict")
     if oracle_errors:
         errors.extend(oracle_errors)
         return None, None
@@ -656,6 +754,8 @@ def build_promoted_dataset(
             manifest_path=review_queue_manifest_path,
         )
     )
+    queue_version = _clean(queue_manifest.get("version"))
+    rank_selection_required = queue_version == _RANK_SELECTION_QUEUE_VERSION
     approved_reviewers, registry, registry_path, registry_sha256 = (
         _load_reviewer_registry(reviewer_registry_path)
     )
@@ -671,6 +771,7 @@ def build_promoted_dataset(
         _validate_queue_label_isolation(
             authority,
             sample_id=sample_id,
+            rank_selection_required=rank_selection_required,
             errors=errors,
         )
     for label, indexed in (("review_a", first_by_id), ("review_b", second_by_id)):
@@ -689,6 +790,7 @@ def build_promoted_dataset(
             sample_id=sample_id,
             queue_sha256=queue_sha256,
             approved_reviewers=approved_reviewers,
+            rank_selection_required=rank_selection_required,
             errors=errors,
         )
         if row is not None:
@@ -768,7 +870,12 @@ def build_promoted_dataset(
             "approved_distinct_reviewers_required": True,
             "queue_content_hash_required": True,
             "timezone_aware_reviewed_at_required": True,
-            "matching_oracle_payload_required": True,
+            "matching_review_selection_required": rank_selection_required,
+            "matching_oracle_payload_required": not rank_selection_required,
+            "oracle_generated_from_authoritative_suggestion": (
+                rank_selection_required
+            ),
+            "reviewer_oracle_fields_required_blank": rank_selection_required,
             "oracle_authority_match_required": True,
         },
         "suggestion_isolation": {
@@ -776,6 +883,7 @@ def build_promoted_dataset(
             "suggestions_immutable_in_reviews": True,
             "suggestions_excluded_from_promoted_rows": True,
             "suggestions_never_auto_promoted": True,
+            "dual_matching_rank_required": rank_selection_required,
         },
         "split_assignment": {
             "seed": seed,

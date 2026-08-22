@@ -21,6 +21,7 @@ def _queue_row(sample_id, *, project_id, bill_name):
     return {
         "sample_id": sample_id,
         "review_status": "pending",
+        "review_selection": "",
         "dataset_role": "independent_gold_candidate",
         "source": "bill_library.db",
         "source_family": "bill_library",
@@ -41,7 +42,7 @@ def _queue_row(sample_id, *, project_id, bill_name):
         "province_query_fingerprint": f"上海|{query_fingerprint}",
         "sample_rank_in_province": int(sample_id),
         "candidate_quota_books": [{"name": BOOK_NAME, "quota_rows": 10}],
-        "suggested_quota_ids": [f"S-{sample_id}"],
+        "suggested_quota_ids": [f"Q-{sample_id}"],
         "suggested_quota_names": [f"建议定额 {sample_id}"],
         "suggested_quota_books": [BOOK_NAME],
         "suggested_scores": [88.0],
@@ -57,7 +58,7 @@ def _queue_row(sample_id, *, project_id, bill_name):
     }
 
 
-def _write_queue(tmp_path, rows, *, version="accuracy_review_queue.v4"):
+def _write_queue(tmp_path, rows, *, version="accuracy_review_queue.v5"):
     return write_review_queue(
         rows=rows,
         manifest={
@@ -121,20 +122,23 @@ def _write_review_copy(
     for row in rows:
         sample_id = row["sample_id"]
         decision = decisions[sample_id]
-        row["review_status"] = decision["status"]
         row["reviewer"] = reviewer
         row["reviewed_at"] = reviewed_at
         row["review_notes"] = decision.get("notes", "")
-        if decision["status"] == "accepted":
-            row["oracle_quota_ids"] = json.dumps(
-                decision["quota_ids"],
-                ensure_ascii=False,
-            )
-            row["oracle_quota_names"] = json.dumps(
-                decision["quota_names"],
-                ensure_ascii=False,
-            )
-            row["oracle_semantics"] = decision.get("semantics", "any")
+        if "selection" in decision:
+            row["review_selection"] = decision["selection"]
+        else:
+            row["review_status"] = decision["status"]
+            if decision["status"] == "accepted":
+                row["oracle_quota_ids"] = json.dumps(
+                    decision["quota_ids"],
+                    ensure_ascii=False,
+                )
+                row["oracle_quota_names"] = json.dumps(
+                    decision["quota_names"],
+                    ensure_ascii=False,
+                )
+                row["oracle_semantics"] = decision.get("semantics", "any")
         if mutate is not None:
             mutate(row)
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -149,10 +153,18 @@ def _build_inputs(
     decisions_a,
     decisions_b=None,
     *,
-    queue_version="accuracy_review_queue.v4",
+    queue_version="accuracy_review_queue.v5",
 ):
     queue_outputs = _write_queue(tmp_path, rows, version=queue_version)
     quota_rows = []
+    if queue_version == "accuracy_review_queue.v5":
+        for row in rows:
+            quota_rows.extend(
+                zip(
+                    row.get("suggested_quota_ids", []),
+                    row.get("suggested_quota_names", []),
+                )
+            )
     for decision in decisions_a.values():
         quota_rows.extend(zip(decision.get("quota_ids", []), decision.get("quota_names", [])))
     national_index = tmp_path / "national.sqlite"
@@ -197,14 +209,10 @@ def test_promotion_uses_exported_csv_and_preserves_agreed_rejections(tmp_path):
         _queue_row("5", project_id="project-d", bill_name="待排除项"),
     ]
     decisions = {
-        sample_id: {
-            "status": "accepted",
-            "quota_ids": [f"Q-{sample_id}"],
-            "quota_names": [f"定额 {sample_id}"],
-        }
+        sample_id: {"selection": "1"}
         for sample_id in ("1", "2", "3", "4")
     }
-    decisions["5"] = {"status": "rejected", "notes": "无可用规范定额"}
+    decisions["5"] = {"selection": "reject", "notes": "无可用规范定额"}
     inputs = _build_inputs(tmp_path, rows, decisions)
 
     promoted, manifest = _promote(*inputs)
@@ -237,7 +245,9 @@ def test_promotion_uses_exported_csv_and_preserves_agreed_rejections(tmp_path):
         "suggestions_immutable_in_reviews": True,
         "suggestions_excluded_from_promoted_rows": True,
         "suggestions_never_auto_promoted": True,
+        "dual_matching_rank_required": True,
     }
+    assert promoted[0]["oracle_quota_ids"] == ["Q-1"]
     assert all("suggested_quota_ids" not in row for row in promoted)
     assert all(row["source_family"] == "bill_library" for row in promoted)
     assert all(
@@ -246,15 +256,69 @@ def test_promotion_uses_exported_csv_and_preserves_agreed_rejections(tmp_path):
     )
 
 
+def test_promotion_resolves_matching_rank_five_selection(tmp_path):
+    row = _queue_row("1", project_id="project-a", bill_name="给水管")
+    row["suggested_quota_ids"] = [f"Q-1-{rank}" for rank in range(1, 6)]
+    row["suggested_quota_names"] = [f"建议定额 {rank}" for rank in range(1, 6)]
+    row["suggested_quota_books"] = [BOOK_NAME] * 5
+    row["suggested_scores"] = [95.0, 90.0, 85.0, 80.0, 75.0]
+    row["suggested_reasons"] = [[f"rank:{rank}"] for rank in range(1, 6)]
+    decisions = {"1": {"selection": "5"}}
+
+    promoted, manifest = _promote(*_build_inputs(tmp_path, [row], decisions))
+
+    assert promoted[0]["oracle_quota_ids"] == ["Q-1-5"]
+    assert promoted[0]["oracle_quota_names"] == ["建议定额 5"]
+    assert promoted[0]["oracle_semantics"] == "any"
+    assert [audit["review_selection"] for audit in promoted[0]["review_audit"]] == [
+        "5",
+        "5",
+    ]
+    assert manifest["review_contract"][
+        "oracle_generated_from_authoritative_suggestion"
+    ] is True
+
+
+def test_promotion_rejects_out_of_range_selection_and_manual_oracle(tmp_path):
+    row = _queue_row("1", project_id="project-a", bill_name="给水管")
+    decisions = {"1": {"selection": "5"}}
+    inputs = _build_inputs(tmp_path, [row], decisions)
+
+    with pytest.raises(PromotionValidationError) as exc_info:
+        _promote(*inputs)
+
+    assert "1:review_selection_out_of_range" in exc_info.value.errors
+
+    queue_outputs, national_index, registry, review_a, review_b = _build_inputs(
+        tmp_path / "manual",
+        [row],
+        {"1": {"selection": "1"}},
+    )
+    _write_review_copy(
+        queue_outputs["csv"],
+        review_a,
+        reviewer="reviewer-a",
+        decisions={"1": {"selection": "1"}},
+        mutate=lambda review: review.update(
+            review_status="accepted",
+            oracle_quota_ids=json.dumps(["Q-1"]),
+            oracle_quota_names=json.dumps(["手工名称"], ensure_ascii=False),
+            oracle_semantics="any",
+        ),
+    )
+
+    with pytest.raises(PromotionValidationError) as exc_info:
+        _promote(queue_outputs, national_index, registry, review_a, review_b)
+
+    assert "review_a:1:oracle_quota_ids_must_be_blank" in exc_info.value.errors
+    assert "review_a:1:oracle_quota_names_must_be_blank" in exc_info.value.errors
+    assert "review_a:1:oracle_semantics_must_be_blank" in exc_info.value.errors
+    assert "review_a:1:review_status_must_remain_pending" in exc_info.value.errors
+
+
 def test_promotion_rejects_queue_context_and_hash_tampering(tmp_path):
     rows = [_queue_row("1", project_id="project-a", bill_name="给水管")]
-    decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        }
-    }
+    decisions = {"1": {"selection": "1"}}
     queue_outputs, national_index, registry, review_a, review_b = _build_inputs(
         tmp_path,
         rows,
@@ -268,7 +332,7 @@ def test_promotion_rejects_queue_context_and_hash_tampering(tmp_path):
         mutate=lambda row: row.update(
             bill_text="被篡改文本",
             queue_content_sha256="wrong-hash",
-            suggested_quota_ids=json.dumps(["S-TAMPERED"]),
+            suggested_quota_ids=json.dumps(["Q-TAMPERED"]),
         ),
     )
 
@@ -288,13 +352,7 @@ def test_promotion_rejects_oracle_prefilled_in_authoritative_queue(tmp_path):
     row["oracle_quota_ids"] = ["Q-1"]
     row["oracle_quota_names"] = ["给水管安装"]
     row["oracle_semantics"] = "any"
-    decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        }
-    }
+    decisions = {"1": {"selection": "1"}}
     inputs = _build_inputs(tmp_path, [row], decisions)
 
     with pytest.raises(PromotionValidationError) as exc_info:
@@ -314,13 +372,7 @@ def test_promotion_rejects_oracle_prefilled_in_authoritative_queue(tmp_path):
 def test_promotion_rejects_inconsistent_suggestion_payload(tmp_path):
     row = _queue_row("1", project_id="project-a", bill_name="给水管")
     row["suggested_scores"] = []
-    decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        }
-    }
+    decisions = {"1": {"selection": "1"}}
     inputs = _build_inputs(tmp_path, [row], decisions)
 
     with pytest.raises(PromotionValidationError) as exc_info:
@@ -337,6 +389,7 @@ def test_promotion_keeps_legacy_v3_queue_compatible(tmp_path):
     for field_name in list(row):
         if field_name.startswith("suggested_"):
             row.pop(field_name)
+    row.pop("review_selection")
     decisions = {
         "1": {
             "status": "accepted",
@@ -378,6 +431,7 @@ def test_promotion_rejects_unknown_oracle_and_wrong_canonical_name(tmp_path):
         tmp_path,
         rows,
         authoritative,
+        queue_version="accuracy_review_queue.v4",
     )
     invalid = {
         "1": {
@@ -416,13 +470,7 @@ def test_promotion_rejects_unknown_oracle_and_wrong_canonical_name(tmp_path):
 
 def test_promotion_rejects_same_or_unapproved_reviewer(tmp_path):
     rows = [_queue_row("1", project_id="project-a", bill_name="给水管")]
-    decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        }
-    }
+    decisions = {"1": {"selection": "1"}}
     queue_outputs, national_index, registry, review_a, review_b = _build_inputs(
         tmp_path,
         rows,
@@ -457,12 +505,8 @@ def test_promotion_rejects_missing_duplicate_conflict_and_naive_time(tmp_path):
         _queue_row("2", project_id="project-b", bill_name="阀门"),
     ]
     decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        },
-        "2": {"status": "rejected"},
+        "1": {"selection": "1"},
+        "2": {"selection": "reject"},
     }
     queue_outputs, national_index, registry, review_a, review_b = _build_inputs(
         tmp_path,
@@ -487,11 +531,7 @@ def test_promotion_rejects_missing_duplicate_conflict_and_naive_time(tmp_path):
         writer.writerows(review_a_rows)
 
     conflicting = dict(decisions)
-    conflicting["2"] = {
-        "status": "accepted",
-        "quota_ids": ["Q-2"],
-        "quota_names": ["阀门安装"],
-    }
+    conflicting["2"] = {"selection": "1"}
     _write_review_copy(
         queue_outputs["csv"],
         review_b,
@@ -504,7 +544,7 @@ def test_promotion_rejects_missing_duplicate_conflict_and_naive_time(tmp_path):
 
     assert "review_a:1:duplicate_sample_id" in exc_info.value.errors
     assert "review_a:1:reviewed_at_timezone_required" in exc_info.value.errors
-    assert "2:review_status_conflict" in exc_info.value.errors
+    assert "2:review_selection_conflict" in exc_info.value.errors
 
 
 def test_promotion_rejects_missing_and_unknown_samples(tmp_path):
@@ -513,12 +553,8 @@ def test_promotion_rejects_missing_and_unknown_samples(tmp_path):
         _queue_row("2", project_id="project-b", bill_name="阀门"),
     ]
     decisions = {
-        "1": {
-            "status": "accepted",
-            "quota_ids": ["Q-1"],
-            "quota_names": ["给水管安装"],
-        },
-        "2": {"status": "rejected"},
+        "1": {"selection": "1"},
+        "2": {"selection": "reject"},
     }
     queue_outputs, national_index, registry, review_a, review_b = _build_inputs(
         tmp_path,
