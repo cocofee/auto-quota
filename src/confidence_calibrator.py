@@ -140,7 +140,9 @@ def _is_usable_calibration_spec(spec: ConfidenceCalibrationSpec) -> bool:
 
 @lru_cache(maxsize=1)
 def get_confidence_calibration_spec() -> ConfidenceCalibrationSpec:
-    calibration_path = Path(getattr(config, "CONFIDENCE_CALIBRATION_PATH", ""))
+    if not bool(getattr(config, "CONFIDENCE_CALIBRATOR_ENABLED", False)):
+        return DEFAULT_CONFIDENCE_SPEC
+    calibration_path = Path(getattr(config, "CONFIDENCE_CALIBRATOR_PATH", ""))
     if not calibration_path:
         return DEFAULT_CONFIDENCE_SPEC
     try:

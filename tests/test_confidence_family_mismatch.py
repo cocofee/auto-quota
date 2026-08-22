@@ -159,7 +159,8 @@ def test_get_confidence_calibration_spec_loads_external_artifact(tmp_path, monke
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATION_PATH", calibration_path)
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_ENABLED", True)
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_PATH", calibration_path)
     get_confidence_calibration_spec.cache_clear()
 
     spec = get_confidence_calibration_spec()
@@ -175,11 +176,33 @@ def test_get_confidence_calibration_spec_loads_external_artifact(tmp_path, monke
 
 
 def test_get_confidence_calibration_spec_falls_back_to_default_when_artifact_missing(monkeypatch):
-    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATION_PATH", config.DATA_DIR / "missing-confidence.json")
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_ENABLED", True)
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_PATH", config.DATA_DIR / "missing-confidence.json")
     get_confidence_calibration_spec.cache_clear()
 
     spec = get_confidence_calibration_spec()
 
     assert spec == DEFAULT_CONFIDENCE_SPEC
+
+    get_confidence_calibration_spec.cache_clear()
+
+
+def test_get_confidence_calibration_spec_honors_disabled_switch(monkeypatch, tmp_path):
+    calibration_path = tmp_path / "confidence.json"
+    calibration_path.write_text(
+        json.dumps({
+            "model": {"intercept": 5.0, "weights": {}},
+            "isotonic": [
+                {"raw": 0.0, "calibrated": 0.1},
+                {"raw": 1.0, "calibrated": 0.9},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_ENABLED", False)
+    monkeypatch.setattr(config, "CONFIDENCE_CALIBRATOR_PATH", calibration_path)
+    get_confidence_calibration_spec.cache_clear()
+
+    assert get_confidence_calibration_spec() == DEFAULT_CONFIDENCE_SPEC
 
     get_confidence_calibration_spec.cache_clear()

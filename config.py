@@ -959,8 +959,11 @@ CONFIDENCE_CALIBRATOR_ENABLED = os.getenv(
 )
 CONFIDENCE_CALIBRATOR_PATH = Path(os.getenv(
     "CONFIDENCE_CALIBRATOR_PATH",
-    str(DATA_DIR / "confidence_calibrator.json"),
+    str(CONFIDENCE_CALIBRATION_PATH),
 ))
+# Backward-compatible alias. New code and deployments should use
+# CONFIDENCE_CALIBRATOR_PATH.
+CONFIDENCE_CALIBRATION_PATH = CONFIDENCE_CALIBRATOR_PATH
 
 # 学习笔记数据库路径
 def get_learning_notes_db_path():

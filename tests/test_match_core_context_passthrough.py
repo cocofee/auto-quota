@@ -622,6 +622,96 @@ def test_prepare_candidates_from_prepared_attaches_supplemental_quotas(monkeypat
     assert item["_supplemental_quotas"][0]["quota_id"] == "C12-1-1"
 
 
+def test_build_support_surface_process_quotas_uses_real_chinese_business_terms(monkeypatch):
+    del monkeypatch
+
+    class FakeSearcher:
+        def __init__(self):
+            self.calls = []
+
+        def search(self, query, *, top_k, books):
+            self.calls.append((query, top_k, books))
+            return [
+                {"quota_id": f"WRONG-{len(self.calls)}", "name": "不相关候选", "unit": "kg"},
+                {"quota_id": f"C12-{len(self.calls)}", "name": query, "unit": "kg"},
+            ]
+
+    class FakeReranker:
+        def __init__(self):
+            self.calls = []
+
+        def rerank(self, query, candidates):
+            self.calls.append(query)
+            return candidates
+
+    searcher = FakeSearcher()
+    reranker = FakeReranker()
+
+    quotas = match_core._build_support_surface_process_quotas(
+        {
+            "name": "管道支架",
+            "description": "除锈后刷防锈漆二道，再刷灰色调和漆二道",
+            "params": {"support_scope": "管道支架"},
+        },
+        searcher=searcher,
+        reranker=reranker,
+        classification={"search_books": ["C10", "C12"]},
+    )
+
+    assert [quota["quota_role"] for quota in quotas] == [
+        "surface_rust_remove",
+        "surface_primer_first",
+        "surface_primer_extra",
+        "surface_finish_first",
+        "surface_finish_extra",
+    ]
+    assert [query for query, _top_k, _books in searcher.calls] == [
+        "手工除锈 一般钢结构 轻锈",
+        "一般钢结构 防锈漆 第一遍",
+        "一般钢结构 防锈漆 增一遍",
+        "一般钢结构 调和漆 第一遍",
+        "一般钢结构 调和漆 增一遍",
+    ]
+    assert all(books == ["C12"] for _query, _top_k, books in searcher.calls)
+    assert reranker.calls == [query for query, _top_k, _books in searcher.calls]
+    assert all(quota["reason"].startswith("附加定额:") for quota in quotas)
+
+
+def test_build_support_surface_process_quotas_does_not_use_extra_coat_as_first():
+    class FakeSearcher:
+        def search(self, query, *, top_k, books):
+            del top_k, books
+            if "第一遍" in query:
+                return [
+                    {
+                        "quota_id": f"EXTRA-{query}",
+                        "name": query.replace("第一遍", "增加一遍"),
+                        "unit": "kg",
+                    },
+                    {
+                        "quota_id": f"FIRST-{query}",
+                        "name": query,
+                        "unit": "kg",
+                    },
+                ]
+            return [{"quota_id": query, "name": query, "unit": "kg"}]
+
+    quotas = match_core._build_support_surface_process_quotas(
+        {
+            "name": "管道支架",
+            "description": "刷防锈漆二道，再刷调和漆二道",
+            "params": {"support_scope": "管道支架"},
+        },
+        searcher=FakeSearcher(),
+        reranker=None,
+        classification={"search_books": ["C12"]},
+    )
+
+    by_role = {quota["quota_role"]: quota for quota in quotas}
+    assert by_role["surface_primer_first"]["name"].endswith("第一遍")
+    assert by_role["surface_finish_first"]["name"].endswith("第一遍")
+
+
 def test_cascade_search_strict_route_does_not_escape_to_full_library():
     calls = []
 

@@ -909,88 +909,6 @@ def try_experience_exact_match(
     return validated
 
 
-# ============================================================
-# ?????
-# ============================================================
-
-def try_experience_exact_match(
-    query: str,
-    item: dict,
-    experience_db,
-    rule_validator=None,
-    province: str = None,
-    *,
-    authority_only: bool = True,
-) -> dict:
-    """?????????? exact/normalized exact???????????"""
-    if experience_db is None:
-        return None
-
-    exact_lookup = getattr(experience_db, "_find_exact_match", None)
-    if not callable(exact_lookup):
-        return None
-
-    # 跨省: 传 province=None 搜索所有省份
-    try:
-        best = exact_lookup(query, province, authority_only=authority_only)
-    except TypeError:
-        best = exact_lookup(query, province)
-
-    if not best:
-        return None
-
-    best = _annotate_experience_confidence(dict(best), experience_db)
-    normalizer = getattr(experience_db, "_normalize_record_quota_fields", None)
-    if callable(normalizer):
-        best = normalizer(best)
-
-    quota_ids = best.get("quota_ids", [])
-    quota_names = best.get("quota_names", [])
-    if not quota_ids:
-        logger.debug(f"???????????????????: {query[:50]}")
-        return None
-
-    if not _experience_allows_direct(best, experience_db):
-        logger.debug(f"experience exact lightweight direct rejected by dynamic confidence: {query[:50]}")
-        return None
-    confidence = min(_experience_effective_confidence(best, experience_db), 98)
-    exp_materials = _safe_json_materials(best.get("materials"))
-    quotas = []
-    for i, qid in enumerate(quota_ids):
-        quotas.append({
-            "quota_id": qid,
-            "name": quota_names[i] if i < len(quota_names) else "",
-            "unit": "",
-            "reason": f"??????? (???{confidence}%, ??{best.get('confirm_count', 1)}?)",
-        })
-
-    result = {
-        "bill_item": item,
-        "quotas": quotas,
-        "materials": exp_materials,
-        "confidence": confidence,
-        "explanation": f"??????? (??{best.get('confirm_count', 1)}?)",
-        "match_source": "experience_exact",
-    }
-    _append_trace_step(
-        result,
-        "experience_exact_lightweight",
-        record_id=best.get("id"),
-        similarity=1.0,
-        effective_confidence=confidence,
-        confirm_count=best.get("confirm_count", 0),
-        quota_ids=[q.get("quota_id", "") for q in quotas],
-        materials_count=len(exp_materials),
-        match_method=str(best.get("_match_method", "exact") or "exact"),
-        authority_only=bool(authority_only),
-    )
-
-    validated = _validate_experience_params(result, item, rule_validator, is_exact=True)
-    if validated is None:
-        return None
-    return validated
-
-
 def _translate_books_for_industry(c_books: list[str],
                                   quota_books: dict) -> list[str]:
     """?C1-C12????????????book??
@@ -2680,6 +2598,91 @@ def _retain_primary_stage_candidates(candidates: list[dict],
     return retained
 
 
+def _parse_chinese_count_token(token: str) -> int:
+    token = str(token or "").strip()
+    if not token:
+        return 0
+    if token.isdigit():
+        return int(token)
+    mapping = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
+    if token == "十":
+        return 10
+    if token.startswith("十") and len(token) == 2:
+        return 10 + mapping.get(token[1], 0)
+    if token.endswith("十") and len(token) == 2:
+        return mapping.get(token[0], 0) * 10
+    if len(token) == 2 and "十" in token:
+        left, _, right = token.partition("十")
+        return mapping.get(left, 0) * 10 + mapping.get(right, 0)
+    return mapping.get(token, 0)
+
+
+def _extract_surface_process_count(text: str, token: str) -> int:
+    if not text or not token:
+        return 0
+    patterns = [
+        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*道",
+        rf"{re.escape(token)}[^，。；;\n]*?([0-9一二两三四五六七八九十]+)\s*遍",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        count = _parse_chinese_count_token(match.group(1))
+        if count > 0:
+            return count
+    return 0
+
+
+def _search_surface_process_candidate(searcher: HybridSearcher, reranker, *,
+                                      query: str, books: list[str],
+                                      matcher) -> dict | None:
+    try:
+        candidates = searcher.search(
+            query,
+            top_k=max(int(config.HYBRID_TOP_K), 8),
+            books=books or None,
+        )
+    except Exception as e:
+        logger.debug(f"表面处理附加搜索失败: query={query!r} error={e}")
+        return None
+
+    if candidates and len(candidates) > 1 and reranker is not None:
+        try:
+            candidates = reranker.rerank(query, candidates)
+        except Exception as e:
+            logger.debug(f"表面处理附加重排失败: query={query!r} error={e}")
+
+    for candidate in candidates or []:
+        name = str(candidate.get("name") or "")
+        if name and matcher(name):
+            return candidate
+    return None
+
+
+def _is_first_surface_coat_name(name: str) -> bool:
+    if "第一遍" in name:
+        return True
+    if "一遍" not in name:
+        return False
+    return not any(
+        token in name
+        for token in ("增一遍", "增加一遍", "每增一遍", "每增加一遍")
+    )
+
+
 def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, reranker,
                                           classification: dict) -> list[dict]:
     if not isinstance(item, dict):
@@ -2694,10 +2697,10 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
 
     params = item.get("params") or text_parser.parse(full_text)
     support_scope = str(params.get("support_scope") or "").strip()
-    if support_scope != "????":
+    if support_scope != "管道支架":
         return []
 
-    if not any(token in full_text for token in ("??", "??", "??", "???", "???", "???")):
+    if not any(token in full_text for token in ("除锈", "刷油", "油漆", "防锈漆", "调和漆", "调合漆")):
         return []
 
     search_books = [
@@ -2707,43 +2710,45 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
     ] or ["C12"]
 
     specs: list[tuple[str, str, object]] = []
-    if "??" in full_text:
+    if "除锈" in full_text:
         specs.append((
             "surface_rust_remove",
-            "???? ????? ??",
-            lambda name: "??" in name,
+            "手工除锈 一般钢结构 轻锈",
+            lambda name: "除锈" in name,
         ))
 
-    primer_token = "?????" if "?????" in full_text else ("???" if "???" in full_text else "")
+    primer_token = "红丹防锈漆" if "红丹防锈漆" in full_text else ("防锈漆" if "防锈漆" in full_text else "")
     primer_count = _extract_surface_process_count(full_text, primer_token) if primer_token else 0
     if primer_token:
         specs.append((
             "surface_primer_first",
-            f"????? {primer_token} ???",
-            lambda name, token=primer_token: token in name and any(flag in name for flag in ("???", "??")),
+            f"一般钢结构 {primer_token} 第一遍",
+            lambda name, token=primer_token: token in name
+            and _is_first_surface_coat_name(name),
         ))
         if primer_count >= 2:
             specs.append((
                 "surface_primer_extra",
-                f"????? {primer_token} ???",
-                lambda name, token=primer_token: token in name and any(flag in name for flag in ("???", "????")),
+                f"一般钢结构 {primer_token} 增一遍",
+                lambda name, token=primer_token: token in name and any(flag in name for flag in ("增一遍", "增加一遍")),
             ))
 
     finish_count = max(
-        _extract_surface_process_count(full_text, "???"),
-        _extract_surface_process_count(full_text, "???"),
+        _extract_surface_process_count(full_text, "调和漆"),
+        _extract_surface_process_count(full_text, "调合漆"),
     )
-    if any(token in full_text for token in ("???", "???")):
+    if any(token in full_text for token in ("调和漆", "调合漆")):
         specs.append((
             "surface_finish_first",
-            "????? ??? ???",
-            lambda name: ("???" in name or "???" in name) and any(flag in name for flag in ("???", "??")),
+            "一般钢结构 调和漆 第一遍",
+            lambda name: ("调和漆" in name or "调合漆" in name)
+            and _is_first_surface_coat_name(name),
         ))
         if finish_count >= 2:
             specs.append((
                 "surface_finish_extra",
-                "????? ??? ???",
-                lambda name: ("???" in name or "???" in name) and any(flag in name for flag in ("???", "????")),
+                "一般钢结构 调和漆 增一遍",
+                lambda name: ("调和漆" in name or "调合漆" in name) and any(flag in name for flag in ("增一遍", "增加一遍")),
             ))
 
     supplemental: list[dict] = []
@@ -2767,7 +2772,7 @@ def _build_support_surface_process_quotas(item: dict, searcher: HybridSearcher, 
             "quota_id": quota_id,
             "name": quota_name,
             "unit": candidate.get("unit", "") or item.get("unit", ""),
-            "reason": f"????:{query}",
+            "reason": f"附加定额:{query}",
             "reasoning": summarize_candidate_reasoning(candidate),
             "db_id": candidate.get("id"),
             "quota_role": role,
@@ -3028,7 +3033,6 @@ def _mark_agent_fastpath(result: dict):
     note = "Agent快速通道: 高置信候选，跳过LLM"
     explanation = (result.get("explanation") or "").strip()
     result["explanation"] = f"{explanation} | {note}" if explanation else note
-    _append_trace_step(result, "agent_fastpath", skipped_llm=True)
     _append_trace_step(result, "agent_fastpath", skipped_llm=True)
 
 

@@ -480,6 +480,7 @@ class TestAgentDecision:
         # 设置 agent_skipped=True 和 match_source="agent_fastpath"
         assert result.get("agent_skipped") is True
         assert result.get("match_source") == "agent_fastpath"
+        assert result["trace"]["path"].count("agent_fastpath") == 1
 
 
 class TestTraceFunctions:
